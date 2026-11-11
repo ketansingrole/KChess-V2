@@ -10,17 +10,18 @@ use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_domain::training::lessons::{self, Goal, Reason, Status};
 use serde_json::{Value, json};
 use shakmaty::Color;
 
 use super::endgame_drills::{color_of, move_squares, san_from};
-use super::endgames::{Course, LessonChapter, LessonStep, TrainerEvent, finished};
+use super::endgames::{Chapter, Course, Step, TrainerEvent, finished};
 use super::engine_move::{EngineMove, HasEngine};
 use super::run::{self, TrainingItem};
 use crate::assets::icon;
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard, Circle};
 use crate::core::AppCore;
-use crate::game::{rules, view};
+use crate::game::view;
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
@@ -32,39 +33,38 @@ const NARROW: Pixels = px(860.);
 /// A scripted reply comes after a beat.
 const REPLY: Duration = Duration::from_millis(450);
 
-/// What a finished step's reason reads as (`REASONS`).
-fn reason_title(reason: &str) -> &'static str {
+/// What a finished step's reason reads as.
+fn reason_title(reason: Reason) -> &'static str {
     match reason {
-        "lineDone" => "Well done",
-        "checkmate" => "Checkmate",
-        "mated" => "You were checkmated",
-        "stalemate" => "Stalemate",
-        "insufficient" => "Insufficient material",
-        "repetition" => "Threefold repetition",
-        "fiftyMoves" => "Fifty-move rule",
-        "promoted" => "Promoted — the rest is technique",
-        "bareKing" => "Only a bare king is left",
-        "reached" => "Key square reached",
-        "confined" => "The king is boxed in",
-        "held" => "Draw held",
-        "outOfMoves" => "Out of moves",
-        "materialLost" => "Material lost",
-        "lost" => "The position slipped away",
-        _ => "",
+        Reason::Read => "",
+        Reason::LineDone => "Well done",
+        Reason::Checkmate => "Checkmate",
+        Reason::Mated => "You were checkmated",
+        Reason::Stalemate => "Stalemate",
+        Reason::Insufficient => "Insufficient material",
+        Reason::Repetition => "Threefold repetition",
+        Reason::FiftyMoves => "Fifty-move rule",
+        Reason::Promoted => "Promoted — the rest is technique",
+        Reason::BareKing => "Only a bare king is left",
+        Reason::Reached => "Key square reached",
+        Reason::Confined => "The king is boxed in",
+        Reason::Held => "Draw held",
+        Reason::OutOfMoves => "Out of moves",
+        Reason::MaterialLost => "Material lost",
+        Reason::Lost => "The position slipped away",
     }
 }
 
 /// How a finished step ended; a draw held by a drawing rule says so.
-fn outcome(status: &Value) -> String {
-    let reason = status["reason"].as_str().unwrap_or_default();
-    if status["over"] != json!(true) || reason.is_empty() || reason == "read" {
+fn outcome(status: &Status) -> String {
+    let Some(reason) = status.reason.filter(|_| status.over) else {
         return String::new();
-    }
+    };
     let title = reason_title(reason);
-    if status["success"] == json!(true)
+    if status.success == Some(true)
         && matches!(
             reason,
-            "stalemate" | "insufficient" | "repetition" | "fiftyMoves"
+            Reason::Stalemate | Reason::Insufficient | Reason::Repetition | Reason::FiftyMoves
         )
     {
         format!("Draw held — {}", title.to_lowercase())
@@ -74,23 +74,46 @@ fn outcome(status: &Value) -> String {
 }
 
 /// What the step asks, while it is yours to play.
-fn goal(task: &Value, side: &str) -> String {
-    let within = crate::game::whole(&task["within"]);
-    let moves = format!("{within} {}", if within == 1 { "move" } else { "moves" });
-    match task["kind"].as_str().unwrap_or_default() {
-        "line" => format!("Find the best move for {side}"),
-        "mate" if within == 1 => "Checkmate in one move".into(),
-        "mate" => format!("Checkmate in {within} moves"),
-        "play" => match task["goal"].as_str().unwrap_or_default() {
-            "mate" => format!("Checkmate the engine within {moves}"),
-            "win" => format!("Win against the engine within {moves}"),
-            "draw" => format!("Hold the draw for {moves}"),
-            "reach" => format!("Bring your king to a marked square within {moves}"),
-            "confine" => format!("Box the king into the marked area within {moves}"),
-            _ => String::new(),
-        },
-        _ => String::new(),
+fn goal(task: &lessons::Task, side: &str) -> String {
+    let moves = |within: u32| format!("{within} {}", if within == 1 { "move" } else { "moves" });
+    match task {
+        lessons::Task::Read => String::new(),
+        lessons::Task::Line { .. } => format!("Find the best move for {side}"),
+        lessons::Task::Mate { within: 1 } => "Checkmate in one move".into(),
+        lessons::Task::Mate { within } => format!("Checkmate in {within} moves"),
+        lessons::Task::Play { goal, within, .. } => {
+            let moves = moves(*within);
+            match goal {
+                Goal::Mate => format!("Checkmate the engine within {moves}"),
+                Goal::Win => format!("Win against the engine within {moves}"),
+                Goal::Draw => format!("Hold the draw for {moves}"),
+                Goal::Reach => format!("Bring your king to a marked square within {moves}"),
+                Goal::Confine => format!("Box the king into the marked area within {moves}"),
+            }
+        }
     }
+}
+
+/// Where a step stands when its position cannot be read: nothing to play, nothing over.
+fn unreadable() -> Status {
+    Status {
+        over: false,
+        success: None,
+        reason: None,
+        player: "",
+        turn: "",
+        fen: String::new(),
+        check: false,
+        played: 0,
+        limit: None,
+        reply: None,
+        engine: false,
+    }
+}
+
+/// A logged lesson rule that failed.
+fn warn(cause: &str) {
+    crate::log::write(Level::Warn, "endgame-lesson", cause);
 }
 
 /// A lesson's actions, as its buttons offer them.
@@ -203,11 +226,11 @@ impl EndgameLesson {
         &self.course.id
     }
 
-    fn chapter(&self) -> &LessonChapter {
+    fn chapter(&self) -> &Chapter {
         &self.course.chapters[self.chapter]
     }
 
-    fn step(&self) -> &LessonStep {
+    fn step(&self) -> &Step {
         &self.chapter().steps[self.step]
     }
 
@@ -215,38 +238,36 @@ impl EndgameLesson {
         self.step + 1 == self.chapter().steps.len()
     }
 
-    /// `lessonStatus`: where the step stands after `moves`.
-    fn status_after(&self, moves: &[String]) -> Value {
+    /// Where the step stands after `moves`.
+    fn status_after(&self, moves: &[String]) -> Status {
         let step = self.step();
-        rules(
-            "lessonStatus",
-            &[json!(step.fen), step.task.clone(), json!(moves)],
-        )
-        .unwrap_or(Value::Null)
+        lessons::status(&step.fen, &step.task, moves).unwrap_or_else(|cause| {
+            warn(&cause);
+            unreadable()
+        })
     }
 
-    fn status(&self) -> Value {
+    fn status(&self) -> Status {
         self.status_after(&self.moves)
     }
 
     fn playable(&self) -> bool {
-        self.step().task["kind"] != json!("read")
+        self.step().task != lessons::Task::Read
     }
 
     fn your_turn(&self) -> bool {
         let status = self.status();
-        self.playable() && status["over"] != json!(true) && status["turn"] == status["player"]
+        self.playable() && !status.over && status.turn == status.player
     }
 
     fn player(&self) -> Color {
-        color_of(self.status()["player"].as_str().unwrap_or("white"))
+        color_of(self.status().player)
     }
 
     /// What Return goes on to: the next step or chapter, once this step is read or passed.
     pub(crate) fn next_on_return(&self) -> Option<LessonAction> {
         let status = self.status();
-        let passed =
-            !self.playable() || (status["over"] == json!(true) && status["success"] == json!(true));
+        let passed = !self.playable() || (status.over && status.success == Some(true));
         let actions = self.actions();
         [LessonAction::Next, LessonAction::NextChapter]
             .into_iter()
@@ -261,7 +282,10 @@ impl EndgameLesson {
             if self.your_turn() && !thinking {
                 actions.push(LessonAction::Hint);
             }
-            if self.step().task["kind"] == json!("play") && !self.moves.is_empty() && !thinking {
+            if matches!(self.step().task, lessons::Task::Play { .. })
+                && !self.moves.is_empty()
+                && !thinking
+            {
                 actions.push(LessonAction::TakeBack);
             }
             actions.push(LessonAction::Flip);
@@ -352,20 +376,17 @@ impl EndgameLesson {
         }
         self.hint = None;
         let step = self.step();
-        let verdict = rules(
-            "lessonMove",
-            &[
-                json!(step.fen),
-                step.task.clone(),
-                json!(self.moves),
-                json!(uci),
-            ],
-        )
-        .unwrap_or(Value::Null);
-        match verdict["uci"].as_str() {
-            Some(played) if verdict["accepted"] == json!(true) => {
+        let played = match lessons::try_move(&step.fen, &step.task, &self.moves, uci) {
+            Ok(verdict) => verdict.uci.filter(|_| verdict.accepted),
+            Err(cause) => {
+                warn(&cause);
+                None
+            }
+        };
+        match played {
+            Some(played) => {
                 self.wrong = false;
-                self.play(played.to_string(), cx);
+                self.play(played, cx);
             }
             _ => {
                 self.wrong = true;
@@ -377,10 +398,7 @@ impl EndgameLesson {
     }
 
     fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let fen = self.status()["fen"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
+        let fen = self.status().fen;
         let text = self.move_input.read(cx).value().trim().to_string();
         let setup = json!({ "variant": "standard", "fen": fen });
         let typed = kchess_domain::rules::setup_start("standard", &fen)
@@ -395,15 +413,15 @@ impl EndgameLesson {
     /// The opponent answers: a scripted or solved reply after a beat, else the engine.
     fn respond(&mut self, cx: &mut Context<Self>) {
         let status = self.status();
-        if status["over"] == json!(true)
-            || status["turn"] == status["player"]
+        if status.over
+            || status.turn == status.player
             || !self.playable()
             || self.engine.thinking
             || self.reply.is_some()
         {
             return;
         }
-        if let Some(reply) = status["reply"].as_str().map(str::to_string) {
+        if let Some(reply) = status.reply {
             let at = self.moves.len();
             self.reply = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(REPLY).await;
@@ -416,7 +434,7 @@ impl EndgameLesson {
             }));
             return;
         }
-        if status["engine"] != json!(true) {
+        if !status.engine {
             return;
         }
         let (fen, moves) = (self.step().fen.clone(), self.moves.clone());
@@ -436,12 +454,10 @@ impl EndgameLesson {
             return;
         }
         let step = self.step();
-        let known = rules(
-            "lessonHint",
-            &[json!(step.fen), step.task.clone(), json!(self.moves)],
-        )
-        .ok()
-        .and_then(|hint| hint.as_str().map(str::to_string));
+        let known = lessons::hint(&step.fen, &step.task, &self.moves).unwrap_or_else(|cause| {
+            warn(&cause);
+            None
+        });
         if let Some(known) = known {
             self.hint = Some(known);
             self.redraw(cx);
@@ -472,10 +488,10 @@ impl EndgameLesson {
         self.reply = None;
         self.hint = None;
         self.wrong = false;
-        let player = self.status()["player"].clone();
+        let player = self.status().player;
         let mut kept = self.moves.clone();
         kept.pop();
-        while !kept.is_empty() && self.status_after(&kept)["turn"] != player {
+        while !kept.is_empty() && self.status_after(&kept).turn != player {
             kept.pop();
         }
         self.moves = kept;
@@ -485,7 +501,7 @@ impl EndgameLesson {
     /// The last step solved finishes the chapter: saved once as a `lesson` run.
     fn save(&mut self, cx: &mut Context<Self>) {
         let status = self.status();
-        if status["over"] != json!(true) || status["success"] != json!(true) || !self.last_step() {
+        if !status.over || status.success != Some(true) || !self.last_step() {
             return;
         }
         let id = self.chapter().id.clone();
@@ -524,13 +540,13 @@ impl EndgameLesson {
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
         let status = self.status();
-        let fen = status["fen"].as_str().unwrap_or_default().to_string();
+        let fen = status.fen.clone();
         let Some(position) = kchess_domain::rules::setup_start("standard", &fen) else {
             return;
         };
         let last = self.moves.last().and_then(|last| {
             let before = self.status_after(&self.moves[..self.moves.len() - 1]);
-            move_squares(before["fen"].as_str()?, last)
+            move_squares(&before.fen, last)
         });
         let player = self.player();
         let orientation = if self.flipped { !player } else { player };
@@ -553,7 +569,7 @@ impl EndgameLesson {
             state.arrows.push(Arrow::hint(from, to));
         }
         // The pieces show while there is nothing to play, and once the step is over.
-        let reveal = status["over"] == json!(true) || !self.playable();
+        let reveal = status.over || !self.playable();
         state.blindfold = cx
             .global::<SettingsHandle>()
             .0
@@ -627,12 +643,12 @@ impl EndgameLesson {
         palette: &Palette,
     ) -> AnyElement {
         let status = self.status();
-        let over = status["over"] == json!(true);
-        let success = status["success"] == json!(true);
+        let over = status.over;
+        let success = status.success == Some(true);
         let thinking = self.engine.thinking;
         let playable = self.playable();
         let your_turn = self.your_turn();
-        let engine_step = status["engine"] == json!(true);
+        let engine_step = status.engine;
         let missing = self.engine.ready == Some(false);
         let side = if self.player() == Color::White {
             "White"
@@ -717,7 +733,7 @@ impl EndgameLesson {
                             .disabled(!your_turn || thinking)
                             .on_click(cx.listener(|this, _, _, cx| this.show_hint(cx))),
                     )
-                    .when(step.task["kind"] == json!("play"), |actions| {
+                    .when(matches!(step.task, lessons::Task::Play { .. }), |actions| {
                         actions.child(
                             Button::new("lesson-takeback")
                                 .outline()
@@ -890,34 +906,37 @@ impl Render for EndgameLesson {
 
 #[cfg(test)]
 mod tests {
-    use super::{goal, outcome};
-    use serde_json::json;
+    use super::{goal, outcome, unreadable};
+    use kchess_domain::training::lessons::{Goal, Reason, Status, Task};
 
     #[test]
     fn steps_say_what_they_ask() {
         assert_eq!(
-            goal(&json!({ "kind": "mate", "within": 1 }), "White"),
+            goal(&Task::Mate { within: 1 }, "White"),
             "Checkmate in one move"
         );
+        let hold = Task::Play {
+            goal: Goal::Draw,
+            within: 1,
+            squares: Vec::new(),
+        };
+        assert_eq!(goal(&hold, "Black"), "Hold the draw for 1 move");
         assert_eq!(
-            goal(
-                &json!({ "kind": "play", "goal": "draw", "within": 1.0 }),
-                "Black"
-            ),
-            "Hold the draw for 1 move"
-        );
-        assert_eq!(
-            goal(&json!({ "kind": "line", "moves": [] }), "Black"),
+            goal(&Task::Line { moves: Vec::new() }, "Black"),
             "Find the best move for Black"
         );
     }
 
     #[test]
     fn a_drawing_rule_reads_as_a_held_draw() {
-        let held = json!({ "over": true, "success": true, "reason": "stalemate" });
-        assert_eq!(outcome(&held), "Draw held — stalemate");
-        let lost = json!({ "over": true, "success": false, "reason": "stalemate" });
-        assert_eq!(outcome(&lost), "Stalemate");
-        assert_eq!(outcome(&json!({ "over": false })), "");
+        let ended = |success| Status {
+            over: true,
+            success: Some(success),
+            reason: Some(Reason::Stalemate),
+            ..unreadable()
+        };
+        assert_eq!(outcome(&ended(true)), "Draw held — stalemate");
+        assert_eq!(outcome(&ended(false)), "Stalemate");
+        assert_eq!(outcome(&unreadable()), "");
     }
 }

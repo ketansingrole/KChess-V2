@@ -4,6 +4,7 @@
 //! unfinished game in the profile, to resume it.
 
 use kchess_contracts::calls;
+use kchess_domain::training::clock::format_clock;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -524,10 +525,7 @@ impl ComputerPage {
         let (ply, color) = (self.ply(), self.user_color());
         let computer = format!(
             "Stockfish ({})",
-            rules("engineLevelLabel", &[self.game.state["level"].clone()])
-                .ok()
-                .and_then(|label| label.as_str().map(str::to_string))
-                .unwrap_or_default()
+            crate::game::engine_level_label(self.game.state["level"].as_str().unwrap_or_default())
         );
         let (white, black) = if color == Color::White {
             ("You".to_string(), computer)
@@ -1238,19 +1236,9 @@ impl ComputerPage {
 
     /// The opening the moves on the board reached, as `(eco, name)` (`openingAt`).
     fn opening(&self) -> Option<(SharedString, SharedString)> {
-        let opening = rules(
-            "openingAt",
-            &[
-                self.game.state["setup"].clone(),
-                json!(self.moves()),
-                json!(self.ply()),
-            ],
-        )
-        .ok()?;
-        Some((
-            opening["eco"].as_str()?.to_string().into(),
-            opening["name"].as_str()?.to_string().into(),
-        ))
+        let opening =
+            crate::game::opening_at(&self.game.state["setup"], &self.moves(), self.ply())?;
+        Some((opening.eco.into(), opening.name.into()))
     }
 
     fn clock_text(&self, color: &str) -> Option<SharedString> {
@@ -1258,12 +1246,7 @@ impl ComputerPage {
             return None;
         }
         let remaining = self.game.remaining(color, &self.host());
-        rules("formatClock", &[json!(remaining)])
-            .ok()
-            .and_then(|text| {
-                text.as_str()
-                    .map(|text| SharedString::from(text.to_string()))
-            })
+        Some(format_clock(remaining).into())
     }
 
     fn render_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1390,15 +1373,9 @@ fn level_choices(cx: &App) -> (Vec<String>, Vec<SharedString>) {
         .collect();
     let labels = ids
         .iter()
-        .map(|id| {
-            rules("engineLevelLabel", &[json!(id)])
-                .ok()
-                .and_then(|label| {
-                    label
-                        .as_str()
-                        .map(|label| SharedString::from(label.to_string()))
-                })
-                .unwrap_or_else(|| id.clone().into())
+        .map(|id| match crate::game::engine_level_label(id) {
+            label if label.is_empty() => id.clone().into(),
+            label => SharedString::from(label),
         })
         .collect();
     (ids, labels)

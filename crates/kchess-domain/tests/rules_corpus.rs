@@ -21,8 +21,10 @@ const RETIRED: &[&str] = &[
     "RANKS",
     "START_SETUP",
     "materialBalance",
+    "nearestEngineLevel",
     "pgnFromMoves",
     "playMove",
+    "puzzleFromDb",
 ];
 
 use std::io::{Read, Write};

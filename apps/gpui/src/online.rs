@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use kchess_contracts::Level;
+use kchess_domain::training::clock::{ClockState, SetData, format_clock};
 use serde_json::{Value, json};
 
 use crate::core::{AppCore, CoreEvent};
@@ -86,7 +87,7 @@ pub struct OnlineState {
     /// The rules' state: `onlineGameState()` and the class's private fields.
     model: Value,
     /// `ClockState`.
-    clock: Value,
+    clock: ClockState,
     /// The position looked at while reviewing; `None` follows the game.
     pub view_ply: Option<usize>,
     pub flipped: bool,
@@ -215,24 +216,15 @@ impl OnlineState {
 
     /// Milliseconds left on `color`'s clock.
     pub fn remaining(&self, color: &str) -> f64 {
-        rules(
-            "clockRemaining",
-            &[self.clock.clone(), json!(color), json!(now())],
-        )
-        .ok()
-        .and_then(|value| value.as_f64())
-        .unwrap_or_default()
+        self.clock.remaining(color, now())
     }
 
     pub fn clock_running(&self) -> Option<&str> {
-        self.clock["ticking"].as_str()
+        self.clock.ticking.as_deref()
     }
 
     pub fn clock_text(&self, color: &str) -> String {
-        rules("formatClock", &[json!(self.remaining(color))])
-            .ok()
-            .and_then(|text| text.as_str().map(str::to_string))
-            .unwrap_or_default()
+        format_clock(self.remaining(color))
     }
 
     fn context(cx: &App) -> Value {
@@ -354,25 +346,24 @@ impl OnlineState {
                     notice(cx, cause.to_string());
                 }
             }
-            "clockPause" => {
-                if let Ok(clock) = rules("clockPause", &[self.clock.clone(), json!(now())]) {
-                    self.clock = clock;
+            "clockPause" => self.clock.pause(now()),
+            "clockSet" => match (effect["white"].as_f64(), effect["black"].as_f64()) {
+                (Some(white), Some(black)) => {
+                    let data = SetData {
+                        white,
+                        black,
+                        ticking: effect["ticking"].as_str().map(str::to_string),
+                        initial_seconds: effect["initialSeconds"].as_f64(),
+                        delay_centis: None,
+                    };
+                    self.clock.set(&data, now());
                 }
-            }
-            "clockSet" => {
-                let mut data = json!({
-                    "white": effect["white"],
-                    "black": effect["black"],
-                });
-                for key in ["ticking", "initialSeconds"] {
-                    if !effect[key].is_null() {
-                        data[key] = effect[key].clone();
-                    }
-                }
-                if let Ok(clock) = rules("clockSet", &[self.clock.clone(), data, json!(now())]) {
-                    self.clock = clock;
-                }
-            }
+                _ => crate::log::write(
+                    Level::Warn,
+                    "online",
+                    &format!("A clock without both times: {effect}"),
+                ),
+            },
             "loadChat" => {
                 let id = effect["id"].clone();
                 self.perform("chat", id, cx).detach();
@@ -619,25 +610,19 @@ impl OnlineState {
         }
         if self.model["onlineClockConfig"].is_object()
             && let Some(turn) = self.clock_running().map(str::to_string)
-            && let Ok(alert) = rules(
-                "clockLowTimeAlert",
-                &[self.clock.clone(), json!(turn), json!(now())],
-            )
+            && self.clock.low_time_alert(&turn, now())
         {
-            self.clock = alert["state"].clone();
-            if alert["result"] == json!(true) {
-                crate::sound::play(crate::sound::Sound::LowTime, cx);
-                let mine = self.model["onlineColor"] == json!(turn);
-                if mine {
-                    let left = self.clock_text(&turn);
-                    let opponent = self.model["onlineOpponent"].as_str().unwrap_or_default();
-                    crate::notifications::desktop(
-                        "lowTime",
-                        "Low on time",
-                        &format!("{left} left against {opponent}"),
-                        cx,
-                    );
-                }
+            crate::sound::play(crate::sound::Sound::LowTime, cx);
+            let mine = self.model["onlineColor"] == json!(turn);
+            if mine {
+                let left = self.clock_text(&turn);
+                let opponent = self.model["onlineOpponent"].as_str().unwrap_or_default();
+                crate::notifications::desktop(
+                    "lowTime",
+                    "Low on time",
+                    &format!("{left} left against {opponent}"),
+                    cx,
+                );
             }
         }
         // Redraw only when something the game shows by the clock changes: a clock face (each
@@ -1040,7 +1025,7 @@ pub fn init(cx: &mut App) {
         let mut state = OnlineState {
             phase: Phase::Checking,
             model: kchess_domain::online_game::idle_state(),
-            clock: rules("clockInitial", &[]).unwrap_or(Value::Null),
+            clock: ClockState::initial(),
             view_ply: None,
             flipped: false,
             form: Form::default(),

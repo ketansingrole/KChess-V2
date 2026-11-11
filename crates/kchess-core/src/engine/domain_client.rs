@@ -5,28 +5,13 @@
 //! typed and give `domain_dispatch` test a single list to pin: every wrapper's
 //! method must exist in `kchess_domain::api::call`.
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use super::{domain, validate};
+use super::validate;
 use crate::error::Result;
 
 /// Every domain method the core calls through the generic bridge. Pinned by test.
-pub const DOMAIN_METHODS: &[&str] = &[
-    "engineLevelInfo",
-    "parseInfo",
-    "assertMoves",
-    "assertBestMoveOptions",
-];
-
-/// `engineLevelInfo(level)`: the search profile for a computer level.
-pub fn engine_level_info(level: &str) -> Result<Value> {
-    domain("engineLevelInfo", vec![json!(level)])
-}
-
-/// `parseInfo(line, whiteToMove)`: one UCI info line parsed, or None.
-pub fn parse_info_typed(text: &str, white_to_move: bool) -> Option<Value> {
-    domain("parseInfo", vec![json!(text), json!(white_to_move)]).ok()
-}
+pub const DOMAIN_METHODS: &[&str] = &["assertMoves", "assertBestMoveOptions"];
 
 /// `assertMoves(moves)`: validated move list.
 pub fn assert_moves(moves: &Value) -> Result<Value> {

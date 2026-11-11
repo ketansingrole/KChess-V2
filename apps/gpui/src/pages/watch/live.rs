@@ -3,6 +3,7 @@
 //! a channel's earlier games, and Analyse.
 
 use kchess_contracts::calls;
+use kchess_domain::training::clock::format_clock;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -425,10 +426,7 @@ impl Live {
             0.
         };
         let millis = (base - elapsed).max(0.) * 1000.;
-        let text = rules("formatClock", &[json!(millis)])
-            .ok()
-            .and_then(|text| text.as_str().map(str::to_string))?;
-        Some((text, running))
+        Some((format_clock(millis), running))
     }
 
     /// "All time 3–2 · 5 games" and the current match.

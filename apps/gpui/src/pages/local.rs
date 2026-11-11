@@ -3,6 +3,7 @@
 //! place in Game history, and the board game resumes in either app.
 
 use kchess_contracts::calls;
+use kchess_domain::training::clock::format_clock;
 use std::time::{Duration, Instant};
 
 use gpui_kit::base::TestSupportExt as _;
@@ -1019,10 +1020,7 @@ impl LocalPage {
         let mut face = |side: Side, index: usize, cx: &mut Context<Self>| {
             let running = self.clock.running == Some(side);
             let flagged = self.clock.flagged == Some(side);
-            let time = rules("formatClock", &[json!(self.clock.left(side, now))])
-                .ok()
-                .and_then(|text| text.as_str().map(str::to_string))
-                .unwrap_or_default();
+            let time = format_clock(self.clock.left(side, now));
             let state = if flagged {
                 "Time up"
             } else if running {
@@ -1562,15 +1560,8 @@ impl LocalPage {
         };
         let opening =
             (frontend.show_opening_name && self.setup()["variant"] == "standard").then(|| {
-                let opening = rules(
-                    "openingAt",
-                    &[self.setup().clone(), json!(moves), json!(shown)],
-                )
-                .ok()?;
-                Some((
-                    opening["eco"].as_str()?.to_string(),
-                    opening["name"].as_str()?.to_string(),
-                ))
+                let opening = crate::game::opening_at(self.setup(), &moves, shown)?;
+                Some((opening.eco, opening.name))
             });
         let page = cx.entity().downgrade();
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
@@ -2185,8 +2176,5 @@ fn face(color: Color) -> usize {
 }
 
 fn clock_face(millis: f64) -> String {
-    rules("formatClock", &[json!(millis)])
-        .ok()
-        .and_then(|text| text.as_str().map(str::to_string))
-        .unwrap_or_default()
+    format_clock(millis)
 }

@@ -1252,10 +1252,10 @@ fn play_commands(cx: &App) -> Vec<Command> {
         .collect();
     let mut list = Vec::new();
     for level in levels {
-        let info = crate::game::rules("engineLevelInfo", &[json!(level)]).unwrap_or_default();
-        let name = info["label"].as_str().unwrap_or(&level).to_string();
-        let strength = info["elo"]
-            .as_f64()
+        let info = crate::game::engine_level(&level);
+        let name = info.map_or(level.clone(), |info| info.label.clone());
+        let strength = info
+            .and_then(|info| info.elo)
             .map_or("Full strength".to_string(), |elo| format!("~{elo}"));
         for (color, color_label) in [
             ("white", "White"),

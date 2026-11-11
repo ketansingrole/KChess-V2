@@ -1,21 +1,23 @@
-//! Puzzles → Storm · Streak · Rush (rules in `training/rush.rs` through
-//! `rules()`): timed and survival runs over a ladder of puzzles from the database on this computer,
+//! Puzzles → Storm · Streak · Rush (rules in `kchess_domain::training::rush`): timed and survival
+//! runs over a ladder of puzzles from the database on this computer,
 //! scored and kept here; Lichess's own Storm and Streak results beside the menu.
 
 use kchess_contracts::calls;
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde::Deserialize;
+use kchess_contracts::Level;
+use kchess_domain::training::data::data;
+use kchess_domain::training::rush::{RushConfig, RushState, combo_progress, format_run_clock};
 use serde_json::{Map, Value, json};
 
 use super::stats::PuzzleStats;
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::rules;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::puzzle_board::{PuzzleBoard, PuzzleBoardEvent};
 use crate::theme::{Palette, radii, tint};
@@ -29,21 +31,32 @@ const AFTER_SOLVE: Duration = Duration::from_millis(250);
 const AFTER_MISS: Duration = Duration::from_millis(750);
 const BONUS_SHOWN: Duration = Duration::from_millis(1200);
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Training {
-    rush_configs: Map<String, Value>,
-    rush_choices: Vec<String>,
+/// The kinds of run, and the order the menu offers them in.
+fn runs() -> (&'static BTreeMap<String, RushConfig>, &'static [String]) {
+    static NONE: BTreeMap<String, RushConfig> = BTreeMap::new();
+    match data() {
+        Ok(data) => (&data.rush_configs, &data.rush_choices),
+        Err(cause) => {
+            crate::log::write(Level::Warn, "rush", &cause);
+            (&NONE, &[])
+        }
+    }
 }
 
-fn training() -> Training {
-    serde_json::from_str(include_str!(
-        "../../../../../crates/kchess-domain/data/training.json"
-    ))
-    .unwrap_or(Training {
-        rush_configs: Map::new(),
-        rush_choices: Vec::new(),
-    })
+/// The state before any run: nothing scored, no clock.
+fn no_run() -> RushState {
+    RushState {
+        score: 0.,
+        moves: 0.,
+        mistakes: 0.,
+        combo: 0.,
+        max_combo: 0.,
+        time_left_ms: None,
+        skips_left: 0.,
+        highest: 0.,
+        bonus_ms: 0.,
+        over: None,
+    }
 }
 
 /// What a run's buttons do, as Quick Pick offers them.
@@ -65,15 +78,14 @@ enum Stage {
 }
 
 pub struct PuzzleRush {
-    configs: Map<String, Value>,
-    choices: Vec<String>,
+    configs: &'static BTreeMap<String, RushConfig>,
+    choices: &'static [String],
     choice: String,
     stage: Stage,
     error: Option<String>,
     ladder: Vec<Value>,
     index: usize,
-    /// `RushState`, as the rules keep it.
-    state: Value,
+    state: RushState,
     /// `runSummary` by mode.
     summaries: Map<String, Value>,
     saved: Option<Value>,
@@ -93,18 +105,13 @@ pub struct PuzzleRush {
     _subscriptions: Vec<Subscription>,
 }
 
-/// A rule over the run's state that answers the next state (`update`).
-fn step(method: &str, args: &[Value]) -> Option<Value> {
-    rules(method, args).ok()
-}
-
 impl PuzzleRush {
     pub fn new(
         stats: Entity<PuzzleStats>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> PuzzleRush {
-        let training = training();
+        let (configs, choices) = runs();
         let board = cx.new(|cx| {
             let mut board = PuzzleBoard::new(false, window, cx);
             board.for_runs(REPLY);
@@ -122,14 +129,10 @@ impl PuzzleRush {
             cx.observe(&board, |_, _, cx| cx.notify()),
             cx.observe(&stats, |_, _, cx| cx.notify()),
         ];
-        let state = training
-            .rush_configs
-            .get("storm")
-            .and_then(|config| step("newRush", std::slice::from_ref(config)))
-            .unwrap_or(Value::Null);
+        let state = configs.get("storm").map_or_else(no_run, RushState::new);
         let mut rush = PuzzleRush {
-            configs: training.rush_configs,
-            choices: training.rush_choices,
+            configs,
+            choices,
             choice: "storm".into(),
             stage: Stage::Menu,
             error: None,
@@ -155,18 +158,14 @@ impl PuzzleRush {
         rush
     }
 
-    fn config(&self) -> Value {
-        self.configs
-            .get(&self.choice)
-            .cloned()
-            .unwrap_or(Value::Null)
+    fn config(&self) -> Option<&'static RushConfig> {
+        self.configs.get(&self.choice)
     }
 
     fn title_of(&self, key: &str) -> String {
         self.configs
             .get(key)
-            .and_then(|config| config["title"].as_str())
-            .unwrap_or(key)
+            .map_or(key, |config| config.title.as_str())
             .to_string()
     }
 
@@ -189,9 +188,7 @@ impl PuzzleRush {
     /// The best score of a kind of run, kept here.
     fn best_of(&self, key: &str) -> Option<f64> {
         let config = self.configs.get(key)?;
-        let mode = config["mode"].as_str()?;
-        let variant = config["variant"].as_str()?;
-        self.summaries.get(mode)?["best"][variant]["score"].as_f64()
+        self.summaries.get(&config.mode)?["best"][&config.variant]["score"].as_f64()
     }
 
     fn stop_timers(&mut self) {
@@ -203,14 +200,16 @@ impl PuzzleRush {
 
     /// `start`: a ladder from the database, then the clock.
     fn start(&mut self, cx: &mut Context<Self>) {
+        let Some(config) = self.config() else {
+            return;
+        };
         self.stop_timers();
         let generation = self.generation;
-        let config = self.config();
         self.error = None;
         self.stage = Stage::Loading;
         cx.notify();
         let ladder = cx.global::<AppCore>().request(calls::LocalLadder {
-            query: config["ladder"].clone(),
+            query: json!(config.ladder),
         });
         cx.spawn(async move |this, cx| {
             let ladder = ladder.await;
@@ -236,7 +235,7 @@ impl PuzzleRush {
                 };
                 this.ladder = ladder;
                 this.index = 0;
-                this.state = step("newRush", std::slice::from_ref(&config)).unwrap_or(Value::Null);
+                this.state = RushState::new(config);
                 this.saved = None;
                 this.warned = false;
                 let now = Instant::now();
@@ -244,7 +243,7 @@ impl PuzzleRush {
                 this.last_tick = Some(now);
                 this.stage = Stage::Running;
                 this.show_puzzle(cx);
-                if config["durationMs"].is_number() {
+                if config.duration_ms.is_some() {
                     this.run_clock(cx);
                 }
                 cx.notify();
@@ -290,10 +289,8 @@ impl PuzzleRush {
             .last_tick
             .map_or(0., |last| (now - last).as_millis() as f64);
         self.last_tick = Some(now);
-        if let Some(next) = step("tick", &[self.state.clone(), json!(elapsed)]) {
-            self.state = next;
-        }
-        let left = self.state["timeLeftMs"].as_f64();
+        self.state.tick(elapsed);
+        let left = self.state.time_left_ms;
         if !self.warned && left.is_some_and(|left| left > 0. && left < 10_000.) {
             self.warned = true;
             crate::sound::play(crate::sound::Sound::LowTime, cx);
@@ -310,34 +307,33 @@ impl PuzzleRush {
     }
 
     fn over(&self) -> bool {
-        self.state["over"].is_string()
+        self.state.over.is_some()
     }
 
     fn on_move(&mut self, correct: bool, cx: &mut Context<Self>) {
         if self.stage != Stage::Running {
             return;
         }
-        let config = self.config();
+        let Some(config) = self.config() else {
+            return;
+        };
         if correct {
-            if let Some(next) = step("correctMove", &[self.state.clone(), config]) {
-                self.state = next["state"].clone();
-                let bonus = next["result"].as_f64().unwrap_or_default();
-                if bonus > 0. {
-                    self.bonus = Some(bonus);
-                    let generation = self.generation;
-                    self.timers.push(cx.spawn(async move |this, cx| {
-                        cx.background_executor().timer(BONUS_SHOWN).await;
-                        let _ = this.update(cx, |this, cx| {
-                            if this.generation == generation {
-                                this.bonus = None;
-                                cx.notify();
-                            }
-                        });
-                    }));
-                }
+            let bonus = self.state.correct_move(config);
+            if bonus > 0. {
+                self.bonus = Some(bonus);
+                let generation = self.generation;
+                self.timers.push(cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(BONUS_SHOWN).await;
+                    let _ = this.update(cx, |this, cx| {
+                        if this.generation == generation {
+                            this.bonus = None;
+                            cx.notify();
+                        }
+                    });
+                }));
             }
-        } else if let Some(next) = step("mistake", &[self.state.clone(), config]) {
-            self.state = next;
+        } else {
+            self.state.mistake(config);
         }
         if self.over() {
             self.end_run(cx);
@@ -356,9 +352,8 @@ impl PuzzleRush {
                 .ladder
                 .get(self.index)
                 .and_then(|p| p["rating"].as_f64())
-            && let Some(next) = step("puzzleSolved", &[self.state.clone(), json!(rating)])
         {
-            self.state = next;
+            self.state.puzzle_solved(rating);
         }
         self.locked = true;
         self.board
@@ -384,9 +379,7 @@ impl PuzzleRush {
         }
         self.index += 1;
         if self.index >= self.ladder.len() {
-            if let Some(next) = step("finish", &[self.state.clone(), json!("complete")]) {
-                self.state = next;
-            }
+            self.state.finish("complete");
             self.end_run(cx);
             return;
         }
@@ -398,11 +391,8 @@ impl PuzzleRush {
         if self.locked {
             return;
         }
-        if let Some(next) = step("skip", std::slice::from_ref(&self.state)) {
-            self.state = next["state"].clone();
-            if next["result"] == json!(true) {
-                self.advance(cx);
-            }
+        if self.state.skip() {
+            self.advance(cx);
         }
         cx.notify();
     }
@@ -417,31 +407,29 @@ impl PuzzleRush {
         self.elapsed = self
             .started
             .map_or(Duration::ZERO, |started| started.elapsed());
-        if !self.over()
-            && let Some(next) = step("finish", &[self.state.clone(), json!("ended")])
-        {
-            self.state = next;
-        }
+        self.state.finish("ended");
         self.stage = Stage::Over;
         self.board
             .update(cx, |board, cx| board.set_frozen(true, cx));
-        let config = self.config();
-        let accuracy = rules("accuracy", std::slice::from_ref(&self.state)).unwrap_or(Value::Null);
+        let Some(config) = self.config() else {
+            cx.notify();
+            return;
+        };
         let state = &self.state;
         let run = json!({
-            "kind": config["mode"],
-            "variant": config["variant"],
-            "score": state["score"],
+            "kind": config.mode,
+            "variant": config.variant,
+            "score": state.score,
             "detail": {
-                "moves": state["moves"],
-                "mistakes": state["mistakes"],
-                "accuracy": accuracy,
-                "maxCombo": state["maxCombo"],
-                "highest": state["highest"],
+                "moves": state.moves,
+                "mistakes": state.mistakes,
+                "accuracy": state.accuracy(),
+                "maxCombo": state.max_combo,
+                "highest": state.highest,
                 "seconds": self.elapsed.as_secs_f64().round(),
             },
         });
-        let mode = config["mode"].as_str().unwrap_or("storm").to_string();
+        let mode = config.mode.clone();
         let save = cx.global::<AppCore>().request(calls::SaveRun { run });
         cx.spawn(async move |this, cx| {
             let saved = save.await.map_err(|cause| cause.message);
@@ -480,10 +468,7 @@ impl PuzzleRush {
     }
 
     fn clock_text(ms: f64) -> String {
-        rules("formatRunClock", &[json!(ms)])
-            .ok()
-            .and_then(|text| text.as_str().map(str::to_string))
-            .unwrap_or_default()
+        format_run_clock(ms)
     }
 
     fn render_menu(
@@ -547,14 +532,16 @@ impl PuzzleRush {
                             .child(format!("Best: {best}"))
                     }))
             }));
-        let mode = config["mode"].as_str().unwrap_or("storm");
+        let mode = config.map_or("storm", |config| config.mode.as_str());
         let recent: Vec<Value> = self
             .summaries
             .get(mode)
             .and_then(|summary| summary["recent"].as_array())
             .map(|recent| recent.iter().take(6).cloned().collect())
             .unwrap_or_default();
-        let title = config["title"].as_str().unwrap_or_default().to_string();
+        let title = config
+            .map(|config| config.title.clone())
+            .unwrap_or_default();
         let recent_table = (!recent.is_empty()).then(|| {
             let cell = |text: String, width: f32| div().w(px(width)).child(text);
             v_flex()
@@ -619,7 +606,11 @@ impl PuzzleRush {
                     .text_size(px(13.))
                     .line_height(relative(1.55))
                     .text_color(palette.toned)
-                    .child(config["rules"].as_str().unwrap_or_default().to_string()),
+                    .child(
+                        config
+                            .map(|config| config.rules.clone())
+                            .unwrap_or_default(),
+                    ),
             )
             .children(self.error.clone().map(|error| {
                 div()
@@ -673,7 +664,7 @@ impl PuzzleRush {
         let config = self.config();
         let board_size = self.layout.board_size(window);
         let state = &self.state;
-        let number = |key: &str| state[key].as_f64().unwrap_or_default();
+        let combo_on = config.is_some_and(|config| config.combo);
         let board_column = div()
             .relative()
             .w(board_size)
@@ -692,7 +683,9 @@ impl PuzzleRush {
                     .font_weight(FontWeight::MEDIUM)
                     .child(format!("+{}s", bonus / 1000.))
             }));
-        let title = config["title"].as_str().unwrap_or_default().to_string();
+        let title = config
+            .map(|config| config.title.clone())
+            .unwrap_or_default();
         let mut panel = widgets::side_panel(palette)
             .h(board_size)
             .flex_1()
@@ -701,7 +694,7 @@ impl PuzzleRush {
             .gap(px(14.))
             .child(widgets::heading(title, palette));
         if self.stage == Stage::Running {
-            let left = state["timeLeftMs"].as_f64();
+            let left = state.time_left_ms;
             let low = left.is_some_and(|left| left < 10_000.);
             let hud = h_flex()
                 .justify_between()
@@ -721,15 +714,12 @@ impl PuzzleRush {
                             div()
                                 .text_size(px(28.))
                                 .font_weight(FontWeight::MEDIUM)
-                                .child(number("score").to_string()),
+                                .child(state.score.to_string()),
                         )
                         .child(div().text_color(palette.text_muted).child("solved")),
                 );
-            let combo = (config["combo"] == json!(true)).then(|| {
-                let progress = rules("comboProgress", &[json!(number("combo"))])
-                    .ok()
-                    .and_then(|progress| progress.as_f64())
-                    .unwrap_or_default();
+            let combo = combo_on.then(|| {
+                let progress = combo_progress(state.combo);
                 v_flex()
                     .gap(px(4.))
                     .child(
@@ -741,7 +731,7 @@ impl PuzzleRush {
                             .child(
                                 div()
                                     .font_weight(FontWeight::MEDIUM)
-                                    .child(number("combo").to_string()),
+                                    .child(state.combo.to_string()),
                             ),
                     )
                     .child(
@@ -759,11 +749,11 @@ impl PuzzleRush {
                             ),
                     )
             });
-            let strikes = config["strikes"]
-                .as_u64()
-                .filter(|strikes| *strikes > 1)
+            let strikes = config
+                .and_then(|config| config.strikes)
+                .filter(|strikes| *strikes > 1.)
                 .map(|strikes| {
-                    let used = number("mistakes") as u64;
+                    let (strikes, used) = (strikes as u64, state.mistakes as u64);
                     h_flex()
                         .gap(px(8.))
                         .children((0..strikes).map(|slot| {
@@ -785,7 +775,7 @@ impl PuzzleRush {
                 .get(self.index)
                 .and_then(|p| p["rating"].as_f64())
                 .unwrap_or_default();
-            let skips = number("skipsLeft");
+            let skips = state.skips_left;
             panel = panel
                 .child(hud)
                 .children(combo)
@@ -797,19 +787,16 @@ impl PuzzleRush {
                 .child(
                     h_flex()
                         .gap(px(8.))
-                        .when(
-                            config["skips"].as_f64().is_some_and(|skips| skips > 0.),
-                            |row| {
-                                row.child(
-                                    Button::new("rush-skip")
-                                        .outline()
-                                        .icon(icon("skip-forward"))
-                                        .label(format!("Skip ({skips})"))
-                                        .disabled(skips <= 0. || self.locked)
-                                        .on_click(cx.listener(|this, _, _, cx| this.skip(cx))),
-                                )
-                            },
-                        )
+                        .when(config.is_some_and(|config| config.skips > 0.), |row| {
+                            row.child(
+                                Button::new("rush-skip")
+                                    .outline()
+                                    .icon(icon("skip-forward"))
+                                    .label(format!("Skip ({skips})"))
+                                    .disabled(skips <= 0. || self.locked)
+                                    .on_click(cx.listener(|this, _, _, cx| this.skip(cx))),
+                            )
+                        })
                         .child(
                             Button::new("rush-end")
                                 .outline()
@@ -823,9 +810,11 @@ impl PuzzleRush {
                 .saved
                 .as_ref()
                 .is_some_and(|saved| saved["isBest"] == json!(true));
-            let over = match state["over"].as_str() {
+            let over = match state.over.as_deref() {
                 Some("time") => "Time’s up".to_string(),
-                Some("strikes") if config["strikes"].as_u64() == Some(1) => "Streak over".into(),
+                Some("strikes") if config.and_then(|config| config.strikes) == Some(1.) => {
+                    "Streak over".into()
+                }
                 Some("strikes") => "Out of strikes".into(),
                 Some("complete") => "Every puzzle cleared".into(),
                 _ => "Run ended".into(),
@@ -839,10 +828,7 @@ impl PuzzleRush {
             } else {
                 "Saving…".into()
             };
-            let accuracy = rules("accuracy", std::slice::from_ref(state))
-                .ok()
-                .and_then(|accuracy| accuracy.as_f64())
-                .unwrap_or_default();
+            let accuracy = state.accuracy();
             let result = |label: &str, value: String| {
                 v_flex()
                     .min_w(px(100.))
@@ -859,7 +845,7 @@ impl PuzzleRush {
                             .child(value),
                     )
             };
-            let highest = number("highest");
+            let highest = state.highest;
             panel = panel
                 .child(
                     widgets::StatusBanner::new(
@@ -874,11 +860,11 @@ impl PuzzleRush {
                     h_flex()
                         .flex_wrap()
                         .gap(px(14.))
-                        .child(result("Score", number("score").to_string()))
-                        .child(result("Moves", number("moves").to_string()))
+                        .child(result("Score", state.score.to_string()))
+                        .child(result("Moves", state.moves.to_string()))
                         .child(result("Accuracy", format!("{accuracy}%")))
-                        .when(config["combo"] == json!(true), |row| {
-                            row.child(result("Best combo", number("maxCombo").to_string()))
+                        .when(combo_on, |row| {
+                            row.child(result("Best combo", state.max_combo.to_string()))
                         })
                         .child(result(
                             "Hardest solved",
@@ -944,8 +930,8 @@ impl PuzzleRush {
             }
             Stage::Loading => Vec::new(),
             Stage::Running => {
-                let skips = self.config()["skips"].as_f64().unwrap_or_default();
-                let left = self.state["skipsLeft"].as_f64().unwrap_or_default();
+                let skips = self.config().map_or(0., |config| config.skips);
+                let left = self.state.skips_left;
                 let mut actions = Vec::new();
                 if skips > 0. && left > 0. && !self.locked {
                     actions.push(RushAction::Skip);
@@ -989,8 +975,7 @@ impl Render for PuzzleRush {
 
 #[cfg(test)]
 mod tests {
-    use super::{step, training};
-    use serde_json::json;
+    use kchess_domain::training::rush::RushState;
 
     /// Saving a finished run failed after the next run had begun: the failure showed in it.
     #[gpui_kit::test]
@@ -1014,14 +999,14 @@ mod tests {
 
     #[test]
     fn a_storm_run_follows_the_rules() {
-        let training = training();
-        assert_eq!(training.rush_choices[0], "storm");
-        let config = training.rush_configs["storm"].clone();
-        let state = step("newRush", std::slice::from_ref(&config)).unwrap();
-        assert_eq!(state["timeLeftMs"].as_f64(), Some(180_000.));
-        let state = step("mistake", &[state, config]).unwrap();
-        assert_eq!(state["timeLeftMs"].as_f64(), Some(170_000.));
-        let state = step("tick", &[state, json!(170000)]).unwrap();
-        assert_eq!(state["over"], json!("time"));
+        let (configs, choices) = super::runs();
+        assert_eq!(choices[0], "storm");
+        let config = &configs["storm"];
+        let mut state = RushState::new(config);
+        assert_eq!(state.time_left_ms, Some(180_000.));
+        state.mistake(config);
+        assert_eq!(state.time_left_ms, Some(170_000.));
+        state.tick(170_000.);
+        assert_eq!(state.over.as_deref(), Some("time"));
     }
 }

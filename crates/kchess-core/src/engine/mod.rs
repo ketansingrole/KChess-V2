@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio::task::AbortHandle;
 
@@ -105,30 +105,6 @@ pub(crate) fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
 pub(crate) fn validate(method: &str, value: &Value) -> Result<Value> {
     kchess_domain::misc::validate_values(method, std::slice::from_ref(value))
         .map_err(CoreError::new)
-}
-
-/// `parseInfo`: one UCI `info` line, with its scored principal variation from White's side.
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct InfoLine {
-    pub rank: f64,
-    pub depth: f64,
-    #[serde(default)]
-    pub cp: Option<f64>,
-    #[serde(default)]
-    pub mate: Option<f64>,
-    pub pv: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct ParsedInfo {
-    pub line: InfoLine,
-    #[serde(default)]
-    pub nps: Option<f64>,
-}
-
-pub(crate) fn parse_info(text: &str, white_to_move: bool) -> Option<ParsedInfo> {
-    let parsed = domain_client::parse_info_typed(text, white_to_move)?;
-    serde_json::from_value(parsed).ok()
 }
 
 /// `Date.now()`: milliseconds since the Unix epoch.

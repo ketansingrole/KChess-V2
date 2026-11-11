@@ -2,11 +2,8 @@
 //! after a line of moves.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::HashMap;
 
-use super::data::data;
-use super::{Out, to_value, value_arg};
 use crate::{position, rules};
 
 /// One drill (`ENDGAME_DRILLS`), from `data/training.json`.
@@ -23,7 +20,8 @@ pub struct EndgameDrill {
     pub idea: String,
 }
 
-/// `EndgameStatus` with the turn and FEN the TypeScript result carries alongside it.
+/// Where a drill stands: whether it is over and won, what to tell the player, and the turn and FEN
+/// after the moves.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
@@ -141,30 +139,6 @@ pub fn san_from<S: AsRef<str>>(fen: &str, moves: &[S]) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-fn evaluate_call(args: &[Value]) -> Out {
-    let fen: String = value_arg(args, 0, "fen")?;
-    let moves: Vec<String> = value_arg(args, 1, "moves")?;
-    let player: String = value_arg(args, 2, "player")?;
-    let goal: String = value_arg(args, 3, "goal")?;
-    to_value(evaluate(&fen, &moves, &player, &goal)?)
-}
-
-fn san_from_call(args: &[Value]) -> Out {
-    let fen: String = value_arg(args, 0, "fen")?;
-    let moves: Vec<String> = value_arg(args, 1, "moves")?;
-    to_value(san_from(&fen, &moves))
-}
-
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result = match method {
-        "endgameDrills" => data().and_then(|d| to_value(&d.endgame_drills)),
-        "evaluateEndgame" => evaluate_call(args),
-        "sanFrom" => san_from_call(args),
-        _ => return None,
-    };
-    Some(result)
 }
 
 #[cfg(test)]

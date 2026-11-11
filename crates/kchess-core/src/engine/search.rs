@@ -394,11 +394,15 @@ fn prepare(moves: Value, options: Value, level: &str, configured: &str) -> Resul
 
 /// The level's search profile (`engineLevelInfo`).
 fn level_profile(level: &str) -> Result<LevelProfile> {
-    let info = super::domain_client::engine_level_info(level)?;
-    if info.is_null() {
-        return Err(CoreError::new(format!("Unknown engine level {level}.")));
-    }
-    serde_json::from_value(info).map_err(|cause| CoreError::new(cause.to_string()))
+    let info = kchess_domain::training::engine_levels::info(level)
+        .map_err(CoreError::new)?
+        .ok_or_else(|| CoreError::new(format!("Unknown engine level {level}.")))?;
+    Ok(LevelProfile {
+        time: info.time,
+        uci_elo: info.uci_elo,
+        skill: info.skill,
+        random_move: info.random_move,
+    })
 }
 
 /// The warm engine for `status`: kept when it is the same executable and still healthy,

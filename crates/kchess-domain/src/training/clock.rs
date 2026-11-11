@@ -3,9 +3,8 @@
 //! the state is plain data and the rules are deterministic.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
-use super::{Out, num_out, pad2, text_arg, to_value, value_arg};
+use super::pad2;
 use crate::js;
 
 /// A value per side.
@@ -16,7 +15,7 @@ pub struct Sides<T> {
 }
 
 impl<T: Copy> Sides<T> {
-    fn get(&self, color: &str) -> Option<T> {
+    pub fn get(&self, color: &str) -> Option<T> {
         match color {
             "white" => Some(self.white),
             "black" => Some(self.black),
@@ -166,44 +165,6 @@ pub fn format_clock(millis: f64) -> String {
             pad2(seconds % 60.0)
         )
     }
-}
-
-fn state_arg(args: &[Value]) -> Result<ClockState, String> {
-    value_arg(args, 0, "state")
-}
-
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result = match method {
-        "clockInitial" => to_value(ClockState::initial()),
-        "clockSet" => state_arg(args).and_then(|mut state| {
-            let data: SetData = value_arg(args, 1, "data")?;
-            state.set(&data, super::number_arg(args, 2));
-            to_value(state)
-        }),
-        "clockPause" => state_arg(args).and_then(|mut state| {
-            state.pause(super::number_arg(args, 1));
-            to_value(state)
-        }),
-        "clockRemaining" => state_arg(args).and_then(|state| {
-            let color = text_arg(args, 1, "color")?;
-            to_value(num_out(state.remaining(color, super::number_arg(args, 2))))
-        }),
-        "clockLowTimeAlert" => state_arg(args).and_then(|mut state| {
-            let color = text_arg(args, 1, "color")?;
-            let result = state.low_time_alert(color, super::number_arg(args, 2));
-            to_value(Stepped { state, result })
-        }),
-        "formatClock" => Ok(Value::String(format_clock(super::number_arg(args, 0)))),
-        _ => return None,
-    };
-    Some(result)
-}
-
-/// A transition's new state and its own result.
-#[derive(Serialize)]
-struct Stepped<T> {
-    state: ClockState,
-    result: T,
 }
 
 #[cfg(test)]

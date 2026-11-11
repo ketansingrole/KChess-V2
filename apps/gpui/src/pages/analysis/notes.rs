@@ -7,6 +7,7 @@ use gpui_kit::component::input::{Textarea, TextareaState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_domain::training::clock::format_clock;
 use serde_json::{Value, json};
 
 use super::AnalysisPage;
@@ -145,7 +146,7 @@ impl AnalysisPage {
         let clock = rules("commentClock", &[json!(self.raw_comment())])
             .ok()
             .and_then(|seconds| seconds.as_f64())
-            .map(|seconds| text("formatClock", &[json!(seconds * 1000.)]));
+            .map(|seconds| format_clock(seconds * 1000.));
         let current = self.glyph_of(&self.path);
         let open = self.notes.editing || !self.shown_comment().is_empty();
         let glyphs = (!self.path.is_empty()).then(|| {

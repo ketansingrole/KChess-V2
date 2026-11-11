@@ -32,6 +32,36 @@ pub fn setup_pgn(setup: &Value, moves: &[String], headers: &Value) -> Option<Str
     Some(kchess_domain::pgn::setup_pgn(variant, fen, moves, &headers))
 }
 
+use kchess_contracts::Level;
+use kchess_domain::training::engine_levels::{self, EngineLevelInfo};
+use kchess_domain::training::openings::{self, OpeningName};
+
+/// The opening a game set up as `setup` reached after `ply` of `moves`.
+pub fn opening_at<S: AsRef<str>>(setup: &Value, moves: &[S], ply: usize) -> Option<OpeningName> {
+    openings::opening_at(
+        setup["variant"].as_str().unwrap_or_default(),
+        setup["fen"].as_str().unwrap_or_default(),
+        moves,
+        ply as f64,
+    )
+}
+
+/// A computer level's search profile; none for a level the ladder does not know.
+pub fn engine_level(level: &str) -> Option<&'static EngineLevelInfo> {
+    engine_levels::info(level).unwrap_or_else(|cause| {
+        crate::log::write(Level::Warn, "engine-levels", &cause);
+        None
+    })
+}
+
+/// "Grandmaster · ~2550"; empty for a level the ladder does not know.
+pub fn engine_level_label(level: &str) -> String {
+    engine_levels::label(level).unwrap_or_else(|cause| {
+        crate::log::write(Level::Warn, "engine-levels", &cause);
+        String::new()
+    })
+}
+
 /// `formatGameDate`: "Oct 22, 2026" in local time.
 pub fn game_date(millis: f64) -> String {
     use chrono::TimeZone as _;

@@ -2,10 +2,8 @@
 //! strongest, and how a chosen set of levels is kept and substituted.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use super::data::data;
-use super::{Out, text_arg, to_value, value_arg};
 use crate::js;
 
 /// One rung of the ladder (`EngineLevelInfo`), from `data/training.json`.
@@ -24,8 +22,14 @@ pub struct EngineLevelInfo {
     pub time: f64,
 }
 
-fn ladder() -> Result<&'static [EngineLevelInfo], String> {
+/// The ladder from the weakest level to the strongest.
+pub fn ladder() -> Result<&'static [EngineLevelInfo], String> {
     Ok(&data()?.engine_ladder)
+}
+
+/// The levels a new profile enables.
+pub fn default_levels() -> Result<&'static [String], String> {
+    Ok(&data()?.default_engine_levels)
 }
 
 /// The ladder entry for a level, none for an unknown one.
@@ -33,8 +37,8 @@ pub fn info(id: &str) -> Result<Option<&'static EngineLevelInfo>, String> {
     Ok(ladder()?.iter().find(|entry| entry.id == id))
 }
 
-/// `engineLevelLabel`: "Grandmaster · ~2550", "Stockfish Max · Full strength".
-fn label(id: &str) -> Result<String, String> {
+/// "Grandmaster · ~2550", "Stockfish Max · Full strength".
+pub fn label(id: &str) -> Result<String, String> {
     let entry = info(id)?.ok_or_else(|| format!("unknown engine level {id}"))?;
     let strength = match entry.elo {
         Some(elo) => format!("~{}", js::number_to_string(elo)),
@@ -43,8 +47,8 @@ fn label(id: &str) -> Result<String, String> {
     Ok(format!("{} · {strength}", entry.label))
 }
 
-/// `normalizeEngineLevels`: the known levels, in ladder order; never empty.
-fn normalize(levels: &[String]) -> Result<Vec<String>, String> {
+/// The known levels of `levels`, in ladder order; the default levels when none is known.
+pub fn normalize(levels: &[String]) -> Result<Vec<String>, String> {
     let kept: Vec<String> = ladder()?
         .iter()
         .filter(|entry| levels.contains(&entry.id))
@@ -55,47 +59,6 @@ fn normalize(levels: &[String]) -> Result<Vec<String>, String> {
     } else {
         Ok(kept)
     }
-}
-
-/// `nearestEngineLevel`: the enabled level closest in strength to `wanted`.
-fn nearest(wanted: &str, enabled: &[String]) -> Result<String, String> {
-    if enabled.iter().any(|id| id == wanted) || enabled.is_empty() {
-        return Ok(wanted.to_string());
-    }
-    let rank = |id: &str| {
-        ladder()
-            .ok()
-            .and_then(|ladder| ladder.iter().position(|entry| entry.id == id))
-            .map_or(-1, |index| index as i64)
-    };
-    let target = rank(wanted);
-    let mut sorted: Vec<&String> = enabled.iter().collect();
-    // A stable sort, as `Array.prototype.sort` is, so equally close levels keep their order.
-    sorted.sort_by_key(|id| (rank(id) - target).abs());
-    sorted
-        .first()
-        .map(|id| (*id).clone())
-        .ok_or_else(|| "no engine levels are enabled".into())
-}
-
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result = match method {
-        "engineLadder" => ladder().and_then(to_value),
-        "defaultEngineLevels" => data().and_then(|d| to_value(&d.default_engine_levels)),
-        "engineLevelInfo" => text_arg(args, 0, "id")
-            .and_then(info)
-            .and_then(|entry| to_value(entry.cloned())),
-        "engineLevelLabel" => text_arg(args, 0, "id").and_then(label).map(Value::String),
-        "normalizeEngineLevels" => value_arg::<Vec<String>>(args, 0, "levels")
-            .and_then(|levels| normalize(&levels))
-            .and_then(to_value),
-        "nearestEngineLevel" => text_arg(args, 0, "wanted").and_then(|wanted| {
-            let enabled: Vec<String> = value_arg(args, 1, "enabled")?;
-            nearest(wanted, &enabled).map(Value::String)
-        }),
-        _ => return None,
-    };
-    Some(result)
 }
 
 #[cfg(test)]
@@ -113,20 +76,6 @@ mod tests {
         assert_eq!(
             normalize(&[]).ok(),
             data().ok().map(|d| d.default_engine_levels.clone())
-        );
-    }
-
-    #[test]
-    fn nearest_level_is_the_closest_enabled_one() {
-        let set = |ids: &[&str]| ids.iter().map(|id| (*id).to_string()).collect::<Vec<_>>();
-        assert_eq!(nearest("fm", &set(&["fm", "gm"])).as_deref(), Ok("fm"));
-        assert_eq!(
-            nearest("cm", &set(&["beginner", "im", "max"])).as_deref(),
-            Ok("im")
-        );
-        assert_eq!(
-            nearest("casual", &set(&["beginner", "gm"])).as_deref(),
-            Ok("beginner")
         );
     }
 }
