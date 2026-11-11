@@ -9,8 +9,7 @@ use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
-use kchess_contracts::types::{EngineStatus, ReviewAuto, Settings};
-use serde_json::Value;
+use kchess_contracts::types::{EngineStatus, ReviewAuto, ReviewPause, ReviewStatus, Settings};
 
 use super::{Rows, SettingsPage, choice, info};
 use crate::assets::icon;
@@ -57,10 +56,9 @@ pub fn engine_name(status: Option<&EngineStatus>) -> String {
 }
 
 /// `reviewStatusText`: what the background review is doing.
-fn review_text(status: &Value, auto: ReviewAuto) -> String {
-    let waiting = status["waiting"].as_u64().unwrap_or_default();
-    let current = &status["current"];
-    if current.is_object() {
+fn review_text(status: &ReviewStatus, auto: ReviewAuto) -> String {
+    let waiting = status.waiting;
+    if let Some(current) = &status.current {
         let more = if waiting > 0 {
             format!(" · {waiting} more waiting")
         } else {
@@ -68,15 +66,14 @@ fn review_text(status: &Value, auto: ReviewAuto) -> String {
         };
         return format!(
             "Reviewing a game: {} of {} positions{more}.",
-            current["done"].as_u64().unwrap_or_default(),
-            current["total"].as_u64().unwrap_or_default()
+            current.done, current.total
         );
     }
-    match status["paused"].as_str() {
-        Some("battery") => "Paused while on battery power".into(),
-        Some("engine") => "Paused while the engine is in use".into(),
-        Some("online") => "Paused during your online game".into(),
-        Some("off") => "Games are reviewed when you ask for it".into(),
+    match status.paused {
+        Some(ReviewPause::Battery) => "Paused while on battery power".into(),
+        Some(ReviewPause::Engine) => "Paused while the engine is in use".into(),
+        Some(ReviewPause::Online) => "Paused during your online game".into(),
+        Some(ReviewPause::Off) => "Games are reviewed when you ask for it".into(),
         _ if auto == ReviewAuto::Off => "Games are reviewed when you ask for it".into(),
         _ if waiting > 0 => format!(
             "{} waiting",
@@ -513,6 +510,10 @@ mod tests {
     use kchess_contracts::types::{EngineManaged, EngineStatus, ReviewAuto};
     use serde_json::json;
 
+    fn queue(status: serde_json::Value) -> kchess_contracts::types::ReviewStatus {
+        serde_json::from_value(status).expect("a review status")
+    }
+
     fn status(path: &str, bundled: bool) -> EngineStatus {
         EngineStatus {
             identity: None,
@@ -543,29 +544,35 @@ mod tests {
     fn the_review_queue_is_described() {
         assert_eq!(
             review_text(
-                &json!({ "current": { "done": 3, "total": 40 }, "waiting": 2 }),
+                &queue(json!({
+                    "current": { "key": "k", "done": 3, "total": 40, "background": true },
+                    "waiting": 2
+                })),
                 ReviewAuto::All
             ),
             "Reviewing a game: 3 of 40 positions · 2 more waiting."
         );
         assert_eq!(
-            review_text(&json!({ "paused": "battery" }), ReviewAuto::All),
+            review_text(
+                &queue(json!({ "paused": "battery", "waiting": 0 })),
+                ReviewAuto::All
+            ),
             "Paused while on battery power"
         );
         assert_eq!(
-            review_text(&json!({ "waiting": 0 }), ReviewAuto::Off),
+            review_text(&queue(json!({ "waiting": 0 })), ReviewAuto::Off),
             "Games are reviewed when you ask for it"
         );
         assert_eq!(
-            review_text(&json!({ "waiting": 4 }), ReviewAuto::Recent),
+            review_text(&queue(json!({ "waiting": 4 })), ReviewAuto::Recent),
             "4 games waiting"
         );
         assert_eq!(
-            review_text(&json!({ "waiting": 1 }), ReviewAuto::Recent),
+            review_text(&queue(json!({ "waiting": 1 })), ReviewAuto::Recent),
             "1 game waiting"
         );
         assert_eq!(
-            review_text(&json!({ "waiting": 0 }), ReviewAuto::Recent),
+            review_text(&queue(json!({ "waiting": 0 })), ReviewAuto::Recent),
             "All caught up"
         );
     }

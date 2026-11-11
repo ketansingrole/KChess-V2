@@ -5,20 +5,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use kchess_contracts::Variant;
-use kchess_contracts::check::Moves;
+use kchess_contracts::check::{Fen, GameIds, Moves, ReviewKey};
 use kchess_contracts::core_api::{Assist, EngineApi};
 use kchess_contracts::types::{
-    AnalysisRequest, BestMoveOptions, EngineInstalled, EngineLevel, EngineStatus,
+    AnalysisRequest, BestMoveOptions, ByGame, EngineInstalled, EngineLevel, EngineStatus,
+    ReviewRequest, ReviewStatus, ReviewSummary, StoredReview,
 };
-use kchess_domain::misc::checks;
-use serde_json::{Value, json};
+use serde_json::json;
 
-use super::args::{normal, text, to_json};
+use super::args::text;
 use crate::core::{Core, LocationOverride, Mutation};
-use crate::engine::review::ReviewRequest;
 use crate::engine::status::{engine_identity, engine_status, variant_engine_status};
 use crate::error::{CoreError, Result};
-use crate::store::games::as_json;
 
 impl Core {
     /// The engine path the settings name.
@@ -106,46 +104,34 @@ impl EngineApi for Core {
         Ok(())
     }
 
-    async fn review_get(&self, fen: Value, moves: Value, variant: Option<Value>) -> Result<Value> {
-        let mut asked = json!({ "fen": fen, "moves": moves });
-        // Standard chess has no variant; `null` is not one.
-        if let Some(variant) = variant {
-            asked["variant"] = variant;
-        }
-        let request = normal(checks::review_request, &asked)?;
-        let moves: Vec<String> = match &request["moves"] {
-            Value::Null => Vec::new(),
-            moves => serde_json::from_value(moves.clone())
-                .map_err(|e| CoreError::new(format!("Invalid moves: {e}")))?,
-        };
-        let variant = request["variant"].as_str();
-        let fen = text(&request["fen"]);
-        to_json(self.reviews.get_review(&fen, &moves, variant).await)
+    async fn review_get(
+        &self,
+        Fen(fen): Fen,
+        Moves(moves): Moves,
+        variant: Option<String>,
+    ) -> Result<Option<StoredReview>> {
+        // Standard chess and Chess960 have no variant to review by.
+        let variant = variant
+            .filter(|key| Variant::from_key(key).is_some_and(|variant| !variant.standard_rules()));
+        self.reviews
+            .get_review(&fen, &moves, variant.as_deref())
+            .await
     }
 
-    async fn review_request(&self, request: Value) -> Result<Value> {
-        let request: ReviewRequest = serde_json::from_value(request)
-            .map_err(|e| CoreError::new(format!("Invalid request: {e}")))?;
-        to_json(self.reviews.request_review(request).await)
+    async fn review_request(&self, request: ReviewRequest) -> Result<Option<StoredReview>> {
+        self.reviews.request_review(request).await
     }
 
-    async fn review_cancel(&self, key: Value) -> Result<Value> {
-        self.reviews.cancel_review(&text(&key));
-        Ok(Value::Null)
+    async fn review_cancel(&self, ReviewKey(key): ReviewKey) -> Result<()> {
+        self.reviews.cancel_review(&key);
+        Ok(())
     }
 
-    async fn review_status(&self) -> Result<Value> {
-        as_json(self.reviews.review_status())
+    async fn review_status(&self) -> Result<ReviewStatus> {
+        Ok(self.reviews.review_status())
     }
 
-    async fn review_summaries(&self, ids: Value) -> Result<Value> {
-        let ids: Vec<String> = ids
-            .as_array()
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-            .iter()
-            .map(text)
-            .collect();
+    async fn review_summaries(&self, GameIds(ids): GameIds) -> Result<ByGame<ReviewSummary>> {
         self.database
             .read_async(move |ctx| crate::store::reviews::review_summaries(ctx.host, ctx.db, &ids))
             .await

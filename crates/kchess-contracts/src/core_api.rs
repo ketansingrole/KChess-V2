@@ -233,21 +233,22 @@ core_api! {
         /// The stored review of these moves from this position, if any; `variant` is a variant
         /// game's Lichess key.
         #[assist(StoredReview)]
+        #[check(crate::check::review_get)]
         ReviewGet = "reviewGet" fn review_get(
-            fen: Value = c::review_fen,
-            moves: Value = c::review_moves;
-            variant: Option<Value> = c::review_variant
-        ) -> Value;
+            fen: Fen,
+            moves: Moves;
+            variant: Option<String>
+        ) -> Option<StoredReview>;
         /// Review a game now, ahead of automatic reviews (a Lichess game is looked up on Lichess
         /// first). Returns what is stored so far; the rest arrives on `review:update`.
         #[assist(Review)]
         ReviewRequest = "reviewRequest" fn review_request(
-            request: Value = c::review_request
-        ) -> Value;
-        ReviewCancel = "reviewCancel" fn review_cancel(key: Value = c::review_key) -> Value;
-        ReviewStatus = "reviewStatus" fn review_status() -> Value;
+            request: crate::types::ReviewRequest
+        ) -> Option<StoredReview>;
+        ReviewCancel = "reviewCancel" fn review_cancel(key: ReviewKey) -> ();
+        ReviewStatus = "reviewStatus" fn review_status() -> crate::types::ReviewStatus;
         /// Review summaries of up to one history page of games, by game id.
-        ReviewSummaries = "reviewSummaries" fn review_summaries(ids: Value = c::game_ids) -> Value;
+        ReviewSummaries = "reviewSummaries" fn review_summaries(ids: GameIds) -> ByGame<ReviewSummary>;
         /// Trusts the Stockfish executable at `path`, chosen with the file picker.
         TrustEnginePath = "trustEnginePath" fn trust_engine_path(path: String) -> ();
     }

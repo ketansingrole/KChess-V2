@@ -593,14 +593,17 @@ async fn a_cached_lichess_review_is_linked_to_the_requesting_game() {
         key: key.clone(),
         fen: START.into(),
         moves: moves(&["e2e4", "e7e5"]),
-        source: "lichess".into(),
+        source: kchess_contracts::types::ReviewSource::Lichess,
         engine: None,
         evals: vec![None, None, None],
         depth: 0,
         complete: true,
         updated_at: 1,
         game_id: None,
-        extra: Map::new(),
+        judgments: None,
+        accuracy: None,
+        variant: None,
+        rest: Map::new(),
     });
     let mut asking = request(&["e2e4", "e7e5"]);
     asking.game_id = Some("Game0002".into());

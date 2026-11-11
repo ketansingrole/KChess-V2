@@ -10,7 +10,9 @@ use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
-use serde_json::{Map, Value, json};
+use kchess_contracts::check::GameIds;
+use kchess_contracts::types::{ByGame, ReviewSummary};
+use serde_json::{Value, json};
 use shakmaty::Color;
 
 use super::HistoryPage;
@@ -51,8 +53,7 @@ pub struct LichessTab {
     pub total: usize,
     pub loading: bool,
     pub error: Option<String>,
-    /// `ReviewSummary` by game id.
-    pub summaries: Map<String, Value>,
+    pub summaries: ByGame<ReviewSummary>,
     epoch: u64,
     pub account_select: Entity<SelectState<Vec<Choice>>>,
     pub rated_select: Entity<SelectState<Vec<Choice>>>,
@@ -180,7 +181,7 @@ pub fn new_tab(
             total: 0,
             loading: false,
             error: None,
-            summaries: Map::new(),
+            summaries: ByGame::default(),
             epoch: 0,
             account_select,
             rated_select,
@@ -221,17 +222,23 @@ impl HistoryPage {
         let page = core.request(calls::GamePage { query });
         cx.spawn(async move |this, cx| {
             let page = page.await;
-            let ids: Vec<Value> = page
+            let ids: Vec<String> = page
                 .as_ref()
                 .ok()
                 .and_then(|page| page["games"].as_array())
-                .map(|games| games.iter().map(|game| game["id"].clone()).collect())
+                .map(|games| {
+                    games
+                        .iter()
+                        .filter_map(|game| game["id"].as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default();
             let summaries = if ids.is_empty() {
-                Ok(Value::Null)
+                None
             } else {
-                core.request(calls::ReviewSummaries { ids: json!(ids) })
+                core.request(calls::ReviewSummaries { ids: GameIds(ids) })
                     .await
+                    .ok()
             };
             let _ = this.update(cx, |this, cx| {
                 let tab = &mut this.lichess;
@@ -252,7 +259,7 @@ impl HistoryPage {
                     }
                     Err(cause) => tab.error = Some(cause.message),
                 }
-                if let Ok(Value::Object(summaries)) = summaries {
+                if let Some(summaries) = summaries {
                     tab.summaries = summaries;
                 }
                 cx.notify();
@@ -390,11 +397,13 @@ impl HistoryPage {
     fn side_of(&self, game: &Value) -> Option<Value> {
         let id = game["id"].as_str()?;
         let color = game["color"].as_str()?;
-        self.lichess
-            .summaries
-            .get(id)
-            .map(|summary| summary[color].clone())
-            .filter(Value::is_object)
+        let summary = self.lichess.summaries.get(id)?;
+        let side = match color {
+            "white" => &summary.white,
+            "black" => &summary.black,
+            _ => return None,
+        };
+        serde_json::to_value(side).ok()
     }
 
     /// The accounts the filter offers, kept up to date with the account store.

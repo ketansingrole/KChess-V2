@@ -153,7 +153,7 @@ async fn a_crazyhouse_game_is_reviewed_with_its_drops() {
     let done = wait_until_review(&review_host).await;
     assert_eq!(done.evals.len(), moves.len() + 1);
     assert!(done.evals.iter().all(Option::is_some), "{:?}", done.evals);
-    assert_eq!(done.extra.get("variant"), Some(&json!("crazyhouse")));
+    assert_eq!(done.variant.as_deref(), Some("crazyhouse"));
     assert!(
         done.engine
             .as_deref()

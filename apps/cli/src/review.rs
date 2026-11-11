@@ -2,6 +2,8 @@
 //! and print each side's accuracy and the moves Stockfish faults.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::ReviewKey;
+use kchess_contracts::types::{ReviewRequest, ReviewStatus, ReviewUpdate, StoredReview};
 use kchess_domain::pgn::parse_pgn;
 use kchess_domain::review::{analyse_review, san_to_uci};
 use kchess_domain::variant::Variant;
@@ -124,47 +126,63 @@ pub async fn run(
     core.request(calls::ResumeOnline {}).await?;
     // A queued request answers null; the finished review arrives as an update. The core keys it
     // by its own reading of the start position, so it is recognised by its moves and position.
-    let mut request = json!({ "fen": line.fen, "moves": line.moves });
-    // Fairy-Stockfish reviews the other variants.
-    if let Some(variant) = line.variant {
-        request["variant"] = json!(variant.key());
-    }
+    let request = ReviewRequest {
+        fen: line.fen.clone(),
+        moves: line.moves.clone(),
+        // Fairy-Stockfish reviews the other variants.
+        variant: line.variant.map(|variant| variant.key().to_string()),
+        game_id: None,
+        account: None,
+    };
     let mut stored = core.request(calls::ReviewRequest { request }).await?;
     let start = |fen: &str| fen.split(' ').take(2).collect::<Vec<_>>().join(" ");
-    let ours = |review: &Value| {
-        review["moves"] == json!(line.moves)
-            && review["fen"]
-                .as_str()
-                .is_some_and(|fen| start(fen) == start(&line.fen))
+    let ours = |review: &StoredReview| {
+        review.moves == line.moves && start(&review.fen) == start(&line.fen)
     };
     // The key the core gives the review, so a failure reported for it ends the wait.
     let key = kchess_domain::records::review::review_key(&line.fen, &line.moves, line.variant);
     let mut wait = Wait::new(events);
-    while !(ours(&stored) && stored["complete"] == json!(true)) {
+    let done = |stored: &Option<StoredReview>| {
+        stored
+            .as_ref()
+            .is_some_and(|review| ours(review) && review.complete)
+    };
+    while !done(&stored) {
+        let key = stored
+            .as_ref()
+            .map_or(key.as_str(), |review| review.key.as_str());
         match wait.next().await {
             Next::Interrupted | Next::InputEnded => {
-                let key = stored["key"].as_str().unwrap_or(&key);
                 crate::told_if_failed(
                     "Cancelling the review",
-                    core.request(calls::ReviewCancel { key: json!(key) }).await,
+                    core.request(calls::ReviewCancel {
+                        key: ReviewKey(key.to_string()),
+                    })
+                    .await,
                 );
                 return Err("Review cancelled.".into());
             }
             Next::Closed => return Err("The core closed.".into()),
-            Next::Event(CoreEvent::ReviewUpdate(update)) if ours(&update["review"]) => {
-                stored = update["review"].clone();
+            Next::Event(CoreEvent::ReviewUpdate(update)) => {
+                if let Ok(update) = serde_json::from_value::<ReviewUpdate>(update)
+                    && ours(&update.review)
+                {
+                    stored = Some(update.review);
+                }
             }
-            Next::Event(CoreEvent::ReviewStatus(status))
-                if status["failed"]["key"]
-                    .as_str()
-                    .is_some_and(|failed| failed == stored["key"].as_str().unwrap_or(&key)) =>
-            {
-                let message = status["failed"]["message"].as_str().unwrap_or_default();
-                return Err(format!("The review failed: {message}"));
+            Next::Event(CoreEvent::ReviewStatus(status)) => {
+                let failed = serde_json::from_value::<ReviewStatus>(status)
+                    .ok()
+                    .and_then(|status| status.failed)
+                    .filter(|failed| failed.key == key);
+                if let Some(failed) = failed {
+                    return Err(format!("The review failed: {}", failed.message));
+                }
             }
             Next::Event(_) | Next::Line(_) | Next::Tick => {}
         }
     }
+    let stored = serde_json::to_value(&stored).map_err(|cause| cause.to_string())?;
     report(&line, &stored)
 }
 

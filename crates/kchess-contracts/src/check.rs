@@ -21,10 +21,12 @@ use kchess_domain::{js, replay};
 mod ai;
 mod engine;
 mod lookups;
+mod reviews;
 mod studies;
 
 pub use ai::*;
 pub use lookups::*;
+pub use reviews::*;
 pub use studies::*;
 
 /// Why an argument was refused, as the caller is told.

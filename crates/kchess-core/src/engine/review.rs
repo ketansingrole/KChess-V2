@@ -19,7 +19,7 @@ use kchess_domain::records::review::{Score, is_reviewable_perf};
 use kchess_domain::replay::{ReplayedPosition, replay_positions_in};
 use kchess_domain::variant::Variant;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use tokio::sync::watch;
 use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
@@ -66,115 +66,11 @@ pub struct ReviewSettings {
     pub engine_path: String,
 }
 
-/// Why automatic reviews are on hold (`ReviewStatus.paused`). `busy` reports only `Engine` and
-/// `Online`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Pause {
-    Battery,
-    Engine,
-    Online,
-    Off,
-}
-
-/// The score of one position (`ReviewEval`).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewEval {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cp: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mate: Option<f64>,
-    /// The engine's move in this position (UCI).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub best: Option<String>,
-    /// The line the engine expects after its move.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pv: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub depth: Option<f64>,
-}
-
-/// A review as stored (`StoredReview`). Fields this module does not read are kept in `extra`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StoredReview {
-    /// `reviewKey(fen, moves)`: the same moves from the same start share one review.
-    pub key: String,
-    pub fen: String,
-    /// UCI, from `fen`.
-    pub moves: Vec<String>,
-    /// `'local'` or `'lichess'`.
-    pub source: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub engine: Option<String>,
-    /// Index 0 is the starting position, index i the position after move i.
-    pub evals: Vec<Option<ReviewEval>>,
-    pub depth: u32,
-    pub complete: bool,
-    pub updated_at: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub game_id: Option<String>,
-    #[serde(flatten)]
-    pub extra: Map<String, Value>,
-}
-
-/// What a store answers when it saves a review: the review kept and its summary.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ReviewUpdate {
-    pub review: StoredReview,
-    /// `ReviewSummary`, as the store computes it.
-    pub summary: Value,
-}
-
-/// The review being worked on (`ReviewStatus.current`).
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewProgress {
-    pub key: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub game_id: Option<String>,
-    pub done: usize,
-    pub total: usize,
-    pub background: bool,
-}
-
-/// The last review asked for that could not be done (`ReviewStatus.failed`).
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ReviewFailure {
-    pub key: String,
-    pub message: String,
-}
-
-/// The payload of `review:status`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewStatus {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub current: Option<ReviewProgress>,
-    /// Reviews waiting, asked for and automatic.
-    pub waiting: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub paused: Option<Pause>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub failed: Option<ReviewFailure>,
-}
-
-/// A game someone asked to review (`ReviewRequest`).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewRequest {
-    pub fen: String,
-    pub moves: Vec<String>,
-    /// A Lichess game: its own analysis is fetched first when it has one.
-    #[serde(default)]
-    pub game_id: Option<String>,
-    #[serde(default)]
-    pub account: Option<String>,
-    /// The Lichess key of a variant game's variant, which Fairy-Stockfish reviews.
-    #[serde(default)]
-    pub variant: Option<String>,
-}
+use kchess_contracts::types::ReviewSource;
+pub use kchess_contracts::types::{
+    ReviewCurrent as ReviewProgress, ReviewEval, ReviewFailure, ReviewPause as Pause,
+    ReviewRequest, ReviewStatus, ReviewUpdate, StoredReview,
+};
 
 /// A synced game that may be reviewed automatically (`GameToReview`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -477,7 +373,7 @@ impl Reviews {
         };
         if let Some(review) = &stored
             && review.complete
-            && review.source == "lichess"
+            && review.source == ReviewSource::Lichess
         {
             return Ok(Some(review.clone()));
         }
@@ -667,22 +563,21 @@ fn account_in(job: &Job, names: &HashSet<String>) -> bool {
 }
 
 fn empty_review(job: &Job) -> StoredReview {
-    let mut extra = Map::new();
-    if !job.variant.is_empty() {
-        extra.insert("variant".into(), json!(job.variant));
-    }
     StoredReview {
         key: job.key.clone(),
         fen: job.fen.clone(),
         moves: job.moves.clone(),
-        source: "local".to_string(),
+        source: ReviewSource::Local,
         engine: None,
         evals: vec![None; job.positions.len()],
         depth: FULL_DEPTH,
         complete: false,
         updated_at: now_ms(),
         game_id: job.game_id.clone(),
-        extra,
+        judgments: None,
+        accuracy: None,
+        variant: (!job.variant.is_empty()).then(|| job.variant.clone()),
+        rest: Map::new(),
     }
 }
 
@@ -1093,7 +988,7 @@ async fn run(s: &Arc<Shared>, job: Arc<Job>) {
             return;
         }
     };
-    if review.source == "lichess" && review.complete {
+    if review.source == ReviewSource::Lichess && review.complete {
         lock(&s.state).running = None;
         return;
     }
@@ -1203,9 +1098,7 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
         return Ok(());
     }
     if !job.variant.is_empty() {
-        review
-            .extra
-            .insert("variant".into(), json!(job.variant.clone()));
+        review.variant = Some(job.variant.clone());
     }
     let target = open_engine(s, &settings.engine_path, &job.variant).await?;
     if review.engine.as_deref() != Some(target.key.as_str()) {

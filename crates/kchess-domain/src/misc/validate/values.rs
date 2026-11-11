@@ -35,28 +35,10 @@ pub(super) fn assert_fen(value: J) -> Checked<String> {
     Ok(text)
 }
 
-pub(super) fn assert_game_ids(value: J) -> Checked<Vec<String>> {
-    let ids: Vec<String> = decode(value, |keys| match keys {
-        [] => Some("Invalid game list."),
-        _ => Some("Invalid game id."),
-    })?;
-    each(&ids, |id| game_id(id))?;
-    max_items(&ids, 100, Some("Too many games."), "")?;
-    Ok(ids)
-}
-
 pub(super) fn assert_uci(value: J) -> Checked<String> {
     let text: String = decode(value, always!("Invalid move."))?;
     uci(&text)?;
     Ok(text)
-}
-
-pub fn assert_moves(value: J) -> Checked<Vec<String>> {
-    let moves: Vec<String> = decode(value, |keys| {
-        move_list_messages(keys, Some("Invalid move list."))
-    })?;
-    move_list(&moves)?;
-    Ok(moves)
 }
 
 /// Decodes `value` as `T`; any rejection is `msg`, or the decoder's own text without one.

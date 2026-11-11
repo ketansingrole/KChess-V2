@@ -234,11 +234,9 @@ use library::*;
 use requests::*;
 use values::*;
 
-pub use requests::{
-    AnalysisRequest, GamePageQuery, assert_analysis_request, assert_game_page_query,
-    assert_watch_target,
-};
-pub use values::{assert_moves, assert_username};
+use requests::assert_analysis_request;
+pub use requests::{GamePageQuery, assert_game_page_query, assert_watch_target};
+pub use values::assert_username;
 
 /* ── One check per argument ── */
 
@@ -277,50 +275,6 @@ macro_rules! checks {
                 Ok(Value::String(assert_analysis_request(J::Obj(fields))?.fen))
             }
 
-            /// `reviewGet`'s variant, when it names one.
-            fn review_variant_of(args: &[J]) -> Option<&str> {
-                args.get(2).and_then(J::str)
-            }
-
-            /// The review request `reviewGet(fen, moves, variant)` makes, checked.
-            fn review_of(args: &[J], variant: Option<&str>) -> Checked<()> {
-                let at = |i: usize| args.get(i).cloned().unwrap_or(J::Undef);
-                let mut fields = vec![("fen".into(), at(0)), ("moves".into(), at(1))];
-                if let Some(variant) = variant {
-                    fields.push(("variant".into(), J::Str(variant.into())));
-                }
-                assert_review_request(J::Obj(fields)).map(|_| ())
-            }
-
-            /// `reviewGet`'s position: a variant game's is checked with its moves by the
-            /// variant's rules. As sent.
-            pub fn review_fen(value: J, args: &[J]) -> Checked<Value> {
-                match review_variant_of(args) {
-                    Some(variant) => review_of(args, Some(variant))?,
-                    None => {
-                        position_of(value.clone(), None)?;
-                    }
-                }
-                Ok(value.into_value())
-            }
-
-            /// `reviewGet`'s moves (checked with the position for a variant game). As sent.
-            pub fn review_moves(value: J, args: &[J]) -> Checked<Value> {
-                if review_variant_of(args).is_none() {
-                    assert_moves(value.clone())?;
-                }
-                Ok(value.into_value())
-            }
-
-            /// `reviewGet`'s variant: anything; without one, the position and moves must make a
-            /// review of standard chess. As sent.
-            pub fn review_variant(value: J, args: &[J]) -> Checked<Value> {
-                if review_variant_of(args).is_none() {
-                    review_of(args, None)?;
-                }
-                Ok(value.into_value())
-            }
-
             /// A played game to save: an object (`assertArchivedGameShape`).
             pub fn archived_game_shape(value: J) -> Checked<Value> {
                 crate::misc::documents::assert_archived_game_shape(vec![value])
@@ -343,7 +297,6 @@ checks! {
     game_id => assert_game_id,
     game_account => assert_game_account,
     chesscom_username => assert_chesscom_username,
-    game_ids => assert_game_ids,
     uci => assert_uci,
     fen => assert_fen,
     usernames => assert_usernames,
@@ -377,7 +330,6 @@ checks! {
     run_input => assert_run_input,
     puzzle_attempt => assert_puzzle_attempt,
     puzzle_progress_query => assert_puzzle_progress_query,
-    review_request => assert_review_request,
     review_key => assert_review_key,
     voice_attempt => assert_voice_attempt,
     voice_update => assert_voice_update,
@@ -607,23 +559,6 @@ mod tests {
             ("dark", palette),
         ]);
         assert_eq!(checks::theme(theme), Err(HEX.into()));
-        let moves = obj(vec![
-            ("fen", J::Str("x".into())),
-            ("moves", J::Arr(vec![J::Num(1.0)])),
-        ]);
-        assert_eq!(checks::review_request(moves), Err("Invalid move.".into()));
-    }
-
-    #[test]
-    fn the_engine_is_not_given_positions_stockfish_refuses() {
-        // Black has a seventeenth piece: Stockfish quit on it ("More than 32 pieces").
-        let crowded = "rnbqkbnr/pppppppp/8/8/3q3N/4K3/1PPPPPPP/RNBQ1BNR w kq - 0 1";
-        let refused = Err("Each side can have at most 16 pieces.".into());
-        let review = obj(vec![
-            ("fen", J::Str(crowded.into())),
-            ("moves", J::Arr(vec![])),
-        ]);
-        assert_eq!(checks::review_request(review), refused);
     }
 
     #[test]

@@ -3,6 +3,8 @@
 //! review of its main line, or of the game before moves were added to it.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::{Fen, Moves, ReviewKey};
+use kchess_contracts::types::{ReviewCurrent, ReviewRequest, StoredReview};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
@@ -126,12 +128,13 @@ impl AnalysisPage {
         )
     }
 
+    /// The review shown, as the review rules read it.
     pub(super) fn review(&self, cx: &App) -> Option<Value> {
         cx.global::<ReviewHandle>()
             .0
             .read(cx)
             .get(&self.review.shown)
-            .cloned()
+            .and_then(|review| serde_json::to_value(review).ok())
     }
 
     /// Follow the main line's review: the cached one, else the stored one, once looked up.
@@ -148,26 +151,26 @@ impl AnalysisPage {
             let moves = self.mainline();
             if store.read(cx).get(&key).is_none() && !moves.is_empty() {
                 let found = cx.global::<AppCore>().request(calls::ReviewGet {
-                    fen: json!(self.root.fen),
-                    moves: json!(moves),
-                    variant: self.fairy_variant().map(|variant| json!(variant)),
+                    fen: Fen(self.root.fen.clone()),
+                    moves: Moves(moves),
+                    variant: self.fairy_variant().map(str::to_string),
                 });
                 let store = store.clone();
                 cx.spawn(async move |this, cx| match found.await {
-                    Ok(review) if !review.is_null() => {
+                    Ok(Some(review)) => {
                         let _ = this.update(cx, |this, cx| {
+                            let shown = review.key.clone();
                             store.update(cx, |store, cx| {
-                                store.cache.remember(review.clone());
+                                store.cache.remember(review);
                                 cx.notify();
                             });
                             if this.mainline_key() == key {
-                                this.review.shown =
-                                    review["key"].as_str().unwrap_or_default().to_string();
+                                this.review.shown = shown;
                                 this.reviewed(cx);
                             }
                         });
                     }
-                    Ok(_) => {}
+                    Ok(None) => {}
                     Err(cause) => crate::log::write(
                         Level::Warn,
                         "review",
@@ -299,7 +302,7 @@ impl AnalysisPage {
     }
 
     /// The review queue is working on this game.
-    pub(super) fn reviewing(&self, cx: &App) -> Option<Value> {
+    pub(super) fn reviewing(&self, cx: &App) -> Option<ReviewCurrent> {
         cx.global::<ReviewHandle>()
             .0
             .read(cx)
@@ -319,15 +322,14 @@ impl AnalysisPage {
         self.wanted.clear();
         stop_analysis(false, cx);
         let origin = self.review.origin.clone().unwrap_or_default();
-        let mut request = json!({ "fen": self.root.fen, "moves": moves });
-        // Fairy-Stockfish reviews the other variants.
-        if let Some(variant) = self.fairy_variant() {
-            request["variant"] = json!(variant);
-        }
-        if let Some(id) = &origin.game_id {
-            request["gameId"] = json!(id);
-            request["account"] = json!(origin.account);
-        }
+        let request = ReviewRequest {
+            fen: self.root.fen.clone(),
+            moves,
+            // Fairy-Stockfish reviews the other variants.
+            variant: self.fairy_variant().map(str::to_string),
+            account: origin.game_id.as_ref().and(origin.account.clone()),
+            game_id: origin.game_id,
+        };
         let asked = cx
             .global::<AppCore>()
             .request(calls::ReviewRequest { request });
@@ -338,11 +340,13 @@ impl AnalysisPage {
             let _ = this.update(cx, |this, cx| {
                 match asked {
                     Ok(stored) => {
-                        let key = stored["key"].as_str().map(str::to_string);
-                        store.update(cx, |store, cx| {
-                            store.cache.remember(stored);
-                            cx.notify();
-                        });
+                        let key = stored.as_ref().map(|stored| stored.key.clone());
+                        if let Some(stored) = stored {
+                            store.update(cx, |store, cx| {
+                                store.cache.remember(stored);
+                                cx.notify();
+                            });
+                        }
                         this.review.shown = key.unwrap_or(fallback);
                     }
                     Err(cause) => {
@@ -365,7 +369,7 @@ impl AnalysisPage {
     fn cancel_review(&mut self, cx: &mut Context<Self>) {
         self.review.requested.clear();
         let cancel = cx.global::<AppCore>().request(calls::ReviewCancel {
-            key: json!(self.mainline_key()),
+            key: ReviewKey(self.mainline_key()),
         });
         cx.background_executor()
             .spawn(async move {
@@ -639,12 +643,19 @@ impl AnalysisPage {
         cx: &mut Context<Self>,
     ) {
         let asked = cx.global::<AppCore>().request(calls::ReviewRequest {
-            request: json!({ "fen": fen, "moves": [uci] }),
+            request: ReviewRequest {
+                fen,
+                moves: vec![uci],
+                variant: None,
+                game_id: None,
+                account: None,
+            },
         });
         let store = cx.global::<ReviewHandle>().0.clone();
         cx.spawn(async move |this, cx| {
             let stored = match asked.await {
-                Ok(stored) => stored,
+                Ok(Some(stored)) => stored,
+                Ok(None) => return,
                 Err(cause) => {
                     crate::log::write(
                         Level::Warn,
@@ -658,7 +669,7 @@ impl AnalysisPage {
                 if this.apply_tried(&start, &path, &stored, cx) {
                     return;
                 }
-                let key = stored["key"].as_str().unwrap_or_default().to_string();
+                let key = stored.key.clone();
                 store.update(cx, |store, cx| {
                     store.cache.remember(stored);
                     cx.notify();
@@ -681,15 +692,19 @@ impl AnalysisPage {
         &mut self,
         start: &str,
         path: &str,
-        review: &Value,
+        review: &StoredReview,
         cx: &mut Context<Self>,
     ) -> bool {
         if self.tried_done.iter().any(|done| done == path) {
             return true;
         }
-        if review["complete"] != json!(true) {
+        if !review.complete {
             return false;
         }
+        let Ok(review) = serde_json::to_value(review) else {
+            return false;
+        };
+        let review = &review;
         self.tried_done.push(path.to_string());
         let judgment = kchess_domain::review::analyse_review(review)
             .ok()
@@ -896,8 +911,8 @@ impl AnalysisPage {
                 .child(text)
         };
         let progress_row = progress.as_ref().map(|current| {
-            let done = current["done"].as_f64().unwrap_or(0.);
-            let total = current["total"].as_f64().unwrap_or(1.).max(1.);
+            let done = current.done as f64;
+            let total = (current.total as f64).max(1.);
             h_flex()
                 .gap(px(8.))
                 .text_size(px(11.))

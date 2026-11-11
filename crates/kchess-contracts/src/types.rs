@@ -510,18 +510,6 @@ pub struct GameLibraryOverview {
     pub versus: BTreeMap<String, GameRecord>,
 }
 
-/// One player's side of a review.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewSide {
-    pub accuracy: Option<f64>,
-    /// Average centipawn loss.
-    pub acpl: Option<f64>,
-    pub inaccuracy: f64,
-    pub mistake: f64,
-    pub blunder: f64,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct OnlineConnection {
@@ -1906,22 +1894,30 @@ pub enum AiExplanation {
 
 /// One position of a reviewed game: its score from White's side and the engine's choice there.
 /// A checkmated position is `mate: 0` (the side to move has lost).
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewEval {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cp: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mate: Option<f64>,
     /// The engine's move in this position (UCI), and the line it expects after it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub best: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depth: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+/// Lichess's accuracy figures, as Lichess sent them (`87`, `64.5`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewAccuracy {
-    pub white: Option<f64>,
-    pub black: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub white: Option<serde_json::Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub black: Option<serde_json::Number>,
 }
 
 /// A game's review as stored: the raw scores; labels and accuracy are worked out from them.
@@ -1934,19 +1930,44 @@ pub struct StoredReview {
     /// UCI, from `fen`.
     pub moves: Vec<String>,
     pub source: ReviewSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<String>,
     /// Index 0 is the starting position, index i the position after move i; null until analysed.
     pub evals: Vec<Option<ReviewEval>>,
+    /// Depth the local analysis aims for; 0 for Lichess's analysis.
+    pub depth: u32,
+    pub complete: bool,
+    pub updated_at: i64,
+    /// The Lichess game it belongs to, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_id: Option<String>,
     /// Lichess's own label for each move (index i is move i+1), when Lichess did the analysis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub judgments: Option<Vec<Option<Judgment>>>,
     /// Lichess's own accuracy figures, when Lichess did the analysis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accuracy: Option<ReviewAccuracy>,
-    /// Depth the local analysis aims for; 0 for Lichess's analysis.
-    pub depth: f64,
-    pub complete: bool,
-    pub updated_at: f64,
-    /// The Lichess game it belongs to, if any.
-    pub game_id: Option<String>,
+    /// The Lichess key of a variant game's variant, which Fairy-Stockfish reviews.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
+    /// What another release stored beside these, kept as it was.
+    #[serde(flatten)]
+    pub rest: serde_json::Map<String, Value>,
+}
+
+/// One player's side of a review. Figures keep the form they were stored in (`100` when read
+/// back, `100.0` when just worked out).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewSide {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accuracy: Option<serde_json::Number>,
+    /// Average centipawn loss.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acpl: Option<serde_json::Number>,
+    pub inaccuracy: u32,
+    pub mistake: u32,
+    pub blunder: u32,
 }
 
 /// What the game list shows for a reviewed game.
@@ -1955,32 +1976,93 @@ pub struct StoredReview {
 pub struct ReviewSummary {
     pub key: String,
     pub source: ReviewSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<String>,
     pub complete: bool,
     pub white: ReviewSide,
     pub black: ReviewSide,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
+/// Values by game id, in the order the core found them; a later value for a game replaces the
+/// earlier one in its place.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ByGame<T>(pub Vec<(String, T)>);
+
+impl<T> Default for ByGame<T> {
+    fn default() -> ByGame<T> {
+        ByGame(Vec::new())
+    }
+}
+
+impl<T> ByGame<T> {
+    pub fn get(&self, id: &str) -> Option<&T> {
+        self.0
+            .iter()
+            .find_map(|(game, value)| (game == id).then_some(value))
+    }
+
+    pub fn insert(&mut self, id: String, value: T) {
+        match self.0.iter_mut().find(|(game, _)| *game == id) {
+            Some((_, known)) => *known = value,
+            None => self.0.push((id, value)),
+        }
+    }
+}
+
+impl<T: Serialize> Serialize for ByGame<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_map(self.0.iter().map(|(game, value)| (game, value)))
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for ByGame<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Games<T>(std::marker::PhantomData<T>);
+        impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for Games<T> {
+            type Value = ByGame<T>;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("values by game id")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<ByGame<T>, A::Error> {
+                let mut games = ByGame::default();
+                while let Some((game, value)) = map.next_entry()? {
+                    games.insert(game, value);
+                }
+                Ok(games)
+            }
+        }
+        deserializer.deserialize_map(Games(std::marker::PhantomData))
+    }
+}
+
+/// Review a game: its moves from its position, and the Lichess game it is when it is one.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", expecting = "an object")]
 pub struct ReviewRequest {
     pub fen: String,
     pub moves: Vec<String>,
-    /// A Lichess game: its own analysis is fetched first when it has one.
-    pub game_id: Option<String>,
-    pub account: Option<String>,
     /// The Lichess key of a variant game's variant (`crazyhouse`, `atomic`…), which
     /// Fairy-Stockfish reviews.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
+    /// A Lichess game: its own analysis is fetched first when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewCurrent {
     pub key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game_id: Option<String>,
-    pub done: f64,
-    pub total: f64,
+    pub done: usize,
+    pub total: usize,
     pub background: bool,
 }
 
@@ -1992,19 +2074,23 @@ pub struct ReviewFailure {
 }
 
 /// Progress of the review queue, sent whenever it changes.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewStatus {
     /// The review being worked on, with how many positions are done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current: Option<ReviewCurrent>,
     /// Reviews waiting, asked for and automatic.
-    pub waiting: f64,
+    pub waiting: usize,
     /// Why automatic reviews are on hold, when they are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused: Option<ReviewPause>,
     /// The last review asked for that could not be done, and why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<ReviewFailure>,
 }
 
+/// The payload of `review:update`: the review as stored, and its summary.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewUpdate {

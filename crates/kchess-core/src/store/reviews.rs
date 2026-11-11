@@ -9,6 +9,7 @@ use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use crate::time::now_ms;
+use kchess_contracts::types::{ByGame, ReviewSummary};
 use kchess_domain::js::truthy;
 
 /// `parse` for a stored review or summary: a failure is logged.
@@ -237,9 +238,14 @@ fn sql_number(value: Option<&Value>) -> Sql {
 }
 
 /// `reviewSummaries(ids)`: the summaries of these Lichess games' reviews, by game id.
-pub fn review_summaries(host: &dyn Host, db: &Connection, ids: &[String]) -> Result<Value> {
+pub fn review_summaries(
+    host: &dyn Host,
+    db: &Connection,
+    ids: &[String],
+) -> Result<ByGame<ReviewSummary>> {
+    let mut result = ByGame::default();
     if ids.is_empty() {
-        return Ok(json!({}));
+        return Ok(result);
     }
     let marks = vec!["?"; ids.len()].join(", ");
     let sql = format!(
@@ -252,14 +258,21 @@ pub fn review_summaries(host: &dyn Host, db: &Connection, ids: &[String]) -> Res
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
         .sql()?;
-    let mut result = Map::new();
     for row in rows {
         let (game, summary) = row.sql()?;
-        if let Some(summary) = parse_logged(host, &summary).filter(|s| truthy(Some(s))) {
-            result.insert(game, summary);
+        let Some(summary) = parse_logged(host, &summary).filter(|s| truthy(Some(s))) else {
+            continue;
+        };
+        match serde_json::from_value(summary) {
+            Ok(summary) => result.insert(game, summary),
+            Err(cause) => host.log(
+                Level::Warn,
+                "reviews",
+                &format!("Unreadable review summary of {game}: {cause}"),
+            ),
         }
     }
-    Ok(Value::Object(result))
+    Ok(result)
 }
 
 /// Whether this account is still on this device.
