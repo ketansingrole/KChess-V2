@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use super::client::{Auth, Lane, LichessClient};
+use super::client::{Auth, Lane, LichessClient, Request};
 use super::decode::{Loose, Text, read};
 use super::policy::{Clock, Policy, timed_out};
 use super::reviews::split_whitespace;
@@ -30,6 +30,7 @@ use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Host;
 use kchess_domain::color::{self, Color};
 use kchess_domain::{js, position, replay};
+use std::future::Future;
 
 mod opening_info;
 
@@ -40,9 +41,11 @@ const DEFAULT_OPENING: &str = r#"{"speeds":["blitz","rapid","classical"]}"#;
 const MAX_CACHED_GAMES: usize = 30;
 const MAX_MOVES: usize = 256;
 /// How long a lookup's answer may take by default (the player database's stream excepted).
-const LOOKUP_TIMEOUT: Duration = Duration::from_secs(15);
+pub const LOOKUP_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long the player database may take to finish its stream of ever more complete results.
 const PLAYER_TIMEOUT: Duration = Duration::from_secs(60);
+/// A lookup ended by the core closing.
+const CANCELLED: &str = "Position lookup was cancelled.";
 const CONNECT_EXPLORER: &str = "Connect a Lichess account in Settings to use the opening explorer.";
 
 /* ── Cloud evaluation ── */
@@ -265,9 +268,9 @@ type Pending = watch::Receiver<Option<Result<PositionLookup, CoreError>>>;
 /// The position explorer: deduplicated and bounded lookups with validated legal moves, stale
 /// recovery when a refresh fails, and the master game PGNs.
 pub struct PositionLookups {
-    host: Arc<dyn Host>,
+    /// Wikibooks' client, which carries no Lichess login.
     http: reqwest::Client,
-    endpoints: Endpoints,
+    wikibooks: String,
     /// The explorer and the tablebase, each with its own policy: a 429 from one pauses only it.
     explorer: LichessClient,
     tablebase: LichessClient,
@@ -276,6 +279,7 @@ pub struct PositionLookups {
     pending: Mutex<HashMap<String, Pending>>,
     /// The login the explorer is asked with; None sends no login (tests).
     login: Option<Arc<dyn ExplorerLogin>>,
+    /// The core's: closing stops login, HTTP, cache waits and deduplicated callers.
     lifetime: CancellationToken,
     /// How long a lookup's answer may take (the player database's stream excepted).
     timeout: Duration,
@@ -302,28 +306,38 @@ pub trait ExplorerLogin: Send + Sync {
 
 impl PositionLookups {
     /// `now` is the clock in ms since the epoch; it also times the origins' 429 cooldowns.
+    /// `lifetime` is the core's, and `timeout` how long a lookup's answer may take
+    /// (`LOOKUP_TIMEOUT`).
     pub fn new(
         host: Arc<dyn Host>,
         http: reqwest::Client,
         endpoints: Endpoints,
         cache: Arc<dyn LookupCache>,
         now: Clock,
+        lifetime: CancellationToken,
+        timeout: Duration,
     ) -> PositionLookups {
-        let lifetime = CancellationToken::new();
-        let (explorer, tablebase) =
-            clients(&host, &http, &endpoints, &lifetime, &now, LOOKUP_TIMEOUT);
+        let client = |base: &str| {
+            let policy = Policy::for_lookups(
+                Arc::clone(&host),
+                http.clone(),
+                lifetime.clone(),
+                timeout,
+                Arc::clone(&now),
+            );
+            LichessClient::with_base(base, policy)
+        };
         PositionLookups {
-            host,
+            explorer: client(&endpoints.explorer),
+            tablebase: client(&endpoints.tablebase),
             http,
-            endpoints,
-            explorer,
-            tablebase,
+            wikibooks: endpoints.wikibooks,
             cache,
             now,
             pending: Mutex::new(HashMap::new()),
             login: None,
             lifetime,
-            timeout: LOOKUP_TIMEOUT,
+            timeout,
         }
     }
 
@@ -334,28 +348,18 @@ impl PositionLookups {
         self
     }
 
-    /// Share the core's lifetime so close stops login, HTTP, cache waits and deduplicated callers.
-    pub fn with_lifetime(mut self, lifetime: CancellationToken) -> PositionLookups {
-        self.lifetime = lifetime;
-        self.rebuild()
+    /// `work`, ended by the core closing.
+    async fn until_closed<T>(&self, work: impl Future<Output = CoreResult<T>>) -> CoreResult<T> {
+        tokio::select! {
+            biased;
+            _ = self.lifetime.cancelled() => Err(CoreError::aborted(CANCELLED)),
+            result = work => result,
+        }
     }
 
-    /// How long a lookup's answer may take (the tests' unanswered lookups).
-    pub fn with_timeout(mut self, timeout: Duration) -> PositionLookups {
-        self.timeout = timeout;
-        self.rebuild()
-    }
-
-    fn rebuild(mut self) -> PositionLookups {
-        (self.explorer, self.tablebase) = clients(
-            &self.host,
-            &self.http,
-            &self.endpoints,
-            &self.lifetime,
-            &self.now,
-            self.timeout,
-        );
-        self
+    /// A request to the explorer at `path`, asked as its account.
+    async fn explorer_get(&self, path: &str) -> CoreResult<Request<'_>> {
+        Ok(self.explorer.get(path, &self.explorer_auth().await?))
     }
 
     /// Who the explorer (not the tablebase) is asked as: the explorer's login when one is set.
@@ -379,11 +383,8 @@ impl PositionLookups {
         fen: &str,
         options: Option<&LookupOptions>,
     ) -> CoreResult<PositionLookup> {
-        tokio::select! {
-            biased;
-            _ = self.lifetime.cancelled() => Err(CoreError::aborted("Position lookup was cancelled.")),
-            result = self.lookup_inner(kind, fen, options) => result,
-        }
+        self.until_closed(self.lookup_inner(kind, fen, options))
+            .await
     }
 
     async fn lookup_inner(
@@ -581,18 +582,15 @@ impl PositionLookups {
     async fn fetch(&self, kind: Kind, fen: &str, options: &LookupOptions) -> CoreResult<String> {
         let query = PositionLookups::query(kind, fen, options);
         let failed = |cause: CoreError| lookup_error(cause, kind, options);
-        let (client, auth, path) = match kind {
-            Kind::Tablebase => (
-                &self.tablebase,
-                self.tablebase.anonymous(UsageKind::Analysis),
-                "/standard",
-            ),
-            Kind::Opening => (&self.explorer, self.explorer_auth().await?, "/lichess"),
-            Kind::Masters => (&self.explorer, self.explorer_auth().await?, "/masters"),
-            Kind::Player => (&self.explorer, self.explorer_auth().await?, "/player"),
+        let request = match kind {
+            Kind::Tablebase => self
+                .tablebase
+                .get("/standard", &self.tablebase.anonymous(UsageKind::Analysis)),
+            Kind::Opening => self.explorer_get("/lichess").await?,
+            Kind::Masters => self.explorer_get("/masters").await?,
+            Kind::Player => self.explorer_get("/player").await?,
         };
-        let request = client
-            .get(path, &auth)
+        let request = request
             .query(&query)
             .max_bytes(max_bytes(kind), "Position lookup returned too much data.");
         if kind != Kind::Player {
@@ -608,11 +606,7 @@ impl PositionLookups {
 
     /// A master game's PGN; master games never change.
     pub async fn masters_game(&self, id: &str) -> CoreResult<String> {
-        tokio::select! {
-            biased;
-            _ = self.lifetime.cancelled() => Err(CoreError::aborted("Position lookup was cancelled.")),
-            result = self.masters_game_inner(id) => result,
-        }
+        self.until_closed(self.masters_game_inner(id)).await
     }
 
     async fn masters_game_inner(&self, id: &str) -> CoreResult<String> {
@@ -620,16 +614,14 @@ impl PositionLookups {
             return Err(CoreError::new("Invalid id."));
         }
         let text = self
-            .explorer
-            .get(&format!("/masters/pgn/{id}"), &self.explorer_auth().await?)
+            .explorer_get(&format!("/masters/pgn/{id}"))
+            .await?
             .read_text(None)
             .await
             .map_err(|cause| match cause.kind {
-                Some(ErrorKind::Login) => {
-                    CoreError::new(CONNECT_EXPLORER).with_kind(ErrorKind::Login)
-                }
                 Some(ErrorKind::RateLimited | ErrorKind::TimedOut) => cause,
                 _ if cause.aborted => cause,
+                Some(ErrorKind::Login) => explorer_error(cause, ""),
                 _ => CoreError {
                     message: "The master game could not be loaded.".into(),
                     ..cause
@@ -645,12 +637,13 @@ impl PositionLookups {
 /// What a person is told when a lookup fails: never Lichess's status, and a refused login asks to
 /// connect an account only for the explorer, which needs one.
 fn lookup_error(cause: CoreError, kind: Kind, options: &LookupOptions) -> CoreError {
+    const OFFLINE: &str = "Position lookup failed. Check your connection and retry.";
     match cause.kind {
-        Some(ErrorKind::Login) if kind != Kind::Tablebase => {
-            CoreError::new(CONNECT_EXPLORER).with_kind(ErrorKind::Login)
+        Some(ErrorKind::Login | ErrorKind::Offline) if kind != Kind::Tablebase => {
+            explorer_error(cause, OFFLINE)
         }
         Some(ErrorKind::Offline) => CoreError {
-            message: "Position lookup failed. Check your connection and retry.".into(),
+            message: OFFLINE.into(),
             ..cause
         },
         Some(ErrorKind::NotFound) if kind == Kind::Player => CoreError {
@@ -658,6 +651,19 @@ fn lookup_error(cause: CoreError, kind: Kind, options: &LookupOptions) -> CoreEr
                 "No Lichess player named \"{}\".",
                 options.player.as_deref().unwrap_or("")
             ),
+            ..cause
+        },
+        _ => cause,
+    }
+}
+
+/// What a person is told when the explorer refuses: a refused login asks to connect an account,
+/// and an unreachable explorer says `offline`; anything else is the cause as it was.
+fn explorer_error(cause: CoreError, offline: &str) -> CoreError {
+    match cause.kind {
+        Some(ErrorKind::Login) => CoreError::new(CONNECT_EXPLORER).with_kind(ErrorKind::Login),
+        Some(ErrorKind::Offline) => CoreError {
+            message: offline.into(),
             ..cause
         },
         _ => cause,
@@ -672,28 +678,6 @@ impl Pairs {
     fn append_pair(&mut self, key: &'static str, value: &str) {
         self.0.push((key, value.to_string()));
     }
-}
-
-/// The explorer's and the tablebase's clients, stopped by `lifetime`.
-fn clients(
-    host: &Arc<dyn Host>,
-    http: &reqwest::Client,
-    endpoints: &Endpoints,
-    lifetime: &CancellationToken,
-    now: &Clock,
-    timeout: Duration,
-) -> (LichessClient, LichessClient) {
-    let client = |base: &str| {
-        let policy = Policy::for_lookups(
-            Arc::clone(host),
-            http.clone(),
-            lifetime.clone(),
-            timeout,
-            Arc::clone(now),
-        );
-        LichessClient::with_base(base, policy)
-    };
-    (client(&endpoints.explorer), client(&endpoints.tablebase))
 }
 
 /// The speeds as a query lists them.

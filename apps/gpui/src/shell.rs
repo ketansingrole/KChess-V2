@@ -5,18 +5,20 @@ use gpui_kit::component::animation::{EffectTransition, ease_out_cubic};
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::sidebar::{SidebarItem, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::{
-    ActiveTheme as _, Collapsible, Icon, Selectable as _, Sizable as _, TitleBar, h_flex, v_flex,
+    ActiveTheme as _, Collapsible, Icon, Selectable as _, TitleBar, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::time::Duration;
 
 use crate::assets::icon;
-use crate::pages::settings::{Section, SectionGroup};
+use crate::pages::settings::Section;
 use crate::pages::{ActionRole, NavGroup, Page, PageCommand, PageView, Pages};
 use crate::part::Part;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
+
+mod settings_dialog;
 
 /// The window's height above the page.
 pub const TOPBAR_HEIGHT: Pixels = px(52.);
@@ -523,12 +525,8 @@ pub struct Workspace {
     sidebar: Entity<Part<Workspace>>,
     /// The sidebar's list of pages, scrolled in a short window.
     sidebar_scroll: ScrollHandle,
-    /// Settings' categories beside them in its dialog: to the top as it opens, and to the
-    /// category it shows.
-    sections_scroll: ScrollHandle,
-    /// The group to scroll the categories to once the dialog's list is drawn: one asked for as it
-    /// opens comes before the list exists.
-    sections_pending: std::cell::Cell<Option<usize>>,
+    /// Settings' categories beside them in its dialog.
+    sections: settings_dialog::Sections,
     topbar: Entity<Part<Workspace>>,
     /// The sidebar toggle over the top bar (`render_sidebar_toggle`).
     toggle: Entity<Part<Workspace>>,
@@ -652,8 +650,7 @@ impl Workspace {
                 cx,
             ),
             sidebar_scroll: ScrollHandle::new(),
-            sections_scroll: ScrollHandle::new(),
-            sections_pending: std::cell::Cell::new(None),
+            sections: settings_dialog::Sections::default(),
             topbar: Part::keyed(
                 |this, window, cx| this.render_topbar(window, cx).into_any_element(),
                 TopbarInputs::of,
@@ -734,13 +731,13 @@ impl Workspace {
         }
         if page == Page::Settings && current != Page::Settings {
             self.back = current;
-            self.sections_scroll.set_offset(point(px(0.), px(0.)));
+            self.sections.to_top();
         }
         self.pages.choose(page, window, cx);
         if page == Page::Settings
             && let Some(settings) = self.pages.get::<crate::pages::settings::SettingsPage>()
         {
-            self.scroll_to_section(settings.read(cx).section());
+            self.sections.scroll_to(settings.read(cx).section());
         }
         cx.notify();
     }
@@ -865,25 +862,6 @@ impl Workspace {
         )
     }
 
-    fn choose_section(&mut self, section: Section, cx: &mut Context<Self>) {
-        if let Some(settings) = self.pages.get::<crate::pages::settings::SettingsPage>() {
-            settings.update(cx, |page, cx| page.show(section, cx));
-        }
-        self.scroll_to_section(section);
-        cx.notify();
-    }
-
-    /// Scroll Settings' categories to the group of the one it shows, which the palette may have
-    /// chosen, or Settings remembered, out of a short window's sight.
-    fn scroll_to_section(&self, section: Section) {
-        let group = SectionGroup::ALL
-            .iter()
-            .position(|group| *group == section.group())
-            .unwrap_or(0);
-        self.sections_scroll.scroll_to_item(group);
-        self.sections_pending.set(Some(group));
-    }
-
     /// The page shown in the window: while Settings is open, the one under its dialog.
     fn shown_page(&self) -> Page {
         match self.pages.current() {
@@ -932,158 +910,6 @@ impl Workspace {
                 )
             })
             .collect()
-    }
-
-    /// Settings' categories in its dialog, in their groups.
-    fn section_blocks(&self, cx: &mut Context<Self>) -> Vec<NavBlock> {
-        let shown = self
-            .pages
-            .get::<crate::pages::settings::SettingsPage>()
-            .map_or(Section::Appearance, |page| page.read(cx).section());
-        SectionGroup::ALL
-            .into_iter()
-            .map(|group| {
-                NavBlock::Group(
-                    group.heading(),
-                    Box::new(SidebarMenu::new().gap_0().children(group.sections().map(
-                        |section| {
-                            nav_item(section.label(), section.icon())
-                                .active(shown == section)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.choose_section(section, cx)
-                                }))
-                        },
-                    ))),
-                )
-            })
-            .collect()
-    }
-
-    /// Settings as a dialog over the page it was opened from, below the top bar (whose search
-    /// finds settings, and whose window controls stay in reach): its categories on the left,
-    /// the one chosen on the right. The close button, Escape or a press outside it closes it.
-    fn settings_dialog(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let palette = *cx.global::<Palette>();
-        let overlay = cx.theme().overlay;
-        let viewport = window.viewport_size();
-        let margin = px(24.);
-        let width = (viewport.width - margin * 2.).min(px(1040.));
-        let height = viewport.height - TOPBAR_HEIGHT - margin * 2.;
-        let blocks: Vec<AnyElement> = self
-            .section_blocks(cx)
-            .into_iter()
-            .enumerate()
-            .map(|(ix, block)| {
-                block
-                    .collapsed(false)
-                    .render(SharedString::from(format!("s{}", ix + 1)), window, cx)
-                    .into_any_element()
-            })
-            .collect();
-        // GPUI drops a scroll asked for before the list's first layout, when it does not know yet
-        // that the list scrolls: ask again once it has been laid out.
-        if let Some(group) = self.sections_pending.get() {
-            if self.sections_scroll.bounds().size.height > px(0.) {
-                self.sections_pending.set(None);
-                self.sections_scroll.scroll_to_item(group);
-            } else {
-                window.request_animation_frame();
-            }
-        }
-        let close = cx.listener(|this, _, window, cx| this.choose(this.back, window, cx));
-        div()
-            .id("settings-backdrop")
-            .absolute()
-            .top(TOPBAR_HEIGHT)
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .occlude()
-            .bg(overlay)
-            .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.choose(this.back, window, cx)),
-            )
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if crate::widgets::is_escape(event) {
-                    cx.stop_propagation();
-                    this.choose(this.back, window, cx);
-                }
-            }))
-            .child(
-                v_flex()
-                    .id("settings-dialog")
-                    .test_support()
-                    .role(Role::Dialog)
-                    .aria_label("Settings")
-                    .w(width)
-                    .h(height)
-                    .rounded(crate::theme::radii::XL)
-                    .border_1()
-                    .border_color(palette.border)
-                    .bg(cx.theme().background)
-                    .overflow_hidden()
-                    // A press inside is the dialog's own, not one outside it.
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        h_flex()
-                            .flex_none()
-                            .h(px(52.))
-                            .px(px(20.))
-                            .border_b_1()
-                            .border_color(palette.border)
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .text_size(px(16.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(palette.highlighted)
-                                    .child("Settings"),
-                            )
-                            .child(
-                                Button::new("settings-close")
-                                    .ghost()
-                                    .small()
-                                    .icon(icon("x"))
-                                    .accessibility_label("Close settings")
-                                    .tooltip("Close (Esc)")
-                                    .on_click(close),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .flex_1()
-                            .min_h_0()
-                            .items_stretch()
-                            .child(
-                                v_flex()
-                                    .id("settings-sections")
-                                    .test_support()
-                                    .w(px(232.))
-                                    .flex_none()
-                                    .overflow_y_scroll()
-                                    .track_scroll(&self.sections_scroll)
-                                    .px_3()
-                                    .py_2()
-                                    .gap_1()
-                                    .border_r_1()
-                                    .border_color(palette.border)
-                                    .bg(cx.theme().tokens.sidebar)
-                                    .children(blocks),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .h_full()
-                                    .child(self.pages.view().cached(page_style())),
-                            ),
-                    ),
-            )
-            .into_any_element()
     }
 
     /// Whether the sidebar is open as shown: in a narrow window, only while opened there.

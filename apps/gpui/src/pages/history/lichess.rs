@@ -2,6 +2,7 @@
 //! filtered by account, result and rating and searched by opponent or opening; each with its review's accuracy; opened to go through
 //! move by move or to review on the analysis board.
 
+use crate::loading::Epoch;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -55,7 +56,7 @@ pub struct LichessTab {
     pub loading: bool,
     pub error: Option<String>,
     pub summaries: Keyed<ReviewSummary>,
-    epoch: u64,
+    epoch: Epoch,
     pub account_select: Entity<SelectState<Vec<Choice>>>,
     pub rated_select: Entity<SelectState<Vec<Choice>>>,
     pub size_select: Entity<SelectState<Vec<Choice>>>,
@@ -195,7 +196,7 @@ pub fn new_tab(
             loading: false,
             error: None,
             summaries: Keyed::default(),
-            epoch: 0,
+            epoch: Epoch::default(),
             account_select,
             rated_select,
             size_select,
@@ -210,8 +211,7 @@ impl HistoryPage {
     /// `gamePage`: the page of games the filters ask for, and their reviews.
     pub(super) fn load_lichess(&mut self, cx: &mut Context<Self>) {
         let tab = &mut self.lichess;
-        tab.epoch += 1;
-        let epoch = tab.epoch;
+        let epoch = tab.epoch.next();
         tab.loading = true;
         tab.error = None;
         // Filters left at "all" are left out.
@@ -243,7 +243,7 @@ impl HistoryPage {
             };
             let _ = this.update(cx, |this, cx| {
                 let tab = &mut this.lichess;
-                if epoch != tab.epoch {
+                if !tab.epoch.is_current(epoch) {
                     return;
                 }
                 tab.loading = false;

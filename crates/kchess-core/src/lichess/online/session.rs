@@ -2,7 +2,6 @@ use kchess_contracts::CoreEvent;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
-use std::time::Duration;
 
 use kchess_contracts::types::{OnlineConnection, OnlinePhase};
 use serde_json::{Value, json};
@@ -13,14 +12,15 @@ use super::super::challenges::ChallengeInbox;
 use super::super::client::{Auth, Lane as RequestLane};
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Level;
+use crate::lichess::stream::Backoff;
 use crate::time::now_ms;
 use kchess_contracts::types::UsageKind;
 
 use super::events::{is_challenge_event, validate_online_event};
 use super::requests::{Emitter, Listen, Quiet, StreamRequest};
 use super::state::{
-    ANNOUNCED_MAX, Handle, Inner, LOST_CONNECTION, Lane, MAX_RECONNECTS, ONGOING_DEBOUNCE,
-    OnlineSession, State, lock,
+    ANNOUNCED_MAX, Handle, Inner, LOST_CONNECTION, LOST_STREAM, Lane, MAX_RECONNECTS,
+    ONGOING_DEBOUNCE, OnlineSession, State, lock,
 };
 
 mod lobby;
@@ -43,6 +43,11 @@ struct StateUpdate<'a> {
 impl OnlineSession {
     /// A session over `lichess` (its client, logins, store and host).
     pub fn new(lichess: Arc<Lichess>) -> OnlineSession {
+        OnlineSession::with_backoff(lichess, Backoff::default())
+    }
+
+    /// `new`, with dropped streams reconnecting after `backoff` (the tests' shorter waits).
+    pub fn with_backoff(lichess: Arc<Lichess>, backoff: Backoff) -> OnlineSession {
         let host = Arc::clone(lichess.host());
         let challenges = ChallengeInbox::new(Arc::clone(&host), Arc::new(now_ms));
         OnlineSession {
@@ -51,6 +56,7 @@ impl OnlineSession {
                 host,
                 challenges,
                 state: Mutex::new(State::new()),
+                backoff,
                 state_hook: Mutex::new(None),
             }),
         }
@@ -181,7 +187,7 @@ impl OnlineSession {
     }
 
     /// The state report of a listen: the quiet lobby's own report, or the game connection's when
-    /// the session it started under is still the current one.
+    /// the session it started under is still the current one. Stale sessions report nothing.
     fn listen_state(
         &self,
         options: &Listen,
@@ -189,21 +195,7 @@ impl OnlineSession {
         phase: OnlinePhase,
         message: Option<&str>,
     ) {
-        if cancel.is_cancelled() {
-            return;
-        }
-        if let Some(quiet) = &options.quiet {
-            quiet(phase, message);
-        } else if options.session == self.st().epoch {
-            self.emit_state(
-                options.session,
-                &options.account,
-                &options.game_id,
-                options.lane,
-                phase,
-                message,
-            );
-        }
+        self.listen_report(options, cancel, phase, message, None);
     }
 
     /// The stream failed for good: its state carries the failure's kind.
@@ -214,12 +206,23 @@ impl OnlineSession {
         phase: OnlinePhase,
         cause: &CoreError,
     ) {
+        let kind = cause.kind.unwrap_or(ErrorKind::Unavailable);
+        self.listen_report(options, cancel, phase, Some(&cause.message), Some(kind));
+    }
+
+    fn listen_report(
+        &self,
+        options: &Listen,
+        cancel: &CancellationToken,
+        phase: OnlinePhase,
+        message: Option<&str>,
+        kind: Option<ErrorKind>,
+    ) {
         if cancel.is_cancelled() {
             return;
         }
-        let message = &cause.message;
         if let Some(quiet) = &options.quiet {
-            quiet(phase, Some(message));
+            quiet(phase, message);
         } else if options.session == self.st().epoch {
             self.emit_state_update(StateUpdate {
                 session: options.session,
@@ -227,9 +230,22 @@ impl OnlineSession {
                 game_id: &options.game_id,
                 lane: options.lane,
                 phase,
-                message: Some(message),
-                kind: Some(cause.kind.unwrap_or(ErrorKind::Unavailable)),
+                message,
+                kind,
             });
+        }
+    }
+
+    /// The stream is gone and will not come back by itself: the game's page offers to reconnect.
+    fn listen_lost(&self, options: &Listen, cancel: &CancellationToken) {
+        self.listen_state(
+            options,
+            cancel,
+            OnlinePhase::Disconnected,
+            Some(LOST_STREAM),
+        );
+        if options.quiet.is_none() && !cancel.is_cancelled() {
+            self.emit_error(LOST_CONNECTION);
         }
     }
 
@@ -245,15 +261,7 @@ impl OnlineSession {
     ) {
         let listened = crate::tasks::caught(self.listen_loop(&request, &cancel, &emit, &options));
         if listened.await.is_err() {
-            self.listen_state(
-                &options,
-                &cancel,
-                OnlinePhase::Disconnected,
-                Some("Lost connection to Lichess. Reconnect to recover the game."),
-            );
-            if options.quiet.is_none() && !cancel.is_cancelled() {
-                self.emit_error(LOST_CONNECTION);
-            }
+            self.listen_lost(&options, &cancel);
         }
     }
 
@@ -370,15 +378,7 @@ impl OnlineSession {
                         options.account, options.game_id
                     ),
                 );
-                self.listen_state(
-                    options,
-                    cancel,
-                    OnlinePhase::Disconnected,
-                    Some("Lost connection to Lichess. Reconnect to recover the game."),
-                );
-                if options.quiet.is_none() {
-                    self.emit_error(LOST_CONNECTION);
-                }
+                self.listen_lost(options, cancel);
                 return;
             }
             self.listen_state(
@@ -388,10 +388,9 @@ impl OnlineSession {
                 Some("Connection interrupted. Reconnecting…"),
             );
             // Backing off ends early when the session is cancelled; the loop then exits.
-            let wait = Duration::from_millis((500 * 2u64.pow(failures)).min(15_000));
             tokio::select! {
                 _ = cancel.cancelled() => {}
-                _ = tokio::time::sleep(wait) => {}
+                _ = tokio::time::sleep(self.inner.backoff.after(failures)) => {}
             }
         }
     }

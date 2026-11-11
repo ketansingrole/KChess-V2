@@ -4,6 +4,7 @@
 //! Engine help stays off while a game is live or being looked for, and
 //! until the core has said whether one was left running.
 
+use crate::loading::Epoch;
 use kchess_contracts::calls;
 use kchess_contracts::check::OptionalAccount;
 use std::sync::OnceLock;
@@ -103,7 +104,7 @@ pub struct OnlineState {
     pub presence: Option<PresenceReport>,
     pub latency: Vec<f64>,
     pub move_ack: Option<f64>,
-    presence_epoch: u64,
+    presence_epoch: Epoch,
     presence_pending: bool,
     /// Something the rules started is waiting for Lichess (`busy`).
     pub busy: bool,
@@ -287,7 +288,7 @@ impl OnlineState {
         if before == self.phase {
             return;
         }
-        self.presence_epoch += 1;
+        self.presence_epoch.invalidate();
         if self.phase == Phase::Playing {
             self.start_ticking(cx);
             self.poll_presence(cx);
@@ -318,7 +319,7 @@ impl OnlineState {
                 self.flipped = false;
                 self.presence = None;
             }
-            Effect::ConnectionChanged => self.presence_epoch += 1,
+            Effect::ConnectionChanged => self.presence_epoch.invalidate(),
             Effect::MoveAcknowledged { ms } => self.move_ack = Some(*ms),
             Effect::Failed => {
                 if let Some(cause) = cause {
@@ -659,7 +660,7 @@ impl OnlineState {
         } else {
             PresenceUsers(vec![me, opponent])
         };
-        let epoch = self.presence_epoch;
+        let epoch = self.presence_epoch.current();
         self.presence_pending = true;
         let call = cx
             .global::<AppCore>()
@@ -668,7 +669,7 @@ impl OnlineState {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
                 this.presence_pending = false;
-                if epoch != this.presence_epoch || this.phase != Phase::Playing {
+                if !this.presence_epoch.is_current(epoch) || this.phase != Phase::Playing {
                     return;
                 }
                 // A missed poll leaves the last reading; a later one recovers.
@@ -1008,7 +1009,7 @@ pub fn init(cx: &mut App) {
             presence: None,
             latency: Vec::new(),
             move_ack: None,
-            presence_epoch: 0,
+            presence_epoch: Epoch::default(),
             presence_pending: false,
             busy: false,
             challenges: Vec::new(),

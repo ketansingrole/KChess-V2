@@ -12,16 +12,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use super::EngineContext;
+use super::job::{self, Line, Place};
 use super::scheduler::Priority;
 use super::slot::EngineSlot;
 use super::status::fairy_variant;
-use super::uci::{error_summary, truncate_for_log};
+use super::uci::truncate_for_log;
 use crate::error::{CoreError, Result};
-use crate::host::Level;
 use crate::tasks::{aborted as signal_aborted, lock};
 use kchess_contracts::check::check;
 use kchess_contracts::types::AnalysisRequest;
@@ -47,8 +46,8 @@ struct State {
     /// The request in progress, with its id.
     current: Option<(u64, CancellationToken)>,
     next_id: u64,
-    /// Finishes when the analysis queued last has finished.
-    serial: Option<oneshot::Receiver<()>>,
+    /// The analyses in the order they were asked for.
+    line: Line,
 }
 
 struct Shared {
@@ -262,9 +261,8 @@ struct PendingAnalysis {
     request: AnalysisRequest,
     id: u64,
     token: CancellationToken,
-    prev: Option<oneshot::Receiver<()>>,
+    place: Place,
     finish: Finish,
-    done: oneshot::Sender<()>,
 }
 
 impl Drop for Finish {
@@ -303,19 +301,13 @@ impl AnalysisEngine {
         send: AnalysisSink,
     ) -> Result<u64> {
         let mut pending = self.reserve(request);
-        if let Some(prev) = pending.prev.take() {
-            let _ = prev.await;
-        }
-        let configured = tokio::select! {
-            biased;
-            _ = pending.token.cancelled() => return Err(signal_aborted()),
-            result = configured => result?,
-        };
+        pending.place.turn().await;
+        let configured = job::configured(&pending.token, configured).await?;
         Ok(self.start_pending(pending, configured, send))
     }
 
     fn reserve(&self, request: AnalysisRequest) -> PendingAnalysis {
-        let (id, token, prev, done) = {
+        let (id, token, place) = {
             let mut state = lock(&self.shared.state);
             state.next_id += 1;
             let id = state.next_id;
@@ -325,16 +317,13 @@ impl AnalysisEngine {
             let token = CancellationToken::new();
             state.current = Some((id, token.clone()));
             self.shared.engine.keep();
-            let (done, queued) = oneshot::channel();
-            let prev = state.serial.replace(queued);
-            (id, token, prev, done)
+            (id, token, state.line.join())
         };
         PendingAnalysis {
             request,
             id,
             token,
-            prev,
-            done,
+            place,
             finish: Finish {
                 shared: Arc::clone(&self.shared),
                 id,
@@ -352,19 +341,16 @@ impl AnalysisEngine {
             request,
             id,
             token,
-            prev,
-            done,
+            place,
             finish,
         } = pending;
         let shared = Arc::clone(&self.shared);
         tokio::spawn(async move {
-            // Declared so that the finish bookkeeping runs first, then the next analysis may start.
-            let _done = done;
+            // Declared before the finish bookkeeping, which so runs first: then the next
+            // analysis may start.
+            let mut place = place;
             let _finish = finish;
-            if let Some(prev) = prev {
-                // A failed analysis still lets the next one start.
-                let _ = prev.await;
-            }
+            place.turn().await;
             let root = request
                 .root_fen
                 .clone()
@@ -389,34 +375,29 @@ impl AnalysisEngine {
                 &token,
             )
             .await;
-            match outcome {
-                Ok(()) => {}
-                Err(cause) => {
-                    let context = format!(
-                        "fen={} client={}",
-                        truncate_for_log(&request.fen, 60),
-                        truncate_for_log(
-                            &request
-                                .client_id
-                                .map_or("none".to_string(), |id| id.to_string()),
-                            40
-                        ),
-                    );
-                    if token.is_cancelled() || cause.aborted {
-                        shared.ctx.host.log(
-                            Level::Debug,
-                            "analysis",
-                            &format!("Analysis interrupted: {context} {}", error_summary(&cause)),
-                        );
-                        session.emit(Some(Reason::Interrupted), None);
-                    } else {
-                        shared.ctx.host.log(
-                            Level::Warn,
-                            "analysis",
-                            &format!("Analysis failed: {context} {}", error_summary(&cause)),
-                        );
-                        session.emit(Some(Reason::Failed), Some(cause.message));
-                    }
+            if let Err(cause) = outcome {
+                let context = format!(
+                    "fen={} client={}",
+                    truncate_for_log(&request.fen, 60),
+                    truncate_for_log(
+                        &request
+                            .client_id
+                            .map_or("none".to_string(), |id| id.to_string()),
+                        40
+                    ),
+                );
+                let labels = ("Analysis interrupted", "Analysis failed");
+                if job::interrupted(
+                    &*shared.ctx.host,
+                    "analysis",
+                    labels,
+                    &context,
+                    &cause,
+                    &token,
+                ) {
+                    session.emit(Some(Reason::Interrupted), None);
+                } else {
+                    session.emit(Some(Reason::Failed), Some(cause.message));
                 }
             }
         });
@@ -443,15 +424,8 @@ impl AnalysisEngine {
     /// longer current. It takes its own place in the `serial` line, so an analysis queued after
     /// it still waits its turn.
     pub async fn settled(&self) {
-        let (link, prev) = {
-            let mut state = lock(&self.shared.state);
-            let (link, queued) = oneshot::channel::<()>();
-            (link, state.serial.replace(queued))
-        };
-        if let Some(prev) = prev {
-            let _ = prev.await;
-        }
-        drop(link);
+        let mut place = lock(&self.shared.state).line.join();
+        place.turn().await;
     }
 }
 
@@ -486,28 +460,20 @@ async fn analyse(
                 return Err(signal_aborted());
             }
             // Stepping through a game reuses this process with identical options; only changed
-            // values are sent. Chess960 is always on: castling is king-takes-rook in the history.
+            // values are sent.
             let threads = shared.ctx.scheduler.search_threads().to_string();
             let lines = request.lines.to_string();
-            let mut options = vec![
+            let options = [
                 ("Threads", threads.as_str()),
                 ("Hash", "128"),
                 ("MultiPV", lines.as_str()),
+                job::rules_option(fairy),
             ];
-            // Fairy-Stockfish plays the variant named; its castling is king-takes-rook too.
-            options.push(match fairy {
-                Some(variant) => ("UCI_Variant", variant),
-                None => ("UCI_Chess960", "true"),
-            });
             target.ensure_options(&options).await?;
             if token.is_cancelled() {
                 return Err(signal_aborted());
             }
-            let mut position = format!("position fen {root}");
-            if !moves.is_empty() {
-                position.push_str(&format!(" moves {}", moves.join(" ")));
-            }
-            target.write(&position)?;
+            target.write(&job::position_command(Some(root), moves))?;
             let (command, timeout) = if request.infinite == Some(true) {
                 ("go infinite".to_string(), None)
             } else {

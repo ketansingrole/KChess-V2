@@ -15,9 +15,61 @@ mod tree_view;
 
 use crate::game::surface::TakesKeys as _;
 use crate::game::tree::TreePgn as _;
+use crate::shortcuts::{PageKey, page_key};
 use engine::{prefs_lines, stop_analysis};
 use kchess_contracts::calls;
 use tree_view::{TreeView, flow};
+
+/// What the analysis board's own keys do.
+#[derive(Clone, Copy)]
+pub(crate) enum AnalysisKey {
+    Engine,
+    Threat,
+    Best,
+    Comment,
+    Explorer,
+    Delete,
+}
+
+/// The analysis board's own keys, which the shortcuts list shows.
+pub(crate) const KEYS: &[PageKey<AnalysisKey>] = &[
+    PageKey {
+        action: AnalysisKey::Engine,
+        keys: &["l"],
+        shown: "L",
+        does: "Engine on or off",
+    },
+    PageKey {
+        action: AnalysisKey::Threat,
+        keys: &["x"],
+        shown: "X",
+        does: "Show threat",
+    },
+    PageKey {
+        action: AnalysisKey::Best,
+        keys: &["space"],
+        shown: "Space",
+        does: "Play the best move",
+    },
+    PageKey {
+        action: AnalysisKey::Comment,
+        keys: &["c"],
+        shown: "C",
+        does: "Comment",
+    },
+    PageKey {
+        action: AnalysisKey::Explorer,
+        keys: &["e"],
+        shown: "E",
+        does: "Explorer",
+    },
+    PageKey {
+        action: AnalysisKey::Delete,
+        keys: &["delete", "backspace"],
+        shown: "Delete",
+        does: "Delete from the move shown",
+    },
+];
 
 pub use load::{
     analyse_puzzle, board, new_board, open_line, practise_game, replace, replace_read, when_read,
@@ -1107,28 +1159,32 @@ impl AnalysisPage {
         if modifiers.modified() {
             return;
         }
-        match event.keystroke.key.as_str() {
+        let key = event.keystroke.key.as_str();
+        match key {
             "left" => self.back(cx),
             "right" => self.forward(cx),
             "up" | "home" => self.go_to_start(cx),
             "down" | "end" => self.go_to_end(cx),
-            "l" => self.toggle_engine(cx),
-            "x" => self.toggle_threat(cx),
-            "c" => self.focus_notes(window, cx),
-            "e" => self.toggle_explorer(window, cx),
-            "delete" | "backspace" => self.delete_from_here(window, cx),
-            "space"
-                if !cx
-                    .global::<SettingsHandle>()
-                    .0
-                    .read(cx)
-                    .settings
-                    .frontend
-                    .voice_push_to_talk =>
-            {
-                self.play_best(cx)
-            }
-            _ => return,
+            _ => match page_key(KEYS, key) {
+                Some(AnalysisKey::Engine) => self.toggle_engine(cx),
+                Some(AnalysisKey::Threat) => self.toggle_threat(cx),
+                Some(AnalysisKey::Comment) => self.focus_notes(window, cx),
+                Some(AnalysisKey::Explorer) => self.toggle_explorer(window, cx),
+                Some(AnalysisKey::Delete) => self.delete_from_here(window, cx),
+                // Push to talk holds Space for the microphone.
+                Some(AnalysisKey::Best)
+                    if !cx
+                        .global::<SettingsHandle>()
+                        .0
+                        .read(cx)
+                        .settings
+                        .frontend
+                        .voice_push_to_talk =>
+                {
+                    self.play_best(cx)
+                }
+                _ => return,
+            },
         }
         cx.stop_propagation();
     }

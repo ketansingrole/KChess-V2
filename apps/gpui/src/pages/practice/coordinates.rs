@@ -2,6 +2,7 @@
 //! named, or name one shown on the board. A timed run keeps a best score per mode and length; untimed
 //! practice, or practising only some files and ranks, keeps none.
 
+use crate::loading::Epoch;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -153,7 +154,7 @@ pub struct Coordinates {
     voice_log: DrillLog,
     starting: bool,
     /// The run and the question within it, which name what each phrase answered.
-    run_epoch: u32,
+    run_epoch: Epoch,
     question: u32,
     _subscriptions: Vec<Subscription>,
 }
@@ -213,7 +214,7 @@ impl Coordinates {
             voice: Control::new(false, cx),
             voice_log: DrillLog::default(),
             starting: false,
-            run_epoch: 0,
+            run_epoch: Epoch::default(),
             question: 0,
             _subscriptions: subscriptions,
         };
@@ -270,7 +271,7 @@ impl Coordinates {
             cx.notify();
             return;
         }
-        self.run_epoch += 1;
+        self.run_epoch.invalidate();
         self.question = 0;
         self.voice.feedback = None;
         if let Some(orientation) = crate::game::drawn(crate::game::draw_color(self.side)) {
@@ -338,7 +339,7 @@ impl Coordinates {
         if !self.voice.owns(event) || self.stage != Stage::Running || self.mode != Mode::Voice {
             return;
         }
-        let asked = format!("{}:{}", self.run_epoch, self.question);
+        let asked = format!("{}:{}", self.run_epoch.current(), self.question);
         let target = self.target.clone();
         let (heard, missed) = match event {
             VoiceEvent::Heard { heard, .. } => (heard, false),

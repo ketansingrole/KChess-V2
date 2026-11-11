@@ -2,6 +2,7 @@
 //! relays, searchable; a tournament's rounds and boards with their clocks; one board followed
 //! move by move, and Analyse.
 
+use crate::loading::Epoch;
 use kchess_contracts::calls;
 use kchess_contracts::check::{BroadcastQuery, LichessId};
 use kchess_contracts::types::{BroadcastSection, BroadcastSummary, BroadcastTourDetail};
@@ -133,7 +134,7 @@ pub struct Broadcasts {
     results: Vec<BroadcastSummary>,
     searching: bool,
     search_error: Option<SharedString>,
-    search_epoch: u64,
+    search_epoch: Epoch,
     pub(super) tour: Option<BroadcastTourDetail>,
     round: String,
     round_select: Entity<SelectState<Vec<Choice>>>,
@@ -185,7 +186,7 @@ impl Broadcasts {
             results: Vec::new(),
             searching: false,
             search_error: None,
-            search_epoch: 0,
+            search_epoch: Epoch::default(),
             tour: None,
             round: String::new(),
             round_select,
@@ -388,8 +389,7 @@ impl WatchPage {
     fn search(&mut self, cx: &mut Context<Self>) {
         let broadcasts = &mut self.broadcasts;
         let query = broadcasts.query.read(cx).value().trim().to_string();
-        broadcasts.search_epoch += 1;
-        let epoch = broadcasts.search_epoch;
+        let epoch = broadcasts.search_epoch.next();
         broadcasts.results.clear();
         broadcasts.search_error = None;
         broadcasts.searching = !query.is_empty();
@@ -408,7 +408,7 @@ impl WatchPage {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 let broadcasts = &mut this.broadcasts;
-                if broadcasts.search_epoch != epoch {
+                if !broadcasts.search_epoch.is_current(epoch) {
                     return;
                 }
                 broadcasts.searching = false;
@@ -443,14 +443,14 @@ impl WatchPage {
     ) {
         self.broadcasts.redo = None;
         self.stop(cx);
-        let epoch = self.epoch;
+        let epoch = self.epoch.current();
         let call = cx
             .global::<AppCore>()
             .request(calls::BroadcastTour { id: LichessId(id) });
         cx.spawn_in(window, async move |this, cx| {
             let answer = call.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
@@ -501,8 +501,7 @@ impl WatchPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.epoch += 1;
-        let epoch = self.epoch;
+        let epoch = self.epoch.next();
         self.early.clear();
         self.session = None;
         self.round_session = None;
@@ -539,7 +538,7 @@ impl WatchPage {
             let answer = call.await;
             drop(started);
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     // The page moved on while the core started it: that feed ends now.
                     if let Ok(session) = answer {
                         super::stop_watching(Some(session as f64), cx);

@@ -14,16 +14,15 @@ use std::time::Duration;
 use futures_util::future::{BoxFuture, ready};
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
+use super::job::{self, Line, Place};
 use super::scheduler::Priority;
 use super::slot::EngineSlot;
 use super::status::{EngineTrust, computer_playing, fairy_variant};
-use super::uci::{UciController, error_summary, search_cancelled, truncate_for_log};
+use super::uci::{UciController, truncate_for_log};
 use super::{EngineContext, random_unit};
 use crate::error::{CoreError, Result};
-use crate::host::Level;
 use crate::tasks::{aborted as signal_aborted, lock};
 use crate::time::now_ms;
 use kchess_contracts::check::{Moves, check};
@@ -76,8 +75,8 @@ struct State {
     active: HashMap<u64, (u64, CancellationToken)>,
     ticket: u64,
     last_move_at: i64,
-    /// Finishes when the search queued last has finished.
-    serial: Option<oneshot::Receiver<()>>,
+    /// The searches in the order they were asked for.
+    line: Line,
 }
 
 struct Shared {
@@ -117,14 +116,8 @@ impl Drop for Finish {
     }
 }
 
-/// The receiving end of the search queue, and the sender that releases the next search.
-type Ticket = (
-    u64,
-    u64,
-    CancellationToken,
-    Option<oneshot::Receiver<()>>,
-    oneshot::Sender<()>,
-);
+/// A search's epoch, ticket, token and place in line.
+type Ticket = (u64, u64, CancellationToken, Place);
 
 impl Search {
     pub fn new(ctx: EngineContext) -> Search {
@@ -237,11 +230,12 @@ impl Search {
             Err(cause) => return Box::pin(ready(Err(cause))),
         };
         let connection = crate::connection::current_or_app();
-        let (epoch, ticket, token, prev, done) = self.register(connection);
+        let (epoch, ticket, token, place) = self.register(connection);
         let shared = Arc::clone(&self.shared);
         Box::pin(async move {
-            // Declared so that the finish bookkeeping runs first, then the next search may start.
-            let _done = done;
+            // Declared before the finish bookkeeping, which so runs first: then the next search
+            // may start.
+            let mut place = place;
             let _finish = Finish {
                 shared: Arc::clone(&shared),
                 connection,
@@ -249,56 +243,38 @@ impl Search {
             };
             let mut key = String::new();
             let outcome = async {
-                // Retain the serial chain even when a settings wait is cancelled.
-                if let Some(prev) = prev {
-                    let _ = prev.await;
-                }
-                request.configured = tokio::select! {
-                    biased;
-                    _ = token.cancelled() => return Err(signal_aborted()),
-                    result = configured => result?,
-                };
+                // In line even when the settings wait is cancelled.
+                place.turn().await;
+                request.configured = job::configured(&token, configured).await?;
                 attempt(&shared, &request, epoch, &token, &mut key).await
             }
             .await;
-            match outcome {
-                Ok(mv) => Ok(mv),
-                Err(cause) => {
-                    let fen = match &request.fen {
-                        Some(fen) => format!("fen={}", truncate_for_log(fen, 60)),
-                        None => "startpos".to_string(),
-                    };
-                    let shown_key = if key.is_empty() {
-                        "unstarted".to_string()
-                    } else {
-                        key.clone()
-                    };
-                    let context = format!(
-                        "level={} moves={} engine={} {fen}",
-                        request.level,
-                        request.moves.len(),
-                        truncate_for_log(&shown_key, 80),
-                    );
-                    if token.is_cancelled() || cause.aborted {
-                        shared.ctx.host.log(
-                            Level::Debug,
-                            "engine",
-                            &format!(
-                                "Engine search superseded: {context} {}",
-                                error_summary(&cause)
-                            ),
-                        );
-                        Err(CoreError::aborted(SUPERSEDED))
-                    } else {
-                        shared.ctx.host.log(
-                            Level::Warn,
-                            "engine",
-                            &format!("Engine search failed: {context} {}", error_summary(&cause)),
-                        );
-                        Err(cause)
-                    }
+            outcome.map_err(|cause| {
+                let fen = match &request.fen {
+                    Some(fen) => format!("fen={}", truncate_for_log(fen, 60)),
+                    None => "startpos".to_string(),
+                };
+                let shown_key = if key.is_empty() { "unstarted" } else { &key };
+                let context = format!(
+                    "level={} moves={} engine={} {fen}",
+                    request.level,
+                    request.moves.len(),
+                    truncate_for_log(shown_key, 80),
+                );
+                let labels = ("Engine search superseded", "Engine search failed");
+                if job::interrupted(
+                    &*shared.ctx.host,
+                    "engine",
+                    labels,
+                    &context,
+                    &cause,
+                    &token,
+                ) {
+                    CoreError::aborted(SUPERSEDED)
+                } else {
+                    cause
                 }
-            }
+            })
         })
     }
 
@@ -315,9 +291,8 @@ impl Search {
         }
         self.shared.warm.keep();
         state.last_move_at = now_ms();
-        let (done, queued) = oneshot::channel();
-        let prev = state.serial.replace(queued);
-        (epoch, ticket, token, prev, done)
+        let place = state.line.join();
+        (epoch, ticket, token, place)
     }
 }
 
@@ -377,35 +352,24 @@ async fn attempt(
     token: &CancellationToken,
     key: &mut String,
 ) -> Result<String> {
-    if token.is_cancelled() {
-        return Err(signal_aborted());
-    }
+    // A `stop_engine` moves the generation: checked before the engine is found, once the
+    // engine budget is granted, and once the engine is ready.
+    let wanted = || job::still_wanted(token, epoch, lock(&shared.state).generation);
+    wanted()?;
     let located = shared
         .warm
         .locate(&request.configured, request.variant.is_some())
         .await?;
     key.clone_from(&located.key);
-    if epoch != lock(&shared.state).generation {
-        return Err(search_cancelled());
-    }
+    wanted()?;
     let target = shared.warm.open(&located)?.uci;
     let profile = level_profile(&request.level)?;
-    let epoch_at_lease = epoch;
     shared
         .ctx
         .lease(Priority::Computer, token, async {
-            // Re-check supersede after the queue wait: a `stop_engine` during admission
-            // moved the generation, and this search must not start.
-            if epoch_at_lease != lock(&shared.state).generation {
-                return Err(search_cancelled());
-            }
+            wanted()?;
             target.ready().await?;
-            if token.is_cancelled() {
-                return Err(signal_aborted());
-            }
-            if epoch_at_lease != lock(&shared.state).generation {
-                return Err(search_cancelled());
-            }
+            wanted()?;
             target.write("ucinewgame")?;
             search_under_lease(shared, request, &profile, &target, token).await
         })
@@ -446,14 +410,10 @@ async fn search_under_lease(
         return Err(signal_aborted());
     }
     let movetime = request.movetime.unwrap_or(profile.time);
-    let mut position = match &request.fen {
-        Some(fen) => format!("position fen {fen}"),
-        None => "position startpos".to_string(),
-    };
-    if !request.moves.is_empty() {
-        position.push_str(&format!(" moves {}", request.moves.join(" ")));
-    }
-    target.write(&position)?;
+    target.write(&job::position_command(
+        request.fen.as_deref(),
+        &request.moves,
+    ))?;
     let random = (shared.random)() < profile.random_move.unwrap_or(0.0);
     let legal: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&legal);

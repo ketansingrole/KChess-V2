@@ -21,6 +21,7 @@ use kchess_core::lichess::challenges::{ChallengeInfo, PlayerRef, TimeControl};
 use kchess_core::lichess::client::{LichessClient, TokenSource};
 use kchess_core::lichess::online::{OnlineAction, OnlineOptions, OnlineSession, Resumed};
 use kchess_core::lichess::policy::Policy;
+use kchess_core::lichess::stream::Backoff;
 use serde_json::{Number, Value, json};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -115,6 +116,17 @@ fn session(
     store: &Arc<MemoryStore>,
     tokens: &Arc<ScriptedTokens>,
 ) -> OnlineSession {
+    session_with(base, host, store, tokens, Backoff::default())
+}
+
+/// `session`, with dropped streams reconnecting after `backoff`.
+fn session_with(
+    base: &str,
+    host: &Arc<Recording>,
+    store: &Arc<MemoryStore>,
+    tokens: &Arc<ScriptedTokens>,
+    backoff: Backoff,
+) -> OnlineSession {
     let client = LichessClient::with_base(base, policy(host));
     let lichess = Arc::new(Lichess::new(
         client,
@@ -123,7 +135,7 @@ fn session(
         Arc::clone(tokens) as Arc<dyn TokenSource>,
         Arc::clone(host) as Arc<dyn Host>,
     ));
-    OnlineSession::new(lichess)
+    OnlineSession::with_backoff(lichess, backoff)
 }
 
 fn rig(accounts: &[(&str, bool)]) -> (Arc<Recording>, Arc<MemoryStore>, Arc<ScriptedTokens>) {
@@ -1513,13 +1525,17 @@ async fn a_refused_record_on_every_connect_backs_off_instead_of_reconnecting_eac
     })
     .await;
     let (host, store, tokens) = rig(&[("Alice", true)]);
-    let online = session(&fixture.base, &host, &store, &tokens);
+    let backoff = Backoff {
+        first: Duration::from_millis(50),
+        most: Duration::from_secs(15),
+    };
+    let online = session_with(&fixture.base, &host, &store, &tokens, backoff);
     online.stay_connected("Alice");
     fixture.requested("/api/stream/event", 1).await;
-    // Backing off: connects at 0 s, 1 s and 3 s, then 7 s. Once a second would be five by now.
-    tokio::time::sleep(Duration::from_millis(4_500)).await;
+    // Backing off: connects at 0, 100 and 300 ms, then 700 ms. Every 100 ms would be five by now.
+    tokio::time::sleep(Duration::from_millis(450)).await;
     let seen = attempts.load(Ordering::SeqCst);
-    assert!(seen <= 3, "reconnected {seen} times in 4.5 s");
+    assert!(seen <= 3, "reconnected {seen} times in 450 ms");
     online.close();
 }
 

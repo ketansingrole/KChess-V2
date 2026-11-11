@@ -100,8 +100,9 @@ impl Services {
             endpoints,
             Arc::new(DbLookups::new(Arc::clone(&database))),
             Arc::new(crate::time::now_ms),
+            lifetime.clone(),
+            super::lookups::LOOKUP_TIMEOUT,
         )
-        .with_lifetime(lifetime.clone())
         .with_login(Arc::new(DbExplorerLogin::new(
             Arc::clone(&database),
             tokens,

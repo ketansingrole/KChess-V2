@@ -18,6 +18,31 @@ pub const MAX_LINE_BYTES: usize = 2_000_000;
 /// The default idle deadline between chunks.
 pub const IDLE: Duration = Duration::from_secs(45);
 
+/// How long a stream waits before it reconnects: doubling from `first` with each failure in a
+/// row, up to `most`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Backoff {
+    pub first: Duration,
+    pub most: Duration,
+}
+
+impl Default for Backoff {
+    fn default() -> Backoff {
+        Backoff {
+            first: Duration::from_millis(500),
+            most: Duration::from_secs(15),
+        }
+    }
+}
+
+impl Backoff {
+    /// The wait after `failures` failures in a row.
+    pub fn after(&self, failures: u32) -> Duration {
+        let doubled = 2u32.checked_pow(failures).unwrap_or(u32::MAX);
+        self.first.saturating_mul(doubled).min(self.most)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct LineOptions {
     /// Longest line accepted, measured in bytes from its first byte.
@@ -174,6 +199,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reconnecting_waits_double_up_to_the_most() {
+        let backoff = Backoff::default();
+        let waits: Vec<u64> = (0..7)
+            .map(|failures| backoff.after(failures).as_millis() as u64)
+            .collect();
+        assert_eq!(waits, [500, 1_000, 2_000, 4_000, 8_000, 15_000, 15_000]);
+        assert_eq!(backoff.after(u32::MAX), Duration::from_secs(15));
+    }
 
     fn stream_of(
         chunks: Vec<&'static [u8]>,

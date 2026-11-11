@@ -2,6 +2,7 @@
 //! on this computer (with partial credit) and the ones Lichess recorded (only the result), in one
 //! list, each to try again or study on the analysis board; with today's and all-time totals.
 
+use crate::loading::Epoch;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
@@ -206,7 +207,7 @@ pub struct PuzzleHistory {
     filter: Entity<SelectState<Vec<Choice>>>,
     /// The list's card, to fit the rows' columns to it.
     area: Measured,
-    epoch: u64,
+    epoch: Epoch,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -247,7 +248,7 @@ impl PuzzleHistory {
             themes,
             filter,
             area: Measured::default(),
-            epoch: 0,
+            epoch: Epoch::default(),
             _subscriptions: subscriptions,
         }
     }
@@ -274,7 +275,7 @@ impl PuzzleHistory {
         let who = self.account.clone();
         if who.is_empty() {
             // Activity still on its way for the previous account must not land once there is none.
-            self.epoch += 1;
+            self.epoch.invalidate();
             self.loading = false;
             self.error = None;
             self.reconnect = false;
@@ -283,8 +284,7 @@ impl PuzzleHistory {
         if !force && self.loaded == who {
             return;
         }
-        self.epoch += 1;
-        let epoch = self.epoch;
+        let epoch = self.epoch.next();
         self.loading = true;
         self.error = None;
         self.reconnect = false;
@@ -296,7 +296,7 @@ impl PuzzleHistory {
         cx.spawn(async move |this, cx| {
             let result = activity.await;
             let _ = this.update(cx, |this, cx| {
-                if epoch != this.epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 this.loading = false;
@@ -685,9 +685,9 @@ mod tests {
             let page = cx.new(|cx| PuzzleHistory::new(Vec::new(), window, cx));
             page.update(cx, |page, cx| {
                 page.shown("Alice".into(), cx);
-                let asked = page.epoch;
+                let asked = page.epoch.current();
                 page.shown(String::new(), cx);
-                (page.loading, page.epoch == asked)
+                (page.loading, page.epoch.is_current(asked))
             })
         });
         assert!(!loading && !stale);

@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{CONNECT_EXPLORER, PositionLookups};
+use super::{PositionLookups, explorer_error};
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use kchess_contracts::types::{DescriptionBlock, OpeningDescription, PopularityMonth};
 use kchess_domain::training::openings::{line_fens, wikibooks_title};
@@ -159,11 +159,8 @@ impl PositionLookups {
         &self,
         moves: &[String],
     ) -> CoreResult<Option<OpeningDescription>> {
-        tokio::select! {
-            biased;
-            _ = self.lifetime.cancelled() => Err(CoreError::aborted("Position lookup was cancelled.")),
-            result = self.opening_description_inner(moves) => result,
-        }
+        self.until_closed(self.opening_description_inner(moves))
+            .await
     }
 
     async fn opening_description_inner(
@@ -208,7 +205,7 @@ impl PositionLookups {
         title: &str,
         now: i64,
     ) -> CoreResult<Option<OpeningDescription>> {
-        let mut url = reqwest::Url::parse(&self.endpoints.wikibooks)
+        let mut url = reqwest::Url::parse(&self.wikibooks)
             .map_err(|cause| CoreError::new(format!("Invalid Wikibooks URL: {cause}")))?;
         url.query_pairs_mut()
             .append_pair("action", "query")
@@ -246,11 +243,8 @@ impl PositionLookups {
     /// The monthly share of the Lichess games (blitz, rapid and
     /// classical) at the position before the line's last move that went on with it.
     pub async fn opening_popularity(&self, moves: &[String]) -> CoreResult<Vec<PopularityMonth>> {
-        tokio::select! {
-            biased;
-            _ = self.lifetime.cancelled() => Err(CoreError::aborted("Position lookup was cancelled.")),
-            result = self.opening_popularity_inner(moves) => result,
-        }
+        self.until_closed(self.opening_popularity_inner(moves))
+            .await
     }
 
     async fn opening_popularity_inner(&self, moves: &[String]) -> CoreResult<Vec<PopularityMonth>> {
@@ -324,8 +318,8 @@ impl PositionLookups {
 
     async fn fetch_history(&self, fen: &str) -> CoreResult<Value> {
         let text = self
-            .explorer
-            .get("/lichess/history", &self.explorer_auth().await?)
+            .explorer_get("/lichess/history")
+            .await?
             .query(&[
                 ("variant", "standard"),
                 ("fen", fen),
@@ -334,16 +328,11 @@ impl PositionLookups {
             .max_bytes(MAX_BYTES, "Opening popularity returned too much data.")
             .read_text(None)
             .await
-            .map_err(|cause| match cause.kind {
-                Some(ErrorKind::Login) => {
-                    CoreError::new(CONNECT_EXPLORER).with_kind(ErrorKind::Login)
-                }
-                Some(ErrorKind::Offline) => CoreError {
-                    message: "Opening popularity could not be loaded. Check your connection."
-                        .into(),
-                    ..cause
-                },
-                _ => cause,
+            .map_err(|cause| {
+                explorer_error(
+                    cause,
+                    "Opening popularity could not be loaded. Check your connection.",
+                )
             })?;
         serde_json::from_str(&text)
             .map_err(|_| CoreError::new("Opening popularity could not be read."))

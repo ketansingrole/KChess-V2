@@ -38,9 +38,10 @@ To reproduce CI's Linux build locally, start Docker (on macOS, `brew install col
   pure chess or training rules in `crates/kchess-domain`, and views in `apps/gpui`. Documents a
   user keeps belong in the core's library. Every core method names a check for each argument in
   its `core_api!` declaration (`crates/kchess-contracts/src/core_api.rs`).
-- New settings need three things: the `Settings` type, the `SETTINGS_KEYS` list in
-  `crates/kchess-core/src/store/games.rs`, and a new entry at the end of `MIGRATIONS` in
-  `crates/kchess-core/src/store/migrations.rs` (never edit an earlier migration).
+- A new setting is a field of the `Settings` type with its default in
+  `crates/kchess-contracts/src/defaults.rs`, its check in `crates/kchess-contracts/src/check/accounts.rs`,
+  and its column: a new entry at the end of `MIGRATIONS` in `crates/kchess-core/src/store/migrations.rs`
+  (never edit an earlier migration). The store reads and writes every field by its name.
 - Be gentle with Lichess. Bulk downloads run one request at a time, and every request names its
   account and kind for the data-usage counters (`Policy::usage` in
   `crates/kchess-core/src/lichess/policy.rs`).

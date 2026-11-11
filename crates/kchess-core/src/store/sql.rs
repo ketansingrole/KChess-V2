@@ -26,6 +26,17 @@ impl<T> Sql<T> for rusqlite::Result<T> {
     }
 }
 
+/// A JSON number bound as SQL: a whole number as an integer, any other as a real, and anything
+/// that is no number as NULL.
+pub fn number(value: Option<&serde_json::Value>) -> rusqlite::types::Value {
+    use rusqlite::types::Value as Sql;
+    match value.and_then(serde_json::Value::as_f64) {
+        Some(n) if n.fract() == 0.0 && n.abs() < 9.0e15 => Sql::Integer(n as i64),
+        Some(n) => Sql::Real(n),
+        None => Sql::Null,
+    }
+}
+
 /// Runs `work` inside `BEGIN IMMEDIATE`, committing on success and rolling back on any failure.
 /// The caller sees the failure that ended the work; a ROLLBACK that fails too is appended to it.
 pub fn transaction<T>(db: &Connection, work: impl FnOnce() -> Result<T>) -> Result<T> {

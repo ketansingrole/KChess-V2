@@ -2,8 +2,32 @@
 //! board, any variant, with or without a clock; or a chess clock for a real board. Both keep their
 //! place in Game history, and the board game resumes in either app.
 
+use crate::shortcuts::{PageKey, page_key};
 use kchess_domain::training::clock::format_clock;
 use std::time::Instant;
+
+/// What the chess clock's keys do.
+#[derive(Clone, Copy)]
+pub(crate) enum ClockKey {
+    Press,
+    Pause,
+}
+
+/// The chess clock's keys, which the shortcuts list shows.
+pub(crate) const CLOCK_KEYS: &[PageKey<ClockKey>] = &[
+    PageKey {
+        action: ClockKey::Press,
+        keys: &["space"],
+        shown: "Space",
+        does: "Press the clock",
+    },
+    PageKey {
+        action: ClockKey::Pause,
+        keys: &["p"],
+        shown: "P",
+        does: "Pause",
+    },
+];
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -898,26 +922,27 @@ impl LocalPage {
         cx.notify();
     }
 
-    /// The chess clock's keys when the page itself has focus (not a text field): Space presses
-    /// the running clock and P pauses.
+    /// The chess clock's keys (`CLOCK_KEYS`) when the page itself has focus (not a text field).
     fn clock_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !crate::board::page_has_keys(&self.focus, window, cx)
             || event.keystroke.modifiers.modified()
         {
             return;
         }
-        match event.keystroke.key.as_str() {
-            "space" => {
+        let Some(action) = page_key(CLOCK_KEYS, &event.keystroke.key) else {
+            return;
+        };
+        match action {
+            ClockKey::Press => {
                 let side = self.clock.running.unwrap_or(Side::Top);
                 self.press(side, cx);
             }
-            "p" => {
+            ClockKey::Pause => {
                 if self.clock.pause(self.now()) {
                     self.clock_flagged(cx);
                 }
                 self.clock_changed(cx);
             }
-            _ => return,
         }
         cx.stop_propagation();
     }

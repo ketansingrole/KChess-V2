@@ -2,6 +2,7 @@
 //! speed, opponent, length, clock, day, time of day, ending and opening, with time use from the
 //! games' clocks, filtered by speed, period and rated or casual.
 
+use crate::loading::Epoch;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
@@ -238,7 +239,7 @@ pub struct InsightsPage {
     report: Option<Value>,
     error: Option<SharedString>,
     loading: bool,
-    epoch: u64,
+    epoch: Epoch,
     /// A game sync ran when the accounts last changed: its end brings new games.
     syncing: bool,
     focus: FocusHandle,
@@ -312,7 +313,7 @@ impl InsightsPage {
             report: None,
             error: None,
             loading: false,
-            epoch: 0,
+            epoch: Epoch::default(),
             syncing: accounts.read(cx).syncing(),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -394,7 +395,7 @@ impl InsightsPage {
     fn load(&mut self, cx: &mut Context<Self>) {
         // A new epoch either way: a report still on its way for the previous account must not
         // land once there is none.
-        self.epoch += 1;
+        self.epoch.invalidate();
         if self.account.is_empty() {
             self.report = None;
             self.loading = false;
@@ -402,7 +403,7 @@ impl InsightsPage {
             cx.notify();
             return;
         }
-        let epoch = self.epoch;
+        let epoch = self.epoch.current();
         self.loading = true;
         self.error = None;
         cx.notify();
@@ -412,7 +413,7 @@ impl InsightsPage {
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 this.loading = false;
@@ -467,8 +468,8 @@ impl InsightsPage {
 
     /// How many reports the page has asked for.
     #[cfg(test)]
-    pub(crate) fn requests(&self) -> u64 {
-        self.epoch
+    pub(crate) fn requests(&self) -> crate::loading::Turn {
+        self.epoch.current()
     }
 
     /// Why the last report failed, if it did.
@@ -1005,10 +1006,10 @@ mod tests {
             page.update(cx, |page, cx| {
                 page.account = "Alice".into();
                 page.load(cx);
-                let asked = page.epoch;
+                let asked = page.epoch.current();
                 page.account.clear();
                 page.load(cx);
-                (page.loading, page.epoch == asked)
+                (page.loading, page.epoch.is_current(asked))
             })
         });
         assert!(!loading && !stale);

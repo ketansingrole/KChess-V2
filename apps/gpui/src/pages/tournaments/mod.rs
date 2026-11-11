@@ -2,6 +2,7 @@
 //! timeline, one tournament's details (join, standings, the top game, games in progress and
 //! totals), and creating an arena.
 
+use crate::loading::Epoch;
 use kchess_contracts::calls::{self, CoreCall};
 use kchess_contracts::check::{
     Bounded, OptionalAccount, TournamentId, TournamentPassword, Username,
@@ -72,7 +73,7 @@ struct Open {
     received: Instant,
     error: Option<SharedString>,
     page: usize,
-    epoch: u64,
+    epoch: Epoch,
 }
 
 /// The page's actions, as its buttons offer them.
@@ -268,7 +269,7 @@ impl TournamentsPage {
                 received: Instant::now(),
                 error: None,
                 page: 1,
-                epoch: 0,
+                epoch: Epoch::default(),
             });
         }
         self.load_event(cx);
@@ -324,8 +325,7 @@ impl TournamentsPage {
         let Some(open) = &mut self.open else {
             return;
         };
-        open.epoch += 1;
-        let epoch = open.epoch;
+        let epoch = open.epoch.next();
         let (system, id, page) = (open.system.clone(), open.id.clone(), open.page);
         let call = cx.global::<AppCore>().request(calls::Tournament {
             system: system_named(&system),
@@ -335,27 +335,26 @@ impl TournamentsPage {
         });
         cx.spawn(async move |this, cx| {
             let answer = call.await;
-            let _ =
-                this.update(cx, |this, cx| {
-                    // Every tournament opened counts from 1: a reply is this one's only if it also
-                    // names the tournament still open.
-                    let Some(open) = this.open.as_mut().filter(|open| {
-                        open.epoch == epoch && open.system == system && open.id == id
-                    }) else {
-                        return;
-                    };
-                    match answer {
-                        Ok(detail) => {
-                            open.detail = serde_json::to_value(detail).ok();
-                            open.received = Instant::now();
-                            open.error = None;
-                        }
-                        Err(cause) => open.error = Some(cause.message.into()),
+            let _ = this.update(cx, |this, cx| {
+                // Every tournament opened counts from 1: a reply is this one's only if it also
+                // names the tournament still open.
+                let Some(open) = this.open.as_mut().filter(|open| {
+                    open.epoch.is_current(epoch) && open.system == system && open.id == id
+                }) else {
+                    return;
+                };
+                match answer {
+                    Ok(detail) => {
+                        open.detail = serde_json::to_value(detail).ok();
+                        open.received = Instant::now();
+                        open.error = None;
                     }
-                    // The core forgets an arena that is over or that you left.
-                    this.reload_joined(cx);
-                    cx.notify();
-                });
+                    Err(cause) => open.error = Some(cause.message.into()),
+                }
+                // The core forgets an arena that is over or that you left.
+                this.reload_joined(cx);
+                cx.notify();
+            });
         })
         .detach();
     }

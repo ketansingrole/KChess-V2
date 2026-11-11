@@ -1,0 +1,171 @@
+//! What the engine services' jobs share: their place in line, the wait for settings that a stop
+//! also ends, the engine's rules for the game's variant, the position command, and how a job
+//! that went wrong is told apart and logged.
+
+use std::future::Future;
+
+use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
+
+use super::uci::{error_summary, search_cancelled};
+use crate::error::{CoreError, Result};
+use crate::host::{Host, Level};
+use crate::tasks::aborted as signal_aborted;
+
+/// A service's jobs in the order they were asked for: each starts once the one before it ended.
+#[derive(Default)]
+pub(crate) struct Line {
+    last: Option<oneshot::Receiver<()>>,
+}
+
+impl Line {
+    /// The next place in line. Dropping it lets the job after it start.
+    pub fn join(&mut self) -> Place {
+        let (done, queued) = oneshot::channel();
+        Place {
+            before: self.last.replace(queued),
+            _done: done,
+        }
+    }
+}
+
+/// One job's place in a `Line`.
+pub(crate) struct Place {
+    before: Option<oneshot::Receiver<()>>,
+    _done: oneshot::Sender<()>,
+}
+
+impl Place {
+    /// Waits until the job before has ended, however it ended.
+    pub async fn turn(&mut self) {
+        if let Some(before) = self.before.take() {
+            let _ = before.await;
+        }
+    }
+}
+
+/// The engine the settings name, unless the job is stopped first: a stop must also end a job
+/// still waiting for its settings.
+pub(crate) async fn configured(
+    token: &CancellationToken,
+    configured: impl Future<Output = Result<String>>,
+) -> Result<String> {
+    tokio::select! {
+        biased;
+        _ = token.cancelled() => Err(signal_aborted()),
+        result = configured => result,
+    }
+}
+
+/// Stops when `token` was cancelled, and when `epoch` is no longer `current` (a stop that
+/// superseded every job).
+pub(crate) fn still_wanted(token: &CancellationToken, epoch: u64, current: u64) -> Result<()> {
+    if token.is_cancelled() {
+        return Err(signal_aborted());
+    }
+    if epoch != current {
+        return Err(search_cancelled());
+    }
+    Ok(())
+}
+
+/// The option that sets the rules: Fairy-Stockfish's variant, or else Chess960, since the moves
+/// write castling king-takes-rook and an engine in standard mode reads that as an illegal move.
+pub(crate) fn rules_option(fairy: Option<&'static str>) -> (&'static str, &'static str) {
+    match fairy {
+        Some(variant) => ("UCI_Variant", variant),
+        None => ("UCI_Chess960", "true"),
+    }
+}
+
+/// The `position` command: the start (`startpos` without a FEN) and the moves played from it.
+pub(crate) fn position_command(fen: Option<&str>, moves: &[String]) -> String {
+    let mut position = match fen {
+        Some(fen) => format!("position fen {fen}"),
+        None => "position startpos".to_string(),
+    };
+    if !moves.is_empty() {
+        position.push_str(" moves ");
+        position.push_str(&moves.join(" "));
+    }
+    position
+}
+
+/// Whether a job that failed was interrupted (stopped, superseded, aborted) rather than failed,
+/// logged as such: an interruption at Debug, a failure at Warn.
+pub(crate) fn interrupted(
+    host: &dyn Host,
+    area: &str,
+    (stopped, failed): (&str, &str),
+    context: &str,
+    cause: &CoreError,
+    token: &CancellationToken,
+) -> bool {
+    let interrupted = token.is_cancelled() || cause.aborted;
+    let (level, label) = if interrupted {
+        (Level::Debug, stopped)
+    } else {
+        (Level::Warn, failed)
+    };
+    host.log(
+        level,
+        area,
+        &format!("{label}: {context} {}", error_summary(cause)),
+    );
+    interrupted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_position_names_its_start_and_moves() {
+        assert_eq!(position_command(None, &[]), "position startpos");
+        assert_eq!(
+            position_command(
+                Some("8/8/8/8/8/8/8/K6k w - - 0 1"),
+                &["a1b1".into(), "h1g1".into()]
+            ),
+            "position fen 8/8/8/8/8/8/8/K6k w - - 0 1 moves a1b1 h1g1"
+        );
+    }
+
+    #[test]
+    fn a_variant_sets_its_rules_and_chess_plays_chess960() {
+        assert_eq!(
+            rules_option(Some("crazyhouse")),
+            ("UCI_Variant", "crazyhouse")
+        );
+        assert_eq!(rules_option(None), ("UCI_Chess960", "true"));
+    }
+
+    #[tokio::test]
+    async fn a_job_waits_for_the_one_before() {
+        let mut line = Line::default();
+        let first = line.join();
+        let mut second = line.join();
+        let waiting = tokio::spawn(async move { second.turn().await });
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished());
+        drop(first);
+        waiting.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_stop_ends_the_wait_for_settings() {
+        let token = CancellationToken::new();
+        token.cancel();
+        let error = configured(&token, std::future::pending())
+            .await
+            .unwrap_err();
+        assert!(error.aborted);
+        let open = CancellationToken::new();
+        assert_eq!(
+            configured(&open, async { Ok("sf".to_string()) })
+                .await
+                .unwrap(),
+            "sf"
+        );
+    }
+}

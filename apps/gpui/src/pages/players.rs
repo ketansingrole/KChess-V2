@@ -2,6 +2,7 @@
 //! online, your record against them, their rating history, their record in a speed, and their
 //! recent games — and follow, challenge, message or watch them.
 
+use crate::loading::{Epoch, Turn};
 use kchess_contracts::calls;
 use kchess_contracts::check::{GameId, LichessId, MessageText, PresenceUsers, StudyId, Username};
 use kchess_contracts::types::{
@@ -261,25 +262,25 @@ pub struct PlayersPage {
     /// again rather than showing another account's.
     extras_account: Option<String>,
     /// Each read of `record` and `relation`; answers to an older one are dropped.
-    account_epoch: u64,
+    account_epoch: Epoch,
     /// The leaderboard shown while no player is open.
     board: Option<Vec<LeaderboardEntry>>,
     board_error: Option<SharedString>,
     board_perf: String,
     board_select: Entity<SelectState<Vec<Choice>>>,
-    board_epoch: u64,
+    board_epoch: Epoch,
     board_title: String,
     title_select: Entity<SelectState<Vec<Choice>>>,
     /// The `board_epoch` whose titles `title_select` offers.
-    title_choices_for: Option<u64>,
+    title_choices_for: Option<Turn>,
     /// `PlayerSuggestion`s for what is typed.
     matches: Vec<PlayerSuggestion>,
-    search_epoch: u64,
+    search_epoch: Epoch,
     error: Option<SharedString>,
     loading: bool,
     /// Each lookup; answers to an older one are dropped.
-    epoch: u64,
-    stats_epoch: u64,
+    epoch: Epoch,
+    stats_epoch: Epoch,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -382,21 +383,21 @@ impl PlayersPage {
             days_error: false,
             relation: None,
             extras_account: None,
-            account_epoch: 0,
+            account_epoch: Epoch::default(),
             board: None,
             board_error: None,
             board_perf,
             board_select,
-            board_epoch: 0,
+            board_epoch: Epoch::default(),
             board_title,
             title_select,
             title_choices_for: None,
             matches: Vec::new(),
-            search_epoch: 0,
+            search_epoch: Epoch::default(),
             error: None,
             loading: false,
-            epoch: 0,
-            stats_epoch: 0,
+            epoch: Epoch::default(),
+            stats_epoch: Epoch::default(),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
@@ -410,8 +411,7 @@ impl PlayersPage {
 
     /// The leaderboard of the chosen category, while no player is open.
     fn load_board(&mut self, cx: &mut Context<Self>) {
-        self.board_epoch += 1;
-        let epoch = self.board_epoch;
+        let epoch = self.board_epoch.next();
         self.board = None;
         self.board_error = None;
         cx.notify();
@@ -421,7 +421,7 @@ impl PlayersPage {
         cx.spawn(async move |this, cx| {
             let answer = board.await;
             let _ = this.update(cx, |this, cx| {
-                if this.board_epoch != epoch {
+                if !this.board_epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
@@ -450,10 +450,10 @@ impl PlayersPage {
         let Some(board) = &self.board else {
             return;
         };
-        if self.title_choices_for == Some(self.board_epoch) {
+        if self.title_choices_for == Some(self.board_epoch.current()) {
             return;
         }
-        self.title_choices_for = Some(self.board_epoch);
+        self.title_choices_for = Some(self.board_epoch.current());
         let items = title_choices(board, &self.board_title);
         let chosen = SharedString::from(self.board_title.clone());
         self.title_select.update(cx, |select, cx| {
@@ -464,8 +464,7 @@ impl PlayersPage {
 
     /// Players whose names start with what is typed, once typing settles.
     fn search_names(&mut self, cx: &mut Context<Self>) {
-        self.search_epoch += 1;
-        let epoch = self.search_epoch;
+        let epoch = self.search_epoch.next();
         let term = self.input.read(cx).value().trim().to_string();
         let shown = self
             .username()
@@ -483,7 +482,7 @@ impl PlayersPage {
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SEARCH_WAIT).await;
             let current = this
-                .read_with(cx, |this, _| this.search_epoch == epoch)
+                .read_with(cx, |this, _| this.search_epoch.is_current(epoch))
                 .unwrap_or(false);
             if !current {
                 return;
@@ -494,7 +493,7 @@ impl PlayersPage {
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                if this.search_epoch != epoch {
+                if !this.search_epoch.is_current(epoch) {
                     return;
                 }
                 if let Ok(found) = found {
@@ -529,7 +528,7 @@ impl PlayersPage {
         if !crate::game::is_username(&name) {
             // This search replaces one still on its way: its answer would show that profile
             // under this error and put its name back in the box over what was typed.
-            self.epoch += 1;
+            self.epoch.invalidate();
             self.loading = false;
             self.error = Some(if name.is_empty() {
                 "Enter a Lichess username".into()
@@ -539,9 +538,9 @@ impl PlayersPage {
             cx.notify();
             return;
         }
-        self.epoch += 1;
-        self.stats_epoch += 1;
-        let epoch = self.epoch;
+        self.epoch.invalidate();
+        self.stats_epoch.invalidate();
+        let epoch = self.epoch.current();
         self.loading = true;
         self.error = None;
         self.stats = None;
@@ -554,7 +553,7 @@ impl PlayersPage {
         self.days = None;
         self.days_error = false;
         self.relation = None;
-        self.account_epoch += 1;
+        self.account_epoch.invalidate();
         self.matches.clear();
         self.history.update(cx, |history, cx| {
             history.set(Value::Null, Value::Null, cx);
@@ -567,7 +566,7 @@ impl PlayersPage {
         cx.spawn_in(window, async move |this, cx| {
             let found = profile.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 this.loading = false;
@@ -618,14 +617,14 @@ impl PlayersPage {
 
     /// What the player did lately on Lichess.
     fn load_days(&mut self, username: &str, cx: &mut Context<Self>) {
-        let epoch = self.epoch;
+        let epoch = self.epoch.current();
         let days = cx.global::<AppCore>().request(calls::Activity {
             username: Username(username.to_string()),
         });
         cx.spawn(async move |this, cx| {
             let answer = days.await;
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
@@ -644,7 +643,7 @@ impl PlayersPage {
             return;
         };
         let blocking = !relation.blocking;
-        let account_epoch = self.account_epoch;
+        let account_epoch = self.account_epoch.current();
         let page = cx.entity().downgrade();
         let apply = move |window: &mut Window, cx: &mut App| {
             let page = page.clone();
@@ -662,7 +661,7 @@ impl PlayersPage {
                         if took {
                             let _ = page.update(cx, |page, cx| {
                                 // Another account or player since: its relation is read anew.
-                                if page.account_epoch != account_epoch {
+                                if !page.account_epoch.is_current(account_epoch) {
                                     return;
                                 }
                                 let following = !blocking && relation.following;
@@ -708,7 +707,7 @@ impl PlayersPage {
 
     /// Your record against them, and whether they are online.
     fn load_extras(&mut self, username: &str, cx: &mut Context<Self>) {
-        let epoch = self.epoch;
+        let epoch = self.epoch.current();
         let core = cx.global::<AppCore>().clone();
         self.load_account_extras(username, cx);
         let presence = core.request(calls::Presence {
@@ -718,7 +717,7 @@ impl PlayersPage {
         cx.spawn(async move |this, cx| {
             let answer = presence.await;
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
@@ -750,8 +749,7 @@ impl PlayersPage {
 
     /// The online account's record against the player and how it stands with them on Lichess.
     fn load_account_extras(&mut self, username: &str, cx: &mut Context<Self>) {
-        self.account_epoch += 1;
-        let account_epoch = self.account_epoch;
+        let account_epoch = self.account_epoch.next();
         self.record = None;
         self.relation = None;
         self.extras_failed.retain(|failed| *failed != "your record");
@@ -771,7 +769,7 @@ impl PlayersPage {
         cx.spawn(async move |this, cx| {
             let answer = relation.await;
             let _ = this.update(cx, |this, cx| {
-                if this.account_epoch == account_epoch
+                if this.account_epoch.is_current(account_epoch)
                     && let Ok(Reply::Done(relation)) = answer
                 {
                     this.relation = Some(relation);
@@ -787,7 +785,7 @@ impl PlayersPage {
         cx.spawn(async move |this, cx| {
             let answer = crosstable.await;
             let _ = this.update(cx, |this, cx| {
-                if this.account_epoch != account_epoch {
+                if !this.account_epoch.is_current(account_epoch) {
                     return;
                 }
                 match answer {
@@ -805,8 +803,7 @@ impl PlayersPage {
         let Some(username) = self.username() else {
             return;
         };
-        self.stats_epoch += 1;
-        let stats_epoch = self.stats_epoch;
+        let stats_epoch = self.stats_epoch.next();
         self.stats = None;
         self.stats_error = None;
         cx.notify();
@@ -817,7 +814,7 @@ impl PlayersPage {
         cx.spawn(async move |this, cx| {
             let answer = stats.await;
             let _ = this.update(cx, |this, cx| {
-                if this.stats_epoch != stats_epoch {
+                if !this.stats_epoch.is_current(stats_epoch) {
                     return;
                 }
                 match answer {
@@ -836,7 +833,7 @@ impl PlayersPage {
         let Some(username) = self.username() else {
             return;
         };
-        let epoch = self.epoch;
+        let epoch = self.epoch.current();
         self.games = None;
         self.games_error = false;
         let core = cx.global::<AppCore>().clone();
@@ -847,7 +844,7 @@ impl PlayersPage {
         cx.spawn(async move |this, cx| {
             let answer = games.await;
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
@@ -878,7 +875,7 @@ impl PlayersPage {
                 ))
             };
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 let withheld = this.withheld(cx);
@@ -2146,9 +2143,9 @@ mod tests {
             let page = cx.new(|cx| super::PlayersPage::new(window, cx));
             page.update(cx, |page, cx| {
                 page.lookup(Some("Alice".into()), window, cx);
-                let asked = page.epoch;
+                let asked = page.epoch.current();
                 page.lookup(Some("a".into()), window, cx);
-                (page.loading, page.epoch == asked)
+                (page.loading, page.epoch.is_current(asked))
             })
         });
         assert!(!loading && !stale);
