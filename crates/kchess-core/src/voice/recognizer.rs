@@ -158,20 +158,21 @@ impl VoiceRecognizer {
         {
             return Err(CoreError::new(NOT_INSTALLED));
         }
-        let mut child = crate::process::no_window(&mut Command::new(path))
-            .arg(&self.model_dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|cause| {
-                self.log(
-                    Level::Error,
-                    &format!("Voice helper did not start: {cause}"),
-                );
-                CoreError::new(UNAVAILABLE)
-            })?;
+        let mut child = crate::process::spawn(
+            Command::new(path)
+                .arg(&self.model_dir)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .kill_on_drop(true),
+        )
+        .map_err(|cause| {
+            self.log(
+                Level::Error,
+                &format!("Voice helper did not start: {cause}"),
+            );
+            CoreError::new(UNAVAILABLE)
+        })?;
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             return Err(CoreError::new(UNAVAILABLE));
         };

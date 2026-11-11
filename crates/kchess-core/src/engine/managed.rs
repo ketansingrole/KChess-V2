@@ -15,16 +15,16 @@ use std::future::Future;
 use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex as AsyncMutex, watch};
 
+use super::uci::{EngineHub, UciController};
 use crate::archive::{self, Member, hex};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
@@ -114,7 +114,6 @@ const EXTRACT_TIMEOUT: Duration = Duration::from_secs(60);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long the handoff may take to stop the engine owners before the install gives up.
 pub const DEFAULT_EXIT_DEADLINE: Duration = Duration::from_secs(4);
-const PROBE_OUTPUT_LIMIT: usize = 1_000_000;
 const VERSION_FILE: &str = "VERSION";
 
 const EXIT_TIMEOUT_MESSAGE: &str = "Stockfish did not exit. The previous engine was retained.";
@@ -911,91 +910,20 @@ fn find_binary(root: &Path) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-/// Run the candidate executable and require a `uciok` line within the probe deadline.
+/// Runs the candidate executable through the UCI handshake within the probe deadline. The probe
+/// has a registry of its own: the core's refuses new engines while the executable is replaced.
 async fn probe_engine(path: &Path) -> Result<()> {
-    match tokio::time::timeout(PROBE_TIMEOUT, run_probe(path)).await {
-        Ok(result) => result,
-        Err(_) => Err(CoreError::new(COULD_NOT_START)),
+    struct Quiet;
+    impl Host for Quiet {
+        fn log(&self, _: Level, _: &str, _: &str) {}
+        fn emit(&self, _: &str, _: serde_json::Value) {}
     }
-}
-
-/// Start the staged executable. On Linux, a process forked elsewhere in this process while the
-/// file was still open for writing keeps that write descriptor until it execs, and `execve`
-/// fails with `ETXTBSY` meanwhile; the window is brief, so busy spawns are retried (the probe
-/// deadline still bounds the whole probe).
-async fn spawn_probe(path: &Path) -> Result<tokio::process::Child> {
-    let mut delay = Duration::from_millis(5);
-    loop {
-        let spawned = crate::process::no_window(&mut tokio::process::Command::new(path))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn();
-        match spawned {
-            Ok(child) => return Ok(child),
-            Err(cause) if cause.kind() == io::ErrorKind::ExecutableFileBusy => {
-                tokio::time::sleep(delay).await;
-                delay = (delay * 2).min(Duration::from_millis(200));
-            }
-            Err(_) => return Err(CoreError::new(COULD_NOT_START)),
-        }
-    }
-}
-
-async fn run_probe(path: &Path) -> Result<()> {
-    let mut child = spawn_probe(path).await?;
-    if let Some(mut stdin) = child.stdin.take() {
-        // A broken build can exit before reading: the write then fails, and the exit below
-        // reports the probe as failed.
-        let _ = stdin.write_all(b"uci\n").await;
-    }
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| CoreError::new(COULD_NOT_START))?;
-    let mut output = String::new();
-    let mut scanned = 0_usize;
-    let mut verified = false;
-    let mut buffer = [0_u8; 8192];
-    let mut outcome = Ok(());
-    while let Ok(read) = stdout.read(&mut buffer).await {
-        if read == 0 {
-            // The end of output is the end of a last line without a newline.
-            verified = is_uciok(&output[scanned..]);
-            break;
-        }
-        output.push_str(&String::from_utf8_lossy(&buffer[..read]));
-        let mut start = scanned;
-        while let Some(offset) = output[start..].find('\n') {
-            if is_uciok(&output[start..start + offset]) {
-                verified = true;
-                break;
-            }
-            start += offset + 1;
-        }
-        scanned = start;
-        if verified || is_uciok(&output[scanned..]) {
-            verified = true;
-            break;
-        }
-        if output.len() > PROBE_OUTPUT_LIMIT {
-            outcome = Err(CoreError::new("Invalid Stockfish output."));
-            break;
-        }
-    }
-    let _ = child.start_kill();
-    let _ = child.wait().await;
-    if verified {
-        return Ok(());
-    }
-    outcome.and(Err(CoreError::new(COULD_NOT_START)))
-}
-
-/// `/^uciok\s*$/` on one line.
-fn is_uciok(line: &str) -> bool {
-    line.strip_prefix("uciok")
-        .is_some_and(|rest| rest.trim().is_empty())
+    let hub = EngineHub::new(Arc::new(Quiet));
+    let engine = UciController::start(&hub, tokio::process::Command::new(path), PROBE_TIMEOUT)
+        .map_err(|_| CoreError::new(COULD_NOT_START))?;
+    let ready = engine.ready().await;
+    engine.close();
+    ready.map_err(|_| CoreError::new(COULD_NOT_START))
 }
 
 fn io_error(context: &str, cause: io::Error) -> CoreError {

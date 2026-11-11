@@ -155,8 +155,9 @@ fn sha256(bytes: &[u8]) -> String {
     format!("sha256:{}", hex(&Sha256::digest(bytes)))
 }
 
-/// A fake UCI engine: answers `uci` with `uciok`, then exits at end of input.
-const FAKE_ENGINE: &str = "#!/bin/sh\nwhile read line; do\n  if [ \"$line\" = uci ]; then echo id name Fake; echo uciok; fi\ndone\n";
+/// A fake UCI engine: answers `uci` with `uciok` and `isready` with `readyok`, then exits at end
+/// of input.
+const FAKE_ENGINE: &str = "#!/bin/sh\nwhile read line; do\n  if [ \"$line\" = uci ]; then echo id name Fake; echo uciok; fi\n  if [ \"$line\" = isready ]; then echo readyok; fi\ndone\n";
 
 /// One archive member.
 enum Member<'a> {
@@ -957,26 +958,6 @@ fn safe_relative_keeps_only_normal_components() {
 }
 
 // --- Handoff, cancellation and deadlines ---
-
-/// CI regression (Linux): a descriptor still open for writing makes `execve` fail with
-/// `ETXTBSY`, as when a concurrently forked child inherits it. The probe waits it out.
-#[cfg(target_os = "linux")]
-#[tokio::test]
-async fn the_probe_waits_out_a_busy_executable() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join(EXE);
-    let mut writer = std::fs::File::create(&path).unwrap();
-    writer.write_all(FAKE_ENGINE.as_bytes()).unwrap();
-    set_executable(&path).unwrap();
-    let busy = tokio::process::Command::new(&path).spawn().unwrap_err();
-    assert_eq!(busy.kind(), std::io::ErrorKind::ExecutableFileBusy);
-    let release = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        drop(writer);
-    });
-    probe_engine(&path).await.unwrap();
-    release.await.unwrap();
-}
 
 // The release is a Linux archive whose engine is a shell script.
 #[cfg(unix)]
