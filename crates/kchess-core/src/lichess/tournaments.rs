@@ -878,12 +878,7 @@ pub async fn tournament(
     account: &str,
     page: u32,
 ) -> CoreResult<TournamentDetail> {
-    let mut auth = lichess.client().counted(account, UsageKind::Tournament);
-    if !account.is_empty()
-        && let Ok(Some(token)) = lichess.stored_login(account).await
-    {
-        auth = auth.with_token(token);
-    }
+    let auth = lichess.optional_login(account, UsageKind::Tournament).await;
     if system == ARENA {
         arena_detail(lichess, id, page, &auth).await
     } else {

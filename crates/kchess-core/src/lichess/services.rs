@@ -132,8 +132,8 @@ impl Services {
         &self.spectator
     }
 
-    /// Cancels the requests and streams in flight: Lichess calls, the usage counters' pending
-    /// writes are kept for the core to flush. Called when the core closes.
+    /// Cancels the Lichess requests and streams in flight when the core closes. The usage still
+    /// pending is kept for the core to flush.
     pub fn abort(&self) {
         self.lifetime.cancel();
     }
@@ -152,14 +152,6 @@ impl Services {
     pub fn reset(&self) {
         self.cloud.clear();
         self.lichess.reset();
-    }
-
-    /// Cancels the running services and drops the usage still pending (`closeUsage`).
-    pub async fn close(&self) {
-        self.online.close();
-        self.spectator.stop();
-        self.lifetime.cancel();
-        self.usage.close();
     }
 
     /// Forgets the usage of accounts that were signed out (`forgetUsage`): traffic still in flight

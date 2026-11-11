@@ -151,11 +151,6 @@ impl OnlineSession {
         }))
     }
 
-    /// `account`'s login for play, or the error asking to reconnect it.
-    async fn required_login(&self, account: &str) -> CoreResult<Auth> {
-        self.inner.lichess.signed_in(account, UsageKind::Play).await
-    }
-
     fn next_handle(&self, st: &mut State) -> Handle {
         st.next_handle += 1;
         Handle {

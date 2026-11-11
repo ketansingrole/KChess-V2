@@ -432,6 +432,31 @@ impl Lichess {
         })
     }
 
+    /// `account`'s requests counted as `kind`, with its login when it has one. Without a login,
+    /// or with one the store cannot read (logged), they go anonymously.
+    pub async fn optional_login(&self, account: &str, kind: UsageKind) -> Auth {
+        let auth = self.client.counted(account, kind);
+        if account.is_empty() {
+            return auth;
+        }
+        match self.stored_login(account).await {
+            Ok(Some(token)) => auth.with_token(token),
+            _ => auth,
+        }
+    }
+
+    /// The signed-in accounts, in the stored order.
+    pub async fn connected_accounts(&self) -> CoreResult<Vec<String>> {
+        Ok(self
+            .store
+            .accounts()
+            .await?
+            .into_iter()
+            .filter(|row| row.connected)
+            .map(|row| row.username)
+            .collect())
+    }
+
     /// A caller without a login, counted as `kind` against nobody.
     pub fn anonymous(&self, kind: UsageKind) -> Auth {
         self.client.anonymous(kind)
@@ -453,12 +478,8 @@ impl Lichess {
     pub async fn revoke_logins(&self, accounts: Option<&[String]>) {
         let names: Vec<String> = match accounts {
             Some(names) => names.to_vec(),
-            None => match self.store.accounts().await {
-                Ok(rows) => rows
-                    .into_iter()
-                    .filter(|row| row.connected)
-                    .map(|row| row.username)
-                    .collect(),
+            None => match self.connected_accounts().await {
+                Ok(names) => names,
                 Err(cause) => {
                     self.host.log(
                         Level::Warn,
@@ -599,12 +620,8 @@ impl Lichess {
         Fut: Future<Output = CoreResult<T>>,
     {
         let anonymous = self.client.counted(account.unwrap_or(""), kind);
-        let connected: Vec<String> = match self.store.accounts().await {
-            Ok(rows) => rows
-                .into_iter()
-                .filter(|row| row.connected)
-                .map(|row| row.username)
-                .collect(),
+        let connected = match self.connected_accounts().await {
+            Ok(names) => names,
             Err(cause) => {
                 self.host.log(
                     Level::Debug,

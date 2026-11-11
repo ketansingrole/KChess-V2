@@ -177,7 +177,10 @@ impl OnlineSession {
             }
             st.current_account.clone()
         };
-        self.required_login(&account).await
+        self.inner
+            .lichess
+            .signed_in(&account, UsageKind::Play)
+            .await
     }
 
     /// Sends a game action (a move, a resignation…) as `auth`, ahead of background requests.
@@ -222,7 +225,11 @@ impl OnlineSession {
         uci: &str,
     ) -> CoreResult<()> {
         let _sending = MoveInFlight::claim(self)?;
-        let auth = self.required_login(account).await?;
+        let auth = self
+            .inner
+            .lichess
+            .signed_in(account, UsageKind::Play)
+            .await?;
         let playing: Value = self
             .inner
             .lichess
@@ -329,12 +336,11 @@ impl OnlineSession {
 
     async fn fetch_presence(&self, ids: &[String], account: &str) -> CoreResult<PresenceReport> {
         let client = self.inner.lichess.client();
-        let mut auth = client.counted(account, UsageKind::Presence);
-        if !account.is_empty()
-            && let Some(token) = self.inner.lichess.stored_login(account).await?
-        {
-            auth = auth.with_token(token);
-        }
+        let auth = self
+            .inner
+            .lichess
+            .optional_login(account, UsageKind::Presence)
+            .await;
         let started = Instant::now();
         let query = [
             ("ids", ids.join(",")),
