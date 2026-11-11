@@ -35,7 +35,14 @@ pub use kchess_domain::links::{
     BroadcastLink, GameLink, broadcast_link, game_link, is_username, pgn_orientation, profile_link,
     study_link,
 };
-pub use kchess_games::{computer, draw_color, local, random_chess960, random_unit, whole};
+pub use kchess_games::{computer, draw_color, local, random_chess960, random_unit};
+
+/// A random draw, or none when the system had no randomness to give, which is logged: the
+/// caller then leaves things as they are.
+pub fn drawn<T>(draw: Result<T, String>) -> Option<T> {
+    draw.map_err(|cause| crate::log::write(kchess_contracts::Level::Warn, "random", &cause))
+        .ok()
+}
 
 /// A `{ variant, fen }` setup's UCI moves as PGN, as far as they are legal, after `headers` (a
 /// JSON object of strings). `None` when the setup is not a legal one or a header is not one.

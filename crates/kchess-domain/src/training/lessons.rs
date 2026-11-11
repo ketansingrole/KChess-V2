@@ -167,14 +167,6 @@ fn chess(fen: &str) -> Result<Chess, String> {
     }
 }
 
-fn color_name(color: Color) -> &'static str {
-    if color == Color::White {
-        "white"
-    } else {
-        "black"
-    }
-}
-
 fn legal(pos: &Chess, uci: &str) -> Option<Move> {
     let parsed = rules::parse_uci(uci)?;
     rules::legal_move(&VariantPosition::Chess(pos.clone()), parsed)
@@ -433,8 +425,8 @@ pub fn status<S: AsRef<str>>(fen: &str, task: &Task, moves: &[S]) -> Result<Stat
         over,
         success,
         reason,
-        player: color_name(r.player),
-        turn: color_name(turn),
+        player: crate::color::name(r.player),
+        turn: crate::color::name(turn),
         fen: rules::make_fen(&VariantPosition::Chess(pos.clone())),
         check: pos.is_check(),
         played: r.played,

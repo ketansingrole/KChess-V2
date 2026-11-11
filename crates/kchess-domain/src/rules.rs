@@ -978,10 +978,6 @@ pub fn variant_of(pos: &VariantPosition) -> Variant {
     pos.variant()
 }
 
-pub fn turn_name(color: Color) -> &'static str {
-    if color.is_white() { "white" } else { "black" }
-}
-
 pub fn default_position(variant: Variant) -> VariantPosition {
     VariantPosition::new(variant)
 }

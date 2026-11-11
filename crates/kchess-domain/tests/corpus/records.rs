@@ -4,13 +4,14 @@
 use serde_json::{Value, json};
 use shakmaty::variant::VariantPosition;
 
-use kchess_domain::js;
+use super::side;
 use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use kchess_domain::records::review::Score;
 use kchess_domain::records::{
     context, games, lichess, oauth, online, ratings, review, studies, time_control,
 };
 use kchess_domain::rules;
+use kchess_domain::{color, js};
 
 use super::{Out, arg};
 
@@ -111,7 +112,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
             .and_then(Value::as_str)
             .map(|pgn| Ok(json!(studies::summarize_study(pgn))))
             .unwrap_or_else(|| Err("pgn must be a string".into())),
-        "opponent" => Ok(json!(games::opponent(str_or_empty(args, 0)))),
+        "opponent" => Ok(json!(color::name(!side(str_or_empty(args, 0))))),
         "boardResult" => setup_position(arg(args, 0)).and_then(|pos| {
             let variant = super::variant(arg(args, 1).and_then(Value::as_str).unwrap_or(""))?;
             let draw = arg(args, 2)
@@ -120,12 +121,15 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
             serde_json::to_value(games::board_result(&pos, variant, draw.as_deref()))
                 .map_err(|e| e.to_string())
         }),
-        "timeoutWinner" => setup_position(arg(args, 0))
-            .map(|pos| json!(games::timeout_winner(&pos, str_or_empty(args, 1)))),
-        "pgnResult" => Ok(json!(games::pgn_result(
+        "timeoutWinner" => setup_position(arg(args, 0)).map(|pos| {
+            json!(games::timeout_winner(&pos, side(str_or_empty(args, 1))).map(color::name))
+        }),
+        "pgnResult" => Ok(json!(games::Outcome::tag(games::Outcome::of(
             !js::falsy(arg(args, 0)),
-            arg(args, 1).and_then(Value::as_str)
-        ))),
+            arg(args, 1)
+                .and_then(Value::as_str)
+                .and_then(color::from_name)
+        )))),
         "isGameInProgress" => Ok(json!(games::is_game_in_progress(arg(args, 0)))),
         "archivedPlayerSide" => Ok(json!(games::archived_player_side(
             arg(args, 0).unwrap_or(&Value::Null)

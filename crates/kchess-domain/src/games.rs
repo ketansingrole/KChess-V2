@@ -1,6 +1,7 @@
 //! Game sessions: the computer game, the board game with clocks, the board clock and the archive
-//! identity. Each is a typed state machine: the caller holds it, calls its methods with what it
-//! asks of the host, and carries out the effects it returns, in order.
+//! identity. Each is a typed state machine: the frontend holds it, calls its methods with what it
+//! knows now (its clock, whether the engine may play), and carries out the effects it returns,
+//! in order.
 
 pub mod archive;
 pub mod computer;
@@ -8,6 +9,7 @@ pub mod local;
 pub mod otb_clock;
 
 use serde::{Deserialize, Serialize};
+use shakmaty::Color;
 use shakmaty::variant::VariantPosition;
 
 use crate::position::{self, Info};
@@ -15,22 +17,22 @@ use crate::records::games::{self as results, GameEnd};
 use crate::replay;
 use crate::rules;
 
+pub use crate::records::games::Outcome;
 pub use crate::rules::INITIAL_FEN;
+pub use crate::variant::Setup;
 
-/// What a board game asks its host at the moment it needs it.
-pub trait Host {
-    /// The host's clock in milliseconds.
-    fn now(&mut self) -> f64;
-    /// Engine assistance is allowed now.
-    fn allowed(&mut self) -> bool;
-    /// The engine is ready to search.
-    fn ready(&mut self) -> bool;
-}
-
-/// What a session answers for a setup that is not a legal position.
 pub const ILLEGAL_SETUP: &str = "the setup is not a legal position";
 
-pub use crate::variant::Setup;
+/// What the frontend knows when it calls a game.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Host {
+    /// Monotonic milliseconds.
+    pub now: f64,
+    /// Assistance is allowed: the engine may play.
+    pub allowed: bool,
+    /// The engine is ready.
+    pub ready: bool,
+}
 
 /// A clock for one side: minutes and the increment in seconds.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -40,12 +42,17 @@ pub struct Clock {
 }
 
 impl Clock {
-    /// A clock a game may start with: what a saved session keeps (0 to 180 minutes and
-    /// seconds). `1e306` minutes made the times infinite, which are stored as `null` and failed
-    /// every later move, so the game could only be reset.
-    pub fn checked(self) -> Result<Clock, String> {
+    /// Whether a saved session may keep it: 0 to 180 minutes and seconds.
+    pub fn fits(self) -> bool {
         let fits = |value: f64| (0.0..=180.0).contains(&value);
-        if fits(self.minutes) && fits(self.increment) {
+        fits(self.minutes) && fits(self.increment)
+    }
+
+    /// A clock a game may start with: what a saved session keeps. `1e306` minutes made the times
+    /// infinite, which are stored as `null` and failed every later move, so the game could only
+    /// be reset.
+    pub fn checked(self) -> Result<Clock, String> {
+        if self.fits() {
             Ok(self)
         } else {
             Err("A clock is 0 to 180 minutes with an increment of 0 to 180 seconds.".into())
@@ -61,19 +68,17 @@ pub struct Times {
 }
 
 impl Times {
-    pub fn get(&self, color: &str) -> f64 {
-        if color == "white" {
-            self.white
-        } else {
-            self.black
+    pub fn get(&self, color: Color) -> f64 {
+        match color {
+            Color::White => self.white,
+            Color::Black => self.black,
         }
     }
 
-    pub fn set(&mut self, color: &str, value: f64) {
-        if color == "white" {
-            self.white = value;
-        } else {
-            self.black = value;
+    pub fn set(&mut self, color: Color, value: f64) {
+        match color {
+            Color::White => self.white = value,
+            Color::Black => self.black = value,
         }
     }
 }
@@ -128,8 +133,8 @@ impl Board {
     }
 
     /// The side to move.
-    pub fn turn(&self) -> &'static str {
-        self.info.turn
+    pub fn turn(&self) -> Color {
+        shakmaty::Position::turn(&self.position)
     }
 
     /// The repetition or fifty-move draw reached, if any.
@@ -143,16 +148,12 @@ impl Board {
     }
 
     /// The winner the position itself names, if any.
-    pub fn outcome_winner(&self) -> Option<&str> {
-        self.info
-            .outcome
-            .as_ref()
-            .and_then(|outcome| outcome.get("winner"))
-            .and_then(serde_json::Value::as_str)
+    pub fn outcome_winner(&self) -> Option<Color> {
+        self.end.as_ref().and_then(|end| end.winner)
     }
 
     /// Who wins when `flagged` runs out of time here: the other side, unless it cannot mate.
-    pub fn timeout_winner(&self, flagged: &str) -> Option<&'static str> {
+    pub fn timeout_winner(&self, flagged: Color) -> Option<Color> {
         results::timeout_winner(&self.position, flagged)
     }
 
@@ -169,26 +170,24 @@ impl Board {
     }
 
     /// The side to move after the first `count` moves.
-    pub fn turn_after(&self, count: usize) -> &'static str {
+    pub fn turn_after(&self, count: usize) -> Color {
         let moves = &self.moves[..count.min(self.moves.len())];
-        match replay::replay_setup_turn(self.setup.variant, &self.setup.fen, moves) {
-            Some((_, shakmaty::Color::Black)) => "black",
-            _ => "white",
-        }
+        replay::replay_setup_turn(self.setup.variant, &self.setup.fen, moves)
+            .map_or(Color::White, |(_, turn)| turn)
     }
 }
 
 /// The clock both board games share: each side's time, charged to the side to move while the
 /// game says its clock runs, from `turn_started` on the host's clock.
-pub(crate) struct Clocking<'a> {
+pub(crate) struct Clocking {
     pub times: Option<Times>,
     pub turn_started: f64,
     pub running: bool,
-    pub turn: &'a str,
+    pub turn: Color,
 }
 
-impl Clocking<'_> {
-    pub fn remaining(&self, color: &str, at: f64) -> f64 {
+impl Clocking {
+    pub fn remaining(&self, color: Color, at: f64) -> f64 {
         let left = self.times.map_or(0.0, |times| times.get(color));
         if self.running && self.turn == color {
             (left - (at - self.turn_started)).max(0.0)
@@ -200,18 +199,18 @@ impl Clocking<'_> {
     /// Both sides' time at `at`: what a clock keeps when it stops.
     pub fn times_at(&self, at: f64) -> Times {
         Times {
-            white: self.remaining("white", at),
-            black: self.remaining("black", at),
+            white: self.remaining(Color::White, at),
+            black: self.remaining(Color::Black, at),
         }
     }
 
     /// The side to move, when its time has run out at `at` on a running clock.
-    pub fn out_of_time(&self, at: f64) -> Option<&str> {
+    pub fn out_of_time(&self, at: f64) -> Option<Color> {
         (self.running && self.remaining(self.turn, at) <= 0.0).then_some(self.turn)
     }
 
     /// The clock once `mover` moves at `at` and gains `increment` milliseconds; none without one.
-    pub fn charged(&self, mover: &str, at: f64, increment: f64) -> Option<Times> {
+    pub fn charged(&self, mover: Color, at: f64, increment: f64) -> Option<Times> {
         let mut times = self.times?;
         let spent = if self.running {
             at - self.turn_started
@@ -234,12 +233,25 @@ mod tests {
     fn an_illegal_setup_is_refused() {
         let illegal = Setup {
             variant: crate::variant::Variant::Standard,
-
             fen: "8/8/8/8/8/8/8/8 w - - 0 1".into(),
         };
         assert_eq!(Board::new(illegal, Vec::new()).unwrap_err(), ILLEGAL_SETUP);
         let board = Board::new(Setup::standard(), vec!["e2e4".into()]).unwrap();
-        assert_eq!(board.turn(), "black");
-        assert_eq!(board.turn_after(0), "white");
+        assert_eq!(board.turn(), Color::Black);
+        assert_eq!(board.turn_after(0), Color::White);
+    }
+
+    #[test]
+    fn outcomes_read_and_write_as_pgn_tags() {
+        for outcome in [
+            None,
+            Some(Outcome::Wins(Color::White)),
+            Some(Outcome::Wins(Color::Black)),
+            Some(Outcome::Draw),
+        ] {
+            assert_eq!(Outcome::from_tag(Outcome::tag(outcome)), outcome);
+        }
+        assert_eq!(Outcome::tag(Outcome::of(true, None)), "1/2-1/2");
+        assert_eq!(Outcome::tag(Outcome::of(false, Some(Color::White))), "*");
     }
 }

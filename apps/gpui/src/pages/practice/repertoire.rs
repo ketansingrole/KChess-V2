@@ -231,14 +231,6 @@ fn turn_of(fen: &str) -> Color {
     }
 }
 
-fn color_name(color: Color) -> &'static str {
-    if color == Color::White {
-        "white"
-    } else {
-        "black"
-    }
-}
-
 /// The repertoire trainer's actions, as its buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum RepertoireAction {
@@ -457,7 +449,7 @@ impl Repertoire {
 
     /// Where missed moves are counted: by study (or opening) and side.
     fn miss_key(&self, cx: &App) -> String {
-        let color = color_name(Self::color(cx));
+        let color = kchess_domain::color::name(Self::color(cx));
         match Self::opening(cx).filter(|_| Self::drills_opening(cx)) {
             Some(opening) => format!(
                 "opening:{}:{color}",
@@ -478,7 +470,7 @@ impl Repertoire {
             edited,
             Self::study_id(cx),
             crate::prefs::get::<String>(cx, CHAPTER, ALL_CHAPTERS.into()),
-            color_name(Self::color(cx)),
+            kchess_domain::color::name(Self::color(cx)),
             Self::opening(cx).map(|opening| json!(opening)),
         ])
     }
@@ -489,7 +481,7 @@ impl Repertoire {
         if Self::drills_opening(cx) {
             let wanted = json!([
                 Self::opening(cx).map(|o| json!(o)),
-                color_name(Self::color(cx))
+                kchess_domain::color::name(Self::color(cx))
             ]);
             if self.drill_for.as_ref() != Some(&wanted) {
                 self.drill_for = Some(wanted);
@@ -682,7 +674,9 @@ impl Repertoire {
             None => {
                 let table = self.misses[self.miss_key(cx)].clone();
                 let roots: Vec<&TreeNode> = self.roots.iter().collect();
-                pick_weak(&roots, &table, random_unit()).map(|index| (index, String::new()))
+                crate::game::drawn(random_unit())
+                    .and_then(|draw| pick_weak(&roots, &table, draw))
+                    .map(|index| (index, String::new()))
             }
         };
         if self.at.is_some() {
@@ -716,7 +710,10 @@ impl Repertoire {
                 .position(|child| leads_to(&child_path(&path, &child.uci), target))
         });
         let Some(next) = on_target
-            .or_else(|| pick_weak(&children, &table, random_unit()))
+            .or_else(|| {
+                crate::game::drawn(random_unit())
+                    .and_then(|draw| pick_weak(&children, &table, draw))
+            })
             .map(|index| children[index])
         else {
             return self.finish_line(cx);

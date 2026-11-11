@@ -58,7 +58,10 @@ enum Stage {
 pub fn random_square(previous: Option<&str>, allowed: Option<&[String]>) -> String {
     let mut draws: Vec<f64> = Vec::new();
     loop {
-        draws.push(random_unit());
+        let Some(draw) = crate::game::drawn(random_unit()) else {
+            return "e4".into();
+        };
+        draws.push(draw);
         if let Some(square) = kchess_domain::voice::random_square(previous, &draws, allowed) {
             return square;
         }
@@ -270,7 +273,9 @@ impl Coordinates {
         self.run_epoch += 1;
         self.question = 0;
         self.voice.feedback = None;
-        self.orientation = crate::game::draw_color(self.side);
+        if let Some(orientation) = crate::game::drawn(crate::game::draw_color(self.side)) {
+            self.orientation = orientation;
+        }
         self.score = 0;
         self.mistakes = 0;
         self.pending_file = None;

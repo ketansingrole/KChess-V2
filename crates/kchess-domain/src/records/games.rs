@@ -4,8 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use shakmaty::Position;
 use shakmaty::variant::VariantPosition;
+use shakmaty::{Color, Position};
 use std::collections::HashMap;
 
 use crate::js;
@@ -16,14 +16,47 @@ use crate::{position, replay, rules};
 /// How a game ended: the winner, none for a draw, and why.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GameEnd {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub winner: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::color::option_by_name"
+    )]
+    pub winner: Option<Color>,
     pub reason: String,
 }
 
-/// The other colour: anything but white is black's opponent.
-pub fn opponent(color: &str) -> &'static str {
-    if color == "white" { "black" } else { "white" }
+/// A finished game's result: a side won, or it was drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Wins(Color),
+    Draw,
+}
+
+impl Outcome {
+    /// The result of a game that is `over`, with `winner` (none for a draw).
+    pub fn of(over: bool, winner: Option<Color>) -> Option<Outcome> {
+        over.then(|| winner.map_or(Outcome::Draw, Outcome::Wins))
+    }
+
+    /// The PGN `Result` tag; `*` while the game goes on.
+    pub fn tag(outcome: Option<Outcome>) -> &'static str {
+        match outcome {
+            None => "*",
+            Some(Outcome::Wins(Color::White)) => "1-0",
+            Some(Outcome::Wins(Color::Black)) => "0-1",
+            Some(Outcome::Draw) => "1/2-1/2",
+        }
+    }
+
+    /// A PGN `Result` tag's outcome; none for `*` or anything else.
+    pub fn from_tag(tag: &str) -> Option<Outcome> {
+        match tag {
+            "1-0" => Some(Outcome::Wins(Color::White)),
+            "0-1" => Some(Outcome::Wins(Color::Black)),
+            "1/2-1/2" => Some(Outcome::Draw),
+            _ => None,
+        }
+    }
 }
 
 /// How the position ended the game, or the draw already found by repetition or the fifty-move
@@ -48,7 +81,7 @@ pub fn board_result(
             winner: outcome
                 .get("winner")
                 .and_then(Value::as_str)
-                .map(str::to_string),
+                .and_then(crate::color::from_name),
             reason: reason.to_string(),
         });
     }
@@ -59,27 +92,9 @@ pub fn board_result(
 }
 
 /// Who wins when `flagged` runs out of time: the other side, unless it cannot possibly mate.
-pub fn timeout_winner(pos: &VariantPosition, flagged: &str) -> Option<&'static str> {
-    let winner = opponent(flagged);
-    let facts = position::info(pos);
-    let cannot_win = if winner == "white" {
-        facts.cannot_win.white
-    } else {
-        facts.cannot_win.black
-    };
-    (!cannot_win).then_some(winner)
-}
-
-/// The PGN result token.
-pub fn pgn_result(over: bool, winner: Option<&str>) -> &'static str {
-    if !over {
-        return "*";
-    }
-    match winner {
-        Some("white") => "1-0",
-        Some("black") => "0-1",
-        _ => "1/2-1/2",
-    }
+pub fn timeout_winner(pos: &VariantPosition, flagged: Color) -> Option<Color> {
+    let winner = !flagged;
+    (!pos.has_insufficient_material(winner)).then_some(winner)
 }
 
 fn ended(pos: &VariantPosition) -> bool {

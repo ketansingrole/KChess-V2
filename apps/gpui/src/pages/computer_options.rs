@@ -358,7 +358,9 @@ impl GameOptions {
     }
 
     fn randomize(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let n = crate::game::random_chess960();
+        let Some(n) = crate::game::drawn(crate::game::random_chess960()) else {
+            return;
+        };
         self.number
             .update(cx, |input, cx| input.set_value(n.to_string(), window, cx));
         self.refresh_preview(cx);

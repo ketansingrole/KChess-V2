@@ -1,9 +1,10 @@
-//! A game's place in Game history as every frontend keeps it: the archive rules decide
-//! (`archive.rs`), and the frontend carries out the writes they ask for, in order.
+//! A game's place in Game history as every frontend keeps it: the archive rules
+//! (`kchess_domain::games::archive`) decide when the game is saved, replaced or dropped, and the
+//! frontend carries out the writes they ask for, in order.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use crate::archive::{Effect, GameArchive, Host};
+use kchess_domain::games::archive::{Effect, Host, Identity, State};
 
 /// A write to the profile's library a Game history place asks for.
 #[derive(Clone, Debug, PartialEq)]
@@ -19,8 +20,42 @@ pub enum Write {
 /// The place in Game history of a `kind` game (`computer`, `board`, `clock`).
 pub struct HistoryPlace {
     kind: &'static str,
-    archive: Option<GameArchive>,
+    archive: Option<State>,
     saved_identity: Value,
+}
+
+/// What the archive is told of the game now.
+fn host<'a>(source: &'a Value, has_play: bool, games: &'a [Value]) -> Host<'a> {
+    Host {
+        has_play,
+        source,
+        games,
+        now: crate::now_ms(),
+        new_id: new_id(),
+    }
+}
+
+/// A random version-4 UUID.
+fn new_id() -> String {
+    let mut bytes = [0u8; 16];
+    if getrandom::fill(&mut bytes).is_err() {
+        // A clock-based id is still unique enough for one profile's history.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        bytes = nanos.to_le_bytes();
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
 }
 
 /// The session a `kind` game's identity is kept as.
@@ -45,19 +80,14 @@ impl HistoryPlace {
             archive: None,
             saved_identity: identity.clone(),
         };
-        let mut host = Host {
-            source,
-            has_play,
-            games,
-            now: crate::now_ms(),
-        };
-        let started = GameArchive::new(
-            (!identity.is_null()).then_some(&identity),
-            resume,
-            &mut host,
-        );
-        let writes = match started {
-            Ok((archive, effects)) => {
+        let kept = (!identity.is_null())
+            .then(|| serde_json::from_value::<Identity>(identity))
+            .transpose();
+        let writes = match kept {
+            Ok(kept) => {
+                let host = host(&source, has_play, games);
+                let mut archive = State::new(kept, &host);
+                let effects = archive.init(resume, &host);
                 place.archive = Some(archive);
                 Ok(place.writes(effects))
             }
@@ -76,7 +106,7 @@ impl HistoryPlace {
     ) -> Vec<Write> {
         self.run(
             |archive, host| archive.save(finished, host),
-            source,
+            &source,
             has_play,
             games,
         )
@@ -84,26 +114,25 @@ impl HistoryPlace {
 
     /// A new game begins: the one before keeps its place and this one gets its own.
     pub fn reset(&mut self, source: Value, has_play: bool, games: &[Value]) -> Vec<Write> {
-        self.run(|archive, host| archive.reset(host), source, has_play, games)
+        self.run(
+            |archive, host| archive.reset(host),
+            &source,
+            has_play,
+            games,
+        )
     }
 
     fn run(
         &mut self,
-        step: impl FnOnce(&mut GameArchive, &mut Host<'_>) -> Vec<Effect>,
-        source: Value,
+        step: impl FnOnce(&mut State, &Host<'_>) -> Vec<Effect>,
+        source: &Value,
         has_play: bool,
         games: &[Value],
     ) -> Vec<Write> {
         let Some(archive) = self.archive.as_mut() else {
             return Vec::new();
         };
-        let mut host = Host {
-            source,
-            has_play,
-            games,
-            now: crate::now_ms(),
-        };
-        let effects = step(archive, &mut host);
+        let effects = step(archive, &host(source, has_play, games));
         self.writes(effects)
     }
 
@@ -116,7 +145,7 @@ impl HistoryPlace {
                 Effect::Remove(id) => Write::RemoveGame(id),
             })
             .collect();
-        if let Some(identity) = self.archive.as_ref().map(GameArchive::identity)
+        if let Some(identity) = self.archive.as_ref().map(|archive| json!(archive.identity))
             && identity != self.saved_identity
         {
             self.saved_identity = identity.clone();
@@ -146,19 +175,46 @@ pub fn apply_to(games: &mut Vec<Value>, writes: &[Write]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+
+    #[test]
+    fn ids_are_version_4_uuids() {
+        let ids: Vec<String> = (0..64).map(|_| new_id()).collect();
+        for id in &ids {
+            let chars: Vec<char> = id.chars().collect();
+            assert_eq!(chars.len(), 36, "{id}");
+            assert_eq!(chars[14], '4', "{id}");
+            assert!("89ab".contains(chars[19]), "{id}");
+        }
+        assert!(
+            ids.iter()
+                .any(|id| id.as_bytes()[15] != ids[0].as_bytes()[15])
+        );
+    }
+
+    /// Restored after a restart, a game whose only move is taken back leaves no entry behind.
+    #[test]
+    fn a_resumed_game_taken_back_to_its_start_leaves_no_entry() {
+        let identity = json!({ "id": "resumed-game", "startedAt": 1.0e12 });
+        let saved = vec![json!({ "id": "resumed-game", "moves": ["e2e4"], "result": "*" })];
+        let source = json!({ "moves": [], "result": "*" });
+        let (mut place, writes) =
+            HistoryPlace::new("computer", identity, true, source.clone(), false, &saved);
+        assert_eq!(writes, Ok(Vec::new()));
+        let writes = place.save(false, source, false, &saved);
+        assert_eq!(writes, vec![Write::RemoveGame("resumed-game".into())]);
+    }
 
     /// A new place keeps its identity once; a game with a move is saved under it, and the
     /// identity is not written again until a new game gets its own.
     #[test]
     fn the_identity_is_written_only_when_it_changes() {
         let mut games = Vec::new();
-        let mut game = crate::local::LocalGame::new(None, 0.).unwrap();
+        let mut game = crate::local::LocalGame::resume(None, 0.).unwrap();
         let (mut place, writes) = HistoryPlace::new(
             "board",
             Value::Null,
             true,
-            game.archive_snapshot(),
+            json!(game.archive_snapshot()),
             false,
             &games,
         );
@@ -168,7 +224,7 @@ mod tests {
         };
         assert_eq!(kind, "archive:board");
         game.play("e2e4", 1.);
-        let source = game.archive_snapshot();
+        let source = json!(game.archive_snapshot());
         let writes = place.save(false, source.clone(), true, &games);
         assert!(
             matches!(writes.first(), Some(Write::SaveGame(game)) if game["id"] == identity["id"]),

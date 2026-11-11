@@ -121,7 +121,7 @@ fn end_of(pos: &VariantPosition) -> Option<&'static str> {
 fn describe(pos: &VariantPosition) -> ReplayedPosition {
     ReplayedPosition {
         fen: rules::make_fen(pos),
-        turn: rules::turn_name(pos.turn()),
+        turn: crate::color::name(pos.turn()),
         end: end_of(pos),
     }
 }

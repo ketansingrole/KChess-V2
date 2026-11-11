@@ -50,10 +50,6 @@ fn outcome(pos: &VariantPosition, no_moves: bool) -> Option<Option<Color>> {
     }
 }
 
-fn color_name(color: Color) -> &'static str {
-    rules::turn_name(color)
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Info {
@@ -92,7 +88,7 @@ pub fn info(pos: &VariantPosition) -> Info {
     let check = pos.is_check();
     Info {
         fen: rules::make_fen(pos),
-        turn: color_name(pos.turn()),
+        turn: crate::color::name(pos.turn()),
         check,
         checkmate: !ended && check && no_moves,
         stalemate: !ended && !check && no_moves,
@@ -104,7 +100,7 @@ pub fn info(pos: &VariantPosition) -> Info {
         variant_end: ended,
         end: ended || pos.is_insufficient_material() || no_moves,
         outcome: outcome(pos, no_moves).map(|winner| match winner {
-            Some(color) => json!({ "winner": color_name(color) }),
+            Some(color) => json!({ "winner": crate::color::name(color) }),
             None => json!({}),
         }),
         halfmoves: pos.halfmoves(),
@@ -343,7 +339,7 @@ pub fn fen_setup(fen: &str) -> Option<BoardSetup> {
     let board = written.split(' ').next().unwrap_or_default().to_string();
     Some(BoardSetup {
         board,
-        turn: color_name(setup.turn),
+        turn: crate::color::name(setup.turn),
     })
 }
 
@@ -525,7 +521,7 @@ pub fn pgn_mainline(text: &str, limit: usize) -> Option<Mainline> {
         let Some(m) = rules::parse_san(&pos, data.san.as_str()) else {
             break;
         };
-        let mover = color_name(pos.turn());
+        let mover = crate::color::name(pos.turn());
         let uci = rules::make_uci(&m);
         pos.play_unchecked(m);
         let clock = data

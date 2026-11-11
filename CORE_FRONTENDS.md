@@ -27,7 +27,8 @@ as `kchess-cli --embedded` does; only one core may hold a profile at a time (`pr
 
 ## Game sessions
 
-`kchess_games::computer::ComputerGame`, `local::LocalGame` and `archive::GameArchive` run the
-domain's transitions: the frontend answers their reads (the clock, whether engine help is
-allowed) and carries out their effects (searches, sounds, saving the session and its Game history
-entry). The app and the CLI share them, so a game started in one carries on in the other.
+`kchess_games::computer::ComputerGame` and `local::LocalGame` are the domain's typed sessions,
+and `history::HistoryPlace` keeps a game's place in Game history: the frontend calls them with
+what it knows (the clock, whether engine help is allowed) and carries out their effects (searches,
+sounds, saving the session and its Game history entry). The app and the CLI share them, so a game
+started in one carries on in the other.

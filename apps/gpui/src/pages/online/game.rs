@@ -29,14 +29,6 @@ pub fn can_play(online: &OnlineState) -> bool {
     online.phase == Phase::Playing && online.view_ply.is_none()
 }
 
-fn color_name(color: Color) -> &'static str {
-    if color == Color::White {
-        "white"
-    } else {
-        "black"
-    }
-}
-
 fn action(name: &'static str) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| crate::online::handle(cx).update(cx, |online, cx| online.action(name, cx))
 }
@@ -572,7 +564,7 @@ impl OnlinePage {
                     connection(online, mine, &palette),
                     has_clock.then(|| {
                         widgets::clock(
-                            online.clock_text(color_name(side)).into(),
+                            online.clock_text(kchess_domain::color::name(side)).into(),
                             running,
                             &palette,
                         )

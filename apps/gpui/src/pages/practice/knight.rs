@@ -48,8 +48,13 @@ use kchess_domain::voice::knight_moves;
 fn knight_challenge(min: u32, max: u32) -> (String, String, u32) {
     let mut draws: Vec<f64> = Vec::new();
     for _ in 0..64 {
-        draws.push(random_unit());
-        draws.push(random_unit());
+        let (Some(first), Some(second)) = (
+            crate::game::drawn(random_unit()),
+            crate::game::drawn(random_unit()),
+        ) else {
+            break;
+        };
+        draws.extend([first, second]);
         if let Some(found) =
             kchess_domain::voice::knight_challenge(f64::from(min), f64::from(max), &draws)
         {
