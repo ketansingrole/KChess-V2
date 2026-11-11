@@ -617,6 +617,8 @@ impl WatchPage {
         }
     }
 
+    /// The channel list as Lichess would answer it, for the end-to-end tests: the fake Lichess
+    /// leaves the list unanswered, which TV's unreachable state needs, and every test shares it.
     #[cfg(test)]
     pub(crate) fn show_channels(&mut self, channels: Vec<Value>, cx: &mut Context<Self>) {
         self.channels = channels;

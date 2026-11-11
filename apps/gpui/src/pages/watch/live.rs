@@ -1001,13 +1001,6 @@ impl WatchPage {
         }
     }
 
-    /// A game on the board as the feed would send it, for the end-to-end tests.
-    #[cfg(test)]
-    pub(crate) fn show_frame(&mut self, frame: Value, cx: &mut Context<Self>) {
-        self.live.set_frame(frame, cx);
-        cx.notify();
-    }
-
     /// `analyseTv`: the game so far on the analysis board, at the move looked at.
     fn analyse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(frame) = self.live.frame.clone() else {

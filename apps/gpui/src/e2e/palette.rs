@@ -41,6 +41,25 @@ pub(super) fn wait_until_closed(app: &mut Harness) {
     });
 }
 
+/// Run a command from Quick Pick, found by its name.
+fn run_command(app: &mut Harness, name: &str) {
+    app.press("secondary-k");
+    app.type_text(&format!(">{name}"));
+    wait_for_first(app, name);
+    app.press("enter");
+    wait_until_closed(app);
+}
+
+/// Watch a Lichess TV channel by pasting its link, and wait for its game.
+fn watch_tv(app: &mut Harness, channel: &str) {
+    app.press("secondary-k");
+    app.type_text(&format!("https://lichess.org/tv/{channel}"));
+    wait_for_first(app, "Watch this TV channel");
+    app.press("enter");
+    wait_until_closed(app);
+    app.find("watch-stop");
+}
+
 #[gpui_kit::test]
 fn quick_pick_opens_with_its_modes_and_closes_on_escape(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
@@ -570,7 +589,6 @@ fn a_game_over_the_board_is_drawn_from_quick_pick(cx: &mut gpui_kit::TestAppCont
 /// While a TV game is watched, Quick Pick offers its panel's actions, and Stop ends it.
 #[gpui_kit::test]
 fn a_watched_game_is_stopped_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::watch::WatchPage;
     let mut app = Harness::start(cx);
     app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
     let listed = |app: &mut Harness| -> Vec<String> {
@@ -590,28 +608,12 @@ fn a_watched_game_is_stopped_from_quick_pick(cx: &mut gpui_kit::TestAppContext) 
         labels
     };
     assert!(!listed(&mut app).contains(&"Stop watching".to_string()));
-    app.with_window(|_, cx| {
-        let page = crate::shell::view::<WatchPage>(cx).expect("Watch");
-        page.update(cx, |page, cx| {
-            page.show_frame(
-                serde_json::json!({
-                    "source": "tv", "channel": "atomic", "variant": "atomic", "gameId": "tv1",
-                    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-                    "white": { "name": "A" }, "black": { "name": "B" },
-                }),
-                cx,
-            )
-        });
-    });
+    watch_tv(&mut app, "atomic");
     // An Atomic game goes to the analysis board too.
     let watching = listed(&mut app);
     assert!(watching.contains(&"Flip board".to_string()), "{watching:?}");
     assert!(watching.contains(&"Analyse".to_string()), "{watching:?}");
-    app.press("secondary-k");
-    app.type_text(">Stop watching");
-    wait_for_first(&mut app, "Stop watching");
-    app.press("enter");
-    wait_until_closed(&mut app);
+    run_command(&mut app, "Stop watching");
     assert!(!listed(&mut app).contains(&"Stop watching".to_string()));
 }
 
@@ -734,25 +736,11 @@ fn a_tv_channel_is_chosen_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
 /// leaving Watch tells the Watch page it is hidden, which must not happen while it runs the action.
 #[gpui_kit::test]
 fn a_watched_game_is_analysed_from_its_button_and_quick_pick(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::watch::WatchPage;
     let mut app = Harness::start(cx);
     let watch = |app: &mut Harness| {
-        app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
-        app.with_window(|_, cx| {
-            let page = crate::shell::view::<WatchPage>(cx).expect("Watch");
-            page.update(cx, |page, cx| {
-                page.show_frame(
-                    serde_json::json!({
-                        "source": "tv", "channel": "rapid", "variant": "standard", "gameId": "tv2",
-                        "startFen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-                        "moves": ["e2e4", "c7c5"],
-                        "fen": "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
-                        "white": { "name": "A" }, "black": { "name": "B" },
-                    }),
-                    cx,
-                )
-            });
-        });
+        watch_tv(app, "rapid");
+        // Its moves so far, once Lichess's export of the game has them.
+        app.find(("move", 1usize));
     };
     watch(&mut app);
     app.click("watch-analyse");
