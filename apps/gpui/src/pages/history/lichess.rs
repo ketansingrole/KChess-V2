@@ -74,13 +74,9 @@ fn line_of(pgn: &str) -> Option<(Value, Vec<String>)> {
     let variant = crate::game::pgn_variant_key(pgn)?;
     if !crate::game::standard_rules(variant) {
         // Replayed under the variant's own rules.
-        let line = crate::game::rules("pgnMainline", &[json!(pgn)]).ok()?;
-        let start = line["start"].as_str()?;
-        let moves = line["moves"]
-            .as_array()?
-            .iter()
-            .filter_map(|entry| entry["uci"].as_str().map(str::to_string))
-            .collect();
+        let line = kchess_domain::position::pgn_mainline(pgn, usize::MAX)?;
+        let start = line.start?;
+        let moves = line.moves.into_iter().map(|entry| entry.uci).collect();
         return Some((json!({ "variant": variant, "fen": start }), moves));
     }
     let tree = TreeNode::from_pgn(pgn)?;

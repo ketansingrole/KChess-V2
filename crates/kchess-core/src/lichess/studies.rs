@@ -625,46 +625,24 @@ struct Chapter {
 
 /// `validChapters(pgn)`: the games of a PGN, each replayable from its start and with legal moves.
 fn valid_chapters(pgn: &str) -> CoreResult<Vec<Chapter>> {
-    let Some(games) = position::pgn_games(pgn).as_array().cloned() else {
-        return Err(CoreError::new("Use up to 64 valid chapters."));
-    };
+    let games = position::pgn_games(pgn);
     if games.is_empty() || games.len() > MAX_CHAPTERS {
         return Err(CoreError::new("Use up to 64 valid chapters."));
     }
     let mut chapters = Vec::with_capacity(games.len());
-    for game in &games {
-        match game.get("problem").and_then(Value::as_str) {
+    for game in games {
+        match game.problem {
             Some("start") => return Err(CoreError::new("Invalid chapter starting position.")),
             Some("move") => return Err(CoreError::new("The chapter contains an illegal move.")),
             _ => {}
         }
-        let pairs = game
-            .get("headers")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|pair| {
-                        let pair = pair.as_array()?;
-                        Some((
-                            pair.first()?.as_str()?.to_string(),
-                            pair.get(1)?.as_str()?.to_string(),
-                        ))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
         let mut headers = Vec::new();
-        for (key, value) in pairs {
-            map_set(&mut headers, &key, &value);
+        for (key, value) in &game.headers {
+            map_set(&mut headers, key, value);
         }
         chapters.push(Chapter {
             headers,
-            pgn: game
-                .get("pgn")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
+            pgn: game.pgn,
         });
     }
     Ok(chapters)

@@ -906,10 +906,7 @@ pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
         );
         return;
     };
-    let games = crate::game::rules("pgnGames", &[serde_json::json!(text)])
-        .ok()
-        .and_then(|games| games.as_array().map(Vec::len))
-        .unwrap_or(0);
+    let games = kchess_domain::position::pgn_games(&text).len();
     if games > 1 {
         open(Page::Studies, window, cx);
         StudiesPage::open_import_with(Some(text), window, cx);

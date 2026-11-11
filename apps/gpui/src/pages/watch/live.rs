@@ -1039,15 +1039,12 @@ impl WatchPage {
             "gameId": frame["gameId"],
         });
         if let Some(setup) = self.live.setup() {
-            let pgn = rules(
-                "setupPgn",
-                &[
-                    setup,
-                    json!(self.live.moves()),
-                    json!({ "White": frame["white"]["name"], "Black": frame["black"]["name"] }),
-                ],
+            let pgn = crate::game::setup_pgn(
+                &setup,
+                &self.live.moves(),
+                &json!({ "White": frame["white"]["name"], "Black": frame["black"]["name"] }),
             );
-            if let Ok(Value::String(pgn)) = pgn {
+            if let Some(pgn) = pgn {
                 let ply = self.live.shown_ply();
                 // Once this page is no longer being updated: leaving Watch tells it it is hidden.
                 window.defer(cx, move |window, cx| {

@@ -207,12 +207,8 @@ impl AnalysisPage {
         {
             return Some(analysed.clone());
         }
-        let analysis = rules("analyseReview", std::slice::from_ref(&review)).ok()?;
-        if analysis.is_null() {
-            return None;
-        }
-        let classes: Vec<Option<String>> = rules("reviewClassifications", &[review])
-            .ok()
+        let analysis = kchess_domain::review::analyse_review(&review)?;
+        let classes: Vec<Option<String>> = kchess_domain::review::review_classifications(&review)
             .and_then(|classes| serde_json::from_value(classes).ok())
             .unwrap_or_default();
         *memo = Some((key, updated, (analysis.clone(), classes.clone())));
@@ -566,16 +562,10 @@ impl AnalysisPage {
     ) -> bool {
         let solution: Vec<String> =
             serde_json::from_value(puzzle["solution"].clone()).unwrap_or_default();
-        let Ok(Value::String(pgn)) = crate::game::rules(
-            "setupPgn",
-            &[
-                serde_json::json!({ "variant": "standard", "fen": puzzle["fen"] }),
-                serde_json::json!(solution),
-                serde_json::json!({}),
-            ],
-        ) else {
+        let Some(fen) = puzzle["fen"].as_str() else {
             return false;
         };
+        let pgn = kchess_domain::pgn::setup_pgn("standard", fen, &solution, &[]);
         if !self.load_pgn(&pgn, cx) {
             return false;
         }
@@ -673,13 +663,11 @@ impl AnalysisPage {
             return false;
         }
         self.tried_done.push(path.to_string());
-        let judgment = rules("analyseReview", std::slice::from_ref(review))
-            .ok()
-            .and_then(|analysis| {
-                analysis["moves"][0]["judgment"]
-                    .as_str()
-                    .map(str::to_string)
-            });
+        let judgment = kchess_domain::review::analyse_review(review).and_then(|analysis| {
+            analysis["moves"][0]["judgment"]
+                .as_str()
+                .map(str::to_string)
+        });
         // The board still holds this puzzle and the variation was not deleted.
         let held =
             self.root.fen == start && self.root.nodes_along(path).len() == moves_of(path).len() + 1;
@@ -710,16 +698,14 @@ impl AnalysisPage {
                     headers.insert(header.into(), json!(name));
                 }
             }
-            let pgn = rules(
-                "setupPgn",
-                &[
-                    json!({ "variant": "standard", "fen": game["fen"] }),
-                    game["moves"].clone(),
-                    Value::Object(headers),
-                ],
-            )
-            .ok()
-            .and_then(|pgn| pgn.as_str().map(str::to_string));
+            let moves: Option<Vec<String>> = serde_json::from_value(game["moves"].clone()).ok();
+            let pgn = moves.and_then(|moves| {
+                crate::game::setup_pgn(
+                    &json!({ "variant": "standard", "fen": game["fen"] }),
+                    &moves,
+                    &Value::Object(headers),
+                )
+            });
             let Some(pgn) = pgn else {
                 return false;
             };
@@ -1000,7 +986,7 @@ impl AnalysisPage {
         if !matches!(judgment, "inaccuracy" | "mistake" | "blunder") {
             return None;
         }
-        let moment = rules("reviewMoment", &[review, json!(index)]).ok()?;
+        let moment = kchess_domain::coach::review_moment(&review, index)?;
         let reason = moment["reason"].as_str().map(str::to_string);
         Some(
             v_flex()
@@ -1161,7 +1147,7 @@ impl AnalysisPage {
                         .into_any_element(),
                 )
             }));
-        let phases = rules("reviewPhases", std::slice::from_ref(review)).unwrap_or(Value::Null);
+        let phases = kchess_domain::review::review_phases(review).unwrap_or(Value::Null);
         let phase_rows: Vec<AnyElement> = [
             ("opening", "Opening"),
             ("middlegame", "Middlegame"),

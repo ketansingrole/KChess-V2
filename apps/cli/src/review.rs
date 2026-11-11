@@ -56,17 +56,11 @@ pub fn main_line(pgn: &str) -> Result<Line, String> {
     let (fen, moves) = match variant {
         // Read by the variant's rules, up to the first move that is not legal.
         Some(_) => {
-            let line = kchess_domain::position::pgn_mainline(pgn, sans.len());
-            let fen = line["start"]
-                .as_str()
+            let line = kchess_domain::position::pgn_mainline(pgn, sans.len())
                 .ok_or("No game could be read from that PGN.")?;
-            let moves = line["moves"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|entry| entry["uci"].as_str().map(str::to_string))
-                .collect();
-            (fen.to_string(), moves)
+            let fen = line.start.ok_or("No game could be read from that PGN.")?;
+            let moves = line.moves.into_iter().map(|entry| entry.uci).collect();
+            (fen, moves)
         }
         None => {
             let fen = game.header("FEN").unwrap_or(START).to_string();

@@ -519,16 +519,7 @@ impl ComputerPage {
 
     /// Review the game on the analysis board, opened at the move being looked at.
     fn review_game(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let pgn = rules(
-            "setupPgn",
-            &[
-                self.game.state["setup"].clone(),
-                json!(self.moves()),
-                json!({}),
-            ],
-        )
-        .ok()
-        .and_then(|pgn| pgn.as_str().map(str::to_string));
+        let pgn = crate::game::setup_pgn(&self.game.state["setup"], &self.moves(), &Value::Null);
         let Some(pgn) = pgn else { return };
         let (ply, color) = (self.ply(), self.user_color());
         let computer = format!(

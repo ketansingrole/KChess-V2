@@ -143,26 +143,6 @@ mod tests {
         assert_eq!(whole(&json!("2")), 0);
     }
 
-    /// A 100-move game could not be opened from Game history: its tree was refused at depth 128.
-    #[test]
-    fn a_long_game_tree_reads_back() {
-        let shuffle = ["Nf3", "Nf6", "Ng1", "Ng8"];
-        let moves: Vec<String> = (0..200)
-            .map(|ply| {
-                let number = format!("{}. ", ply / 2 + 1);
-                let prefix = if ply % 2 == 0 { number.as_str() } else { "" };
-                format!("{prefix}{}", shuffle[ply % 4])
-            })
-            .collect();
-        let tree = rules("treeFromPgn", &[Value::String(moves.join(" "))]).unwrap();
-        let (mut node, mut plies) = (&tree, 0);
-        while let Some(next) = node["children"].get(0) {
-            node = next;
-            plies += 1;
-        }
-        assert_eq!(plies, 200);
-    }
-
     #[test]
     fn whole_reads_integers_and_floats_alike() {
         assert_eq!(whole(&json!(2)), 2);
@@ -212,42 +192,5 @@ mod tests {
         let mut scalar = json!(3);
         assign_written(&mut scalar, &json!({ "a": 1 }), &json!(["a"]));
         assert_eq!(scalar, json!(3));
-    }
-
-    /// A deepest legal tree (1024 plies) read on a 1 MiB thread, as on Windows' main thread:
-    /// reading the answer back there overflowed the stack and aborted the app on a dropped PGN.
-    #[derive(serde::Deserialize)]
-    struct Node {
-        children: Vec<Node>,
-    }
-
-    #[test]
-    fn the_deepest_tree_reads_on_a_small_stack() {
-        let shuffle = ["Nf3", "Nf6", "Ng1", "Ng8"];
-        let moves: Vec<String> = (0..1024)
-            .map(|ply| {
-                let number = format!("{}. ", ply / 2 + 1);
-                let prefix = if ply % 2 == 0 { number.as_str() } else { "" };
-                format!("{prefix}{}", shuffle[ply % 4])
-            })
-            .collect();
-        let pgn = Value::String(format!("{} *", moves.join(" ")));
-        let plies = std::thread::Builder::new()
-            .stack_size(1024 * 1024)
-            .spawn(move || {
-                let tree: Node = rules_as("treeFromPgn", &[pgn]).unwrap();
-                let (mut node, mut plies) = (&tree, 0);
-                while let Some(next) = node.children.first() {
-                    node = next;
-                    plies += 1;
-                }
-                // Dropping the tree recurses once a ply too, here on the small stack.
-                drop(tree);
-                plies
-            })
-            .unwrap()
-            .join()
-            .unwrap();
-        assert_eq!(plies, 1024);
     }
 }

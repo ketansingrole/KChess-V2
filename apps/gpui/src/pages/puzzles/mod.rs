@@ -733,12 +733,8 @@ pub(crate) type NextPuzzle = Box<dyn Fn(&mut Window, &mut App)>;
 
 /// The puzzle's idea, shown with the hint.
 fn clue(puzzle: &Value) -> Option<AnyElement> {
-    let clue = rules(
-        "puzzleClue",
-        &[puzzle["fen"].clone(), puzzle["solution"].clone()],
-    )
-    .ok()?;
-    let clue = clue.as_str()?.to_string();
+    let solution: Vec<String> = serde_json::from_value(puzzle["solution"].clone()).ok()?;
+    let clue = kchess_domain::coach::puzzle_clue(puzzle["fen"].as_str()?, &solution)?;
     Some(div().text_size(px(13.)).child(clue).into_any_element())
 }
 

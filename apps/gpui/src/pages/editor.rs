@@ -556,9 +556,8 @@ impl EditorPage {
     /// The variant's usual start (Horde's, Racing Kings'), or standard chess's.
     fn start_position(&mut self, cx: &mut Context<Self>) {
         let usual = (!standard_rules(&self.variant))
-            .then(|| rules("defaultFen", &[json!(self.variant)]).ok())
-            .flatten()
-            .and_then(|fen| fen.as_str().map(str::to_string));
+            .then(|| kchess_domain::rules::default_fen(&self.variant))
+            .flatten();
         let variant = self.variant.clone();
         if !usual.is_some_and(|fen| self.read_fen(&fen)) {
             self.setup = start_setup();

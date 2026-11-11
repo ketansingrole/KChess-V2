@@ -274,9 +274,14 @@ pub fn chapter_items(study: &Value) -> Vec<(String, String)> {
 
 /// The whole study as one PGN, a game per chapter (`studyDocumentPgn`).
 pub fn document_pgn(study: &Value) -> String {
-    crate::game::rules("studyDocumentPgn", &[study["chapters"].clone()])
-        .ok()
-        .and_then(|pgn| pgn.as_str().map(str::to_string))
+    let chapters: Option<Vec<(&str, &str)>> = study["chapters"].as_array().and_then(|chapters| {
+        chapters
+            .iter()
+            .map(|chapter| Some((chapter["name"].as_str()?, chapter["pgn"].as_str()?)))
+            .collect()
+    });
+    chapters
+        .and_then(|chapters| kchess_domain::pgn::study_document_pgn(&chapters))
         .unwrap_or_default()
 }
 

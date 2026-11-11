@@ -19,7 +19,6 @@ use serde_json::json;
 use shakmaty::Color;
 
 use crate::assets::icon;
-use crate::game::rules;
 use crate::game_image::{self, ImageOptions};
 use crate::settings::SettingsHandle;
 
@@ -126,22 +125,19 @@ fn game_pgn(game: &GameExport) -> Option<String> {
     if let Some(pgn) = &game.pgn {
         return Some(pgn.clone());
     }
-    rules(
-        "setupPgn",
+    let result = game.result.as_deref().unwrap_or("*");
+    let date = chrono::Local::now().format("%Y.%m.%d").to_string();
+    Some(kchess_domain::pgn::setup_pgn(
+        &game.variant,
+        &game.fen,
+        &game.moves,
         &[
-            json!({ "variant": game.variant, "fen": game.fen }),
-            json!(game.moves),
-            json!({
-                "White": game.white,
-                "Black": game.black,
-                "Result": game.result.clone().unwrap_or_else(|| "*".into()),
-                "Date": chrono::Local::now().format("%Y.%m.%d").to_string(),
-            }),
+            ("Black", &game.black),
+            ("Date", &date),
+            ("Result", result),
+            ("White", &game.white),
         ],
-    )
-    .ok()?
-    .as_str()
-    .map(str::to_string)
+    ))
 }
 
 /// The FEN of the position shown: a variation's end when it is off the moves, else the move

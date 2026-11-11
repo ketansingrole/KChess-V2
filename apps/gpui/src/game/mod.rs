@@ -8,7 +8,7 @@ pub mod tree;
 pub mod view;
 
 /// The usual starting position.
-pub const STANDARD_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+pub const STANDARD_FEN: &str = kchess_domain::rules::INITIAL_FEN;
 
 use serde_json::{Value, json};
 
@@ -17,6 +17,20 @@ pub use kchess_domain::links::{
     study_link,
 };
 pub use kchess_games::{archive, computer, local, random_unit, rules, whole};
+
+/// A `{ variant, fen }` setup's UCI moves as PGN, as far as they are legal, after `headers` (a
+/// JSON object of strings). `None` when the setup or a header is not one.
+pub fn setup_pgn(setup: &Value, moves: &[String], headers: &Value) -> Option<String> {
+    let (variant, fen) = (setup["variant"].as_str()?, setup["fen"].as_str()?);
+    let headers: Vec<(&str, &str)> = match headers {
+        Value::Object(headers) => headers
+            .iter()
+            .map(|(name, value)| value.as_str().map(|value| (name.as_str(), value)))
+            .collect::<Option<_>>()?,
+        _ => Vec::new(),
+    };
+    Some(kchess_domain::pgn::setup_pgn(variant, fen, moves, &headers))
+}
 
 /// `formatGameDate`: "Oct 22, 2026" in local time.
 pub fn game_date(millis: f64) -> String {
@@ -62,15 +76,9 @@ pub fn chess960(n: i64) -> String {
 /// from the rules, castling rights as written, and a plausible en passant square.
 pub fn editor_setup(text: &str) -> Option<Value> {
     let trimmed = text.trim();
-    let parsed = rules("fenSetup", &[json!(trimmed)]).ok()?;
-    if parsed.is_null() {
-        return None;
-    }
+    let parsed = kchess_domain::position::fen_setup(trimmed)?;
     let fields: Vec<&str> = trimmed.split_whitespace().collect();
-    let rights = castling_letters(
-        parsed["board"].as_str().unwrap_or_default(),
-        fields.get(2).copied().unwrap_or("-"),
-    );
+    let rights = castling_letters(&parsed.board, fields.get(2).copied().unwrap_or("-"));
     let ep = fields
         .get(3)
         .copied()
@@ -80,8 +88,8 @@ pub fn editor_setup(text: &str) -> Option<Value> {
         })
         .unwrap_or_default();
     Some(json!({
-        "board": parsed["board"],
-        "turn": parsed["turn"],
+        "board": parsed.board,
+        "turn": parsed.turn,
         "castling": {
             "K": rights.contains('K'),
             "Q": rights.contains('Q'),

@@ -768,11 +768,9 @@ impl LocalPage {
 
     /// Analyse the game on the analysis board at the position shown (standard and Chess960).
     fn analyse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let pgn = rules(
-            "setupPgn",
-            &[self.setup().clone(), json!(self.moves()), json!({})],
-        );
-        let Ok(Value::String(pgn)) = pgn else { return };
+        let Some(pgn) = crate::game::setup_pgn(self.setup(), &self.moves(), &Value::Null) else {
+            return;
+        };
         let ply = self.shown_ply();
         let origin = json!({ "white": "White", "black": "Black" });
         crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
@@ -781,12 +779,7 @@ impl LocalPage {
     }
 
     fn copy_pgn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let today = rules("calendarToday", &[]).ok();
-        let date = today
-            .as_ref()
-            .and_then(Value::as_str)
-            .map(|day| day.replace('-', "."))
-            .unwrap_or_else(|| "????.??.??".into());
+        let date = chrono::Local::now().format("%Y.%m.%d").to_string();
         let headers = json!({
             "Event": "Over the board (KChess)",
             "Date": date,
@@ -794,11 +787,8 @@ impl LocalPage {
             "Black": "Black",
             "Result": self.pgn_result(),
         });
-        match rules(
-            "setupPgn",
-            &[self.setup().clone(), json!(self.moves()), headers],
-        ) {
-            Ok(Value::String(pgn)) => {
+        match crate::game::setup_pgn(self.setup(), &self.moves(), &headers) {
+            Some(pgn) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(pgn));
                 window.push_notification("PGN copied", cx);
             }
@@ -1906,9 +1896,7 @@ impl NewGame {
         let usual = match current_variant {
             "standard" => Some(STANDARD_FEN.to_string()),
             "chess960" => None,
-            variant => rules("defaultFen", &[json!(variant)])
-                .ok()
-                .and_then(|fen| fen.as_str().map(str::to_string)),
+            variant => kchess_domain::rules::default_fen(variant),
         };
         let fen = cx.new(|cx| {
             let label = format!(
@@ -2030,7 +2018,7 @@ impl NewGame {
                 .is_none()
                 .then(|| json!({ "variant": variant, "fen": text }));
         }
-        let fen = rules("defaultFen", &[json!(variant)]).ok()?;
+        let fen = kchess_domain::rules::default_fen(&variant)?;
         Some(json!({ "variant": variant, "fen": fen }))
     }
 

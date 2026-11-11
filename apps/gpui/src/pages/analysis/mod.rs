@@ -875,10 +875,8 @@ impl AnalysisPage {
 
     /// Load a line from the starting position, opened at its end (an opening's Analyse).
     pub fn load_line(&mut self, moves: &[String], cx: &mut Context<Self>) {
-        let Ok(pgn) = rules("pgnFromUci", &[json!(moves)]) else {
-            return;
-        };
-        if self.load_pgn(pgn.as_str().unwrap_or_default(), cx) {
+        let pgn = kchess_domain::pgn::pgn_from_uci(moves);
+        if self.load_pgn(&pgn, cx) {
             self.go_to_end(cx);
         }
     }

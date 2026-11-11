@@ -74,29 +74,17 @@ pub fn winning_chances(line: Option<&Value>) -> f32 {
         .unwrap_or_default() as f32
 }
 
-/// One move of a principal variation: its SAN and its label ("12… Nf6").
-#[derive(Clone, Debug, Deserialize)]
-pub struct PvMove {
-    pub san: String,
-    pub label: String,
-}
+pub use kchess_domain::tree::PvMove;
 
 /// A principal variation in SAN with move numbers, stopping at the first illegal move; `variant`
 /// is the Lichess key of the rules it is played by.
 pub fn pv_san(fen: &str, pv: &[String], max: usize, variant: &str) -> Vec<PvMove> {
-    let pv = &pv[..pv.len().min(max)];
     let variant = if super::standard_rules(variant) {
         ""
     } else {
         variant
     };
-    rules(
-        "pvSan",
-        &[json!(fen), json!(pv), json!(pv.len()), json!(variant)],
-    )
-    .ok()
-    .and_then(|moves| serde_json::from_value(moves).ok())
-    .unwrap_or_default()
+    kchess_domain::tree::pv_san(fen, pv, max, variant)
 }
 
 /// "1.", "1…", or nothing: the number to print before a move at `ply`.
@@ -122,14 +110,10 @@ pub fn comment_text(comment: &str) -> String {
 impl TreeNode {
     /// A tree holding only its start; an unusable FEN starts from the usual position.
     pub fn new(fen: Option<&str>) -> TreeNode {
-        let start =
-            rules("startNode", &[json!(fen.unwrap_or(super::STANDARD_FEN))]).unwrap_or(Value::Null);
+        let (fen, ply) = kchess_domain::tree::tree_root(fen.unwrap_or(super::STANDARD_FEN));
         TreeNode {
-            fen: start["fen"]
-                .as_str()
-                .unwrap_or(super::STANDARD_FEN)
-                .to_string(),
-            ply: start["ply"].as_f64().unwrap_or_default(),
+            fen,
+            ply: f64::from(ply),
             ..TreeNode::default()
         }
     }
@@ -147,7 +131,29 @@ impl TreeNode {
 
     /// One bounded PGN document, or `None` when it cannot be imported without loss.
     pub fn from_pgn(text: &str) -> Option<TreeNode> {
-        kchess_games::rules_as("treeFromPgn", &[json!(text)]).ok()
+        // A tree nests once a ply: it is built and converted on a stack deep enough for it.
+        kchess_domain::tree::on_large_stack(|| {
+            kchess_domain::tree::tree_from_pgn(text).map(|tree| TreeNode::from_rules(&tree))
+        })
+        .ok()
+        .flatten()
+    }
+
+    fn from_rules(node: &kchess_domain::tree::TreeNode) -> TreeNode {
+        TreeNode {
+            uci: node.uci.clone(),
+            san: node.san.clone(),
+            fen: node.fen.clone(),
+            ply: f64::from(node.ply),
+            children: node.children.iter().map(TreeNode::from_rules).collect(),
+            headers: node.headers.clone(),
+            comments: node.comments.clone(),
+            starting_comments: node.starting_comments.clone(),
+            nags: node
+                .nags
+                .as_ref()
+                .map(|nags| nags.iter().map(|&nag| i64::from(nag)).collect()),
+        }
     }
 
     /// The tree as PGN, with its own headers.
@@ -179,8 +185,15 @@ impl TreeNode {
         if let Some(comments) = &self.comments {
             document.insert("comments".into(), json!(comments));
         }
-        let headers = Value::Object(self.headers.clone().unwrap_or_default());
-        text("treeToPgn", &[Value::Object(document), headers])
+        kchess_domain::tree::tree_to_pgn(&Value::Object(document), self.headers.as_ref())
+            .unwrap_or_else(|error| {
+                crate::log::write(
+                    kchess_contracts::Level::Warn,
+                    "analysis",
+                    &format!("the tree could not be written as PGN: {error}"),
+                );
+                String::new()
+            })
     }
 
     /// The moves from the start to `path` alone, as a tree of their own: the comments and
@@ -364,6 +377,50 @@ impl TreeNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A move line of `plies` half-moves that shuffles knights back and forth.
+    fn shuffle(plies: usize) -> String {
+        let shuffle = ["Nf3", "Nf6", "Ng1", "Ng8"];
+        let moves: Vec<String> = (0..plies)
+            .map(|ply| {
+                let number = format!("{}. ", ply / 2 + 1);
+                let prefix = if ply % 2 == 0 { number.as_str() } else { "" };
+                format!("{prefix}{}", shuffle[ply % 4])
+            })
+            .collect();
+        format!("{} *", moves.join(" "))
+    }
+
+    /// The deepest legal tree (1024 plies) read on a 1 MiB thread, as on Windows' main thread:
+    /// reading the answer back there overflowed the stack and aborted the app on a dropped PGN.
+    /// A 100-move game could not be opened from Game history: its tree was refused at depth 128.
+    #[test]
+    fn the_deepest_tree_reads_on_a_small_stack() {
+        let plies = std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(|| {
+                let tree = TreeNode::from_pgn(&shuffle(1024)).expect("a tree");
+                let (mut node, mut plies) = (&tree, 0);
+                while let Some(next) = node.children.first() {
+                    node = next;
+                    plies += 1;
+                }
+                // Dropping the tree recurses once a ply too, here on the small stack.
+                drop(tree);
+                plies
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(plies, 1024);
+        let (tree, mut plies) = (TreeNode::from_pgn(&shuffle(200)).expect("a tree"), 0);
+        let mut node = &tree;
+        while let Some(next) = node.children.first() {
+            node = next;
+            plies += 1;
+        }
+        assert_eq!(plies, 200);
+    }
 
     #[test]
     fn a_pgn_keeps_its_annotations() {

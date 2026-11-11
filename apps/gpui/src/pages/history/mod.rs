@@ -232,12 +232,8 @@ fn pgn(game: &Value) -> Option<String> {
         headers["WhiteTimeControl"] = json!(clocks[0]);
         headers["BlackTimeControl"] = json!(clocks[1]);
     }
-    rules(
-        "setupPgn",
-        &[game["setup"].clone(), game["moves"].clone(), headers],
-    )
-    .ok()
-    .and_then(|pgn| pgn.as_str().map(str::to_string))
+    let moves: Vec<String> = serde_json::from_value(game["moves"].clone()).ok()?;
+    crate::game::setup_pgn(&game["setup"], &moves, &headers)
 }
 
 /// PGN's `Date`: the UTC day the game started, "2026.10.22".

@@ -190,21 +190,19 @@ const VARIANT_IMPORT: &str = "A chapter is in a variant KChess doesn't play";
 
 /// An import's chapters (`pgnGames`): each game named by its `ChapterName`, or numbered.
 fn import_chapters(text: &str) -> Result<Vec<(String, String)>, &'static str> {
-    let games = crate::game::rules("pgnGames", &[json!(text)]).map_err(|_| INVALID_IMPORT)?;
-    let chapters: Vec<(String, String)> = games
-        .as_array()
-        .ok_or(INVALID_IMPORT)?
-        .iter()
+    let chapters: Vec<(String, String)> = kchess_domain::position::pgn_games(text)
+        .into_iter()
         .enumerate()
         .map(|(index, game)| {
-            let name = game["headers"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|pair| pair[0] == json!("ChapterName"))
-                .and_then(|pair| pair[1].as_str())
-                .map_or_else(|| format!("Chapter {}", index + 1), str::to_string);
-            (name, game["pgn"].as_str().unwrap_or_default().to_string())
+            let name = game
+                .headers
+                .iter()
+                .find(|(name, _)| name == "ChapterName")
+                .map_or_else(
+                    || format!("Chapter {}", index + 1),
+                    |(_, value)| value.clone(),
+                );
+            (name, game.pgn)
         })
         .collect();
     // A game read under rules other than its own would show positions it never had.

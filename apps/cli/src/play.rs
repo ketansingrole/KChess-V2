@@ -153,19 +153,27 @@ impl Session<'_> {
                 }
             }
         };
-        let headers = json!({
-            "Event": if self.kind() == "computer" { "Computer game (KChess)" } else { "Over the board (KChess)" },
-            "White": white,
-            "Black": black,
-            "Result": result,
-        });
-        kchess_games::rules(
-            "setupPgn",
-            &[self.state()["setup"].clone(), json!(self.moves()), headers],
-        )?
-        .as_str()
-        .map(str::to_string)
-        .ok_or_else(|| "The game could not be written as PGN.".to_string())
+        let event = if self.kind() == "computer" {
+            "Computer game (KChess)"
+        } else {
+            "Over the board (KChess)"
+        };
+        let setup = &self.state()["setup"];
+        let (Some(variant), Some(fen)) = (setup["variant"].as_str(), setup["fen"].as_str()) else {
+            return Err("The game could not be written as PGN.".to_string());
+        };
+        let headers = [
+            ("Black", black.as_str()),
+            ("Event", event),
+            ("Result", &result),
+            ("White", white.as_str()),
+        ];
+        Ok(kchess_domain::pgn::setup_pgn(
+            variant,
+            fen,
+            &self.moves(),
+            &headers,
+        ))
     }
 
     fn show(&self) {
@@ -289,7 +297,7 @@ impl Session<'_> {
                 (kchess_games::random_unit() * 960.0) as i64
             ))
         } else {
-            kchess_games::rules("defaultFen", &[json!(variant)])?
+            json!(kchess_domain::rules::default_fen(variant).ok_or("variant")?)
         };
         self.reset_history().await;
         let setup = json!({ "variant": variant, "fen": fen });
