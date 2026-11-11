@@ -88,12 +88,8 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
                 .and_then(Value::as_str)
                 .is_some_and(review::is_reviewable_perf)
         )),
-        "normalizeRatingKey" => Ok(json!(ratings::normalize_rating_key(str_or_empty(
-            args, 0
-        )))),
-        "ratingDisplayName" => Ok(json!(ratings::rating_display_name(str_or_empty(
-            args, 0
-        )))),
+        "normalizeRatingKey" => Ok(json!(ratings::normalize_rating_key(str_or_empty(args, 0)))),
+        "ratingDisplayName" => Ok(json!(ratings::rating_display_name(str_or_empty(args, 0)))),
         "isPuzzleHistory" => Ok(json!(ratings::is_puzzle_history(str_or_empty(args, 0)))),
         "ratingDisplayNames" => Ok(Value::Object(
             kchess_domain::records::RATING_DISPLAY_NAMES
@@ -101,9 +97,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
                 .map(|(key, label)| ((*key).to_string(), json!(label)))
                 .collect(),
         )),
-        "ratingHistoryFromGames" => {
-            list(args, 0, "games").map(ratings::rating_history_from_games)
-        }
+        "ratingHistoryFromGames" => list(args, 0, "games").map(ratings::rating_history_from_games),
         "mergeRatingHistories" => list(args, 0, "official").and_then(|official| {
             list(args, 1, "fromGames")
                 .map(|from_games| ratings::merge_rating_histories(official, from_games))

@@ -1194,7 +1194,9 @@ mod tests {
 
     /// A complete review of `BLUNDER`: level until Black's sixth move hands White mate in one.
     fn store_blunder_review(db: &Connection, source: &str, depth: u32) -> String {
-        let key = json!(kchess_domain::records::review::review_key(START, &BLUNDER, None));
+        let key = json!(kchess_domain::records::review::review_key(
+            START, &BLUNDER, None
+        ));
         let mut evals: Vec<Value> = (0..5)
             .map(|_| json!({ "cp": 30, "depth": depth, "best": "a2a3" }))
             .collect();

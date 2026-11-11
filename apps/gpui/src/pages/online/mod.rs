@@ -8,18 +8,19 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::board::{BoardEvent, ChessBoard};
 use crate::export::Exporter;
-use crate::game::rules;
 use crate::online::{OnlineHandle, OnlineState, Phase};
 use crate::pages::Page;
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
+use kchess_domain::records::time_control::{
+    can_direct_challenge, can_play_online, perf_for, total_seconds,
+};
 
 mod chat;
 pub(crate) mod game;
@@ -39,11 +40,6 @@ const INCREMENTS: [f64; 7] = [0., 1., 2., 3., 5., 10., 20.];
 const DAYS: [f64; 7] = [1., 2., 3., 5., 7., 10., 14.];
 
 /// `data/variants.json`: each variant's key, name and what sets it apart.
-fn time_rule(name: &str, minutes: f64, increment: f64, extra: Option<bool>) -> Value {
-    let mut args = vec![json!(minutes), json!(increment)];
-    args.extend(extra.map(|value| json!(value)));
-    rules(name, &args).unwrap_or(Value::Null)
-}
 
 /// "5+3 · Rapid · Casual", or "3 days per move · Casual" (`summary`).
 pub fn summary(form: &crate::online::Form, variant_label: Option<&str>) -> String {
@@ -59,12 +55,11 @@ pub fn summary(form: &crate::online::Form, variant_label: Option<&str>) -> Strin
             if form.days == 1. { "day" } else { "days" }
         )
     } else {
-        let perf = time_rule("perfFor", form.minutes, form.increment, None);
         format!(
             "{variant}{}+{} · {} · {mode}",
             form.minutes,
             form.increment,
-            perf.as_str().unwrap_or_default()
+            perf_for(form.minutes, form.increment)
         )
     }
 }
@@ -256,8 +251,7 @@ impl OnlinePage {
         let username = username.to_string();
         online.update(cx, |online, cx| {
             let form = &mut online.form;
-            let fits =
-                time_rule("canPlayOnline", form.minutes, form.increment, Some(true)) == json!(true);
+            let fits = can_play_online(form.minutes, form.increment, true);
             if !fits {
                 form.minutes = 10.;
                 form.increment = 0.;
@@ -434,29 +428,18 @@ impl OnlinePage {
             .active(cx)
             .unwrap_or_default();
         let targeted = !form.target.trim().is_empty();
-        let allowed = form.correspondence
-            || time_rule(
-                "canPlayOnline",
-                form.minutes,
-                form.increment,
-                Some(targeted),
-            ) == json!(true);
+        let allowed =
+            form.correspondence || can_play_online(form.minutes, form.increment, targeted);
         let blitz_needs_target = !targeted
-            && time_rule("canPlayOnline", form.minutes, form.increment, Some(false)) != json!(true)
-            && time_rule("canDirectChallenge", form.minutes, form.increment, None) == json!(true);
-        let perf = time_rule("perfFor", form.minutes, form.increment, None)
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
+            && !can_play_online(form.minutes, form.increment, false)
+            && can_direct_challenge(form.minutes, form.increment);
+        let perf = perf_for(form.minutes, form.increment);
         let (variant_label, variant_hint) = crate::game::variants()
             .iter()
             .find(|text| text.key == form.variant)
             .map(|text| (text.label.clone(), text.hint.clone()))
             .unwrap_or_default();
-        let estimated = time_rule("totalSeconds", form.minutes, form.increment, None)
-            .as_f64()
-            .unwrap_or_default()
-            / 60.;
+        let estimated = total_seconds(form.minutes, form.increment) / 60.;
         let set = |change: fn(&mut crate::online::Form, f64), value: f64| {
             move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
                 crate::online::handle(cx).update(cx, |online, cx| {

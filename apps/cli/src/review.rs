@@ -151,19 +151,14 @@ pub async fn run(
                 .is_some_and(|fen| start(fen) == start(&line.fen))
     };
     // The key the core gives the review, so a failure reported for it ends the wait.
-    let mut key_args = vec![json!(line.fen), json!(line.moves)];
-    key_args.extend(line.variant.map(|variant| json!(variant)));
-    let key = kchess_domain::api::call_value("reviewKey", &key_args)
-        .ok()
-        .and_then(|key| key.as_str().map(str::to_string));
+    let key = kchess_domain::records::review::review_key(&line.fen, &line.moves, line.variant);
     let interrupted = tokio::signal::ctrl_c();
     tokio::pin!(interrupted);
     while !(ours(&stored) && stored["complete"] == json!(true)) {
         tokio::select! {
             _ = &mut interrupted => {
-                if let Some(key) = stored["key"].as_str().or(key.as_deref()) {
-                    let _ = core.request(calls::ReviewCancel { key: json!(key) }).await;
-                }
+                let key = stored["key"].as_str().unwrap_or(&key);
+                let _ = core.request(calls::ReviewCancel { key: json!(key) }).await;
                 return Err("Review cancelled.".into());
             }
             event = events.recv() => match event {
@@ -175,7 +170,7 @@ pub async fn run(
                 }
                 Some(event) if event.name == "review:status"
                     && event.payload["failed"]["key"].as_str().is_some_and(|failed| {
-                        Some(failed) == stored["key"].as_str().or(key.as_deref())
+                        failed == stored["key"].as_str().unwrap_or(&key)
                     }) =>
                 {
                     let message = event.payload["failed"]["message"].as_str().unwrap_or_default();

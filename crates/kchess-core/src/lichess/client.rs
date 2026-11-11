@@ -200,7 +200,10 @@ pub fn lichess_error(status: u16, body: Option<Value>, endpoint: &str) -> Liches
     LichessError {
         status,
         endpoint: endpoint.to_string(),
-        detail: kchess_domain::records::lichess::error_detail(Some(f64::from(status)), body.as_ref()),
+        detail: kchess_domain::records::lichess::error_detail(
+            Some(f64::from(status)),
+            body.as_ref(),
+        ),
     }
 }
 

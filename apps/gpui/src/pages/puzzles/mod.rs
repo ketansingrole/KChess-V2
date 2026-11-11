@@ -15,6 +15,7 @@ use gpui_kit::component::{Disableable as _, Icon, IndexPath, Sizable as _, h_fle
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use serde_json::{Value, json};
 use shakmaty::Color;
 
@@ -444,19 +445,16 @@ impl PuzzlesPage {
     fn account(&self, cx: &App) -> String {
         let preferred = crate::prefs::get::<String>(cx, ACCOUNT, String::new());
         let connected = self.accounts(cx);
-        let accounts: Vec<Value> = connected
+        let accounts: Vec<ListedAccount> = connected
             .iter()
-            .map(|username| json!({ "username": username, "connected": true }))
+            .map(|username| ListedAccount {
+                username: Some(username),
+                connected: true,
+            })
             .collect();
-        rules(
-            "connectedAccountIndex",
-            &[json!(accounts), json!(preferred)],
-        )
-        .ok()
-        .filter(|index| !index.is_null())
-        .map(|index| crate::game::whole(&index))
-        .and_then(|index| connected.get(index as usize).cloned())
-        .unwrap_or_default()
+        connected_account_index(&accounts, Some(&preferred))
+            .and_then(|index| connected.get(index).cloned())
+            .unwrap_or_default()
     }
 
     fn selection(&self, cx: &App) -> Value {

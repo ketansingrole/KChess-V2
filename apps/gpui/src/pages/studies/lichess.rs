@@ -498,9 +498,7 @@ impl StudiesPage {
                 let board = copy
                     .as_ref()
                     .and_then(|copy| {
-                        summary(copy["pgn"].as_str().unwrap_or_default())["fen"]
-                            .as_str()
-                            .map(str::to_string)
+                        summary(copy["pgn"].as_str().unwrap_or_default()).map(|summary| summary.fen)
                     })
                     .map(|fen| self.preview(&fen, cx).into());
                 let chapters = copy

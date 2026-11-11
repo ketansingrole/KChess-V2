@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use kchess_contracts::Level;
+use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use serde_json::{Value, json};
 
 use crate::core::{AppCore, CoreEvent};
@@ -1016,18 +1017,15 @@ pub fn handle(cx: &App) -> Entity<OnlineState> {
 /// is connected, else the first connected one.
 pub fn active_account(accounts: &[Value], cx: &App) -> Option<String> {
     let preferred = crate::prefs::get::<String>(cx, crate::accounts::ONLINE_ACCOUNT, String::new());
-    let listed: Vec<Value> = accounts
+    let listed: Vec<ListedAccount> = accounts
         .iter()
-        .map(
-            |account| json!({ "username": account["username"], "connected": account["connected"] }),
-        )
+        .map(|account| ListedAccount {
+            username: account["username"].as_str(),
+            connected: account["connected"].as_bool().unwrap_or(false),
+        })
         .collect();
-    let index = crate::game::rules("connectedAccountIndex", &[json!(listed), json!(preferred)])
-        .ok()
-        .filter(|index| !index.is_null())?;
-    accounts.get(crate::game::whole(&index) as usize)?["username"]
-        .as_str()
-        .map(str::to_string)
+    let index = connected_account_index(&listed, Some(&preferred))?;
+    listed[index].username.map(str::to_string)
 }
 
 /// Which connected account plays (`setOnlineAccount`).

@@ -73,7 +73,8 @@ impl Core {
             }
             "connectLichess" => {
                 // An unreadable look falls back to the safe default colours.
-                let look = kchess_domain::records::oauth::look(&arg(args, 0)).unwrap_or(Value::Null);
+                let look =
+                    kchess_domain::records::oauth::look(&arg(args, 0)).unwrap_or(Value::Null);
                 self.inner("lichess.connectLichess", vec![look]).await
             }
             "stayConnected" => {

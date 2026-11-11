@@ -10,11 +10,11 @@ use crate::lichess::accounts::path_segment;
 use crate::lichess::challenges::{ChallengeInfo, TimeControl};
 use crate::lichess::client::authorize;
 
-use kchess_domain::records::time_control::{can_board_seek, can_direct_challenge, perf_for};
 use crate::lichess::online::requests::{Emitter, StreamRequest, game_body, refs};
 use crate::lichess::online::state::{
     Handle, Lane, OnlineOptions, OnlineSession, Res, StartResult, aborted, core, js_number,
 };
+use kchess_domain::records::time_control::{can_board_seek, can_direct_challenge, perf_for};
 
 impl OnlineSession {
     /// `start(options)`: a challenge to a player, a public seek, or a correspondence game.

@@ -71,7 +71,8 @@ pub fn normalize_rating_key(name: &str) -> String {
 
 /// The label of a rating history, or the name itself when it has none.
 pub fn rating_display_name(name: &str) -> String {
-    lookup(DISPLAY_NAMES, &normalize_rating_key(name)).map_or_else(|| name.to_string(), str::to_string)
+    lookup(DISPLAY_NAMES, &normalize_rating_key(name))
+        .map_or_else(|| name.to_string(), str::to_string)
 }
 
 /// Whether a rating history is the puzzle rating's.

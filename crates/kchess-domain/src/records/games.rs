@@ -220,9 +220,6 @@ mod tests {
             archived_player_side(&computer("White", "You", "*")),
             Some("black")
         );
-        assert_eq!(
-            archived_player_side(&computer("White", "Black", "*")),
-            None
-        );
+        assert_eq!(archived_player_side(&computer("White", "Black", "*")), None);
     }
 }
