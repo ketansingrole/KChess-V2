@@ -8,7 +8,6 @@ pub mod defaults;
 pub mod error;
 pub mod events;
 pub mod host;
-pub mod library;
 pub mod types;
 pub mod voice;
 

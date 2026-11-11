@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::Variant;
+use kchess_domain::color::Color;
 
 /// A string-literal union.
 macro_rules! union {
@@ -210,7 +211,6 @@ wire_enum!(#[doc = "Format for exporting a game."] ExportKind, EXPORT_KINDS {
     Pgn = "pgn",
 });
 
-union!(#[doc = "Side to play as."] PlayerColor { White = "white", Black = "black" });
 union!(#[doc = "Tournament pairing system."] TournamentSystem { Arena = "arena", Swiss = "swiss" });
 union!(#[doc = "Whether play is rated or casual."] LookupMode { Rated = "rated", Casual = "casual" });
 union!(#[doc = "Filter games by result."] GameResultFilter { Win = "win", Loss = "loss", Draw = "draw" });
@@ -245,16 +245,6 @@ union!(#[doc = "Whether watching Lichess TV or a specific game."] WatchSource { 
 union!(#[doc = "Time section of a broadcast list."] BroadcastSection { Active = "active", Upcoming = "upcoming", Past = "past" });
 union!(#[doc = "Why engine analysis stopped."] AnalysisReason { Completed = "completed", Interrupted = "interrupted", Failed = "failed" });
 union!(#[doc = "Why automatic review is paused."] ReviewPause { Battery = "battery", Engine = "engine", Online = "online", Off = "off" });
-union!(#[doc = "Stage of the app update check."] AppUpdatePhase {
-    Idle = "idle",
-    Checking = "checking",
-    UpToDate = "up-to-date",
-    Available = "available",
-    Downloading = "downloading",
-    Downloaded = "downloaded",
-    Error = "error",
-    Disabled = "disabled",
-});
 union!(#[doc = "OS permission state of the microphone."] MicrophoneStatus {
     Granted = "granted",
     Denied = "denied",
@@ -262,14 +252,6 @@ union!(#[doc = "OS permission state of the microphone."] MicrophoneStatus {
     NotDetermined = "not-determined",
     Unknown = "unknown",
 });
-union!(#[doc = "Why a desktop notification was skipped."] NotificationSkip {
-    Disabled = "disabled",
-    CategoryOff = "category-off",
-    WindowState = "window-state",
-    Unsupported = "unsupported",
-    Failed = "failed",
-});
-union!(#[doc = "How a notification was delivered."] NotificationVia { System = "system", InApp = "in-app" });
 union!(#[doc = "Progress stage of the puzzle database download."] PuzzleDbPhase {
     Downloading = "downloading",
     Importing = "importing",
@@ -436,8 +418,10 @@ pub struct LichessGame {
     pub speed: String,
     pub perf: String,
     pub status: String,
-    pub winner: Option<PlayerColor>,
-    pub color: PlayerColor,
+    #[serde(default, with = "kchess_domain::color::option_by_name")]
+    pub winner: Option<Color>,
+    #[serde(with = "kchess_domain::color::by_name")]
+    pub color: Color,
     pub opponent: String,
     pub opponent_rating: Option<f64>,
     pub player_rating: Option<f64>,
@@ -602,7 +586,8 @@ pub struct OngoingGame {
     pub game_id: String,
     pub account: String,
     pub opponent: PlayerRef,
-    pub color: PlayerColor,
+    #[serde(with = "kchess_domain::color::by_name")]
+    pub color: Color,
     pub fen: String,
     pub last_move: Option<String>,
     pub is_my_turn: bool,
@@ -752,7 +737,8 @@ pub struct TournamentFeatured {
     #[serde(flatten)]
     pub game: TournamentGame,
     pub fen: String,
-    pub orientation: PlayerColor,
+    #[serde(with = "kchess_domain::color::by_name")]
+    pub orientation: Color,
     pub last_move: Option<String>,
     /// Seconds left on each clock when Lichess sent it.
     pub clocks: Option<TournamentClocks>,
@@ -1016,9 +1002,11 @@ pub struct TvPastGame {
     /// The last position the feed sent.
     pub fen: String,
     pub last_move: Option<String>,
-    pub orientation: PlayerColor,
+    #[serde(with = "kchess_domain::color::by_name")]
+    pub orientation: Color,
     pub status: Option<String>,
-    pub winner: Option<PlayerColor>,
+    #[serde(default, with = "kchess_domain::color::option_by_name")]
+    pub winner: Option<Color>,
 }
 
 /// One position of a game being watched (TV or a game by id).
@@ -1032,7 +1020,8 @@ pub struct WatchFrame {
     pub game_id: String,
     pub white: WatchPlayer,
     pub black: WatchPlayer,
-    pub orientation: PlayerColor,
+    #[serde(with = "kchess_domain::color::by_name")]
+    pub orientation: Color,
     /// Board placement plus side to move (pockets of Crazyhouse are dropped).
     pub fen: String,
     pub last_move: Option<String>,
@@ -1046,7 +1035,8 @@ pub struct WatchFrame {
     /// Time control in seconds; absent for correspondence or until the details arrive.
     pub clock: Option<WatchClock>,
     pub status: Option<String>,
-    pub winner: Option<PlayerColor>,
+    #[serde(default, with = "kchess_domain::color::option_by_name")]
+    pub winner: Option<Color>,
     pub finished: bool,
     /// FEN before the first move, once the move list is known.
     pub start_fen: Option<String>,
@@ -1310,7 +1300,8 @@ pub struct PuzzleRequest {
     /// A puzzle theme key (`mateIn2`, `fork`, …) or `mix`.
     pub angle: String,
     pub difficulty: PuzzleDifficulty,
-    pub color: Option<PlayerColor>,
+    #[serde(default, with = "kchess_domain::color::option_by_name")]
+    pub color: Option<Color>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -1827,7 +1818,8 @@ pub struct LookupOptions {
     pub ratings: Option<Vec<f64>>,
     /// Player database: whose games, and with which colour.
     pub player: Option<String>,
-    pub color: Option<PlayerColor>,
+    #[serde(default, with = "kchess_domain::color::option_by_name")]
+    pub color: Option<Color>,
     /// Player database: rated, casual or both.
     pub modes: Option<Vec<LookupMode>>,
     /// Games since this month (`YYYY-MM`; masters use a year).
@@ -1843,7 +1835,8 @@ pub struct ExplorerGame {
     pub black: String,
     pub white_rating: Option<f64>,
     pub black_rating: Option<f64>,
-    pub winner: Option<PlayerColor>,
+    #[serde(default, with = "kchess_domain::color::option_by_name")]
+    pub winner: Option<Color>,
     pub year: Option<f64>,
     pub month: Option<String>,
     /// The move played from this position, as SAN.

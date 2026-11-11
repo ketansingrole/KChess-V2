@@ -439,7 +439,7 @@ mod tests {
             &ctx(0.0),
         );
         let begun = model.begin(seek(), &ctx(0.0));
-        assert_eq!(begun.call.map(|call| call.method()), Some("startOnline"));
+        assert!(matches!(begun.call, Some(Call::StartOnline(_))));
         assert_eq!(model.online_phase, "seeking");
     }
 
@@ -447,7 +447,7 @@ mod tests {
     fn a_seek_reply_after_a_stop_is_ignored() {
         let mut model = Model::idle();
         let begun = model.begin(seek(), &ctx(0.0));
-        assert_eq!(begun.call.as_ref().map(Call::method), Some("startOnline"));
+        assert!(matches!(begun.call, Some(Call::StartOnline(_))));
         model.begin(Op::Stop, &ctx(0.0));
         let late = model.settle(
             &begun.pending.unwrap(),
@@ -516,8 +516,11 @@ mod tests {
         let mut model = playing();
         let begun = model.begin(Op::Move("e2e4".into()), &ctx(10.0));
         assert_eq!(
-            begun.call.as_ref().map(Call::args),
-            Some(vec![json!("AbCd1234"), json!("e2e4")])
+            begun.call,
+            Some(Call::PlayOnline {
+                id: "AbCd1234".into(),
+                uci: "e2e4".into()
+            })
         );
         let failed = model.settle(&begun.pending.unwrap(), Reply::Failed, &ctx(20.0));
         assert_eq!(model.online_phase, "disconnected");

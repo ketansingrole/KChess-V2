@@ -145,43 +145,6 @@ pub enum Call {
     },
 }
 
-impl Call {
-    /// The core method's name.
-    pub fn method(&self) -> &'static str {
-        match self {
-            Call::StartOnline(_) => "startOnline",
-            Call::CancelOnline => "cancelOnline",
-            Call::ResumeOnline => "resumeOnline",
-            Call::OpenGame { .. } => "openGame",
-            Call::PlayOnline { .. } => "playOnline",
-            Call::OnlineAction { .. } => "onlineAction",
-            Call::OnlineChat { .. } => "onlineChat",
-        }
-    }
-
-    /// The core method's arguments.
-    pub fn args(&self) -> Vec<Value> {
-        match self {
-            Call::StartOnline(options) => vec![options.clone()],
-            Call::CancelOnline | Call::ResumeOnline => Vec::new(),
-            Call::OpenGame { account, id } => vec![account.as_str().into(), id.as_str().into()],
-            Call::PlayOnline { id, uci } => vec![id.as_str().into(), uci.as_str().into()],
-            Call::OnlineAction { id, action } => vec![id.as_str().into(), action.as_str().into()],
-            Call::OnlineChat { id } => vec![id.as_str().into()],
-        }
-    }
-}
-
-impl Serialize for Call {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut call = serializer.serialize_struct("Call", 2)?;
-        call.serialize_field("method", self.method())?;
-        call.serialize_field("args", &self.args())?;
-        call.end()
-    }
-}
-
 /// The game a real-time seek left: a correspondence game being played, to go back to.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Left {
@@ -257,7 +220,7 @@ pub struct Outcome {
     pub effects: Vec<Effect>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ret: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     pub call: Option<Call>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending: Option<Pending>,
