@@ -601,11 +601,6 @@ impl OpeningsPage {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn orientation(&self) -> Color {
-        self.orientation
-    }
-
     fn flip(&mut self, cx: &mut Context<Self>) {
         self.orientation = !self.orientation;
         self.redraw(cx);

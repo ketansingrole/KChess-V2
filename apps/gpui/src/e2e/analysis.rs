@@ -526,22 +526,6 @@ fn the_editor_undoes_and_redoes_its_changes(cx: &mut gpui_kit::TestAppContext) {
     wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
 }
 
-/// F turns the editor's board, as its button does.
-#[gpui_kit::test]
-fn f_flips_the_editors_board(cx: &mut gpui_kit::TestAppContext) {
-    let mut app = editor(cx);
-    let orientation = |app: &mut Harness| {
-        app.cx.update(|cx| {
-            crate::shell::view::<crate::pages::editor::EditorPage>(cx)
-                .map(|page| page.read(cx).orientation())
-        })
-    };
-    let before = orientation(&mut app).expect("the page");
-    app.click(("editor-turn", 0usize));
-    app.press("f");
-    assert_eq!(orientation(&mut app), Some(!before));
-}
-
 /// The editor sets up positions in the other variants: Horde's start, read by Horde's rules and
 /// analysed as a Horde game; a pasted Crazyhouse FEN brings its variant and keeps its pockets.
 #[gpui_kit::test]

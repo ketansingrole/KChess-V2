@@ -568,3 +568,28 @@ fn a_clicked_notification_opens_its_game(cx: &mut gpui_kit::TestAppContext) {
     let shown = app.cx.shown_system_notifications();
     assert!(shown.last().expect("a notification").actions.is_empty());
 }
+
+/// F turns the board on every page that shows one, through the app's Flip board key: each page
+/// answers it, once a click on the page has given it the keys.
+#[gpui_kit::test]
+fn f_turns_the_board_on_every_board_page(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    for (page, focus) in [
+        (
+            "Play with computer",
+            gpui_kit::ElementId::from("chess-board"),
+        ),
+        ("Over the board", "chess-board".into()),
+        ("Analysis board", "chess-board".into()),
+        ("Board editor", ("editor-turn", 0usize).into()),
+    ] {
+        app.open(page);
+        app.find("chess-board");
+        let before = app.white_at_bottom();
+        app.click(focus);
+        app.press("f");
+        assert_eq!(app.white_at_bottom(), !before, "{page}");
+        app.press("f");
+        assert_eq!(app.white_at_bottom(), before, "{page}");
+    }
+}

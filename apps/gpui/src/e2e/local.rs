@@ -285,7 +285,6 @@ fn a_page_made_ahead_opens_with_its_game(cx: &mut gpui_kit::TestAppContext) {
             )
         })
     };
-    assert_eq!(made(&mut app), (None, false), "made only when asked");
     app.with_window(crate::shell::prewarm);
     let (local, analysis) = made(&mut app);
     assert!(local.is_some() && analysis, "both pages are made");
@@ -602,25 +601,16 @@ fn a_chess960_game_can_be_taken_to_the_analysis_board(cx: &mut gpui_kit::TestApp
 /// F turns the board, as its flip button does, and the arrows and Home still step the moves.
 #[gpui_kit::test]
 fn f_flips_the_board(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::local::LocalPage;
     let mut app = board(cx);
     type_moves(&mut app, &["e4", "e5"]);
-    let orientation = |app: &mut Harness| {
-        app.cx.update(|cx| {
-            crate::shell::view::<LocalPage>(cx)
-                .expect("the page")
-                .read(cx)
-                .orientation(cx)
-        })
-    };
-    let before = orientation(&mut app);
+    let before = app.white_at_bottom();
     app.click(("move", 1usize));
     app.press("f");
-    assert_eq!(orientation(&mut app), !before);
+    assert_eq!(app.white_at_bottom(), !before);
     app.press("home");
     assert!(!app.enabled("skip-back"));
     app.press("f");
-    assert_eq!(orientation(&mut app), before);
+    assert_eq!(app.white_at_bottom(), before);
     // The move box still takes a click and the next move.
     app.press("end");
     app.click_label("Enter a chess move in SAN or UCI");

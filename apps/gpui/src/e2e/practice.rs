@@ -208,17 +208,10 @@ fn f_flips_an_endgame_drill(cx: &mut gpui_kit::TestAppContext) {
     reveal(&mut app, "endgame-courses", "card-drills");
     app.click("card-drills");
     app.find("drill-hint");
-    let flipped = |app: &mut Harness| {
-        app.cx.update(|cx| {
-            crate::shell::view::<crate::pages::practice::PracticePage>(cx)
-                .and_then(|page| page.read(cx).drills(cx))
-                .map(|drills| drills.read(cx).flipped())
-        })
-    };
-    assert_eq!(flipped(&mut app), Some(false));
+    assert!(app.white_at_bottom());
     app.click("chess-board");
     app.press("f");
-    assert_eq!(flipped(&mut app), Some(true));
+    assert!(!app.white_at_bottom());
 }
 
 /// An endgame drill's buttons are in Quick Pick, those it allows now.
@@ -246,12 +239,7 @@ fn an_endgame_drill_is_flipped_from_quick_pick(cx: &mut gpui_kit::TestAppContext
     super::palette::wait_for_first(&mut app, "Flip board");
     app.press("enter");
     super::palette::wait_until_closed(&mut app);
-    let flipped = app.cx.update(|cx| {
-        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
-            .and_then(|page| page.read(cx).drills(cx))
-            .map(|drills| drills.read(cx).flipped())
-    });
-    assert_eq!(flipped, Some(true));
+    assert!(!app.white_at_bottom());
 }
 
 #[gpui_kit::test]
@@ -340,14 +328,9 @@ fn a_crazyhouse_mistake_is_solved_with_a_drop(cx: &mut gpui_kit::TestAppContext)
     app.click("practice-due");
     app.click("pocket-White-Pawn");
     app.click_square("d4", true);
-    let status = |app: &mut Harness| {
-        app.cx
-            .update(|cx| mistakes.read(cx).board().read(cx).status().to_string())
-    };
     app.wait_for("the drop to solve the drill", |_, cx| {
         mistakes.read(cx).board().read(cx).status() == "solved"
     });
-    assert_eq!(status(&mut app), "solved");
 }
 
 /// A saved mistake is practised from Quick Pick, as the trainer's buttons do.
@@ -443,10 +426,7 @@ fn a_solved_mistake_is_stepped_through_and_turned(cx: &mut gpui_kit::TestAppCont
         Some(0)
     );
     app.press("f");
-    assert!(
-        app.cx
-            .update(|cx| mistakes.read(cx).board().read(cx).flipped())
-    );
+    assert!(!app.white_at_bottom());
 }
 
 /// Once a mistake is solved, Return goes on to the next due one, as on Puzzles.

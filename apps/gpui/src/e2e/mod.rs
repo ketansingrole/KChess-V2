@@ -607,6 +607,13 @@ impl Harness {
             .to_string()
     }
 
+    /// Whether the board shown has White at the bottom, as its squares are drawn.
+    pub fn white_at_bottom(&mut self) -> bool {
+        let a1 = self.find(("square", 0usize)).bounds();
+        let h8 = self.find(("square", 63usize)).bounds();
+        a1.origin.y > h8.origin.y
+    }
+
     /// Type text into the focused input.
     pub fn type_text(&mut self, text: &str) {
         self.with_window(|window, cx| window.input(text, cx));

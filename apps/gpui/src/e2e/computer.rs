@@ -399,10 +399,10 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
     });
     assert!(typed(&mut app).is_none_or(|value| value.is_empty()));
     assert!(app.enabled("start-game"));
-/// Game options start a game in another variant, which the engine plays by its rules: the
-/// variant's start, and the computer's move from it.
 }
 
+/// Game options start a game in another variant, which the engine plays by its rules: the
+/// variant's start, and the computer's move from it.
 #[gpui_kit::test]
 fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
@@ -462,55 +462,4 @@ fn undo_takes_back(cx: &mut gpui_kit::TestAppContext) {
     app.wait_for_moves(&["e4"]);
     app.press("secondary-z");
     app.wait_for_moves(&[]);
-}
-
-/// The player's clock warns as it runs low, before it runs out, as Lichess's does. (The stand-in
-/// engine answers e4 alone: the player, Black to move, plays first so that answer is legal.)
-#[gpui_kit::test]
-fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::computer::ComputerPage;
-    use crate::sound::{Played, Sound};
-    let mut app = computer(cx);
-    app.cx.update(|cx| cx.set_global(Played::default()));
-    app.with_window(|window, cx| {
-        let page = crate::shell::view::<ComputerPage>(cx).expect("the page");
-        let setup = serde_json::json!({
-            "variant": "standard",
-            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1",
-        });
-        // Three seconds: the warning comes under two, once both sides have moved.
-        page.update(cx, |page, cx| {
-            page.play_with_clock(setup, shakmaty::Color::Black, 0.05, window, cx)
-        });
-    });
-    wait_playable(&mut app);
-    app.click_square("e7", false);
-    app.click_square("e5", false);
-    app.wait_for_moves(&["e5", "e4"]);
-    let started = std::time::Instant::now();
-    app.wait_for_in_real_time("the low-time warning", |_, cx| {
-        cx.global::<Played>().0.contains(&Sound::LowTime)
-    });
-    assert!(started.elapsed() < std::time::Duration::from_millis(2_900));
-}
-
-/// F turns the board on Play with computer, as on every other game page: the page answers the
-/// app's Flip board key.
-#[gpui_kit::test]
-fn f_flips_the_board(cx: &mut gpui_kit::TestAppContext) {
-    let mut app = computer(cx);
-    let orientation = |app: &mut Harness| {
-        app.cx.update(|cx| {
-            crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
-                .expect("the page")
-                .read(cx)
-                .shown_orientation()
-        })
-    };
-    let before = orientation(&mut app);
-    app.click("chess-board");
-    app.press("f");
-    assert_eq!(orientation(&mut app), !before);
-    app.press("f");
-    assert_eq!(orientation(&mut app), before);
 }

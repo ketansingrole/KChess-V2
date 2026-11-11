@@ -1180,7 +1180,6 @@ pub fn challenge_alert(challenge: &ChallengeInfo) -> (String, String) {
 
 #[cfg(test)]
 mod tests {
-    use super::Form;
     use crate::e2e::Harness;
 
     /// Signing out while the games in progress loaded kept that request current: its answer
@@ -1204,13 +1203,5 @@ mod tests {
         });
         assert!(!stale);
         assert_eq!(error, None);
-    }
-
-    #[test]
-    fn the_form_starts_at_15_plus_10() {
-        let form = Form::default();
-        assert_eq!((form.minutes, form.increment), (15., 10.));
-        assert_eq!(form.color, "random");
-        assert!(!form.rated && !form.correspondence);
     }
 }

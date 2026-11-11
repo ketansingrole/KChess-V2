@@ -281,16 +281,10 @@ fn f_flips_the_puzzle(cx: &mut gpui_kit::TestAppContext) {
             .is_some_and(|hint| hint.disabled() != Some(true))
     });
     super::palette::wait_until_closed(&mut app);
-    let flipped = |app: &mut Harness| {
-        app.cx.update(|cx| {
-            crate::shell::view::<crate::pages::puzzles::PuzzlesPage>(cx)
-                .and_then(|page| page.read(cx).shown_flipped(cx))
-        })
-    };
-    assert_eq!(flipped(&mut app), Some(false));
+    let before = app.white_at_bottom();
     app.click("chess-board");
     app.press("f");
-    assert_eq!(flipped(&mut app), Some(true));
+    assert_eq!(app.white_at_bottom(), !before);
 }
 
 /// Once a training puzzle is over (and Next puzzle after solving is off), Return goes on to the next one, from the (now shut) move field

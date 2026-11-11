@@ -288,11 +288,6 @@ impl EndgameDrills {
         self.redraw(cx);
     }
 
-    #[cfg(test)]
-    pub(crate) fn flipped(&self) -> bool {
-        self.flipped
-    }
-
     fn takeback(&mut self, cx: &mut Context<Self>) {
         if self.engine.thinking {
             return;

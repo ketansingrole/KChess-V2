@@ -392,38 +392,15 @@ fn missed_lines_are_due_for_review_and_right_ones_wait(cx: &mut gpui_kit::TestAp
     assert_eq!(app.find("review-due").disabled(), Some(true));
 }
 
-/// F turns an opening's board, as its button does.
-#[gpui_kit::test]
-fn f_flips_an_openings_board(cx: &mut gpui_kit::TestAppContext) {
-    let mut app = openings(cx);
-    open_kieseritzky(&mut app);
-    let orientation = |app: &mut Harness| {
-        app.cx.update(|cx| {
-            crate::shell::view::<crate::pages::openings::OpeningsPage>(cx)
-                .map(|page| page.read(cx).orientation())
-        })
-    };
-    let before = orientation(&mut app).expect("the page");
-    app.click("opening-title");
-    app.press("f");
-    assert_eq!(orientation(&mut app), Some(!before));
-}
-
 /// A line opened from the search takes the keys at once: F turns its board, Escape goes back to
 /// all openings.
 #[gpui_kit::test]
 fn escape_goes_back_to_all_openings(cx: &mut gpui_kit::TestAppContext) {
     let mut app = openings(cx);
     open_kieseritzky(&mut app);
-    let orientation = |app: &mut Harness| {
-        app.cx.update(|cx| {
-            crate::shell::view::<crate::pages::openings::OpeningsPage>(cx)
-                .map(|page| page.read(cx).orientation())
-        })
-    };
-    let before = orientation(&mut app).expect("the page");
+    let before = app.white_at_bottom();
     app.press("f");
-    assert_eq!(orientation(&mut app), Some(!before));
+    assert_eq!(app.white_at_bottom(), !before);
     app.press("escape");
     app.wait_gone("opening-title");
     app.click_label("Search openings");

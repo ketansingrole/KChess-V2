@@ -625,14 +625,20 @@ fn a_position_opened_while_a_study_closes_stays_on_the_board(cx: &mut gpui_kit::
     import_study(&mut app, "Pawn openings", TWO_CHAPTERS);
     app.click("open-imported");
     app.find("tree-e2e4");
+    let closed = std::rc::Rc::new(std::cell::Cell::new(None));
     let opened = app.with_window(|_, cx| {
         let page = crate::shell::view::<AnalysisPage>(cx).expect("the analysis board");
         page.update(cx, |page, cx| {
-            page.close_study(cx).detach();
+            let close = page.close_study(cx);
+            let closed = closed.clone();
+            cx.spawn(async move |_, _| closed.set(Some(close.await)))
+                .detach();
             page.load(Some("8/8/8/4k3/8/8/4K3/8 w - - 0 1"), cx);
             page.shown_fen()
         })
     });
+    app.wait_for("the study to close", |_, _| closed.get().is_some());
+    assert_eq!(closed.get(), Some(true), "the close went through");
     let shown = app.with_window(|_, cx| {
         crate::shell::view::<AnalysisPage>(cx)
             .expect("the analysis board")

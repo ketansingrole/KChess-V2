@@ -785,7 +785,6 @@ fn a_copied_game_is_opened_with_paste(cx: &mut gpui_kit::TestAppContext) {
         app.cx
             .write_to_clipboard(gpui_kit::ClipboardItem::new_string(text.to_string()))
     };
-    let page = |app: &mut Harness| app.cx.update(|cx| crate::shell::current_page(cx));
 
     copy(&mut app, "hello");
     app.press("secondary-v");

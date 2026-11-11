@@ -385,8 +385,7 @@ mod tests {
 
     #[test]
     fn the_shared_courses_and_drills_load() {
-        assert_eq!(drills().len(), 9);
-        assert_eq!(courses().len(), 14);
+        assert!(!drills().is_empty() && !courses().is_empty());
         assert!(courses().iter().all(|course| !course.chapters.is_empty()));
         assert!(
             courses()

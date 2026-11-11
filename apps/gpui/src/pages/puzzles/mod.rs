@@ -1718,13 +1718,6 @@ impl PuzzlesPage {
     }
 
     /// The puzzle board of the tab shown, while it shows a puzzle, and whether it is Train's.
-    /// Whether the board on screen is turned round.
-    #[cfg(test)]
-    pub(crate) fn shown_flipped(&self, cx: &App) -> Option<bool> {
-        self.shown_board(cx)
-            .map(|(board, _)| board.read(cx).flipped())
-    }
-
     /// The puzzle on the Train tab, told apart from the one before it.
     #[cfg(test)]
     pub(crate) fn puzzle_key(&self) -> u64 {

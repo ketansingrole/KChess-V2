@@ -558,12 +558,6 @@ impl ComputerPage {
         self.game.setup().fen.clone()
     }
 
-    /// The side at the bottom of the board.
-    #[cfg(test)]
-    pub(crate) fn shown_orientation(&self) -> Color {
-        self.orientation()
-    }
-
     fn thinking(&self) -> bool {
         self.game.thinking()
     }
@@ -758,23 +752,6 @@ impl ComputerPage {
             window,
             cx,
         );
-    }
-
-    /// A new game from `setup` as the side to move, on a clock of `minutes`, no increment.
-    #[cfg(test)]
-    pub(crate) fn play_with_clock(
-        &mut self,
-        setup: Value,
-        color: Color,
-        minutes: f64,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.game.set_clock(Some(kchess_domain::games::Clock {
-            minutes,
-            increment: 0.,
-        }));
-        self.start_from(setup, color, window, cx);
     }
 
     /// Like the page's own New game, a game in progress is only thrown away when confirmed.

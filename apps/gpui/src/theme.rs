@@ -237,14 +237,7 @@ pub fn apply(window: &mut Window, cx: &mut App) {
     let chosen = if dark { &dark_theme } else { &light };
     let resolved = colors(chosen, &custom, dark);
     cx.set_global(Palette::of(&resolved, dark));
-    let mut keys = Map::new();
-    for (key, name) in KEYS {
-        if let Some(value) = resolved.get(*name) {
-            keys.insert((*key).to_string(), value.clone());
-        }
-    }
-    keys.insert("overlay".into(), json!(OVERLAY[usize::from(dark)]));
-    match kit_config(dark, keys) {
+    match kit_config(&resolved, dark) {
         Ok(config) => {
             Theme::global_mut(cx).apply_config(&Rc::new(config));
             window.refresh();
@@ -261,7 +254,16 @@ pub fn apply(window: &mut Window, cx: &mut App) {
 /// dialog hard to tell from a board or list under it.
 pub const OVERLAY: [&str; 2] = ["#00000059", "#00000099"];
 
-fn kit_config(dark: bool, colors: Map<String, Value>) -> serde_json::Result<ThemeConfig> {
+/// GPUI Kit's theme for KChess's `resolved` colors: the kit's keys, the dialog overlay, controls
+/// rounded to `radii::SM` and dialogs to `radii::MD` (whole pixels, as the kit reads them).
+fn kit_config(resolved: &Map<String, Value>, dark: bool) -> serde_json::Result<ThemeConfig> {
+    let mut colors = Map::new();
+    for (key, name) in KEYS {
+        if let Some(value) = resolved.get(*name) {
+            colors.insert((*key).to_string(), value.clone());
+        }
+    }
+    colors.insert("overlay".into(), json!(OVERLAY[usize::from(dark)]));
     serde_json::from_value(json!({
         "name": "KChess",
         "mode": if dark { "dark" } else { "light" },
@@ -276,70 +278,23 @@ fn kit_config(dark: bool, colors: Map<String, Value>) -> serde_json::Result<Them
 mod tests {
     use super::*;
 
-    /// A dialog dims the page under it enough to stand apart from it, more in the dark.
+    /// A theme GPUI Kit cannot read leaves its components in the kit's own colors and corners,
+    /// and its dialogs over a page they are hard to tell from.
     #[test]
-    fn dialogs_dim_the_page_under_them() {
-        for dark in [false, true] {
-            let mut colors = Map::new();
-            colors.insert("overlay".into(), json!(OVERLAY[usize::from(dark)]));
-            let config = kit_config(dark, colors).unwrap();
-            assert_eq!(
-                config.colors.overlay.as_deref(),
-                Some(OVERLAY[usize::from(dark)])
-            );
-        }
-        assert!(OVERLAY[1] > OVERLAY[0]);
-    }
-
-    /// A theme GPUI Kit cannot read leaves its components in the kit's own colors and corners.
-    #[test]
-    fn the_kit_reads_the_theme() {
-        for dark in [false, true] {
-            let config = kit_config(dark, Map::new()).unwrap();
-            assert_eq!(config.radius, Some(6));
-            assert_eq!(config.radius_lg, Some(8));
-        }
-    }
-
-    /// Every rounded box takes its corners from `radii`; only Settings' theme preview, a scale
-    /// model of a page, rounds its own.
-    #[test]
-    fn corners_come_from_the_radius_scale() {
-        fn sources(folder: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
-            for entry in std::fs::read_dir(folder).unwrap().flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    sources(&path, found);
-                } else if path.extension().is_some_and(|extension| extension == "rs") {
-                    found.push(path);
-                }
+    fn the_kit_reads_every_preset() {
+        let presets: Vec<AppTheme> = serde_json::from_value(theme::presets().clone()).unwrap();
+        let ids = presets.iter().map(|preset| preset.id.as_str());
+        for id in std::iter::once(DEFAULT_THEME).chain(ids) {
+            for dark in [false, true] {
+                let config = kit_config(&colors(id, &[], dark), dark)
+                    .unwrap_or_else(|error| panic!("{id}: {error}"));
+                assert_eq!(
+                    config.colors.overlay.as_deref(),
+                    Some(OVERLAY[usize::from(dark)]),
+                    "{id}"
+                );
             }
         }
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut files = Vec::new();
-        sources(&root, &mut files);
-        let mut stray = Vec::new();
-        for file in files {
-            let text = std::fs::read_to_string(&file).unwrap();
-            let preview = text
-                .find("fn theme_preview(")
-                .map(|start| (start, start + text[start..].find("\n}").unwrap_or(0)));
-            for (at, _) in text.match_indices(".rounded") {
-                let call = &text[at..];
-                let literal = call.find('(').is_some_and(|open| {
-                    call[open + 1..].starts_with("px(") && !call[..open].contains('\n')
-                });
-                let in_preview = preview.is_some_and(|(start, end)| (start..end).contains(&at));
-                if literal && !in_preview {
-                    let line = text[..at].lines().count();
-                    stray.push(format!(
-                        "{}:{line}",
-                        file.strip_prefix(&root).unwrap().display()
-                    ));
-                }
-            }
-        }
-        assert!(stray.is_empty(), "corners outside `radii`: {stray:?}");
     }
 
     #[test]

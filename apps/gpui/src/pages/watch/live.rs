@@ -72,24 +72,7 @@ fn speed_icon(speed: &str) -> Option<gpui_kit::component::Icon> {
     })
 }
 
-/// Lichess-style base time: 60 → "1", 30 → "½", 90 → "1.5".
-fn base_minutes(seconds: f64) -> String {
-    match seconds as i64 {
-        15 => "¼".into(),
-        30 => "½".into(),
-        45 => "¾".into(),
-        _ => {
-            let minutes = (seconds / 60. * 10.).round() / 10.;
-            if minutes.fract() == 0. {
-                format!("{minutes:.0}")
-            } else {
-                minutes.to_string()
-            }
-        }
-    }
-}
-
-/// "Black won · Checkmate", or "Live" while the game goes on (`frameResult`).
+/// "Black won · Checkmate", or "Live" while the game goes on.
 pub fn result_line(frame: &Value) -> String {
     if frame["finished"] != json!(true) {
         return "Live".into();
@@ -137,7 +120,7 @@ pub fn info_line(frame: &Value, channels: &[kchess_contracts::types::TvChannel])
         frame["clock"]["initial"].as_f64(),
         frame["clock"]["increment"].as_f64(),
     ) {
-        parts.push(format!("{}+{increment}", base_minutes(initial)));
+        parts.push(crate::widgets::time_control(initial / 60., increment));
     }
     if let Some(rated) = frame["rated"].as_bool() {
         parts.push(if rated { "Rated" } else { "Casual" }.into());
@@ -1076,7 +1059,7 @@ mod tests {
         assert_eq!(placeholder(true, Some("error")), "Not connected");
     }
 
-    use super::{base_minutes, info_line, past_result, past_score, points, result_line};
+    use super::{info_line, past_result, past_score, points, result_line};
     use serde_json::json;
 
     #[test]
@@ -1116,8 +1099,6 @@ mod tests {
         );
         let standard = json!({ "source": "game", "variant": "standard", "speed": "rapid" });
         assert_eq!(info_line(&standard, &channels), "Rapid");
-        assert_eq!(base_minutes(30.), "½");
-        assert_eq!(base_minutes(90.), "1.5");
     }
 
     #[test]
