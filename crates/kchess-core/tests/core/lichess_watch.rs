@@ -11,13 +11,13 @@ use fixtures::{
     MemoryStore, MemoryTokens, Recording, Reply, Seen, lichess_service, lichess_service_with_idle,
     serve,
 };
+use kchess_contracts::check::{BroadcastQuery, WatchSession, check};
 use kchess_contracts::types::{BroadcastSection, WatchPhase};
 use kchess_core::lichess::accounts::Lichess;
 use kchess_core::lichess::watch::{
     BroadcastUpdate, LineUpTiming, Spectator, WatchFrame, WatchSink, WatchState, WatchTarget,
     align_tv_moves, broadcast_game, broadcast_summaries, parse_game_details, parse_tv_game,
 };
-use kchess_domain::misc::checks;
 use kchess_domain::misc::value::J;
 use kchess_domain::replay;
 use kchess_domain::variant::{Setup, Variant};
@@ -452,23 +452,27 @@ async fn broadcast_search_lists_recent_official_broadcasts() {
 
 #[test]
 fn validates_watch_targets_and_broadcast_queries() {
-    let target = |value: Value| checks::watch_target(J::from(&value));
+    let target = |value: Value| check::<WatchTarget>(J::from(&value));
     assert_eq!(
-        target(json!({ "channel": "rapid" })).unwrap(),
-        json!({ "channel": "rapid" })
+        target(json!({ "channel": "rapid" })),
+        Ok(WatchTarget::Channel("rapid".into()))
     );
     assert_eq!(
-        target(json!({ "gameId": "AbCd1234" })).unwrap(),
-        json!({ "gameId": "AbCd1234" })
+        target(json!({ "gameId": "AbCd1234" })),
+        Ok(WatchTarget::Game("AbCd1234".into()))
     );
     assert!(target(json!({ "channel": "../x" })).is_err());
-    let query =
-        |value: Option<Value>| checks::broadcast_query(value.map_or(J::Undef, |v| J::from(&v)));
-    assert!(query(None).is_ok());
-    assert_eq!(query(Some(json!(" Open "))).unwrap(), json!("Open"));
+    let query = |value: Option<Value>| {
+        check::<Option<BroadcastQuery>>(value.map_or(J::Undef, |v| J::from(&v)))
+    };
+    assert_eq!(query(None), Ok(None));
+    assert_eq!(
+        query(Some(json!(" Open "))),
+        Ok(Some(BroadcastQuery("Open".into())))
+    );
     assert!(query(Some(json!("x".repeat(101)))).is_err());
-    let session = |value: Value| checks::watch_session(J::from(&value));
-    assert_eq!(session(json!(3)).unwrap(), json!(3));
+    let session = |value: Value| check::<WatchSession>(J::from(&value));
+    assert_eq!(session(json!(3)).map(|session| session.0), Ok(3));
     assert!(session(json!(0)).is_err());
     assert!(session(json!("3")).is_err());
 }
@@ -766,7 +770,7 @@ fn every_listed_tv_channel_is_a_valid_watch_target() {
     // Atomic, Horde and Racing Kings were listed but refused by the watch validator.
     for (channel, _) in kchess_core::lichess::watch::TV_CHANNELS {
         assert!(
-            checks::watch_target(J::from(&json!({ "channel": channel }))).is_ok(),
+            check::<WatchTarget>(J::from(&json!({ "channel": channel }))).is_ok(),
             "{channel}"
         );
     }

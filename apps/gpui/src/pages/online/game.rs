@@ -8,7 +8,6 @@ use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::json;
 use shakmaty::Color;
 
 use super::OnlinePage;
@@ -22,6 +21,7 @@ use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
+use kchess_contracts::types::DeclineReason;
 use kchess_domain::online_game::model::Model;
 
 /// The player may touch pieces: the game is on, at its last move.
@@ -322,20 +322,22 @@ fn opponent_connection_panel(cx: &App, palette: &Palette) -> Stateful<Div> {
     let entry = online
         .presence
         .as_ref()
-        .map(|report| &report["users"][&them]);
+        .and_then(|report| report.users.get(&them));
     let (status, signal) = if model.opponent_gone {
         ("Disconnected".to_string(), "—".to_string())
     } else {
-        match entry.filter(|entry| entry.is_object()) {
+        match entry {
             None => ("Checking…".to_string(), "—".to_string()),
             Some(entry) => (
-                if entry["online"] == json!(true) {
+                if entry.online {
                     "Online".to_string()
                 } else {
                     "Offline".to_string()
                 },
-                entry["signal"]
-                    .as_u64()
+                entry
+                    .signal
+                    .as_ref()
+                    .and_then(serde_json::Number::as_u64)
                     .filter(|signal| (1..=4).contains(signal))
                     .map_or("—".into(), |signal| {
                         format!("{} · {signal} of 4", QUALITY[signal as usize])
@@ -370,7 +372,9 @@ fn connection(online: &OnlineState, mine: bool, palette: &Palette) -> Option<Any
         match online.latency.last() {
             None => ("Measuring…".to_string(), palette.text_muted),
             Some(ms) => {
-                let offline = report.is_some_and(|r| r["users"][&me]["online"] == json!(false));
+                let offline = report
+                    .and_then(|r| r.users.get(&me))
+                    .is_some_and(|entry| !entry.online);
                 (
                     format!(
                         "{} · {} ms",
@@ -389,9 +393,9 @@ fn connection(online: &OnlineState, mine: bool, palette: &Palette) -> Option<Any
         ("Away".to_string(), palette.warning)
     } else {
         let them = online.model().opponent_id.to_lowercase();
-        match report.map(|r| &r["users"][&them]) {
-            Some(entry) if entry.is_object() => {
-                if entry["online"] == json!(true) {
+        match report.and_then(|r| r.users.get(&them)) {
+            Some(entry) => {
+                if entry.online {
                     ("Online".to_string(), palette.success)
                 } else {
                     ("Offline".to_string(), palette.error)
@@ -873,12 +877,7 @@ impl OnlinePage {
             notices.push(
                 offer(
                     "repeat",
-                    format!(
-                        "{} wants a rematch",
-                        rematch["opponent"]["name"]
-                            .as_str()
-                            .unwrap_or("Your opponent")
-                    ),
+                    format!("{} wants a rematch", rematch.opponent.name),
                     vec![
                         Button::new("rematch-accept")
                             .xsmall()
@@ -897,7 +896,7 @@ impl OnlinePage {
                             .on_click(move |_, _, cx| {
                                 let challenge = decline.clone();
                                 crate::online::handle(cx).update(cx, |online, cx| {
-                                    online.decline(&challenge, "generic", cx)
+                                    online.decline(&challenge, DeclineReason::Generic, cx)
                                 })
                             })
                             .into_any_element(),

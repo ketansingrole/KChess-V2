@@ -3,6 +3,8 @@
 //! page is shown: leaving it stops the stream.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::{Bounded, LichessId, PresenceUsers};
+use kchess_contracts::types::{TvChannel, UserPresence, WatchTarget};
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -95,10 +97,10 @@ enum Target {
 }
 
 impl Target {
-    fn json(&self) -> Value {
+    fn contract(&self) -> WatchTarget {
         match self {
-            Target::Channel(channel) => json!({ "channel": channel }),
-            Target::Game(id) => json!({ "gameId": id }),
+            Target::Channel(channel) => WatchTarget::Channel(channel.clone()),
+            Target::Game(id) => WatchTarget::Game(id.clone()),
         }
     }
 }
@@ -135,13 +137,22 @@ pub fn channel_icon(key: &str) -> gpui_kit::component::Icon {
 
 /// "GM Name (2800)": a player as Lichess labels them.
 pub fn label(player: &Value) -> String {
+    player_label(
+        player["title"].as_str(),
+        player["name"].as_str().unwrap_or("?"),
+        player["rating"].as_f64(),
+    )
+}
+
+/// "GM Carlsen (2850)": a player's title, name and rating.
+fn player_label(title: Option<&str>, name: &str, rating: Option<f64>) -> String {
     let mut text = String::new();
-    if let Some(title) = player["title"].as_str() {
+    if let Some(title) = title {
         text.push_str(title);
         text.push(' ');
     }
-    text.push_str(player["name"].as_str().unwrap_or("?"));
-    if let Some(rating) = player["rating"].as_f64() {
+    text.push_str(name);
+    if let Some(rating) = rating {
         text.push_str(&format!(" ({rating})"));
     }
     text
@@ -149,7 +160,7 @@ pub fn label(player: &Value) -> String {
 
 pub struct WatchPage {
     tab: Tab,
-    channels: Vec<Value>,
+    channels: Vec<TvChannel>,
     target: Option<Target>,
     /// The connection to the feed (`WatchState`), once known.
     phase: Option<String>,
@@ -167,7 +178,7 @@ pub struct WatchPage {
     live: Live,
     broadcasts: Broadcasts,
     /// Followed players' presence by lowercase name.
-    presence: std::collections::HashMap<String, Value>,
+    presence: std::collections::HashMap<String, UserPresence>,
     presence_error: Option<SharedString>,
     /// The live game's panel beside the board, drawn as a cached view of its own
     /// (`render_live_panel`), so a sliding move redraws the page around the board alone.
@@ -355,8 +366,8 @@ impl WatchPage {
         match self.tab {
             Tab::Tv if self.target.is_none() => {
                 let channel = crate::prefs::get::<String>(cx, CHANNEL_KEY, "best".into());
-                let known = self.channels.is_empty()
-                    || self.channels.iter().any(|c| c["key"] == json!(channel));
+                let known =
+                    self.channels.is_empty() || self.channels.iter().any(|c| c.key == channel);
                 self.watch_channel(if known { channel } else { "best".into() }, cx);
             }
             Tab::Broadcasts => {
@@ -410,9 +421,9 @@ impl WatchPage {
         self.stop(cx);
         self.error = None;
         let epoch = self.epoch;
-        let found = cx
-            .global::<AppCore>()
-            .request(calls::BroadcastRound { id: json!(round) });
+        let found = cx.global::<AppCore>().request(calls::BroadcastRound {
+            id: LichessId(round.clone()),
+        });
         cx.spawn_in(window, async move |this, cx| {
             let answer = found.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -421,8 +432,7 @@ impl WatchPage {
                 }
                 match answer {
                     Ok(found) => {
-                        let tour = found["tourId"].as_str().unwrap_or_default().to_string();
-                        this.open_tour_at(tour, Some(round), game, window, cx);
+                        this.open_tour_at(found.tour_id, Some(round), game, window, cx);
                     }
                     Err(cause) => this.error = Some(cause.message.into()),
                 }
@@ -457,7 +467,7 @@ impl WatchPage {
                 match answer {
                     Ok(channels) => {
                         this.channels_error = None;
-                        this.channels = channels.as_array().cloned().unwrap_or_default()
+                        this.channels = channels
                     }
                     Err(cause) => this.channels_error = Some(cause.message.into()),
                 }
@@ -486,21 +496,21 @@ impl WatchPage {
         self.pending = Some(Pending::Watch);
         cx.notify();
         let call = cx.global::<AppCore>().request(calls::Watch {
-            target: target.json(),
+            target: target.contract(),
         });
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
                 if this.epoch != epoch {
                     // The page moved on while the core started it: that watch ends now.
-                    if let Ok(session) = &answer {
-                        stop_watching(session.as_f64(), cx);
+                    if let Ok(session) = answer {
+                        stop_watching(Some(session as f64), cx);
                     }
                     return;
                 }
                 match answer {
                     Ok(session) => {
-                        this.session = session.as_f64();
+                        this.session = Some(session as f64);
                         this.replay_early(cx);
                     }
                     Err(cause) => {
@@ -597,15 +607,15 @@ impl WatchPage {
         self.presence_error = None;
         for chunk in names.chunks(50) {
             let presence = core.request(calls::Presence {
-                usernames: json!(chunk),
+                usernames: PresenceUsers(chunk.to_vec()),
             });
             cx.spawn(async move |this, cx| {
                 let answer = presence.await;
                 let _ = this.update(cx, |this, cx| {
                     match answer {
                         Ok(report) => {
-                            for (name, entry) in report["users"].as_object().into_iter().flatten() {
-                                this.presence.insert(name.to_lowercase(), entry.clone());
+                            for (name, entry) in report.users {
+                                this.presence.insert(name.to_lowercase(), entry);
                             }
                         }
                         Err(cause) => this.presence_error = Some(cause.message.into()),
@@ -620,7 +630,7 @@ impl WatchPage {
     /// The channel list as Lichess would answer it, for the end-to-end tests: the fake Lichess
     /// leaves the list unanswered, which TV's unreachable state needs, and every test shares it.
     #[cfg(test)]
-    pub(crate) fn show_channels(&mut self, channels: Vec<Value>, cx: &mut Context<Self>) {
+    pub(crate) fn show_channels(&mut self, channels: Vec<TvChannel>, cx: &mut Context<Self>) {
         self.channels = channels;
         cx.notify();
     }
@@ -637,11 +647,8 @@ impl WatchPage {
         };
         self.channels
             .iter()
-            .filter_map(|channel| {
-                let key = channel["key"].as_str()?;
-                let name = channel["label"].as_str()?;
-                (current != Some(key)).then(|| (key.to_string(), name.to_string()))
-            })
+            .filter(|channel| current != Some(channel.key.as_str()))
+            .map(|channel| (channel.key.clone(), channel.label.clone()))
             .collect()
     }
 
@@ -682,18 +689,16 @@ impl WatchPage {
                     .gap(px(2.))
                     .overflow_y_scroll()
                     .children(self.channels.iter().enumerate().map(|(index, channel)| {
-                        let key = channel["key"].as_str().unwrap_or_default().to_string();
+                        let key = channel.key.clone();
                         let chosen = current.as_deref() == Some(key.as_str());
-                        let sub = if channel["player"].is_object() {
-                            label(&channel["player"])
-                        } else {
-                            "No game".into()
-                        };
+                        let sub = channel.player.as_ref().map_or("No game".into(), |player| {
+                            player_label(player.title.as_deref(), &player.name, player.rating)
+                        });
                         h_flex()
                             .id(("watch-channel", index))
                             .role(Role::Button)
                             .keyboard_focus(palette.primary)
-                            .aria_label(channel["label"].as_str().unwrap_or_default().to_string())
+                            .aria_label(channel.label.clone())
                             .aria_selected(chosen)
                             .gap(px(12.))
                             .p(px(8.))
@@ -725,12 +730,7 @@ impl WatchPage {
                                             .text_size(px(14.))
                                             .font_weight(FontWeight::MEDIUM)
                                             .truncate()
-                                            .child(
-                                                channel["label"]
-                                                    .as_str()
-                                                    .unwrap_or_default()
-                                                    .to_string(),
-                                            ),
+                                            .child(channel.label.clone()),
                                     )
                                     .child(
                                         div()
@@ -753,7 +753,7 @@ impl WatchPage {
                 friend["username"].as_str().is_some_and(|name| {
                     self.presence
                         .get(&name.to_lowercase())
-                        .is_some_and(|p| p["online"] == json!(true))
+                        .is_some_and(|p| p.online)
                 })
             })
             .count();
@@ -762,12 +762,9 @@ impl WatchPage {
             .filter_map(|friend| {
                 let name = friend["username"].as_str()?;
                 let presence = self.presence.get(&name.to_lowercase())?;
-                (presence["playing"] == json!(true)).then(|| {
-                    (
-                        name.to_string(),
-                        presence["playingId"].as_str().map(str::to_string),
-                    )
-                })
+                presence
+                    .playing
+                    .then(|| (name.to_string(), presence.playing_id.clone()))
             })
             .collect();
         let header = h_flex()
@@ -1077,7 +1074,7 @@ pub(super) fn stop_watching(session: Option<f64>, cx: &mut App) {
         return;
     };
     let stopping = cx.global::<AppCore>().request(calls::StopWatching {
-        session: Some(json!(session as u64)),
+        session: Some(Bounded(session as u64)),
     });
     cx.background_spawn(async move {
         if let Err(cause) = stopping.await {

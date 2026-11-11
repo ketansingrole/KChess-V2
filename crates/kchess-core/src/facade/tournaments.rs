@@ -151,8 +151,6 @@ impl TournamentsApi for Core {
         arena: NewArena,
     ) -> Result<Reply<TournamentSummary>> {
         let lichess = self.services.lichess();
-        tournaments::create_tournament(lichess, &account.0, &arena)
-            .await
-            .map_err(Into::into)
+        tournaments::create_tournament(lichess, &account.0, &arena).await
     }
 }

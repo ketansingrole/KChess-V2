@@ -1440,10 +1440,10 @@ fn game_mark(cx: &App) -> Option<GameMark> {
             crate::game::view::position_at(&setup, &moves, moves.len()).as_ref(),
         ) == online.color()
     };
-    let correspondence_turn = online.ongoing.iter().any(|game| {
-        game["speed"] == serde_json::json!("correspondence")
-            && game["isMyTurn"] == serde_json::json!(true)
-    });
+    let correspondence_turn = online
+        .ongoing
+        .iter()
+        .any(|game| game.speed == "correspondence" && game.is_my_turn);
     if my_turn || correspondence_turn {
         Some(GameMark::Turn)
     } else if live {

@@ -7,8 +7,10 @@ use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::Variant;
 use kchess_contracts::calls;
-use serde_json::{Value, json};
+use kchess_contracts::check::Username;
+use kchess_contracts::types::{NewArena, Reply};
 
 use super::TournamentsPage;
 use crate::assets::icon;
@@ -220,35 +222,29 @@ impl CreateArena {
         )
     }
 
-    fn arena(&self, cx: &App) -> Value {
-        let mut arena = json!({
-            "clockTime": Self::number(&self.clock, cx),
-            "clockIncrement": Self::number(&self.increment, cx),
-            "minutes": Self::number(&self.duration, cx),
-            "variant": self.variant.read(cx).selected_value().map_or("standard".into(), |v| v.to_string()),
-            "rated": self.rated,
-        });
-        // Unset fields are left out: the validators reject null.
-        let name = self.name.read(cx).value().trim().to_string();
-        if !name.is_empty() {
-            arena["name"] = json!(name);
+    fn arena(&self, cx: &App) -> NewArena {
+        let filled = |text: String| Some(text).filter(|text| !text.is_empty());
+        let later = self.later(cx);
+        NewArena {
+            name: filled(self.name.read(cx).value().trim().to_string()),
+            clock_time: Self::number(&self.clock, cx),
+            clock_increment: Self::number(&self.increment, cx),
+            minutes: Self::number(&self.duration, cx),
+            wait_minutes: (!later).then(|| Self::number(&self.start, cx)),
+            start_date: later
+                .then(|| parse_start(&self.start_at.read(cx).value()))
+                .flatten()
+                .map(|at| at as i64),
+            variant: self
+                .variant
+                .read(cx)
+                .selected_value()
+                .and_then(|key| Variant::from_key(key))
+                .unwrap_or(Variant::Standard),
+            rated: self.rated,
+            password: filled(self.password.read(cx).value().to_string()),
+            description: filled(self.description.read(cx).value().trim().to_string()),
         }
-        if self.later(cx) {
-            if let Some(at) = parse_start(&self.start_at.read(cx).value()) {
-                arena["startDate"] = json!(at);
-            }
-        } else {
-            arena["waitMinutes"] = json!(Self::number(&self.start, cx));
-        }
-        let password = self.password.read(cx).value().to_string();
-        if !password.is_empty() {
-            arena["password"] = json!(password);
-        }
-        let description = self.description.read(cx).value().trim().to_string();
-        if !description.is_empty() {
-            arena["description"] = json!(description);
-        }
-        arena
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -260,7 +256,7 @@ impl CreateArena {
         self.reconnect = false;
         cx.notify();
         let call = cx.global::<AppCore>().request(calls::CreateTournament {
-            account: json!(self.account),
+            account: Username(self.account.clone()),
             arena: self.arena(cx),
         });
         let page = self.page.clone();
@@ -269,8 +265,8 @@ impl CreateArena {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match answer {
-                    Ok(result) if result.get("needsReconnect").is_some() => this.reconnect = true,
-                    Ok(created) => {
+                    Ok(Reply::NeedsReconnect) => this.reconnect = true,
+                    Ok(Reply::Done(created)) => {
                         window.close_dialog(cx);
                         let _ = page.update(cx, |page, cx| page.created(&created, window, cx));
                     }

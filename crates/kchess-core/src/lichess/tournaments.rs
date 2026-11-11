@@ -26,8 +26,6 @@ use kchess_contracts::types::{TournamentStatus, TournamentSystem, UsageKind};
 use kchess_domain::color::Color;
 use kchess_domain::js;
 
-/// `TournamentSystem`: an arena, or a Swiss event.
-
 /* ── Lichess's shapes (see `decode` for the key rules) ─────────────────── */
 
 /// `variantField`: a key string, or `{ key, name? }`.

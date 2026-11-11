@@ -4,6 +4,8 @@
 //! from Lichess, sync, clear and remove.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::PresenceUsers;
+use kchess_contracts::types::UserPresence;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
@@ -58,7 +60,7 @@ pub struct FriendsPage {
     profiles: HashMap<String, Value>,
     /// When every profile was last asked for.
     profiles_asked: Option<std::time::Instant>,
-    status: HashMap<String, Value>,
+    status: HashMap<String, UserPresence>,
     loading: bool,
     /// `gameLibraryOverview().versus`: the connected accounts' record against each player.
     versus: Value,
@@ -290,13 +292,11 @@ impl FriendsPage {
         let core = cx.global::<AppCore>().clone();
         for chunk in names.chunks(PRESENCE_CHUNK) {
             let presence = core.request(calls::Presence {
-                usernames: json!(chunk),
+                usernames: PresenceUsers(chunk.to_vec()),
             });
             crate::loading::fetch(cx, "friends", presence, |this, report, _| {
-                if let Some(users) = report["users"].as_object() {
-                    for (name, presence) in users {
-                        this.status.insert(key(name), presence.clone());
-                    }
+                for (name, presence) in report.users {
+                    this.status.insert(key(&name), presence);
                 }
             });
         }
@@ -430,15 +430,13 @@ impl FriendsPage {
         let (games, stored) = accounts.stored(&name);
         let (label, dot) = match &presence {
             None => ("Status unknown", palette.text_muted),
-            Some(presence) if presence["playing"] == json!(true) => {
-                ("Playing now", palette.success)
-            }
-            Some(presence) if presence["online"] == json!(true) => ("Online", palette.success),
+            Some(presence) if presence.playing => ("Playing now", palette.success),
+            Some(presence) if presence.online => ("Online", palette.success),
             Some(_) => ("Offline", palette.border_accented),
         };
         let seen = presence
             .as_ref()
-            .filter(|presence| presence["online"] != json!(true))
+            .filter(|presence| !presence.online)
             .and(profile["seenAt"].as_f64())
             .map(|seen| format!(" · seen {}", ago(seen)));
         let rating = |perf: &str| {
@@ -456,7 +454,7 @@ impl FriendsPage {
         });
         let playing_id = presence
             .as_ref()
-            .and_then(|presence| presence["playingId"].as_str().map(str::to_string));
+            .and_then(|presence| presence.playing_id.clone());
         let synced = friend["lastSyncedAt"].as_f64();
         // Lichess has games the last sync did not download.
         let mut new_badge = has_new_games(friend, &profile).then(|| {
@@ -694,13 +692,13 @@ impl Render for FriendsPage {
         let handle = cx.global::<AccountsHandle>().0.clone();
         let accounts = handle.read(cx);
         let mut friends = accounts.tracked();
-        let rank = |friend: &Value, status: &HashMap<String, Value>| {
+        let rank = |friend: &Value, status: &HashMap<String, UserPresence>| {
             let presence = friend["username"]
                 .as_str()
                 .and_then(|name| status.get(&key(name)));
             match presence {
-                Some(presence) if presence["playing"] == json!(true) => 0,
-                Some(presence) if presence["online"] == json!(true) => 1,
+                Some(presence) if presence.playing => 0,
+                Some(presence) if presence.online => 1,
                 _ => 2,
             }
         };

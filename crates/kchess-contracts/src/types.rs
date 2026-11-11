@@ -1754,7 +1754,7 @@ fn playable_by_default() -> bool {
 
 /// Lichess's view of one user's connection. `signal` runs 1 (poor, lag > 500 ms) to 4 (great,
 /// lag < 150 ms).
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UserPresence {
     pub online: bool,

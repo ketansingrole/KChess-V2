@@ -395,11 +395,20 @@ fn home() {
                     crate::shell::open(Page::Dashboard, window, cx);
                     if turn {
                         crate::online::handle(cx).update(cx, |online, cx| {
-                            online.ongoing = vec![serde_json::json!({
-                                "gameId": "corr1",
-                                "speed": "correspondence",
-                                "isMyTurn": true,
-                            })];
+                            online.ongoing = vec![
+                                serde_json::from_value(serde_json::json!({
+                                    "gameId": "corr1",
+                                    "account": "",
+                                    "opponent": { "name": "" },
+                                    "color": "white",
+                                    "fen": "",
+                                    "variant": "standard",
+                                    "speed": "correspondence",
+                                    "rated": false,
+                                    "isMyTurn": true,
+                                }))
+                                .expect("a game in progress"),
+                            ];
                             cx.notify();
                         });
                     }

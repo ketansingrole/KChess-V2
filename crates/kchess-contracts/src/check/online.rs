@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use kchess_domain::misc::constants::{CORRESPONDENCE_DAYS, TV_CHANNELS};
+use kchess_domain::misc::constants::{
+    ARENA_CLOCK_MINUTES, ARENA_DURATIONS, ARENA_INCREMENTS, ARENA_WAIT_MINUTES,
+    CORRESPONDENCE_DAYS, TV_CHANNELS,
+};
 use kchess_domain::misc::patterns;
 use kchess_domain::misc::value::J;
 use kchess_domain::variant::{VARIANTS, Variant};
@@ -375,23 +378,6 @@ impl Validate for OnlineOptions {
     }
 }
 
-/// The clocks, in minutes, an arena may have.
-pub const ARENA_CLOCK_MINUTES: &[f64] = &[
-    0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 15.0, 20.0, 25.0,
-    30.0, 40.0, 50.0, 60.0,
-];
-/// The increments, in seconds, an arena may have.
-pub const ARENA_INCREMENTS: &[f64] = &[
-    0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0,
-];
-/// How long, in minutes, an arena may last.
-pub const ARENA_DURATIONS: &[f64] = &[
-    20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0, 55.0, 60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0,
-    150.0, 180.0, 210.0, 240.0, 270.0, 300.0, 330.0, 360.0, 420.0, 480.0, 540.0, 600.0, 720.0,
-];
-/// How many minutes from now an arena may start.
-pub const ARENA_WAIT_MINUTES: &[f64] = &[1.0, 2.0, 3.0, 5.0, 10.0, 15.0, 20.0, 30.0, 45.0, 60.0];
-
 /// The arena as sent: its clock, schedule and options, and no other keys.
 #[derive(Deserialize)]
 #[serde(expecting = "an object")]
@@ -549,6 +535,23 @@ mod tests {
         assert_eq!(
             check::<ChatText>(J::Str("  ".into())),
             Err("Type a message first.".into())
+        );
+    }
+
+    #[test]
+    fn binary_data_is_not_text() {
+        let bytes = J::Bytes {
+            len: 2,
+            head: b"hi".to_vec(),
+        };
+        assert_eq!(check::<ChatText>(bytes), Err("Invalid message.".into()));
+    }
+
+    #[test]
+    fn default_messages_name_the_rejected_value() {
+        assert_eq!(
+            check::<NewArena>(obj(vec![])),
+            Err("missing field `clockTime`".into())
         );
     }
 }

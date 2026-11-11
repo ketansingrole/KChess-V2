@@ -11,6 +11,10 @@ use std::time::{Duration, Instant};
 use futures::FutureExt as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
+use kchess_contracts::check::{GameId, PresenceUsers, Uci, Username, Validate};
+use kchess_contracts::types::{
+    ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, OngoingGame, PresenceReport,
+};
 use kchess_contracts::{CoreError, Level};
 use kchess_domain::online_game::model::{Call, Ctx, Effect, Model, Op, Outcome, Reply, View};
 use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
@@ -93,16 +97,16 @@ pub struct OnlineState {
     pub flipped: bool,
     pub form: Form,
     /// `PresenceReport` for both players, and recent round trips.
-    pub presence: Option<Value>,
+    pub presence: Option<PresenceReport>,
     pub latency: Vec<f64>,
     pub move_ack: Option<f64>,
     presence_epoch: u64,
     presence_pending: bool,
     /// Something the rules started is waiting for Lichess (`busy`).
     pub busy: bool,
-    pub challenges: Vec<Value>,
+    pub challenges: Vec<ChallengeInfo>,
     pub lobby: Option<Value>,
-    pub ongoing: Vec<Value>,
+    pub ongoing: Vec<OngoingGame>,
     pub ongoing_loaded: bool,
     pub ongoing_error: Option<String>,
     /// Each games-in-progress request; an answer to an earlier one is dropped.
@@ -346,33 +350,30 @@ impl OnlineState {
             return Task::ready(begun.ret);
         };
         let core = cx.global::<AppCore>();
+        // The rules keep their calls and answers as JSON: each is typed on its way to the core.
         let call = match call {
-            Call::StartOnline(options) => {
-                core.request(calls::StartOnline { options }).boxed_local()
-            }
-            Call::CancelOnline => core.request(calls::CancelOnline {}).boxed_local(),
-            Call::ResumeOnline => core.request(calls::ResumeOnline {}).boxed_local(),
-            Call::OpenGame { account, id } => core
-                .request(calls::OpenGame {
-                    account: json!(account),
-                    id: json!(id),
-                })
-                .boxed_local(),
-            Call::PlayOnline { id, uci } => core
-                .request(calls::PlayOnline {
-                    id: json!(id),
-                    r#move: json!(uci),
-                })
-                .boxed_local(),
-            Call::OnlineAction { id, action } => core
-                .request(calls::OnlineAction {
-                    id: json!(id),
-                    action: json!(action),
-                })
-                .boxed_local(),
-            Call::OnlineChat { id } => core
-                .request(calls::OnlineChat { id: json!(id) })
-                .boxed_local(),
+            Call::StartOnline(options) => match typed(&options) {
+                Ok(options) => answer(core.request(calls::StartOnline { options })),
+                Err(refused) => futures::future::ready(Err(refused)).boxed_local(),
+            },
+            Call::CancelOnline => answer(core.request(calls::CancelOnline {})),
+            Call::ResumeOnline => answer(core.request(calls::ResumeOnline {})),
+            Call::OpenGame { account, id } => answer(core.request(calls::OpenGame {
+                account: Username(account),
+                id: GameId(id),
+            })),
+            Call::PlayOnline { id, uci } => answer(core.request(calls::PlayOnline {
+                id: GameId(id),
+                r#move: Uci(uci),
+            })),
+            Call::OnlineAction { id, action } => match typed(&json!(action)) {
+                Ok(action) => answer(core.request(calls::OnlineAction {
+                    id: GameId(id),
+                    action,
+                })),
+                Err(refused) => futures::future::ready(Err(refused)).boxed_local(),
+            },
+            Call::OnlineChat { id } => answer(core.request(calls::OnlineChat { id: GameId(id) })),
         };
         cx.spawn(async move |this, cx| {
             let answer = call.await;
@@ -553,15 +554,20 @@ impl OnlineState {
         self.perform(Op::Action(action.to_string()), cx).detach();
     }
 
-    pub fn send_chat(&mut self, text: String, room: &str, cx: &mut Context<Self>) -> Task<bool> {
+    pub fn send_chat(
+        &mut self,
+        text: String,
+        room: ChatRoom,
+        cx: &mut Context<Self>,
+    ) -> Task<bool> {
         let id = self.id().to_string();
         if id.is_empty() || text.trim().is_empty() {
             return Task::ready(false);
         }
         let call = cx.global::<AppCore>().request(calls::SendChat {
-            id: json!(id),
-            room: json!(room),
-            text: json!(text.trim()),
+            id: GameId(id),
+            room,
+            text: kchess_contracts::check::ChatText(text.trim().to_string()),
         });
         cx.spawn(async move |_, cx| match call.await {
             Ok(_) => true,
@@ -649,9 +655,9 @@ impl OnlineState {
         }
         let opponent = self.model.opponent_id.clone();
         let ids = if opponent.is_empty() {
-            json!([me])
+            PresenceUsers(vec![me])
         } else {
-            json!([me, opponent])
+            PresenceUsers(vec![me, opponent])
         };
         let epoch = self.presence_epoch;
         self.presence_pending = true;
@@ -667,11 +673,9 @@ impl OnlineState {
                 }
                 // A missed poll leaves the last reading; a later one recovers.
                 if let Ok(report) = answer {
-                    if let Some(ms) = report["latencyMs"].as_f64() {
-                        this.latency.push(ms);
-                        if this.latency.len() > LATENCY_KEPT {
-                            this.latency.remove(0);
-                        }
+                    this.latency.push(report.latency_ms as f64);
+                    if this.latency.len() > LATENCY_KEPT {
+                        this.latency.remove(0);
                     }
                     this.presence = Some(report);
                     cx.notify();
@@ -703,12 +707,11 @@ impl OnlineState {
                 }
                 match answer {
                     Ok(games) => {
-                        let games = games.as_array().cloned().unwrap_or_default();
                         for game in &games {
-                            let id = game["gameId"].as_str().unwrap_or_default().to_string();
-                            let mine = game["isMyTurn"] == json!(true);
+                            let id = game.game_id.clone();
+                            let mine = game.is_my_turn;
                             let before = this.turns.get(&id).copied();
-                            if game["speed"] == json!("correspondence")
+                            if game.speed == "correspondence"
                                 && mine
                                 && before == Some(false)
                                 && id != this.id()
@@ -779,7 +782,7 @@ impl OnlineState {
         cx.spawn(async move |this, cx| {
             if let Ok(list) = call.await {
                 let _ = this.update(cx, |this, cx| {
-                    this.challenges = list.as_array().cloned().unwrap_or_default();
+                    this.challenges = list;
                     cx.notify();
                 });
             }
@@ -790,7 +793,7 @@ impl OnlineState {
     fn challenge_act(
         &mut self,
         id: String,
-        call: impl Future<Output = Result<Value, CoreError>> + 'static,
+        call: impl Future<Output = Result<(), CoreError>> + 'static,
         cx: &mut Context<Self>,
     ) -> Task<bool> {
         self.busy_challenge = id;
@@ -813,19 +816,16 @@ impl OnlineState {
     }
 
     /// Accept a challenge: a live one opens on the board; a correspondence one joins the games.
-    pub fn accept(&mut self, challenge: &Value, cx: &mut Context<Self>) -> Task<bool> {
-        let id = challenge["id"].as_str().unwrap_or_default().to_string();
-        let live = challenge["timeControl"]["type"] == json!("clock");
+    pub fn accept(&mut self, challenge: &ChallengeInfo, cx: &mut Context<Self>) -> Task<bool> {
+        let id = challenge.id.clone();
+        let live = matches!(challenge.time_control, ChallengeTimeControl::Clock { .. });
         if live {
-            self.prepare_for_game(challenge["account"].as_str().unwrap_or_default(), &id);
+            self.prepare_for_game(&challenge.account, &id);
         }
-        let opponent = challenge["opponent"]["name"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let call = cx
-            .global::<AppCore>()
-            .request(calls::AcceptChallenge { id: json!(id) });
+        let opponent = challenge.opponent.name.clone();
+        let call = cx.global::<AppCore>().request(calls::AcceptChallenge {
+            id: GameId(id.clone()),
+        });
         let done = self.challenge_act(id, call, cx);
         cx.spawn(async move |this, cx| {
             let done = done.await;
@@ -842,29 +842,34 @@ impl OnlineState {
         })
     }
 
-    pub fn decline(&mut self, challenge: &Value, reason: &str, cx: &mut Context<Self>) {
-        let id = challenge["id"].as_str().unwrap_or_default().to_string();
+    pub fn decline(
+        &mut self,
+        challenge: &ChallengeInfo,
+        reason: DeclineReason,
+        cx: &mut Context<Self>,
+    ) {
+        let id = challenge.id.clone();
         let call = cx.global::<AppCore>().request(calls::DeclineChallenge {
-            id: json!(id),
-            reason: json!(reason),
+            id: GameId(id.clone()),
+            reason,
         });
         self.challenge_act(id, call, cx).detach();
     }
 
-    pub fn withdraw(&mut self, challenge: &Value, cx: &mut Context<Self>) {
-        let id = challenge["id"].as_str().unwrap_or_default().to_string();
-        let call = cx
-            .global::<AppCore>()
-            .request(calls::CancelChallenge { id: json!(id) });
+    pub fn withdraw(&mut self, challenge: &ChallengeInfo, cx: &mut Context<Self>) {
+        let id = challenge.id.clone();
+        let call = cx.global::<AppCore>().request(calls::CancelChallenge {
+            id: GameId(id.clone()),
+        });
         self.challenge_act(id, call, cx).detach();
     }
 
     /// The opponent's rematch offer for the game just finished.
-    pub fn rematch_offer(&self) -> Option<Value> {
+    pub fn rematch_offer(&self) -> Option<ChallengeInfo> {
         let last = self.model.last_game.as_ref()?.id.as_str();
         self.challenges
             .iter()
-            .find(|c| c["direction"] == json!("in") && c["rematchOf"].as_str() == Some(last))
+            .find(|c| c.direction == "in" && c.rematch_of.as_deref() == Some(last))
             .cloned()
     }
 
@@ -920,20 +925,22 @@ impl OnlineState {
             }
             CoreEvent::OngoingChanged(_) => self.refresh_ongoing(cx),
             CoreEvent::ChallengesUpdate(payload) => {
-                self.challenges = payload.as_array().cloned().unwrap_or_default();
+                self.challenges = serde_json::from_value(payload.clone()).unwrap_or_default();
                 cx.notify();
             }
             // A new challenge for one of the accounts: Accept and Decline from its notification.
-            CoreEvent::ChallengeReceived(challenge) if challenge["direction"] == json!("in") => {
-                let (title, body) = challenge_alert(challenge);
+            CoreEvent::ChallengeReceived(payload) => {
+                let Ok(challenge) = serde_json::from_value::<ChallengeInfo>(payload.clone()) else {
+                    return;
+                };
+                if challenge.direction != "in" {
+                    return;
+                }
+                let (title, body) = challenge_alert(&challenge);
                 // The notification's buttons find it here, before the inbox's next update.
-                let id = challenge["id"].as_str().unwrap_or_default().to_string();
-                if !self
-                    .challenges
-                    .iter()
-                    .any(|known| known["id"] == challenge["id"])
-                {
-                    self.challenges.push(challenge.clone());
+                let id = challenge.id.clone();
+                if !self.challenges.iter().any(|known| known.id == challenge.id) {
+                    self.challenges.push(challenge);
                 }
                 crate::notifications::challenge(&id, &title, &body, cx);
             }
@@ -1103,12 +1110,11 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
                 return;
             }
             match resumed {
-                Ok(game) if game.is_object() => {
+                Ok(Some(game)) => {
                     // The game may belong to any connected account; it becomes the active one.
-                    let account = game["account"].as_str().unwrap_or_default().to_string();
-                    set_active_account(&account, cx);
-                    state.model.online_account = account;
-                    state.model.online_id = game["id"].as_str().unwrap_or_default().to_string();
+                    set_active_account(&game.account, cx);
+                    state.model.online_account = game.account;
+                    state.model.online_id = game.id;
                     if state.model.online_phase != "playing" {
                         state.model.online_phase = "disconnected".into();
                     }
@@ -1139,22 +1145,35 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
     .detach();
 }
 
+/// A call the rules made, as its contract type: refused as the core would refuse it.
+fn typed<T: Validate>(value: &Value) -> Result<T, CoreError> {
+    T::validate(value.into()).map_err(CoreError::new)
+}
+
+/// A typed answer as the rules read it.
+fn answer<T: serde::Serialize + 'static>(
+    call: impl Future<Output = Result<T, CoreError>> + 'static,
+) -> futures::future::LocalBoxFuture<'static, Result<Value, CoreError>> {
+    call.map(|answer| answer.map(|answer| serde_json::to_value(answer).unwrap_or_default()))
+        .boxed_local()
+}
+
 /// A challenge's notification: who sent it, then its clock, variant and whether it is rated
 /// ("Alice (1800) challenges you", "5+3 · Standard · Rated").
-pub fn challenge_alert(challenge: &Value) -> (String, String) {
-    let opponent = &challenge["opponent"];
-    let name = opponent["name"].as_str().unwrap_or("Someone");
-    let title = match opponent["rating"].as_f64() {
+pub fn challenge_alert(challenge: &ChallengeInfo) -> (String, String) {
+    let opponent = &challenge.opponent;
+    let name = &opponent.name;
+    let title = match opponent
+        .rating
+        .as_ref()
+        .and_then(serde_json::Number::as_f64)
+    {
         Some(rating) => format!("{name} ({rating}) challenges you"),
         None => format!("{name} challenges you"),
     };
-    let variant = challenge["variantName"].as_str().unwrap_or("Standard");
-    let rated = if challenge["rated"] == json!(true) {
-        "Rated"
-    } else {
-        "Casual"
-    };
-    let control = crate::pages::online::lists::describe_control(challenge);
+    let variant = &challenge.variant_name;
+    let rated = if challenge.rated { "Rated" } else { "Casual" };
+    let control = crate::pages::online::lists::describe_control(&challenge.time_control);
     (title, format!("{control} · {variant} · {rated}"))
 }
 

@@ -3,6 +3,8 @@
 //! recent games — and follow, challenge, message or watch them.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::PresenceUsers;
+use kchess_contracts::types::UserPresence;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -226,7 +228,7 @@ pub struct PlayersPage {
     input: Entity<InputState>,
     profile: Option<Value>,
     /// `UserPresence`, once known.
-    status: Option<Value>,
+    status: Option<UserPresence>,
     perf: String,
     perf_select: Entity<SelectState<Vec<Choice>>>,
     stats: Option<Value>,
@@ -692,7 +694,7 @@ impl PlayersPage {
         let core = cx.global::<AppCore>().clone();
         self.load_account_extras(username, cx);
         let presence = core.request(calls::Presence {
-            usernames: json!([username]),
+            usernames: PresenceUsers(vec![username.to_string()]),
         });
         let key = username.to_lowercase();
         cx.spawn(async move |this, cx| {
@@ -702,9 +704,7 @@ impl PlayersPage {
                     return;
                 }
                 match answer {
-                    Ok(report) => {
-                        this.status = Some(report["users"][&key].clone()).filter(Value::is_object)
-                    }
+                    Ok(report) => this.status = report.users.get(&key).cloned(),
                     Err(_) => this.extras_failed.push("online status"),
                 }
                 cx.notify();
@@ -947,7 +947,7 @@ impl PlayersPage {
         if self
             .status
             .as_ref()
-            .is_some_and(|status| status["playingId"].is_string())
+            .is_some_and(|status| status.playing_id.is_some())
         {
             actions.push(Action::Watch);
         }
@@ -970,7 +970,7 @@ impl PlayersPage {
                 let playing = self
                     .status
                     .as_ref()
-                    .and_then(|status| status["playingId"].as_str().map(str::to_string));
+                    .and_then(|status| status.playing_id.clone());
                 if let Some(id) = playing {
                     crate::pages::watch::watch_game(&id, window, cx);
                 }
@@ -1142,8 +1142,8 @@ impl PlayersPage {
         let not_me = me
             .as_deref()
             .is_none_or(|me| !me.eq_ignore_ascii_case(&username));
-        let status = self.status.clone().unwrap_or(Value::Null);
-        let playing_id = status["playingId"].as_str().map(str::to_string);
+        let status = self.status.clone().unwrap_or_default();
+        let playing_id = status.playing_id.clone();
         let title = profile["title"].as_str();
         let mut line = format!(
             "{} games · joined {}",
@@ -1202,13 +1202,9 @@ impl PlayersPage {
                                         widgets::badge(title.to_string(), Look::Primary, palette)
                                     }))
                                     .child(username.clone())
-                                    .when(status["online"] == json!(true), |row| {
+                                    .when(status.online, |row| {
                                         row.child(widgets::badge(
-                                            if status["playing"] == json!(true) {
-                                                "Playing"
-                                            } else {
-                                                "Online"
-                                            },
+                                            if status.playing { "Playing" } else { "Online" },
                                             Look::Success,
                                             palette,
                                         ))
