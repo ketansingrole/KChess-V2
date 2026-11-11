@@ -13,7 +13,7 @@ use shakmaty::Color;
 
 use super::OnlinePage;
 use crate::assets::icon;
-use crate::export::GameExport;
+use crate::game::played::PlayedGame;
 use crate::game::view;
 use crate::online::{OnlineHandle, OnlineState, Phase};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, panel_style};
@@ -634,11 +634,6 @@ impl OnlinePage {
                         return;
                     }
                 }
-                if event.keystroke.key == "f" {
-                    flip(cx);
-                    cx.stop_propagation();
-                    return;
-                }
                 let online = crate::online::handle(cx);
                 let (ply, count) = {
                     let online = online.read(cx);
@@ -1147,20 +1142,7 @@ impl OnlinePage {
                         if rated { "Rated" } else { "Casual" }
                     ))
                     .child(div().flex_1())
-                    .child(widgets::view_toggles(
-                        cx.global::<SettingsHandle>()
-                            .0
-                            .read(cx)
-                            .settings
-                            .frontend
-                            .blindfold,
-                        cx.global::<SettingsHandle>()
-                            .0
-                            .read(cx)
-                            .settings
-                            .frontend
-                            .zen_mode,
-                    )),
+                    .child(widgets::view_toggles(cx)),
             )
             .children(banner.map(|(glyph, title, detail)| {
                 widgets::StatusBanner::new(Tone::Plain, icon(glyph), title.into())
@@ -1194,7 +1176,11 @@ impl OnlinePage {
                 ply,
                 moves.len(),
                 select,
-                ("Flip board".into(), Some("F"), flip),
+                (
+                    "Flip board".into(),
+                    crate::menu::keys(&crate::menu::FlipBoard, cx),
+                    flip,
+                ),
             ))
             .child(
                 div()
@@ -1205,7 +1191,7 @@ impl OnlinePage {
             )
     }
 
-    fn game_export(&self, online: &OnlineState, model: &Value) -> GameExport {
+    fn game_export(&self, online: &OnlineState, model: &Value) -> PlayedGame {
         let setup = online.setup();
         let me = online.account().to_string();
         let opponent = model["onlineOpponent"]
@@ -1217,24 +1203,15 @@ impl OnlinePage {
         } else {
             (opponent, me)
         };
-        GameExport {
-            variant: setup["variant"].as_str().unwrap_or("standard").to_string(),
-            fen: setup["fen"].as_str().unwrap_or_default().to_string(),
-            moves: online.moves(),
-            orientation: online.orientation(),
-            white,
-            black,
+        PlayedGame {
             ply: Some(online.ply()),
-            result: Some(
-                model["onlineResult"]
-                    .as_str()
-                    .filter(|result| !result.is_empty())
-                    .unwrap_or("*")
-                    .to_string(),
-            ),
+            result: model["onlineResult"]
+                .as_str()
+                .and_then(kchess_games::Outcome::from_tag),
+            player: Some(online.color()),
             lichess_id: Some(online.id().to_string()).filter(|id| !id.is_empty()),
-            pgn: None,
-            shown: None,
+            account: model["onlineAccount"].as_str().map(str::to_string),
+            ..PlayedGame::new(&setup, online.moves(), online.orientation(), white, black)
         }
     }
 }
@@ -1242,29 +1219,23 @@ impl OnlinePage {
 /// The finished game on the analysis board, at the move looked at, reviewed (`analyse`).
 fn analyse(window: &mut Window, cx: &mut App) {
     let online = crate::online::handle(cx).read(cx);
-    let model = online.model().clone();
-    let setup = online.setup();
-    let moves = online.moves();
-    let ply = online.ply();
+    let model = online.model();
     let color = online.color();
-    let opponent = model["onlineOpponent"].clone();
+    let opponent = model["onlineOpponent"].as_str().unwrap_or_default();
     let (white, black) = if color == Color::White {
-        (json!("You"), opponent)
+        ("You", opponent)
     } else {
-        (opponent, json!("You"))
+        (opponent, "You")
     };
-    let origin = json!({
-        "gameId": model["onlineId"],
-        "account": model["onlineAccount"],
-        "white": white,
-        "black": black,
-        "player": color_name(color),
-    });
-    let Some(pgn) = crate::game::setup_pgn(&setup, &moves, &Value::Null) else {
-        return;
+    let game = PlayedGame {
+        ply: Some(online.ply()),
+        player: Some(color),
+        lichess_id: model["onlineId"].as_str().map(str::to_string),
+        account: model["onlineAccount"].as_str().map(str::to_string),
+        ..PlayedGame::new(&online.setup(), online.moves(), color, white, black)
     };
     crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-        analysis.open_game(&pgn, ply, Some(color), Some(origin.clone()), true, cx)
+        analysis.open_played(&game, true, cx)
     });
 }
 

@@ -374,13 +374,6 @@ impl Render for EndgameDrills {
         let thinking = self.engine.thinking;
         let missing = self.engine.ready == Some(false);
         let your_turn = self.your_turn();
-        let frontend = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
         let board_size = self.layout.board_size(window);
         let sans = san_from(&self.drill.fen, &self.moves);
         let (tone, glyph, title, detail) = if missing {
@@ -464,7 +457,7 @@ impl Render for EndgameDrills {
                             )
                             .child(widgets::heading(self.drill.title.clone(), &palette)),
                     )
-                    .child(widgets::view_toggles(frontend.blindfold, frontend.zen_mode)),
+                    .child(widgets::view_toggles(cx)),
             )
             .child(widgets::hint(
                 format!(
@@ -516,7 +509,7 @@ impl Render for EndgameDrills {
                         Button::new("drill-flip")
                             .outline()
                             .icon(icon("arrow-up-down"))
-                            .tooltip("Flip board (F)")
+                            .tooltip(crate::menu::flip_label(cx))
                             .accessibility_label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     )

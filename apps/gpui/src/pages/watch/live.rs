@@ -18,7 +18,9 @@ use super::{WatchPage, label, live_badge};
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
+use crate::game::played::GameOrigin;
 use crate::game::view;
+use crate::pages::analysis::Opening;
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, panel_style};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
@@ -386,15 +388,10 @@ impl Live {
             .update(cx, |board, cx| board.set_state(state, cx));
     }
 
-    /// ←/→ and ↑/↓ step through the moves once they are known; F turns the board.
+    /// ←/→ and ↑/↓ step through the moves once they are known.
     pub fn key(&mut self, key: &str, cx: &mut App) -> bool {
         if self.frame.is_none() {
             return false;
-        }
-        if key == "f" {
-            self.flipped = !self.flipped;
-            self.redraw(cx);
-            return true;
         }
         if self.setup().is_none() {
             return false;
@@ -739,7 +736,11 @@ impl WatchPage {
                 self.live.shown_ply(),
                 moves.len(),
                 select,
-                ("Flip board".into(), Some("F"), flip),
+                (
+                    "Flip board".into(),
+                    crate::menu::keys(&crate::menu::FlipBoard, cx),
+                    flip,
+                ),
             ))
             .when(frame["source"] == json!("game"), |panel| {
                 panel.child(widgets::hint(
@@ -1033,11 +1034,10 @@ impl WatchPage {
             return;
         };
         let orientation = self.live.orientation();
-        let origin = json!({
-            "white": frame["white"]["name"],
-            "black": frame["black"]["name"],
-            "gameId": frame["gameId"],
-        });
+        let origin = GameOrigin {
+            game_id: frame["gameId"].as_str().map(str::to_string),
+            ..GameOrigin::named(&frame["white"]["name"], &frame["black"]["name"])
+        };
         if let Some(setup) = self.live.setup() {
             let pgn = crate::game::setup_pgn(
                 &setup,
@@ -1049,14 +1049,13 @@ impl WatchPage {
                 // Once this page is no longer being updated: leaving Watch tells it it is hidden.
                 window.defer(cx, move |window, cx| {
                     crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-                        analysis.open_game(
-                            &pgn,
+                        let opening = Opening {
                             ply,
-                            Some(orientation),
-                            Some(origin.clone()),
-                            false,
-                            cx,
-                        )
+                            orientation: Some(orientation),
+                            origin: Some(origin.clone()),
+                            review: false,
+                        };
+                        analysis.open_pgn(&pgn, opening, cx)
                     });
                 });
                 return;

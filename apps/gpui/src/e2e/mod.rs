@@ -358,6 +358,28 @@ impl Harness {
         }
     }
 
+    /// Wait until the app has shown a system notification `matches` takes, and return the latest
+    /// such. The system's notifications are drawn by the app on Windows and Linux alone.
+    #[cfg(any(windows, target_os = "linux"))]
+    pub fn wait_for_notification(
+        &mut self,
+        what: &str,
+        mut matches: impl FnMut(&gpui_kit::SystemNotification) -> bool,
+    ) -> gpui_kit::SystemNotification {
+        let started = Instant::now();
+        loop {
+            self.cx.run_until_parked();
+            let shown = self.cx.shown_system_notifications();
+            if let Some(found) = shown.into_iter().rev().find(|shown| matches(shown)) {
+                return found;
+            }
+            if started.elapsed() > TIMEOUT {
+                panic!("timed out after {TIMEOUT:?} waiting for {what}");
+            }
+            self.tick();
+        }
+    }
+
     /// Type `text` into the dialog's field labelled `label`, in place of what it holds, once the
     /// dialog has stopped moving.
     pub fn fill_in_dialog(&mut self, label: &str, text: &str) {

@@ -400,13 +400,6 @@ impl Render for KnightPaths {
             if self.best == 1 { "jump" } else { "jumps" }
         );
         let board_size = self.layout.board_size(window);
-        let frontend = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
         let length = Self::length(cx);
         let mut panel = widgets::side_panel(&palette)
             .h(self.layout.panel_height(board_size))
@@ -424,7 +417,7 @@ impl Render for KnightPaths {
                             .text_color(palette.text_muted)
                             .child("Reach the green square in the fewest moves"),
                     )
-                    .child(widgets::view_toggles(frontend.blindfold, frontend.zen_mode)),
+                    .child(widgets::view_toggles(cx)),
             )
             .child(run::field(
                 "Difficulty",

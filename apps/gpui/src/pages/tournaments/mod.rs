@@ -43,15 +43,10 @@ fn refresh_due(status: &Value, since: Duration) -> bool {
 
 /// `control`: "3+2", "½+0".
 pub fn control(clock: &Value) -> String {
-    let minutes = clock["limit"].as_f64().unwrap_or_default() / 60.;
-    let base = match minutes {
-        0.25 => "¼".to_string(),
-        0.5 => "½".to_string(),
-        0.75 => "¾".to_string(),
-        m if m.fract() == 0. => format!("{m:.0}"),
-        m => m.to_string(),
-    };
-    format!("{base}+{}", clock["increment"].as_f64().unwrap_or_default())
+    crate::widgets::time_control(
+        clock["limit"].as_f64().unwrap_or_default() / 60.,
+        clock["increment"].as_f64().unwrap_or_default(),
+    )
 }
 
 /// The tournament open, and what is known of it.

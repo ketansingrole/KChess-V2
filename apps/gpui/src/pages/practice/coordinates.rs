@@ -266,12 +266,7 @@ impl Coordinates {
         self.run_epoch += 1;
         self.question = 0;
         self.voice.feedback = None;
-        self.orientation = match self.side {
-            "black" => Color::Black,
-            "random" if random_unit() < 0.5 => Color::White,
-            "random" => Color::Black,
-            _ => Color::White,
-        };
+        self.orientation = crate::game::draw_color(self.side);
         self.score = 0;
         self.mistakes = 0;
         self.pending_file = None;
@@ -616,13 +611,6 @@ impl Render for Coordinates {
             .relative()
             .child(crate::board::cached(&self.board))
             .children(prompt);
-        let frontend = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
         let page = cx.entity().downgrade();
         let modes = widgets::wrapping_pills(
             "coordinates-mode",
@@ -762,7 +750,7 @@ impl Render for Coordinates {
                                     .text_color(palette.highlighted)
                                     .child("Mode"),
                             )
-                            .child(widgets::view_toggles(frontend.blindfold, frontend.zen_mode)),
+                            .child(widgets::view_toggles(cx)),
                     )
                     .child(modes),
             )

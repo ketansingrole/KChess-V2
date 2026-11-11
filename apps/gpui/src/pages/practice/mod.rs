@@ -361,24 +361,6 @@ impl PracticePage {
                     cx.stop_propagation();
                 }
             }
-            // F turns an endgame drill's or lesson's board, as its button does.
-            Tab::Endgames
-                if crate::board::page_has_keys(&self.focus, window, cx)
-                    && !event.keystroke.modifiers.modified()
-                    && event.keystroke.key == "f" =>
-            {
-                let flip = self.actions(cx).into_iter().find(|action| {
-                    matches!(
-                        action,
-                        Action::Drill(endgame_drills::DrillAction::Flip)
-                            | Action::Lesson(endgame_lesson::LessonAction::Flip)
-                    )
-                });
-                if let Some(flip) = flip {
-                    self.act(flip, window, cx);
-                    cx.stop_propagation();
-                }
-            }
             // A mistake's board: F turns it, and a finished one's moves step back and forth.
             Tab::Mistakes
                 if crate::board::page_has_keys(&self.focus, window, cx)

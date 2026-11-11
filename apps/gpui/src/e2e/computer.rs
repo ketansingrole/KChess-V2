@@ -306,7 +306,9 @@ fn no_move_is_taken_before_the_saved_game_is_restored(cx: &mut gpui_kit::TestApp
     app.cx.update(|cx| {
         let page =
             crate::shell::view::<crate::pages::computer::ComputerPage>(cx).expect("the page");
-        page.update(cx, |page, cx| page.forget_loaded(cx));
+        page.update(cx, |page, _| {
+            crate::game::session::Resumes::saver(page).forget()
+        });
     });
     app.click_square("e2", true);
     app.click_square("e4", true);
@@ -492,4 +494,25 @@ fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
         cx.global::<Played>().0.contains(&Sound::LowTime)
     });
     assert!(started.elapsed() < std::time::Duration::from_millis(2_900));
+}
+
+/// F turns the board on Play with computer, as on every other game page: the page answers the
+/// app's Flip board key.
+#[gpui_kit::test]
+fn f_flips_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    let orientation = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
+                .expect("the page")
+                .read(cx)
+                .shown_orientation()
+        })
+    };
+    let before = orientation(&mut app);
+    app.click("chess-board");
+    app.press("f");
+    assert_eq!(orientation(&mut app), !before);
+    app.press("f");
+    assert_eq!(orientation(&mut app), before);
 }

@@ -16,8 +16,10 @@ use shakmaty::Color;
 use super::HistoryPage;
 use crate::assets::icon;
 use crate::core::AppCore;
+use crate::game::played::GameOrigin;
 use crate::game::tree::TreeNode;
 use crate::pages::Page;
+use crate::pages::analysis::Opening;
 use crate::replay::GameReplay;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
@@ -1030,16 +1032,26 @@ pub(super) fn open_review(game: Value, ply: usize, window: &mut Window, cx: &mut
     } else {
         Color::White
     };
-    let (account, opponent) = (game["account"].clone(), game["opponent"].clone());
-    let origin = json!({
-        "gameId": game["id"],
-        "account": account,
-        "white": if color == Color::White { &account } else { &opponent },
-        "black": if color == Color::Black { &account } else { &opponent },
-        "player": game["color"],
-    });
+    let (account, opponent) = (&game["account"], &game["opponent"]);
+    let (white, black) = if color == Color::White {
+        (account, opponent)
+    } else {
+        (opponent, account)
+    };
+    let origin = GameOrigin {
+        player: crate::game::played::color_of(&game["color"]),
+        game_id: game["id"].as_str().map(str::to_string),
+        account: account.as_str().map(str::to_string),
+        ..GameOrigin::named(white, black)
+    };
     crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-        analysis.open_game(&pgn, ply, Some(color), Some(origin.clone()), true, cx)
+        let opening = Opening {
+            ply,
+            orientation: Some(color),
+            origin: Some(origin.clone()),
+            review: true,
+        };
+        analysis.open_pgn(&pgn, opening, cx)
     });
 }
 

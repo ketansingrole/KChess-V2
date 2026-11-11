@@ -25,6 +25,8 @@ use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::STANDARD_FEN;
+use crate::game::played::GameOrigin;
+use crate::pages::analysis::Opening;
 use crate::play_layout::Measured;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
@@ -529,13 +531,16 @@ impl PositionExplorer {
                         return;
                     }
                 };
-                let origin = json!({
-                    "white": game["white"],
-                    "black": game["black"],
-                    "gameId": (!masters).then_some(id),
-                });
+                let origin = GameOrigin {
+                    game_id: (!masters).then_some(id),
+                    ..GameOrigin::named(&game["white"], &game["black"])
+                };
                 crate::pages::analysis::replace(window, cx, move |analysis, window, cx| {
-                    let opened = analysis.open_game(&pgn, 0, None, Some(origin.clone()), false, cx);
+                    let opening = Opening {
+                        origin: Some(origin.clone()),
+                        ..Opening::default()
+                    };
+                    let opened = analysis.open_pgn(&pgn, opening, cx);
                     if !opened {
                         window.push_notification(
                             Notification::error("That game could not be read")

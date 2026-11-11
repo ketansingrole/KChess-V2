@@ -47,7 +47,7 @@ pub(crate) fn groups(cx: &App) -> Vec<(&'static str, Vec<(&'static str, String)>
             vec![
                 ("Previous / next move", "← →".to_string()),
                 ("First / last move", "Home End".to_string()),
-                ("Flip board", "F".to_string()),
+                ("Flip board", keys(&FlipBoard)),
                 (
                     "After Tab to the board: move, pick up or put down, let go",
                     "← ↑ → ↓ Enter Esc".to_string(),

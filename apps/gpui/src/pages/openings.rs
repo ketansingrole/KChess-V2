@@ -1126,7 +1126,7 @@ impl OpeningsPage {
                             .ghost()
                             .xsmall()
                             .icon(icon("arrow-up-down"))
-                            .tooltip("Flip board (F)")
+                            .tooltip(crate::menu::flip_label(cx))
                             .accessibility_label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     ),
@@ -1244,7 +1244,6 @@ impl Render for OpeningsPage {
             return div()
                 .size_full()
                 .track_focus(&self.focus)
-                // F turns the line's board, as its button does, while no text field has the keys.
                 // Escape goes back to all openings.
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                     if !crate::board::page_has_keys(&this.focus, window, cx)
@@ -1252,12 +1251,10 @@ impl Render for OpeningsPage {
                     {
                         return;
                     }
-                    match event.keystroke.key.as_str() {
-                        "f" => this.act(Action::Flip, window, cx),
-                        "escape" => this.show_line(None, cx),
-                        _ => return,
+                    if event.keystroke.key == "escape" {
+                        this.show_line(None, cx);
+                        cx.stop_propagation();
                     }
-                    cx.stop_propagation();
                 }))
                 .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
                     if event.button == MouseButton::Left {

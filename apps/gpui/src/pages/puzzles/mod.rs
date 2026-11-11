@@ -1078,7 +1078,7 @@ pub(crate) fn status_panel(
                 Button::new("puzzle-flip")
                     .ghost()
                     .icon(icon("arrow-up-down"))
-                    .tooltip("Flip board (F)")
+                    .tooltip(crate::menu::flip_label(cx))
                     .accessibility_label("Flip board")
                     .on_click({
                         let board = board_entity.downgrade();
@@ -1821,11 +1821,6 @@ impl PuzzlesPage {
         if let Some((board, _)) = self.shown_board(cx)
             && board.update(cx, |board, cx| board.step(&event.keystroke.key, cx))
         {
-            cx.stop_propagation();
-            return;
-        }
-        if event.keystroke.key == "f" && self.actions(cx).contains(&Action::Flip) {
-            self.act(Action::Flip, cx);
             cx.stop_propagation();
         }
     }

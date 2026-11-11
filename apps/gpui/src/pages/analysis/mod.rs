@@ -18,7 +18,7 @@ use kchess_contracts::calls;
 use tree_view::{TreeView, flow};
 
 pub use load::{analyse_puzzle, board, new_board, open_line, practise_game, replace};
-pub use review::classification_look;
+pub use review::{Opening, classification_look};
 
 use crate::voice::moves::{Access, Action, BoardBar, Reply, Turn, VoiceMoves, board_bar};
 use std::collections::{HashMap, VecDeque};
@@ -50,7 +50,8 @@ use crate::board::{Arrow, Badge, BoardEvent, BoardState, ChessBoard, Circle};
 use crate::core::{AppCore, BoxedSave, CoreEvent};
 use crate::engine_view::EVAL_BAR;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
-use crate::export::{Exporter, GameExport};
+use crate::export::Exporter;
+use crate::game::played::PlayedGame;
 use crate::game::tree::{
     TreeNode, analysis_context, child_path, comment_text, format_eval, move_glyph, move_number,
     moves_of, path_of, pv_san,
@@ -1065,7 +1066,6 @@ impl AnalysisPage {
             "right" => self.forward(cx),
             "up" | "home" => self.go_to_start(cx),
             "down" | "end" => self.go_to_end(cx),
-            "f" => self.flip(cx),
             "l" => self.toggle_engine(cx),
             "x" => self.toggle_threat(cx),
             "c" => self.focus_notes(window, cx),
@@ -1195,14 +1195,14 @@ impl AnalysisPage {
 
     /// The game an Export saves: the document with its variations and comments, its main line
     /// for the GIF, and the position shown (in a variation too) for the PNG.
-    fn game_export(&self) -> GameExport {
+    fn game_export(&self) -> PlayedGame {
         let mainline = self.mainline();
         let depth = if self.path.is_empty() {
             0
         } else {
             self.path.split(' ').count()
         };
-        GameExport {
+        PlayedGame {
             variant: if self.standard_rules() {
                 crate::game::setup_from_fen(&self.root.fen)["variant"]
                     .as_str()
@@ -1217,15 +1217,20 @@ impl AnalysisPage {
             orientation: self.orientation,
             white: self.player_name(Color::White),
             black: self.player_name(Color::Black),
-            result: Some(self.header("Result")).filter(|result| !result.is_empty()),
+            result: kchess_games::Outcome::from_tag(&self.header("Result")),
+            player: self.review.origin.as_ref().and_then(|origin| origin.player),
+            account: self
+                .review
+                .origin
+                .as_ref()
+                .and_then(|origin| origin.account.clone()),
             // A Chess.com game has no page on Lichess: it is uploaded like any other game.
             lichess_id: self
                 .review
                 .origin
                 .as_ref()
-                .and_then(|origin| origin["gameId"].as_str())
-                .filter(|id| !kchess_domain::chesscom::is_game_id(id))
-                .map(str::to_string),
+                .and_then(|origin| origin.game_id.clone())
+                .filter(|id| !kchess_domain::chesscom::is_game_id(id)),
             pgn: Some(self.root.to_pgn()),
             shown: Some(moves_of(&self.path)),
         }
@@ -1480,7 +1485,7 @@ impl AnalysisPage {
                     .ghost()
                     .small()
                     .icon(icon("arrow-up-down"))
-                    .tooltip("Flip board (F)")
+                    .tooltip(crate::menu::flip_label(cx))
                     .accessibility_label("Flip board")
                     .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
             )

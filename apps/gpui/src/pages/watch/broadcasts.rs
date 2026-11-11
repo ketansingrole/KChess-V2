@@ -22,8 +22,10 @@ use super::{Pending, WatchPage, label};
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
+use crate::game::played::GameOrigin;
 use crate::game::tree::format_eval;
 use crate::game::view;
+use crate::pages::analysis::Opening;
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
@@ -313,15 +315,13 @@ impl Broadcasts {
             .update(cx, |board, cx| board.set_state(state, cx));
     }
 
-    /// ←/→ and ↑/↓ step through the open board's moves; F turns it.
+    /// ←/→ and ↑/↓ step through the open board's moves.
     pub fn key(&mut self, key: &str, cx: &mut App) -> bool {
         let Some(game) = self.current() else {
             return false;
         };
         let count = moves_of(game).len();
-        if key == "f" {
-            self.orientation = !self.orientation;
-        } else if let Some(ply) = view::navigate(key, self.shown_ply(), count) {
+        if let Some(ply) = view::navigate(key, self.shown_ply(), count) {
             self.return_to_game();
             self.ply = (ply < count).then_some(ply);
         } else {
@@ -1062,7 +1062,7 @@ impl WatchPage {
             return;
         };
         let pgn = game["pgn"].as_str().unwrap_or_default().to_string();
-        let origin = json!({ "white": game["white"]["name"], "black": game["black"]["name"] });
+        let origin = GameOrigin::named(&game["white"]["name"], &game["black"]["name"]);
         let (ply, orientation) = (self.broadcasts.shown_ply(), self.broadcasts.orientation);
         window.defer(cx, move |window, cx| {
             analyse_board(pgn, ply, orientation, origin, window, cx)
@@ -1207,7 +1207,7 @@ impl WatchPage {
                     result_text(&game).into(),
                 )));
         let pgn = game["pgn"].as_str().unwrap_or_default().to_string();
-        let origin = json!({ "white": game["white"]["name"], "black": game["black"]["name"] });
+        let origin = GameOrigin::named(&game["white"]["name"], &game["black"]["name"]);
         let panel = widgets::side_panel(palette)
             .h(self.layout.panel_height(board_size))
             .flex_1()
@@ -1231,7 +1231,11 @@ impl WatchPage {
                 ply,
                 moves.len(),
                 select,
-                ("Flip board".into(), Some("F"), flip),
+                (
+                    "Flip board".into(),
+                    crate::menu::keys(&crate::menu::FlipBoard, cx),
+                    flip,
+                ),
             ))
             .child(
                 h_flex()
@@ -1286,19 +1290,18 @@ fn analyse_board(
     pgn: String,
     ply: usize,
     orientation: Color,
-    origin: Value,
+    origin: GameOrigin,
     window: &mut Window,
     cx: &mut App,
 ) {
     crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-        analysis.open_game(
-            &pgn,
+        let opening = Opening {
             ply,
-            Some(orientation),
-            Some(origin.clone()),
-            false,
-            cx,
-        )
+            orientation: Some(orientation),
+            origin: Some(origin.clone()),
+            review: false,
+        };
+        analysis.open_pgn(&pgn, opening, cx)
     });
 }
 

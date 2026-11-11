@@ -367,6 +367,7 @@ trait AnyPage {
     fn zen_key(&self, cx: &App) -> bool;
     fn commands(&self, cx: &App) -> Vec<PageCommand>;
     fn run_role(&self, role: ActionRole, window: &mut Window, cx: &mut App);
+    fn has_role(&self, role: ActionRole, cx: &App) -> bool;
     fn new_here(&self, window: &mut Window, cx: &mut App);
 }
 
@@ -429,6 +430,13 @@ impl<V: PageView> AnyPage for Entity<V> {
 
     fn run_role(&self, role: ActionRole, window: &mut Window, cx: &mut App) {
         run_role(self, role, window, cx);
+    }
+
+    fn has_role(&self, role: ActionRole, cx: &App) -> bool {
+        self.read(cx)
+            .actions(cx)
+            .iter()
+            .any(|action| action.info().role == Some(role))
     }
 
     fn new_here(&self, window: &mut Window, cx: &mut App) {
@@ -627,6 +635,11 @@ impl PageHandle {
     /// Run the page's action with `role`, if it has one now.
     pub fn run_role(&self, role: ActionRole, window: &mut Window, cx: &mut App) {
         self.0.run_role(role, window, cx);
+    }
+
+    /// The page has an action with `role` now.
+    pub fn has_role(&self, role: ActionRole, cx: &App) -> bool {
+        self.0.has_role(role, cx)
     }
 
     /// New on the page.

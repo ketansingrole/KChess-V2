@@ -18,17 +18,6 @@ use crate::widgets;
 
 const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-/// The clocks offered (`CLOCKS`), as minutes and increment.
-const CLOCKS: &[(&str, Option<(f64, f64)>)] = &[
-    ("No clock", None),
-    ("3+2", Some((3., 2.))),
-    ("5+3", Some((5., 3.))),
-    ("10+5", Some((10., 5.))),
-    ("15+10", Some((15., 10.))),
-    ("30+0", Some((30., 0.))),
-    ("60+30", Some((60., 30.))),
-];
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Start {
     Standard,
@@ -153,13 +142,13 @@ impl GameOptions {
                     .unwrap_or_default()
             )
         });
-        let clock_row = CLOCKS
+        let clock_row = crate::game::CLOCKS
             .iter()
             .position(|(label, _)| Some(*label) == clock_text.as_deref())
             .unwrap_or(0);
         let clock = cx.new(|cx| {
             SelectState::new(
-                CLOCKS
+                crate::game::CLOCKS
                     .iter()
                     .map(|(label, _)| SharedString::from(*label))
                     .collect(),
@@ -336,7 +325,7 @@ impl GameOptions {
                 .selected_index(cx)
                 .map_or(0, |index| index.row)
         };
-        let clock = CLOCKS
+        let clock = crate::game::CLOCKS
             .get(row(&self.clock))
             .and_then(|(_, clock)| *clock)
             .map_or(

@@ -1181,13 +1181,6 @@ impl Render for Repertoire {
         let drills_opening = Self::drills_opening(cx);
         let color = Self::color(cx);
         let your_turn = self.your_turn(cx);
-        let frontend = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
         let board_size = self.layout.board_size(window);
         let board_column = v_flex().w(board_size).flex_none().gap(widgets::STACK_GAP);
         let board_column = if self.at.is_some() {
@@ -1263,7 +1256,7 @@ impl Render for Repertoire {
                         h_flex()
                             .gap(px(4.))
                             .child(help)
-                            .child(widgets::view_toggles(frontend.blindfold, frontend.zen_mode)),
+                            .child(widgets::view_toggles(cx)),
                     ),
             )
             .child(run::field(

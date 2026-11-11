@@ -605,20 +605,9 @@ fn a_challenge_is_answered_from_its_notification(cx: &mut gpui_kit::TestAppConte
     };
     let shown = |app: &mut Harness, id: &str| {
         let tag = format!("challenge:{id}");
-        let mut found = None;
-        for _ in 0..400 {
-            found = app
-                .cx
-                .shown_system_notifications()
-                .into_iter()
-                .find(|shown| shown.tag.as_ref() == tag);
-            if found.is_some() {
-                break;
-            }
-            app.cx.run_until_parked();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        found.expect("the challenge's notification")
+        app.wait_for_notification("the challenge's notification", |shown| {
+            shown.tag.as_ref() == tag
+        })
     };
     lichess.lock().events.push(challenge("Decline01"));
     let declined = shown(&mut app, "Decline01");
@@ -719,16 +708,9 @@ fn a_correspondence_move_is_played_from_its_notification(cx: &mut gpui_kit::Test
     // The game moved on before Play: nothing is sent.
     lichess.lock().correspondence_turn = false;
     answer(&mut app, "confirm:Tester/E2eCorr1", "play");
-    let mut refused = None;
-    for _ in 0..400 {
-        let shown = last(&mut app);
-        if shown.title.as_ref() == "e4 was not played" {
-            refused = Some(shown);
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    refused.expect("the move refused");
+    app.wait_for_notification("the move refused", |shown| {
+        shown.title.as_ref() == "e4 was not played"
+    });
     assert!(writes(&lichess).is_empty(), "{:?}", writes(&lichess));
     // On your move again: typed, confirmed and played once.
     lichess.lock().correspondence_turn = true;
@@ -738,16 +720,9 @@ fn a_correspondence_move_is_played_from_its_notification(cx: &mut gpui_kit::Test
     app.wait_for("the move to reach Lichess", |_, _| {
         writes(&lichess) == ["POST /api/board/game/E2eCorr1/move/e2e4"]
     });
-    let mut played = None;
-    for _ in 0..400 {
-        let shown = last(&mut app);
-        if shown.title.as_ref() == "Played e4 against Opponent" {
-            played = Some(shown);
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    played.expect("the move confirmed");
+    app.wait_for_notification("the move confirmed", |shown| {
+        shown.title.as_ref() == "Played e4 against Opponent"
+    });
     // Play again on the same confirmation sends nothing more.
     answer(&mut app, "confirm:Tester/E2eCorr1", "play");
     assert_eq!(

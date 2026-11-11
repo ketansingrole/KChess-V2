@@ -28,7 +28,8 @@ gpui_kit::actions!(
         ToggleSidebar,
         Find,
         New,
-        ToggleZen
+        ToggleZen,
+        FlipBoard
     ]
 );
 
@@ -146,6 +147,14 @@ pub fn keys(action: &dyn Action, cx: &App) -> Option<String> {
         .or(first)
 }
 
+/// "Flip board", with the key that turns the board.
+pub fn flip_label(cx: &App) -> String {
+    match keys(&FlipBoard, cx) {
+        Some(key) => format!("Flip board ({key})"),
+        None => "Flip board".into(),
+    }
+}
+
 /// Every binding of `action`, in the order `init` makes them.
 pub fn all_keys(action: &dyn Action, cx: &App) -> Vec<String> {
     let keymap = cx.key_bindings();
@@ -260,11 +269,12 @@ pub fn init(cx: &mut App) {
     } else {
         bind("ctrl-b", ToggleSidebar, cx)
     }]);
-    // ? lists the shortcuts as on Lichess, and Z turns zen mode on or off on a game page, but
-    // only outside a text field, where they are typed.
+    // ? lists the shortcuts as on Lichess, Z turns zen mode on or off on a game page and F turns
+    // the board, but only outside a text field, where they are typed.
     cx.bind_keys([
         KeyBinding::new("?", ShowShortcuts, Some("!Input")),
         KeyBinding::new("z", ToggleZen, Some("!Input")),
+        KeyBinding::new("f", FlipBoard, Some("!Input")),
     ]);
     cx.on_action(|_: &ShowShortcuts, cx| {
         cx.defer(|cx| {

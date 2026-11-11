@@ -658,13 +658,6 @@ impl EndgameLesson {
         let other = if side == "White" { "Black" } else { "White" };
         let step = self.step();
         let chapters = self.course.chapters.len();
-        let frontend = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
         let banner = playable.then(|| {
             let mut busy = false;
             let (tone, glyph, title, detail) = if over {
@@ -747,7 +740,7 @@ impl EndgameLesson {
                         Button::new("lesson-flip")
                             .outline()
                             .icon(icon("arrow-up-down"))
-                            .tooltip("Flip board (F)")
+                            .tooltip(crate::menu::flip_label(cx))
                             .accessibility_label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     )
@@ -818,7 +811,7 @@ impl EndgameLesson {
                                 ))
                             }),
                     )
-                    .child(widgets::view_toggles(frontend.blindfold, frontend.zen_mode)),
+                    .child(widgets::view_toggles(cx)),
             )
             .child(
                 v_flex()

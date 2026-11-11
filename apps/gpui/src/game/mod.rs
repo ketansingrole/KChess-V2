@@ -3,9 +3,27 @@
 
 pub mod history;
 pub mod low_time;
+pub mod played;
 pub mod puzzle;
+pub mod session;
+pub mod surface;
 pub mod tree;
 pub mod view;
+
+/// The clocks both new-game dialogs offer (Play with computer, Over the board), as minutes and
+/// increment.
+pub const CLOCKS: &[(&str, Option<(f64, f64)>)] = &[
+    ("No clock", None),
+    ("3+2", Some((3., 2.))),
+    ("5+0", Some((5., 0.))),
+    ("5+3", Some((5., 3.))),
+    ("10+0", Some((10., 0.))),
+    ("10+5", Some((10., 5.))),
+    ("15+10", Some((15., 10.))),
+    ("30+0", Some((30., 0.))),
+    ("60+30", Some((60., 30.))),
+    ("90+30", Some((90., 30.))),
+];
 
 /// The usual starting position.
 pub const STANDARD_FEN: &str = kchess_domain::rules::INITIAL_FEN;
@@ -16,7 +34,7 @@ pub use kchess_domain::links::{
     BroadcastLink, GameLink, broadcast_link, game_link, is_username, pgn_orientation, profile_link,
     study_link,
 };
-pub use kchess_games::{archive, computer, local, random_unit, whole};
+pub use kchess_games::{computer, draw_color, local, random_chess960, random_unit, whole};
 
 /// A `{ variant, fen }` setup's UCI moves as PGN, as far as they are legal, after `headers` (a
 /// JSON object of strings). `None` when the setup or a header is not one.
@@ -86,15 +104,6 @@ pub fn short_game_date(millis: f64) -> String {
             }
         })
         .unwrap_or_default()
-}
-
-/// A Chess960 start's number picked at random, or 518 (the standard start) without randomness.
-pub fn random_chess960() -> i64 {
-    let mut bytes = [0u8; 2];
-    if getrandom::fill(&mut bytes).is_err() {
-        return 518;
-    }
-    i64::from(u16::from_le_bytes(bytes) % 960)
 }
 
 /// The Chess960 start numbered `n` (`chess960Fen`).

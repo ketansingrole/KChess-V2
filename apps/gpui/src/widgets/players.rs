@@ -183,3 +183,36 @@ pub fn material(fen: &str, white: bool, set: &str, palette: &Palette) -> Option<
             .into_any_element(),
     )
 }
+
+/// A clock's minutes as a time control names them: "½" for 30 seconds, as Lichess writes it,
+/// "1.5" for 90.
+pub fn clock_minutes(minutes: f64) -> String {
+    match minutes {
+        0.25 => "¼".into(),
+        0.5 => "½".into(),
+        0.75 => "¾".into(),
+        m if m.fract() == 0. => format!("{m:.0}"),
+        m => format!("{}", (m * 100.).round() / 100.),
+    }
+}
+
+/// A time control, "5+3": minutes on the clock and seconds added each move.
+pub fn time_control(minutes: f64, increment: f64) -> String {
+    format!("{}+{increment}", clock_minutes(minutes))
+}
+
+#[cfg(test)]
+mod time_control_tests {
+    use super::time_control;
+
+    /// A 30-second clock reads the same on every page: Tournaments, Game history, the
+    /// challenges, and a game against the computer.
+    #[test]
+    fn a_thirty_second_clock_reads_as_lichess_writes_it() {
+        assert_eq!(time_control(0.5, 0.), "½+0");
+        assert_eq!(time_control(0.25, 1.), "¼+1");
+        assert_eq!(time_control(3., 2.), "3+2");
+        assert_eq!(time_control(1.5, 0.), "1.5+0");
+        assert_eq!(time_control(180., 180.), "180+180");
+    }
+}
