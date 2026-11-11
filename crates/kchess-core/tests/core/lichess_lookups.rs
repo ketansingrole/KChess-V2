@@ -911,3 +911,69 @@ async fn an_opening_description_is_read_from_wikibooks() {
     assert!(page.blocks.iter().any(|block| block.heading));
     crate::support::wire::assert_wire("openingDescription.e4", &page);
 }
+
+/// A saved lookup stands for the position only when it is of that position and its moves are
+/// still read as saved; otherwise Lichess is asked again.
+#[tokio::test]
+async fn a_saved_lookup_of_another_position_or_with_a_misread_move_is_asked_again() {
+    let fixture = serve(|_| Reply::Json(200, opening_body().to_string())).await;
+    let after_e4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+    let e4 = |san: &str| json!([{ "uci": "e2e4", "san": san, "white": 1, "draws": 0, "black": 0 }]);
+    for (fen, moves, cached) in [
+        (INITIAL, e4("e4"), true),
+        (after_e4, json!([]), false),
+        (INITIAL, e4("d4"), false),
+    ] {
+        let lookups = lookups(&fixture.base, 1_000);
+        let saved = json!({
+            "kind": "opening", "fen": fen, "fetchedAt": 1_000, "games": [], "moves": moves,
+        });
+        lookups
+            .cache
+            .values
+            .lock()
+            .unwrap()
+            .insert(format!("opening:{INITIAL}"), saved);
+        let result = lookups
+            .service
+            .lookup(Kind::Opening, INITIAL, None)
+            .await
+            .unwrap();
+        assert_eq!(result.cached, cached, "{fen} {moves}");
+        assert_eq!(result.saved.moves[0].san, "e4");
+    }
+    assert_eq!(fixture.requests().len(), 2);
+}
+
+/// A saved opening lookup stays fresh for a day: an hour later it is served without asking.
+#[tokio::test]
+async fn a_saved_opening_lookup_is_fresh_for_a_day() {
+    let fixture = serve(|_| Reply::Json(200, opening_body().to_string())).await;
+    let lookups = lookups(&fixture.base, 1_000);
+    lookups
+        .service
+        .lookup(Kind::Opening, INITIAL, None)
+        .await
+        .unwrap();
+    lookups.clock.store(1_000 + 3_600_000, Ordering::SeqCst);
+    let again = lookups
+        .service
+        .lookup(Kind::Opening, INITIAL, None)
+        .await
+        .unwrap();
+    assert!(again.cached && !again.stale);
+    assert_eq!(fixture.requests().len(), 1);
+}
+
+/// Only a position Lichess does not know is remembered as having no evaluation: a failure is an
+/// error, and the next request asks again.
+#[tokio::test]
+async fn a_failed_cloud_evaluation_is_an_error_and_not_remembered() {
+    let fixture = serve(|_| Reply::Json(503, "{}".into())).await;
+    let lichess = service(&fixture.base, &Arc::new(Recording::default()));
+    let cache = CloudCache::default();
+    for _ in 0..2 {
+        assert!(cloud_eval(&lichess, &cache, INITIAL, 1).await.is_err());
+    }
+    assert_eq!(fixture.to("/api/cloud-eval").len(), 2);
+}

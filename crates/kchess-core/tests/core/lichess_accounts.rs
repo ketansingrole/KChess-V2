@@ -1040,3 +1040,77 @@ async fn uploads_a_game_as_the_account_or_anonymously() {
     assert_eq!(calls[0].header("authorization"), Some("Bearer lip_alice"));
     assert_eq!(calls[1].header("authorization"), None);
 }
+
+/// A refusal of the login falls back to the public games; any other failure is the sync's, not a
+/// reason to ask again without the login.
+#[tokio::test]
+async fn a_failure_that_is_not_about_the_login_is_not_asked_again_anonymously() {
+    let fixture = serve(|seen| {
+        if seen.header("authorization").is_some() {
+            Reply::Json(400, r#"{"error":"Bad request"}"#.into())
+        } else {
+            Reply::Text(
+                200,
+                "application/x-ndjson",
+                ndjson(&page_of("Game", 1, 5_000_000)),
+            )
+        }
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let store = MemoryStore::with_accounts(&[("Alice", true)]);
+    let lichess = service(
+        &fixture.base,
+        &host,
+        Arc::clone(&store),
+        MemoryTokens::with(&[("Alice", "lip_alice")]),
+    );
+    assert!(lichess.sync_games(Some("Alice")).await.is_err());
+    let sent = fixture.to("/api/games/user/Alice");
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].header("authorization"), Some("Bearer lip_alice"));
+    assert!(store.games.lock().unwrap().is_empty());
+}
+
+/// Lichess is asked once more about a game it may still analyse; a finished game is settled once
+/// it has a review or ended a day ago, and a game still being played never is.
+#[tokio::test]
+async fn only_finished_games_lichess_has_had_time_to_analyse_are_settled() {
+    let recent = kchess_core::time::now_ms();
+    let mut playing = game_json("Playing1", 5_000_000, "Alice", "Bob");
+    playing["status"] = json!("started");
+    let page = [
+        game_json("OldGame1", 5_000_000, "Alice", "Bob"),
+        playing,
+        game_json("Recent01", recent, "Alice", "Bob"),
+    ];
+    let fixture = serve(move |_| Reply::Text(200, "application/x-ndjson", ndjson(&page))).await;
+    let host = Arc::new(Recording::default());
+    let store = MemoryStore::with_accounts(&[("Alice", true)]);
+    let lichess = service(
+        &fixture.base,
+        &host,
+        Arc::clone(&store),
+        MemoryTokens::with(&[("Alice", "lip_alice")]),
+    );
+    lichess.sync_games(Some("Alice")).await.unwrap();
+    assert_eq!(*store.checked.lock().unwrap(), ["OldGame1"]);
+}
+
+/// A user Lichess no longer has is not served from the saved copy, as an unreachable Lichess is.
+#[tokio::test]
+async fn a_missing_user_is_not_served_from_the_saved_copy() {
+    let fixture = serve(|_| Reply::Text(404, "text/html", "<html>missing</html>".into())).await;
+    let host = Arc::new(Recording::default());
+    let store = MemoryStore::with_accounts(&[]);
+    store.cache.lock().unwrap().insert(
+        "alice:profile".to_string(),
+        CachedValue {
+            value: json!({"username": "Alice", "title": "IM"}),
+            fetched_at: 42,
+        },
+    );
+    let lichess = service(&fixture.base, &host, store, MemoryTokens::with(&[]));
+    let error = lichess.profile("alice").await.unwrap_err();
+    assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::NotFound));
+}

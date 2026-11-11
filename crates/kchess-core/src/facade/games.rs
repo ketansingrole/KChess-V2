@@ -69,8 +69,7 @@ impl GamesApi for Core {
 
     async fn connect_lichess(&self, look: Option<Value>) -> Result<ConnectedLichess> {
         // An unreadable look falls back to the safe default colours.
-        let look = kchess_domain::records::oauth::look(&look.unwrap_or(Value::Null))
-            .filter(|look| !look.is_null());
+        let look = kchess_domain::records::oauth::look(&look.unwrap_or(Value::Null));
         // The window is focused when the browser returns.
         let capabilities = Arc::clone(&self.capabilities);
         let focus = move || {
