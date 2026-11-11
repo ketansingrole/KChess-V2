@@ -17,7 +17,7 @@ use kchess_core::lichess::lookups::{
     CloudCache, Endpoints, LOOKUP_TIMEOUT, LookupCache, PositionLookups, cloud_eval,
 };
 use serde_json::{Value, json};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 const INITIAL: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -976,4 +976,271 @@ async fn a_failed_cloud_evaluation_is_an_error_and_not_remembered() {
         assert!(cloud_eval(&lichess, &cache, INITIAL, 1).await.is_err());
     }
     assert_eq!(fixture.to("/api/cloud-eval").len(), 2);
+}
+
+/// Each database is asked with the filters it understands, normalized: speeds and rating groups in
+/// the contract's order, an empty list as no filter (the Lichess database's speeds as its
+/// default), and the player's variant, modes and month.
+#[tokio::test]
+async fn each_database_is_asked_with_its_normalized_filters() {
+    const ZH: &str = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[P] w KQkq - 0 3";
+    let fixture = serve(|_| Reply::Json(200, json!({ "moves": [] }).to_string())).await;
+    let cases = [
+        (
+            Kind::Opening,
+            INITIAL,
+            json!({ "speeds": ["rapid", "blitz"], "ratings": [2000, 1600], "since": "2020-01" }),
+            vec![
+                ("speeds", Some("blitz%2Crapid")),
+                ("ratings", Some("1600%2C2000")),
+                ("since", Some("2020-01")),
+                ("variant", Some("standard")),
+            ],
+        ),
+        (
+            Kind::Opening,
+            INITIAL,
+            json!({ "speeds": [], "ratings": [] }),
+            vec![
+                ("speeds", Some("blitz%2Crapid%2Cclassical")),
+                ("ratings", None),
+                ("since", None),
+            ],
+        ),
+        (
+            Kind::Player,
+            ZH,
+            json!({
+                "player": "Alice", "color": "black", "speeds": ["classical", "blitz"],
+                "modes": ["rated"], "since": "2021-03", "variant": "crazyhouse",
+            }),
+            vec![
+                ("player", Some("Alice")),
+                ("color", Some("black")),
+                ("speeds", Some("blitz%2Cclassical")),
+                ("modes", Some("rated")),
+                ("since", Some("2021-03")),
+                ("variant", Some("crazyhouse")),
+            ],
+        ),
+        (
+            Kind::Player,
+            INITIAL,
+            json!({ "player": "Bob", "speeds": [], "modes": [] }),
+            vec![
+                ("player", Some("Bob")),
+                ("color", Some("white")),
+                ("speeds", None),
+                ("modes", None),
+                ("since", None),
+                ("variant", None),
+            ],
+        ),
+    ];
+    for (index, (kind, fen, sent, expected)) in cases.into_iter().enumerate() {
+        lookups(&fixture.base, 1_000)
+            .service
+            .lookup(kind, fen, Some(&options(sent.clone())))
+            .await
+            .unwrap_or_else(|error| panic!("{sent}: {}", error.message));
+        let asked = &fixture.requests()[index];
+        for (key, value) in expected {
+            assert_eq!(asked.query(key).as_deref(), value, "{key} of {sent}");
+        }
+    }
+}
+
+/// A position that is not legal in its variant is refused before anything is asked; a Horde
+/// position, with no white king, is legal in Horde.
+#[tokio::test]
+async fn a_position_is_checked_by_its_variants_rules_before_it_is_asked() {
+    const HORDE: &str =
+        "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1";
+    let fixture = serve(|_| Reply::Json(200, json!({ "moves": [] }).to_string())).await;
+    let lookups = lookups(&fixture.base, 1_000);
+    let error = lookups
+        .service
+        .lookup(Kind::Opening, "8/8/8/8/8/8/8/8 w - - 0 1", None)
+        .await
+        .unwrap_err();
+    assert_eq!(error.message, "That position is not legal.");
+    assert!(fixture.requests().is_empty());
+    lookups
+        .service
+        .lookup(
+            Kind::Opening,
+            HORDE,
+            Some(&options(json!({ "variant": "horde" }))),
+        )
+        .await
+        .expect("a Horde position is legal in Horde");
+    assert_eq!(
+        fixture.requests()[0].query("variant").as_deref(),
+        Some("horde")
+    );
+}
+
+/// A saved opening lookup is fresh for exactly a day after it was fetched, on a real clock.
+#[tokio::test]
+async fn a_saved_lookup_is_fresh_until_its_day_is_over() {
+    const NOW: i64 = 1_700_000_000_000;
+    let fixture = serve(|_| Reply::Json(200, opening_body().to_string())).await;
+    for (later, cached) in [(86_399_999, true), (86_400_000, false)] {
+        let lookups = lookups(&fixture.base, NOW);
+        lookups
+            .service
+            .lookup(Kind::Opening, INITIAL, None)
+            .await
+            .unwrap();
+        lookups.clock.store(NOW + later, Ordering::SeqCst);
+        let again = lookups
+            .service
+            .lookup(Kind::Opening, INITIAL, None)
+            .await
+            .unwrap();
+        assert_eq!(again.cached, cached, "{later} ms later");
+    }
+    assert_eq!(fixture.requests().len(), 3);
+}
+
+/// What a failed lookup says: the explorer asks for an account when its login is refused, the
+/// tablebase (which needs none) does not; a missing player is named; an unreachable server says to
+/// check the connection.
+#[tokio::test]
+async fn a_failed_lookup_says_what_went_wrong_for_its_database() {
+    use kchess_contracts::ErrorKind;
+    const ENDGAME: &str = "8/8/8/8/8/8/R7/K6k w - - 0 1";
+    const AFTER_E4: &str = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+    const OFFLINE: &str = "Position lookup failed. Check your connection and retry.";
+    // Nothing listens on the discard port.
+    const UNREACHABLE: &str = "http://127.0.0.1:9";
+    let fixture = serve(|seen: &Request| {
+        let missing =
+            seen.path() == "/player" || seen.query("fen").is_some_and(|fen| fen.contains("4P3"));
+        Reply::Json(if missing { 404 } else { 401 }, "{}".into())
+    })
+    .await;
+    let alice = options(json!({ "player": "Alice" }));
+    let base = fixture.base.as_str();
+    let cases = [
+        (
+            base,
+            Kind::Opening,
+            INITIAL,
+            None,
+            CONNECT,
+            ErrorKind::Login,
+        ),
+        (
+            base,
+            Kind::Tablebase,
+            ENDGAME,
+            None,
+            "Lichess no longer accepts this account’s login. Reconnect it.",
+            ErrorKind::Login,
+        ),
+        (
+            base,
+            Kind::Player,
+            INITIAL,
+            Some(&alice),
+            "No Lichess player named \"Alice\".",
+            ErrorKind::NotFound,
+        ),
+        (
+            base,
+            Kind::Opening,
+            AFTER_E4,
+            None,
+            "Lichess has no such thing.",
+            ErrorKind::NotFound,
+        ),
+        (
+            UNREACHABLE,
+            Kind::Opening,
+            INITIAL,
+            None,
+            OFFLINE,
+            ErrorKind::Offline,
+        ),
+        (
+            UNREACHABLE,
+            Kind::Tablebase,
+            ENDGAME,
+            None,
+            OFFLINE,
+            ErrorKind::Offline,
+        ),
+    ];
+    for (base, kind, fen, sent, message, error_kind) in cases {
+        let error = lookups(base, 1_000)
+            .service
+            .lookup(kind, fen, sent)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (error.message.as_str(), error.kind),
+            (message, Some(error_kind)),
+            "{kind:?} at {base}"
+        );
+    }
+}
+
+const CONNECT: &str = "Connect a Lichess account in Settings to use the opening explorer.";
+
+/// An ordinary lookup's body must arrive within the deadline, but the player database streams
+/// ever more complete results for longer: only its whole answer is bounded (by a minute).
+#[tokio::test]
+async fn only_the_player_databases_stream_may_outlast_the_deadline() {
+    let (player_send, player_body) = mpsc::unbounded_channel::<String>();
+    let mut player_body = Some(player_body);
+    let mut stalled = Vec::new();
+    let fixture = serve(move |seen: &Request| {
+        if seen.path() == "/player" {
+            let body = player_body.take().expect("one player lookup");
+            return Reply::StreamText(200, "text/plain", body);
+        }
+        // Headers at once, then a body that never ends.
+        let (send, body) = mpsc::unbounded_channel::<String>();
+        stalled.push(send);
+        Reply::StreamText(200, "application/json", body)
+    })
+    .await;
+    let lookups = lookups_with(
+        &fixture.base,
+        1_000,
+        CancellationToken::new(),
+        Duration::from_millis(300),
+    );
+    let service = Arc::new(lookups.service);
+    let player = {
+        let service = Arc::clone(&service);
+        tokio::spawn(async move {
+            let alice = options(json!({ "player": "Alice" }));
+            service.lookup(Kind::Player, INITIAL, Some(&alice)).await
+        })
+    };
+    fixture.requested("/player", 1).await;
+    let snapshot =
+        |n: i64| json!({ "moves": [{ "uci": "d2d4", "white": n, "draws": 0, "black": 0 }] });
+    player_send.send(format!("{}\n", snapshot(1))).unwrap();
+    // Two deadlines pass for the opening lookups while the player's stream goes on.
+    for _ in 0..2 {
+        let error = tokio::time::timeout(
+            Duration::from_secs(10),
+            service.lookup(Kind::Opening, INITIAL, None),
+        )
+        .await
+        .expect("a stalled body ends at the deadline")
+        .unwrap_err();
+        assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::TimedOut));
+    }
+    player_send.send(format!("{}\n", snapshot(7))).unwrap();
+    drop(player_send);
+    let result = tokio::time::timeout(Duration::from_secs(10), player)
+        .await
+        .expect("the stream ended")
+        .unwrap()
+        .expect("the player's stream outlasts the deadline");
+    assert_eq!(result.saved.moves[0].white, Some(7));
 }

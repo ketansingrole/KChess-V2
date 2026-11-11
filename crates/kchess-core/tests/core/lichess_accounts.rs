@@ -1041,6 +1041,20 @@ async fn uploads_a_game_as_the_account_or_anonymously() {
     assert_eq!(calls[1].header("authorization"), None);
 }
 
+/// A game Lichess refuses to import says so in words, not Lichess's own reason.
+#[tokio::test]
+async fn a_refused_upload_says_the_game_could_not_be_read() {
+    let fixture = serve(|_| Reply::Json(400, r#"{"error":"Invalid PGN"}"#.into())).await;
+    let lichess = service(
+        &fixture.base,
+        &Arc::new(Recording::default()),
+        MemoryStore::with_accounts(&[]),
+        MemoryTokens::with(&[]),
+    );
+    let error = lichess.import_game("", "1. e4 *").await.unwrap_err();
+    assert_eq!(error.message, "Lichess could not read that game.");
+}
+
 /// A refusal of the login falls back to the public games; any other failure is the sync's, not a
 /// reason to ask again without the login.
 #[tokio::test]

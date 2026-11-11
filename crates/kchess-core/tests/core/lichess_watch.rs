@@ -813,6 +813,72 @@ async fn a_stop_for_an_earlier_watch_leaves_the_newer_one_running() {
     assert_eq!(sink.broadcasts.lock().unwrap().len(), sent);
 }
 
+/// A host that keeps which client each event went to (None: every client).
+#[derive(Default)]
+struct Delivered(Mutex<Vec<(Option<u64>, String, Value)>>);
+
+impl kchess_core::host::Host for Delivered {
+    fn log(&self, _: kchess_core::host::Level, _: &str, _: &str) {}
+
+    fn emit(&self, event: kchess_core::host::CoreEvent) {
+        let name = event.name().to_string();
+        self.0
+            .lock()
+            .unwrap()
+            .push((None, name, event.into_payload()));
+    }
+
+    fn emit_to(&self, connection: u64, event: kchess_core::host::CoreEvent) {
+        let name = event.name().to_string();
+        let payload = event.into_payload();
+        self.0
+            .lock()
+            .unwrap()
+            .push((Some(connection), name, payload));
+    }
+}
+
+/// The host's sink sends a watch's state, frames and broadcast updates as their events, to the
+/// client watching when it has one, and to every client otherwise.
+#[test]
+fn the_hosts_sink_sends_each_update_as_its_event_to_the_client_watching() {
+    use kchess_core::lichess::watch::HostSink;
+    let player = json!({ "name": "Alice" });
+    let state: WatchState =
+        serde_json::from_value(json!({ "session": 3, "phase": "connected" })).expect("a state");
+    let frame: WatchFrame = serde_json::from_value(json!({
+        "session": 3, "source": "tv", "gameId": "Game0001", "white": player, "black": player,
+        "orientation": "white", "fen": INITIAL, "variant": "standard", "finished": false,
+    }))
+    .expect("a frame");
+    let update: BroadcastUpdate =
+        serde_json::from_value(json!({ "session": 3, "roundId": "Round001", "games": [] }))
+            .expect("an update");
+    for connection in [None, Some(7)] {
+        let host = Arc::new(Delivered::default());
+        let sink = match connection {
+            Some(to) => HostSink::to(host.clone(), to),
+            None => HostSink::new(host.clone()),
+        };
+        sink.state(state.clone());
+        sink.frame(frame.clone());
+        sink.broadcast(update.clone());
+        let sent: Vec<(Option<u64>, String, u64)> = host
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(to, name, payload)| (*to, name.clone(), payload["session"].as_u64().unwrap()))
+            .collect();
+        let expected: Vec<(Option<u64>, String, u64)> =
+            ["watch:state", "watch:frame", "watch:broadcast"]
+                .into_iter()
+                .map(|name| (connection, name.to_string(), 3))
+                .collect();
+        assert_eq!(sent, expected);
+    }
+}
+
 #[test]
 fn every_listed_tv_channel_is_a_valid_watch_target() {
     // Atomic, Horde and Racing Kings were listed but refused by the watch validator.

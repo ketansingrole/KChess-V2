@@ -578,6 +578,14 @@ mod tests {
             Some(("Study001".into(), "Chapter1".into()))
         );
         assert_eq!(study_chapter_id("https://lichess.org/study/Study001"), None);
+        // Both ids must be ids, and nothing but a query or fragment may follow.
+        for site in [
+            "https://lichess.org/study/Study-01/Chapter1",
+            "https://lichess.org/study/Study001/Chapter-",
+            "https://lichess.org/study/Study001/Chapter12",
+        ] {
+            assert_eq!(study_chapter_id(site), None, "{site}");
+        }
     }
 
     #[test]

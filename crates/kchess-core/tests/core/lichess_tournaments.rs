@@ -18,7 +18,7 @@ use kchess_core::lichess::accounts::{Lichess, LichessStore, Reply as Outcome};
 use kchess_core::lichess::client::{LichessClient, TokenSource};
 use kchess_core::lichess::policy::Policy;
 use kchess_core::lichess::tournaments::{
-    NewArena, arena_extras, create_tournament, tournament, tournaments,
+    NewArena, arena_extras, arena_form, create_tournament, tournament, tournaments,
 };
 use kchess_domain::color::Color;
 use serde_json::{Value, json};
@@ -293,6 +293,89 @@ async fn looks_up_the_accounts_teams_signed_in_and_explains_a_refusal_briefly() 
         ]
     );
     assert!(!list.problems.join(" ").contains("authorization header"));
+}
+
+/// A team lookup Lichess rate-limited says that it asked to slow down, and does not ask to
+/// reconnect.
+#[tokio::test]
+async fn a_rate_limited_team_lookup_says_lichess_asked_to_slow_down() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/tournament" => Reply::Json(
+            200,
+            json!({ "started": [], "created": [], "finished": [] }).to_string(),
+        ),
+        _ => Reply::Json(429, "{}".into()),
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let lichess = lichess(
+        &fixture.base,
+        &host,
+        MemoryTokens::with(&[("Alice", "Alice-token")]),
+    );
+    let list = tournaments(&lichess, "Alice").await.unwrap();
+    assert_eq!(
+        list.problems,
+        vec!["Couldn’t load the teams of @Alice. Lichess asked to slow down.".to_string()]
+    );
+}
+
+/// KChess plays tournament games through the Board API, which allows Rapid and Classical only:
+/// a faster arena is listed as one it cannot play, and says why.
+#[tokio::test]
+async fn a_bullet_arena_is_listed_as_one_kchess_cannot_play() {
+    let fixture = serve(|_| {
+        Reply::Json(
+            200,
+            json!({
+                "started": [],
+                "created": [arena(json!({ "clock": { "limit": 60, "increment": 0 } }))],
+                "finished": [],
+            })
+            .to_string(),
+        )
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let lichess = lichess(&fixture.base, &host, Arc::new(MemoryTokens::default()));
+    let list = tournaments(&lichess, "").await.unwrap();
+    let bullet = &list.arenas[0];
+    assert!(!bullet.playable);
+    assert_eq!(
+        bullet.problem.as_deref(),
+        Some(
+            "Lichess lets third-party apps play only Rapid and Classical tournament games (this is faster)."
+        )
+    );
+}
+
+/// A start date replaces the wait before the arena; a date of 0 is no date, so the wait stays.
+#[test]
+fn an_arenas_start_date_replaces_its_wait() {
+    let new_arena = |start_date| NewArena {
+        name: None,
+        clock_time: 10.0,
+        clock_increment: 0.0,
+        minutes: 60.0,
+        wait_minutes: Some(5.0),
+        start_date,
+        variant: Variant::Standard,
+        rated: true,
+        password: None,
+        description: None,
+    };
+    for (start_date, wait) in [
+        (None, Some("5")),
+        (Some(0), Some("5")),
+        (Some(1_800_000_000_000), None),
+    ] {
+        let form = arena_form(&new_arena(start_date));
+        let sent = form
+            .iter()
+            .find(|(key, _)| *key == "waitMinutes")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(sent, wait, "{start_date:?}");
+    }
 }
 
 /// Every 403 asked to connect the account again, though one that is not about the login (a

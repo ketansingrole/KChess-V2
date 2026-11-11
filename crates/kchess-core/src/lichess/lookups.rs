@@ -618,19 +618,26 @@ impl PositionLookups {
             .await?
             .read_text(None)
             .await
-            .map_err(|cause| match cause.kind {
-                Some(ErrorKind::RateLimited | ErrorKind::TimedOut) => cause,
-                _ if cause.aborted => cause,
-                Some(ErrorKind::Login) => explorer_error(cause, ""),
-                _ => CoreError {
-                    message: "The master game could not be loaded.".into(),
-                    ..cause
-                },
-            })?;
+            .map_err(master_game_error)?;
         if js::utf16_len(&text) > 200_000 || !text.contains('[') {
             return Err(CoreError::new("That game is not a PGN."));
         }
         Ok(text)
+    }
+}
+
+/// What a person is told when a master game cannot be loaded: a rate limit, a timeout or a
+/// cancellation as it is, a refused login asks to connect an account, anything else says what
+/// failed (never Lichess's status).
+fn master_game_error(cause: CoreError) -> CoreError {
+    match cause.kind {
+        Some(ErrorKind::RateLimited | ErrorKind::TimedOut) => cause,
+        _ if cause.aborted => cause,
+        Some(ErrorKind::Login) => explorer_error(cause, ""),
+        _ => CoreError {
+            message: "The master game could not be loaded.".into(),
+            ..cause
+        },
     }
 }
 
@@ -1098,6 +1105,40 @@ async fn wait_for(mut receiver: Pending) -> CoreResult<PositionLookup> {
         }
         if receiver.changed().await.is_err() {
             return Err(CoreError::new("Position lookup was cancelled."));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A master game that cannot be loaded says why only where the reason helps: a rate limit,
+    /// a timeout and a cancellation keep theirs, a refused login asks for an account, and the rest
+    /// say what failed.
+    #[test]
+    fn a_master_game_failure_keeps_only_the_reasons_that_help() {
+        const FAILED: &str = "The master game could not be loaded.";
+        let slow = CoreError::new("Too many lookups.").with_kind(ErrorKind::RateLimited);
+        let late = CoreError::new("Lichess didn’t answer in time.").with_kind(ErrorKind::TimedOut);
+        let stopped = CoreError::aborted("Stopped.").with_kind(ErrorKind::Unavailable);
+        let refused = CoreError::new("Reconnect it.").with_kind(ErrorKind::Login);
+        let broken = CoreError::new("Lichess isn’t working.").with_kind(ErrorKind::Unavailable);
+        let cases = [
+            (slow.clone(), slow),
+            (late.clone(), late),
+            (stopped.clone(), stopped),
+            (
+                refused,
+                CoreError::new(CONNECT_EXPLORER).with_kind(ErrorKind::Login),
+            ),
+            (
+                broken,
+                CoreError::new(FAILED).with_kind(ErrorKind::Unavailable),
+            ),
+        ];
+        for (cause, told) in cases {
+            assert_eq!(master_game_error(cause.clone()), told, "{cause:?}");
         }
     }
 }

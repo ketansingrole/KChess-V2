@@ -205,6 +205,21 @@ async fn a_theme_with_no_puzzles_left_is_an_empty_draw_not_a_failure() {
     assert_eq!(draw.puzzle, None);
 }
 
+/// Only Lichess having no puzzle is an empty draw: any other failure is an error.
+#[tokio::test]
+async fn an_anonymous_draw_that_fails_is_an_error_not_an_empty_draw() {
+    let fixture = serve(|_| Reply::Json(500, "{}".into())).await;
+    let lichess = service(&fixture.base);
+    let request = PuzzleRequest {
+        account: String::new(),
+        angle: "mix".into(),
+        difficulty: PuzzleDifficulty::Normal,
+        color: None,
+    };
+    let error = puzzle_next(&lichess, &request).await.unwrap_err();
+    assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::Unavailable));
+}
+
 #[tokio::test]
 async fn an_answer_that_is_not_a_puzzle_is_refused() {
     let fixture = serve(|_| Reply::Json(200, "{}".into())).await;

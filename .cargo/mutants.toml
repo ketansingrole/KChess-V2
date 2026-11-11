@@ -19,6 +19,9 @@ exclude_re = [
     # The command line closes its core only as the process exits, with the core's writes already
     # on disk: what a test can see afterwards is the same whether or not it was closed.
     'apps/cli/src/core\.rs:.*: replace CoreClient::close with \(\)$',
+    # The Lichess client only builds its request with this client; `Policy::send` executes it with
+    # the policy's own, which adds the headers and deadlines. Any client builds the same request.
+    'kchess-core/src/lichess/policy\.rs:.*: replace Policy::http -> &reqwest::Client with ',
     # Setting the folder's mode to 0700 when it already is 0700 changes nothing.
     'kchess-service/src/discovery\.rs:.*: replace & with [|^] in private_dir',
     # DETACHED_PROCESS and CREATE_NEW_PROCESS_GROUP share no bit, so `|` and `^` are the same.

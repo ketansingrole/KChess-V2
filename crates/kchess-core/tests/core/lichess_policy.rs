@@ -218,10 +218,14 @@ async fn a_rate_limit_cools_the_next_request_down_for_retry_after() {
     assert_eq!(limited.response.status().as_u16(), 429);
 
     let started = Instant::now();
-    let next = policy
-        .send(account(), Lane::Background, &nobody(&policy), &cancel)
-        .await
-        .unwrap();
+    // A cooldown whose clock stands still would never end.
+    let next = tokio::time::timeout(
+        Duration::from_secs(10),
+        policy.send(account(), Lane::Background, &nobody(&policy), &cancel),
+    )
+    .await
+    .expect("the cooldown ends")
+    .unwrap();
     assert!(next.response.status().is_success());
     assert!(started.elapsed() >= Duration::from_millis(900));
 
@@ -424,6 +428,34 @@ async fn traffic_of_a_forgotten_account_is_not_counted() {
             .all(|event| event["account"] != "alice"),
         "logged out traffic must not be counted"
     );
+}
+
+/// Once the core is closing, traffic still arriving is no longer counted.
+#[tokio::test]
+async fn traffic_after_the_core_closed_is_not_counted() {
+    let fixture = serve(|_| Reply::Json(200, "{}".into())).await;
+    let host = Arc::new(Recording::default());
+    let lifetime = CancellationToken::new();
+    let policy = Policy::with_timeout(
+        host.clone(),
+        host.clone(),
+        http_client(),
+        lifetime.clone(),
+        Duration::from_secs(5),
+    );
+    lifetime.cancel();
+    let request = http_client()
+        .get(format!("{}/api/account", fixture.base))
+        .build()
+        .unwrap();
+    let usage = policy.usage("Alice", UsageKind::Games);
+    // The request has a cancellation of its own, so it still runs.
+    policy
+        .send(request, Lane::Background, &usage, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(fixture.requests().len(), 1);
+    assert_eq!(host.usage_events(), Vec::<serde_json::Value>::new());
 }
 
 /// A page showed reqwest's "error sending request for url (…)" when Lichess could not be reached.
