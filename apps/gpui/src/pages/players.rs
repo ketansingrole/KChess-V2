@@ -2077,6 +2077,64 @@ impl Render for MessageDialog {
     }
 }
 
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::ActionInfo;
+        match self {
+            Action::Follow => {
+                ActionInfo::new("players:follow", "Follow player", "user-plus", "friend add")
+            }
+            Action::Challenge => ActionInfo::new(
+                "players:challenge",
+                "Challenge",
+                "swords",
+                "play game invite",
+            ),
+            Action::Message => {
+                ActionInfo::new("players:message", "Message", "message-circle", "send write")
+            }
+            Action::Watch => ActionInfo::new("players:watch", "Watch", "tv", "spectate game"),
+        }
+    }
+}
+
+impl crate::pages::PageView for PlayersPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Players,
+        label: "Players",
+        short: "Players",
+        icon: "user-search",
+        group: Some(crate::pages::NavGroup::Lichess),
+        keywords: "lookup profile user",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        PlayersPage::new(window, cx)
+    }
+
+    fn search_fields(&self) -> Vec<Entity<InputState>> {
+        PlayersPage::search_fields(self)
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        PlayersPage::actions(self, cx)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.act(action, window, cx));
+    }
+}
+
+/// A player's profile on Players.
+pub fn open_player(username: &str, window: &mut Window, cx: &mut App) {
+    let username = username.to_string();
+    crate::shell::show::<PlayersPage>(window, cx, move |players, window, cx| {
+        players.show_player(&username, window, cx)
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::{hours, played_perfs, suggestions, title_choices, title_shown};
@@ -2185,62 +2243,4 @@ mod tests {
         assert!(!title_shown("titled", Some("BOT")));
         assert!(!title_shown("GM", None));
     }
-}
-
-impl crate::pages::PageAction for Action {
-    fn info(&self) -> crate::pages::ActionInfo {
-        use crate::pages::ActionInfo;
-        match self {
-            Action::Follow => {
-                ActionInfo::new("players:follow", "Follow player", "user-plus", "friend add")
-            }
-            Action::Challenge => ActionInfo::new(
-                "players:challenge",
-                "Challenge",
-                "swords",
-                "play game invite",
-            ),
-            Action::Message => {
-                ActionInfo::new("players:message", "Message", "message-circle", "send write")
-            }
-            Action::Watch => ActionInfo::new("players:watch", "Watch", "tv", "spectate game"),
-        }
-    }
-}
-
-impl crate::pages::PageView for PlayersPage {
-    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
-        page: crate::pages::Page::Players,
-        label: "Players",
-        short: "Players",
-        icon: "user-search",
-        group: Some(crate::pages::NavGroup::Lichess),
-        keywords: "lookup profile user",
-    };
-
-    type Action = Action;
-
-    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        PlayersPage::new(window, cx)
-    }
-
-    fn search_fields(&self) -> Vec<Entity<InputState>> {
-        PlayersPage::search_fields(self)
-    }
-
-    fn actions(&self, cx: &App) -> Vec<Action> {
-        PlayersPage::actions(self, cx)
-    }
-
-    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
-        this.update(cx, |page, cx| page.act(action, window, cx));
-    }
-}
-
-/// A player's profile on Players.
-pub fn open_player(username: &str, window: &mut Window, cx: &mut App) {
-    let username = username.to_string();
-    crate::shell::show::<PlayersPage>(window, cx, move |players, window, cx| {
-        players.show_player(&username, window, cx)
-    });
 }

@@ -1542,81 +1542,6 @@ impl Render for HistoryPage {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{move_count, outcome, player_side, time_label};
-    use crate::game::rules;
-    use serde_json::json;
-
-    /// The rules read only a game's result fields: given those alone, each outcome and side is
-    /// what the whole game gets, for every kind of result.
-    #[test]
-    fn a_games_outcome_is_read_from_its_result_fields() {
-        let moves: Vec<&str> = ["e2e4", "e7e5"].repeat(40);
-        let game = |source: &str, white: &str, black: &str, result: &str, finished: bool| {
-            json!({
-                "id": "g", "source": source, "white": white, "black": black, "result": result,
-                "finished": finished, "reason": "-", "startedAt": 1, "updatedAt": 2,
-                "timeControl": "-", "moves": moves,
-                "setup": { "variant": "standard", "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
-            })
-        };
-        let games = [
-            game("clock", "A", "B", "*", true),
-            game("computer", "You", "Stockfish", "*", false),
-            game("computer", "You", "Stockfish", "*", true),
-            game("computer", "You", "Stockfish", "1/2-1/2", true),
-            game("computer", "You", "Stockfish", "1-0", true),
-            game("computer", "You", "Stockfish", "0-1", true),
-            game("computer", "Stockfish", "You", "1-0", true),
-            game("computer", "Stockfish", "You", "0-1", true),
-            game("board", "Ann", "Bo", "1-0", true),
-            game("board", "Ann", "Bo", "0-1", true),
-        ];
-        let mut seen = std::collections::BTreeSet::new();
-        for whole in &games {
-            let expected = rules("archivedOutcome", std::slice::from_ref(whole)).expect("outcome");
-            assert_eq!(json!(outcome(whole)), expected, "{whole}");
-            let side = rules("archivedPlayerSide", std::slice::from_ref(whole)).expect("side");
-            let named = player_side(whole).map(|color| match color {
-                shakmaty::Color::White => "white",
-                shakmaty::Color::Black => "black",
-            });
-            assert_eq!(json!(named), side, "{whole}");
-            seen.insert(outcome(whole));
-        }
-        // Every kind of outcome is among them.
-        assert_eq!(
-            seen.into_iter().collect::<Vec<_>>(),
-            [
-                "black",
-                "clock",
-                "draw",
-                "loss",
-                "ongoing",
-                "unfinished",
-                "white",
-                "win"
-            ]
-        );
-    }
-
-    #[test]
-    fn time_controls_read_in_minutes() {
-        assert_eq!(time_label("-"), "Untimed");
-        assert_eq!(time_label("300+3"), "5+3");
-        assert_eq!(time_label("180+2 / 600+2"), "3+2 / 10+2");
-        assert_eq!(time_label("90+0"), "1.5+0");
-    }
-
-    #[test]
-    fn moves_count_full_moves() {
-        assert_eq!(move_count(1), "1 move");
-        assert_eq!(move_count(2), "1 move");
-        assert_eq!(move_count(13), "7 moves");
-    }
-}
-
 impl crate::pages::PageAction for Action {
     fn info(&self) -> crate::pages::ActionInfo {
         use crate::pages::ActionInfo;
@@ -1733,4 +1658,79 @@ pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
     crate::shell::show::<HistoryPage>(window, cx, move |history, window, cx| {
         history.show_game(&id, window, cx)
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{move_count, outcome, player_side, time_label};
+    use crate::game::rules;
+    use serde_json::json;
+
+    /// The rules read only a game's result fields: given those alone, each outcome and side is
+    /// what the whole game gets, for every kind of result.
+    #[test]
+    fn a_games_outcome_is_read_from_its_result_fields() {
+        let moves: Vec<&str> = ["e2e4", "e7e5"].repeat(40);
+        let game = |source: &str, white: &str, black: &str, result: &str, finished: bool| {
+            json!({
+                "id": "g", "source": source, "white": white, "black": black, "result": result,
+                "finished": finished, "reason": "-", "startedAt": 1, "updatedAt": 2,
+                "timeControl": "-", "moves": moves,
+                "setup": { "variant": "standard", "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
+            })
+        };
+        let games = [
+            game("clock", "A", "B", "*", true),
+            game("computer", "You", "Stockfish", "*", false),
+            game("computer", "You", "Stockfish", "*", true),
+            game("computer", "You", "Stockfish", "1/2-1/2", true),
+            game("computer", "You", "Stockfish", "1-0", true),
+            game("computer", "You", "Stockfish", "0-1", true),
+            game("computer", "Stockfish", "You", "1-0", true),
+            game("computer", "Stockfish", "You", "0-1", true),
+            game("board", "Ann", "Bo", "1-0", true),
+            game("board", "Ann", "Bo", "0-1", true),
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for whole in &games {
+            let expected = rules("archivedOutcome", std::slice::from_ref(whole)).expect("outcome");
+            assert_eq!(json!(outcome(whole)), expected, "{whole}");
+            let side = rules("archivedPlayerSide", std::slice::from_ref(whole)).expect("side");
+            let named = player_side(whole).map(|color| match color {
+                shakmaty::Color::White => "white",
+                shakmaty::Color::Black => "black",
+            });
+            assert_eq!(json!(named), side, "{whole}");
+            seen.insert(outcome(whole));
+        }
+        // Every kind of outcome is among them.
+        assert_eq!(
+            seen.into_iter().collect::<Vec<_>>(),
+            [
+                "black",
+                "clock",
+                "draw",
+                "loss",
+                "ongoing",
+                "unfinished",
+                "white",
+                "win"
+            ]
+        );
+    }
+
+    #[test]
+    fn time_controls_read_in_minutes() {
+        assert_eq!(time_label("-"), "Untimed");
+        assert_eq!(time_label("300+3"), "5+3");
+        assert_eq!(time_label("180+2 / 600+2"), "3+2 / 10+2");
+        assert_eq!(time_label("90+0"), "1.5+0");
+    }
+
+    #[test]
+    fn moves_count_full_moves() {
+        assert_eq!(move_count(1), "1 move");
+        assert_eq!(move_count(2), "1 move");
+        assert_eq!(move_count(13), "7 moves");
+    }
 }

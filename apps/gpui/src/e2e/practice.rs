@@ -236,7 +236,8 @@ fn an_endgame_drill_is_flipped_from_quick_pick(cx: &mut gpui_kit::TestAppContext
     app.find("drill-hint");
     app.press("secondary-k");
     app.type_text(">");
-    super::palette::wait_for_first(&mut app, "Hint");
+    // Zen mode leads, as on every page it applies to.
+    super::palette::wait_for_first(&mut app, "Zen mode");
     let listed: Vec<String> = app.with_window(|window, _| {
         (0..6usize)
             .filter_map(|index| window.try_find(("palette-item", index)))
@@ -244,7 +245,7 @@ fn an_endgame_drill_is_flipped_from_quick_pick(cx: &mut gpui_kit::TestAppContext
             .collect()
     });
     // Nothing was played, so there is nothing to take back.
-    assert_eq!(&listed[..3], ["Hint", "Flip board", "Restart"]);
+    assert_eq!(&listed[1..4], ["Hint", "Flip board", "Restart"]);
     app.type_text("Flip board");
     super::palette::wait_for_first(&mut app, "Flip board");
     app.press("enter");

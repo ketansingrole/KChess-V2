@@ -1168,45 +1168,6 @@ impl Render for EditorPage {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{castling_pieces, setup_fen, standard_castling_pieces, start_setup};
-    use serde_json::json;
-
-    #[test]
-    fn a_setup_reads_as_its_fen() {
-        assert_eq!(
-            setup_fen(&start_setup()),
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-        );
-        // Castling rights the pieces no longer allow are left out.
-        let mut setup = start_setup();
-        setup["board"] = json!("4k3/8/8/8/8/8/8/4K3");
-        setup["turn"] = json!("black");
-        assert_eq!(setup_fen(&setup), "4k3/8/8/8/8/8/8/4K3 b - - 0 1");
-    }
-
-    /// What a castling right names: the king's file and the outermost rook's on that side.
-    #[test]
-    fn a_castling_right_names_its_king_and_rook() {
-        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
-        for key in ["K", "Q", "k", "q"] {
-            assert_eq!(
-                castling_pieces(start, key),
-                standard_castling_pieces(key),
-                "{key}"
-            );
-        }
-        // Chess960 start 0: king on g, rooks on f and h.
-        let shuffled = "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR";
-        assert_eq!(castling_pieces(shuffled, "K"), (Some(6), Some(7)));
-        assert_eq!(castling_pieces(shuffled, "q"), (Some(6), Some(5)));
-        // The king stepped to d1: no longer the standard pieces, so that tick is cleared.
-        let moved = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBK1BNR";
-        assert_ne!(castling_pieces(moved, "Q"), standard_castling_pieces("Q"));
-    }
-}
-
 impl crate::pages::PageAction for Action {
     fn info(&self) -> crate::pages::ActionInfo {
         use crate::pages::{ActionInfo, ActionRole};
@@ -1282,4 +1243,43 @@ pub fn edit_position(
         });
     }
     crate::shell::open(crate::pages::Page::Editor, window, cx);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{castling_pieces, setup_fen, standard_castling_pieces, start_setup};
+    use serde_json::json;
+
+    #[test]
+    fn a_setup_reads_as_its_fen() {
+        assert_eq!(
+            setup_fen(&start_setup()),
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        );
+        // Castling rights the pieces no longer allow are left out.
+        let mut setup = start_setup();
+        setup["board"] = json!("4k3/8/8/8/8/8/8/4K3");
+        setup["turn"] = json!("black");
+        assert_eq!(setup_fen(&setup), "4k3/8/8/8/8/8/8/4K3 b - - 0 1");
+    }
+
+    /// What a castling right names: the king's file and the outermost rook's on that side.
+    #[test]
+    fn a_castling_right_names_its_king_and_rook() {
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+        for key in ["K", "Q", "k", "q"] {
+            assert_eq!(
+                castling_pieces(start, key),
+                standard_castling_pieces(key),
+                "{key}"
+            );
+        }
+        // Chess960 start 0: king on g, rooks on f and h.
+        let shuffled = "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR";
+        assert_eq!(castling_pieces(shuffled, "K"), (Some(6), Some(7)));
+        assert_eq!(castling_pieces(shuffled, "q"), (Some(6), Some(5)));
+        // The king stepped to d1: no longer the standard pieces, so that tick is cleared.
+        let moved = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBK1BNR";
+        assert_ne!(castling_pieces(moved, "Q"), standard_castling_pieces("Q"));
+    }
 }

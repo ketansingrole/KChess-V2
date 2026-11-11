@@ -873,26 +873,6 @@ impl Render for OnlinePage {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::summary;
-    use crate::online::Form;
-
-    #[test]
-    fn the_summary_names_the_game() {
-        let mut form = Form::default();
-        assert_eq!(summary(&form, Some("Standard")), "15+10 · Rapid · Casual");
-        form.correspondence = true;
-        form.rated = true;
-        form.days = 1.;
-        form.variant = "atomic".into();
-        assert_eq!(
-            summary(&form, Some("Atomic")),
-            "Atomic · 1 day per move · Rated"
-        );
-    }
-}
-
 impl crate::pages::PageAction for game::LiveAction {
     fn info(&self) -> crate::pages::ActionInfo {
         use crate::pages::{ActionInfo, ActionRole};
@@ -1016,4 +996,24 @@ pub fn challenge_rated(username: &str, rated: bool, window: &mut Window, cx: &mu
     crate::shell::show::<OnlinePage>(window, cx, move |page, window, cx| {
         page.challenge_rated(&username, rated, window, cx)
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::summary;
+    use crate::online::Form;
+
+    #[test]
+    fn the_summary_names_the_game() {
+        let mut form = Form::default();
+        assert_eq!(summary(&form, Some("Standard")), "15+10 · Rapid · Casual");
+        form.correspondence = true;
+        form.rated = true;
+        form.days = 1.;
+        form.variant = "atomic".into();
+        assert_eq!(
+            summary(&form, Some("Atomic")),
+            "Atomic · 1 day per move · Rated"
+        );
+    }
 }

@@ -1305,55 +1305,6 @@ impl Render for OpeningsPage {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use super::{OpeningNode, catalog, entry, fold, group_of, opening_tree};
-
-    /// Each Openings page made the catalog again as it opened, from a JSON copy of the rules'
-    /// tree.
-    #[test]
-    fn every_page_shares_one_catalog() {
-        let first = catalog();
-        assert!(Arc::ptr_eq(&first, &catalog()));
-        assert!(
-            std::ptr::eq(first.tree, opening_tree().as_slice()),
-            "the rules' own tree"
-        );
-        assert!(!first.tree.is_empty());
-        assert!(!first.named.is_empty());
-        assert!(!first.popular.is_empty());
-    }
-
-    #[test]
-    fn search_ignores_accents_and_apostrophes() {
-        assert_eq!(fold("Grünfeld Defense"), "grunfeld defense");
-        assert_eq!(fold("King’s Gambit"), "king's gambit");
-    }
-
-    #[test]
-    fn a_card_names_its_line() {
-        let moves: Vec<String> = ["e2e4", "c7c5"].map(String::from).to_vec();
-        let card = entry(&moves, None).unwrap();
-        assert_eq!(card.name, "Sicilian Defense");
-        assert_eq!(card.eco, "B20");
-        assert_eq!(card.san, "1.e4 c5");
-    }
-
-    #[test]
-    fn families_go_under_their_first_move() {
-        let node = OpeningNode {
-            name: "English Opening".into(),
-            label: "English Opening".into(),
-            eco: Some("A10".into()),
-            moves: Some(vec!["c2c4".into()]),
-            children: Vec::new(),
-        };
-        assert_eq!(group_of(&node), "flank");
-    }
-}
-
 impl crate::pages::PageAction for Action {
     fn info(&self) -> crate::pages::ActionInfo {
         use crate::pages::{ActionInfo, ActionRole};
@@ -1418,5 +1369,54 @@ impl crate::pages::PageView for OpeningsPage {
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
         this.update(cx, |page, cx| page.act(action, window, cx));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::{OpeningNode, catalog, entry, fold, group_of, opening_tree};
+
+    /// Each Openings page made the catalog again as it opened, from a JSON copy of the rules'
+    /// tree.
+    #[test]
+    fn every_page_shares_one_catalog() {
+        let first = catalog();
+        assert!(Arc::ptr_eq(&first, &catalog()));
+        assert!(
+            std::ptr::eq(first.tree, opening_tree().as_slice()),
+            "the rules' own tree"
+        );
+        assert!(!first.tree.is_empty());
+        assert!(!first.named.is_empty());
+        assert!(!first.popular.is_empty());
+    }
+
+    #[test]
+    fn search_ignores_accents_and_apostrophes() {
+        assert_eq!(fold("Grünfeld Defense"), "grunfeld defense");
+        assert_eq!(fold("King’s Gambit"), "king's gambit");
+    }
+
+    #[test]
+    fn a_card_names_its_line() {
+        let moves: Vec<String> = ["e2e4", "c7c5"].map(String::from).to_vec();
+        let card = entry(&moves, None).unwrap();
+        assert_eq!(card.name, "Sicilian Defense");
+        assert_eq!(card.eco, "B20");
+        assert_eq!(card.san, "1.e4 c5");
+    }
+
+    #[test]
+    fn families_go_under_their_first_move() {
+        let node = OpeningNode {
+            name: "English Opening".into(),
+            label: "English Opening".into(),
+            eco: Some("A10".into()),
+            moves: Some(vec!["c2c4".into()]),
+            children: Vec::new(),
+        };
+        assert_eq!(group_of(&node), "flank");
     }
 }

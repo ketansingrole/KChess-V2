@@ -182,13 +182,16 @@ impl PageAction for std::convert::Infallible {
     }
 }
 
+/// What runs a command, on the window it was chosen in.
+pub type Run = Rc<dyn Fn(&mut Window, &mut App)>;
+
 /// Something Quick Pick can run on a page: one of its actions, or one of its places (a tab).
 #[derive(Clone)]
 pub struct PageCommand {
     pub info: ActionInfo,
     /// Dimmed text after the label: the page a place is on.
     pub detail: Option<SharedString>,
-    pub run: Rc<dyn Fn(&mut Window, &mut App)>,
+    pub run: Run,
 }
 
 /// A page as the shell drives it.

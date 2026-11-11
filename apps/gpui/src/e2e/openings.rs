@@ -268,7 +268,8 @@ fn a_drilled_line_is_saved_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     app.find("save-opening");
     app.press("secondary-k");
     app.type_text(">");
-    super::palette::wait_for_first(&mut app, "Show move");
+    // Zen mode leads, as on every page it applies to.
+    super::palette::wait_for_first(&mut app, "Zen mode");
     let listed: Vec<String> = app.with_window(|window, _| {
         (0..6usize)
             .filter_map(|index| window.try_find(("palette-item", index)))
@@ -276,7 +277,10 @@ fn a_drilled_line_is_saved_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
             .collect()
     });
     // Nothing missed yet: there are no mistakes to forget.
-    assert_eq!(&listed[..3], ["Show move", "Restart line", "Save as study"]);
+    assert_eq!(
+        &listed[1..4],
+        ["Show move", "Restart line", "Save as study"]
+    );
     app.type_text("Save as study");
     super::palette::wait_for_first(&mut app, "Save as study");
     app.press("enter");

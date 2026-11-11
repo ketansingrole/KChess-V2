@@ -314,7 +314,7 @@ fn decode(value: &str) -> String {
 
 /// The pages `pages-tour` opens in turn: the sidebar's, then Settings.
 fn tour() -> Vec<(Page, &'static str)> {
-    let pages: Vec<(Page, &'static str)> =
+    let mut pages: Vec<(Page, &'static str)> =
         Page::all().map(|page| (page, page.info().label)).collect();
     // `KCHESS_BENCH_TOUR=Openings,Home`: those pages alone, in that order, so a page's first
     // opening is measured without the pages before it.

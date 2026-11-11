@@ -1262,31 +1262,6 @@ impl Render for ImportDialog {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::has_new_games;
-    use serde_json::json;
-
-    #[test]
-    fn a_longer_play_time_than_at_the_sync_means_new_games() {
-        let synced = json!({ "syncedPlayTime": 1000 });
-        assert!(has_new_games(
-            &synced,
-            &json!({ "playTime": { "total": 1300 } })
-        ));
-        assert!(!has_new_games(
-            &synced,
-            &json!({ "playTime": { "total": 1000 } })
-        ));
-        // Without a play time saved at a sync, or in the profile, nothing is claimed.
-        assert!(!has_new_games(
-            &json!({}),
-            &json!({ "playTime": { "total": 1300 } })
-        ));
-        assert!(!has_new_games(&synced, &json!({})));
-    }
-}
-
 impl crate::pages::PageAction for Action {
     fn info(&self) -> crate::pages::ActionInfo {
         use crate::pages::ActionInfo;
@@ -1329,5 +1304,30 @@ impl crate::pages::PageView for FriendsPage {
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
         this.update(cx, |page, cx| page.act(action, window, cx));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_new_games;
+    use serde_json::json;
+
+    #[test]
+    fn a_longer_play_time_than_at_the_sync_means_new_games() {
+        let synced = json!({ "syncedPlayTime": 1000 });
+        assert!(has_new_games(
+            &synced,
+            &json!({ "playTime": { "total": 1300 } })
+        ));
+        assert!(!has_new_games(
+            &synced,
+            &json!({ "playTime": { "total": 1000 } })
+        ));
+        // Without a play time saved at a sync, or in the profile, nothing is claimed.
+        assert!(!has_new_games(
+            &json!({}),
+            &json!({ "playTime": { "total": 1300 } })
+        ));
+        assert!(!has_new_games(&synced, &json!({})));
     }
 }

@@ -843,6 +843,49 @@ impl Render for HomePage {
     }
 }
 
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        match self {
+            Action::Review => crate::pages::ActionInfo::new(
+                "home:review",
+                "Review last game",
+                "microscope",
+                "analyse recent",
+            ),
+        }
+    }
+}
+
+impl crate::pages::PageView for HomePage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: Page::Dashboard,
+        label: "Home",
+        short: "Home",
+        icon: "house",
+        group: Some(crate::pages::NavGroup::Home),
+        keywords: "start overview",
+    };
+
+    type Action = Action;
+
+    fn create(_: &mut Window, cx: &mut Context<Self>) -> Self {
+        HomePage::new(cx)
+    }
+
+    /// Home shows the unfinished game and accounts as they are now.
+    fn shown(this: &Entity<Self>, _again: bool, _window: &mut Window, cx: &mut App) {
+        this.update(cx, |home, cx| home.refresh(cx));
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        HomePage::actions(self, cx)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |home, cx| home.act(action, window, cx));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -920,48 +963,5 @@ mod tests {
         );
         let (_, moves) = line(&json!({ "moves": ["e2e4", "e7e5"] }));
         assert_eq!(moves, ["e2e4", "e7e5"]);
-    }
-}
-
-impl crate::pages::PageAction for Action {
-    fn info(&self) -> crate::pages::ActionInfo {
-        match self {
-            Action::Review => crate::pages::ActionInfo::new(
-                "home:review",
-                "Review last game",
-                "microscope",
-                "analyse recent",
-            ),
-        }
-    }
-}
-
-impl crate::pages::PageView for HomePage {
-    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
-        page: Page::Dashboard,
-        label: "Home",
-        short: "Home",
-        icon: "house",
-        group: Some(crate::pages::NavGroup::Home),
-        keywords: "start overview",
-    };
-
-    type Action = Action;
-
-    fn create(_: &mut Window, cx: &mut Context<Self>) -> Self {
-        HomePage::new(cx)
-    }
-
-    /// Home shows the unfinished game and accounts as they are now.
-    fn shown(this: &Entity<Self>, _again: bool, _window: &mut Window, cx: &mut App) {
-        this.update(cx, |home, cx| home.refresh(cx));
-    }
-
-    fn actions(&self, cx: &App) -> Vec<Action> {
-        HomePage::actions(self, cx)
-    }
-
-    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
-        this.update(cx, |home, cx| home.act(action, window, cx));
     }
 }

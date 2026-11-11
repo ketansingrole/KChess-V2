@@ -980,6 +980,29 @@ impl InsightsPage {
     }
 }
 
+impl crate::pages::PageView for InsightsPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: Page::Insights,
+        label: "Insights",
+        short: "Insights",
+        icon: "chart-pie",
+        group: Some(crate::pages::NavGroup::Lichess),
+        keywords: "stats openings performance",
+    };
+
+    type Action = std::convert::Infallible;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        InsightsPage::new(window, cx)
+    }
+
+    fn shown(this: &Entity<Self>, again: bool, _window: &mut Window, cx: &mut App) {
+        if !again {
+            this.update(cx, |insights, cx| insights.shown(cx));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1066,28 +1089,5 @@ mod tests {
             Some(4.)
         );
         assert_eq!(blunder_rate(&json!({ "moves": 0, "blunders": 0 })), None);
-    }
-}
-
-impl crate::pages::PageView for InsightsPage {
-    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
-        page: Page::Insights,
-        label: "Insights",
-        short: "Insights",
-        icon: "chart-pie",
-        group: Some(crate::pages::NavGroup::Lichess),
-        keywords: "stats openings performance",
-    };
-
-    type Action = std::convert::Infallible;
-
-    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        InsightsPage::new(window, cx)
-    }
-
-    fn shown(this: &Entity<Self>, again: bool, _window: &mut Window, cx: &mut App) {
-        if !again {
-            this.update(cx, |insights, cx| insights.shown(cx));
-        }
     }
 }

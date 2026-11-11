@@ -755,54 +755,6 @@ impl Render for TournamentsPage {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    /// Overlapping list requests (a refresh, then the account changed) let the first answer
-    /// clear the spinner while the second was on its way, and land over it if it came later.
-    #[gpui_kit::test]
-    fn only_the_latest_tournament_list_lands(cx: &mut gpui_kit::TestAppContext) {
-        use gpui_kit::AppContext as _;
-        let mut app = crate::e2e::Harness::start(cx);
-        let (first, second) = app.with_window(|window, cx| {
-            let page = cx.new(|cx| super::TournamentsPage::new(window, cx));
-            page.update(cx, |page, cx| {
-                page.refresh(cx);
-                let first = page.list_request;
-                page.refresh(cx);
-                (first, page.list_request)
-            })
-        });
-        assert_ne!(first, second);
-    }
-
-    #[test]
-    fn only_a_running_event_refreshes_every_tick_and_a_waiting_one_each_minute() {
-        use super::{REFRESH_EVERY, WAITING_REFRESH_EVERY, refresh_due};
-        use serde_json::json;
-        use std::time::Duration;
-        let tick = REFRESH_EVERY - Duration::from_millis(300);
-        assert!(refresh_due(&json!("started"), tick));
-        assert!(!refresh_due(&json!("started"), Duration::from_secs(1)));
-        // An upcoming event used to be refreshed every tick, for hours before its start.
-        assert!(!refresh_due(&json!("created"), tick));
-        assert!(refresh_due(
-            &json!("created"),
-            WAITING_REFRESH_EVERY - Duration::from_millis(300)
-        ));
-        assert!(!refresh_due(&json!("finished"), Duration::from_secs(3600)));
-    }
-
-    use super::control;
-    use serde_json::json;
-
-    #[test]
-    fn time_controls_read_like_lichess() {
-        assert_eq!(control(&json!({ "limit": 180, "increment": 2 })), "3+2");
-        assert_eq!(control(&json!({ "limit": 30, "increment": 0 })), "½+0");
-        assert_eq!(control(&json!({ "limit": 90, "increment": 1 })), "1.5+1");
-    }
-}
-
 impl crate::pages::PageAction for Action {
     fn info(&self) -> crate::pages::ActionInfo {
         use crate::pages::ActionInfo;
@@ -869,4 +821,52 @@ pub fn open_event(system: &'static str, id: &str, window: &mut Window, cx: &mut 
     crate::shell::show::<TournamentsPage>(window, cx, move |page, _, cx| {
         page.show_event(system, &id, cx)
     });
+}
+
+#[cfg(test)]
+mod tests {
+    /// Overlapping list requests (a refresh, then the account changed) let the first answer
+    /// clear the spinner while the second was on its way, and land over it if it came later.
+    #[gpui_kit::test]
+    fn only_the_latest_tournament_list_lands(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = crate::e2e::Harness::start(cx);
+        let (first, second) = app.with_window(|window, cx| {
+            let page = cx.new(|cx| super::TournamentsPage::new(window, cx));
+            page.update(cx, |page, cx| {
+                page.refresh(cx);
+                let first = page.list_request;
+                page.refresh(cx);
+                (first, page.list_request)
+            })
+        });
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn only_a_running_event_refreshes_every_tick_and_a_waiting_one_each_minute() {
+        use super::{REFRESH_EVERY, WAITING_REFRESH_EVERY, refresh_due};
+        use serde_json::json;
+        use std::time::Duration;
+        let tick = REFRESH_EVERY - Duration::from_millis(300);
+        assert!(refresh_due(&json!("started"), tick));
+        assert!(!refresh_due(&json!("started"), Duration::from_secs(1)));
+        // An upcoming event used to be refreshed every tick, for hours before its start.
+        assert!(!refresh_due(&json!("created"), tick));
+        assert!(refresh_due(
+            &json!("created"),
+            WAITING_REFRESH_EVERY - Duration::from_millis(300)
+        ));
+        assert!(!refresh_due(&json!("finished"), Duration::from_secs(3600)));
+    }
+
+    use super::control;
+    use serde_json::json;
+
+    #[test]
+    fn time_controls_read_like_lichess() {
+        assert_eq!(control(&json!({ "limit": 180, "increment": 2 })), "3+2");
+        assert_eq!(control(&json!({ "limit": 30, "increment": 0 })), "½+0");
+        assert_eq!(control(&json!({ "limit": 90, "increment": 1 })), "1.5+1");
+    }
 }
