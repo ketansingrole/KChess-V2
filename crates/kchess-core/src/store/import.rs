@@ -13,15 +13,14 @@ use serde_json::{Map, Value, json};
 
 use super::StoreContext;
 use super::games::{
-    GameRows, MAX_GAMES, default_settings, in_progress, keep_pending, to_sql, write_settings_json,
+    GameRows, MAX_GAMES, in_progress, keep_pending, save_settings, settings_from_stored, sql_json,
+    to_sql,
 };
 use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use kchess_contracts::types::Settings;
 use kchess_domain::js;
-
-const PIECE_ANIMATIONS: [&str; 4] = ["none", "fast", "normal", "slow"];
-const REVIEW_AUTO: [&str; 3] = ["off", "recent", "all"];
 
 /// A plaintext token from an earlier release, for the caller to encrypt and store.
 pub struct PlainToken {
@@ -99,7 +98,7 @@ fn from_json(ctx: &StoreContext) -> Result<bool> {
         Some(Value::Object(map)) => map,
         _ => Map::new(),
     };
-    let settings = normalize_settings(&stored_settings)?;
+    let settings = backup_settings(&stored_settings);
     let accounts = field("accounts").unwrap_or_else(|| json!([]));
     // Games that are not a list fail the whole import, not one game.
     let mut games: Vec<Value> = match field("games") {
@@ -137,7 +136,7 @@ fn from_json(ctx: &StoreContext) -> Result<bool> {
     };
 
     let imported = transaction(ctx.db, || {
-        write_settings_json(ctx.db, &Value::Object(settings.clone()))?;
+        save_settings(ctx.db, &settings)?;
         let Some(accounts) = accounts.as_array() else {
             return Err(CoreError::new("accounts is not iterable"));
         };
@@ -383,17 +382,7 @@ fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken
         }),
     );
     stored.insert("enginePath".into(), json!(engine_path));
-    let settings = match normalize_settings(&stored) {
-        Ok(settings) => settings,
-        Err(cause) => {
-            log(
-                ctx,
-                Level::Debug,
-                &format!("Legacy migration failed: {cause}"),
-            );
-            return Vec::new();
-        }
-    };
+    let settings = backup_settings(&stored);
 
     let games: Vec<Value> = game_rows.iter().map(|row| legacy_game(row)).collect();
     // Stored tokens are encrypted by the caller, which must read every row: a NULL token makes
@@ -416,7 +405,7 @@ fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken
         .any(|row| matches!(row[1], SqlValue::Null));
 
     let imported = transaction(ctx.db, || {
-        write_settings_json(ctx.db, &Value::Object(settings.clone()))?;
+        save_settings(ctx.db, &settings)?;
         for row in &account_rows {
             if !matches!(&row[0], SqlValue::Text(name) if !name.trim().is_empty()) {
                 continue;
@@ -536,88 +525,16 @@ fn importable(game: &Value) -> bool {
         && game.get("winner").is_none_or(|v| v.is_null() || side(v))
 }
 
-/// The stored settings over the defaults, with the older forms converted.
-pub fn normalize_settings(stored: &Map<String, Value>) -> Result<Map<String, Value>> {
-    let Ok(Value::Object(defaults)) = serde_json::to_value(default_settings()) else {
-        return Err(CoreError::new("The default settings are not an object."));
-    };
-    let mut settings = defaults.clone();
-    for (key, value) in stored {
-        if key != "boardPreset" {
-            settings.insert(key.clone(), value.clone());
-        }
-    }
-    let present = |key: &str| stored.get(key).filter(|value| !value.is_null());
-    let default = |key: &str| defaults.get(key).cloned().unwrap_or(Value::Null);
+/// A backup's settings over the defaults, with the older forms converted.
+pub fn backup_settings(stored: &Map<String, Value>) -> Settings {
+    let mut stored = stored.clone();
     // Older builds stored a preset plus two square colors instead of a board theme.
-    let board_theme = match present("boardTheme") {
-        Some(theme) => theme.clone(),
-        None if stored.get("boardPreset").and_then(Value::as_str) == Some("chess.com") => {
-            json!("green")
-        }
-        None => default("boardTheme"),
-    };
-    settings.insert("boardTheme".into(), board_theme);
-    let coordinates = stored.get("coordinates").cloned().unwrap_or(Value::Null);
-    settings.insert(
-        "coordinates".into(),
-        if matches!(coordinates.as_str(), Some("none" | "outside")) {
-            coordinates
-        } else {
-            json!("inside")
-        },
-    );
-    let promotion = stored.get("promotion").cloned().unwrap_or(Value::Null);
-    settings.insert(
-        "promotion".into(),
-        if matches!(promotion.as_str(), Some("queen" | "premove")) {
-            promotion
-        } else {
-            json!("ask")
-        },
-    );
-    let animation = stored.get("pieceAnimation").cloned().unwrap_or(Value::Null);
-    settings.insert(
-        "pieceAnimation".into(),
-        match animation.as_str() {
-            Some(name) if PIECE_ANIMATIONS.contains(&name) => animation,
-            _ => default("pieceAnimation"),
-        },
-    );
-    let levels = present("engineLevels")
-        .cloned()
-        .unwrap_or_else(|| default("engineLevels"));
-    let levels: Vec<String> = serde_json::from_value(levels)
-        .map_err(|cause| CoreError::new(format!("levels: {cause}")))?;
-    settings.insert(
-        "engineLevels".into(),
-        json!(kchess_domain::training::engine_levels::normalize(&levels)),
-    );
-    let review = stored.get("reviewAuto").cloned().unwrap_or(Value::Null);
-    settings.insert(
-        "reviewAuto".into(),
-        match review.as_str() {
-            Some(name) if REVIEW_AUTO.contains(&name) => review,
-            _ => default("reviewAuto"),
-        },
-    );
-    if let Some(volume) = settings.get("soundVolume").and_then(Value::as_f64)
-        && volume > 1.0
+    if stored.get("boardTheme").is_none_or(Value::is_null)
+        && stored.get("boardPreset").and_then(Value::as_str) == Some("chess.com")
     {
-        settings.insert("soundVolume".into(), number_json((volume / 100.0).min(1.0)));
+        stored.insert("boardTheme".into(), json!("green"));
     }
-    Ok(settings)
-}
-
-/// A SQLite value as JSON; a blob is null.
-fn sql_json(value: SqlValue) -> Value {
-    match value {
-        SqlValue::Null => Value::Null,
-        SqlValue::Integer(number) => json!(number),
-        SqlValue::Real(number) => number_json(number),
-        SqlValue::Text(text) => json!(text),
-        SqlValue::Blob(_) => Value::Null,
-    }
+    settings_from_stored(&stored)
 }
 
 /// A number as JSON; NaN and infinities become null.
