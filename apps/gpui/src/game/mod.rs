@@ -29,7 +29,7 @@ pub const CLOCKS: &[(&str, Option<(f64, f64)>)] = &[
 pub const STANDARD_FEN: &str = kchess_domain::rules::INITIAL_FEN;
 
 use kchess_domain::variant::{Setup, Variant};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 pub use kchess_domain::links::{
     BroadcastLink, GameLink, broadcast_link, game_link, is_username, pgn_orientation, profile_link,
@@ -120,83 +120,6 @@ pub fn short_game_date(millis: f64) -> String {
 /// The Chess960 start numbered `n`.
 pub fn chess960(n: i64) -> String {
     kchess_domain::rules::chess960_fen(n)
-}
-
-/// The FEN of a board editor setup (`editor_setup`'s shape): castling and en passant only where
-/// the pieces allow them. None, logged, for anything else.
-pub fn setup_fen(setup: &Value) -> Option<String> {
-    match serde_json::from_value::<kchess_domain::voice::EditorSetup>(setup.clone()) {
-        Ok(setup) => Some(kchess_domain::voice::setup_fen(&setup)),
-        Err(cause) => {
-            crate::log::write(
-                kchess_contracts::Level::Warn,
-                "editor",
-                &format!("not an editor setup: {cause}"),
-            );
-            None
-        }
-    }
-}
-
-pub fn editor_setup(text: &str) -> Option<Value> {
-    let trimmed = text.trim();
-    let parsed = kchess_domain::position::fen_setup(trimmed)?;
-    let fields: Vec<&str> = trimmed.split_whitespace().collect();
-    let rights = castling_letters(&parsed.board, fields.get(2).copied().unwrap_or("-"));
-    let ep = fields
-        .get(3)
-        .copied()
-        .filter(|ep| {
-            let bytes = ep.as_bytes();
-            bytes.len() == 2 && (b'a'..=b'h').contains(&bytes[0]) && matches!(bytes[1], b'3' | b'6')
-        })
-        .unwrap_or_default();
-    Some(json!({
-        "board": parsed.board,
-        "turn": parsed.turn,
-        "castling": {
-            "K": rights.contains('K'),
-            "Q": rights.contains('Q'),
-            "k": rights.contains('k'),
-            "q": rights.contains('q'),
-        },
-        "ep": ep,
-    }))
-}
-
-/// Castling rights as `KQkq`: Shredder-FEN and X-FEN name a rook by its file (`HAha`), which is
-/// the short side when it stands right of its king.
-fn castling_letters(board: &str, rights: &str) -> String {
-    let king_file = |rank: usize, king: char| {
-        let mut file = 0;
-        for c in board.split('/').nth(rank).unwrap_or_default().chars() {
-            match c.to_digit(10) {
-                Some(skip) => file += skip as usize,
-                None if c == king => return Some(file),
-                None => file += 1,
-            }
-        }
-        None
-    };
-    rights
-        .chars()
-        .filter_map(|c| match c {
-            'K' | 'Q' | 'k' | 'q' => Some(c),
-            'A'..='H' | 'a'..='h' => {
-                let white = c.is_ascii_uppercase();
-                let king = king_file(if white { 7 } else { 0 }, if white { 'K' } else { 'k' })?;
-                let file = (c.to_ascii_lowercase() as u8 - b'a') as usize;
-                let short = file > king;
-                Some(match (white, short) {
-                    (true, true) => 'K',
-                    (true, false) => 'Q',
-                    (false, true) => 'k',
-                    (false, false) => 'q',
-                })
-            }
-            _ => None,
-        })
-        .collect()
 }
 
 /// Why a position cannot be played, in the words the board editor uses.
@@ -345,35 +268,16 @@ mod setup_tests {
         );
     }
 
-    /// A Chess960 position pasted into the board editor keeps its castling, written as `KQkq`,
-    /// and plays as Chess960 from there.
+    /// A Chess960 position pasted into the board editor plays as Chess960 from there.
     #[test]
-    fn the_editor_keeps_a_chess960_positions_castling() {
-        for pasted in [
-            "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1",
-            "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w KQkq - 0 1",
-        ] {
-            let setup = super::editor_setup(pasted).expect("a position");
-            assert_eq!(
-                setup["castling"],
-                serde_json::json!({ "K": true, "Q": true, "k": true, "q": true }),
-                "{pasted}"
-            );
-            let fen = super::setup_fen(&setup).expect("its FEN");
-            assert_eq!(
-                fen,
-                "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w KQkq - 0 1"
-            );
-            assert_eq!(
-                setup_from_fen(&fen).variant,
-                kchess_domain::variant::Variant::Chess960
-            );
-        }
-        // Only the rights written: the long side's rook (F) on its own.
-        let setup = super::editor_setup("bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w F - 0 1");
+    fn the_editor_keeps_a_chess960_position() {
+        let pasted = "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1";
+        let fen = kchess_domain::editor::EditorSetup::from_fen(pasted)
+            .expect("a position")
+            .fen();
         assert_eq!(
-            setup.expect("a position")["castling"],
-            serde_json::json!({ "K": false, "Q": true, "k": false, "q": false })
+            setup_from_fen(&fen).variant,
+            kchess_domain::variant::Variant::Chess960
         );
     }
 }

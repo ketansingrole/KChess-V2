@@ -1,7 +1,8 @@
 use serde_json::{Value, json};
 
+use kchess_domain::editor::{self, CastlingRights, EditorSetup};
 use kchess_domain::rules;
-use kchess_domain::voice::{self, CastlingRights, EditorSetup, Grammar};
+use kchess_domain::voice::{self, Grammar};
 
 use super::Out;
 
@@ -28,9 +29,9 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         }),
         "spokenAnalysisCommand" => text(args, 0).map(|t| json!(voice::analysis_command(t))),
         "withPiece" => with_piece(args),
-        "castlingAvailable" => text(args, 0).map(|board| json!(voice::castling_available(board))),
+        "castlingAvailable" => text(args, 0).map(|board| json!(editor::castling_available(board))),
         "enPassantSquares" => text(args, 0).and_then(|board| {
-            text(args, 1).map(|turn| json!(voice::en_passant_squares(board, turn)))
+            text(args, 1).map(|turn| json!(editor::en_passant_squares(board, side(turn))))
         }),
         "setupFen" => setup_fen(args),
         "randomSquare" => random_square(args),
@@ -106,7 +107,7 @@ fn with_piece(args: &[Value]) -> Out {
                 .ok_or("piece.role must be a string")?,
         )),
     };
-    voice::with_piece(board, square, piece).map(Value::String)
+    editor::with_piece(board, square, piece).map(Value::String)
 }
 
 fn setup_fen(args: &[Value]) -> Out {
@@ -130,7 +131,7 @@ fn setup_fen(args: &[Value]) -> Out {
     };
     let setup = EditorSetup {
         board: field("board", "setup.board must be a string")?,
-        turn: field("turn", "setup.turn must be a string")?,
+        turn: side(&field("turn", "setup.turn must be a string")?),
         castling: CastlingRights {
             white_short: ticked("K"),
             white_long: ticked("Q"),
@@ -143,7 +144,16 @@ fn setup_fen(args: &[Value]) -> Out {
             .unwrap_or("")
             .to_string(),
     };
-    Ok(Value::String(voice::setup_fen(&setup)))
+    Ok(Value::String(setup.fen()))
+}
+
+/// The side a turn names: White for `white`, Black for anything else, as the editor read it.
+fn side(turn: &str) -> shakmaty::Color {
+    if turn == "white" {
+        shakmaty::Color::White
+    } else {
+        shakmaty::Color::Black
+    }
 }
 
 fn random_square(args: &[Value]) -> Out {
