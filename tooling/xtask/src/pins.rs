@@ -1,64 +1,32 @@
-//! `cargo xtask pins --check`: whether the AppImage tools the Linux package pins
-//! (`package/linux.rs`) still match the newest upstream releases. When one is behind it prints
-//! the pin and the newer release, writes them to `--report <file>` and fails. The weekly Pins
-//! workflow (`.github/workflows/pins.yml`) runs it and opens one issue; `ci.yml` never does, so
-//! an upstream release cannot turn a pull request red.
+//! `cargo xtask pins --check`: whether every pinned download (`pinned.rs`) still matches the newest
+//! upstream release, or for a commit the branch's head. When one is behind it prints the pin and
+//! the newer one, writes them to `--report <file>` and fails. The weekly Pins workflow
+//! (`.github/workflows/pins.yml`) runs it and opens one issue; `ci.yml` never does, so an upstream
+//! release cannot turn a pull request red.
 
+use std::collections::HashMap;
 use std::path::Path;
 
-use crate::package::linux::{APPIMAGE_RUNTIME, APPIMAGETOOL};
+use crate::pinned::{self, Pin, Source};
 use crate::util::{Result, output, say};
 
-/// A file the build downloads by a fixed release, and the constants that pin it.
-struct Pin {
-    name: &'static str,
-    repo: &'static str,
-    url: &'static str,
-    url_constant: &'static str,
-    digest_constant: &'static str,
-}
-
-const PINS: [Pin; 2] = [
-    Pin {
-        name: "the AppImage runtime",
-        repo: "AppImage/type2-runtime",
-        url: APPIMAGE_RUNTIME,
-        url_constant: "APPIMAGE_RUNTIME",
-        digest_constant: "APPIMAGE_RUNTIME_SHA256",
-    },
-    Pin {
-        name: "appimagetool",
-        repo: "AppImage/appimagetool",
-        url: APPIMAGETOOL,
-        url_constant: "APPIMAGETOOL",
-        digest_constant: "APPIMAGETOOL_SHA256",
-    },
-];
-
-/// The newest release upstream: its tag, page and the digest GitHub records for the pinned file.
+/// What upstream has that is newer than a pin: its version, page and, for a release, the digest
+/// GitHub records for the pinned file under its new name.
 #[derive(Debug, PartialEq)]
-struct Release {
-    tag: String,
+struct Newer {
+    version: String,
     page: String,
+    file: String,
     digest: Option<String>,
 }
 
-/// The release tag in a GitHub download URL (`…/releases/download/<tag>/<file>`).
-fn release_tag(url: &str) -> Option<&str> {
-    let (_, rest) = url.split_once("/releases/download/")?;
-    let (tag, file) = rest.split_once('/')?;
-    (!tag.is_empty() && !file.is_empty()).then_some(tag)
-}
-
-/// The file name a download URL ends with.
-fn file_name(url: &str) -> &str {
-    url.rsplit('/').next().unwrap_or(url)
-}
-
-/// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags
-/// (`continuous`, `old`) are not versions.
+/// A release tag's numbers to compare (`1.9.1`, `v1.9.1`, `sf_19`, `20251108`); moving or named
+/// tags (`continuous`, `old`) are not versions.
 fn version(tag: &str) -> Option<Vec<u64>> {
-    let tag = tag.strip_prefix('v').unwrap_or(tag);
+    let tag = tag.trim_start_matches(|c: char| !c.is_ascii_digit());
+    if tag.is_empty() {
+        return None;
+    }
     tag.split('.')
         .map(|part| {
             (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
@@ -68,77 +36,133 @@ fn version(tag: &str) -> Option<Vec<u64>> {
         .collect()
 }
 
-/// The newest published, versioned release in GitHub's answer to `repos/<repo>/releases`.
-fn newest(answer: &str, file: &str) -> Result<Release> {
+/// The pinned file's name in release `tag`: the pin's version in it replaced by `tag`'s
+/// (`vosk-osx-0.3.42.zip` in `v0.3.45` is `vosk-osx-0.3.45.zip`).
+fn file_in(pin: &Pin, tag: &str) -> String {
+    let digits = |tag: &'_ str| {
+        tag.trim_start_matches(|c: char| !c.is_ascii_digit())
+            .to_string()
+    };
+    let pinned = digits(pin.version);
+    if pinned.is_empty() {
+        return pin.file.to_string();
+    }
+    pin.file.replace(&pinned, &digits(tag))
+}
+
+/// The newest published, versioned release in GitHub's answer to `repos/<repo>/releases` that
+/// carries `pin`'s file, when it is newer than the pin.
+fn newer_release(answer: &str, pin: &Pin) -> Result<Option<Newer>> {
     let unreadable = |why: &str| format!("GitHub's list of releases is unreadable: {why}.");
     let releases: serde_json::Value =
         serde_json::from_str(answer).map_err(|cause| unreadable(&cause.to_string()))?;
     let releases = releases
         .as_array()
         .ok_or_else(|| unreadable("it is not a list"))?;
+    let pinned = version(pin.version)
+        .ok_or_else(|| format!("The pinned release {} is no version.", pin.version))?;
     let flag = |release: &serde_json::Value, key: &str| release[key].as_bool().unwrap_or(false);
-    releases
+    let versioned: Vec<_> = releases
         .iter()
         .filter(|release| !flag(release, "draft") && !flag(release, "prerelease"))
         .filter_map(|release| {
             let tag = release["tag_name"].as_str()?;
             Some((version(tag)?, tag, release))
         })
-        .max_by(|(a, ..), (b, ..)| a.cmp(b))
-        .map(|(_, tag, release)| Release {
-            tag: tag.to_string(),
-            page: release["html_url"].as_str().unwrap_or_default().to_string(),
-            digest: release["assets"].as_array().and_then(|assets| {
-                assets
-                    .iter()
-                    .find(|asset| asset["name"].as_str() == Some(file))
-                    .and_then(|asset| asset["digest"].as_str())
-                    .map(|digest| digest.trim_start_matches("sha256:").to_string())
-            }),
+        .collect();
+    if versioned.is_empty() {
+        return Err(unreadable("it names no versioned release"));
+    }
+    let asset = |release: &serde_json::Value, file: &str| {
+        release["assets"].as_array().and_then(|assets| {
+            assets
+                .iter()
+                .find(|asset| asset["name"].as_str() == Some(file))
+                .cloned()
         })
-        .ok_or_else(|| unreadable("it names no versioned release"))
+    };
+    Ok(versioned
+        .into_iter()
+        .filter(|(number, ..)| *number > pinned)
+        .filter_map(|(number, tag, release)| {
+            let file = file_in(pin, tag);
+            let asset = asset(release, &file)?;
+            Some((number, tag, release, file, asset))
+        })
+        .max_by(|(a, ..), (b, ..)| a.cmp(b))
+        .map(|(_, tag, release, file, asset)| Newer {
+            version: tag.to_string(),
+            page: release["html_url"].as_str().unwrap_or_default().to_string(),
+            file,
+            digest: asset["digest"]
+                .as_str()
+                .map(|digest| digest.trim_start_matches("sha256:").to_string()),
+        }))
 }
 
-/// The newer release when `newest` is ahead of the pinned `tag`.
-fn newer(tag: &str, newest: Release) -> Result<Option<Release>> {
-    let pinned = version(tag).ok_or_else(|| format!("The pinned release {tag} is no version."))?;
-    let latest = version(&newest.tag).unwrap_or_default();
-    Ok((latest > pinned).then_some(newest))
+/// The branch head in GitHub's answer to `repos/<repo>/commits/<branch>`, when it is not the
+/// pinned commit.
+fn newer_commit(answer: &str, pin: &Pin) -> Result<Option<Newer>> {
+    let commit: serde_json::Value = serde_json::from_str(answer)
+        .map_err(|cause| format!("GitHub's answer for the branch is unreadable: {cause}."))?;
+    let sha = commit["sha"]
+        .as_str()
+        .ok_or("GitHub's answer for the branch names no commit.")?;
+    Ok((sha != pin.version).then(|| Newer {
+        version: sha.to_string(),
+        page: commit["html_url"].as_str().unwrap_or_default().to_string(),
+        file: pin.file.to_string(),
+        digest: None,
+    }))
 }
 
-/// The issue text naming each pin that is behind and the constants to change.
-fn report(behind: &[(&Pin, &str, Release)]) -> String {
-    let mut text = String::from("Newer releases of the AppImage tools KChess pins are out:\n\n");
-    for (pin, tag, release) in behind {
+/// The issue text naming each pin that is behind and the file to change it in.
+fn report(behind: &[(Pin, &str, Newer)]) -> String {
+    let mut text = String::from("Newer releases of the downloads KChess pins are out:\n\n");
+    for (pin, file, newer) in behind {
         text += &format!(
-            "- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\n",
-            pin.name, pin.repo, release.tag, release.page
+            "- **{}** (`{}`, `{}`): pinned `{}`, newest [`{}`]({}).\n",
+            pin.name, pin.repo, pin.file, pin.version, newer.version, newer.page
         );
-        if let Some(digest) = &release.digest {
-            text += &format!("  Its `{}` has SHA-256 `{digest}`.\n", file_name(pin.url));
+        if let Some(digest) = &newer.digest {
+            text += &format!("  Its `{}` has SHA-256 `{digest}`.\n", newer.file);
         }
-        text += &format!(
-            "  Change `{}` and `{}` in `tooling/xtask/src/package/linux.rs`.\n",
-            pin.url_constant, pin.digest_constant
-        );
+        text += &format!("  Change the pin in `{file}`.\n");
     }
     text += "\nUpdate a pin in a pull request, checking the downloaded file against its digest: \
-             CI then packages and tests the AppImage with it. `cargo xtask pins --check` \
-             answers whether the pins are current.\n";
+             CI then builds and tests with it. `cargo xtask pins --check` answers whether the \
+             pins are current.\n";
     text
 }
 
-/// The report when a pin is behind, asking `releases` for each repository's releases.
-fn check(releases: impl Fn(&str) -> Result<String>) -> Result<Option<String>> {
+/// The report when a pin is behind, asking `github` for each API path (once per path).
+fn check(
+    pins: &[(Pin, &'static str)],
+    github: impl Fn(&str) -> Result<String>,
+) -> Result<Option<String>> {
+    let mut answers: HashMap<String, String> = HashMap::new();
     let mut behind = Vec::new();
-    for pin in &PINS {
-        let tag = release_tag(pin.url)
-            .ok_or_else(|| format!("{} names no release: {}", pin.url_constant, pin.url))?;
-        let latest = newest(&releases(pin.repo)?, file_name(pin.url))
-            .map_err(|cause| format!("{} ({}): {cause}", pin.name, pin.repo))?;
-        match newer(tag, latest)? {
-            Some(release) => behind.push((pin, tag, release)),
-            None => say(&format!("{} is at the newest release, {tag}.", pin.name)),
+    for (pin, file) in pins {
+        let path = match pin.source {
+            Source::Release => format!("repos/{}/releases?per_page=100", pin.repo),
+            Source::Commit { branch } => format!("repos/{}/commits/{branch}", pin.repo),
+        };
+        if !answers.contains_key(&path) {
+            let answer = github(&path)?;
+            answers.insert(path.clone(), answer);
+        }
+        let answer = answers.get(&path).map_or("", String::as_str);
+        let newer = match pin.source {
+            Source::Release => newer_release(answer, pin),
+            Source::Commit { .. } => newer_commit(answer, pin),
+        }
+        .map_err(|cause| format!("{} ({}): {cause}", pin.name, pin.repo))?;
+        match newer {
+            Some(newer) => behind.push((*pin, *file, newer)),
+            None => say(&format!(
+                "{} ({}) is current at {}.",
+                pin.name, pin.file, pin.version
+            )),
         }
     }
     Ok((!behind.is_empty()).then(|| report(&behind)))
@@ -160,13 +184,8 @@ fn report_file(args: &[String]) -> Result<Option<&String>> {
 
 pub fn run(args: &[String]) -> Result {
     let report_file = report_file(args)?;
-    let releases = |repo: &str| {
-        output(
-            "gh",
-            &["api", &format!("repos/{repo}/releases?per_page=100")],
-        )
-    };
-    let Some(text) = check(releases)? else {
+    let github = |path: &str| output("gh", &["api", path]);
+    let Some(text) = check(&pinned::all(), github)? else {
         return Ok(());
     };
     print!("{text}");
@@ -174,20 +193,49 @@ pub fn run(args: &[String]) -> Result {
         std::fs::write(Path::new(path), &text)
             .map_err(|cause| format!("Cannot write {path}: {cause}"))?;
     }
-    Err("A pinned AppImage tool is behind its newest release.".into())
+    Err("A pinned download is behind its newest release.".into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn release(tag: &str) -> serde_json::Value {
+    const RUNTIME: Pin = Pin {
+        name: "the runtime",
+        repo: "o/runtime",
+        version: "20251108",
+        file: "runtime-x86_64",
+        sha256: "",
+        source: Source::Release,
+    };
+    const VOSK: Pin = Pin {
+        name: "libvosk",
+        repo: "o/vosk",
+        version: "v0.3.42",
+        file: "vosk-osx-0.3.42.zip",
+        sha256: "",
+        source: Source::Release,
+    };
+    const ENGINE: Pin = Pin {
+        name: "the engine",
+        repo: "o/engine",
+        version: "abc",
+        file: "engine.tar.gz",
+        sha256: "",
+        source: Source::Commit { branch: "master" },
+    };
+
+    fn release(tag: &str, files: &[&str]) -> serde_json::Value {
+        let assets: Vec<_> = files
+            .iter()
+            .map(|name| serde_json::json!({"name": name, "digest": format!("sha256:{tag}digest")}))
+            .collect();
         serde_json::json!({
             "tag_name": tag,
             "html_url": format!("https://github.com/o/r/releases/tag/{tag}"),
             "draft": false,
             "prerelease": false,
-            "assets": [{"name": "runtime-x86_64", "digest": format!("sha256:{tag}digest")}],
+            "assets": assets,
         })
     }
 
@@ -196,53 +244,77 @@ mod tests {
     }
 
     #[test]
-    fn the_pins_name_their_release_tags() {
-        let url = "https://github.com/AppImage/appimagetool/releases/download/1.9.1/tool.AppImage";
-        assert_eq!(release_tag(url), Some("1.9.1"));
-        for pin in [APPIMAGE_RUNTIME, APPIMAGETOOL] {
-            assert!(release_tag(pin).and_then(version).is_some(), "{pin}");
-        }
-        assert_eq!(file_name(APPIMAGE_RUNTIME), "runtime-x86_64");
-        assert_eq!(release_tag("https://example.test/runtime"), None);
-        assert_eq!(release_tag("https://x/releases/download//runtime"), None);
-        assert_eq!(release_tag("https://x/releases/download/1.0/"), None);
-    }
-
-    #[test]
     fn release_tags_compare_as_versions() {
         assert_eq!(version("20251108"), Some(vec![20251108]));
         assert_eq!(version("v1.9.1"), Some(vec![1, 9, 1]));
+        assert_eq!(version("sf_19"), Some(vec![19]));
         assert_eq!(version("continuous"), None);
         assert_eq!(version("1.9-beta"), None);
         assert_eq!(version("1..9"), None);
         // `+1` parses as a number but is no release tag.
         assert_eq!(version("1.+9"), None);
         assert!(version("1.10.0") > version("1.9.1"));
+        // Every real pin's release is a version.
+        for (pin, _) in pinned::all() {
+            if pin.source == Source::Release {
+                assert!(version(pin.version).is_some(), "{}", pin.name);
+            }
+        }
     }
 
     #[test]
-    fn the_newest_release_skips_moving_tags_drafts_and_prereleases() {
-        let mut draft = release("1.11.0");
+    fn a_file_named_by_its_version_is_looked_for_under_the_new_one() {
+        assert_eq!(file_in(&VOSK, "v0.3.45"), "vosk-osx-0.3.45.zip");
+        assert_eq!(file_in(&RUNTIME, "20260301"), "runtime-x86_64");
+    }
+
+    #[test]
+    fn the_newest_release_skips_moving_tags_drafts_prereleases_and_other_platforms() {
+        let mut draft = release("1.11.0", &["runtime-x86_64"]);
         draft["draft"] = true.into();
-        let mut beta = release("1.10.0");
+        let mut beta = release("1.10.0", &["runtime-x86_64"]);
         beta["prerelease"] = true.into();
+        let pin = Pin {
+            version: "1.8.0",
+            ..RUNTIME
+        };
         let text = answer(&[
-            release("continuous"),
-            release("1.9.0"),
-            release("1.9.1"),
+            release("continuous", &["runtime-x86_64"]),
+            release("1.9.0", &["runtime-x86_64"]),
+            release("1.9.1", &["runtime-x86_64"]),
+            release("1.9.2", &["other"]),
             draft,
             beta,
-            release("old"),
+            release("old", &["runtime-x86_64"]),
         ]);
         assert_eq!(
-            newest(&text, "runtime-x86_64"),
-            Ok(Release {
-                tag: "1.9.1".into(),
+            newer_release(&text, &pin),
+            Ok(Some(Newer {
+                version: "1.9.1".into(),
                 page: "https://github.com/o/r/releases/tag/1.9.1".into(),
+                file: "runtime-x86_64".into(),
                 digest: Some("1.9.1digest".into()),
-            })
+            }))
         );
-        assert_eq!(newest(&text, "other").unwrap().digest, None);
+        // A newer release without this platform's archive (libvosk 0.3.45 has no macOS build)
+        // leaves the pin current.
+        let vosk = answer(&[
+            release("v0.3.42", &["vosk-osx-0.3.42.zip"]),
+            release("v0.3.45", &["vosk-linux-x86_64-0.3.45.zip"]),
+        ]);
+        assert_eq!(newer_release(&vosk, &VOSK), Ok(None));
+        let vosk = answer(&[release("v0.3.50", &["vosk-osx-0.3.50.zip"])]);
+        assert_eq!(
+            newer_release(&vosk, &VOSK).unwrap().map(|newer| newer.file),
+            Some("vosk-osx-0.3.50.zip".into())
+        );
+        assert_eq!(
+            newer_release(
+                &answer(&[release("20251108", &["runtime-x86_64"])]),
+                &RUNTIME
+            ),
+            Ok(None)
+        );
     }
 
     #[test]
@@ -251,82 +323,105 @@ mod tests {
             "<html>504 Gateway Time-out</html>",
             r#"{"message": "API rate limit exceeded"}"#,
             "[]",
-            &answer(&[release("continuous")]),
+            &answer(&[release("continuous", &[])]),
         ] {
-            let error = newest(text, "runtime-x86_64").unwrap_err();
+            let error = newer_release(text, &RUNTIME).unwrap_err();
             assert!(
                 error.starts_with("GitHub's list of releases is unreadable"),
                 "{error}"
             );
         }
+        let moving = Pin {
+            version: "continuous",
+            ..RUNTIME
+        };
+        assert!(newer_release(&answer(&[release("1.0", &[])]), &moving).is_err());
+        assert!(newer_commit("{}", &ENGINE).is_err());
     }
 
     #[test]
-    fn only_a_newer_release_is_reported() {
-        let latest = |tag: &str| newest(&answer(&[release(tag)]), "runtime-x86_64").unwrap();
-        assert_eq!(newer("20251108", latest("20250101")), Ok(None));
-        assert_eq!(newer("20251108", latest("20251108")), Ok(None));
+    fn a_commit_pin_is_behind_when_the_branch_moved() {
+        let head = |sha: &str| format!(r#"{{"sha":"{sha}","html_url":"https://x/{sha}"}}"#);
+        assert_eq!(newer_commit(&head("abc"), &ENGINE), Ok(None));
         assert_eq!(
-            newer("20251108", latest("20260301"))
+            newer_commit(&head("def"), &ENGINE)
                 .unwrap()
-                .map(|r| r.tag),
-            Some("20260301".into())
+                .map(|newer| newer.version),
+            Some("def".into())
         );
-        assert!(newer("continuous", latest("20260301")).is_err());
     }
 
     #[test]
-    fn the_check_reports_each_pin_that_is_behind() {
-        // Read from the pins, so bumping one does not break this test.
-        let runtime = release_tag(APPIMAGE_RUNTIME).unwrap();
-        let tool = release_tag(APPIMAGETOOL).unwrap();
-        let current = |repo: &str| -> Result<String> {
-            Ok(answer(&[match repo {
-                "AppImage/type2-runtime" => release(runtime),
-                _ => release(tool),
-            }]))
+    fn the_check_reports_each_pin_that_is_behind_asking_once_per_repository() {
+        let pins = [
+            (RUNTIME, "pinned.rs"),
+            (VOSK, "pinned.rs"),
+            (
+                Pin {
+                    file: "vosk-win64-0.3.42.zip",
+                    ..VOSK
+                },
+                "pinned.rs",
+            ),
+            (ENGINE, "shipped.rs"),
+        ];
+        let asked = std::cell::RefCell::new(Vec::new());
+        let github = |runtime: &'static str, vosk: &'static str, engine: &'static str| {
+            let asked = &asked;
+            move |path: &str| -> Result<String> {
+                asked.borrow_mut().push(path.to_string());
+                Ok(match path {
+                    "repos/o/runtime/releases?per_page=100" => {
+                        answer(&[release(runtime, &["runtime-x86_64"])])
+                    }
+                    "repos/o/vosk/releases?per_page=100" => answer(&[release(
+                        vosk,
+                        &[&file_in(&VOSK, vosk), "vosk-win64-0.3.42.zip"],
+                    )]),
+                    "repos/o/engine/commits/master" => format!(r#"{{"sha":"{engine}"}}"#),
+                    other => panic!("{other}"),
+                })
+            }
         };
-        assert_eq!(check(current), Ok(None));
+        assert_eq!(check(&pins, github("20251108", "v0.3.42", "abc")), Ok(None));
+        assert_eq!(asked.borrow().len(), 3, "{:?}", asked.borrow());
 
-        let runtime_newer = |repo: &str| -> Result<String> {
-            Ok(answer(&[match repo {
-                "AppImage/type2-runtime" => release("99991231"),
-                _ => release("0.1.0"),
-            }]))
-        };
-        let text = check(runtime_newer)
+        let text = check(&pins, github("99991231", "v0.3.42", "def"))
             .unwrap()
-            .expect("the runtime is behind");
-        assert!(text.contains(&format!(
-            "- **the AppImage runtime** (`AppImage/type2-runtime`): pinned `{runtime}`, newest \
-             [`99991231`](https://github.com/o/r/releases/tag/99991231).\n"
-        )));
-        assert!(text.contains("  Its `runtime-x86_64` has SHA-256 `99991231digest`.\n"));
+            .expect("the runtime and the engine are behind");
+        assert!(
+            text.contains(
+                "- **the runtime** (`o/runtime`, `runtime-x86_64`): pinned `20251108`, newest \
+             [`99991231`](https://github.com/o/r/releases/tag/99991231).\n  Its \
+             `runtime-x86_64` has SHA-256 `99991231digest`.\n  Change the pin in `pinned.rs`.\n"
+            ),
+            "{text}"
+        );
         assert!(text.contains(
-            "  Change `APPIMAGE_RUNTIME` and `APPIMAGE_RUNTIME_SHA256` in \
-             `tooling/xtask/src/package/linux.rs`.\n"
+            "- **the engine** (`o/engine`, `engine.tar.gz`): pinned `abc`, newest [`def`]"
         ));
-        assert!(!text.contains("appimagetool**"), "{text}");
+        assert!(text.contains("Change the pin in `shipped.rs`."));
+        assert!(!text.contains("libvosk"), "{text}");
 
-        let both_newer = |repo: &str| -> Result<String> {
-            Ok(answer(&[match repo {
-                "AppImage/type2-runtime" => release("99991231"),
-                _ => release("999.0.0"),
-            }]))
-        };
-        let text = check(both_newer).unwrap().unwrap();
-        assert!(text.contains(&format!("pinned `{tool}`, newest [`999.0.0`]")));
-        assert!(text.contains("Change `APPIMAGETOOL` and `APPIMAGETOOL_SHA256`"));
-        assert!(!text.contains("Its `appimagetool-x86_64.AppImage`"));
+        // A newer release with the macOS archive but not the Windows one: only macOS is behind.
+        let text = check(&pins, github("20251108", "v0.3.50", "abc"))
+            .unwrap()
+            .unwrap();
+        assert!(text.contains("`vosk-osx-0.3.42.zip`): pinned `v0.3.42`, newest [`v0.3.50`]"));
+        assert!(!text.contains("vosk-win64"), "{text}");
     }
 
     #[test]
     fn a_failed_or_unreadable_lookup_fails_the_check() {
+        let pins = [(RUNTIME, "pinned.rs")];
         let down = |_: &str| -> Result<String> { Err("HTTP 504".into()) };
-        assert_eq!(check(down), Err("HTTP 504".into()));
+        assert_eq!(check(&pins, down), Err("HTTP 504".into()));
         let garbled = |_: &str| -> Result<String> { Ok("{}".into()) };
-        let error = check(garbled).unwrap_err();
-        assert!(error.starts_with("the AppImage runtime (AppImage/type2-runtime): GitHub's"));
+        let error = check(&pins, garbled).unwrap_err();
+        assert!(
+            error.starts_with("the runtime (o/runtime): GitHub's"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -1,9 +1,10 @@
 name: Pins
-# The AppImage tools the Linux package pins by release and SHA-256 (tooling/xtask/src/package/
-# linux.rs): appimagetool and the runtime it embeds. Weekly and on demand, never in ci.yml, so a
-# new upstream release cannot turn a pull request red. When one is behind, this opens (or updates)
-# one issue naming the release and the constants to change; the pin then moves in a reviewed pull
-# request that CI packages and tests. The run fails only when the check itself cannot answer.
+# Every download the build pins by version and SHA-256 (tooling/xtask/src/pinned.rs, and the
+# shipped Stockfish in crates/kchess-core/src/engine/managed/shipped.rs). Weekly and on demand,
+# never in ci.yml, so a new upstream release cannot turn a pull request red. When one is behind,
+# this opens (or updates) one issue naming the release and the file to change; the pin then moves
+# in a reviewed pull request that CI builds and tests. The run fails only when the check itself
+# cannot answer.
 on:
   schedule:
     - cron: '43 4 * * 1'
@@ -49,7 +50,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           BEHIND: ${{ steps.check.outputs.behind }}
           REPORT: ${{ runner.temp }}/pins.md
-          TITLE: Newer AppImage tool releases to pin
+          TITLE: Newer releases of pinned downloads
         run: |
           number=$(gh issue list --state open --limit 100 --json number,title \
             | jq -r --arg title "$TITLE" 'map(select(.title == $title)) | .[0].number // empty')
@@ -60,5 +61,5 @@ jobs:
               gh issue create --title "$TITLE" --body-file "$REPORT"
             fi
           elif [ -n "$number" ]; then
-            gh issue close "$number" --comment "The AppImage tool pins match the newest releases."
+            gh issue close "$number" --comment "The pins match the newest releases."
           fi

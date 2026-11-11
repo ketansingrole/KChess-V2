@@ -9961,6 +9961,7 @@ dependencies = [
  "image",
  "kchess-delta",
  "kchess-hack",
+ "kchess-voice",
  "lzma-rust2",
  "ring",
  "serde_json",

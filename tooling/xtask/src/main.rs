@@ -19,8 +19,7 @@ mod licenses;
 mod mutants;
 mod mutants_tree;
 mod package;
-// The pins it checks live with the Linux packaging, compiled on Unix.
-#[cfg(unix)]
+mod pinned;
 mod pins;
 mod release;
 mod store_notes;
@@ -330,19 +329,9 @@ const COMMANDS: &[Command] = &[
             "Fail when a pinned download (pins.toml) has a newer release than its pin, naming \
              both; the weekly Pins workflow runs it",
         )],
-        run: run_pins,
+        run: pins::run,
     },
 ];
-
-#[cfg(unix)]
-fn run_pins(rest: &[String]) -> util::Result {
-    pins::run(rest)
-}
-
-#[cfg(not(unix))]
-fn run_pins(_: &[String]) -> util::Result {
-    Err("pins runs on Unix.".into())
-}
 
 /// Where a command's description starts.
 const COLUMN: usize = 24;

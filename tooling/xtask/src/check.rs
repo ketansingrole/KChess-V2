@@ -1185,6 +1185,48 @@ mod tests {
         assert!(checked > 5, "only {checked} workflows found");
     }
 
+    /// The xtask modules packaging runs: those `package/` and `deltas` (the update patches, which
+    /// the Windows upgrade test applies) name (`crate::<module>`), and those they name in turn.
+    fn packaging_modules() -> Vec<String> {
+        let src = root().join("tooling/xtask/src");
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(src.join("package"))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .chain([src.join("deltas.rs")])
+            .collect();
+        let mut modules = vec!["deltas".to_string()];
+        while let Some(file) = files.pop() {
+            let text = std::fs::read_to_string(&file).unwrap();
+            for (at, _) in text.match_indices("crate::") {
+                let rest = &text[at + "crate::".len()..];
+                let names: Vec<&str> = match rest.strip_prefix('{') {
+                    Some(list) => list
+                        .split('}')
+                        .next()
+                        .unwrap_or_default()
+                        .split(',')
+                        .map(|name| name.split("::").next().unwrap_or_default().trim())
+                        .collect(),
+                    None => vec![
+                        rest.split(|c: char| !c.is_alphanumeric() && c != '_')
+                            .next()
+                            .unwrap(),
+                    ],
+                };
+                for name in names {
+                    let path = src.join(format!("{name}.rs"));
+                    if name != "package" && path.is_file() && !modules.iter().any(|m| m == name) {
+                        modules.push(name.to_string());
+                        files.push(path);
+                    }
+                }
+            }
+        }
+        modules.sort();
+        modules
+    }
+
     /// CI packages, builds the Snap and runs the Windows upgrade only when a file matching its
     /// `PACKAGING` pattern changed. A change to the code packaging runs (util.rs, the patches,
     /// kchess-delta) once skipped the jobs that test it: every such file must match.
@@ -1207,15 +1249,18 @@ mod tests {
                 )
             })
             .collect();
-        for module in [
-            "deb", "deltas", "engines", "fairy", "licenses", "sums", "util", "voice",
-        ] {
+        let modules = packaging_modules();
+        for module in ["deltas", "fairy", "pinned", "util", "voice"] {
+            assert!(modules.iter().any(|m| m == module), "{module}: {modules:?}");
+        }
+        for module in modules {
             files.push(format!("tooling/xtask/src/{module}.rs"));
         }
         files.extend(
             [
                 "crates/kchess-delta/src/lib.rs",
                 "crates/kchess-voice/src/main.rs",
+                "crates/kchess-core/src/engine/managed/shipped.rs",
                 "Cargo.lock",
                 ".cargo/config.toml",
             ]

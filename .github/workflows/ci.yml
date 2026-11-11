@@ -104,7 +104,7 @@ jobs:
           RELEASE: ${{ steps.docs.outputs.release }}
           # The files packaging is made from; xtask's `packaging_changes_run_the_package_jobs`
           # checks it names each of xtask's.
-          PACKAGING: '^(Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.cargo/config\.toml$|apps/gpui/build\.rs$|apps/gpui/build/|crates/kchess-voice/|crates/kchess-delta/|tooling/xtask/src/(package/|deb\.rs$|deltas\.rs$|engines\.rs$|fairy\.rs$|licenses\.rs$|sums\.rs$|util\.rs$|voice\.rs$)|tooling/windows-upgrade-test\.ps1$|\.github/actions/|\.github/workflows/(ci|release|windows-upgrade)\.yml$)'
+          PACKAGING: '^(Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.cargo/config\.toml$|apps/gpui/build\.rs$|apps/gpui/build/|crates/kchess-voice/|crates/kchess-delta/|crates/kchess-core/src/engine/managed/shipped\.rs$|tooling/xtask/src/(package/|deb\.rs$|deltas\.rs$|engines\.rs$|fairy\.rs$|licenses\.rs$|pinned\.rs$|sums\.rs$|util\.rs$|voice\.rs$)|tooling/windows-upgrade-test\.ps1$|\.github/actions/|\.github/workflows/(ci|release|windows-upgrade)\.yml$)'
         run: |
           if [ "$RELEASE" = true ] || [ "$EVENT" = workflow_dispatch ]; then
             packaging=true

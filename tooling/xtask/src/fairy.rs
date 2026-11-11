@@ -11,9 +11,10 @@ use std::process::Command;
 
 use crate::util::{Result, download, pinned, root, run_with, say};
 
-/// The commit built, and the SHA-256 of GitHub's archive of it.
-const COMMIT: &str = "2f1959e1f0b44d4648ff35015b89d8e918a5c746";
-const SHA256: &str = "f226f3c67cb30e87b6990ce7d38cf29cbaca59709f2dba23f421fafdecbb67e5";
+use crate::pinned::FAIRY_STOCKFISH;
+
+/// The commit built (`pinned.rs`, with the SHA-256 of GitHub's archive of it).
+const COMMIT: &str = FAIRY_STOCKFISH.version;
 
 /// The Makefile's `ARCH` for this machine: Apple Silicon, or 64-bit x86 with SSE4.1 and POPCNT.
 fn arch() -> Result<&'static str> {
@@ -29,7 +30,7 @@ pub fn build() -> Result<PathBuf> {
     build_with(&Source {
         dir: root().join("target/fairy-stockfish"),
         commit: COMMIT,
-        sha256: SHA256,
+        sha256: FAIRY_STOCKFISH.sha256,
         fetch: download,
     })
 }
@@ -57,8 +58,11 @@ fn build_with(source: &Source<impl Fn(&str, &Path) -> Result>) -> Result<PathBuf
         return Ok(target);
     }
     let cache = dir.join(format!("{commit}.tar.gz"));
-    let url =
-        format!("https://codeload.github.com/fairy-stockfish/Fairy-Stockfish/tar.gz/{commit}");
+    let url = crate::pinned::Pin {
+        version: commit,
+        ..FAIRY_STOCKFISH
+    }
+    .url();
     let what = format!("Fairy-Stockfish {}", &commit[..12]);
     pinned(&what, &url, sha256, &cache, fetch)?;
     let work = dir.join("work");

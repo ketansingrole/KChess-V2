@@ -7,9 +7,22 @@ use std::process::{Command, Stdio};
 
 use crate::util::{Result, root, say};
 
-/// The shipped Stockfish in `dir`, fetched there unless it already is; its path. `release` builds
-/// the fetcher as packaging builds everything else, so it reuses that build.
+/// The shipped Stockfish's program in `dir` when the folder already holds the pinned release
+/// (the core's installer records its tag in `VERSION`).
+fn fetched(dir: &Path) -> Option<PathBuf> {
+    let program = dir.join(crate::util::exe(kchess_delta::installed::STOCKFISH));
+    let version = std::fs::read_to_string(dir.join("VERSION")).ok()?;
+    (program.is_file() && version.trim() == crate::pinned::stockfish_tag()).then_some(program)
+}
+
+/// The shipped Stockfish in `dir`, fetched there unless it already is; its path. Fetching builds
+/// the core's installer, so a folder that holds the release is answered without it (CI's kept
+/// engines). `release` builds the fetcher as packaging builds everything else, so it reuses that
+/// build.
 pub fn stockfish(dir: &Path, release: bool) -> Result<PathBuf> {
+    if let Some(program) = fetched(dir) {
+        return Ok(program);
+    }
     say(&format!("Fetching Stockfish into {}…", dir.display()));
     let mut cargo = Command::new("cargo");
     cargo.arg("run");
@@ -92,6 +105,26 @@ fn append(file: &Path, text: &str) -> Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A folder that holds the pinned release is used as it is; another release, or none, is
+    /// fetched again.
+    #[test]
+    fn only_the_pinned_release_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join(crate::util::exe("stockfish"));
+        assert_eq!(fetched(dir.path()), None);
+        std::fs::write(&program, "engine").unwrap();
+        assert_eq!(fetched(dir.path()), None, "no VERSION");
+        std::fs::write(dir.path().join("VERSION"), "sf_1\n").unwrap();
+        assert_eq!(fetched(dir.path()), None, "another release");
+        std::fs::write(
+            dir.path().join("VERSION"),
+            format!("{}\n", crate::pinned::stockfish_tag()),
+        )
+        .unwrap();
+        assert_eq!(fetched(dir.path()), Some(program.clone()));
+        assert_eq!(stockfish(dir.path(), false), Ok(program));
+    }
 
     /// The job's environment file keeps what earlier steps wrote and gains both engines.
     #[test]
