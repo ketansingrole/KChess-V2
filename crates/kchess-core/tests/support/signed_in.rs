@@ -58,13 +58,26 @@ pub struct Profile {
 
 /// Opens the core against the Lichess at `base` with `Alice` connected.
 pub async fn open(base: &str) -> Profile {
+    open_switched(TestSwitches {
+        lichess_origin: Some(base.to_string()),
+        ..TestSwitches::default()
+    })
+}
+
+/// `open`, with Chess.com at `base` too.
+pub async fn open_with_chesscom(base: &str) -> Profile {
+    open_switched(TestSwitches {
+        lichess_origin: Some(base.to_string()),
+        chesscom_origin: Some(base.to_string()),
+        ..TestSwitches::default()
+    })
+}
+
+fn open_switched(switches: TestSwitches) -> Profile {
     let dir = tempfile::tempdir().unwrap();
     let host = Arc::new(SignedIn::default());
     let config = Config {
-        test: Some(TestSwitches {
-            lichess_origin: Some(base.to_string()),
-            ..TestSwitches::default()
-        }),
+        test: Some(switches),
         ..Config::new(dir.path().to_path_buf())
     };
     let core = Arc::new(Core::open(config, Arc::clone(&host) as Arc<dyn Host>).unwrap());
