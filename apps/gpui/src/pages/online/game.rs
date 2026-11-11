@@ -8,7 +8,7 @@ use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use serde_json::json;
 use shakmaty::Color;
 
 use super::OnlinePage;
@@ -22,6 +22,7 @@ use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
+use kchess_domain::online_game::model::Model;
 
 /// The player may touch pieces: the game is on, at its last move.
 pub fn can_play(online: &OnlineState) -> bool {
@@ -64,11 +65,9 @@ pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
         Phase::Finished => {
             let model = online.model();
             let mut actions = Vec::new();
-            let tournament = model["onlineTournament"]
-                .as_str()
-                .is_some_and(|tournament| !tournament.is_empty());
+            let tournament = !model.online_tournament.is_empty();
             // A rematch on its way is not sent twice: its button shows it loading meanwhile.
-            if model["lastGame"].is_object() && !tournament && !online.busy {
+            if model.last_game.is_some() && !tournament && !online.busy {
                 actions.push(LiveAction::Rematch);
                 if online.new_opponent_form().is_some() {
                     actions.push(LiveAction::NewOpponent);
@@ -88,20 +87,18 @@ fn playing_actions(online: &OnlineState) -> Vec<LiveAction> {
     let model = online.model();
     // Before each side has moved the game is aborted, not resigned.
     let started = view::sans(&online.setup(), &online.moves()).len() >= 2;
-    let berserk = model["onlineTournament"]
-        .as_str()
-        .is_some_and(|tournament| !tournament.is_empty())
-        && model["onlineClockConfig"].is_object()
-        && model["berserked"] != json!(true)
-        && online.view()["ownMoves"].as_f64() == Some(0.);
+    let berserk = !model.online_tournament.is_empty()
+        && model.online_clock_config.is_some()
+        && !model.berserked
+        && model.own_moves() == 0;
     let mut actions = Vec::new();
     if berserk {
         actions.push(LiveAction::Berserk);
     }
-    if started && model["takebackOffer"].as_str().unwrap_or("none") == "none" {
+    if started && model.takeback_offer == "none" {
         actions.push(LiveAction::Takeback);
     }
-    if started && model["drawOffer"].as_str().unwrap_or("none") == "none" {
+    if started && model.draw_offer == "none" {
         actions.push(LiveAction::OfferDraw);
     }
     actions.push(if started {
@@ -328,20 +325,13 @@ fn own_connection_panel(cx: &App, palette: &Palette) -> Stateful<Div> {
 fn opponent_connection_panel(cx: &App, palette: &Palette) -> Stateful<Div> {
     let online = crate::online::handle(cx).read(cx);
     let model = online.model();
-    let name = model["onlineOpponent"]
-        .as_str()
-        .or(model["opponentId"].as_str())
-        .unwrap_or_default()
-        .to_string();
-    let them = model["opponentId"]
-        .as_str()
-        .unwrap_or_default()
-        .to_lowercase();
+    let name = model.online_opponent.clone();
+    let them = model.opponent_id.to_lowercase();
     let entry = online
         .presence
         .as_ref()
         .map(|report| &report["users"][&them]);
-    let (status, signal) = if model["opponentGone"] == json!(true) {
+    let (status, signal) = if model.opponent_gone {
         ("Disconnected".to_string(), "—".to_string())
     } else {
         match entry.filter(|entry| entry.is_object()) {
@@ -403,13 +393,10 @@ fn connection(online: &OnlineState, mine: bool, palette: &Palette) -> Option<Any
                 )
             }
         }
-    } else if online.model()["opponentGone"] == json!(true) {
+    } else if online.model().opponent_gone {
         ("Away".to_string(), palette.warning)
     } else {
-        let them = online.model()["opponentId"]
-            .as_str()
-            .unwrap_or_default()
-            .to_lowercase();
+        let them = online.model().opponent_id.to_lowercase();
         match report.map(|r| &r["users"][&them]) {
             Some(entry) if entry.is_object() => {
                 if entry["online"] == json!(true) {
@@ -513,18 +500,15 @@ impl OnlinePage {
         let orientation = online.orientation();
         let playing = online.phase == Phase::Playing;
         let correspondence = online.correspondence();
-        let has_clock = model["onlineClockConfig"].is_object() || correspondence;
+        let has_clock = model.online_clock_config.is_some() || correspondence;
         let position = view::position_at(&setup, &moves, ply);
         let live_turn = view::turn(view::position_at(&setup, &moves, moves.len()).as_ref());
         let fen = position
             .as_ref()
             .map(kchess_domain::rules::make_fen)
             .unwrap_or_default();
-        let opponent = model["onlineOpponent"]
-            .as_str()
-            .unwrap_or("Opponent")
-            .to_string();
-        let opponent_id = model["opponentId"].as_str().unwrap_or_default().to_string();
+        let opponent = model.online_opponent.clone();
+        let opponent_id = model.opponent_id.clone();
         let mut pockets = [
             crate::board::pocket(&self.board, Color::White, cx),
             crate::board::pocket(&self.board, Color::Black, cx),
@@ -532,12 +516,11 @@ impl OnlinePage {
         let mut line =
             |side: Color| {
                 let mine = side == color;
-                let rating = model[if mine {
-                    "onlineRating"
+                let rating = if mine {
+                    model.online_rating
                 } else {
-                    "onlineOpponentRating"
-                }]
-                .as_f64();
+                    model.online_opponent_rating
+                };
                 let name = match (mine, rating) {
                     (true, Some(rating)) => format!("You ({rating})"),
                     (true, None) => "You".into(),
@@ -633,7 +616,7 @@ impl OnlinePage {
     }
 
     fn disconnected(&self, online: &OnlineState, palette: &Palette) -> Div {
-        let status = online.model()["onlineStatus"].as_str().unwrap_or_default();
+        let status = online.model().online_status.as_str();
         let has_game = !online.id().is_empty();
         let id = online.id().to_string();
         let failure = connection_failure(online);
@@ -716,7 +699,7 @@ impl OnlinePage {
     fn game_panel(
         &self,
         online: &OnlineState,
-        model: &Value,
+        model: &Model,
         page: WeakEntity<OnlinePage>,
         cx: &App,
         palette: &Palette,
@@ -727,18 +710,12 @@ impl OnlinePage {
         let setup = online.setup();
         let ply = online.ply();
         let sans = view::sans(&setup, &moves);
-        let opponent = model["onlineOpponent"]
-            .as_str()
-            .unwrap_or("Opponent")
-            .to_string();
+        let opponent = model.online_opponent.clone();
         let reviewing = playing && !can_play(online);
         let variant = setup["variant"].as_str().unwrap_or("standard");
         let variant_name = (variant != "standard").then(|| crate::game::variant_label(variant));
-        let rated = model["onlineGameRated"] == json!(true);
-        let status = model["onlineStatus"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
+        let rated = model.online_game_rated;
+        let status = model.online_status.clone();
         let banner: Option<(&'static str, String, String)> = if reviewing {
             Some((
                 "history",
@@ -765,17 +742,13 @@ impl OnlinePage {
             ))
         };
         let now = crate::online::now();
-        let seconds_until = |key: &str| {
-            model[key]
-                .as_f64()
-                .map(|at| ((at - now) / 1000.).ceil().max(0.))
-        };
-        let first_move_in = seconds_until("firstMoveBy").filter(|_| playing);
-        let claim_in = (playing && model["opponentGone"] == json!(true))
-            .then(|| seconds_until("claimAt"))
+        let seconds_until = |at: Option<f64>| at.map(|at| ((at - now) / 1000.).ceil().max(0.));
+        let first_move_in = seconds_until(model.first_move_by).filter(|_| playing);
+        let claim_in = (playing && model.opponent_gone)
+            .then(|| seconds_until(model.claim_at))
             .flatten();
-        let draw = model["drawOffer"].as_str().unwrap_or("none");
-        let takeback = model["takebackOffer"].as_str().unwrap_or("none");
+        let draw = model.draw_offer.as_str();
+        let takeback = model.takeback_offer.as_str();
         let mut notices: Vec<AnyElement> = Vec::new();
         if let Some(pending) = self.pending() {
             let mut shown = moves.clone();
@@ -947,11 +920,8 @@ impl OnlinePage {
         };
         let flip: widgets::ClickHandler = Box::new(move |_, _, cx| flip(cx));
         let live = live_actions(online);
-        let tournament = model["onlineTournament"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let last_game = model["lastGame"].is_object();
+        let tournament = model.online_tournament.clone();
+        let last_game = model.last_game.is_some();
         // Sharing the row equally, as the computer's do, wrapping evenly in a narrow panel.
         let actions = if playing {
             h_flex()
@@ -1172,13 +1142,10 @@ impl OnlinePage {
             )
     }
 
-    fn game_export(&self, online: &OnlineState, model: &Value) -> PlayedGame {
+    fn game_export(&self, online: &OnlineState, model: &Model) -> PlayedGame {
         let setup = online.setup();
         let me = online.account().to_string();
-        let opponent = model["onlineOpponent"]
-            .as_str()
-            .unwrap_or("Opponent")
-            .to_string();
+        let opponent = model.online_opponent.clone();
         let (white, black) = if online.color() == Color::White {
             (me, opponent)
         } else {
@@ -1186,12 +1153,10 @@ impl OnlinePage {
         };
         PlayedGame {
             ply: Some(online.ply()),
-            result: model["onlineResult"]
-                .as_str()
-                .and_then(kchess_games::Outcome::from_tag),
+            result: kchess_games::Outcome::from_tag(&model.online_result),
             player: Some(online.color()),
             lichess_id: Some(online.id().to_string()).filter(|id| !id.is_empty()),
-            account: model["onlineAccount"].as_str().map(str::to_string),
+            account: Some(model.online_account.clone()),
             ..PlayedGame::new(&setup, online.moves(), online.orientation(), white, black)
         }
     }
@@ -1202,7 +1167,7 @@ fn analyse(window: &mut Window, cx: &mut App) {
     let online = crate::online::handle(cx).read(cx);
     let model = online.model();
     let color = online.color();
-    let opponent = model["onlineOpponent"].as_str().unwrap_or_default();
+    let opponent = model.online_opponent.as_str();
     let (white, black) = if color == Color::White {
         ("You", opponent)
     } else {
@@ -1211,8 +1176,8 @@ fn analyse(window: &mut Window, cx: &mut App) {
     let game = PlayedGame {
         ply: Some(online.ply()),
         player: Some(color),
-        lichess_id: model["onlineId"].as_str().map(str::to_string),
-        account: model["onlineAccount"].as_str().map(str::to_string),
+        lichess_id: Some(model.online_id.clone()),
+        account: Some(model.online_account.clone()),
         ..PlayedGame::new(&online.setup(), online.moves(), color, white, black)
     };
     crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
@@ -1264,8 +1229,11 @@ impl Failure {
 }
 
 fn connection_failure(online: &OnlineState) -> Failure {
-    let phase = online.model()["onlineConnection"]["phase"]
-        .as_str()
+    let phase = online
+        .model()
+        .online_connection
+        .as_ref()
+        .and_then(|connection| connection["phase"].as_str())
         .unwrap_or_default();
     match (phase, online.failure.as_deref()) {
         ("checking", _) => Failure::Checking,

@@ -747,8 +747,7 @@ impl OnlinePage {
     }
 
     fn seeking(&self, online: &OnlineState, palette: &Palette) -> Div {
-        let status = online.model()["onlineStatus"]
-            .as_str()
+        let status = Some(online.model().online_status.as_str())
             .filter(|status| !status.is_empty())
             .unwrap_or("Looking for an opponent…")
             .to_string();
