@@ -16,14 +16,16 @@ use gpui_kit::component::{Disableable as _, Icon, IndexPath, Sizable as _, h_fle
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
-use kchess_contracts::types::{PuzzleAttempt, PuzzleProgress, PuzzleProgressQuery};
+use kchess_contracts::types::{
+    Puzzle, PuzzleAttempt, PuzzleAttemptOutcome, PuzzleProgress, PuzzleProgressQuery,
+};
 use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use serde_json::{Value, json};
 use shakmaty::Color;
 
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::puzzle::{PuzzleSession, Selection, Step, local_day};
+use crate::game::puzzle::{PuzzleSession, PuzzleStatus, Selection, Step, local_day};
 use crate::game::surface::TakesKeys as _;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
 use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
@@ -648,12 +650,17 @@ impl PuzzlesPage {
         let ready = self.session.phase() == "ready";
         let key = self.session.puzzle_key();
         let shown = self.puzzle.read(cx).puzzle().is_some();
-        match self.session.current().cloned() {
-            Some(puzzle) if ready && (!shown || key != self.shown_key) => {
+        let current = self
+            .session
+            .current()
+            .cloned()
+            .map(serde_json::from_value::<Puzzle>);
+        match current {
+            Some(Ok(puzzle)) if ready && (!shown || key != self.shown_key) => {
                 self.shown_key = key;
                 let outcome = self.session.state().attempt_outcome;
                 self.puzzle
-                    .update(cx, |board, cx| board.start(&puzzle, outcome, cx));
+                    .update(cx, |board, cx| board.start(puzzle, outcome, cx));
             }
             _ if !ready => self.puzzle.update(cx, |board, cx| board.clear(cx)),
             _ => {}
@@ -665,7 +672,7 @@ impl PuzzlesPage {
     fn done(&mut self, cx: &mut Context<Self>) {
         let step = self.session.end(&local_day());
         self.follow(step, Settle::Load, cx);
-        let solved = self.puzzle.read(cx).status() == "solved";
+        let solved = self.puzzle.read(cx).status() == PuzzleStatus::Solved;
         let auto_next = cx
             .global::<SettingsHandle>()
             .0
@@ -826,23 +833,22 @@ fn train_theme(key: String, window: &mut Window, cx: &mut App) {
 pub(crate) type NextPuzzle = Box<dyn Fn(&mut Window, &mut App)>;
 
 /// The puzzle's idea, shown with the hint.
-fn clue(puzzle: &Value) -> Option<AnyElement> {
-    let solution: Vec<String> = serde_json::from_value(puzzle["solution"].clone()).ok()?;
-    let clue = kchess_domain::coach::puzzle_clue(puzzle["fen"].as_str()?, &solution)?;
+fn clue(puzzle: &Puzzle) -> Option<AnyElement> {
+    let clue = kchess_domain::coach::puzzle_clue(&puzzle.fen, &puzzle.solution)?;
     Some(div().text_size(px(13.)).child(clue).into_any_element())
 }
 
 /// Whether a coach may speak: outside help on a puzzle that counts for a rating is cheating, so a
 /// rated attempt has none until it is over.
-fn coach_allowed(rated: bool, status: &str) -> bool {
-    !rated || status != "playing"
+fn coach_allowed(rated: bool, status: PuzzleStatus) -> bool {
+    !rated || status.is_over()
 }
 
 /// What a coach can add: a nudge while solving, why a wrong move fails, why the solution works.
 fn coach_block(
     board_entity: &Entity<PuzzleBoard>,
-    puzzle: &Value,
-    status: &str,
+    puzzle: &Puzzle,
+    status: PuzzleStatus,
     playing: bool,
     rated: bool,
     cx: &App,
@@ -853,20 +859,13 @@ fn coach_block(
     }
     let shown = board_entity.read(cx);
     let on_board = shown.puzzle()?;
-    let solution: Vec<String> = puzzle["solution"]
-        .as_array()?
-        .iter()
-        .filter_map(|played| played.as_str().map(str::to_string))
-        .collect();
+    let solution = &puzzle.solution;
     // While solving, from where the board stands: a long puzzle may be several moves in.
     let current = (
         on_board.fen().to_string(),
         solution.get(on_board.index()..)?.to_vec(),
     );
-    let whole = (
-        puzzle["fen"].as_str().unwrap_or_default().to_string(),
-        solution.clone(),
-    );
+    let whole = (puzzle.fen.clone(), solution.clone());
     let merged = |(fen, moves): &(String, Vec<String>), kind, played: Option<&str>| AiRequest {
         kind,
         fen: fen.clone(),
@@ -896,7 +895,7 @@ fn coach_block(
                 merged(&current, AiKind::Nudge, None),
                 Some(nudged),
             )
-        } else if status != "playing" {
+        } else if status.is_over() {
             (
                 "puzzle-why",
                 "Explain",
@@ -931,29 +930,28 @@ pub(crate) fn status_panel(
     };
     let puzzle = board.puzzle.clone();
     let player = board.player_color();
-    let status = shown.status().to_string();
+    let status = shown.status();
     let (outcome, feedback, waiting, hinted) = (
         shown.outcome(),
         shown.feedback(),
         shown.waiting(),
         shown.hinted(),
     );
-    let status = status.as_str();
     let color = if player == Color::White {
         "white"
     } else {
         "black"
     };
     let (tone, glyph, title) = match status {
-        "revealed" => (
+        PuzzleStatus::Revealed => (
             Tone::Loss,
             icon("eye"),
             "Solution shown — not counted as solved".to_string(),
         ),
-        "solved" if outcome == Some(true) => {
+        PuzzleStatus::Solved if outcome == Some(true) => {
             (Tone::Win, icon("trophy"), "Puzzle solved".to_string())
         }
-        "solved" => (
+        PuzzleStatus::Solved => (
             Tone::Plain,
             icon("check"),
             if shown.was_nudged() {
@@ -962,7 +960,7 @@ pub(crate) fn status_panel(
                 "Solved after a mistake — not counted".to_string()
             },
         ),
-        "failed" => (
+        PuzzleStatus::Failed => (
             Tone::Loss,
             icon("x"),
             "Not the move — puzzle over".to_string(),
@@ -979,8 +977,8 @@ pub(crate) fn status_panel(
             format!("Find the best move for {color}"),
         ),
     };
-    let playing = status == "playing";
-    let finished = matches!(status, "solved" | "revealed" | "failed");
+    let playing = status == PuzzleStatus::Playing;
+    let finished = status.is_over();
     let facts = finished.then(|| {
         v_flex()
             .gap(px(8.))
@@ -994,7 +992,7 @@ pub(crate) fn status_panel(
                             .text_color(palette.text_muted)
                             .child("Rating"),
                     )
-                    .child(format!("{}", puzzle["rating"].as_f64().unwrap_or_default())),
+                    .child(format!("{}", puzzle.rating)),
             )
             .child(
                 h_flex()
@@ -1006,42 +1004,36 @@ pub(crate) fn status_panel(
                             .text_color(palette.text_muted)
                             .child("Themes"),
                     )
-                    .child(
-                        h_flex().flex_1().flex_wrap().gap(px(4.)).children(
-                            puzzle["themes"]
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .filter_map(Value::as_str)
-                                .enumerate()
-                                .map(|(index, theme)| {
-                                    let name = theme_name(theme, themes);
-                                    // A theme Train offers is a way to train it, as on Lichess.
-                                    let trainable = themes.iter().any(|known| known.key == theme);
-                                    let key = theme.to_string();
-                                    div()
-                                        .id(("puzzle-theme", index))
-                                        .test_support()
-                                        .px(px(6.))
-                                        .py(px(1.))
-                                        .rounded(radii::SM)
-                                        .border_1()
-                                        .border_color(palette.border_accented)
-                                        .bg(palette.elevated)
-                                        .text_size(px(12.))
-                                        .when(trainable, |pill| {
-                                            pill.role(gpui_kit::Role::Button)
-                                                .aria_label(format!("Train {name}"))
-                                                .cursor_pointer()
-                                                .pressable(palette)
-                                                .on_click(move |_, window, cx| {
-                                                    train_theme(key.clone(), window, cx)
-                                                })
-                                        })
-                                        .child(name)
-                                }),
+                    .child(h_flex().flex_1().flex_wrap().gap(px(4.)).children(
+                        puzzle.themes.iter().map(String::as_str).enumerate().map(
+                            |(index, theme)| {
+                                let name = theme_name(theme, themes);
+                                // A theme Train offers is a way to train it, as on Lichess.
+                                let trainable = themes.iter().any(|known| known.key == theme);
+                                let key = theme.to_string();
+                                div()
+                                    .id(("puzzle-theme", index))
+                                    .test_support()
+                                    .px(px(6.))
+                                    .py(px(1.))
+                                    .rounded(radii::SM)
+                                    .border_1()
+                                    .border_color(palette.border_accented)
+                                    .bg(palette.elevated)
+                                    .text_size(px(12.))
+                                    .when(trainable, |pill| {
+                                        pill.role(gpui_kit::Role::Button)
+                                            .aria_label(format!("Train {name}"))
+                                            .cursor_pointer()
+                                            .pressable(palette)
+                                            .on_click(move |_, window, cx| {
+                                                train_theme(key.clone(), window, cx)
+                                            })
+                                    })
+                                    .child(name)
+                            },
                         ),
-                    ),
+                    )),
             )
     });
     v_flex()
@@ -1404,26 +1396,33 @@ impl PuzzlesPage {
         let strip = (!recent.is_empty()).then(|| {
             h_flex().flex_wrap().gap(px(4.)).mt(px(8.)).children(
                 recent.into_iter().enumerate().map(|(index, attempt)| {
-                    let outcome = attempt.outcome.as_str().to_string();
-                    let (glyph, fg, bg) = match outcome.as_str() {
-                        "solved" => (icon("check"), palette.success, tint(palette.success, 10.)),
-                        "hinted" => (icon("lightbulb"), palette.success, palette.bg),
-                        "partial" => (
+                    let (glyph, fg, bg) = match attempt.outcome {
+                        PuzzleAttemptOutcome::Solved => {
+                            (icon("check"), palette.success, tint(palette.success, 10.))
+                        }
+                        PuzzleAttemptOutcome::Hinted => {
+                            (icon("lightbulb"), palette.success, palette.bg)
+                        }
+                        PuzzleAttemptOutcome::Partial => (
                             icon("chart-no-axes-column"),
                             palette.info,
                             tint(palette.info, 10.),
                         ),
-                        "revealed" => (icon("eye"), palette.toned, palette.elevated),
-                        _ => (icon("x"), palette.error, tint(palette.error, 10.)),
+                        PuzzleAttemptOutcome::Revealed => {
+                            (icon("eye"), palette.toned, palette.elevated)
+                        }
+                        PuzzleAttemptOutcome::Missed => {
+                            (icon("x"), palette.error, tint(palette.error, 10.))
+                        }
                     };
                     let label = format!(
                         "{}, {}/{} moves{}, rated {}",
-                        match outcome.as_str() {
-                            "solved" => "Solved",
-                            "hinted" => "With hint",
-                            "partial" => "Partial",
-                            "revealed" => "Revealed",
-                            _ => "Missed",
+                        match attempt.outcome {
+                            PuzzleAttemptOutcome::Solved => "Solved",
+                            PuzzleAttemptOutcome::Hinted => "With hint",
+                            PuzzleAttemptOutcome::Partial => "Partial",
+                            PuzzleAttemptOutcome::Revealed => "Revealed",
+                            PuzzleAttemptOutcome::Missed => "Missed",
                         },
                         attempt.found,
                         attempt.total,
@@ -1434,7 +1433,7 @@ impl PuzzlesPage {
                         attempt.puzzle.rating
                     );
                     let (puzzle, wrong) = (
-                        json!(attempt.puzzle),
+                        attempt.puzzle.clone(),
                         attempt.wrong_moves.clone().unwrap_or_default(),
                     );
                     let page = cx.entity().downgrade();
@@ -1463,7 +1462,7 @@ impl PuzzlesPage {
                                     .icon(icon("rotate-ccw"))
                                     .on_click(move |_, _, cx| {
                                         let _ = page
-                                            .update(cx, |page, cx| page.retry(puzzle.clone(), cx));
+                                            .update(cx, |page, cx| page.retry(json!(puzzle), cx));
                                     }),
                             )
                             .item(
@@ -1769,7 +1768,7 @@ impl PuzzlesPage {
             actions.extend([Action::Hint, Action::Solution]);
         }
         actions.push(Action::Flip);
-        if matches!(board.read(cx).status(), "solved" | "revealed" | "failed") {
+        if board.read(cx).status().is_over() {
             actions.push(Action::Analyse);
         }
         if train {
@@ -1897,7 +1896,7 @@ impl Render for PuzzlesPage {
                         &history,
                         window,
                         |this, _, event: &history::HistoryEvent, window, cx| match event {
-                            history::HistoryEvent::Retry(puzzle) => this.retry(puzzle.clone(), cx),
+                            history::HistoryEvent::Retry(puzzle) => this.retry(json!(puzzle), cx),
                             history::HistoryEvent::Analyse(puzzle, wrong) => {
                                 crate::pages::analysis::analyse_puzzle(
                                     puzzle.clone(),
@@ -1975,7 +1974,7 @@ impl Render for PuzzlesPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{as_contract, coach_allowed, theme_groups, theme_name, themes};
+    use super::{PuzzleStatus, as_contract, coach_allowed, theme_groups, theme_name, themes};
     use crate::widgets::{self, format_bytes};
     use kchess_contracts::types::LocalLadderQuery;
 
@@ -2001,11 +2000,15 @@ mod tests {
 
     #[test]
     fn a_rated_attempt_has_no_coach_until_it_is_over() {
-        assert!(!coach_allowed(true, "playing"));
-        for over in ["solved", "failed", "revealed"] {
+        assert!(!coach_allowed(true, PuzzleStatus::Playing));
+        for over in [
+            PuzzleStatus::Solved,
+            PuzzleStatus::Failed,
+            PuzzleStatus::Revealed,
+        ] {
             assert!(coach_allowed(true, over));
         }
-        assert!(coach_allowed(false, "playing"));
+        assert!(coach_allowed(false, PuzzleStatus::Playing));
     }
 
     #[test]

@@ -1,14 +1,12 @@
-//! Game sessions as every KChess frontend drives them: the domain's typed sessions
-//! (`kchess_domain::games`), which the frontend calls with what it knows and whose effects it
-//! carries out, in order, and the frontend's part of them: randomness, the clock and the Game
-//! history writes. The GPUI app and the CLI share them.
+//! What every KChess frontend does around the domain's typed sessions (`kchess_domain::games`):
+//! the randomness and the clock the rules leave to the host, the Game history writes, a puzzle on
+//! the board and broadcast rounds. The GPUI app and the CLI share them.
 
 pub mod broadcast;
 pub mod history;
 pub mod puzzle;
 
-pub use kchess_domain::games::Outcome;
-pub use shakmaty::Color;
+use shakmaty::Color;
 
 use kchess_domain::variant::Variant;
 

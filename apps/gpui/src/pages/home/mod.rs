@@ -30,8 +30,7 @@ mod lichess;
 
 /// A game's variant by name, when it is not standard chess.
 fn variant_of(game: &PlayedGame) -> Option<String> {
-    (game.setup.variant != Variant::Standard)
-        .then(|| crate::game::variant_label(game.setup.variant.key()).to_string())
+    (game.setup.variant != Variant::Standard).then(|| game.setup.variant.label().to_string())
 }
 
 /// Recent games on Home.
@@ -174,6 +173,7 @@ impl HomePage {
         let played = cx.global::<PlayedHandle>().0.clone();
         // The last game's opening shows only while opening names are.
         let settings = cx.global::<crate::settings::SettingsHandle>().0.clone();
+        let home = cx.entity().downgrade();
         let mut page = HomePage {
             continue_game: None,
             board: None,
@@ -186,6 +186,14 @@ impl HomePage {
                 cx.observe(&played, |_, _, cx| cx.notify()),
                 cx.observe(&crate::accounts::handle(cx), |_, _, cx| cx.notify()),
                 cx.observe(&settings, |_, _, cx| cx.notify()),
+                // Another window started or ended a game against the computer.
+                crate::core::profile_changes(
+                    cx,
+                    &[kchess_contracts::types::ProfileArea::Sessions],
+                    move |cx| {
+                        let _ = home.update(cx, |home, cx| home.refresh_continue(cx));
+                    },
+                ),
             ],
         };
         page.refresh(cx);
@@ -242,14 +250,19 @@ impl HomePage {
     /// Read the unfinished computer game (that session alone: the whole library replays every
     /// played game) and the accounts again (the page was shown).
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let session = cx.global::<AppCore>().request(calls::Session {
-            kind: kchess_contracts::types::SessionKind::Computer,
-        });
         crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.refresh(cx));
         if let Some((account, activity)) = &self.activity {
             let account = account.clone();
             activity.update(cx, |activity, cx| activity.load(&account, cx));
         }
+        self.refresh_continue(cx);
+    }
+
+    /// Read the unfinished computer game again.
+    fn refresh_continue(&mut self, cx: &mut Context<Self>) {
+        let session = cx.global::<AppCore>().request(calls::Session {
+            kind: kchess_contracts::types::SessionKind::Computer,
+        });
         cx.spawn(async move |this, cx| {
             let session = session.await;
             let _ = this.update(cx, |this, cx| {

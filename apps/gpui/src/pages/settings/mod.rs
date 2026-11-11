@@ -26,8 +26,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::types::{
-    AppTheme, Appearance, CoordinateMode, EngineLevel, EngineStatus, PieceAnimation, PromotionMode,
-    Settings,
+    AppTheme, Appearance, CoordinateMode, EngineLevel, EngineStatus, PieceAnimation, ProfileArea,
+    PromotionMode, Settings,
 };
 use shakmaty::{Color, Piece, Role};
 
@@ -353,7 +353,17 @@ impl SettingsPage {
             gpui_kit::component::input::InputState::new(window, cx)
                 .placeholder("Chess.com username")
         });
+        let page = cx.entity().downgrade();
         let subscriptions = vec![
+            crate::core::profile_changes(cx, &[ProfileArea::Engine], {
+                let page = page.clone();
+                move |cx| {
+                    let _ = page.update(cx, |page, cx| page.engine_changed(cx));
+                }
+            }),
+            crate::core::profile_changes(cx, &[ProfileArea::VoiceHistory], move |cx| {
+                let _ = page.update(cx, |page, cx| page.voice_history_changed(cx));
+            }),
             cx.subscribe_in(
                 &chesscom_input,
                 window,
@@ -547,6 +557,30 @@ impl SettingsPage {
             db.update(cx, |db, cx| db.refresh(cx));
         }
         cx.notify();
+    }
+
+    /// Another window installed or deleted the engine: the engine shown is read again.
+    fn engine_changed(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.section, Section::Engine | Section::Offline) {
+            self.refresh_engine(cx);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn engine_status(&self) -> Option<&EngineStatus> {
+        self.engine.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn forget_engine_status(&mut self) {
+        self.engine = None;
+    }
+
+    /// Another window saved or cleared voice practice: the history shown is read again.
+    fn voice_history_changed(&mut self, cx: &mut Context<Self>) {
+        if let Some(history) = &self.voice_history {
+            history.update(cx, |history, cx| history.load(cx));
+        }
     }
 
     /// The Interface size select shows the setting, and what Auto means on this display.

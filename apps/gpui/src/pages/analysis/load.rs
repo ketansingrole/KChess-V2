@@ -131,7 +131,7 @@ pub fn open_line(moves: Vec<String>, window: &mut Window, cx: &mut App) {
 /// Study an earlier puzzle on the analysis board, asking first when that would replace unsaved
 /// analysis.
 pub fn analyse_puzzle(
-    puzzle: serde_json::Value,
+    puzzle: kchess_contracts::types::Puzzle,
     wrong_moves: Vec<kchess_contracts::types::PuzzleWrongMove>,
     window: &mut Window,
     cx: &mut App,

@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui_kit::{App, AppContext as _, Entity, EventEmitter, Global};
+use gpui_kit::{App, AppContext as _, Entity, EventEmitter, Global, Subscription};
 use kchess_contracts::calls::CoreCall;
 use kchess_contracts::types::ProfileArea;
 use kchess_contracts::{Capability, CoreError, HostAsk, HostReply, HostRequest, Level};
@@ -204,12 +204,22 @@ impl Reads {
 
 /// Runs `reload` when another window changes one of `areas` of the profile (`profile:changed`,
 /// `docs/shared-core.md`), and after reconnecting to the core, which did not report what changed
-/// meanwhile; this app's own writes are ignored.
+/// meanwhile; this app's own writes are ignored. For as long as the app runs; a page keeps
+/// `profile_changes` with its other subscriptions.
 pub fn on_profile_change(
     cx: &mut App,
     areas: &'static [ProfileArea],
     reload: impl Fn(&mut App) + 'static,
 ) {
+    profile_changes(cx, areas, reload).detach();
+}
+
+/// `on_profile_change` while the subscription is kept.
+pub fn profile_changes(
+    cx: &mut App,
+    areas: &'static [ProfileArea],
+    reload: impl Fn(&mut App) + 'static,
+) -> Subscription {
     let events = cx.global::<AppCore>().events.clone();
     cx.subscribe(&events, move |_, event: &ClientEvent, cx| {
         let change = match event {
@@ -224,19 +234,18 @@ pub fn on_profile_change(
             reload(cx);
         }
     })
-    .detach();
 }
 
 /// Which connection raises system notifications now (`alerts:owner`); `None` until the core says.
 #[derive(Default)]
-pub struct AlertOwner(pub Option<u64>);
+pub struct AlertsOwnerGlobal(pub Option<u64>);
 
-impl Global for AlertOwner {}
+impl Global for AlertsOwnerGlobal {}
 
 /// Whether this app may raise a system notification: it is the alert owner, or nobody is.
 pub fn alerts_here(cx: &App) -> bool {
     let own = cx.global::<AppCore>().bridge.connection();
-    cx.try_global::<AlertOwner>()
+    cx.try_global::<AlertsOwnerGlobal>()
         .and_then(|owner| owner.0)
         .is_none_or(|owner| owner == own)
 }
@@ -287,7 +296,7 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
             }
             if let ClientEvent::Event(CoreEvent::AlertsOwner(owner)) = &event {
                 let owner = owner.connection;
-                cx.update(|cx| cx.set_global(AlertOwner(owner)));
+                cx.update(|cx| cx.set_global(AlertsOwnerGlobal(owner)));
             }
             core.events.update(cx, |_, cx| cx.emit(event));
         }
@@ -350,6 +359,7 @@ fn answer_host(ask: HostAsk, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::{Answer, Reads};
+    use kchess_contracts::types::ProfileArea;
 
     #[test]
     fn only_the_newest_read_without_later_changes_is_shown() {
@@ -365,5 +375,41 @@ mod tests {
         assert_eq!(reads.answer(read), Answer::Again);
         let again = reads.start();
         assert_eq!(reads.answer(again), Answer::Show);
+    }
+
+    /// What reads each profile area again when another window writes it, or why nothing does.
+    /// A new area does not compile here until that is decided.
+    fn observed_by(area: ProfileArea) -> &'static str {
+        match area {
+            ProfileArea::Studies => "studies.rs",
+            ProfileArea::PlayedGames => "played.rs",
+            ProfileArea::Drills => "pages/practice/mistakes.rs",
+            ProfileArea::Sessions => "pages/home: the game to continue",
+            ProfileArea::Tournaments => "pages/tournaments: the events joined",
+            ProfileArea::Repertoire => {
+                "ignored: the repertoire trainer reads it each time it is shown, and a reload \
+                 would replace the line being practised"
+            }
+            ProfileArea::LichessGames => "accounts.rs: every write of it writes Accounts too",
+            ProfileArea::Accounts | ProfileArea::Usage => "accounts.rs",
+            ProfileArea::DesktopSettings => "settings.rs: the SettingsSaved event",
+            ProfileArea::Puzzles => "puzzle_db.rs",
+            ProfileArea::VoiceHistory | ProfileArea::Engine => "pages/settings",
+            ProfileArea::ViewPreferences => "prefs.rs",
+        }
+    }
+
+    #[test]
+    fn every_write_of_lichess_games_also_writes_accounts() {
+        for method in kchess_contracts::core_api::METHODS {
+            if method.writes.contains(&ProfileArea::LichessGames) {
+                assert!(
+                    method.writes.contains(&ProfileArea::Accounts),
+                    "{} writes Lichess games alone: {}",
+                    method.name,
+                    observed_by(ProfileArea::LichessGames)
+                );
+            }
+        }
     }
 }

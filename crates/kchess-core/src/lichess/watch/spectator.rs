@@ -470,7 +470,12 @@ impl Inner {
                         .as_ref()
                         .and_then(|p| p.get("seconds"))
                         .and_then(Value::as_f64),
-                    variant: channel.to_string(),
+                    // A variant's channel shows that variant; any other (a speed, the best
+                    // players, bots) shows standard chess until the export says otherwise.
+                    variant: kchess_domain::variant::Variant::from_key(channel)
+                        .unwrap_or_default()
+                        .key()
+                        .to_string(),
                     speed: None,
                     rated: None,
                     clock: None,

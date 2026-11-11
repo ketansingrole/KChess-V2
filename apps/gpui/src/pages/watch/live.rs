@@ -5,6 +5,7 @@
 use kchess_contracts::calls;
 use kchess_contracts::check::Username;
 use kchess_contracts::types::{Crosstable, TvPastGame, WatchFrame, WatchPhase, WatchSource};
+use kchess_domain::perf::Speed;
 use kchess_domain::training::clock::format_clock;
 use kchess_domain::variant::{Setup, Variant};
 use std::collections::BTreeMap;
@@ -34,11 +35,6 @@ use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 /// Whether KChess plays the variant of a game Lichess sends (standard chess when it names none).
 fn plays_variant(frame: &WatchFrame) -> bool {
     Variant::from_key(&frame.variant).is_some()
-}
-
-/// A speed's name.
-fn speed_label(speed: &str) -> Option<&'static str> {
-    kchess_domain::perf::Speed::from_key(speed).map(kchess_domain::perf::Speed::label)
 }
 
 fn speed_icon(speed: &str) -> Option<gpui_kit::component::Icon> {
@@ -90,7 +86,8 @@ pub fn info_line(frame: &WatchFrame, channels: &[kchess_contracts::types::TvChan
             .channel
             .as_deref()
             .filter(|channel| {
-                !matches!(*channel, "best" | "bot" | "computer") && speed_label(channel).is_none()
+                !matches!(*channel, "best" | "bot" | "computer")
+                    && Speed::from_key(channel).is_none()
             })
             .and_then(|channel| {
                 channels
@@ -115,7 +112,11 @@ pub fn info_line(frame: &WatchFrame, channels: &[kchess_contracts::types::TvChan
         parts.push(if rated { "Rated" } else { "Casual" }.into());
     }
     if !speed.is_empty() {
-        parts.push(speed_label(speed).unwrap_or(speed).to_string());
+        parts.push(
+            Speed::from_key(speed)
+                .map_or(speed, |known| known.label())
+                .to_string(),
+        );
     }
     parts.extend(variant);
     parts.join(" · ")

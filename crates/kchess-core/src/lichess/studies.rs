@@ -33,21 +33,10 @@ pub async fn lichess_studies(
         .as_account(account, UsageKind::Study, |auth| async move {
             let path = format!("/api/study/by/{}", path_segment(account));
             // Each record is read as it arrives: a malformed one ends the listing at once.
-            let mut studies = Vec::new();
-            lichess
+            let mut studies = lichess
                 .client()
                 .get(&path, &auth)
-                .lines(
-                    || {},
-                    |line| {
-                        if let Some(study) = study_metadata(line)?
-                            && studies.len() < MAX_STUDIES
-                        {
-                            studies.push(study);
-                        }
-                        Ok(())
-                    },
-                )
+                .records("study", MAX_STUDIES, |raw: Value| study_metadata(&raw))
                 .await?;
             studies.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
             Ok(studies)
@@ -56,10 +45,7 @@ pub async fn lichess_studies(
 }
 
 /// A study's metadata line, when it has a valid id and name (`metadata` of the schema).
-fn study_metadata(line: &str) -> CoreResult<Option<LichessStudy>> {
-    let raw: Value = serde_json::from_str(line).map_err(|cause| {
-        CoreError::new(format!("Lichess sent an unreadable study record: {cause}"))
-    })?;
+fn study_metadata(raw: &Value) -> Option<LichessStudy> {
     let id = raw.get("id").and_then(Value::as_str);
     let name = raw.get("name").and_then(Value::as_str);
     let optional_number = |key: &str| -> Option<Option<i64>> {
@@ -74,22 +60,22 @@ fn study_metadata(line: &str) -> CoreResult<Option<LichessStudy>> {
         }
     };
     let (Some(id), Some(name)) = (id, name) else {
-        return Ok(None);
+        return None;
     };
     let valid = super::is_lichess_id(id) && js::utf16_len(name) <= 200;
     let (Some(created), Some(updated)) =
         (optional_number("createdAt"), optional_number("updatedAt"))
     else {
-        return Ok(None);
+        return None;
     };
     if !valid {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(LichessStudy {
+    Some(LichessStudy {
         id: id.to_string(),
         name: name.to_string(),
         updated_at: updated.or(created).unwrap_or(0),
-    }))
+    })
 }
 
 /// A multi-game PGN split into games. Lichess separates games with blank lines
@@ -596,18 +582,15 @@ mod tests {
 
     #[test]
     fn lists_studies_with_the_contract_field_names() {
-        let study =
-            study_metadata(r#"{"id":"Study001","name":"Cloud","createdAt":1,"updatedAt":2}"#)
-                .ok()
-                .flatten()
-                .expect("a valid study record");
+        let study = study_metadata(
+            &serde_json::json!({ "id": "Study001", "name": "Cloud", "createdAt": 1, "updatedAt": 2 }),
+        )
+        .expect("a valid study record");
         assert_eq!(
             serde_json::to_value(&study).expect("serializable"),
             serde_json::json!({ "id": "Study001", "name": "Cloud", "updatedAt": 2 })
         );
-        let undated = study_metadata(r#"{"id":"Study002","name":"Undated"}"#)
-            .ok()
-            .flatten()
+        let undated = study_metadata(&serde_json::json!({ "id": "Study002", "name": "Undated" }))
             .expect("a record without timestamps");
         assert_eq!(undated.updated_at, 0);
     }

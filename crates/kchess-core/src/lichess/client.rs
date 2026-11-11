@@ -468,18 +468,35 @@ impl<'c> Request<'c> {
         outcome
     }
 
-    /// Every line of an NDJSON answer, read to the end.
-    pub async fn read_lines(self) -> Result<Vec<String>> {
-        let mut lines = Vec::new();
+    /// The records of an NDJSON answer, each read as a `T` as it arrives: one that is not
+    /// stops the read with "Lichess sent an unreadable {what} record". `keep` turns a record into
+    /// what is kept, or skips it; at most `max` are kept, and the rest are still checked.
+    pub async fn records<T, U>(
+        self,
+        what: &str,
+        max: usize,
+        mut keep: impl FnMut(T) -> Option<U>,
+    ) -> Result<Vec<U>>
+    where
+        T: DeserializeOwned,
+    {
+        let mut kept = Vec::new();
         self.lines(
             || {},
             |line| {
-                lines.push(line.to_string());
+                let record = serde_json::from_str::<T>(line).map_err(|cause| {
+                    CoreError::new(format!("Lichess sent an unreadable {what} record: {cause}"))
+                })?;
+                if kept.len() < max
+                    && let Some(item) = keep(record)
+                {
+                    kept.push(item);
+                }
                 Ok(())
             },
         )
         .await?;
-        Ok(lines)
+        Ok(kept)
     }
 
     /// The answer read in chunks as it arrives (a PGN feed).

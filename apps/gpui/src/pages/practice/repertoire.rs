@@ -290,7 +290,16 @@ impl Repertoire {
         let study_select = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
         let chapter_select = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
         let settings = cx.global::<SettingsHandle>().0.clone();
+        let trainer = cx.entity().downgrade();
         let subscriptions = vec![
+            // Another window practised a repertoire: its misses and schedule are the profile's.
+            crate::core::profile_changes(
+                cx,
+                &[kchess_contracts::types::ProfileArea::Repertoire],
+                move |cx| {
+                    let _ = trainer.update(cx, |trainer, cx| trainer.load_misses(cx));
+                },
+            ),
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
                 if let BoardEvent::Move(uci) = event {
                     this.play(uci, cx);
@@ -368,6 +377,12 @@ impl Repertoire {
         drill.load_misses(cx);
         drill.rebuild(cx);
         drill
+    }
+
+    /// How many repertoires have missed moves.
+    #[cfg(test)]
+    pub(crate) fn missed_repertoires(&self) -> usize {
+        self.misses.len()
     }
 
     /// The missed moves, as the core keeps them.

@@ -74,7 +74,7 @@ impl Scenario {
 
 /// Start the benchmark named by `KCHESS_BENCH` on the main window, if any.
 pub fn start(window: AnyWindowHandle, cx: &mut App) {
-    let Ok(name) = std::env::var("KCHESS_BENCH") else {
+    let Some(name) = kchess_host::env::var("KCHESS_BENCH") else {
         return;
     };
     if name == "lichess-login" {
@@ -86,11 +86,11 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) {
         cx.quit();
         return;
     };
-    let seconds = std::env::var("KCHESS_BENCH_SECONDS")
-        .ok()
+    let seconds = kchess_host::env::var("KCHESS_BENCH_SECONDS")
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(30);
-    let out = std::env::var("KCHESS_BENCH_OUT").unwrap_or_else(|_| "kchess-bench.json".into());
+    let out =
+        kchess_host::env::var("KCHESS_BENCH_OUT").unwrap_or_else(|| "kchess-bench.json".into());
     set_trace_enabled(true);
     cx.spawn(async move |cx| {
         let executor = cx.background_executor().clone();
@@ -318,7 +318,7 @@ fn tour() -> Vec<(Page, &'static str)> {
         Page::all().map(|page| (page, page.info().label)).collect();
     // `KCHESS_BENCH_TOUR=Openings,Home`: those pages alone, in that order, so a page's first
     // opening is measured without the pages before it.
-    if let Ok(only) = std::env::var("KCHESS_BENCH_TOUR") {
+    if let Some(only) = kchess_host::env::var("KCHESS_BENCH_TOUR") {
         let all = pages;
         pages = only
             .split(',')

@@ -656,4 +656,34 @@ mod tests {
         assert_eq!(rematch["minutes"], json!(5.0));
         assert_eq!(rematch["increment"], json!(3.0));
     }
+
+    /// An opponent's move that cannot be replayed has no SAN: the notice said
+    /// "undefined. Your move.".
+    #[test]
+    fn an_opponent_move_without_a_san_still_says_it_is_your_move() {
+        let mut model = playing();
+        model.online_account = "Alice".into();
+        model.online_opponent = "Bob".into();
+        model.online_color = shakmaty::Color::White;
+        model.online_moves = vec!["z9z9".into()];
+        let result = model.event(
+            &ServerEvent::read(&json!({
+                "type": "gameState",
+                "moves": "z9z9 e7e5",
+                "wtime": 300_000,
+                "btime": 300_000,
+                "status": "started",
+            })),
+            &ctx(0.0),
+        );
+        let bodies: Vec<String> = result
+            .effects
+            .into_iter()
+            .filter_map(|effect| match effect {
+                Effect::Notify { title, body, .. } if title == "Bob moved" => Some(body),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(bodies, ["Your move."]);
+    }
 }

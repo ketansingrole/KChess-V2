@@ -18,6 +18,7 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_domain::perf::{Perf, Speed};
 use serde_json::{Value, json};
 
 use crate::assets::icon;
@@ -45,22 +46,12 @@ const TITLES: [&str; 11] = [
 ];
 /// How long typing settles before names are searched.
 pub(crate) const SEARCH_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
-/// Rating categories with a Lichess leaderboard, in the order offered.
-const BOARD_PERFS: [&str; 13] = [
-    "bullet",
-    "blitz",
-    "rapid",
-    "classical",
-    "ultraBullet",
-    "chess960",
-    "crazyhouse",
-    "antichess",
-    "atomic",
-    "horde",
-    "kingOfTheHill",
-    "racingKings",
-    "threeCheck",
-];
+/// Rating categories with a Lichess leaderboard: every one but correspondence.
+fn board_perfs() -> impl Iterator<Item = Perf> {
+    Perf::ALL
+        .into_iter()
+        .filter(|perf| *perf != Perf::Speed(Speed::Correspondence))
+}
 
 /// The rating categories with their names, in `PERF_TYPES` order.
 fn perfs() -> impl Iterator<Item = (&'static str, &'static str)> {
@@ -303,12 +294,8 @@ impl PlayersPage {
         let history = cx.new(|cx| RatingSpeeds::new("Built from the last 200 rated games", cx));
         let accounts = crate::accounts::handle(cx);
         let board_perf: String = crate::prefs::get(cx, BOARD_PERF_KEY, "blitz".to_string());
-        let board_items: Vec<Choice> = BOARD_PERFS
-            .iter()
-            .map(|key| {
-                let label = perfs().find(|(k, _)| k == key).map_or(*key, |(_, l)| l);
-                Choice::new(*key, label)
-            })
+        let board_items: Vec<Choice> = board_perfs()
+            .map(|perf| Choice::new(perf.key(), perf.label()))
             .collect();
         let chosen = SharedString::from(board_perf.clone());
         let board_select = cx.new(|cx| {

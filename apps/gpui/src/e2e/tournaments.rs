@@ -92,3 +92,26 @@ fn a_late_reply_for_another_tournament_is_not_shown(cx: &mut gpui_kit::TestAppCo
             == Some("Second Arena")
     });
 }
+
+/// Another window joined the open tournament: this one shows it joined too. It kept offering
+/// Join until the page was opened again.
+#[gpui_kit::test]
+fn a_tournament_joined_in_another_window_shows_joined_here(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_contracts::check::{TournamentId, Username};
+    use kchess_contracts::types::{ProfileArea, TournamentSystem};
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.with_window(|window, cx| crate::pages::tournaments::open_tournament(ARENA, window, cx));
+    app.wait_for("the arena's Join button", |window, _| {
+        window
+            .try_find("tournament-join")
+            .is_some_and(|join| join.disabled() != Some(true))
+    });
+    app.request(kchess_contracts::calls::JoinTournament {
+        system: TournamentSystem::Arena,
+        id: TournamentId(ARENA.into()),
+        account: Username("Tester".into()),
+        password: None,
+    });
+    app.changed_elsewhere(&[ProfileArea::Tournaments]);
+    app.find("tournament-leave");
+}

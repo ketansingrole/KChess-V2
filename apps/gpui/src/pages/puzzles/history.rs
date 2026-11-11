@@ -11,9 +11,9 @@ use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::{ActivityMax, Username};
 use kchess_contracts::types::{
-    PuzzleActivityEntry, PuzzleAttempt, PuzzleProgress, PuzzleProgressQuery, PuzzleWrongMove, Reply,
+    Puzzle, PuzzleActivityEntry, PuzzleAttempt, PuzzleProgress, PuzzleProgressQuery,
+    PuzzleWrongMove, Reply,
 };
-use serde_json::{Value, json};
 
 use super::{Theme, theme_name};
 use crate::assets::icon;
@@ -45,8 +45,8 @@ const SAME_ATTEMPT_MS: f64 = 15. * 60_000.;
 
 /// What the page does for a row.
 pub enum HistoryEvent {
-    Retry(Value),
-    Analyse(Value, Vec<PuzzleWrongMove>),
+    Retry(Puzzle),
+    Analyse(Puzzle, Vec<PuzzleWrongMove>),
     Train,
     Reconnect,
 }
@@ -61,7 +61,7 @@ struct Row {
     /// Solved, with or without a hint.
     solved: bool,
     moves: Option<String>,
-    puzzle: Value,
+    puzzle: Puzzle,
     wrong: Vec<PuzzleWrongMove>,
     /// The mode shown, and the one the filter matches.
     mode: &'static str,
@@ -134,7 +134,7 @@ fn rows_of(local: &[PuzzleAttempt], lichess: &[PuzzleActivityEntry]) -> Vec<Row>
                 badge: badge_of(outcome),
                 solved: matches!(outcome, "solved" | "hinted"),
                 moves: Some(moves),
-                puzzle: json!(attempt.puzzle),
+                puzzle: attempt.puzzle.clone(),
                 wrong: attempt.wrong_moves.clone().unwrap_or_default(),
                 mode: if attempt.retry { "retry" } else { mode },
                 played_in: mode,
@@ -159,7 +159,7 @@ fn rows_of(local: &[PuzzleAttempt], lichess: &[PuzzleActivityEntry]) -> Vec<Row>
             },
             solved: entry.win,
             moves: None,
-            puzzle: json!(entry.puzzle),
+            puzzle: entry.puzzle.clone(),
             wrong: Vec::new(),
             mode: "lichess",
             played_in: "lichess",
@@ -505,16 +505,15 @@ impl Render for PuzzleHistory {
             });
             let list = rows.into_iter().enumerate().map(|(index, row)| {
                 let (label, glyph, tip) = mode_look(row.mode);
-                let themes: Vec<String> = row.puzzle["themes"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
+                let themes: Vec<String> = row
+                    .puzzle
+                    .themes
+                    .iter()
                     .map(|theme| theme_name(theme, &self.themes))
                     .collect();
                 let (retry, analysed, wrong) =
                     (row.puzzle.clone(), row.puzzle.clone(), row.wrong.clone());
-                let rating = format!("{}", row.puzzle["rating"].as_f64().unwrap_or_default());
+                let rating = format!("{}", row.puzzle.rating);
                 let played = played_text(row.at, now);
                 let badge = div().w(px(96.)).flex_none().child(
                     widgets::badge(row.badge.0, row.badge.1, &palette)

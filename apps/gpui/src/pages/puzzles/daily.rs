@@ -8,7 +8,7 @@ use gpui_kit::component::v_flex;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
-use serde_json::Value;
+use kchess_contracts::types::Puzzle;
 
 use super::{Theme, status_panel};
 use crate::assets::icon;
@@ -26,7 +26,7 @@ pub enum DailyEvent {
 impl EventEmitter<DailyEvent> for DailyPuzzle {}
 
 pub struct DailyPuzzle {
-    puzzle: Option<Value>,
+    puzzle: Option<Puzzle>,
     error: Option<String>,
     loading: bool,
     /// The UTC day the puzzle was fetched on.
@@ -134,9 +134,8 @@ impl DailyPuzzle {
                 this.loading = false;
                 match daily {
                     Ok(puzzle) => {
-                        let puzzle = serde_json::json!(puzzle);
                         this.board
-                            .update(cx, |board, cx| board.start(&puzzle, None, cx));
+                            .update(cx, |board, cx| board.start(puzzle.clone(), None, cx));
                         this.puzzle = Some(puzzle);
                         this.day = day;
                     }

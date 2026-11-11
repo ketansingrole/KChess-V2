@@ -1,6 +1,7 @@
 //! Practice, offline: the board-vision drills and the trainers that need no account.
 
 use super::Harness;
+use crate::game::puzzle::PuzzleStatus;
 use crate::pages::Page;
 
 fn practice(cx: &mut gpui_kit::TestAppContext) -> Harness {
@@ -348,7 +349,7 @@ fn a_crazyhouse_mistake_is_solved_with_a_drop(cx: &mut gpui_kit::TestAppContext)
     app.click("pocket-White-Pawn");
     app.click_square("d4", true);
     app.wait_for("the drop to solve the drill", |_, cx| {
-        mistakes.read(cx).board().read(cx).status() == "solved"
+        mistakes.read(cx).board().read(cx).status() == PuzzleStatus::Solved
     });
 }
 
@@ -435,7 +436,7 @@ fn a_solved_mistake_is_stepped_through_and_turned(cx: &mut gpui_kit::TestAppCont
     app.click_square("h5", true);
     app.click_square("f7", true);
     app.wait_for("the mate to solve the drill", |_, cx| {
-        mistakes.read(cx).board().read(cx).status() == "solved"
+        mistakes.read(cx).board().read(cx).status() == PuzzleStatus::Solved
     });
     app.click("chess-board");
     app.press("left");
@@ -478,13 +479,13 @@ fn return_goes_on_to_the_next_due_mistake(cx: &mut gpui_kit::TestAppContext) {
     app.press("enter");
     assert_eq!(
         app.cx
-            .update(|cx| mistakes.read(cx).board().read(cx).status().to_string()),
-        "playing"
+            .update(|cx| mistakes.read(cx).board().read(cx).status()),
+        PuzzleStatus::Playing
     );
     app.click_square("h5", true);
     app.click_square("f7", true);
     app.wait_for("the mate to solve the drill", |_, cx| {
-        mistakes.read(cx).board().read(cx).status() == "solved"
+        mistakes.read(cx).board().read(cx).status() == PuzzleStatus::Solved
     });
     // The answer is saved in the core, whose drills (none: these were seeded here) come back;
     // seed the other one again once they have.
@@ -499,7 +500,7 @@ fn return_goes_on_to_the_next_due_mistake(cx: &mut gpui_kit::TestAppContext) {
     app.click("chess-board");
     app.press("enter");
     app.wait_for("the next mistake", |_, cx| {
-        mistakes.read(cx).board().read(cx).status() == "playing"
+        mistakes.read(cx).board().read(cx).status() == PuzzleStatus::Playing
     });
 }
 
@@ -709,4 +710,63 @@ fn zen_mode_hides_the_sidebar_in_a_trainer(cx: &mut gpui_kit::TestAppContext) {
     app.wait_gone("sidebar");
     app.with_window(|window, cx| crate::shell::open(Page::Dashboard, window, cx));
     app.find("sidebar");
+}
+
+/// Another window practised a repertoire: the open Openings tab has its misses. It read them
+/// only once, when the tab was first opened.
+#[gpui_kit::test]
+fn repertoire_misses_from_another_window_are_read_here(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_contracts::check::{Position, RepertoireKey};
+    let mut app = practice(cx);
+    let miss = |app: &mut Harness, key: &str| {
+        app.request(kchess_contracts::calls::RecordRepertoireMiss {
+            key: RepertoireKey(key.into()),
+            fen: Position("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1".into()),
+        });
+    };
+    miss(&mut app, "study1:white");
+    tab(&mut app, crate::pages::practice::Tab::Openings);
+    let trainer = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).repertoire())
+            .expect("the repertoire trainer")
+    });
+    app.wait_for("the misses read on opening", |_, cx| {
+        trainer.read(cx).missed_repertoires() == 1
+    });
+    miss(&mut app, "study2:black");
+    app.changed_elsewhere(&[kchess_contracts::types::ProfileArea::Repertoire]);
+    app.wait_for("the other window's miss", |_, cx| {
+        trainer.read(cx).missed_repertoires() == 2
+    });
+}
+
+/// Another window added or answered drills: the open Mistakes tab lists the profile's. It kept
+/// the drills it had until the tab was opened again.
+#[gpui_kit::test]
+fn drills_changed_in_another_window_show_here_too(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Mistakes);
+    app.find("review-a-game");
+    let mistakes = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).mistakes())
+            .expect("the mistakes trainer")
+    });
+    // A drill this window lists that the profile no longer has.
+    app.cx.update(|cx| {
+        mistakes.update(cx, |mistakes, cx| {
+            mistakes.seed(
+                vec![serde_json::json!({
+                    "id": "gone",
+                    "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                    "solution": ["h5f7"],
+                })],
+                cx,
+            )
+        })
+    });
+    app.find("practice-due");
+    app.changed_elsewhere(&[kchess_contracts::types::ProfileArea::Drills]);
+    app.wait_gone("practice-due");
 }

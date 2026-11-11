@@ -104,7 +104,7 @@ fn from_json(ctx: &StoreContext) -> Result<bool> {
     let mut games: Vec<Value> = match field("games") {
         None => Vec::new(),
         Some(Value::Array(items)) => items,
-        Some(_) => return Err(CoreError::new("games is not iterable")),
+        Some(_) => return Err(CoreError::new("The old profile's games are not a list.")),
     };
     // `sort((a, b) => b.createdAt - a.createdAt)`, newest first. A missing or invalid time sorts
     // last: treating NaN as equal to everything is not a total order, and Rust's sort may panic
@@ -138,7 +138,7 @@ fn from_json(ctx: &StoreContext) -> Result<bool> {
     let imported = transaction(ctx.db, || {
         save_settings(ctx.db, &settings)?;
         let Some(accounts) = accounts.as_array() else {
-            return Err(CoreError::new("accounts is not iterable"));
+            return Err(CoreError::new("The old profile's accounts are not a list."));
         };
         for account in accounts {
             // `accounts.username` is a nullable primary key; a NULL row breaks every load.

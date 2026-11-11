@@ -195,7 +195,7 @@ pub async fn fetch_lichess_reviews(
         ("evals", "true".to_string()),
         ("accuracy", "true".to_string()),
     ];
-    let lines = lichess
+    let parsed = lichess
         .as_owner(account, UsageKind::Games, |auth| {
             let (body, query) = (body.clone(), &query);
             async move {
@@ -205,18 +205,11 @@ pub async fn fetch_lichess_reviews(
                     .query(query)
                     .text(body)
                     .lane(Lane::Export)
-                    .read_lines()
+                    .records("game", usize::MAX, |raw: Value| review_from_lichess(&raw))
                     .await
             }
         })
         .await?;
-    let mut parsed = Vec::new();
-    for line in &lines {
-        let raw = parse_record(line)?;
-        if let Some(review) = review_from_lichess(&raw) {
-            parsed.push(review);
-        }
-    }
     // Nothing is written until the download is over: a logout meanwhile keeps it all off disk.
     if epoch != lichess.account_epoch(account) {
         return Err(CoreError::new("Sync was cancelled."));
@@ -228,12 +221,6 @@ pub async fn fetch_lichess_reviews(
         .await?;
     lichess.store().mark_checked(&batch, &current).await?;
     Ok(found)
-}
-
-/// Parses one game record of an NDJSON export.
-pub(crate) fn parse_record(line: &str) -> CoreResult<Value> {
-    serde_json::from_str(line)
-        .map_err(|cause| CoreError::new(format!("Lichess sent an unreadable game record: {cause}")))
 }
 
 /// Runs of whitespace separate words, and a leading or trailing run leaves an empty word.

@@ -394,3 +394,36 @@ async fn the_first_call_finds_an_earlier_releases_games_whatever_it_is() {
     assert_eq!(report["total"], json!(1), "{report}");
     core.close().await;
 }
+
+/// The JSON backup's games or accounts that are not a list are refused in plain words, not the
+/// TypeScript TypeError the first port copied, and the backup is kept.
+#[test]
+fn a_backup_whose_games_or_accounts_are_not_a_list_is_refused_in_plain_words() {
+    let store = Store::new(None, Secrets::OFF);
+    let backup = store.path().join("kchess-data.json");
+    fs::write(&backup, json!({ "games": "none" }).to_string()).expect("backup written");
+    let refused = store
+        .db
+        .write(|c| import::migrate(c, false).map(|_| ()))
+        .expect_err("games that are not a list");
+    assert_eq!(refused.message, "The old profile's games are not a list.");
+    assert!(backup.exists());
+
+    let store = Store::new(None, Secrets::OFF);
+    let backup = store.path().join("kchess-data.json");
+    fs::write(
+        &backup,
+        json!({ "accounts": { "username": "Alice" } }).to_string(),
+    )
+    .expect("backup written");
+    store
+        .db
+        .write(|c| import::migrate(c, false).map(|_| ()))
+        .expect("an import that fails is logged");
+    assert!(
+        store
+            .host
+            .logged("JSON migration failed: The old profile's accounts are not a list.")
+    );
+    assert!(backup.exists());
+}

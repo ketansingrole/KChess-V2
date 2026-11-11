@@ -11,8 +11,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::check::LibraryId;
-use kchess_contracts::types::{Drill, MistakeGame, ReviewSide};
-use serde_json::{Value, json};
+use kchess_contracts::types::{Drill, MistakeGame, ProfileArea, Puzzle, ReviewSide};
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -30,15 +29,18 @@ const GAMES_SHOWN: usize = 8;
 const CLOCK: Duration = Duration::from_secs(60);
 
 /// A drill as a puzzle for the board.
-fn puzzle(item: &Drill) -> Value {
-    json!({
-        "id": item.id,
-        "fen": item.fen,
-        "solution": item.solution,
-        "variant": item.variant,
-        "rating": 0,
-        "themes": [],
-    })
+fn puzzle(item: &Drill) -> Puzzle {
+    Puzzle {
+        id: item.id.clone(),
+        fen: item.fen.clone(),
+        last_move: None,
+        solution: item.solution.clone(),
+        rating: 0.,
+        themes: Vec::new(),
+        plays: None,
+        game_id: None,
+        variant: item.variant.unwrap_or_default(),
+    }
 }
 
 /// A game's title: your opponent when your side is known, else the players.
@@ -113,8 +115,9 @@ pub struct Mistakes {
 impl Mistakes {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Mistakes {
         let puzzle = cx.new(|cx| PuzzleBoard::new(false, window, cx));
-        let subscriptions =
-            vec![cx.subscribe(
+        let trainer = cx.entity().downgrade();
+        let subscriptions = vec![
+            cx.subscribe(
                 &puzzle,
                 |this, _, event: &PuzzleBoardEvent, cx| match event {
                     PuzzleBoardEvent::Outcome { win, .. } => {
@@ -128,7 +131,12 @@ impl Mistakes {
                     }
                     PuzzleBoardEvent::Move { .. } => {}
                 },
-            )];
+            ),
+            // Another window added or answered drills: the overview lists the profile's.
+            crate::core::profile_changes(cx, &[ProfileArea::Drills], move |cx| {
+                let _ = trainer.update(cx, |trainer, cx| trainer.reload(cx));
+            }),
+        ];
         let clock = crate::timer::every(CLOCK, cx, |this, cx| {
             this.now = kchess_games::now_ms();
             cx.notify();
@@ -159,6 +167,11 @@ impl Mistakes {
         self.current = None;
         self.done = false;
         self.show_all = false;
+        self.reload(cx);
+    }
+
+    /// The drills and games as they are now; a drill on the board stays.
+    fn reload(&mut self, cx: &mut Context<Self>) {
         self.now = kchess_games::now_ms();
         self.loading = true;
         self.load += 1;
@@ -216,13 +229,13 @@ impl Mistakes {
     }
 
     #[cfg(test)]
-    pub(crate) fn seed(&mut self, items: Vec<Value>, cx: &mut Context<Self>) {
+    pub(crate) fn seed(&mut self, items: Vec<serde_json::Value>, cx: &mut Context<Self>) {
         // A drill as the core lists it, with what a test leaves out filled in.
         self.items = items
             .into_iter()
             .map(|item| {
                 let mut drill =
-                    json!({ "judgment": "mistake", "dueAt": 0, "streak": 0, "attempts": 0 });
+                    serde_json::json!({ "judgment": "mistake", "dueAt": 0, "streak": 0, "attempts": 0 });
                 for (key, value) in item.as_object().into_iter().flatten() {
                     drill[key] = value.clone();
                 }
@@ -292,7 +305,7 @@ impl Mistakes {
         self.current = item.as_ref().map(|item| item.id.clone());
         if let Some(item) = item {
             self.puzzle
-                .update(cx, |board, cx| board.start(&puzzle(&item), None, cx));
+                .update(cx, |board, cx| board.start(puzzle(&item), None, cx));
         }
         cx.notify();
     }

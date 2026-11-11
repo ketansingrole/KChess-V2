@@ -1184,6 +1184,10 @@ pub struct Puzzle {
     /// Lichess game the position came from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game_id: Option<String>,
+    /// A drill's variant (a mistake from a Crazyhouse game); every Lichess puzzle is standard
+    /// chess.
+    #[serde(default, skip_serializing_if = "Variant::is_standard")]
+    pub variant: Variant,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
@@ -1399,7 +1403,6 @@ pub struct PuzzleProgressQuery {
     pub limit: u32,
 }
 
-/// A puzzle-database download or import in progress (or finished), streamed to the window.
 /// What part of the profile a write changed (`profile:changed`), so other windows refetch it.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -1437,6 +1440,7 @@ pub struct ProfileChange {
     pub origin: u64,
 }
 
+/// A puzzle-database download or import in progress (or finished), streamed to the window.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleDbProgress {

@@ -12,8 +12,23 @@ use kchess_domain::training::openings::{self, ExplorerMove};
 use kchess_domain::training::puzzle::{self, PuzzleState};
 use kchess_domain::training::rush::{self, RushConfig, RushState};
 use kchess_domain::training::{endgames, engine_levels, lessons, uci_info};
+use kchess_domain::variant::Variant;
 
 use super::{Out, arg};
+
+/// A puzzle's solution as sent: its moves that are strings.
+fn solution_of(puzzle: &Value) -> Vec<String> {
+    puzzle
+        .get("solution")
+        .and_then(Value::as_array)
+        .map(|moves| {
+            moves
+                .iter()
+                .filter_map(|uci| uci.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 fn text_arg<'a>(args: &'a [Value], i: usize, name: &str) -> Result<&'a str, String> {
     arg(args, i)
@@ -95,17 +110,21 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
             let uci = text_arg(args, 1, "uci")?;
             to_value(puzzle::move_squares(&fen, uci))
         }),
-        "startPuzzle" => value_arg::<Value>(args, 0, "puzzle")
-            .and_then(|puzzle| to_value(puzzle::start_puzzle(&puzzle))),
+        "startPuzzle" => value_arg::<Value>(args, 0, "puzzle").and_then(|puzzle| {
+            let variant = js::string(puzzle.get("variant"))
+                .and_then(Variant::from_key)
+                .unwrap_or_default();
+            to_value(puzzle::start_puzzle(
+                js::string(puzzle.get("fen")).unwrap_or(""),
+                js::string(puzzle.get("lastMove")),
+                variant,
+            ))
+        }),
         "playerMove" => (|| {
             let puzzle: Value = value_arg(args, 0, "puzzle")?;
             let state: PuzzleState = value_arg(args, 1, "state")?;
             let uci = text_arg(args, 2, "uci")?;
-            to_value(puzzle::player_move(
-                &puzzle::solution_of(&puzzle),
-                state,
-                uci,
-            ))
+            to_value(puzzle::player_move(&solution_of(&puzzle), state, uci))
         })(),
         "opponentReply" => value_arg::<PuzzleState>(args, 0, "state").and_then(|state| {
             let uci = text_arg(args, 1, "uci")?;
@@ -114,13 +133,15 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         "nextSolutionSquares" => (|| {
             let puzzle: Value = value_arg(args, 0, "puzzle")?;
             let state: PuzzleState = value_arg(args, 1, "state")?;
-            to_value(puzzle::next_solution_squares(
-                &puzzle::solution_of(&puzzle),
-                &state,
-            ))
+            to_value(puzzle::next_solution_squares(&solution_of(&puzzle), &state))
         })(),
-        "playerColor" => value_arg::<Value>(args, 0, "puzzle")
-            .and_then(|puzzle| to_value(puzzle::player_color(&puzzle))),
+        "playerColor" => value_arg::<Value>(args, 0, "puzzle").and_then(|puzzle| {
+            let fen = js::string(puzzle.get("fen")).unwrap_or("");
+            to_value(match puzzle::player_color(fen) {
+                shakmaty::Color::White => "white",
+                shakmaty::Color::Black => "black",
+            })
+        }),
         // Endgame drills.
         "endgameDrills" => to_value(&data().endgame_drills),
         "evaluateEndgame" => (|| {

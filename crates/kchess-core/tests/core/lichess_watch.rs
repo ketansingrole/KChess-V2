@@ -284,6 +284,43 @@ fn tv_frame(id: &str, fen: &str) -> String {
     format!("{frame}\n")
 }
 
+/// A TV frame named its channel ("rapid") as its variant until the delayed export lined up,
+/// so the watch page kept Analyse off, for good when the export never came.
+#[tokio::test]
+async fn a_tv_frame_plays_standard_chess_or_its_channels_variant_before_the_export() {
+    for (channel, variant) in [("rapid", "standard"), ("crazyhouse", "crazyhouse")] {
+        let (feed_tx, feed_rx) = mpsc::unbounded_channel::<String>();
+        let feed_rx = Mutex::new(Some(feed_rx));
+        let feed = format!("/api/tv/{channel}/feed");
+        let fixture = serve(move |seen: &Request| {
+            if seen.path() == feed
+                && let Some(rx) = feed_rx.lock().unwrap().take()
+            {
+                return Reply::Stream(rx);
+            }
+            // The export never comes.
+            Reply::Hang
+        })
+        .await;
+        let host = Arc::new(Recording::default());
+        let sink = Arc::new(Sink::default());
+        let spectator = Spectator::new(
+            service(&fixture.base, &host),
+            Arc::clone(&sink) as Arc<dyn WatchSink>,
+        );
+        spectator.watch(WatchTarget::Channel(channel.into()));
+        feed_tx.send(tv_frame("abcdefghijkl", INITIAL)).unwrap();
+        until("the first frame", || {
+            !sink.frames.lock().unwrap().is_empty()
+        })
+        .await;
+        let first = sink.frames.lock().unwrap()[0].clone();
+        assert_eq!(first.channel.as_deref(), Some(channel));
+        assert_eq!(first.variant, variant, "on the {channel} channel");
+        spectator.stop();
+    }
+}
+
 #[tokio::test]
 async fn a_tv_feed_adds_its_moves_once_the_delayed_export_lines_up() {
     let after_e4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
@@ -590,6 +627,17 @@ fn reads_the_start_moves_and_result_from_a_game_export() {
     // move list.
     let house = parse_tv_game(&json!({ "variant": "crazyhouse", "moves": "e4" }));
     assert_eq!(house.setup.unwrap().variant, Variant::Crazyhouse);
+    // A game from a position is standard chess from its start, which KChess plays and analyses.
+    let italian = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 0 1";
+    let from_position = parse_tv_game(&json!({
+        "variant": "fromPosition",
+        "initialFen": italian,
+        "moves": "Bc5"
+    }));
+    let setup = from_position.setup.unwrap();
+    assert_eq!(setup.variant, Variant::Standard);
+    assert_eq!(setup.fen, italian);
+    assert_eq!(from_position.san, ["Bc5"]);
     assert!(
         parse_tv_game(&json!({ "variant": "bughouse", "moves": "e4" }))
             .setup
