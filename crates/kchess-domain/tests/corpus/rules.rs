@@ -63,10 +63,15 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
 fn answer(method: &str, args: &[Value]) -> Result<Option<Value>, String> {
     Ok(Some(match method {
         "treeFromPgn" => to_value(tree::tree_from_pgn(text(args, 0, "pgn")?))?,
-        "treeToPgn" => Value::String(tree::tree_to_pgn(
-            arg(args, 0).ok_or_else(|| "root".to_string())?,
-            arg(args, 1).and_then(Value::as_object),
-        )?),
+        "treeToPgn" => {
+            let root = arg(args, 0).ok_or_else(|| "root".to_string())?;
+            let headers = arg(args, 1).and_then(Value::as_object);
+            if headers.is_some_and(|headers| headers.values().any(|value| !value.is_string())) {
+                return Err("header values must be strings".into());
+            }
+            let root = json_tree(root)?;
+            Value::String(tree::tree_to_pgn(&root, headers)?)
+        }
         "replay" => to_value(replay::replay_positions(
             text(args, 0, "fen")?,
             &texts(args, 1, "moves")?,
@@ -216,4 +221,84 @@ fn answer(method: &str, args: &[Value]) -> Result<Option<Value>, String> {
         }
         _ => return Ok(None),
     }))
+}
+
+/// An analysis tree as the suites passed it (`fen`, `children` of `san`, `comments`,
+/// `startingComments`, `nags`), checked in the order the JSON writer read it.
+fn json_tree(root: &Value) -> Result<tree::TreeNode, String> {
+    fn strings(value: Option<&Value>) -> Result<Option<Vec<String>>, String> {
+        match value {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::Array(items)) => items
+                .iter()
+                .map(|c| {
+                    c.as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| "comments must be strings".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(Some),
+            Some(_) => Err("comments must be a list".to_string()),
+        }
+    }
+    fn nags(value: Option<&Value>) -> Result<Option<Vec<u32>>, String> {
+        match value {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::Array(items)) => items
+                .iter()
+                .map(|n| {
+                    n.as_u64()
+                        .and_then(|n| u32::try_from(n).ok())
+                        .ok_or_else(|| "nags must be whole numbers".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(Some),
+            Some(_) => Err("nags must be a list".to_string()),
+        }
+    }
+    let comments = strings(root.get("comments"))?;
+    let fen = root
+        .get("fen")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "root.fen".to_string())?;
+    // Every node checked depth first, as written, before any is built.
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        let children = node
+            .get("children")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "children".to_string())?;
+        for child in children {
+            child
+                .get("san")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "san".to_string())?;
+            strings(child.get("comments"))?;
+            strings(child.get("startingComments"))?;
+            nags(child.get("nags"))?;
+        }
+        stack.extend(children.iter().rev());
+    }
+    fn build(node: &Value) -> tree::TreeNode {
+        let mut built = tree::TreeNode::leaf(
+            String::new(),
+            node["san"].as_str().unwrap_or_default().to_string(),
+            String::new(),
+            0,
+        );
+        built.comments = strings(node.get("comments")).unwrap_or_default();
+        built.starting_comments = strings(node.get("startingComments")).unwrap_or_default();
+        built.nags = nags(node.get("nags")).unwrap_or_default();
+        built.children = node["children"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(build)
+            .collect();
+        built
+    }
+    let mut tree = build(root);
+    tree.fen = fen.to_string();
+    tree.comments = comments;
+    Ok(tree)
 }

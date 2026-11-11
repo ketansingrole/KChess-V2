@@ -13,6 +13,7 @@ mod review;
 mod study;
 mod tree_view;
 
+use crate::game::tree::TreePgn as _;
 use engine::{prefs_lines, stop_analysis};
 use kchess_contracts::calls;
 use tree_view::{TreeView, flow};
@@ -312,7 +313,7 @@ impl AnalysisPage {
             && linked_pgn
                 .as_deref()
                 .and_then(TreeNode::from_pgn)
-                .is_some_and(|tree| tree.to_pgn() != root.to_pgn());
+                .is_some_and(|tree| tree.pgn_text() != root.pgn_text());
         let study = if conflict || linked.is_none() {
             String::new()
         } else {
@@ -571,13 +572,13 @@ impl AnalysisPage {
     }
 
     fn position(&self) -> Option<VariantPosition> {
-        position_of(self.root.variant(), &self.node().fen)
+        position_of(self.root.variant().key(), &self.node().fen)
     }
 
     /// Whether the game on the board is played by standard rules (standard chess or Chess960):
     /// cloud evaluation and the editor are theirs.
     fn standard_rules(&self) -> bool {
-        crate::game::standard_rules(self.root.variant())
+        crate::game::standard_rules(self.root.variant().key())
     }
 
     /// The position shown, as a game to play from: in the game's variant, or (standard chess)
@@ -592,7 +593,7 @@ impl AnalysisPage {
 
     /// The Lichess key of the game's variant when Fairy-Stockfish analyses and reviews it.
     pub(super) fn fairy_variant(&self) -> Option<&'static str> {
-        (!self.standard_rules()).then(|| self.root.variant())
+        (!self.standard_rules()).then(|| self.root.variant().key())
     }
 
     fn context(&self) -> String {
@@ -603,7 +604,7 @@ impl AnalysisPage {
     /// could pass.
     fn threat_position(&self) -> Option<String> {
         self.threat
-            .then(|| threat_fen(self.root.variant(), &self.node().fen))
+            .then(|| threat_fen(self.root.variant().key(), &self.node().fen))
             .flatten()
     }
 
@@ -814,7 +815,7 @@ impl AnalysisPage {
 
     /// The whole tree as PGN (`analysis.pgn()`).
     pub fn pgn(&self) -> String {
-        self.root.to_pgn()
+        self.root.pgn_text()
     }
 
     /// The bar over the board: the study open, or Save as study.
@@ -832,7 +833,7 @@ impl AnalysisPage {
 
     /// Whether the board holds edits its study has not been sent yet.
     pub fn unsaved_study_edits(&self) -> bool {
-        !self.study.is_empty() && self.root.to_pgn() != self.study_pgn
+        !self.study.is_empty() && self.root.pgn_text() != self.study_pgn
     }
 
     pub fn study_error(&self) -> Option<&str> {
@@ -893,7 +894,7 @@ impl AnalysisPage {
         if text.is_empty() {
             return;
         }
-        let setup = json!({ "variant": self.root.variant(), "fen": self.node().fen });
+        let setup = json!({ "variant": self.root.variant().key(), "fen": self.node().fen });
         let typed = self
             .position()
             .and_then(|position| view::typed_uci(&setup, &position, &text));
@@ -945,7 +946,7 @@ impl AnalysisPage {
     fn save_now(&mut self, cx: &mut Context<Self>) -> BoxedSave {
         self.save = None;
         let session = json!({
-            "pgn": self.root.to_pgn(),
+            "pgn": self.root.pgn_text(),
             "path": self.path,
             "orientation": if self.orientation == Color::White { "white" } else { "black" },
             "study": self.study,
@@ -971,7 +972,7 @@ impl AnalysisPage {
     fn redraw(&mut self, cx: &mut Context<Self>) {
         self.sync_voice(cx);
         let node = self.node();
-        let position = position_of(self.root.variant(), &node.fen).unwrap_or_default();
+        let position = position_of(self.root.variant().key(), &node.fen).unwrap_or_default();
         let last_move = now_square(&node.uci, 0..2).zip(now_square(&node.uci, 2..4));
         let mut state = BoardState::of(
             &position,
@@ -1117,7 +1118,7 @@ impl AnalysisPage {
             }
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
         };
-        let setup = json!({ "variant": self.root.variant(), "fen": fen });
+        let setup = json!({ "variant": self.root.variant().key(), "fen": fen });
         // The threat's best move is the opponent's: "best move" waits for the position's own.
         let best = (Self::assistance_allowed(cx)
             && !self.hides_engine()
@@ -1206,7 +1207,7 @@ impl AnalysisPage {
                     .unwrap_or("standard")
                     .into()
             } else {
-                self.root.variant().into()
+                self.root.variant().key().into()
             },
             fen: self.root.fen.clone(),
             ply: Some(depth.min(mainline.len())),
@@ -1228,7 +1229,7 @@ impl AnalysisPage {
                 .as_ref()
                 .and_then(|origin| origin.game_id.clone())
                 .filter(|id| !kchess_domain::chesscom::is_game_id(id)),
-            pgn: Some(self.root.to_pgn()),
+            pgn: Some(self.root.pgn_text()),
             shown: Some(moves_of(&self.path)),
         }
     }
@@ -1241,7 +1242,7 @@ impl AnalysisPage {
 
     /// Copy the whole game, its variations and comments with it.
     pub(crate) fn copy_pgn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let pgn = self.root.to_pgn();
+        let pgn = self.root.pgn_text();
         self.copy(pgn, "PGN", window, cx);
     }
 
@@ -1253,7 +1254,7 @@ impl AnalysisPage {
 
     /// Copy the moves from the start to `path` as PGN, without the side lines.
     fn copy_line(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let pgn = self.root.line_to(path).to_pgn();
+        let pgn = self.root.line_to(path).pgn_text();
         self.copy(pgn, "Line", window, cx);
     }
 
@@ -1421,7 +1422,7 @@ impl AnalysisPage {
             .settings
             .frontend
             .show_opening_name;
-        if !shown || self.root.variant() != "standard" {
+        if !shown || self.root.variant().key() != "standard" {
             return None;
         }
         let moves = moves_of(&self.path);
@@ -1672,7 +1673,7 @@ impl AnalysisPage {
                                         .icon(icon("file-text"))
                                         .on_click(move |_, window, cx| {
                                             let _ = page.update(cx, |page, cx| {
-                                                let pgn = page.root.to_pgn();
+                                                let pgn = page.root.pgn_text();
                                                 page.copy(pgn, "PGN", window, cx)
                                             });
                                         }),
@@ -1729,7 +1730,7 @@ impl AnalysisPage {
                         .into_any_element(),
                     None => {
                         let (fen, opened) = (self.node().fen.clone(), !self.explorer_open);
-                        let variant = self.root.variant().to_string();
+                        let variant = self.root.variant().key().to_string();
                         self.explorer.update(cx, |explorer, cx| {
                             explorer.show(Some(&variant), &fen, None, opened, cx)
                         });

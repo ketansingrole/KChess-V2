@@ -1,6 +1,7 @@
 //! The board kept in a study: saving to its chapter, opening, saving as and closing a study.
 
 use super::*;
+use crate::game::tree::TreePgn as _;
 
 impl AnalysisPage {
     /// Write the board to its study when it changed there (`persistStudy`); the answer, for a
@@ -12,7 +13,7 @@ impl AnalysisPage {
         }
         let library = cx.global::<StudyHandle>().0.clone();
         let name = library.read(cx).study(&self.study)?["name"].clone();
-        let text = self.root.to_pgn();
+        let text = self.root.pgn_text();
         if text == self.study_pgn {
             return None;
         }
@@ -118,7 +119,7 @@ impl AnalysisPage {
         self.study = id.to_string();
         self.chapter = opened["id"].as_str().unwrap_or_default().to_string();
         library.read(cx).track(&self.study, &self.chapter);
-        self.study_pgn = self.root.to_pgn();
+        self.study_pgn = self.root.pgn_text();
         self.study_error = None;
         self.changed(cx);
         Ok(())
@@ -133,7 +134,7 @@ impl AnalysisPage {
         self.persist_study(cx);
         self.navigation += 1;
         let navigation = self.navigation;
-        let text = self.root.to_pgn();
+        let text = self.root.pgn_text();
         let library = cx.global::<StudyHandle>().0.clone();
         let answer = library
             .read(cx)

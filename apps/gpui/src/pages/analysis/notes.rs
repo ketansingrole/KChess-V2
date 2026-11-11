@@ -29,10 +29,14 @@ pub const MOVE_GLYPHS: [(i64, &str, &str); 6] = [
 ];
 
 /// The NAGs with `nag` as the move's annotation (or none); `None` when nothing is left.
-pub(super) fn with_glyph(nags: Option<&[i64]>, nag: Option<i64>) -> Option<Vec<i64>> {
-    let nags: Vec<f64> = nags.unwrap_or_default().iter().map(|&n| n as f64).collect();
+pub(super) fn with_glyph(nags: Option<&[u32]>, nag: Option<i64>) -> Option<Vec<u32>> {
+    let nags: Vec<f64> = nags
+        .unwrap_or_default()
+        .iter()
+        .map(|&n| f64::from(n))
+        .collect();
     let nags = analysis_tree::set_move_glyph(&nags, nag.map(|n| n as f64))?;
-    Some(nags.into_iter().map(|n| n as i64).collect())
+    Some(nags.into_iter().map(|n| n as u32).collect())
 }
 
 /// The notes field and what it was last filled for.
@@ -119,6 +123,7 @@ impl AnalysisPage {
             .flatten()
             .copied()
             .find(|nag| (1..=6).contains(nag))
+            .map(i64::from)
     }
 
     pub(super) fn render_notes(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
@@ -126,7 +131,11 @@ impl AnalysisPage {
         let subject = if self.path.is_empty() {
             "the starting position".to_string()
         } else {
-            format!("{} {}", move_number(node.ply - 1., true), node.san)
+            format!(
+                "{} {}",
+                move_number(node.ply.saturating_sub(1), true),
+                node.san
+            )
         };
         let clock = kchess_domain::position::comment_clock(&self.raw_comment())
             .map(|seconds| format_clock(seconds * 1000.));

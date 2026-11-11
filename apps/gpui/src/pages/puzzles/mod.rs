@@ -142,8 +142,7 @@ pub(crate) struct Theme {
 }
 
 fn theme_groups() -> Vec<ThemeGroup> {
-    serde_json::from_str(include_str!("../../../data/puzzle-themes.json"))
-    .unwrap_or_default()
+    serde_json::from_str(include_str!("../../../data/puzzle-themes.json")).unwrap_or_default()
 }
 
 fn mix() -> Theme {
