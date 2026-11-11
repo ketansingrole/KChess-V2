@@ -22,6 +22,8 @@ pub use kchess_domain::misc::constants::{
     APPEARANCES, Appearance, ENGINE_LEVELS, EngineLevel, NotificationKind, SESSION_KINDS,
     SessionKind, TournamentSystem,
 };
+pub use kchess_domain::online_game::connection::{Lane, OnlineConnection, OnlinePhase};
+pub use kchess_domain::online_game::model::{CHAT_ROOMS, ChatRoom};
 
 /* ── Choices and settings ───────────────────────────────────────────── */
 
@@ -63,10 +65,6 @@ wire_enum!(#[doc = "Reasons Lichess accepts when declining a challenge (it trans
     Casual = "casual",
     Standard = "standard",
     Variant = "variant",
-});
-wire_enum!(#[doc = "Which chat room a message belongs to."] ChatRoom, CHAT_ROOMS {
-    Player = "player",
-    Spectator = "spectator",
 });
 wire_enum!(#[doc = "Which color the challenger requests."] ChallengeColor, CHALLENGE_COLORS {
     Random = "random",
@@ -203,16 +201,6 @@ impl GameResultFilter {
         }
     }
 }
-union!(#[doc = "Which online stream a message arrived on."] Lane { Events = "events", Game = "game", Seek = "seek" });
-union!(#[doc = "Connection state of the online play session."] OnlinePhase {
-    Checking = "checking",
-    Connecting = "connecting",
-    Connected = "connected",
-    Reconnecting = "reconnecting",
-    Disconnected = "disconnected",
-    AuthRequired = "auth-required",
-    Idle = "idle",
-});
 union!(#[doc = "Lifecycle stage of a tournament."] TournamentStatus { Created = "created", Started = "started", Finished = "finished" });
 union!(#[doc = "Which app area a metered action belongs to."] UsageKind {
     Games = "games",
@@ -731,21 +719,6 @@ pub struct CachedProfile {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MessageSent {
     pub sent: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct OnlineConnection {
-    pub session: u64,
-    pub account: String,
-    pub game_id: String,
-    pub lane: Lane,
-    pub phase: OnlinePhase,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    /// The kind of failure that caused this state, so the page offers what can help.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<crate::ErrorKind>,
 }
 
 /// Health of the idle event stream that waits for challenges and pairings.

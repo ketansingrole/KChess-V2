@@ -21,9 +21,9 @@ use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
-use kchess_contracts::types::DeclineReason;
-use kchess_domain::online_game::model::Model;
-use kchess_domain::online_game::server::ConnectionReport;
+use kchess_contracts::ErrorKind;
+use kchess_contracts::types::{DeclineReason, OnlinePhase};
+use kchess_domain::online_game::model::{Model, Offer};
 
 /// The player may touch pieces: the game is on, at its last move.
 pub fn can_play(online: &OnlineState) -> bool {
@@ -86,10 +86,10 @@ fn playing_actions(online: &OnlineState) -> Vec<LiveAction> {
     if berserk {
         actions.push(LiveAction::Berserk);
     }
-    if started && model.takeback_offer == "none" {
+    if started && model.takeback_offer == Offer::None {
         actions.push(LiveAction::Takeback);
     }
-    if started && model.draw_offer == "none" {
+    if started && model.draw_offer == Offer::None {
         actions.push(LiveAction::OfferDraw);
     }
     actions.push(if started {
@@ -740,8 +740,8 @@ impl OnlinePage {
         let claim_in = (playing && model.opponent_gone)
             .then(|| seconds_until(model.claim_at))
             .flatten();
-        let draw = model.draw_offer.as_str();
-        let takeback = model.takeback_offer.as_str();
+        let draw = model.draw_offer;
+        let takeback = model.takeback_offer;
         let mut notices: Vec<AnyElement> = Vec::new();
         if let Some(pending) = self.pending() {
             let mut shown = moves.clone();
@@ -799,7 +799,7 @@ impl OnlinePage {
         };
         if playing {
             match draw {
-                "theirs" => notices.push(
+                Offer::Theirs => notices.push(
                     offer(
                         "handshake",
                         format!("{opponent} offers a draw"),
@@ -811,7 +811,7 @@ impl OnlinePage {
                     )
                     .into_any_element(),
                 ),
-                "mine" => notices.push(
+                Offer::Mine => notices.push(
                     offer(
                         "handshake",
                         "You offered a draw".into(),
@@ -820,10 +820,10 @@ impl OnlinePage {
                     )
                     .into_any_element(),
                 ),
-                _ => {}
+                Offer::None => {}
             }
             match takeback {
-                "theirs" => notices.push(
+                Offer::Theirs => notices.push(
                     offer(
                         "undo-2",
                         format!("{opponent} asks to take back a move"),
@@ -835,7 +835,7 @@ impl OnlinePage {
                     )
                     .into_any_element(),
                 ),
-                "mine" => notices.push(
+                Offer::Mine => notices.push(
                     offer(
                         "undo-2",
                         "Takeback requested".into(),
@@ -844,7 +844,7 @@ impl OnlinePage {
                     )
                     .into_any_element(),
                 ),
-                _ => {}
+                Offer::None => {}
             }
         }
         if let Some(seconds) = claim_in {
@@ -1224,12 +1224,11 @@ fn connection_failure(online: &OnlineState) -> Failure {
         .model()
         .online_connection
         .as_ref()
-        .and_then(|connection| ConnectionReport::read(connection).phase)
-        .unwrap_or_default();
-    match (phase.as_str(), online.failure.as_deref()) {
-        ("checking", _) => Failure::Checking,
-        ("auth-required", _) | (_, Some("login")) => Failure::Login,
-        (_, Some("refused" | "notFound")) => Failure::Refused,
+        .map(|connection| connection.phase);
+    match (phase, online.failure) {
+        (Some(OnlinePhase::Checking), _) => Failure::Checking,
+        (Some(OnlinePhase::AuthRequired), _) | (_, Some(ErrorKind::Login)) => Failure::Login,
+        (_, Some(ErrorKind::Refused | ErrorKind::NotFound)) => Failure::Refused,
         _ => Failure::Interrupted,
     }
 }

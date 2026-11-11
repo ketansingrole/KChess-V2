@@ -3,6 +3,7 @@
 //! including which call to make and how its reply lands. Each transition takes the context the
 //! host read at that moment (`Ctx`).
 
+pub mod connection;
 pub mod events;
 pub mod model;
 pub mod server;
@@ -10,9 +11,12 @@ pub mod server;
 use serde_json::Value;
 
 use crate::js;
-use model::{Call, ChatEntry, Ctx, Left, Model, Op, Outcome, Pending, Reply, Run, View};
+use connection::OnlineConnection;
+use model::{
+    Call, ChatEntry, Ctx, GamePhase, Left, Model, Offer, Op, Outcome, Pending, Reply, Run, View,
+};
 use serde::Deserialize as _;
-use server::{ConnectionReport, ServerEvent};
+use server::ServerEvent;
 
 impl Model {
     /// The live position, the SAN history, the moves this side made, whether it is a
@@ -36,7 +40,7 @@ impl Model {
     }
 
     /// The stream connected, failed or ended.
-    pub fn connection(&mut self, report: &Value, ctx: &Ctx) -> Outcome {
+    pub fn connection(&mut self, report: &OnlineConnection, ctx: &Ctx) -> Outcome {
         let mut run = Run::new(self, ctx);
         run.read_connection(report);
         run.done()
@@ -80,7 +84,7 @@ impl Model {
                 left,
             } => {
                 let current = *generation == run.m.generation;
-                settle_start(run, *correspondence, previous, left, value, current)
+                settle_start(run, *correspondence, *previous, left, value, current)
             }
             Pending::Stop if !ok => run.rethrow(),
             Pending::Stop => run.done(),
@@ -123,18 +127,18 @@ impl Model {
 /// still being asked for a game in progress refuses it: the seek cut that check short, and its
 /// end put the state back to idle while Lichess held the seek.
 fn start(mut run: Run, options: Value) -> Outcome {
-    let phase = run.m.online_phase.clone();
+    let phase = run.m.online_phase;
     // What `checking` (and the core's report of the check) leaves; a report left over once the
     // phase moved on (a finished game, idle) does not hold seeks back.
-    let checking = phase == "disconnected"
+    let checking = phase == GamePhase::Disconnected
         && run
             .m
             .online_connection
             .as_ref()
-            .is_some_and(|connection| ConnectionReport::read(connection).checking());
-    let refused = (phase == "disconnected" && !run.m.online_id.is_empty())
-        || (phase == "playing" && !run.m.correspondence())
-        || phase == "seeking"
+            .is_some_and(OnlineConnection::checking);
+    let refused = (phase == GamePhase::Disconnected && !run.m.online_id.is_empty())
+        || (phase == GamePhase::Playing && !run.m.correspondence())
+        || phase == GamePhase::Seeking
         || checking;
     if refused {
         return run.answer(false);
@@ -143,7 +147,7 @@ fn start(mut run: Run, options: Value) -> Outcome {
     let correspondence = options.get("days").is_some();
     // A real-time seek from a correspondence game being played: the game it leaves, to go back to
     // if the seek fails.
-    let left = (phase == "playing").then(|| Left {
+    let left = (phase == GamePhase::Playing).then(|| Left {
         id: run.m.online_id.clone(),
         account: run.m.online_account.clone(),
     });
@@ -153,7 +157,7 @@ fn start(mut run: Run, options: Value) -> Outcome {
             .get("account")
             .and_then(Value::as_str)
             .map_or_else(|| run.ctx.active_account.clone(), str::to_string);
-        run.m.online_phase = "seeking".into();
+        run.m.online_phase = GamePhase::Seeking;
         run.m.online_status = "Looking for an opponent…".into();
     }
     let pending = Pending::Start {
@@ -168,8 +172,11 @@ fn start(mut run: Run, options: Value) -> Outcome {
 /// Cancel the seek, and leave a game that is not being played.
 fn stop(mut run: Run) -> Outcome {
     run.next_generation();
-    if run.m.online_phase != "disconnected" && run.m.online_phase != "playing" {
-        run.m.online_phase = "idle".into();
+    if !matches!(
+        run.m.online_phase,
+        GamePhase::Disconnected | GamePhase::Playing
+    ) {
+        run.m.online_phase = GamePhase::Idle;
         run.m.online_status.clear();
     }
     run.call(Call::CancelOnline, Pending::Stop)
@@ -201,7 +208,7 @@ fn open(mut run: Run, account: String, id: String) -> Outcome {
 
 /// A move on the board. It is sent once; a failed reply is never retried.
 fn move_uci(run: Run, uci: String) -> Outcome {
-    if run.m.online_id.is_empty() || run.m.online_phase != "playing" {
+    if run.m.online_id.is_empty() || run.m.online_phase != GamePhase::Playing {
         return run.done();
     }
     let id = run.m.online_id.clone();
@@ -243,7 +250,7 @@ fn chat(run: Run, id: String) -> Outcome {
 /// be confirmed", or showed a draw or takeback offer on a finished game.
 fn same_request(run: &Run, generation: f64, id: &str, epoch: f64) -> bool {
     generation == run.m.generation
-        && run.m.online_phase != "finished"
+        && run.m.online_phase != GamePhase::Finished
         && id == run.m.online_id
         && epoch == run.m.state_epoch
 }
@@ -251,7 +258,7 @@ fn same_request(run: &Run, generation: f64, id: &str, epoch: f64) -> bool {
 fn settle_start(
     mut run: Run,
     correspondence: bool,
-    previous: &str,
+    previous: GamePhase,
     left: &Option<Left>,
     value: Option<&Value>,
     current: bool,
@@ -261,14 +268,13 @@ fn settle_start(
         if !current {
             return run.answer(false);
         }
-        if !correspondence && run.m.online_phase == "seeking" {
+        if !correspondence && run.m.online_phase == GamePhase::Seeking {
             run.m.online_phase = match previous {
                 // Back to the correspondence game the seek left, which went on meanwhile.
-                "playing" if left.is_some() => "playing",
-                "finished" => "finished",
-                _ => "idle",
-            }
-            .into();
+                GamePhase::Playing if left.is_some() => GamePhase::Playing,
+                GamePhase::Finished => GamePhase::Finished,
+                _ => GamePhase::Idle,
+            };
             if let Some(left) = left {
                 run.m.online_id = left.id.clone();
                 run.m.online_account = left.account.clone();
@@ -280,7 +286,7 @@ fn settle_start(
     if !current {
         return run.answer(false);
     }
-    if !correspondence && run.m.online_phase == "seeking" {
+    if !correspondence && run.m.online_phase == GamePhase::Seeking {
         run.m.online_status = if js::truthy(value.get("url")) {
             "Challenge sent. Waiting for acceptance…"
         } else {
@@ -301,7 +307,7 @@ fn settle_reconnect(run: Run, value: Option<&Value>, current: bool) -> Outcome {
             run.m.online_id = js::to_string(value.get("id"));
             run.m.online_status = "Reconnecting…".into();
         } else {
-            run.m.online_phase = "idle".into();
+            run.m.online_phase = GamePhase::Idle;
             run.m.online_id.clear();
             run.m.online_status = "No game in progress. You can find another game.".into();
         }
@@ -321,8 +327,8 @@ fn settle_open(mut run: Run, account: &str, id: &str, ok: bool, current: bool) -
         run.m.online_account = account.to_string();
         run.m.online_id = id.to_string();
         run.m.online_status = "Opening game…".into();
-        if run.m.online_phase != "playing" {
-            run.m.online_phase = "disconnected".into();
+        if run.m.online_phase != GamePhase::Playing {
+            run.m.online_phase = GamePhase::Disconnected;
         }
     }
     run.done()
@@ -341,7 +347,7 @@ fn settle_move(mut run: Run, sent: f64, ok: bool, current: bool) -> Outcome {
     if !current {
         return run.done();
     }
-    run.m.online_phase = "disconnected".into();
+    run.m.online_phase = GamePhase::Disconnected;
     run.m.online_status =
         "The move could not be confirmed. Reconnect to check the server position.".into();
     run.clock_pause();
@@ -357,17 +363,16 @@ fn settle_action(mut run: Run, action: &str, ok: bool, current: bool) -> Outcome
     }
     if current {
         match action {
-            "offerDraw" => run.m.draw_offer = "mine".into(),
-            "declineDraw" | "acceptDraw" => run.m.draw_offer = "none".into(),
+            "offerDraw" => run.m.draw_offer = Offer::Mine,
+            "declineDraw" | "acceptDraw" => run.m.draw_offer = Offer::None,
             "takeback" => {
-                run.m.takeback_offer = if run.m.takeback_offer == "theirs" {
-                    "none"
+                run.m.takeback_offer = if run.m.takeback_offer == Offer::Theirs {
+                    Offer::None
                 } else {
-                    "mine"
+                    Offer::Mine
                 }
-                .into()
             }
-            "declineTakeback" => run.m.takeback_offer = "none".into(),
+            "declineTakeback" => run.m.takeback_offer = Offer::None,
             "berserk" => run.m.berserked = true,
             _ => {}
         }
@@ -410,7 +415,7 @@ mod tests {
 
     fn playing() -> Model {
         let mut model = Model::idle();
-        model.online_phase = "playing".into();
+        model.online_phase = GamePhase::Playing;
         model.online_id = "AbCd1234".into();
         model.online_setup = Setup::standard();
         model
@@ -431,18 +436,21 @@ mod tests {
     fn a_seek_waits_for_the_check_for_a_game_in_progress() {
         let mut model = Model::idle();
         model.checking(&ctx(0.0));
-        let phase = model.online_phase.clone();
+        let phase = model.online_phase;
         let refused = model.begin(seek(), &ctx(0.0));
         assert_eq!(refused.ret, Some(false));
         assert!(refused.call.is_none());
         assert_eq!(model.online_phase, phase);
         model.connection(
-            &json!({ "session": 0, "account": "Alice", "gameId": "", "lane": "game", "phase": "idle" }),
+            &serde_json::from_value(json!({
+                "session": 0, "account": "Alice", "gameId": "", "lane": "game", "phase": "idle",
+            }))
+            .unwrap(),
             &ctx(0.0),
         );
         let begun = model.begin(seek(), &ctx(0.0));
         assert!(matches!(begun.call, Some(Call::StartOnline(_))));
-        assert_eq!(model.online_phase, "seeking");
+        assert_eq!(model.online_phase, GamePhase::Seeking);
     }
 
     #[test]
@@ -457,7 +465,7 @@ mod tests {
             &ctx(0.0),
         );
         assert_eq!(late.ret, Some(false));
-        assert_eq!(model.online_phase, "idle");
+        assert_eq!(model.online_phase, GamePhase::Idle);
     }
 
     /// A draw offer answered after the game ended showed "offered a draw" on the finished game.
@@ -465,9 +473,9 @@ mod tests {
     fn a_late_offer_reply_leaves_a_finished_game_alone() {
         let mut model = playing();
         let begun = model.begin(Op::Action("offerDraw".into()), &ctx(10.0));
-        model.online_phase = "finished".into();
+        model.online_phase = GamePhase::Finished;
         model.settle(&begun.pending.unwrap(), Reply::Ok(json!(true)), &ctx(20.0));
-        assert_eq!(model.draw_offer, "none");
+        assert_eq!(model.draw_offer, Offer::None);
     }
 
     /// A move whose reply failed after the game ended turned the result into "The move could not
@@ -476,9 +484,9 @@ mod tests {
     fn a_late_failed_move_leaves_a_finished_game_alone() {
         let mut model = playing();
         let begun = model.begin(Op::Move("e2e4".into()), &ctx(10.0));
-        model.online_phase = "finished".into();
+        model.online_phase = GamePhase::Finished;
         model.settle(&begun.pending.unwrap(), Reply::Failed, &ctx(20.0));
-        assert_eq!(model.online_phase, "finished");
+        assert_eq!(model.online_phase, GamePhase::Finished);
     }
 
     /// A real-time seek from a correspondence game cleared that game from the board; when the
@@ -489,9 +497,9 @@ mod tests {
         model.online_days_per_turn = Some(3.0);
         model.online_account = "Alice".into();
         let begun = model.begin(seek(), &ctx(0.0));
-        assert_eq!(model.online_phase, "seeking");
+        assert_eq!(model.online_phase, GamePhase::Seeking);
         model.settle(&begun.pending.unwrap(), Reply::Failed, &ctx(1.0));
-        assert_eq!(model.online_phase, "playing");
+        assert_eq!(model.online_phase, GamePhase::Playing);
         assert_eq!(model.online_id, "AbCd1234");
         assert_eq!(model.online_account, "Alice");
     }
@@ -525,7 +533,7 @@ mod tests {
             })
         );
         let failed = model.settle(&begun.pending.unwrap(), Reply::Failed, &ctx(20.0));
-        assert_eq!(model.online_phase, "disconnected");
+        assert_eq!(model.online_phase, GamePhase::Disconnected);
         assert_eq!(
             failed.effects,
             vec![
@@ -543,28 +551,26 @@ mod tests {
     #[test]
     fn a_finished_game_says_who_won_and_how_in_one_line() {
         use super::events::outcome_line;
+        use crate::color::Color::{Black, White};
         assert_eq!(
-            outcome_line(Some("white"), "mate", "white"),
+            outcome_line(Some("white"), "mate", White),
             "You won by checkmate"
         );
         assert_eq!(
-            outcome_line(Some("white"), "outoftime", "black"),
+            outcome_line(Some("white"), "outoftime", Black),
             "You lost on time"
         );
+        assert_eq!(outcome_line(None, "stalemate", White), "Draw by stalemate");
+        assert_eq!(outcome_line(None, "draw", Black), "Draw by agreement");
+        assert_eq!(outcome_line(None, "aborted", White), "Game aborted");
         assert_eq!(
-            outcome_line(None, "stalemate", "white"),
-            "Draw by stalemate"
-        );
-        assert_eq!(outcome_line(None, "draw", "black"), "Draw by agreement");
-        assert_eq!(outcome_line(None, "aborted", "white"), "Game aborted");
-        assert_eq!(
-            outcome_line(Some("black"), "unknownFinish", "black"),
+            outcome_line(Some("black"), "unknownFinish", Black),
             "You won"
         );
-        assert_eq!(outcome_line(None, "finished", "white"), "Game over");
+        assert_eq!(outcome_line(None, "finished", White), "Game over");
         // A status that contradicts the result is left out rather than stated.
-        assert_eq!(outcome_line(None, "mate", "white"), "Game over");
-        assert_eq!(outcome_line(Some("white"), "stalemate", "white"), "You won");
+        assert_eq!(outcome_line(None, "mate", White), "Game over");
+        assert_eq!(outcome_line(Some("white"), "stalemate", White), "You won");
     }
 
     /// A 5+5 game: neither clock runs until both sides have moved, as on Lichess. A clock that
@@ -573,7 +579,7 @@ mod tests {
     fn the_clocks_start_once_both_sides_have_moved() {
         let mut model = playing();
         model.online_account = "Alice".into();
-        model.online_color = "white".into();
+        model.online_color = crate::color::Color::White;
         let mut ticking_after = |moves: &str| {
             let result = model.event(
                 &ServerEvent::read(&json!({
@@ -613,7 +619,7 @@ mod tests {
             })),
             &ctx(0.0),
         );
-        assert_eq!(model.online_color, "black");
+        assert_eq!(model.online_color, crate::color::Color::Black);
         assert_eq!(model.online_rating, Some(1580.0));
         assert_eq!(model.online_opponent_rating, Some(1590.0));
     }
@@ -623,7 +629,7 @@ mod tests {
         let mut model = playing();
         model.opponent_id = "bob".into();
         model.online_opponent = "Bob".into();
-        model.online_color = "white".into();
+        model.online_color = crate::color::Color::White;
         model.online_account = "Alice".into();
         model.online_clock_config = Some(ClockConfig {
             initial: 300.0,
@@ -633,7 +639,7 @@ mod tests {
         let mut run = Run::new(&mut model, &context);
         run.finish(Some("black"), "resign", true);
         let result = run.done();
-        assert_eq!(model.online_phase, "finished");
+        assert_eq!(model.online_phase, GamePhase::Finished);
         assert_eq!(model.online_status, "You lost by resignation");
         // Exports and saved games need the result itself, not only the sentence.
         assert_eq!(model.online_result, "0-1");

@@ -4,10 +4,41 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use super::connection::OnlineConnection;
+use crate::color::{self, Color};
 use crate::misc::constants::NotificationKind;
 use crate::replay::replay_setup;
 use crate::rules::INITIAL_FEN;
 pub use crate::variant::Setup;
+
+crate::union!(
+    /// Where the board's online game stands.
+    GamePhase {
+        Idle = "idle",
+        Seeking = "seeking",
+        Playing = "playing",
+        Finished = "finished",
+        /// A game the board cannot reach right now, or Lichess being asked for one.
+        Disconnected = "disconnected",
+    }
+);
+
+crate::union!(
+    /// A draw or takeback offer on the board: none, ours, or the opponent's.
+    Offer {
+        None = "none",
+        Mine = "mine",
+        Theirs = "theirs",
+    }
+);
+
+crate::wire_enum!(
+    /// Which chat room a message belongs to.
+    ChatRoom, CHAT_ROOMS {
+        Player = "player",
+        Spectator = "spectator",
+    }
+);
 
 /// `{ initial, increment }` in seconds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -23,7 +54,8 @@ pub struct FinishedGame {
     pub id: String,
     pub account: String,
     pub opponent: String,
-    pub color: String,
+    #[serde(with = "color::by_name")]
+    pub color: Color,
     pub rated: bool,
     pub setup: Setup,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -39,12 +71,13 @@ pub struct FinishedGame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Model {
-    pub online_phase: String,
+    pub online_phase: GamePhase,
     pub online_id: String,
     pub online_account: String,
-    pub online_connection: Option<Value>,
+    pub online_connection: Option<OnlineConnection>,
     pub online_moves: Vec<String>,
-    pub online_color: String,
+    #[serde(with = "color::by_name")]
+    pub online_color: Color,
     pub online_opponent: String,
     pub online_opponent_rating: Option<f64>,
     /// Our own rating in this game, as Lichess sent it with the players.
@@ -65,8 +98,8 @@ pub struct Model {
     pub opponent_id: String,
     pub opponent_gone: bool,
     pub claim_at: Option<f64>,
-    pub draw_offer: String,
-    pub takeback_offer: String,
+    pub draw_offer: Offer,
+    pub takeback_offer: Offer,
     pub first_move_by: Option<f64>,
     pub berserked: bool,
     pub chat: Vec<ChatEntry>,
@@ -76,19 +109,18 @@ pub struct Model {
     pub generation: f64,
 }
 
-/// A line of a game's chat: who said it, what, and in which room (`player` or `spectator`).
+/// A line of a game's chat: who said it, what, and in which room.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatEntry {
     pub user: Option<String>,
     pub text: Option<String>,
-    #[serde(default)]
-    pub room: String,
+    pub room: ChatRoom,
 }
 
 impl ChatEntry {
     /// Said by the players, not the spectators.
     pub fn players(&self) -> bool {
-        self.room == "player"
+        self.room == ChatRoom::Player
     }
 }
 
@@ -175,7 +207,7 @@ pub enum Pending {
     Start {
         generation: f64,
         correspondence: bool,
-        previous: String,
+        previous: GamePhase,
         #[serde(skip_serializing_if = "Option::is_none")]
         left: Option<Left>,
     },
@@ -369,22 +401,21 @@ impl Model {
     }
 
     /// Whose turn the position reached by the moves is.
-    pub fn turn(&self) -> &'static str {
+    pub fn turn(&self) -> Color {
         // `replayed()` without its SAN and FEN: only the side to move is wanted.
         let setup = &self.online_setup;
         match crate::replay::replay_setup_turn(setup.variant, &setup.fen, &self.online_moves) {
             None => turn_of(&Setup::standard().fen),
             // Without a move the position is the setup as given.
             Some((0, _)) => turn_of(&setup.fen),
-            Some((_, shakmaty::Color::Black)) => "black",
-            Some((_, shakmaty::Color::White)) => "white",
+            Some((_, turn)) => turn,
         }
     }
 
     /// Moves this side has made so far.
     pub fn own_moves(&self) -> usize {
         let white_first = self.online_setup.fen.split(' ').nth(1) != Some("b");
-        let mine = usize::from(self.online_color != "white");
+        let mine = usize::from(self.online_color == Color::Black);
         self.online_moves
             .iter()
             .enumerate()
@@ -403,12 +434,7 @@ impl Model {
         let mut out = Map::new();
         out.insert("target".into(), game.opponent.clone().into());
         out.insert("account".into(), game.account.clone().into());
-        let color = if game.color == "white" {
-            "black"
-        } else {
-            "white"
-        };
-        out.insert("color".into(), color.into());
+        out.insert("color".into(), color::name(!game.color).into());
         out.insert("rated".into(), game.rated.into());
         if let Some(minutes) = game.minutes {
             out.insert("minutes".into(), minutes.into());
@@ -430,12 +456,12 @@ impl Model {
     /// A board with no game.
     pub fn idle() -> Model {
         Model {
-            online_phase: "idle".into(),
+            online_phase: GamePhase::Idle,
             online_id: String::new(),
             online_account: String::new(),
             online_connection: None,
             online_moves: Vec::new(),
-            online_color: "white".into(),
+            online_color: Color::White,
             online_opponent: "Opponent".into(),
             online_opponent_rating: None,
             online_rating: None,
@@ -452,8 +478,8 @@ impl Model {
             opponent_id: String::new(),
             opponent_gone: false,
             claim_at: None,
-            draw_offer: "none".into(),
-            takeback_offer: "none".into(),
+            draw_offer: Offer::None,
+            takeback_offer: Offer::None,
             first_move_by: None,
             berserked: false,
             chat: Vec::new(),
@@ -465,11 +491,11 @@ impl Model {
     }
 }
 
-/// The side to move in a FEN: `black` for `b`, otherwise `white`.
-pub fn turn_of(fen: &str) -> &'static str {
+/// The side to move in a FEN: Black for `b`, otherwise White.
+pub fn turn_of(fen: &str) -> Color {
     if fen.split(' ').nth(1) == Some("b") {
-        "black"
+        Color::Black
     } else {
-        "white"
+        Color::White
     }
 }
