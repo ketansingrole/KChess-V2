@@ -42,7 +42,9 @@ pub fn without_trailing_nulls(mut args: Vec<Value>) -> Vec<Value> {
 /// An argument of `method` as JSON.
 pub fn arg(method: &str, value: impl Serialize) -> Result<Value, CoreError> {
     serde_json::to_value(value).map_err(|cause| {
-        CoreError::new(format!("An argument of {method} could not be written: {cause}"))
+        CoreError::new(format!(
+            "An argument of {method} could not be written: {cause}"
+        ))
     })
 }
 

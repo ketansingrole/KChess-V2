@@ -4457,6 +4457,7 @@ dependencies = [
  "getrandom 0.4.3",
  "kchess-contracts",
  "kchess-core",
+ "kchess-delta",
  "kchess-hack",
  "rustix",
  "serde",

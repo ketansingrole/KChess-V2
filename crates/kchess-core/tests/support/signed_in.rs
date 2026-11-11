@@ -75,8 +75,5 @@ pub async fn open(base: &str) -> Profile {
             games::import_token_ciphertext(c.db, Some("Alice"), "lip_alice")
         })
         .unwrap();
-    Profile {
-        core,
-        _dir: dir,
-    }
+    Profile { core, _dir: dir }
 }

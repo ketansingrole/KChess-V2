@@ -613,7 +613,8 @@ fn the_binary_prints_its_release_and_protocol() {
     assert_eq!(usage.status.code(), Some(2));
 }
 
-/// `suspend` and `close` only answer: the shared core keeps serving every window.
+/// A window that suspends stops only its own work, and no call closes the shared core: neither
+/// lifecycle step is a core method.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_window_cannot_close_the_shared_core() {
     let profile = tempfile::tempdir().expect("profile");
@@ -621,8 +622,11 @@ async fn a_window_cannot_close_the_shared_core() {
     let (gpui, _events) = connect(profile.path(), "gpui").await;
     let info = discovery::read_info(profile.path()).expect("core.json");
     assert!(info.started_at > 1_600_000_000_000, "{}", info.started_at);
-    assert_eq!(gpui.call("suspend", vec![]).await, Ok(Value::Null));
-    assert_eq!(gpui.call("close", vec![]).await, Ok(Value::Null));
+    gpui.suspend();
+    for name in ["suspend", "close"] {
+        let refused = gpui.call(name, vec![]).await.expect_err("not a method");
+        assert!(refused.message.contains("Unknown core method"), "{refused}");
+    }
     gpui.call("library", vec![]).await.expect("still served");
     assert!(!service.is_finished());
     service.abort();

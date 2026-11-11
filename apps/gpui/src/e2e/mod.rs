@@ -668,7 +668,7 @@ pub const SETTINGS_SHOWN: &str = "settings-dialog";
 impl Drop for Harness {
     fn drop(&mut self) {
         // Saves are flushed and the core closed as at quit, before the profile is removed.
-        let quit = self.cx.update(crate::core::quit);
+        let quit = self.cx.update(crate::quit::quit);
         self.cx.foreground_executor().block_test(quit);
         if self.owns_app {
             // `#[gpui_kit::test]` drains the shared scheduler after the test, which runs this

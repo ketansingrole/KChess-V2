@@ -1610,7 +1610,7 @@ pub fn init(cx: &mut App) {
     // An update downloaded and waiting goes in when KChess quits, if the settings say so (or to
     // restart into it): only after every document is saved, since the installer closes the app.
     let quitting = updates.clone();
-    crate::core::after_quit(cx, move |cx| {
+    crate::quit::after_quit(cx, move |cx| {
         let on_quit = cx
             .global::<SettingsHandle>()
             .0
@@ -1853,7 +1853,7 @@ impl Updates {
         let (saved, cancelled) = (cx.entity().downgrade(), cx.entity().downgrade());
         // Every document reaches the profile first, as on any quit: the installer may close
         // the app.
-        crate::core::prepare_quit(
+        crate::quit::prepare_quit(
             cx,
             "Restart without saving",
             move |cx| {
@@ -1876,7 +1876,7 @@ impl Updates {
         if install.package == Package::WindowsInstaller {
             // The installer closes this app: it starts as the app quits, after the core closes.
             self.restart = true;
-            return crate::core::quit_saved(cx);
+            return crate::quit::quit_saved(cx);
         }
         self.staged = None;
         // Off the UI thread: the package manager may wait for a password.

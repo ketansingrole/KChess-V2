@@ -49,6 +49,7 @@ mod profile;
 mod puzzle_board;
 mod puzzle_db;
 mod quick_pick;
+mod quit;
 mod rating_history;
 mod rating_speeds;
 mod remote_image;
@@ -123,7 +124,7 @@ fn main() {
             explain_and_quit(message, cx);
             return;
         }
-        cx.on_app_quit(core::quit).detach();
+        cx.on_app_quit(quit::quit).detach();
         dock_icon::apply(cx);
         startup::start(cx);
         cx.activate(true);

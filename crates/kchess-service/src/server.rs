@@ -12,7 +12,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use kchess_contracts::CoreEvent;
 use kchess_core::connection::ClientInfo;
 use kchess_core::{Config, Core, Host, Level};
-use serde_json::Value;
 use tokio::sync::{Notify, Semaphore, mpsc};
 use tokio::task::JoinHandle;
 
@@ -449,17 +448,6 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         }
     });
 
-    // The connection's own answers; a client too far behind to take one is cut off.
-    let reply = |id: u64| {
-        sender
-            .try_send(Frame::Result {
-                id,
-                value: Some(Value::Null),
-                error: None,
-                kind: None,
-            })
-            .is_ok()
-    };
     let calls: Arc<Mutex<HashMap<u64, JoinHandle<()>>>> = Arc::default();
     // Why the loop ended: a cut-off client's queue is not flushed, and a writer that failed is done.
     let (mut behind, mut written) = (false, false);
@@ -479,21 +467,6 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
             }
         };
         match frame {
-            // A client without a window stops only its own work, not the other clients'.
-            Frame::Call { id, method, .. } if method == "suspend" => {
-                state.core.suspend_connection(connection);
-                if !reply(id) {
-                    behind = true;
-                    break;
-                }
-            }
-            // The shared core closes on its own once idle: no client closes it for everyone.
-            Frame::Call { id, method, .. } if method == "close" => {
-                if !reply(id) {
-                    behind = true;
-                    break;
-                }
-            }
             Frame::Call { id, method, args } => {
                 let (core, sender, running) =
                     (Arc::clone(&state.core), sender.clone(), Arc::clone(&calls));
@@ -553,6 +526,8 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                 }
             }
             Frame::Focus { focused } => state.core.focus(connection, focused),
+            // A client without a window stops only its own work, not the other clients'.
+            Frame::Suspend => state.core.suspend_connection(connection),
             _ => {}
         }
     }

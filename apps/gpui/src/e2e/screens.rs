@@ -116,7 +116,7 @@ fn the_timeline() {
                 .expect("a screenshot")
                 .save(out.join(format!("{name}-{width}.png")))
                 .expect("the screenshot saves");
-            let quit = cx.update(crate::core::quit);
+            let quit = cx.update(crate::quit::quit);
             cx.foreground_executor().block_test(quit);
             crate::profile::TEST_DATA_DIR.set(None);
         }
@@ -163,7 +163,7 @@ fn settings_sidebar() {
             cx.update_window(window, |_, window, cx| window.click("sidebar-toggle", cx))
                 .expect("the window");
             shoot(&mut cx, "-rail");
-            let quit = cx.update(crate::core::quit);
+            let quit = cx.update(crate::quit::quit);
             cx.foreground_executor().block_test(quit);
             crate::profile::TEST_DATA_DIR.set(None);
         }
@@ -195,7 +195,7 @@ fn settings_sections() {
                 .save(out.join(format!("{width}-{}.png", label.to_lowercase())))
                 .expect("the screenshot saves");
         }
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -247,7 +247,7 @@ fn crazyhouse() {
             .expect("a screenshot")
             .save(out.join(format!("{name}.png")))
             .expect("the screenshot saves");
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -303,7 +303,7 @@ fn figurines() {
             .expect("a screenshot")
             .save(out.join(format!("{name}-settings.png")))
             .expect("the screenshot saves");
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -352,7 +352,7 @@ fn computer_variant() {
             .expect("a screenshot")
             .save(out.join(format!("options-{width}.png")))
             .expect("the screenshot saves");
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -416,7 +416,7 @@ fn home() {
                     .expect("a screenshot")
                     .save(out.join(format!("{state}-{name}-{width}{suffix}.png")))
                     .expect("the screenshot saves");
-                let quit = cx.update(crate::core::quit);
+                let quit = cx.update(crate::quit::quit);
                 cx.foreground_executor().block_test(quit);
                 crate::profile::TEST_DATA_DIR.set(None);
             }
@@ -509,7 +509,7 @@ fn players_search() {
                     .expect("a screenshot")
                     .save(out.join(format!("{state}-{name}-{width}.png")))
                     .expect("the screenshot saves");
-                let quit = cx.update(crate::core::quit);
+                let quit = cx.update(crate::quit::quit);
                 cx.foreground_executor().block_test(quit);
                 crate::profile::TEST_DATA_DIR.set(None);
             }
@@ -552,7 +552,7 @@ fn lichess_history_search() {
                     .expect("a screenshot")
                     .save(out.join(format!("{state}-{name}-{width}.png")))
                     .expect("the screenshot saves");
-                let quit = cx.update(crate::core::quit);
+                let quit = cx.update(crate::quit::quit);
                 cx.foreground_executor().block_test(quit);
                 crate::profile::TEST_DATA_DIR.set(None);
             }
@@ -680,7 +680,7 @@ fn account_menu() {
                 .expect("the window");
             settle(&mut cx, window);
             shoot(&mut cx, "-rail");
-            let quit = cx.update(crate::core::quit);
+            let quit = cx.update(crate::quit::quit);
             cx.foreground_executor().block_test(quit);
             crate::profile::TEST_DATA_DIR.set(None);
         }
@@ -711,7 +711,7 @@ fn shortcuts() {
                 .expect("a screenshot")
                 .save(out.join(format!("{name}-{width}.png")))
                 .expect("the screenshot saves");
-            let quit = cx.update(crate::core::quit);
+            let quit = cx.update(crate::quit::quit);
             cx.foreground_executor().block_test(quit);
             crate::profile::TEST_DATA_DIR.set(None);
         }
@@ -753,7 +753,7 @@ fn low_clock() {
             .expect("a screenshot")
             .save(out.join(format!("{name}.png")))
             .expect("the screenshot saves");
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -802,7 +802,7 @@ fn over_the_board() {
                 .save(out.join(format!("{width}-{mode}.png")))
                 .expect("the screenshot saves");
         }
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -836,7 +836,7 @@ fn import_dialog() {
             .expect("a screenshot")
             .save(out.join(format!("{width}.png")))
             .expect("the screenshot saves");
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -881,7 +881,7 @@ fn drop_zone() {
             .expect("a screenshot")
             .save(out.join(format!("{name}.png")))
             .expect("the screenshot saves");
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -1024,7 +1024,7 @@ fn content(out: &Path, appearance: Appearance) {
     })
     .expect("the window");
     shoot(&mut cx, "player", 6);
-    let quit = cx.update(crate::core::quit);
+    let quit = cx.update(crate::quit::quit);
     cx.foreground_executor().block_test(quit);
     crate::profile::TEST_DATA_DIR.set(None);
 }
@@ -1102,7 +1102,7 @@ fn tabs(out: &Path, appearance: Appearance) {
         .expect("the window");
         shoot(&mut cx, format!("settings--{}", slug(label)));
     }
-    let quit = cx.update(crate::core::quit);
+    let quit = cx.update(crate::quit::quit);
     cx.foreground_executor().block_test(quit);
     crate::profile::TEST_DATA_DIR.set(None);
 }
@@ -1140,7 +1140,7 @@ fn capture(out: &Path, width: f32, height: f32, differ: &mut Vec<String>) {
             differ.push(format!("{label} at {width}×{height}"));
         }
     }
-    let quit = cx.update(crate::core::quit);
+    let quit = cx.update(crate::quit::quit);
     cx.foreground_executor().block_test(quit);
     crate::profile::TEST_DATA_DIR.set(None);
 }
@@ -1174,7 +1174,7 @@ fn board_coordinates() {
                     .expect("the screenshot saves");
             }
         }
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }

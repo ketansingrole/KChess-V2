@@ -404,7 +404,9 @@ impl Host for Recording {
                 }
                 HostReply::done()
             }
-            HostRequest::SecretsEncrypt(plain) => HostReply::Value(Value::from(format!("enc:{plain}"))),
+            HostRequest::SecretsEncrypt(plain) => {
+                HostReply::Value(Value::from(format!("enc:{plain}")))
+            }
             request => match self.answers.lock().unwrap().get(request.kind()) {
                 Some(value) => HostReply::Value(value.clone()),
                 None => HostReply::Error(format!("No answer for {}.", request.kind())),

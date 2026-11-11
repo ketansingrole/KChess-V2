@@ -35,15 +35,11 @@ const RULES: [Rule; 2] = [
             // Starting the core (embedded or through the service) and answering its host requests.
             "apps/gpui/src/core.rs",
             "apps/cli/src/core.rs",
-            // The programs and switches the core is configured with.
-            "apps/gpui/src/profile.rs",
             // Log lines are redacted as the core's are.
             "apps/gpui/src/log.rs",
             // The App Store build: no updater, and no Stockfish download in the engine settings.
             "apps/gpui/src/updates.rs",
             "apps/gpui/src/pages/settings/engine.rs",
-            // Voice input's test audio, behind the core's test switch.
-            "apps/gpui/src/voice/capture.rs",
         ],
     },
     Rule {

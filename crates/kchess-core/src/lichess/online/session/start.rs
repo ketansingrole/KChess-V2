@@ -121,9 +121,10 @@ impl OnlineSession {
             return Err(crate::lichess::aborted());
         }
         if connected.is_empty() {
-            return Err(CoreError::new(
-                "Connect your Lichess account in Settings first.",
-            ));
+            return Err(
+                CoreError::new("Connect your Lichess account in Settings first.")
+                    .with_kind(ErrorKind::Login),
+            );
         }
         // An explicit account must match exactly: never play as a different one.
         let account = match options.account.as_deref().filter(|name| !name.is_empty()) {
@@ -135,6 +136,7 @@ impl OnlineSession {
                     CoreError::new(format!(
                         "@{wanted} is not connected. Connect it in Settings."
                     ))
+                    .with_kind(ErrorKind::Login)
                 })?,
             None => connected[0].clone(),
         };

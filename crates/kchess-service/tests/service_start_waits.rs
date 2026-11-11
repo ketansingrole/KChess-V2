@@ -13,8 +13,7 @@ use std::time::Duration;
 
 use kchess_service::protocol::{self, Frame, RefuseReason, read_frame, write_frame};
 use kchess_service::{
-    Capability, ConnectError, Hello, Start, connect_or_start,
-    connect_or_start_within, discovery,
+    Capability, ConnectError, Hello, Start, connect_or_start, connect_or_start_within, discovery,
 };
 
 const SCRIPT: &str = "#!/bin/sh

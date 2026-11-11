@@ -5,6 +5,9 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
+/// The method a reply crosses the service socket as: `host.reply(id, reply)`.
+pub const REPLY_METHOD: &str = "host.reply";
+
 /// Something a client can do for the core when it asks, as it says when it connects.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]

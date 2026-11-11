@@ -42,11 +42,13 @@ pub enum ErrorKind {
     NotFound,
     /// Lichess failed or answered something unexpected.
     Unavailable,
+    /// No engine can run here: choose or install one.
+    NoEngine,
 }
 
 impl ErrorKind {
     /// Every kind, as `parse` reads them.
-    pub const ALL: [ErrorKind; 7] = [
+    pub const ALL: [ErrorKind; 8] = [
         ErrorKind::Offline,
         ErrorKind::TimedOut,
         ErrorKind::RateLimited,
@@ -54,6 +56,7 @@ impl ErrorKind {
         ErrorKind::Refused,
         ErrorKind::NotFound,
         ErrorKind::Unavailable,
+        ErrorKind::NoEngine,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -65,6 +68,7 @@ impl ErrorKind {
             ErrorKind::Refused => "refused",
             ErrorKind::NotFound => "notFound",
             ErrorKind::Unavailable => "unavailable",
+            ErrorKind::NoEngine => "noEngine",
         }
     }
 
@@ -158,7 +162,7 @@ pub type Result<T> = std::result::Result<T, CoreError>;
 mod tests {
     use super::*;
 
-    const KINDS: [ErrorKind; 7] = [
+    const KINDS: [ErrorKind; 8] = [
         ErrorKind::Offline,
         ErrorKind::TimedOut,
         ErrorKind::RateLimited,
@@ -166,6 +170,7 @@ mod tests {
         ErrorKind::Refused,
         ErrorKind::NotFound,
         ErrorKind::Unavailable,
+        ErrorKind::NoEngine,
     ];
 
     #[test]
@@ -188,7 +193,8 @@ mod tests {
                 "login",
                 "refused",
                 "notFound",
-                "unavailable"
+                "unavailable",
+                "noEngine"
             ]
         );
         for kind in KINDS {

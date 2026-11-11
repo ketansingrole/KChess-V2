@@ -85,8 +85,11 @@ async fn the_core_downloads_the_model_and_reports_its_progress() {
         .collect();
     let profile = tempfile::tempdir().expect("profile");
     let events = Arc::new(Events::default());
-    let core = Core::open(with_model(profile.path(), &archive, &digest), events.clone())
-        .expect("core");
+    let core = Core::open(
+        with_model(profile.path(), &archive, &digest),
+        events.clone(),
+    )
+    .expect("core");
 
     let before = core.call("voiceModelStatus", vec![]).await.expect("status");
     assert_eq!(

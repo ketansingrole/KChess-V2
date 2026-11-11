@@ -85,7 +85,7 @@ fn show_palette(prefix: &'static str, cx: &mut App) {
 /// pages own the unsaved work, and on macOS closing it does not quit the app.
 pub fn close_window(window: AnyWindowHandle, cx: &mut App) {
     unless_leaving_a_game("Close", cx, move |cx| {
-        crate::core::prepare_quit(
+        crate::quit::prepare_quit(
             cx,
             "Close without saving",
             move |cx| {
@@ -350,7 +350,7 @@ pub fn init(cx: &mut App) {
     // Everything is saved, with the window still open to say what could not be, before quitting.
     cx.on_action(|_: &Quit, cx| {
         unless_leaving_a_game("Quit", cx, |cx| {
-            crate::core::prepare_quit(cx, "Quit without saving", crate::core::quit_saved, |_| {});
+            crate::quit::prepare_quit(cx, "Quit without saving", crate::quit::quit_saved, |_| {});
         });
     });
     cx.on_action(|_: &Hide, cx| cx.hide());

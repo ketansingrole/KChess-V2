@@ -7,9 +7,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use kchess_service::{
-    Capability, Hello, Start, connect_or_start, discovery, protocol,
-};
+use kchess_service::{Capability, Hello, Start, connect_or_start, discovery, protocol};
 
 fn window(kind: &str) -> Hello {
     Hello {

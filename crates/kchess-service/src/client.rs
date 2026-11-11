@@ -1,4 +1,4 @@
-//! A client of the shared core (`docs/shared-core.md`): the GPUI app, tools and tests. It finds
+//! A connection to the shared core (`docs/shared-core.md`), under a frontend's `CoreHandle`. It finds
 //! the profile's core through `core.json`, proves itself with `core.token`, and otherwise starts
 //! the core from this release's copy of the service binary (`connect_or_start`).
 
@@ -302,6 +302,11 @@ impl Client {
     /// Tells the core this client's window gained or lost focus.
     pub fn focus(&self, focused: bool) {
         let _ = self.sender.try_send(Frame::Focus { focused });
+    }
+
+    /// Tells the core this client has no window open: what it started stops.
+    pub fn suspend(&self) {
+        let _ = self.sender.try_send(Frame::Suspend);
     }
 }
 

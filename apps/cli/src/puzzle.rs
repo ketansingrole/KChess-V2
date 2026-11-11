@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::core::{ClientEvent, CoreClient, CoreEvent};
+use crate::core::{ClientEvent, CoreClient};
 
 /// A puzzle being solved, on the board as the Puzzles page plays it
 /// (`kchess_games::puzzle::OnBoard`): the rules decide whether a move is the solution's (any
@@ -153,11 +153,11 @@ pub async fn interactive(
     loop {
         tokio::select! {
             _ = &mut interrupted => break,
-            Some(event) = events.recv() => match event {
-                ClientEvent::Event(CoreEvent::HostRequest(request)) => core.answer(&request).await,
-                ClientEvent::Closed => break,
-                _ => {}
-            },
+            Some(event) = events.recv() => {
+                if event == ClientEvent::Closed {
+                    break;
+                }
+            }
             line = lines.next_line() => {
                 let Ok(Some(line)) = line else { break };
                 let shown = match line.trim() {

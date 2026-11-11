@@ -405,7 +405,7 @@ impl PuzzlesPage {
         // A puzzle left unfinished at quit (after a wrong move, say) is logged as another puzzle
         // replacing it would log it.
         let weak = cx.entity().downgrade();
-        crate::core::on_quit(cx, move |cx| {
+        crate::quit::on_quit(cx, move |cx| {
             let page = weak.upgrade()?;
             page.update(cx, |page, cx| {
                 let record = page
@@ -417,7 +417,7 @@ impl PuzzlesPage {
                     .request(calls::RecordPuzzleAttempt { attempt: record });
                 Some(
                     Box::pin(async move { save.await.map(|_| ()).map_err(|cause| cause.message) })
-                        as crate::core::BoxedSave,
+                        as crate::quit::BoxedSave,
                 )
             })
         });

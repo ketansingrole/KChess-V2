@@ -10,7 +10,8 @@ use kchess_contracts::Level;
 use kchess_contracts::calls;
 use serde_json::{Value, json};
 
-use crate::core::{Answer, AppCore, BoxedSave, Reads};
+use crate::core::{Answer, AppCore, Reads};
+use crate::quit::BoxedSave;
 
 enum Write {
     Game(Value),
@@ -19,7 +20,7 @@ enum Write {
     Session(String, Value),
     /// Done once every write before it was answered (with `true`, after those refused were tried
     /// again): with why one still failed, if any did.
-    Flushed(oneshot::Sender<crate::core::Saved>, bool),
+    Flushed(oneshot::Sender<crate::quit::Saved>, bool),
 }
 
 impl Write {
@@ -63,7 +64,7 @@ pub fn init(library: &Value, cx: &mut App) {
         reads: Reads::default(),
     });
     write_in_order(entity.downgrade(), queue, cx);
-    crate::core::on_quit(cx, {
+    crate::quit::on_quit(cx, {
         let entity = entity.clone();
         move |cx| Some(entity.read(cx).flushed())
     });

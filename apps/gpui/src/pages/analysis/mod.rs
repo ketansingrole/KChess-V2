@@ -47,7 +47,7 @@ use shakmaty::{Color, Position as _, Square};
 
 use crate::assets::icon;
 use crate::board::{Arrow, Badge, BoardEvent, BoardState, ChessBoard, Circle};
-use crate::core::{AppCore, BoxedSave, ClientEvent, CoreEvent};
+use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::engine_view::EVAL_BAR;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
 use crate::export::Exporter;
@@ -61,6 +61,7 @@ use crate::online::OnlineHandle;
 use crate::pages::study_bar::{STUDY_BAR, StudyBar};
 use crate::part::Part;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, panel_style};
+use crate::quit::BoxedSave;
 use crate::reviews::ReviewHandle;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::studies::StudyHandle;
@@ -524,7 +525,7 @@ impl AnalysisPage {
         };
         page.redraw(cx);
         let weak = cx.entity().downgrade();
-        crate::core::on_quit(cx, move |cx| {
+        crate::quit::on_quit(cx, move |cx| {
             let page = weak.upgrade()?;
             Some(page.update(cx, |page, cx| {
                 let study = page.persist_study(cx);

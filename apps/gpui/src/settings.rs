@@ -12,7 +12,8 @@ use kchess_contracts::types::{AppTheme, CustomThemeReport, Settings};
 use kchess_contracts::{CoreError, Level};
 use serde_json::Value;
 
-use crate::core::{Answer, AppCore, BoxedSave, ClientEvent, CoreEvent, Reads};
+use crate::core::{Answer, AppCore, ClientEvent, CoreEvent, Reads};
+use crate::quit::BoxedSave;
 
 /// How long edits settle before they are saved.
 const SAVE_DELAY: Duration = Duration::from_millis(400);
@@ -43,7 +44,7 @@ enum Write {
     /// The settings shown, and those they were edited from: only what changed is written.
     Save(Box<(Settings, Settings)>),
     /// Done once every save before it was answered: with why the last of them failed, if it did.
-    Flushed(oneshot::Sender<crate::core::Saved>),
+    Flushed(oneshot::Sender<crate::quit::Saved>),
 }
 
 /// Sent when the settings or themes change.
@@ -96,7 +97,7 @@ pub fn init(cx: &mut App) {
         reads: Reads::default(),
     });
     write_in_order(entity.downgrade(), queue, cx);
-    crate::core::on_quit(cx, {
+    crate::quit::on_quit(cx, {
         let entity = entity.clone();
         move |cx| Some(entity.update(cx, |settings, _| settings.flushed()))
     });

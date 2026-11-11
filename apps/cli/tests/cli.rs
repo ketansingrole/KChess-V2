@@ -118,6 +118,42 @@ fn a_local_game_is_played_through_stdin_and_kept_in_the_library() {
     assert!(lines(&status)[0].get("engine").is_some());
 }
 
+/// 2026-11-11: `--data-dir` alone (no `KCHESS_USER_DATA_DIR`) gave the scratch profile the
+/// person's own downloaded engine in `~/.kchess/engines`, which installing or deleting it there
+/// then replaced. A scratch profile keeps its own, as the app's do.
+#[test]
+fn a_scratch_profile_keeps_its_own_engine() {
+    let home = tempfile::tempdir().expect("home");
+    let profile = tempfile::tempdir().expect("profile");
+    let output = kchess_cli()
+        .args(["--embedded", "--no-credentials", "--data-dir"])
+        .arg(profile.path())
+        .arg("status")
+        .env_remove("KCHESS_USER_DATA_DIR")
+        .env_remove("KCHESS_SERVICE_BINARY")
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .output()
+        .expect("kchess-cli finishes");
+    assert!(output.status.success(), "{output:?}");
+    let status = &lines(&output)[0];
+    let managed = std::path::PathBuf::from(
+        status["engine"]["managed"]["path"]
+            .as_str()
+            .expect("the managed engine's path"),
+    );
+    assert!(
+        managed.starts_with(profile.path()),
+        "{} is outside {}",
+        managed.display(),
+        profile.path().display()
+    );
+    assert!(
+        !home.path().join(".kchess").exists(),
+        "the person's engines were touched"
+    );
+}
+
 /// Moves are typed in SAN as readily as in UCI, read in the position on the board.
 #[test]
 fn moves_are_typed_in_san_or_uci() {

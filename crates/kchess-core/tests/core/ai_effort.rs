@@ -6,9 +6,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::fixtures::{Recording, Reply, default_answers, http_client, serve};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use crate::fixtures::{Recording, Reply, default_answers, http_client, serve};
 use kchess_core::{Config, Core, TestSwitches};
 use serde_json::{Value, json};
 use tokio::sync::watch;

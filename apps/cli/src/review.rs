@@ -158,7 +158,6 @@ pub async fn run(
             event = events.recv() => match event {
                 None => return Err("The core closed.".into()),
                 Some(ClientEvent::Closed) => return Err("The core closed.".into()),
-                Some(ClientEvent::Event(CoreEvent::HostRequest(request))) => core.answer(&request).await,
                 Some(ClientEvent::Event(CoreEvent::ReviewUpdate(update))) if ours(&update["review"]) => {
                     stored = update["review"].clone();
                 }

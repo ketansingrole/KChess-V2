@@ -190,8 +190,8 @@ fn a_call_sends_its_arguments_in_order_without_trailing_ones_left_out() {
 #[test]
 fn an_argument_that_cannot_be_written_is_an_error_naming_its_method() {
     let keyed_by_pairs: std::collections::HashMap<(u8, u8), u8> = [((1, 2), 3)].into();
-    let refused = calls::arg("saveSettings", keyed_by_pairs)
-        .expect_err("a map keyed by pairs is not JSON");
+    let refused =
+        calls::arg("saveSettings", keyed_by_pairs).expect_err("a map keyed by pairs is not JSON");
     assert!(
         refused
             .message

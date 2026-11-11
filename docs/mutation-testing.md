@@ -97,7 +97,7 @@ These stay in the reports on purpose; each is listed with the reason.
 - **The service's slow-reader cleanup** (`server.rs`, `handle`'s last `if`): whether a writer
   stuck on a client that stopped reading is cancelled now or left until the client reads again,
   the client receives the same frames and the same end.
-- **Per-window `suspend`** (`server.rs`): the difference from the core-wide `suspend` shows
+- **Per-window `suspend`** (`server.rs`): the difference from stopping every window's work shows
   only in an engine search or a puzzle download of another window.
 - **The CLI's own list of saved games** (`play.rs`, `written`): it only feeds the Game history
   rules within one run, which find an entry by its id with or without the duplicates a mutant

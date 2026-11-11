@@ -12,7 +12,8 @@ use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
 use kchess_contracts::Level;
 use serde_json::{Map, Value, json};
 
-use crate::core::{Answer, AppCore, BoxedSave, Reads};
+use crate::core::{Answer, AppCore, Reads};
+use crate::quit::BoxedSave;
 
 /// Studies a library may hold.
 pub const MAX_STUDIES: usize = 50;
@@ -26,7 +27,7 @@ enum Write {
     },
     /// Done once every command before it was answered: with the chapters whose last content save
     /// failed, if any did.
-    Flushed(oneshot::Sender<crate::core::Saved>),
+    Flushed(oneshot::Sender<crate::quit::Saved>),
     /// The board now shows this chapter with these moves (`None`: the library has no such
     /// chapter). Queued like the saves, so a save sent before it keeps the base it was made on.
     Track {
@@ -71,7 +72,7 @@ pub fn init(library: &Value, cx: &mut App) {
         reads: Reads::default(),
     });
     write_in_order(entity.downgrade(), queue, cx);
-    crate::core::on_quit(cx, {
+    crate::quit::on_quit(cx, {
         let entity = entity.clone();
         move |cx| Some(entity.read(cx).flushed())
     });

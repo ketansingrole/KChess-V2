@@ -121,8 +121,11 @@ The goal is to keep **exactly one core per profile** and let **any number of cli
     reply.
   - `event`: `{ name, payload }`, the `CoreEvents` names unchanged, plus the new change events
     below.
-  - `host:request` / `host:reply`: the core's existing capability round trip, addressed to one
-    connection.
+  - `host:request` / `host:reply`: the core's capability round trip (`HostAsk` and `HostReply`
+    in `kchess-contracts/src/host.rs`), addressed to one connection.
+  - `focus`: `{ focused }`, the client's window gained or lost focus.
+  - `suspend`: the client has no window open; what it started stops, and every other client's
+    work carries on. No client closes the shared core: it closes once idle.
 - Backpressure: each connection has a bounded outgoing queue. High-rate events (`engine:analysis`,
   `watch:frame`, `puzzledb:progress`) are coalesced per connection (the latest per session wins)
   when a client falls behind; replies and every other event are never dropped. A client that stays
@@ -290,11 +293,16 @@ older one; nothing tries to make two versions work together.
 
 ## Clients
 
-- **GPUI.** `CoreBridge` (`apps/gpui/src/core.rs`) keeps its shape, `call(method, args)` returning
-  JSON and events on a channel, with a socket client underneath instead of an embedded `Core`. Views
-  do not change. `answer_host` stays and answers routed `host:request`s.
-- **CLI** (`apps/cli`), **and MCP (later).** Plain socket clients with no window capabilities. If no
-  service runs, they start one; it stops 10 seconds after they disconnect.
+- Both frontends hold their core through `kchess_service::CoreHandle` (`handle.rs`): one shared
+  or embedded backend, one event channel, typed calls, host replies, focus, `suspend` and `close`
+  with one meaning each, and, for the app, a reconnect after the service stops. Both configure it
+  through `kchess_service::Layout` (`layout.rs`): the profile, the engines, the speech helper,
+  the service binary and the test switches, read once as the frontend starts.
+- **GPUI.** `CoreBridge` (`apps/gpui/src/core.rs`) runs the handle on its runtime; views do not
+  change. `answer_host` answers routed `host:request`s on the UI thread.
+- **CLI** (`apps/cli`), **and MCP (later).** Socket clients with no window capabilities, whose host
+  requests the handle answers as they arrive. If no service runs, they start one; it stops 10
+  seconds after they disconnect.
 - **Embedded mode for tests.** `KCHESS_CORE_MODE=embedded` keeps an in-process core for tests that
   need no second process (the app's end-to-end tests).
 

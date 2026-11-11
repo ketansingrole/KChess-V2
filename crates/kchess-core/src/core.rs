@@ -40,9 +40,6 @@ use crate::store::Database;
 use crate::usage::UsageBatch;
 use crate::voice::recognizer::VoiceRecognizer;
 
-/// The method name a host reply crosses the service socket under (`Core::host_reply`).
-pub const HOST_REPLY: &str = "host.reply";
-
 /// A managed engine change that replaces or removes the downloaded executable.
 #[derive(Clone, Copy)]
 pub(crate) enum Mutation {
@@ -249,7 +246,7 @@ impl Core {
         self.data_dir.clone()
     }
 
-    /// Run one method of `CoreApi`, or `HOST_REPLY` (a host's answer to a capability request).
+    /// Run one method of `CoreApi`, or `host.reply` (a host's answer to a capability request).
     /// Unknown methods and malformed arguments are errors.
     pub async fn call(&self, method: &str, args: Vec<Value>) -> Result<Value> {
         self.call_as(APP, method, args).await
@@ -342,7 +339,7 @@ impl Core {
 
     async fn call_unscoped(&self, method: &str, args: Vec<Value>) -> Result<Value> {
         // How a socket client's `host_reply` crosses (`kchess-service`).
-        if method == HOST_REPLY {
+        if method == kchess_contracts::host::REPLY_METHOD {
             let id = args
                 .first()
                 .and_then(Value::as_u64)

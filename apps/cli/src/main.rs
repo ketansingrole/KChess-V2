@@ -256,9 +256,8 @@ async fn arguments(args: &[String]) -> Result<Vec<Value>, String> {
     }
 }
 
-/// Until Ctrl-C (or the core closing), answering host requests and handing other events to `on`.
+/// Until Ctrl-C (or the core closing), handing each event to `on`.
 async fn until_interrupted(
-    core: &CoreClient,
     events: &mut tokio::sync::mpsc::UnboundedReceiver<ClientEvent>,
     mut on: impl FnMut(&CoreEvent),
 ) {
@@ -270,7 +269,6 @@ async fn until_interrupted(
             event = events.recv() => match event {
                 None => return,
                 Some(ClientEvent::Closed) => return,
-                Some(ClientEvent::Event(CoreEvent::HostRequest(request))) => core.answer(&request).await,
                 Some(ClientEvent::Event(event)) => on(&event),
                 Some(_) => {}
             },
@@ -359,19 +357,7 @@ async fn with_core(
             }
             Command::Login => {
                 // The sign-in page is opened (or printed) while the core waits for it.
-                let login = core.request(calls::ConnectLichess { look: None });
-                tokio::pin!(login);
-                let answer = loop {
-                    tokio::select! {
-                        answer = &mut login => break answer?,
-                        Some(event) = events.recv() => {
-                            if let ClientEvent::Event(CoreEvent::HostRequest(request)) = event {
-                                core.answer(&request).await;
-                            }
-                        }
-                    }
-                };
-                print(&answer);
+                print(&core.request(calls::ConnectLichess { look: None }).await?);
             }
             Command::Call => {
                 let method = rest.first().map(String::as_str).unwrap_or_default();
@@ -384,26 +370,13 @@ async fn with_core(
                 if assists {
                     core.request(calls::ResumeOnline {}).await?;
                 }
-                // A method may ask the host meanwhile (a sign-in opens its page), as login does.
-                let call = core.call(method, parameters);
-                tokio::pin!(call);
-                let answer = loop {
-                    tokio::select! {
-                        answer = &mut call => break answer?,
-                        Some(event) = events.recv() => {
-                            if let ClientEvent::Event(CoreEvent::HostRequest(request)) = event {
-                                core.answer(&request).await;
-                            }
-                        }
-                    }
-                };
-                print(&answer);
+                print(&core.call(method, parameters).await?);
             }
             Command::Analyze => {
                 let request = analysis_request(rest)?;
                 core.request(calls::ResumeOnline {}).await?;
                 core.request(calls::StartAnalysis { request }).await?;
-                until_interrupted(&core, &mut events, |event| {
+                until_interrupted(&mut events, |event| {
                     if let CoreEvent::Analysis(update) = event {
                         print(update);
                     }
@@ -453,7 +426,7 @@ async fn with_core(
                         .await?
                     }
                 };
-                let watched = watch_frames(&core, &mut events).await;
+                let watched = watch_frames(&mut events).await;
                 let _ = core.request(calls::StopWatching { session: None }).await;
                 watched?;
             }
@@ -567,7 +540,6 @@ fn live_round(tour: &Value) -> Option<String> {
 /// Print each frame of the watched game, or each update of the broadcast round, as a JSON line
 /// until Ctrl-C; an error, or the round's end, ends it.
 async fn watch_frames(
-    core: &CoreClient,
     events: &mut tokio::sync::mpsc::UnboundedReceiver<ClientEvent>,
 ) -> Result<(), String> {
     let interrupted = tokio::signal::ctrl_c();
@@ -578,7 +550,6 @@ async fn watch_frames(
             event = events.recv() => match event {
                 None => return Err("The core closed.".into()),
                 Some(ClientEvent::Closed) => return Err("The core closed.".into()),
-                Some(ClientEvent::Event(CoreEvent::HostRequest(request))) => core.answer(&request).await,
                 Some(ClientEvent::Event(CoreEvent::WatchFrame(frame))) => print(&frame),
                 Some(ClientEvent::Event(CoreEvent::WatchBroadcast(update))) => {
                     if let Some(error) = update["error"].as_str() {
@@ -807,23 +778,6 @@ fn explore_request(words: &[String]) -> Result<(&'static str, String, Option<Str
     Ok((kind, fen, None))
 }
 
-/// The core's advice names the app's Settings; here the same fix is a command or an option.
-fn for_the_cli(cause: &str) -> String {
-    const LOGIN: &str = "with `kchess-cli login`";
-    [
-        ("Reconnect in Settings", format!("Reconnect {LOGIN}")),
-        ("Reconnect it in Settings", format!("Reconnect it {LOGIN}")),
-        ("Connect it in Settings", format!("Connect it {LOGIN}")),
-        ("account in Settings", format!("account {LOGIN}")),
-        (
-            "Choose an engine in Settings",
-            "Pass --engine <path>".to_string(),
-        ),
-    ]
-    .iter()
-    .fold(cause.to_string(), |text, (app, cli)| text.replace(app, cli))
-}
-
 /// The stack of every thread the CLI runs the core on: what macOS and Linux give a main thread.
 /// Windows gives its main thread 1 MB, which an embedded sign-in overflows in a debug build.
 const STACK: usize = 8 * 1024 * 1024;
@@ -849,7 +803,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(cause) => {
-            eprintln!("[cli] Command failed: {}", for_the_cli(&cause));
+            eprintln!("[cli] Command failed: {cause}");
             ExitCode::FAILURE
         }
     }
@@ -982,23 +936,6 @@ mod tests {
         ))
         .expect("a King of the Hill position");
         assert_eq!(hill["legal"], serde_json::json!([]), "{hill}");
-    }
-
-    #[test]
-    fn settings_advice_names_the_cli_fix() {
-        assert_eq!(
-            for_the_cli("Connect a Lichess account in Settings to use the opening explorer."),
-            "Connect a Lichess account with `kchess-cli login` to use the opening explorer."
-        );
-        assert_eq!(
-            for_the_cli("@ann's Lichess login is unavailable. Reconnect it in Settings."),
-            "@ann's Lichess login is unavailable. Reconnect it with `kchess-cli login`."
-        );
-        assert_eq!(
-            for_the_cli("Stockfish could not be found. Choose an engine in Settings."),
-            "Stockfish could not be found. Pass --engine <path>."
-        );
-        assert_eq!(for_the_cli("Move 2 is not legal."), "Move 2 is not legal.");
     }
 
     fn strings(values: &[&str]) -> Vec<String> {

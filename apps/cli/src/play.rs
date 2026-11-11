@@ -4,7 +4,6 @@
 //! core's library as the app saves them, so either can carry the game on.
 
 use kchess_contracts::calls;
-use std::future::Future;
 use std::time::Instant;
 
 use kchess_games::Outcome;
@@ -15,26 +14,7 @@ use serde_json::{Value, json};
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::core::{ClientEvent, CoreClient, CoreEvent};
-
-/// Awaits `work` while answering the core's host requests; other events are dropped.
-async fn answering<T>(
-    core: &CoreClient,
-    events: &mut UnboundedReceiver<ClientEvent>,
-    work: impl Future<Output = T>,
-) -> T {
-    tokio::pin!(work);
-    loop {
-        tokio::select! {
-            done = &mut work => return done,
-            Some(event) = events.recv() => {
-                if let ClientEvent::Event(CoreEvent::HostRequest(request)) = event {
-                    core.answer(&request).await;
-                }
-            }
-        }
-    }
-}
+use crate::core::{ClientEvent, CoreClient};
 
 enum Game {
     Computer(ComputerGame),
@@ -307,7 +287,7 @@ impl Session<'_> {
     }
 
     /// The engine's move, when it is its turn; repeated while the rules ask for another search.
-    async fn computer_turn(&mut self, events: &mut UnboundedReceiver<ClientEvent>) {
+    async fn computer_turn(&mut self) {
         loop {
             let host = self.host();
             let Game::Computer(game) = &mut self.game else {
@@ -326,7 +306,7 @@ impl Session<'_> {
                 level: json!(request.level),
                 options: Some(request.options.clone()),
             });
-            let reply = answering(self.core, events, search).await;
+            let reply = search.await;
             let host = self.host();
             let Game::Computer(game) = &mut self.game else {
                 return;
@@ -618,13 +598,11 @@ impl Session<'_> {
                         self.show();
                     }
                 }
-                Some(event) = events.recv() => match event {
-                    ClientEvent::Event(CoreEvent::HostRequest(request)) => {
-                        self.core.answer(&request).await;
+                Some(event) = events.recv() => {
+                    if event == ClientEvent::Closed {
+                        break;
                     }
-                    ClientEvent::Closed => break,
-                    _ => {}
-                },
+                }
                 line = lines.next_line() => {
                     let Ok(Some(line)) = line else { break };
                     match self.typed(line.trim()).await {
@@ -632,7 +610,7 @@ impl Session<'_> {
                         Typed::Skip => continue,
                         Typed::Refresh => {}
                     }
-                    self.computer_turn(events).await;
+                    self.computer_turn().await;
                     self.persist().await;
                     self.show();
                 }
@@ -689,7 +667,7 @@ pub async fn interactive(
         session.choose_setup(variant, fen.as_deref()).await?;
     }
     session.show();
-    session.computer_turn(events).await;
+    session.computer_turn().await;
 
     session.play(events).await;
     if let Game::Computer(_) = session.game {

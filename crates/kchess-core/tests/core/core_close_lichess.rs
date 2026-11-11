@@ -1,7 +1,6 @@
 //! Closing the core while a Lichess request waits on an origin that never answers: the request
 //! ends, `close` returns, and later calls fail with `The KChess core is closed.`.
 
-
 use kchess_contracts::CoreEvent;
 use std::net::TcpListener;
 use std::sync::Arc;

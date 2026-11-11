@@ -166,11 +166,7 @@ impl Capabilities {
             let credentials = Arc::clone(credentials);
             return blocking(move || Ok(credentials.available())).await;
         }
-        Ok(self
-            .request(HostRequest::SecretsAvailable)
-            .await?
-            .as_bool()
-            == Some(true))
+        Ok(self.request(HostRequest::SecretsAvailable).await?.as_bool() == Some(true))
     }
 
     /// Seal a token: with the profile's credentials, or `SecretStore.encrypt(plain)`.

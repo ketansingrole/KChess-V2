@@ -286,7 +286,7 @@ impl LocalPage {
         );
         // The chess clock's session ends with the app: it is saved to history as it stands.
         let page = cx.entity().downgrade();
-        crate::core::on_quit(cx, move |cx| {
+        crate::quit::on_quit(cx, move |cx| {
             let page = page.upgrade()?;
             Some(page.update(cx, |page, cx| page.end_clock(cx)))
         });
@@ -506,7 +506,7 @@ impl LocalPage {
     }
 
     /// The app quits: the chess clock stops and its session is saved to history as it ended.
-    fn end_clock(&mut self, cx: &mut Context<Self>) -> crate::core::BoxedSave {
+    fn end_clock(&mut self, cx: &mut Context<Self>) -> crate::quit::BoxedSave {
         let now = self.now();
         self.clock.pause(now);
         let (source, has_play) = (self.clock_snapshot(), self.clock.has_play());

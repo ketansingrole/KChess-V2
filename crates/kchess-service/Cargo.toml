@@ -13,6 +13,8 @@ path = "src/bin/kchess-service.rs"
 [dependencies]
 kchess-contracts = { path = "../kchess-contracts" }
 kchess-core = { path = "../kchess-core" }
+# The names packages install programs under.
+kchess-delta = { path = "../kchess-delta" }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "process", "net", "signal"] }

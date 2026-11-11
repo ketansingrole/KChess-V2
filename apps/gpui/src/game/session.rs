@@ -116,7 +116,7 @@ impl<V: Resumes> SessionSaver<V> {
         })
         .detach();
         let page = cx.entity().downgrade();
-        crate::core::on_quit(cx, move |cx| {
+        crate::quit::on_quit(cx, move |cx| {
             let page = page.upgrade()?;
             page.update(cx, |page, cx| Self::write_now(page, cx));
             Some(cx.global::<PlayedHandle>().0.read(cx).flushed())

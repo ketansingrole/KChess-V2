@@ -84,6 +84,8 @@ pub enum Frame {
     Event { name: String, payload: Value },
     /// The client's window gained or lost focus.
     Focus { focused: bool },
+    /// The client has no window open: what it started stops, and the core serves on.
+    Suspend,
 }
 
 /// The KChess release this build belongs to: the workspace version, or `KCHESS_PACKAGE_VERSION`

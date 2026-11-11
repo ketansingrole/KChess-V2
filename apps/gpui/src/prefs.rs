@@ -14,7 +14,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
-use crate::core::{AppCore, BoxedSave, Saved};
+use crate::core::AppCore;
+use crate::quit::{BoxedSave, Saved};
 
 #[derive(Default)]
 pub struct ViewPreferences {
@@ -222,7 +223,7 @@ pub fn init(cx: &mut App) {
         sending,
         ..ViewPreferences::default()
     });
-    crate::core::on_quit(cx, |cx| {
+    crate::quit::on_quit(cx, |cx| {
         cx.try_global::<ViewPreferences>()
             .map(ViewPreferences::flushed)
     });

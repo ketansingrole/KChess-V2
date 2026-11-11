@@ -1,14 +1,15 @@
-//! The profile's core, as the CLI reaches it: the shared core service the app also uses (started
-//! when none runs), or, with `--embedded`, a core in this process. Either way calls go by
-//! `CoreApi` name and events arrive on one channel; the core's host requests are answered here.
+//! The profile's core, as the CLI reaches it (`kchess_service::CoreHandle`): the shared core
+//! service the app also uses (started when none runs), or, with `--embedded`, a core in this
+//! process. Its host requests are answered here as they arrive (`answer`), and its errors are
+//! told with the command line's own fix (`told`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use kchess_contracts::Level;
 use kchess_contracts::calls::CoreCall;
-use kchess_core::{Config, Core, Host};
-use serde_json::{Value, json};
+use kchess_contracts::{Capability, CoreError, ErrorKind, HostReply, HostRequest, Level};
+use kchess_service::{CoreHandle, Hello, Layout, Mode};
+use serde_json::Value;
 use tokio::sync::mpsc;
 
 pub use kchess_contracts::CoreEvent;
@@ -28,117 +29,19 @@ pub struct Options {
     pub embedded: bool,
 }
 
-enum Backend {
-    Embedded(Arc<Core>),
-    Service(kchess_service::Client),
-}
-
 pub struct CoreClient {
-    backend: Backend,
-    browser: Browser,
-}
-
-/// Diagnostics go to stderr, so JSON on stdout stays usable in pipelines.
-struct StderrHost {
-    events: mpsc::UnboundedSender<ClientEvent>,
-}
-
-impl Host for StderrHost {
-    fn log(&self, level: Level, scope: &str, message: &str) {
-        if matches!(level, Level::Warn | Level::Error) {
-            eprintln!("[{scope}] {}", kchess_core::redact::redact(message));
-        }
-    }
-
-    fn emit(&self, event: CoreEvent) {
-        let _ = self.events.send(ClientEvent::Event(event));
-    }
+    handle: CoreHandle,
 }
 
 /// The app's profile, which the CLI shares: `KCHESS_USER_DATA_DIR`, else the app's own folder.
 pub fn default_data_dir() -> PathBuf {
-    data_dir_from(|name| std::env::var_os(name))
+    Layout::current().profile()
 }
 
-/// `default_data_dir` with the environment read through `var`.
-fn data_dir_from(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
-    if let Some(dir) = var("KCHESS_USER_DATA_DIR").filter(|dir| !dir.is_empty()) {
-        return PathBuf::from(dir);
-    }
-    let home = var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    if cfg!(target_os = "macos") {
-        home.join("Library/Application Support/KChess")
-    } else if cfg!(windows) {
-        var("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join("AppData/Roaming"))
-            .join("KChess")
-    } else {
-        var("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".config"))
-            .join("KChess")
-    }
-}
-
-/// A file shipped beside this executable (the app's package keeps the CLI with its helpers).
-fn beside(name: &str) -> Option<PathBuf> {
-    let path = std::env::current_exe().ok()?.parent()?.join(name);
-    path.exists().then_some(path)
-}
-
-fn executable(name: &str) -> String {
-    format!("{name}{}", std::env::consts::EXE_SUFFIX)
-}
-
-fn config(options: &Options) -> Config {
-    config_from(options, &|name| kchess_core::env::var_os(name))
-}
-
-/// `config` with the environment read through `var`.
-fn config_from(options: &Options, var: &dyn Fn(&str) -> Option<std::ffi::OsString>) -> Config {
-    let home = var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    // A development override, as `kchess_core::dev_override` reads one.
-    let engine =
-        var("KCHESS_ENGINE_PATH").filter(|path| kchess_core::dev_overrides() && !path.is_empty());
-    Config {
-        managed_engine_dir: Some(home.join(".kchess/engines/stockfish/current")),
-        bundled_engine_path: engine
-            .map(PathBuf::from)
-            .or_else(|| beside(&executable("stockfish"))),
-        // Fairy-Stockfish for variants: beside the executable, or (a build in this repository)
-        // where `cargo xtask fairy-stockfish` builds it.
-        variant_engine_path: var("KCHESS_VARIANT_ENGINE_PATH")
-            .filter(|path| !path.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| beside(&executable("fairy-stockfish")))
-            .or_else(|| {
-                let built = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../target/fairy-stockfish/bin")
-                    .join(executable("fairy-stockfish"));
-                built.exists().then_some(built)
-            }),
-        // Beside the executable, or in a Mac bundle's Resources, as the app finds it: the first
-        // client to start the profile's core chooses it for every client.
-        voice_helper_path: beside(&format!("voice/{}", executable("kchess-voice"))).or_else(|| {
-            beside(&format!(
-                "../Resources/voice/{}",
-                executable("kchess-voice")
-            ))
-        }),
-        // Earlier macOS releases kept their database outside the profile; only the app's own
-        // profile imports it, as the app does (`apps/gpui/src/profile.rs`).
-        legacy_database_path: (cfg!(target_os = "macos")
-            && var("KCHESS_USER_DATA_DIR").is_none()
-            && options.data_dir == data_dir_from(var))
-        .then(|| home.join(".kchess/kchess.db")),
-        system_credentials: options.credentials,
-        test: kchess_core::TestSwitches::from_env(),
-        ..Config::new(options.data_dir.clone())
+/// Diagnostics go to stderr, so JSON on stdout stays usable in pipelines.
+fn log(level: Level, scope: &str, message: &str) {
+    if matches!(level, Level::Warn | Level::Error) {
+        eprintln!("[{scope}] {}", kchess_core::redact::redact(message));
     }
 }
 
@@ -149,107 +52,88 @@ impl CoreClient {
     ) -> Result<(CoreClient, mpsc::UnboundedReceiver<ClientEvent>), String> {
         std::fs::create_dir_all(&options.data_dir)
             .map_err(|cause| format!("The profile folder is unavailable: {cause}"))?;
-        let config = config(options);
-        let (events, received) = mpsc::unbounded_channel();
-        let service = kchess_core::dev_override("KCHESS_SERVICE_BINARY")
-            .map(PathBuf::from)
-            .or_else(|| beside(&executable("kchess-service")));
-        let backend = match service {
-            Some(binary) if !options.embedded => {
-                let start = kchess_service::Start {
-                    binary,
-                    config,
-                };
-                let hello = kchess_service::Hello {
-                    kind: "cli".into(),
-                    capabilities: vec![kchess_service::Capability::Browser],
-                };
-                let (client, mut incoming) =
-                    kchess_service::connect_or_start(&options.data_dir, &hello, &start)
-                        .await
-                        .map_err(|error| error.to_string())?;
-                tokio::spawn(async move {
-                    while let Some(event) = incoming.recv().await {
-                        let _ = events.send(event);
-                    }
-                });
-                Backend::Service(client)
-            }
-            _ => {
-                let core = Core::open(config, Arc::new(StderrHost { events }))
-                    .map_err(|cause| cause.message)?;
-                Backend::Embedded(Arc::new(core))
-            }
+        let layout = Layout::current();
+        let mode = match layout.service_binary() {
+            Some(binary) if !options.embedded => Mode::Service { binary },
+            _ => Mode::Embedded,
         };
-        Ok((
-            CoreClient {
-                backend,
-                browser: options.browser,
+        let browser = options.browser;
+        let (handle, events) = CoreHandle::open(kchess_service::Options {
+            config: layout.config(&options.data_dir, options.credentials),
+            hello: Hello {
+                kind: "cli".into(),
+                capabilities: vec![Capability::Browser],
             },
-            received,
-        ))
+            mode,
+            reconnect: false,
+            log: Arc::new(log),
+            answer: Some(Arc::new(move |request| {
+                answer(request, browser, open_browser)
+            })),
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+        Ok((CoreClient { handle }, events))
     }
 
     /// A `CoreApi` method by name.
     pub async fn call(&self, method: &str, args: Vec<Value>) -> Result<Value, String> {
-        match &self.backend {
-            Backend::Embedded(core) => core.call(method, args).await.map_err(|cause| cause.message),
-            Backend::Service(client) => client
-                .call(method, args)
-                .await
-                .map_err(|cause| cause.message),
-        }
+        self.handle
+            .call(method, args)
+            .await
+            .map_err(|cause| told(&cause))
     }
 
     /// A typed core call (`kchess_contracts::calls`): its method with its arguments, and its
     /// answer read in its shape.
     pub async fn request<C: CoreCall>(&self, call: C) -> Result<C::Answer, String> {
-        let args = call.args().map_err(|cause| cause.message)?;
-        let answer = self.call(C::METHOD, args).await?;
-        kchess_contracts::calls::decode::<C>(answer).map_err(|cause| cause.message)
-    }
-
-    /// Answers a `host:request` the core sent; other events are left to the caller.
-    pub async fn answer(&self, request: &Value) {
-        let Some((id, reply)) = reply(request, self.browser, open_browser) else {
-            return;
-        };
-        if let Err(cause) = self.call("host.reply", vec![json!(id), reply]).await {
-            eprintln!("[cli] A host reply was not delivered: {cause}");
-        }
+        self.handle
+            .request(call)
+            .await
+            .map_err(|cause| told(&cause))
     }
 
     pub async fn close(&self) {
-        if let Backend::Embedded(core) = &self.backend {
-            core.close().await;
-        }
+        self.handle.close().await;
     }
 }
 
-/// The reply to a `host:request`, opening a web page with `open` when `browser` says so and
-/// telling the person on stderr. `None` for a request without an id.
-fn reply(
-    request: &Value,
+/// A core error as the command line tells it: the core's advice names the app's Settings, which
+/// share this profile; the command line's own way to the same fix follows it.
+fn told(error: &CoreError) -> String {
+    let fix = match error.kind {
+        Some(ErrorKind::Login) => "From the command line: `kchess-cli login`.",
+        Some(ErrorKind::NoEngine) => "From the command line: --engine <path>.",
+        _ => return error.message.clone(),
+    };
+    format!("{} {fix}", error.message)
+}
+
+/// The answer to a host request, opening a web page with `open` when `browser` says so and
+/// telling the person on stderr.
+fn answer(
+    request: HostRequest,
     browser: Browser,
     open: impl FnOnce(&str) -> std::io::Result<()>,
-) -> Option<(u64, Value)> {
-    let id = request["id"].as_u64()?;
-    let reply = match request["kind"].as_str().unwrap_or_default() {
-        "openExternal" => match request["payload"].as_str() {
-            Some(url) if kchess_core::capabilities::opens_in_browser(url) => {
-                if browser == Browser::Open && open(url).is_ok() {
-                    eprintln!("Opened {url}");
-                } else {
-                    eprintln!("Open this page to continue: {url}");
-                }
-                json!({ "value": null })
+) -> HostReply {
+    match request {
+        HostRequest::OpenExternal(url) if kchess_core::capabilities::opens_in_browser(&url) => {
+            if browser == Browser::Open && open(&url).is_ok() {
+                eprintln!("Opened {url}");
+            } else {
+                eprintln!("Open this page to continue: {url}");
             }
-            _ => json!({ "error": "Only web addresses open in the browser." }),
-        },
-        "onBattery" => json!({ "value": false }),
-        kind => json!({ "error": format!("The command line cannot answer {kind}.") }),
-    };
-    Some((id, reply))
+            HostReply::done()
+        }
+        HostRequest::OpenExternal(_) => {
+            HostReply::Error("Only web addresses open in the browser.".into())
+        }
+        HostRequest::OnBattery => HostReply::Value(Value::Bool(false)),
+        request => HostReply::Error(format!(
+            "The command line cannot answer {}.",
+            request.kind()
+        )),
+    }
 }
 
 fn open_browser(url: &str) -> std::io::Result<()> {
@@ -282,187 +166,57 @@ pub fn absolute(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsString;
-
-    fn environment(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
-        let pairs: Vec<(String, OsString)> = pairs
-            .iter()
-            .map(|(name, value)| ((*name).to_string(), OsString::from(value)))
-            .collect();
-        move |name| {
-            pairs
-                .iter()
-                .find(|(key, _)| key == name)
-                .map(|(_, value)| value.clone())
-        }
-    }
-
-    /// `KCHESS_USER_DATA_DIR` names the profile; set but empty, it is ignored.
-    #[test]
-    fn the_profile_is_the_variable_else_the_apps_own() {
-        let home = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-        let own = data_dir_from(environment(&[(home, "/home/someone")]));
-        assert!(own.ends_with("KChess"), "{own:?}");
-        assert!(own.starts_with("/home/someone"), "{own:?}");
-        assert_eq!(
-            data_dir_from(environment(&[
-                ("KCHESS_USER_DATA_DIR", "/scratch"),
-                (home, "/h")
-            ])),
-            PathBuf::from("/scratch")
-        );
-        assert_eq!(
-            data_dir_from(environment(&[
-                ("KCHESS_USER_DATA_DIR", ""),
-                (home, "/home/someone")
-            ])),
-            own
-        );
-    }
-
-    fn options(data_dir: &str, credentials: bool) -> Options {
-        Options {
-            data_dir: PathBuf::from(data_dir),
-            browser: Browser::Print,
-            credentials,
-            embedded: true,
-        }
-    }
-
-    /// The paths the core is given: the overrides this build honours, else the app's own.
-    #[test]
-    fn the_core_is_configured_from_the_options_and_overrides() {
-        let home = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-        let config = config_from(
-            &options("/profile", false),
-            &environment(&[
-                (home, "/home/someone"),
-                ("KCHESS_ENGINE_PATH", "/engines/stockfish"),
-                ("KCHESS_VARIANT_ENGINE_PATH", "/engines/fairy"),
-            ]),
-        );
-        assert_eq!(config.data_dir, PathBuf::from("/profile"));
-        assert_eq!(
-            config.managed_engine_dir,
-            Some(PathBuf::from(
-                "/home/someone/.kchess/engines/stockfish/current"
-            ))
-        );
-        assert_eq!(
-            config.bundled_engine_path,
-            Some(PathBuf::from("/engines/stockfish"))
-        );
-        assert_eq!(
-            config.variant_engine_path,
-            Some(PathBuf::from("/engines/fairy"))
-        );
-        assert!(!config.system_credentials);
-        assert!(config_from(&options("/profile", true), &environment(&[])).system_credentials);
-        // Empty overrides count as unset.
-        let unset = config_from(
-            &options("/profile", true),
-            &environment(&[
-                ("KCHESS_ENGINE_PATH", ""),
-                ("KCHESS_VARIANT_ENGINE_PATH", ""),
-            ]),
-        );
-        assert_ne!(unset.bundled_engine_path, Some(PathBuf::new()));
-        assert_ne!(unset.variant_engine_path, Some(PathBuf::new()));
-    }
-
-    /// Only the app's own profile on a Mac imports the database earlier releases kept outside it.
-    #[test]
-    fn only_the_apps_own_mac_profile_imports_the_old_database() {
-        let home = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-        let environment = environment(&[(home, "/home/someone")]);
-        let own = data_dir_from(&environment);
-        let own = own.to_string_lossy();
-        let legacy = Some(PathBuf::from("/home/someone/.kchess/kchess.db"));
-        assert_eq!(
-            config_from(&options(&own, true), &environment).legacy_database_path,
-            if cfg!(target_os = "macos") {
-                legacy
-            } else {
-                None
-            }
-        );
-        assert_eq!(
-            config_from(&options("/elsewhere", true), &environment).legacy_database_path,
-            None
-        );
-    }
-
-    /// The voice helper is taken from beside the executable, as the app ships it.
-    #[test]
-    fn the_voice_helper_beside_the_executable_is_used() {
-        let exe = std::env::current_exe().unwrap();
-        let voice = exe.parent().unwrap().join("voice");
-        std::fs::create_dir_all(&voice).unwrap();
-        let helper = voice.join(executable("kchess-voice"));
-        std::fs::write(&helper, b"").unwrap();
-        let config = config_from(&options("/profile", true), &environment(&[]));
-        let _ = std::fs::remove_file(&helper);
-        assert_eq!(config.voice_helper_path, Some(helper));
-    }
+    use serde_json::json;
 
     /// A web page opens in the browser only when asked to, and nothing else opens at all.
     #[test]
     fn host_requests_are_answered() {
-        let page = json!({ "id": 3, "kind": "openExternal", "payload": "https://lichess.org/" });
+        let page = || HostRequest::OpenExternal("https://lichess.org/".into());
         let opened = std::cell::RefCell::new(Vec::new());
         let open = |url: &str| {
             opened.borrow_mut().push(url.to_string());
             Ok(())
         };
-        assert_eq!(
-            reply(&page, Browser::Print, open),
-            Some((3, json!({ "value": null })))
-        );
+        assert_eq!(answer(page(), Browser::Print, open), HostReply::done());
         assert!(opened.borrow().is_empty());
-        assert_eq!(
-            reply(&page, Browser::Open, open),
-            Some((3, json!({ "value": null })))
-        );
+        assert_eq!(answer(page(), Browser::Open, open), HostReply::done());
         assert_eq!(*opened.borrow(), ["https://lichess.org/"]);
-        let file = json!({ "id": 4, "kind": "openExternal", "payload": "file:///etc/passwd" });
+        let file = HostRequest::OpenExternal("file:///etc/passwd".into());
         assert_eq!(
-            reply(&file, Browser::Open, open),
-            Some((
-                4,
-                json!({ "error": "Only web addresses open in the browser." })
-            ))
+            answer(file, Browser::Open, open),
+            HostReply::Error("Only web addresses open in the browser.".into())
         );
         assert_eq!(opened.borrow().len(), 1);
         assert_eq!(
-            reply(
-                &json!({ "id": 5, "kind": "onBattery" }),
-                Browser::Open,
-                open
-            ),
-            Some((5, json!({ "value": false })))
+            answer(HostRequest::OnBattery, Browser::Open, open),
+            HostReply::Value(json!(false))
         );
         assert_eq!(
-            reply(&json!({ "id": 6, "kind": "focus" }), Browser::Open, open),
-            Some((
-                6,
-                json!({ "error": "The command line cannot answer focus." })
-            ))
-        );
-        assert_eq!(
-            reply(&json!({ "kind": "focus" }), Browser::Open, open),
-            None
+            answer(HostRequest::Focus, Browser::Open, open),
+            HostReply::Error("The command line cannot answer focus.".into())
         );
     }
 
+    /// The fix is chosen by the error's kind, never by its words: a reworded message keeps it.
     #[test]
-    fn helpers_are_found_beside_the_executable() {
-        let exe = std::env::current_exe().unwrap();
-        let name = exe.file_name().unwrap().to_string_lossy().to_string();
-        assert_eq!(beside(&name), Some(exe));
-        assert_eq!(beside("no-such-helper"), None);
+    fn a_login_or_engine_failure_names_the_command_line_fix() {
+        let login =
+            CoreError::new("@ann's Lichess login is unavailable. Reconnect it in Settings.")
+                .with_kind(ErrorKind::Login);
         assert_eq!(
-            executable("kchess-voice"),
-            format!("kchess-voice{}", std::env::consts::EXE_SUFFIX)
+            told(&login),
+            "@ann's Lichess login is unavailable. Reconnect it in Settings. From the command line: `kchess-cli login`."
+        );
+        let engine = CoreError::new("No engine.").with_kind(ErrorKind::NoEngine);
+        assert_eq!(
+            told(&engine),
+            "No engine. From the command line: --engine <path>."
+        );
+        let offline = CoreError::new("Lichess is unreachable.").with_kind(ErrorKind::Offline);
+        assert_eq!(told(&offline), "Lichess is unreachable.");
+        assert_eq!(
+            told(&CoreError::new("Move 2 is not legal.")),
+            "Move 2 is not legal."
         );
     }
 }
