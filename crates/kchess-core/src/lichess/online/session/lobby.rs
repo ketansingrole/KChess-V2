@@ -69,8 +69,11 @@ impl OnlineSession {
             return;
         }
         let Ok(Some(auth)) = auth else {
-            let message = crate::lichess::accounts::login_unavailable(&account).message;
-            self.lobby_state(&account, OnlinePhase::AuthRequired, Some(&message));
+            self.lobby_state(
+                &account,
+                OnlinePhase::AuthRequired,
+                Some("Its Lichess login is unavailable. Reconnect it in Settings."),
+            );
             return;
         };
         self.run_lobby(account, auth, cancel).await;
@@ -126,10 +129,7 @@ impl OnlineSession {
                     if let Err(cause) = attached {
                         this.log(
                             Level::Warn,
-                            format!(
-                                "Could not open game: {account} {game_id} {}",
-                                cause.message
-                            ),
+                            format!("Could not open game: {account} {game_id} {}", cause.message),
                         );
                         this.report(&cause, None);
                     }

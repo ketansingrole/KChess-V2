@@ -22,12 +22,12 @@ use tokio::sync::{OnceCell, watch};
 use tokio_util::sync::CancellationToken;
 
 use super::client::{Auth, Lane, LichessClient, TokenSource};
-use kchess_contracts::types::UsageKind;
 use super::reviews::review_from_lichess;
 use crate::capabilities::Capabilities;
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::{Host, Level};
 use crate::store::games::EXPORTED_GAME_CACHE;
+use kchess_contracts::types::UsageKind;
 
 /// The most games one sync keeps walking back through.
 pub const MAX_GAMES: usize = 5000;
@@ -332,7 +332,6 @@ pub struct Lichess {
     store: Arc<dyn LichessStore>,
     tokens: Arc<dyn TokenSource>,
     host: Arc<dyn Host>,
-    lifetime: CancellationToken,
     login_epoch: AtomicU64,
     account_epochs: Mutex<HashMap<String, u64>>,
     profiles: Mutex<HashMap<String, (Instant, Value)>>,
@@ -358,7 +357,6 @@ impl Lichess {
         store: Arc<dyn LichessStore>,
         tokens: Arc<dyn TokenSource>,
         host: Arc<dyn Host>,
-        lifetime: CancellationToken,
     ) -> Lichess {
         Lichess {
             client,
@@ -366,7 +364,6 @@ impl Lichess {
             store,
             tokens,
             host,
-            lifetime,
             login_epoch: AtomicU64::new(0),
             account_epochs: Mutex::new(HashMap::new()),
             profiles: Mutex::new(HashMap::new()),
@@ -400,8 +397,9 @@ impl Lichess {
         &self.host
     }
 
+    /// The core's lifetime, which the client's policy holds: closing ends every request.
     pub fn lifetime(&self) -> &CancellationToken {
-        &self.lifetime
+        self.client.policy().lifetime()
     }
 
     pub fn login_epoch(&self) -> u64 {
@@ -533,7 +531,12 @@ impl Lichess {
     /// Runs `call` with the account's own login when it has one, counted as `kind` against
     /// it. A refused login falls back to the anonymous request, so a sync is never worse than an
     /// anonymous one.
-    pub async fn as_owner<T, F, Fut>(&self, account: &str, kind: UsageKind, call: F) -> CoreResult<T>
+    pub async fn as_owner<T, F, Fut>(
+        &self,
+        account: &str,
+        kind: UsageKind,
+        call: F,
+    ) -> CoreResult<T>
     where
         F: Fn(Auth) -> Fut,
         Fut: Future<Output = CoreResult<T>>,
@@ -761,8 +764,7 @@ impl Lichess {
                             "lichess-cache",
                             &format!(
                                 "Serving stale cache: {key} fetchedAt={} ({})",
-                                stale.fetched_at,
-                                failure.message
+                                stale.fetched_at, failure.message
                             ),
                         );
                         Ok(stale.value)
@@ -845,10 +847,10 @@ impl Lichess {
         for row in rows.iter().filter(|row| row.connected) {
             let auth = match self.signed_in(&row.username, UsageKind::Profile).await {
                 Ok(auth) => auth,
-                Err(error) => {
+                Err(_) => {
                     problems.push(FollowingProblem {
                         account: row.username.clone(),
-                        message: error.message,
+                        message: "Its Lichess login is unavailable.".to_string(),
                         needs_reconnect: true,
                     });
                     continue;
@@ -1079,16 +1081,16 @@ impl Lichess {
         })
         .await
         .and_then(|lines| {
-                let mut games = Vec::new();
-                for line in lines {
-                    if games.len() >= max {
-                        break;
-                    }
-                    let raw: GameJson = parse_game(&line)?;
-                    games.push(normalize_game(&raw, username));
+            let mut games = Vec::new();
+            for line in lines {
+                if games.len() >= max {
+                    break;
                 }
-                Ok(games)
-            })
+                let raw: GameJson = parse_game(&line)?;
+                games.push(normalize_game(&raw, username));
+            }
+            Ok(games)
+        })
     }
 
     /// `sendMessage`: a private message from `account`. A login made before messaging was
@@ -1252,62 +1254,62 @@ impl Lichess {
         let current = || self.account_epoch(name) == epoch;
         let started_at = now_ms();
         async {
-                self.refresh_pending_games(name, &current).await?;
-                // Incremental sync: Lichess filters by `since` (ms), overlapping 60 s for skew.
-                // It returns newest first and caps each page, so the walk pages backwards with
-                // `until`; a long gap between syncs must not silently lose games.
-                let since = row.last_synced_at.map(|at| at - SYNC_OVERLAP_MS);
-                let mut fetched = 0usize;
-                let mut until: Option<i64> = None;
-                let mut downgraded = false;
-                while fetched < MAX_GAMES {
-                    let (games, reviews, settled, page_downgraded) =
-                        self.fetch_games_page(name, since, until).await?;
-                    downgraded |= page_downgraded;
-                    if !current() {
-                        return Err(sync_cancelled());
-                    }
-                    if !games.is_empty() {
-                        self.store
-                            .save_games_page(name, &games, &reviews, &current)
-                            .await?;
-                    }
-                    if !current() {
-                        return Err(sync_cancelled());
-                    }
-                    self.store.mark_checked(&settled, &current).await?;
-                    fetched += games.len();
-                    if games.len() < SYNC_PAGE {
-                        break;
-                    }
-                    let oldest = games.iter().map(|game| game.created_at).min().unwrap_or(0);
-                    if until.is_some_and(|bound| oldest >= bound) {
-                        break;
-                    }
-                    until = Some(oldest);
+            self.refresh_pending_games(name, &current).await?;
+            // Incremental sync: Lichess filters by `since` (ms), overlapping 60 s for skew.
+            // It returns newest first and caps each page, so the walk pages backwards with
+            // `until`; a long gap between syncs must not silently lose games.
+            let since = row.last_synced_at.map(|at| at - SYNC_OVERLAP_MS);
+            let mut fetched = 0usize;
+            let mut until: Option<i64> = None;
+            let mut downgraded = false;
+            while fetched < MAX_GAMES {
+                let (games, reviews, settled, page_downgraded) =
+                    self.fetch_games_page(name, since, until).await?;
+                downgraded |= page_downgraded;
+                if !current() {
+                    return Err(sync_cancelled());
                 }
-                // A 401-downgraded sync yields a successful partial (public games only):
-                // do not advance the cursor, so the gap is backfilled after reconnect. A tracked
-                // player has no login, so public games are the whole sync: holding its cursor
-                // back re-downloaded its full history every time.
-                if !downgraded || !row.connected {
+                if !games.is_empty() {
                     self.store
-                        .save_games_cursor(name, started_at, &current)
+                        .save_games_page(name, &games, &reviews, &current)
                         .await?;
-                    if let Some(play_time) = play_time {
-                        self.store
-                            .save_synced_play_time(name, play_time, &current)
-                            .await?;
-                    }
-                } else {
-                    self.host.log(
-                        Level::Warn,
-                        "lichess",
-                        &format!("Game sync for {name} used public games only; cursor unchanged."),
-                    );
                 }
-                self.forget_profile(name);
-                Ok::<usize, CoreError>(fetched)
+                if !current() {
+                    return Err(sync_cancelled());
+                }
+                self.store.mark_checked(&settled, &current).await?;
+                fetched += games.len();
+                if games.len() < SYNC_PAGE {
+                    break;
+                }
+                let oldest = games.iter().map(|game| game.created_at).min().unwrap_or(0);
+                if until.is_some_and(|bound| oldest >= bound) {
+                    break;
+                }
+                until = Some(oldest);
+            }
+            // A 401-downgraded sync yields a successful partial (public games only):
+            // do not advance the cursor, so the gap is backfilled after reconnect. A tracked
+            // player has no login, so public games are the whole sync: holding its cursor
+            // back re-downloaded its full history every time.
+            if !downgraded || !row.connected {
+                self.store
+                    .save_games_cursor(name, started_at, &current)
+                    .await?;
+                if let Some(play_time) = play_time {
+                    self.store
+                        .save_synced_play_time(name, play_time, &current)
+                        .await?;
+                }
+            } else {
+                self.host.log(
+                    Level::Warn,
+                    "lichess",
+                    &format!("Game sync for {name} used public games only; cursor unchanged."),
+                );
+            }
+            self.forget_profile(name);
+            Ok::<usize, CoreError>(fetched)
         }
         .await
     }
@@ -1478,7 +1480,8 @@ fn is_game_in_progress(raw: &Value) -> bool {
 /// Lichess's generic 404 becomes a message that names the user.
 pub(crate) fn no_such_user(username: &str, error: CoreError) -> CoreError {
     if error.kind == Some(ErrorKind::NotFound) {
-        CoreError::new(format!("No such Lichess user \"{username}\".")).with_kind(ErrorKind::NotFound)
+        CoreError::new(format!("No such Lichess user \"{username}\"."))
+            .with_kind(ErrorKind::NotFound)
     } else {
         error
     }
@@ -1487,7 +1490,7 @@ pub(crate) fn no_such_user(username: &str, error: CoreError) -> CoreError {
 /// The error of an account whose stored login cannot be used: it must be connected again.
 pub(crate) fn login_unavailable(account: &str) -> CoreError {
     CoreError::new(format!(
-        "@{account}'s Lichess login is unavailable. Reconnect in Settings."
+        "@{account}'s Lichess login is unavailable. Reconnect it in Settings."
     ))
     .with_kind(ErrorKind::Login)
 }

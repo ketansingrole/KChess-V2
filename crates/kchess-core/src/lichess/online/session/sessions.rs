@@ -207,8 +207,7 @@ impl OnlineSession {
                     };
                     // Only a refused login asks to reconnect: a 403 for another reason did,
                     // and reconnecting changed nothing.
-                    let phase = if checking.auth_required || cause.kind == Some(ErrorKind::Login)
-                    {
+                    let phase = if checking.auth_required || cause.kind == Some(ErrorKind::Login) {
                         OnlinePhase::AuthRequired
                     } else {
                         OnlinePhase::Disconnected
@@ -227,7 +226,11 @@ impl OnlineSession {
         }
     }
 
-    async fn resume_body(&self, attempt: u64, checking: &mut Checking) -> CoreResult<Option<Resumed>> {
+    async fn resume_body(
+        &self,
+        attempt: u64,
+        checking: &mut Checking,
+    ) -> CoreResult<Option<Resumed>> {
         let mut accounts: Vec<String> = self
             .inner
             .lichess
@@ -327,7 +330,9 @@ impl OnlineSession {
                 .read_json()
                 .await?;
             let Some(now_playing) = playing.get("nowPlaying").and_then(Value::as_array) else {
-                return Err(CoreError::new("Lichess returned an invalid ongoing-game response."));
+                return Err(CoreError::new(
+                    "Lichess returned an invalid ongoing-game response.",
+                ));
             };
             // Correspondence games last for days: they open only when the player picks one. A
             // game the Board API cannot play stays where it was started.
@@ -441,10 +446,7 @@ impl OnlineSession {
                 }
                 self.log(
                     Level::Warn,
-                    format!(
-                        "Could not load ongoing games: {account} {}",
-                        cause.message
-                    ),
+                    format!("Could not load ongoing games: {account} {}", cause.message),
                 );
                 first_error.get_or_insert(cause);
             }

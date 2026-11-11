@@ -12,11 +12,11 @@ use serde_json::{Number, Value, json};
 
 use super::accounts::{Lichess, Reply, path_segment};
 use super::client::Auth;
-use kchess_contracts::types::UsageKind;
 use super::decode::{Millis, Text, present, read};
 use super::online::js_number;
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Level;
+use kchess_contracts::types::UsageKind;
 
 /// `TournamentSystem`: an arena, or a Swiss event.
 pub const ARENA: &str = "arena";
@@ -884,10 +884,7 @@ async fn swiss_of_teams(
                 lichess.host().log(
                     Level::Warn,
                     "tournaments",
-                    &format!(
-                        "Could not load Swiss events: {} {}",
-                        team.id, cause.message
-                    ),
+                    &format!("Could not load Swiss events: {} {}", team.id, cause.message),
                 );
                 problems.push(format!(
                     "Couldn’t load Swiss events of {}{}",
@@ -938,11 +935,8 @@ async fn arena_detail(
     let object = raw
         .as_object()
         .ok_or_else(|| CoreError::new("Lichess sent an unreadable tournament."))?;
-    let summary = arena_detail_summary(id, &raw).ok_or_else(|| {
-        CoreError::new(
-            "Lichess sent an unreadable tournament clock.",
-        )
-    })?;
+    let summary = arena_detail_summary(id, &raw)
+        .ok_or_else(|| CoreError::new("Lichess sent an unreadable tournament clock."))?;
     let standing: Vec<Standing> = object
         .get("standing")
         .and_then(|standing| standing.get("players"))
@@ -1053,18 +1047,11 @@ fn num_at(value: &Value, key: &str) -> Option<Number> {
     value.get(key).and_then(Value::as_number).cloned()
 }
 
-async fn swiss_detail(
-    lichess: &Lichess,
-    id: &str,
-    auth: &Auth,
-) -> CoreResult<TournamentDetail> {
+async fn swiss_detail(lichess: &Lichess, id: &str, auth: &Auth) -> CoreResult<TournamentDetail> {
     let path = format!("/api/swiss/{}", path_segment(id));
     let raw: Value = lichess.client().get(&path, auth).read_json().await?;
-    let (summary, swiss) = swiss_read(&raw, None).ok_or_else(|| {
-        CoreError::new(
-            "Lichess sent details KChess could not read.",
-        )
-    })?;
+    let (summary, swiss) = swiss_read(&raw, None)
+        .ok_or_else(|| CoreError::new("Lichess sent details KChess could not read."))?;
     let mut standing: Vec<Standing> = Vec::new();
     let results = format!("/api/swiss/{}/results", path_segment(id));
     lichess

@@ -10,8 +10,8 @@ use serde_json::Value;
 
 use super::accounts::{Lichess, Reply, path_segment};
 use super::client::TextLimit;
-use kchess_contracts::types::UsageKind;
 use crate::error::{CoreError, Result as CoreResult};
+use kchess_contracts::types::UsageKind;
 use kchess_domain::{js, position};
 
 /// The most of a study export that is read, in UTF-16 units.
@@ -287,15 +287,17 @@ pub async fn export_to_lichess_study(
             if id.is_empty() {
                 let created: Value = lichess
                     .client()
-                    .post("/api/study", &auth).form(&[
-                            ("name", name),
-                            ("visibility", "private"),
-                            ("computer", "everyone"),
-                            ("explorer", "everyone"),
-                            ("cloneable", "owner"),
-                            ("shareable", "owner"),
-                            ("chat", "member"),
-                        ]).read_json()
+                    .post("/api/study", &auth)
+                    .form(&[
+                        ("name", name),
+                        ("visibility", "private"),
+                        ("computer", "everyone"),
+                        ("explorer", "everyone"),
+                        ("cloneable", "owner"),
+                        ("shareable", "owner"),
+                        ("chat", "member"),
+                    ])
+                    .read_json()
                     .await?;
                 id = created
                     .get("id")
@@ -307,7 +309,9 @@ pub async fn export_to_lichess_study(
             let path = format!("/api/study/{}/import-pgn", path_segment(&id));
             let imported: Value = lichess
                 .client()
-                .post(&path, &auth).form(&[("pgn", pgn), ("name", name)]).read_json()
+                .post(&path, &auth)
+                .form(&[("pgn", pgn), ("name", name)])
+                .read_json()
                 .await?;
             imported_all(&imported, split_pgn(pgn).len().max(1))?;
             Ok(id)
@@ -412,7 +416,9 @@ pub async fn sync_lichess_study(
                 if pending[index] == Pending::Chapter {
                     let _: Value = lichess
                         .client()
-                        .post(&format!("{base}/moves"), &auth).form(&[("pgn", game.pgn.as_str())]).read_json()
+                        .post(&format!("{base}/moves"), &auth)
+                        .form(&[("pgn", game.pgn.as_str())])
+                        .read_json()
                         .await?;
                 }
                 let mut tags = game.headers.clone();
@@ -435,7 +441,9 @@ pub async fn sync_lichess_study(
                     .join("\n");
                 let _: Value = lichess
                     .client()
-                    .post(&format!("{base}/tags"), &auth).form(&[("pgn", tags_pgn.as_str())]).read_json()
+                    .post(&format!("{base}/tags"), &auth)
+                    .form(&[("pgn", tags_pgn.as_str())])
+                    .read_json()
                     .await?;
             }
             for game in after.iter().skip(before.len() + appended) {
@@ -446,7 +454,9 @@ pub async fn sync_lichess_study(
                 let path = format!("/api/study/{}/import-pgn", path_segment(&request.study_id));
                 let imported: Value = lichess
                     .client()
-                    .post(&path, &auth).form(&[("pgn", game.pgn.as_str()), ("name", name.as_str())]).read_json()
+                    .post(&path, &auth)
+                    .form(&[("pgn", game.pgn.as_str()), ("name", name.as_str())])
+                    .read_json()
                     .await?;
                 imported_all(&imported, 1)?;
             }

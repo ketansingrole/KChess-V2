@@ -128,7 +128,10 @@ struct ChannelRaw {
 /// `tvChannels()`: the TV channels with who is playing on each right now.
 pub async fn tv_channels(lichess: &Lichess) -> CoreResult<Vec<TvChannel>> {
     let raw: Value = lichess
-        .client().get("/api/tv/channels", &lichess.anonymous(UsageKind::Watch)).read_json().await?;
+        .client()
+        .get("/api/tv/channels", &lichess.anonymous(UsageKind::Watch))
+        .read_json()
+        .await?;
     Ok(TV_CHANNELS
         .iter()
         .map(|(key, label)| {
@@ -163,7 +166,14 @@ pub async fn broadcasts(
     let query = query.map(js::trim).filter(|q| !q.is_empty());
     if let Some(query) = query {
         let raw: Value = lichess
-            .client().get("/api/broadcast/search", &lichess.anonymous(UsageKind::Watch)).query(&[("q", query.to_string()), ("page", "1".to_string())]).read_json().await?;
+            .client()
+            .get(
+                "/api/broadcast/search",
+                &lichess.anonymous(UsageKind::Watch),
+            )
+            .query(&[("q", query.to_string()), ("page", "1".to_string())])
+            .read_json()
+            .await?;
         let entries = raw
             .get("currentPageResults")
             .and_then(Value::as_array)
@@ -172,7 +182,11 @@ pub async fn broadcasts(
         return Ok(broadcast_summaries(&entries, "past"));
     }
     let raw: Value = lichess
-        .client().get("/api/broadcast/top", &lichess.anonymous(UsageKind::Watch)).query(&[("page", "1".to_string())]).read_json().await?;
+        .client()
+        .get("/api/broadcast/top", &lichess.anonymous(UsageKind::Watch))
+        .query(&[("page", "1".to_string())])
+        .read_json()
+        .await?;
     let list = |key: &str| {
         raw.get(key)
             .and_then(Value::as_array)
@@ -195,7 +209,10 @@ pub async fn broadcasts(
 pub async fn broadcast_round(lichess: &Lichess, id: &str) -> CoreResult<Value> {
     let path = format!("/api/broadcast/-/-/{}", path_segment(id));
     let raw: Value = lichess
-        .client().get(&path, &lichess.anonymous(UsageKind::Watch)).read_json().await?;
+        .client()
+        .get(&path, &lichess.anonymous(UsageKind::Watch))
+        .read_json()
+        .await?;
     let tour = raw["tour"]["id"]
         .as_str()
         .filter(|tour| !tour.is_empty())
@@ -207,7 +224,10 @@ pub async fn broadcast_round(lichess: &Lichess, id: &str) -> CoreResult<Value> {
 pub async fn broadcast_tour(lichess: &Lichess, id: &str) -> CoreResult<BroadcastTourDetail> {
     let path = format!("/api/broadcast/{}", path_segment(id));
     let raw: Value = lichess
-        .client().get(&path, &lichess.anonymous(UsageKind::Watch)).read_json().await?;
+        .client()
+        .get(&path, &lichess.anonymous(UsageKind::Watch))
+        .read_json()
+        .await?;
     let unreadable = || CoreError::new("Lichess sent an unreadable broadcast.");
     let tour: TourRaw = raw.get("tour").and_then(read).ok_or_else(unreadable)?;
     let rounds = raw

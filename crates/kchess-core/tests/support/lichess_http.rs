@@ -728,14 +728,13 @@ pub fn lichess_service_with_idle(
         tokio_util::sync::CancellationToken::new(),
         Duration::from_secs(5),
     );
-    let client = LichessClient::with_base(base, policy, http_client()).with_stream_idle(idle);
+    let client = LichessClient::with_base(base, policy).with_stream_idle(idle);
     Arc::new(kchess_core::lichess::accounts::Lichess::new(
         client,
         capabilities_for(host),
         store,
         tokens,
         Arc::clone(host) as Arc<dyn Host>,
-        tokio_util::sync::CancellationToken::new(),
     ))
 }
 

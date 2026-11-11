@@ -120,7 +120,9 @@ impl OnlineSession {
             return Err(crate::lichess::aborted());
         }
         if connected.is_empty() {
-            return Err(CoreError::new("Connect your Lichess account in Settings first."));
+            return Err(CoreError::new(
+                "Connect your Lichess account in Settings first.",
+            ));
         }
         // An explicit account must match exactly: never play as a different one.
         let account = match options.account.as_deref().filter(|name| !name.is_empty()) {
@@ -296,7 +298,12 @@ impl OnlineSession {
         }
     }
 
-    async fn challenge_post(&self, auth: &Auth, path: &str, form: &[(&str, &str)]) -> CoreResult<()> {
+    async fn challenge_post(
+        &self,
+        auth: &Auth,
+        path: &str,
+        form: &[(&str, &str)],
+    ) -> CoreResult<()> {
         self.inner
             .lichess
             .client()
@@ -332,7 +339,11 @@ impl OnlineSession {
     }
 
     /// Decline an incoming challenge with a reason Lichess shows the challenger.
-    pub async fn decline_challenge(&self, challenge: &ChallengeInfo, reason: &str) -> CoreResult<()> {
+    pub async fn decline_challenge(
+        &self,
+        challenge: &ChallengeInfo,
+        reason: &str,
+    ) -> CoreResult<()> {
         let auth = self.required_login(&challenge.account).await?;
         let path = format!("/api/challenge/{}/decline", path_segment(&challenge.id));
         self.challenge_post(&auth, &path, &[("reason", reason)])

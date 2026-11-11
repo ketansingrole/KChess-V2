@@ -18,8 +18,8 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use super::client::{Auth, Lane, LichessClient};
-use super::policy::{Clock, Policy, timed_out};
 use super::decode::{Loose, Text, read};
+use super::policy::{Clock, Policy, timed_out};
 use super::reviews::split_whitespace;
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Host;
@@ -48,7 +48,7 @@ const PENDING_MAX: usize = 16;
 const DEFAULT_OPENING: &str = r#"{"speeds":["blitz","rapid","classical"]}"#;
 const MAX_CACHED_GAMES: usize = 30;
 const MAX_MOVES: usize = 256;
-/// How long a lookup's answer may take (the player database's stream excepted).
+/// How long a lookup's answer may take by default (the player database's stream excepted).
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long the player database may take to finish its stream of ever more complete results.
 const PLAYER_TIMEOUT: Duration = Duration::from_secs(60);
@@ -449,6 +449,8 @@ pub struct PositionLookups {
     /// The login the explorer is asked with; None sends no login (tests).
     login: Option<Arc<dyn ExplorerLogin>>,
     lifetime: CancellationToken,
+    /// How long a lookup's answer may take (the player database's stream excepted).
+    timeout: Duration,
 }
 
 /// Removing a pending lookup must also happen when its caller is cancelled or dropped.
@@ -480,7 +482,8 @@ impl PositionLookups {
         now: Clock,
     ) -> PositionLookups {
         let lifetime = CancellationToken::new();
-        let (explorer, tablebase) = clients(&host, &http, &endpoints, &lifetime, &now);
+        let (explorer, tablebase) =
+            clients(&host, &http, &endpoints, &lifetime, &now, LOOKUP_TIMEOUT);
         PositionLookups {
             host,
             http,
@@ -492,6 +495,7 @@ impl PositionLookups {
             pending: Mutex::new(HashMap::new()),
             login: None,
             lifetime,
+            timeout: LOOKUP_TIMEOUT,
         }
     }
 
@@ -504,9 +508,25 @@ impl PositionLookups {
 
     /// Share the core's lifetime so close stops login, HTTP, cache waits and deduplicated callers.
     pub fn with_lifetime(mut self, lifetime: CancellationToken) -> PositionLookups {
-        (self.explorer, self.tablebase) =
-            clients(&self.host, &self.http, &self.endpoints, &lifetime, &self.now);
         self.lifetime = lifetime;
+        self.rebuild()
+    }
+
+    /// How long a lookup's answer may take (the tests' unanswered lookups).
+    pub fn with_timeout(mut self, timeout: Duration) -> PositionLookups {
+        self.timeout = timeout;
+        self.rebuild()
+    }
+
+    fn rebuild(mut self) -> PositionLookups {
+        (self.explorer, self.tablebase) = clients(
+            &self.host,
+            &self.http,
+            &self.endpoints,
+            &self.lifetime,
+            &self.now,
+            self.timeout,
+        );
         self
     }
 
@@ -791,7 +811,9 @@ impl PositionLookups {
             .read_text(None)
             .await
             .map_err(|cause| match cause.kind {
-                Some(ErrorKind::Login) => CoreError::new(CONNECT_EXPLORER).with_kind(ErrorKind::Login),
+                Some(ErrorKind::Login) => {
+                    CoreError::new(CONNECT_EXPLORER).with_kind(ErrorKind::Login)
+                }
                 Some(ErrorKind::RateLimited | ErrorKind::TimedOut) => cause,
                 _ if cause.aborted => cause,
                 _ => CoreError {
@@ -845,13 +867,14 @@ fn clients(
     endpoints: &Endpoints,
     lifetime: &CancellationToken,
     now: &Clock,
+    timeout: Duration,
 ) -> (LichessClient, LichessClient) {
     let client = |base: &str| {
         let policy = Policy::for_lookups(
             Arc::clone(host),
             http.clone(),
             lifetime.clone(),
-            LOOKUP_TIMEOUT,
+            timeout,
             Arc::clone(now),
         );
         LichessClient::with_base(base, policy)
@@ -1260,7 +1283,7 @@ fn explorer_result(
 /// A game the explorer lists, or None when it is not readable.
 fn explorer_game(game: &Value, variant: &str, fen: &str) -> Option<ExplorerGame> {
     let game: RawExplorerGame = read(game)?;
-    let id_ok = game.id.len() == 8 && game.id.bytes().all(|b| b.is_ascii_alphanumeric());
+    let id_ok = super::is_lichess_id(&game.id);
     let names_ok = [&game.white.name, &game.black.name]
         .iter()
         .all(|name| name.chars().count() <= 80);

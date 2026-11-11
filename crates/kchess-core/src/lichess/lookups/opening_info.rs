@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{CONNECT_EXPLORER, LOOKUP_TIMEOUT, PositionLookups};
+use super::{CONNECT_EXPLORER, PositionLookups};
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use kchess_domain::training::openings::{line_fens, wikibooks_title};
 
@@ -384,16 +384,14 @@ impl PositionLookups {
     /// nothing to do with Lichess, so no failure asks for a Lichess login.
     async fn wikibooks(&self, url: reqwest::Url) -> CoreResult<String> {
         const WHAT: &str = "The opening description";
-        let unreachable =
-            || CoreError::new(format!("{WHAT} could not be loaded. Check your connection."))
-                .with_kind(ErrorKind::Offline);
+        let unreachable = || {
+            CoreError::new(format!(
+                "{WHAT} could not be loaded. Check your connection."
+            ))
+            .with_kind(ErrorKind::Offline)
+        };
         let attempt = async {
-            let response = self
-                .http
-                .get(url)
-                .send()
-                .await
-                .map_err(|_| unreachable())?;
+            let response = self.http.get(url).send().await.map_err(|_| unreachable())?;
             if !response.status().is_success() {
                 return Err(CoreError::new(format!(
                     "{WHAT} could not be loaded. Try again shortly."
@@ -408,7 +406,7 @@ impl PositionLookups {
             )
             .await
         };
-        tokio::time::timeout(LOOKUP_TIMEOUT, attempt)
+        tokio::time::timeout(self.timeout, attempt)
             .await
             .map_err(|_| {
                 CoreError::new(format!("{WHAT} took too long to load."))

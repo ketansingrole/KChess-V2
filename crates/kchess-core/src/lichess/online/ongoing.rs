@@ -1,8 +1,8 @@
 use serde_json::Value;
 
 use super::super::challenges::PlayerRef;
-use crate::error::CoreError;
 use super::state::{OngoingGame, State};
+use crate::error::CoreError;
 
 /// `checking` of a resume: the account being checked, whether it lacked a login, and the failure
 /// to report if no account has a game.

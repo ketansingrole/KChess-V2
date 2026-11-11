@@ -96,7 +96,6 @@ impl Services {
             store,
             Arc::clone(&tokens),
             Arc::clone(&host),
-            lifetime.clone(),
         ));
         let online = OnlineSession::new(Arc::clone(&lichess));
         let spectator = Spectators::new(Arc::clone(&lichess), host.clone());
@@ -509,14 +508,8 @@ impl Services {
                 arg_u32(args, 3),
             ) {
                 (Ok(system), Ok(id), Ok(account), Ok(page)) => to_json(
-                    super::tournaments::tournament(
-                        &self.lichess,
-                        &system,
-                        &id,
-                        &account,
-                        page,
-                    )
-                    .await,
+                    super::tournaments::tournament(&self.lichess, &system, &id, &account, page)
+                        .await,
                 ),
                 (Err(cause), _, _, _)
                 | (_, Err(cause), _, _)

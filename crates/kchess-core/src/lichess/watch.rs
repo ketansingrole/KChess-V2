@@ -9,6 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use kchess_contracts::types::WatchPhase;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -76,7 +77,7 @@ pub struct WatchClock {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WatchState {
     pub session: u64,
-    pub phase: &'static str,
+    pub phase: WatchPhase,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
     /// The kind of failure (`ErrorKind`) of an `error` phase, so the viewer is offered a retry

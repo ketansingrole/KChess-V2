@@ -11,6 +11,7 @@ use fixtures::{
     MemoryStore, MemoryTokens, Recording, Reply, Seen, lichess_service, lichess_service_with_idle,
     serve,
 };
+use kchess_contracts::types::WatchPhase;
 use kchess_core::lichess::accounts::Lichess;
 use kchess_core::lichess::watch::{
     BroadcastUpdate, GameSetup, LineUpTiming, Spectator, WatchFrame, WatchSink, WatchState,
@@ -69,7 +70,7 @@ async fn reports_an_initial_http_failure_after_the_start_call_has_returned() {
             .lock()
             .unwrap()
             .last()
-            .is_some_and(|state| state.phase == "error")
+            .is_some_and(|state| state.phase == WatchPhase::Error)
     })
     .await;
     let last = sink.states.lock().unwrap().last().cloned().unwrap();
@@ -106,7 +107,7 @@ async fn a_cancelled_watch_reports_nothing_after_it_is_stopped() {
             .lock()
             .unwrap()
             .iter()
-            .all(|state| state.session != second || state.phase != "error")
+            .all(|state| state.session != second || state.phase != WatchPhase::Error)
     );
     assert_ne!(first, second);
     // Stopping is not failing: the log keeps quiet about the feeds it cut.
@@ -218,7 +219,7 @@ async fn last_state_of_a_closed_game_stream(records: Vec<Value>) -> WatchState {
             .lock()
             .unwrap()
             .iter()
-            .any(|state| state.phase == "ended" || state.phase == "error")
+            .any(|state| state.phase == WatchPhase::Ended || state.phase == WatchPhase::Error)
     })
     .await;
     let last = sink.states.lock().unwrap().last().cloned().unwrap();
@@ -251,7 +252,7 @@ async fn a_game_that_ended_closes_its_feed_without_asking_to_reconnect() {
         game_description("outoftime", Some("black")),
     ])
     .await;
-    assert_eq!(last.phase, "ended");
+    assert_eq!(last.phase, WatchPhase::Ended);
     assert_eq!(last.message, None);
 }
 
@@ -262,7 +263,7 @@ async fn a_game_feed_that_closes_mid_game_offers_to_reconnect() {
         json!({ "fen": INITIAL, "wc": 60, "bc": 60 }),
     ])
     .await;
-    assert_eq!(last.phase, "ended");
+    assert_eq!(last.phase, WatchPhase::Ended);
     assert!(last.message.unwrap().contains("Retry"));
 }
 
@@ -413,7 +414,7 @@ async fn a_silent_tv_feed_reconnects_instead_of_ending_the_watch() {
             .lock()
             .unwrap()
             .iter()
-            .all(|state| state.phase != "error")
+            .all(|state| state.phase != WatchPhase::Error)
     );
     spectator.stop();
 }

@@ -60,15 +60,13 @@ fn lookups(base: &str, start: i64) -> Lookups {
     let cache = Arc::new(MemoryCache::default());
     let clock = Arc::new(AtomicI64::new(start));
     let endpoints = Endpoints {
-        opening: format!("{base}/lichess"),
-        masters: format!("{base}/masters"),
-        player: format!("{base}/player"),
-        tablebase: format!("{base}/standard"),
-        masters_game: format!("{base}/masters/pgn"),
+        explorer: base.to_string(),
+        tablebase: base.to_string(),
         wikibooks: format!("{base}/wikibooks/w/api.php"),
     };
     let now_clock = Arc::clone(&clock);
     let service = PositionLookups::new(
+        Arc::new(Recording::default()),
         http_client(),
         endpoints,
         Arc::clone(&cache) as Arc<dyn LookupCache>,
@@ -428,9 +426,9 @@ async fn loads_a_master_game_and_refuses_a_refused_failed_or_non_pgn_answer() {
     let error = lookups.service.masters_game("abcdefgh").await.unwrap_err();
     assert!(error.message.contains("Connect a Lichess account"));
     let error = lookups.service.masters_game("abcdefgh").await.unwrap_err();
-    assert!(
-        error.message.contains("could not be loaded (500)") || error.message.contains("Connect")
-    );
+    // A server error says what failed, never Lichess's status.
+    assert_eq!(error.message, "The master game could not be loaded.");
+    assert_eq!(error.kind, Some(kchess_core::ErrorKind::Unavailable));
     assert!(lookups.service.masters_game("not an id").await.is_err());
 }
 
@@ -826,4 +824,61 @@ async fn the_explorer_is_asked_with_the_accounts_login_and_the_tablebase_never_i
         .await
         .expect("the tablebase answers");
     assert_eq!(fixture.requests()[0].header("authorization"), None);
+}
+
+/// A failed lookup showed `Position lookup returned 500. Try again shortly.`: the person is told
+/// what failed, never Lichess's status.
+#[tokio::test]
+async fn a_failed_lookup_shows_no_status() {
+    let fixture = serve(|_| Reply::Json(500, "{}".into())).await;
+    let lookups = lookups(&fixture.base, 1_000);
+    for kind in ["opening", "masters"] {
+        let error = lookups
+            .service
+            .lookup(&json!(kind), &json!(INITIAL), None)
+            .await
+            .unwrap_err();
+        assert!(!error.message.contains("500"), "{}", error.message);
+        assert_eq!(error.kind, Some(kchess_core::ErrorKind::Unavailable));
+    }
+    let error = lookups
+        .service
+        .opening_popularity(&json!(["e2e4"]))
+        .await
+        .unwrap_err();
+    assert!(!error.message.contains("500"), "{}", error.message);
+}
+
+/// A lookup that never answers said "The operation was aborted due to timeout" with no kind, so
+/// it was not offered a retry.
+#[tokio::test]
+async fn a_lookup_that_never_answers_times_out_as_a_timeout() {
+    let fixture = serve(|_| Reply::Hang).await;
+    let service = lookups(&fixture.base, 1_000)
+        .service
+        .with_timeout(Duration::from_millis(100));
+    let error = service
+        .lookup(&json!("opening"), &json!(INITIAL), None)
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, Some(kchess_core::ErrorKind::TimedOut));
+    assert!(!error.message.contains("aborted"), "{}", error.message);
+}
+
+/// Wikibooks has nothing to do with Lichess: its refusal asked to connect a Lichess account.
+#[tokio::test]
+async fn a_wikibooks_refusal_does_not_ask_to_connect_lichess() {
+    let fixture = serve(|_| Reply::Json(401, "{}".into())).await;
+    let lookups = lookups(&fixture.base, 1_000);
+    let error = lookups
+        .service
+        .opening_description(&json!(["e2e4"]))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.message,
+        "The opening description could not be loaded. Try again shortly."
+    );
+    assert!(!error.message.contains("Lichess"));
+    assert_eq!(fixture.to("/wikibooks/w/api.php").len(), 1);
 }

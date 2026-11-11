@@ -18,9 +18,9 @@ use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
 use crate::lichess::accounts::{Lichess, path_segment};
 use crate::lichess::client::{Auth, Lane};
-use kchess_contracts::types::UsageKind;
 use crate::lichess::decode::{Loose, read};
 use crate::lichess::stream::STALLED;
+use kchess_contracts::types::{UsageKind, WatchPhase};
 
 /// A TV feed record, `{ t, d }`: a featured game or a move. Other kinds, and records whose
 /// `d` is not an object, are ignored; each field is read when it has the right type.
@@ -187,7 +187,7 @@ impl Spectator {
         let (session, token) = self.inner.begin();
         let inner = Arc::clone(&self.inner);
         tokio::spawn(async move {
-            inner.report(session, &token, "connecting", None);
+            inner.report(session, &token, WatchPhase::Connecting, None);
             let followed = async {
                 match &target {
                     WatchTarget::Channel(channel) => inner
@@ -203,11 +203,11 @@ impl Spectator {
                 .unwrap_or_else(|_| Err(CoreError::new(FEED_PANICKED)));
             match result {
                 // Lichess closes a game's stream once the game is over: nothing to reconnect to.
-                Ok(true) => inner.report(session, &token, "ended", None),
+                Ok(true) => inner.report(session, &token, WatchPhase::Ended, None),
                 Ok(false) => inner.report(
                     session,
                     &token,
-                    "ended",
+                    WatchPhase::Ended,
                     Some("The feed ended. Retry to reconnect."),
                 ),
                 // Stopped, or replaced by another watch: nothing failed.
@@ -322,7 +322,7 @@ impl Inner {
         &self,
         session: u64,
         token: &CancellationToken,
-        phase: &'static str,
+        phase: WatchPhase,
         message: Option<&str>,
     ) {
         if !token.is_cancelled() && self.is_current(session) {
@@ -346,7 +346,7 @@ impl Inner {
         if !token.is_cancelled() && self.is_current(session) {
             self.sink.state(WatchState {
                 session,
-                phase: "error",
+                phase: WatchPhase::Error,
                 message: Some(message.to_string()),
                 kind: Some(kind.as_str()),
             });
@@ -493,7 +493,7 @@ impl Inner {
                 drop(state);
                 self.sink.state(WatchState {
                     session,
-                    phase: "connected",
+                    phase: WatchPhase::Connected,
                     message: None,
                     kind: None,
                 });
@@ -544,7 +544,7 @@ impl Inner {
                 drop(state);
                 self.sink.state(WatchState {
                     session,
-                    phase: "connected",
+                    phase: WatchPhase::Connected,
                     message: None,
                     kind: None,
                 });
@@ -810,7 +810,7 @@ impl Inner {
                     if let Some(frame) = current.clone() {
                         self.sink.state(WatchState {
                             session,
-                            phase: "connected",
+                            phase: WatchPhase::Connected,
                             message: None,
                             kind: None,
                         });

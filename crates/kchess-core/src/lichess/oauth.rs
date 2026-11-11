@@ -15,9 +15,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 
 use super::accounts::Lichess;
-use kchess_contracts::types::UsageKind;
 use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
+use kchess_contracts::types::UsageKind;
 
 /// The OAuth client id KChess sends to Lichess.
 pub const OAUTH_CLIENT_ID: &str = "kchess-desktop";
@@ -386,7 +386,10 @@ impl Lichess {
             .await?;
         let account: AccountResponse = self
             .client()
-            .get("/api/account", &anonymous.with_token(token.access_token.as_str()))
+            .get(
+                "/api/account",
+                &anonymous.with_token(token.access_token.as_str()),
+            )
             .cancel(&cancel)
             .read_json()
             .await?;

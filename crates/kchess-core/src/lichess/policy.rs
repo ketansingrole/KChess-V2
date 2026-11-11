@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_util::{Stream, TryStreamExt};
-use reqwest::header::HeaderMap;
 use kchess_contracts::types::UsageKind;
+use reqwest::header::HeaderMap;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
