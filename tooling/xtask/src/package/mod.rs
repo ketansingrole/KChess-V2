@@ -28,14 +28,12 @@ pub mod windows;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use kchess_delta::Asset;
+use kchess_delta::{Asset, installed};
 
 use crate::util::{Result, exe, root, run_with, say};
 
 pub const AUTHOR: &str = "Ketan Singrole";
 pub const COPYRIGHT: &str = "Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.";
-#[cfg(unix)]
-pub const HOMEPAGE: &str = "https://ketansingrole.github.io/KChess-V2/";
 #[cfg(unix)]
 pub const SYNOPSIS: &str = "Desktop chess: Stockfish, Lichess, puzzles and training";
 #[cfg(unix)]
@@ -125,12 +123,12 @@ impl Built {
     pub fn programs(&self, app: &str, cli: bool) -> Vec<(&Path, String)> {
         let mut programs = vec![
             (self.app.as_path(), exe(app)),
-            (self.stockfish.as_path(), exe("stockfish")),
-            (self.fairy.as_path(), exe("fairy-stockfish")),
-            (self.service.as_path(), exe("kchess-service")),
+            (self.stockfish.as_path(), exe(installed::STOCKFISH)),
+            (self.fairy.as_path(), exe(installed::FAIRY_STOCKFISH)),
+            (self.service.as_path(), exe(installed::SERVICE)),
         ];
         if cli {
-            programs.push((self.cli.as_path(), exe("kchess-cli")));
+            programs.push((self.cli.as_path(), exe(installed::CLI)));
         }
         programs
     }
@@ -174,7 +172,7 @@ pub fn executable(path: &Path) -> Result {
 
 /// Copy the voice runtime into `dir/voice`; the paths of its programs and libraries.
 pub fn copy_voice(built: &Built, dir: &Path) -> Result<Vec<PathBuf>> {
-    let target = dir.join("voice");
+    let target = dir.join(installed::VOICE);
     std::fs::create_dir_all(&target).map_err(|cause| cause.to_string())?;
     let mut code = Vec::new();
     for entry in std::fs::read_dir(&built.voice)

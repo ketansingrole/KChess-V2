@@ -128,7 +128,7 @@ pub fn control(identity: &Identity, installed_kb: u64) -> String {
         identity.package,
         identity.version,
         super::AUTHOR,
-        super::HOMEPAGE,
+        kchess_delta::WEBSITE,
         super::SYNOPSIS,
         super::DESCRIPTION
     )
@@ -177,8 +177,8 @@ fn deb(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<P
             .map_err(|cause| cause.to_string())?,
         0o644,
     ));
-    let cli = format!("/opt/{}/kchess-cli", identity.name);
-    let cli_link = "kchess-cli";
+    let cli = format!("/opt/{}/{}", identity.name, kchess_delta::installed::CLI);
+    let cli_link = kchess_delta::installed::CLI;
     let postinst = format!(
         "#!/bin/sh\nset -e\nif type update-alternatives >/dev/null 2>&1; then\n  update-alternatives --install '/usr/bin/{exe}' '{exe}' '{exec}' 100 || ln -sf '{exec}' '/usr/bin/{exe}'\n  update-alternatives --install '/usr/bin/{cli_link}' '{cli_link}' '{cli}' 100 || ln -sf '{cli}' '/usr/bin/{cli_link}'\nelse\n  ln -sf '{exec}' '/usr/bin/{exe}'\n  ln -sf '{cli}' '/usr/bin/{cli_link}'\nfi\nif type update-desktop-database >/dev/null 2>&1; then update-desktop-database -q /usr/share/applications || true; fi\n",
         exe = identity.linux_exe
@@ -258,10 +258,10 @@ base: core24
 grade: stable
 confinement: strict
 license: GPL-3.0-or-later
-website: {homepage}
-source-code: https://github.com/{repository}
-issues: https://github.com/{repository}/issues
-contact: https://github.com/{repository}/issues
+website: {website}
+source-code: {source}
+issues: {issues}
+contact: {issues}
 platforms:
   amd64:
 
@@ -297,8 +297,9 @@ parts:
       - libasound2t64
 "#,
         super::DESCRIPTION,
-        homepage = super::HOMEPAGE,
-        repository = crate::util::REPOSITORY,
+        website = kchess_delta::WEBSITE,
+        source = kchess_delta::SOURCE,
+        issues = kchess_delta::ISSUES,
     )
 }
 

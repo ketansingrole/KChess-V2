@@ -22,7 +22,8 @@ use crate::settings::{SettingsChanged, SettingsHandle};
 
 mod patch;
 
-const REPOSITORY: &str = "ketansingrole/KChess-V2";
+use kchess_delta::{PREFIX, REPOSITORY, Version};
+
 const FEED: &str = "https://api.github.com";
 /// How long a download waits for the server's next bytes before it counts as stopped.
 const IDLE: Duration = if cfg!(test) {
@@ -32,8 +33,6 @@ const IDLE: Duration = if cfg!(test) {
 };
 /// `checkAutomatically`: on startup and every six hours.
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
-/// The name KChess's packages carry.
-const PREFIX: &str = "KChess";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -135,14 +134,9 @@ pub struct UpdatesHandle(pub Entity<Updates>);
 
 impl Global for UpdatesHandle {}
 
-/// `vYYYY.M.C` or `YYYY.M.C` as numbers, to compare releases.
-pub fn parse_version(text: &str) -> Option<[u64; 3]> {
-    let mut parts = text.trim().trim_start_matches('v').split('.');
-    let mut out = [0; 3];
-    for slot in &mut out {
-        *slot = parts.next()?.parse().ok()?;
-    }
-    parts.next().is_none().then_some(out)
+/// `vYYYY.M.C` or `YYYY.M.C` as a release, to compare releases.
+pub fn parse_version(text: &str) -> Option<Version> {
+    Version::of_tag(text)
 }
 
 /// This app's name in version labels, so a report says which KChess app it came from.
@@ -264,7 +258,7 @@ fn rename_bridge_folder(bundle: &Path) -> std::io::Result<Option<PathBuf>> {
     if bundle.file_name() != Some(BRIDGE_FOLDER.as_ref()) {
         return Ok(None);
     }
-    let target = bundle.with_file_name("KChess.app");
+    let target = bundle.with_file_name(kchess_delta::installed::MAC_BUNDLE);
     if target.exists() {
         return Ok(None);
     }
@@ -673,7 +667,7 @@ fn kept_folder(root: &Path, version: &str) -> PathBuf {
 
 /// Remove the kept downloads `stale` names (by version), except one another KChess is still
 /// downloading into (its folder's lock is held).
-fn prune_kept(root: &Path, stale: impl Fn(Option<[u64; 3]>) -> bool) {
+fn prune_kept(root: &Path, stale: impl Fn(Option<Version>) -> bool) {
     let Ok(entries) = std::fs::read_dir(root.join(KEPT)) else {
         return;
     };

@@ -96,14 +96,6 @@ fn hello() -> kchess_service::Hello {
     }
 }
 
-/// A release as numbers, to tell which of two is newer.
-fn release_parts(release: &str) -> Vec<u64> {
-    release
-        .split('.')
-        .map(|part| part.parse().unwrap_or(0))
-        .collect()
-}
-
 /// What the person reads when another KChess release has this profile open
 /// (`docs/shared-core.md`, "Version check").
 fn refusal(error: &kchess_service::ConnectError) -> String {
@@ -118,7 +110,7 @@ fn refusal(error: &kchess_service::ConnectError) -> String {
         "gpui" => "GPUI",
         kind => kind,
     };
-    if release_parts(&other.release) > release_parts(&ours) {
+    if kchess_delta::Version::parse(&other.release) > kchess_delta::Version::parse(&ours) {
         format!(
             "KChess {} ({app}) is open on this profile. Update this app to {} to use them together.",
             other.release, other.release

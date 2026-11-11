@@ -13,8 +13,7 @@ pub fn root() -> PathBuf {
         .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
 }
 
-/// KChess's GitHub repository, whose releases installed apps update from.
-pub const REPOSITORY: &str = "ketansingrole/KChess-V2";
+use kchess_delta::REPOSITORY;
 
 /// The repository the release tooling works on: `GH_REPO` (CI sets it to the one it runs in, so
 /// `gh` and these agree), else KChess's.

@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    Arch, Asset, Delta, Entry, Error, MAX_HEADER, Node, Source, Tree, build, digest, file_digest,
-    name,
+    Arch, Asset, Delta, Entry, Error, MAX_HEADER, Node, Source, Tree, UPDATE_EXE,
+    WINDOWS_INSTALLER, build, digest, file_digest, name, stage_windows,
 };
 
 fn scratch(name: &str) -> PathBuf {
@@ -148,6 +148,30 @@ fn a_delta_rebuilds_the_new_release_from_the_installed_one() {
     // The patch is a small part of what it makes.
     let size = std::fs::metadata(&path).unwrap().len();
     assert!(size < 30_000, "{size} bytes");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A Windows patch is staged as the update installer reads it: the files in `files`, the
+/// installer beside them.
+#[test]
+fn a_windows_patch_stages_the_files_beside_the_update_installer() {
+    let dir = scratch("windows");
+    let release = releases();
+    let installed = dir.join("installed");
+    install(&release.old, &installed);
+    let extras = vec![(WINDOWS_INSTALLER.to_string(), b"installer".to_vec())];
+    let mut delta = Delta::open(&delta_file(&dir, &release.old, &release.new, &extras)).unwrap();
+    let out = dir.join("staged");
+    let installer = stage_windows(&mut delta, &installed, &out).unwrap();
+    assert_eq!(installer, out.join(UPDATE_EXE));
+    assert_eq!(std::fs::read(&installer).unwrap(), b"installer");
+    assert_eq!(
+        Tree::read(&out.join("files"), |_| false).unwrap(),
+        release.new
+    );
+    // Without the installer, nothing would run the files.
+    let mut bare = Delta::open(&delta_file(&dir, &release.old, &release.new, &[])).unwrap();
+    assert!(stage_windows(&mut bare, &installed, &dir.join("bare")).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -573,7 +573,10 @@ fn codesign_reads_who_signed_a_bundle() {
 
 #[test]
 fn release_versions_compare_as_numbers() {
-    assert_eq!(parse_version("v2026.10.12"), Some([2026, 10, 12]));
+    assert_eq!(
+        parse_version("v2026.10.12").map(|version| version.to_string()),
+        Some("2026.10.12".into())
+    );
     assert!(parse_version("v2026.10.12") > parse_version("2026.9.30"));
     assert!(parse_version("v2026.11.0") > parse_version("2026.10.12"));
     assert_eq!(parse_version("v1.2"), None);
@@ -1451,7 +1454,8 @@ fn a_patch_is_used_only_when_it_is_the_smaller_download() {
 /// What a patch makes is staged as the whole package's download is, for each kind of package.
 #[test]
 fn a_patch_is_staged_as_its_package_installs() {
-    use super::patch::{Patch, UPDATE_EXE, rebuild};
+    use super::patch::{Patch, rebuild};
+    use kchess_delta::UPDATE_EXE;
     let root = scratch("patch-kinds");
     let app = noise(7, 50_000);
     let mut app_next = app.clone();

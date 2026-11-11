@@ -38,7 +38,7 @@ pub fn plain(notes: &str) -> Result<String> {
             Some(heading) => heading.trim_start_matches('#').trim_start(),
             None => line,
         };
-        lines.push(unlink(line).replace("**", "").replace('`', ""));
+        lines.push(kchess_delta::notes::plain(line));
     }
     let text: String = lines
         .join("\n")
@@ -67,27 +67,6 @@ pub fn plain(notes: &str) -> Result<String> {
     Ok(text.chars().take(LIMIT).collect())
 }
 
-/// `line` with each Markdown link `[text](target)` as its text.
-fn unlink(line: &str) -> String {
-    let mut out = String::new();
-    let mut rest = line;
-    while let Some(open) = rest.find('[') {
-        let after = &rest[open + 1..];
-        let Some(close) = after.find("](") else {
-            break;
-        };
-        let target = &after[close + 2..];
-        let Some(end) = target.find(')') else {
-            break;
-        };
-        out.push_str(&rest[..open]);
-        out.push_str(&after[..close]);
-        rest = &target[end + 1..];
-    }
-    out.push_str(rest);
-    out
-}
-
 /// `store-notes <in> <out>`.
 pub fn run(args: &[String]) -> Result {
     let [input, output] = args else {
@@ -111,15 +90,6 @@ mod tests {
             plain(notes).unwrap(),
             "- Settings in a window of its own: Close it with × or Escape."
         );
-    }
-
-    /// A link's target starts right after its `](`, whatever brackets its text or the rest of
-    /// the line holds.
-    #[test]
-    fn a_link_keeps_its_text_and_the_rest_of_the_line() {
-        assert_eq!(unlink("[(c)](x) tail"), "(c) tail");
-        assert_eq!(unlink("[abcd](x)y) z"), "abcdy) z");
-        assert_eq!(unlink("no link [here"), "no link [here");
     }
 
     #[test]

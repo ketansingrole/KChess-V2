@@ -1,6 +1,6 @@
 [package]
 name = "kchess-delta"
-description = "Update patches: a release's program files rebuilt from the installed ones and per-file binary patches."
+description = "What a KChess release and the installed app agree on: versions, notes, package and install names, and update patches."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -26,92 +26,21 @@ pub struct Release {
     pub items: Vec<Item>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Item {
-    pub title: Option<String>,
-    pub text: String,
-}
+pub use kchess_delta::notes::Item;
 
 /// The released sections of `text`, in its order: `## 2026.11.4 (2026-11-20)` headings, each with
 /// `- **Title**: text` items. The `## Unreleased` section and anything before the first heading
 /// are left out.
 pub fn parse(text: &str) -> Vec<Release> {
-    sections(text)
+    kchess_delta::notes::sections(text)
         .into_iter()
-        .filter(|release| parse_version(&release.version).is_some())
+        .filter(|section| section.release().is_some())
+        .map(|section| Release {
+            version: section.version.to_string(),
+            date: section.date.map(str::to_string),
+            items: section.items(),
+        })
         .collect()
-}
-
-/// Every `## ` section of `text` with its items, `Unreleased` among them as a version of that name.
-fn sections(text: &str) -> Vec<Release> {
-    let mut releases: Vec<Release> = Vec::new();
-    for line in text.lines() {
-        if let Some(heading) = line.strip_prefix("## ") {
-            let (version, date) = match heading.trim().split_once(' ') {
-                Some((version, date)) => (
-                    version,
-                    Some(date.trim().trim_matches(['(', ')']).to_string()),
-                ),
-                None => (heading.trim(), None),
-            };
-            releases.push(Release {
-                version: version.to_string(),
-                date: date.filter(|date| !date.is_empty()),
-                items: Vec::new(),
-            });
-            continue;
-        }
-        let Some(release) = releases.last_mut() else {
-            continue;
-        };
-        let trimmed = line.trim();
-        if let Some(item) = trimmed.strip_prefix("- ") {
-            release.items.push(item_of(item));
-        } else if !trimmed.is_empty()
-            && line.starts_with(' ')
-            && let Some(item) = release.items.last_mut()
-        {
-            // A wrapped item carries on, indented.
-            item.text.push(' ');
-            item.text.push_str(&plain(trimmed));
-        }
-    }
-    releases
-}
-
-fn item_of(text: &str) -> Item {
-    if let Some(rest) = text.strip_prefix("**")
-        && let Some((title, text)) = rest.split_once("**")
-    {
-        let text = text.trim_start_matches([':', '.']).trim();
-        return Item {
-            title: Some(plain(title.trim_end_matches(':'))),
-            text: plain(text),
-        };
-    }
-    Item {
-        title: None,
-        text: plain(text),
-    }
-}
-
-/// Markdown's emphasis and code marks dropped, links as their text.
-fn plain(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find('[') {
-        let Some((label, after)) = rest[start + 1..].split_once("](") else {
-            break;
-        };
-        let Some(end) = after.find(')') else {
-            break;
-        };
-        out.push_str(&rest[..start]);
-        out.push_str(label);
-        rest = &after[end + 1..];
-    }
-    out.push_str(rest);
-    out.replace("**", "").replace('`', "")
 }
 
 /// Every release up to `current`, newest first.
@@ -255,7 +184,7 @@ fn list(releases: &[Release], palette: &Palette, height: Pixels) -> impl IntoEle
 
 #[cfg(test)]
 mod tests {
-    use super::{Item, NOTES, date_label, parse, parse_version, releases_up_to, sections, to_show};
+    use super::{Item, NOTES, date_label, parse, releases_up_to, to_show};
 
     const SAMPLE: &str = "# What's new\n\nIntro text.\n\n## Unreleased\n\n- **Next**: not yet.\n\n\
         ## 2026.11.4 (2026-11-20)\n\n- **Guess the move**: a drill, see [Practice](https://x).\n  \
@@ -320,41 +249,19 @@ mod tests {
         assert!(shown("2026.11.4", None, false).is_empty());
     }
 
-    /// The notes built into the app read: every released section has a date and items with
-    /// titles, versions descend, and the running release has its section.
+    /// The notes built into the app read (`kchess_delta::notes::problems`, which
+    /// `cargo xtask release-verify` also runs), and the running release has its section.
     #[test]
     fn the_shipped_notes_are_well_formed() {
-        // A player reads a line at a glance: a longer one is skipped, however much it holds.
-        const MAX_ITEM: usize = 280;
-        for release in sections(NOTES) {
-            for item in &release.items {
-                let title = item.title.as_deref().unwrap_or_default();
-                let length = title.chars().count() + item.text.chars().count();
-                assert!(
-                    length <= MAX_ITEM,
-                    "{} has a {length}-character line, over {MAX_ITEM}: keep the few points a \
-                     player notices most. {title}: {}",
-                    release.version,
-                    item.text
-                );
-            }
-        }
+        assert_eq!(kchess_delta::notes::problems(NOTES), Vec::<String>::new());
         let all = parse(NOTES);
-        assert!(!all.is_empty());
         for release in &all {
             assert!(
                 release.date.as_deref().and_then(date_label).is_some(),
                 "{} has a date",
                 release.version
             );
-            assert!(!release.items.is_empty(), "{} has items", release.version);
-            for item in &release.items {
-                assert!(item.title.is_some(), "{}: {}", release.version, item.text);
-                assert!(!item.text.is_empty(), "{}", release.version);
-            }
         }
-        let versions: Vec<_> = all.iter().map(|r| parse_version(&r.version)).collect();
-        assert!(versions.windows(2).all(|pair| pair[0] > pair[1]));
         let current = crate::updates::current_version();
         assert!(
             all.iter().any(|release| release.version == current),

@@ -62,9 +62,7 @@ pub fn ask_restart(window: &mut Window, cx: &mut App) {
 }
 
 /// The landing page, the source and the issue tracker, under the version.
-pub const WEBSITE: &str = "https://ketansingrole.github.io/KChess-V2/";
-pub const SOURCE: &str = "https://github.com/ketansingrole/KChess-V2";
-pub const ISSUES: &str = "https://github.com/ketansingrole/KChess-V2/issues";
+pub use kchess_delta::{ISSUES, SOURCE, WEBSITE};
 
 fn bytes(count: u64) -> String {
     widgets::format_bytes(count as f64)

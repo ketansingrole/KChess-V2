@@ -286,17 +286,13 @@ fn between(old_path: &Path, new_path: &Path, stage: Option<&Path>) -> Result {
 }
 
 /// `deltas --apply <patch> <installed folder> <out>`: what the Windows updater stages from a
-/// patch: the rebuilt files in `<out>/files` and the update installer beside them as
-/// `KChess-update.exe` (the Windows upgrade test runs it as an installed KChess does).
+/// patch, with its own code (`kchess_delta::stage_windows`), so the Windows upgrade test runs
+/// the update installer as an installed KChess does.
 fn apply(delta: &Path, installed: &Path, out: &Path) -> Result {
     let text = |cause: kchess_delta::Error| cause.0;
     let mut patch = kchess_delta::Delta::open(delta).map_err(text)?;
     let _ = std::fs::remove_dir_all(out);
-    patch
-        .rebuild(|path| installed.join(path), &out.join("files"))
-        .map_err(text)?;
-    let installer = patch.extra(WINDOWS_INSTALLER).map_err(text)?;
-    std::fs::write(out.join("KChess-update.exe"), installer).map_err(|cause| cause.to_string())?;
+    kchess_delta::stage_windows(&mut patch, installed, out).map_err(text)?;
     say(&format!(
         "{} to {} staged in {}.",
         patch.header.from,
@@ -468,7 +464,7 @@ mod tests {
             b"voice"
         );
         assert_eq!(
-            std::fs::read(out.join("KChess-update.exe")).unwrap(),
+            std::fs::read(out.join(kchess_delta::UPDATE_EXE)).unwrap(),
             b"MZ update"
         );
         std::fs::remove_file(installed.join("voice/vosk.dll")).unwrap();
@@ -839,7 +835,7 @@ mod tests {
         );
         assert_eq!(std::fs::read(out.join("files/KChess.exe")).unwrap(), b"new");
         assert_eq!(
-            std::fs::read(out.join("KChess-update.exe")).unwrap(),
+            std::fs::read(out.join(kchess_delta::UPDATE_EXE)).unwrap(),
             b"MZ update"
         );
         let _ = std::fs::remove_dir_all(&dir);

@@ -1,42 +1,18 @@
-//! Release versions: `YEAR.MONTH.COUNTER` in the UTC release month (2026.10.0, 2026.10.1, …
-//! 2026.11.0), without zero padding, so the version stays valid semver for Cargo and the update
-//! manifests. The workspace version in Cargo.toml is the release.
+//! Releases: the next version (`kchess_delta::Version`), its notes, and the checks a release
+//! commit and its tag pass. The workspace version in Cargo.toml is the release.
 
-use kchess_delta::Asset;
+use kchess_delta::notes::{self, FILE as NOTES, UNRELEASED};
+use kchess_delta::{Asset, Version};
 
 use crate::util::{Result, output, root, run, say, version, workspace_version};
 
-/// `(year, month, counter)` of a release version.
-pub fn parse(version: &str) -> Result<(u32, u32, u64)> {
-    let invalid = || {
+/// `version` as a release version, refused unless it is one.
+pub fn parse(version: &str) -> Result<Version> {
+    Version::parse(version).ok_or_else(|| {
         format!(
             "Invalid release version {version}: use YEAR.MONTH.COUNTER, without zero padding (e.g. 2026.10.0)."
         )
-    };
-    let parts: Vec<&str> = version.split('.').collect();
-    let [year, month, counter] = parts.as_slice() else {
-        return Err(invalid());
-    };
-    let plain = |part: &str| {
-        !part.is_empty()
-            && part.bytes().all(|b| b.is_ascii_digit())
-            && (part == "0" || !part.starts_with('0'))
-    };
-    if !(plain(year) && plain(month) && plain(counter))
-        || year.len() != 4
-        || !year.starts_with("20")
-    {
-        return Err(invalid());
-    }
-    let (year, month, counter) = (
-        year.parse::<u32>().map_err(|_| invalid())?,
-        month.parse::<u32>().map_err(|_| invalid())?,
-        counter.parse::<u64>().map_err(|_| invalid())?,
-    );
-    if !(1..=12).contains(&month) {
-        return Err(invalid());
-    }
-    Ok((year, month, counter))
+    })
 }
 
 /// The next release in `(year, month)` after `tags`.
@@ -46,7 +22,12 @@ pub fn next_version(tags: &[&str], year: u32, month: u32) -> Result<String> {
         let Some(version) = tag.strip_prefix('v') else {
             continue;
         };
-        let Ok((tag_year, tag_month, tag_counter)) = parse(version) else {
+        let Some(Version {
+            year: tag_year,
+            month: tag_month,
+            counter: tag_counter,
+        }) = Version::parse(version)
+        else {
             continue;
         };
         if (tag_year, tag_month) > (year, month) {
@@ -69,24 +50,20 @@ fn utc_date() -> (u32, u32, u32) {
     (year as u32, month, day)
 }
 
-/// The notes the app shows after an update (`apps/gpui/src/whats_new.rs`): what each change
-/// brings goes under `## Unreleased`, which `release-version` turns into the release's section.
-const NOTES: &str = "apps/gpui/WHATS_NEW.md";
-const UNRELEASED: &str = "## Unreleased";
-
 /// `notes` with its unreleased items as `version`'s, released on `date` (`YYYY-MM-DD`), under a
 /// fresh, empty `## Unreleased`. Refused when nothing is written there: the app would show an
 /// update with no notes.
 pub fn date_notes(notes: &str, version: &str, date: &str) -> Result<String> {
+    let unreleased = format!("## {UNRELEASED}");
     let missing = || {
         format!(
-            "{NOTES} has nothing under {UNRELEASED}. Write what this release brings there, one \
+            "{NOTES} has nothing under {unreleased}. Write what this release brings there, one \
              `- **Title**: what it does` line each, then run release-version again."
         )
     };
     // The heading line itself, not a mention of it in the file's introduction.
     let (head, rest) = notes
-        .split_once(&format!("\n{UNRELEASED}\n"))
+        .split_once(&format!("\n{unreleased}\n"))
         .map(|(head, rest)| (format!("{head}\n"), format!("\n{rest}")))
         .ok_or_else(missing)?;
     let section = rest.split("\n## ").next().unwrap_or_default();
@@ -99,32 +76,18 @@ pub fn date_notes(notes: &str, version: &str, date: &str) -> Result<String> {
     if has_notes(notes, version) {
         return Err(format!("{NOTES} already has a section for {version}."));
     }
-    Ok(format!("{head}{UNRELEASED}\n\n## {version} ({date}){rest}"))
-}
-
-/// The lines under `version`'s `## <version> (<date>)` heading in `notes`, up to the next
-/// section; none without that heading.
-fn section<'a>(notes: &'a str, version: &str) -> Option<Vec<&'a str>> {
-    let heading = format!("## {version} (");
-    let start = notes.lines().position(|line| line.starts_with(&heading))?;
-    Some(
-        notes
-            .lines()
-            .skip(start + 1)
-            .take_while(|line| !line.starts_with("## "))
-            .collect(),
-    )
+    Ok(format!("{head}{unreleased}\n\n## {version} ({date}){rest}"))
 }
 
 /// The items of `version`'s section in `notes`, as the release's text; none when it has none.
 pub fn release_notes(notes: &str, version: &str) -> Option<String> {
-    let body = section(notes, version)?.join("\n").trim().to_string();
+    let body = notes::section(notes, version)?.body();
     (!body.is_empty()).then_some(body)
 }
 
 /// Whether `notes` has a heading for `version`, even one with nothing under it.
 pub fn has_notes(notes: &str, version: &str) -> bool {
-    section(notes, version).is_some()
+    notes::section(notes, version).is_some()
 }
 
 /// Cargo.toml's text with `next` as the workspace version, and no other version changed.
@@ -203,8 +166,11 @@ fn metadata(version: &str, lock: &str, notes: &str, tag: Option<&str>) -> Result
     if !has_notes(notes, version) {
         return Err(format!(
             "{NOTES} has no `## {version} (date)` section, so the app would show this release \
-             with no notes. `cargo xtask release-version` writes it from `{UNRELEASED}`."
+             with no notes. `cargo xtask release-version` writes it from `## {UNRELEASED}`."
         ));
+    }
+    if let Some(problem) = notes::problems(notes).into_iter().next() {
+        return Err(format!("{NOTES}: {problem}"));
     }
     // The App Store takes the same notes: one it would refuse is rewritten before the tag.
     crate::store_notes::plain(&release_notes(notes, version).unwrap_or_default())?;
@@ -508,8 +474,8 @@ mod tests {
 
     #[test]
     fn release_versions_have_no_padding() {
-        assert_eq!(parse("2026.10.0").unwrap(), (2026, 10, 0));
-        assert_eq!(parse("2026.1.12").unwrap(), (2026, 1, 12));
+        assert_eq!(parse("2026.10.0").unwrap().to_string(), "2026.10.0");
+        assert_eq!(parse("2026.1.12").unwrap().to_string(), "2026.1.12");
         for bad in [
             "2026.10.00",
             "2026.01.1",
@@ -612,6 +578,13 @@ mod tests {
                 .contains("no `## 2026.11.5 (date)` section")
         );
         assert!(metadata("1.2.3", lock, notes, None).is_err());
+        // A line too long for a player to read is caught before the tag too.
+        let long = notes.replace("a thing", &"a long thing ".repeat(30));
+        assert!(
+            metadata("2026.11.5", lock, &long, None)
+                .unwrap_err()
+                .contains("over 280")
+        );
         // Notes App Store Connect would refuse are caught before the tag.
         assert!(
             metadata("2026.11.5", lock, &notes.replace("thing", "thing 🎉"), None)

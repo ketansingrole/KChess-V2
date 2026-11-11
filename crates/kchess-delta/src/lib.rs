@@ -1,5 +1,9 @@
-//! Update patches: the program files of a new release, rebuilt from the files of the one that is
-//! installed.
+//! What a release and the installed app must agree on: the repository releases come from, the
+//! release versions ([`Version`]), the release notes ([`notes`]), the packages' names
+//! ([`Asset`]), the names an installation holds ([`installed`]), and update patches.
+//!
+//! Update patches are the program files of a new release, rebuilt from the files of the one that
+//! is installed.
 //!
 //! A release's packages hold the same program files in different wrappers (a bundle in a zip, a
 //! folder in an installer, a tree in a `.deb`, one AppImage). A [`Delta`] describes the new
@@ -24,7 +28,10 @@
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
 mod assets;
+pub mod installed;
+pub mod notes;
 mod tree;
+mod version;
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -34,12 +41,28 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub use assets::{Arch, Asset};
+pub use assets::{Arch, Asset, PREFIX};
 pub use tree::{Node, Tree};
+pub use version::Version;
 
-/// The first bytes of every delta.
+macro_rules! owner {
+    () => {
+        "ketansingrole"
+    };
+}
+macro_rules! project {
+    () => {
+        "KChess-V2"
+    };
+}
+/// The GitHub repository releases are published from, as `owner/name`.
+pub const REPOSITORY: &str = concat!(owner!(), "/", project!());
+/// The repository's page, its issue tracker and the project's website.
+pub const SOURCE: &str = concat!("https://github.com/", owner!(), "/", project!());
+pub const ISSUES: &str = concat!("https://github.com/", owner!(), "/", project!(), "/issues");
+pub const WEBSITE: &str = concat!("https://", owner!(), ".github.io/", project!(), "/");
+
 pub const MAGIC: &[u8; 13] = b"KCHESS-DELTA\n";
-/// The format this crate writes and reads.
 pub const FORMAT: u32 = 1;
 /// The longest header a delta may have: a release's file list is a few kilobytes.
 const MAX_HEADER: u64 = 16 << 20;
@@ -49,6 +72,19 @@ pub const APPIMAGE: &str = "KChess.AppImage";
 /// The update installer a Windows delta carries (the installer without its files, which writes
 /// the files beside it).
 pub const WINDOWS_INSTALLER: &str = "installer.exe";
+/// Where a Windows patch's installer is staged; the files go in `files` beside it, where it
+/// reads them (`$EXEDIR\files`).
+pub const UPDATE_EXE: &str = "KChess-update.exe";
+
+/// Stage a Windows patch over the `installed` folder as the updater installs it: the rebuilt
+/// files in `out/files` and the update installer beside them as [`UPDATE_EXE`]; the installer's
+/// path.
+pub fn stage_windows(delta: &mut Delta, installed: &Path, out: &Path) -> Result<PathBuf> {
+    delta.rebuild(|path| installed.join(path), &out.join("files"))?;
+    let installer = out.join(UPDATE_EXE);
+    std::fs::write(&installer, delta.extra(WINDOWS_INSTALLER)?)?;
+    Ok(installer)
+}
 
 /// The release asset of the delta that makes `package` (a release asset,
 /// `KChess-2026.11.5-linux-amd64.deb`) from release `from`'s installed files:
