@@ -53,7 +53,7 @@ pub fn build_folder(dry_run: bool) -> crate::util::Result {
     if dry_run {
         Ok(())
     } else {
-        crate::worktrees::enough_space(&root)
+        crate::worktrees::enough_space(crate::worktrees::free_space(&root))
     }
 }
 

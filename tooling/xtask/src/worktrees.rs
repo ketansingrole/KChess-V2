@@ -92,31 +92,29 @@ fn sweep_at(
         }
         None => true,
     });
-    if free(root).is_some_and(|bytes| bytes < LOW) {
-        for folder in least_recent_first(folders) {
-            if free(root).is_none_or(|bytes| bytes >= LOW) {
-                break;
-            }
-            if dry_run || delete(&folder.target) {
-                messages.push(format!(
-                    "{verb} {}: the disk has less than {} GB free.",
-                    folder.target.display(),
-                    LOW / 1_000_000_000
-                ));
-            }
-            if dry_run {
-                break;
-            }
+    for folder in least_recent_first(folders) {
+        if free(root).is_none_or(|bytes| bytes >= LOW) {
+            break;
+        }
+        if dry_run || delete(&folder.target) {
+            messages.push(format!(
+                "{verb} {}: the disk has less than {} GB free.",
+                folder.target.display(),
+                LOW / 1_000_000_000
+            ));
+        }
+        if dry_run {
+            break;
         }
     }
     messages
 }
 
-/// Refuses to build while the disk at `root` has less than [`TOO_LOW`] free, after the sweep:
-/// a build that runs out of space fails halfway, in whatever step it was. Where the free space
-/// cannot be read, says nothing against it.
-pub fn enough_space(root: &Path) -> Result {
-    match free_space(root) {
+/// Refuses to build while the disk has less than [`TOO_LOW`] `free`, after the sweep: a build
+/// that runs out of space fails halfway, in whatever step it was. Where the free space cannot be
+/// read, says nothing against it.
+pub fn enough_space(free: Option<u64>) -> Result {
+    match free {
         Some(bytes) if bytes < TOO_LOW => Err(format!(
             "Only {:.1} GB is free on this disk, and a build needs about {} GB. Free some space \
              (remove worktrees you are done with: `git worktree remove <path>`) and try again.",
@@ -289,7 +287,7 @@ fn remove_all_but(folder: &Path, kept: &[PathBuf]) {
 
 /// The bytes free for this user on the disk holding `path`, when the system says: `df` on Unix,
 /// .NET's `DriveInfo` through PowerShell on Windows.
-fn free_space(path: &Path) -> Option<u64> {
+pub fn free_space(path: &Path) -> Option<u64> {
     let mut command = if cfg!(windows) {
         let mut command = std::process::Command::new("powershell");
         command.args([
@@ -349,6 +347,13 @@ mod tests {
         let built = |hours: u32| Some(now - HOUR * hours);
         assert_eq!(why(&folder(built(1), true), now), None);
         assert_eq!(
+            why(
+                &folder(Some(now - 2 * HOUR + Duration::from_secs(1)), true),
+                now
+            ),
+            None
+        );
+        assert_eq!(
             why(&folder(built(2), true), now),
             Some(Why::Merged(2 * HOUR))
         );
@@ -363,6 +368,44 @@ mod tests {
             None,
             "built after now"
         );
+    }
+
+    #[test]
+    fn a_build_needs_fifteen_gigabytes_free_where_that_can_be_told() {
+        assert!(enough_space(Some(TOO_LOW)).is_ok());
+        assert!(enough_space(None).is_ok());
+        let refused = enough_space(Some(TOO_LOW - 1)).unwrap_err();
+        assert!(refused.starts_with("Only 15.0 GB is free"), "{refused}");
+        assert!(enough_space(Some(0)).is_err());
+    }
+
+    #[test]
+    fn outside_a_repository_it_says_it_could_not_look() {
+        let dir = tempfile::tempdir().unwrap();
+        let said = sweep(dir.path(), true);
+        assert_eq!(said.len(), 1);
+        assert!(
+            said[0].starts_with("Could not list the other worktrees"),
+            "{said:?}"
+        );
+    }
+
+    #[test]
+    fn a_mutants_tree_a_push_holds_keeps_its_build_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = built(&dir.path().join(crate::mutants_tree::TREE));
+        let push = File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.path().join(crate::mutants_tree::LOCK))
+            .unwrap();
+        push.try_lock().unwrap();
+        assert!(!delete(&target));
+        assert!(target.is_dir());
+        drop(push);
+        assert!(delete(&target));
+        assert!(!target.exists());
     }
 
     #[test]
