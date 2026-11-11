@@ -2,9 +2,11 @@
 //! the puzzle service alone. Totals and the day streak are derived from the log each time, never
 //! kept as counters of their own. Deleting the downloaded puzzles leaves the log alone.
 
+use kchess_contracts::types::{
+    Puzzle, PuzzleAttempt, PuzzleAttemptInput, PuzzleProgress, PuzzleProgressQuery, PuzzleTotals,
+    PuzzleWrongMove,
+};
 use rusqlite::{Connection, Row, params};
-use serde::Deserialize;
-use serde_json::{Value, json};
 
 use crate::error::Result;
 use crate::store::sql::Sql as _;
@@ -50,57 +52,11 @@ CREATE INDEX IF NOT EXISTS idx_puzzle_attempts_day ON puzzle_attempts(day);",
     Ok(())
 }
 
-/// `PuzzleAttemptInput`, already validated by the facade.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AttemptInput {
-    pub puzzle: AttemptPuzzle,
-    pub mode: String,
-    pub retry: bool,
-    pub win: bool,
-    pub revealed: bool,
-    pub hinted: bool,
-    pub found: u32,
-    pub wrong: u32,
-    pub total: u32,
-    pub day: String,
-    #[serde(default)]
-    pub wrong_moves: Vec<WrongMove>,
-}
-
-/// A wrong first try: the index in the solution of the move it replaced, and the move played.
-#[derive(Debug, Clone, Deserialize)]
-pub struct WrongMove {
-    pub index: u32,
-    pub uci: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AttemptPuzzle {
-    pub id: String,
-    pub fen: String,
-    #[serde(default)]
-    pub last_move: Option<String>,
-    pub solution: Vec<String>,
-    pub rating: f64,
-    pub themes: Vec<String>,
-    #[serde(default)]
-    pub game_id: Option<String>,
-}
-
-/// `PuzzleProgressQuery`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ProgressQuery {
-    pub today: String,
-    pub limit: u32,
-}
-
 /// How many attempts a recorded attempt's progress lists: the training page's strip.
 pub const RECENT: u32 = 10;
 
 /// Keep `attempt` (classified here, as the session did), at `at` ms since the epoch.
-pub fn record(db: &Connection, attempt: &AttemptInput, at: i64) -> Result<()> {
+pub fn record(db: &Connection, attempt: &PuzzleAttemptInput, at: i64) -> Result<()> {
     let verdict = Verdict {
         win: attempt.win,
         revealed: attempt.revealed,
@@ -115,6 +71,7 @@ pub fn record(db: &Connection, attempt: &AttemptInput, at: i64) -> Result<()> {
     let wrong_moves: Vec<String> = attempt
         .wrong_moves
         .iter()
+        .flatten()
         .map(|entry| format!("{}:{}", entry.index, entry.uci))
         .collect();
     db.execute(
@@ -131,7 +88,7 @@ pub fn record(db: &Connection, attempt: &AttemptInput, at: i64) -> Result<()> {
             puzzle.rating as i64,
             puzzle.themes.join(" "),
             puzzle.game_id,
-            attempt.mode,
+            attempt.mode.as_str(),
             attempt.retry,
             outcome.name(),
             attempt.hinted,
@@ -149,53 +106,58 @@ fn words(text: &str) -> Vec<&str> {
     text.split(' ').filter(|word| !word.is_empty()).collect()
 }
 
-fn attempt_from(row: &Row<'_>) -> rusqlite::Result<Value> {
-    let last_move: Option<String> = row.get("last_move")?;
-    let game_id: Option<String> = row.get("game_id")?;
+fn attempt_from(row: &Row<'_>) -> rusqlite::Result<PuzzleAttempt> {
     let solution: String = row.get("solution")?;
     let themes: String = row.get("themes")?;
-    let mut puzzle = json!({
-        "id": row.get::<_, String>("puzzle_id")?,
-        "fen": row.get::<_, String>("fen")?,
-        "solution": words(&solution),
-        "rating": row.get::<_, i64>("rating")?,
-        "themes": words(&themes),
-    });
-    if let Some(last_move) = last_move {
-        puzzle["lastMove"] = json!(last_move);
-    }
-    if let Some(game_id) = game_id {
-        puzzle["gameId"] = json!(game_id);
-    }
+    let owned = |text: &str| words(text).into_iter().map(str::to_owned).collect();
+    let puzzle = Puzzle {
+        id: row.get("puzzle_id")?,
+        fen: row.get("fen")?,
+        last_move: row.get("last_move")?,
+        solution: owned(&solution),
+        rating: row.get::<_, i64>("rating")? as f64,
+        themes: owned(&themes),
+        plays: None,
+        game_id: row.get("game_id")?,
+    };
     let wrong_moves: String = row.get("wrong_moves")?;
-    let wrong_moves: Vec<Value> = words(&wrong_moves)
+    let wrong_moves: Vec<PuzzleWrongMove> = words(&wrong_moves)
         .into_iter()
         .filter_map(|word| {
             let (index, uci) = word.split_once(':')?;
-            Some(json!({ "index": index.parse::<u32>().ok()?, "uci": uci }))
+            Some(PuzzleWrongMove {
+                index: index.parse().ok()?,
+                uci: uci.to_owned(),
+            })
         })
         .collect();
-    let mut attempt = json!({
-        "id": row.get::<_, i64>("id")?,
-        "at": row.get::<_, i64>("at")?,
-        "day": row.get::<_, String>("day")?,
-        "puzzle": puzzle,
-        "mode": row.get::<_, String>("mode")?,
-        "retry": row.get::<_, bool>("retry")?,
-        "outcome": row.get::<_, String>("outcome")?,
-        "hinted": row.get::<_, bool>("hinted")?,
-        "found": row.get::<_, i64>("found")?,
-        "wrong": row.get::<_, i64>("tried")? - row.get::<_, i64>("found")?,
-        "total": row.get::<_, i64>("total")?,
-    });
-    if !wrong_moves.is_empty() {
-        attempt["wrongMoves"] = Value::Array(wrong_moves);
-    }
-    Ok(attempt)
+    let found: u32 = row.get("found")?;
+    Ok(PuzzleAttempt {
+        id: row.get("id")?,
+        at: row.get("at")?,
+        day: row.get("day")?,
+        puzzle,
+        mode: logged(row, "mode")?,
+        retry: row.get("retry")?,
+        outcome: logged(row, "outcome")?,
+        hinted: row.get("hinted")?,
+        found,
+        wrong: row.get::<_, u32>("tried")?.saturating_sub(found),
+        total: row.get("total")?,
+        wrong_moves: (!wrong_moves.is_empty()).then_some(wrong_moves),
+    })
+}
+
+/// A word column read as its wire enum; a word no build of KChess writes is an error.
+fn logged<T: serde::de::DeserializeOwned>(row: &Row<'_>, column: &str) -> rusqlite::Result<T> {
+    let word: String = row.get(column)?;
+    serde_json::from_value(serde_json::Value::String(word)).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, error.into())
+    })
 }
 
 /// `PuzzleTotals` of first attempts, of one day or of all.
-fn totals(db: &Connection, day: Option<&str>) -> Result<Value> {
+fn totals(db: &Connection, day: Option<&str>) -> Result<PuzzleTotals> {
     let mut statement = db
         .prepare(
             "SELECT outcome, COUNT(*), SUM(found), SUM(tried) FROM puzzle_attempts
@@ -212,7 +174,7 @@ fn totals(db: &Connection, day: Option<&str>) -> Result<Value> {
             ))
         })
         .sql()?;
-    let (mut attempts, mut found, mut tried) = (0i64, 0i64, 0i64);
+    let (mut attempts, mut found, mut tried) = (0, 0, 0);
     let mut by = [0i64; 5];
     for row in rows {
         let (outcome, count, moves_found, moves_tried) = row.sql()?;
@@ -224,27 +186,27 @@ fn totals(db: &Connection, day: Option<&str>) -> Result<Value> {
         found += moves_found;
         tried += moves_tried;
     }
-    Ok(json!({
-        "attempts": attempts,
-        "solved": by[Outcome::Solved as usize],
-        "hinted": by[Outcome::Hinted as usize],
-        "partial": by[Outcome::Partial as usize],
-        "missed": by[Outcome::Missed as usize],
-        "revealed": by[Outcome::Revealed as usize],
-        "movesFound": found,
-        "movesTried": tried,
-    }))
+    Ok(PuzzleTotals {
+        attempts,
+        solved: by[Outcome::Solved as usize],
+        hinted: by[Outcome::Hinted as usize],
+        partial: by[Outcome::Partial as usize],
+        missed: by[Outcome::Missed as usize],
+        revealed: by[Outcome::Revealed as usize],
+        moves_found: found,
+        moves_tried: tried,
+    })
 }
 
 /// `PuzzleProgress`: the newest `limit` attempts, the day streak as of `today`, and the totals.
-pub fn progress(db: &Connection, query: &ProgressQuery) -> Result<Value> {
+pub fn progress(db: &Connection, query: &PuzzleProgressQuery) -> Result<PuzzleProgress> {
     let mut statement = db
         .prepare("SELECT * FROM puzzle_attempts ORDER BY id DESC LIMIT ?1")
         .sql()?;
     let recent = statement
         .query_map(params![query.limit], attempt_from)
         .sql()?
-        .collect::<rusqlite::Result<Vec<Value>>>()
+        .collect::<rusqlite::Result<Vec<PuzzleAttempt>>>()
         .sql()?;
     let mut statement = db
         .prepare(
@@ -258,31 +220,40 @@ pub fn progress(db: &Connection, query: &ProgressQuery) -> Result<Value> {
         .collect::<rusqlite::Result<Vec<String>>>()
         .sql()?;
     let streak = day_streak(days.iter().map(String::as_str), &query.today);
-    Ok(json!({
-        "recent": recent,
-        "dayStreak": streak.current,
-        "bestDayStreak": streak.best,
-        "today": totals(db, Some(&query.today))?,
-        "all": totals(db, None)?,
-    }))
+    Ok(PuzzleProgress {
+        recent,
+        day_streak: streak.current,
+        best_day_streak: streak.best,
+        today: totals(db, Some(&query.today))?,
+        all: totals(db, None)?,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kchess_contracts::types::PuzzleTrainMode;
+    use serde_json::{Value, json};
 
-    fn attempt(day: &str, win: bool, found: u32, revealed: bool, retry: bool) -> AttemptInput {
-        AttemptInput {
-            puzzle: AttemptPuzzle {
+    fn attempt(
+        day: &str,
+        win: bool,
+        found: u32,
+        revealed: bool,
+        retry: bool,
+    ) -> PuzzleAttemptInput {
+        PuzzleAttemptInput {
+            puzzle: Puzzle {
                 id: "abc12".into(),
                 fen: "6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1".into(),
                 last_move: Some("e7e8".into()),
                 solution: vec!["d1d8".into()],
                 rating: 1500.0,
                 themes: vec!["mateIn1".into(), "short".into()],
+                plays: None,
                 game_id: None,
             },
-            mode: "practice".into(),
+            mode: PuzzleTrainMode::Practice,
             retry,
             win,
             revealed,
@@ -291,7 +262,7 @@ mod tests {
             wrong: u32::from(!win && !revealed),
             total: 3,
             day: day.into(),
-            wrong_moves: Vec::new(),
+            wrong_moves: None,
         }
     }
 
@@ -301,8 +272,8 @@ mod tests {
         db
     }
 
-    fn query(today: &str) -> ProgressQuery {
-        ProgressQuery {
+    fn query(today: &str) -> PuzzleProgressQuery {
+        PuzzleProgressQuery {
             today: today.into(),
             limit: 10,
         }
@@ -316,7 +287,7 @@ mod tests {
         record(&db, &attempt("2026-10-19", false, 2, false, false), 3).expect("record");
         record(&db, &attempt("2026-10-19", false, 1, true, false), 4).expect("record");
         record(&db, &attempt("2026-10-19", true, 3, false, true), 5).expect("record");
-        let progress = progress(&db, &query("2026-10-19")).expect("progress");
+        let progress = progress_at(&db, "2026-10-19");
         // Today has no first-attempt solve yet (the retry does not count): yesterday's run stands.
         assert_eq!(progress["dayStreak"], 2);
         assert_eq!(progress["bestDayStreak"], 2);
@@ -357,23 +328,23 @@ mod tests {
     }
 
     fn progress_at(db: &Connection, today: &str) -> Value {
-        progress(db, &query(today)).expect("progress")
+        serde_json::to_value(progress(db, &query(today)).expect("progress")).expect("json")
     }
 
     #[test]
     fn keeps_what_was_played_at_each_wrong_first_try() {
         let db = setup();
         let mut missed = attempt("2026-10-19", false, 1, false, false);
-        missed.wrong_moves = vec![
-            WrongMove {
+        missed.wrong_moves = Some(vec![
+            PuzzleWrongMove {
                 index: 0,
                 uci: "d1d7".into(),
             },
-            WrongMove {
+            PuzzleWrongMove {
                 index: 2,
                 uci: "g1h1".into(),
             },
-        ];
+        ]);
         record(&db, &missed, 1).expect("record");
         record(&db, &attempt("2026-10-19", true, 3, false, false), 2).expect("record");
         let recent = progress_at(&db, "2026-10-19")["recent"].clone();

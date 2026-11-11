@@ -2,6 +2,7 @@
 //! Puzzles page.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::PuzzleId;
 use kchess_domain::position::{play_san, play_uci};
 use kchess_domain::rules::setup_start;
 use kchess_games::puzzle::OnBoard;
@@ -122,12 +123,13 @@ pub async fn interactive(
     let puzzle = match id {
         Some(word) => {
             core.request(calls::PuzzleById {
-                id: json!(named(word)),
+                id: PuzzleId(named(word)),
             })
             .await?
         }
         None => core.request(calls::PuzzleDaily {}).await?,
     };
+    let puzzle = json!(puzzle);
     let mut solving =
         Solving::new(&puzzle).ok_or("Lichess sent a puzzle KChess could not read.")?;
     crate::print(json!({

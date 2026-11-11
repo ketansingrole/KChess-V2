@@ -113,7 +113,7 @@ async fn the_daily_puzzle_needs_no_login_and_is_read_as_a_puzzle() {
     let sent = &fixture.requests()[0];
     assert_eq!(sent.path(), "/api/puzzle/daily");
     assert_eq!(sent.header("authorization"), None);
-    assert_eq!(puzzle["id"], "daily1");
+    assert_eq!(puzzle.id, "daily1");
 }
 
 #[tokio::test]
@@ -173,9 +173,9 @@ async fn puzzle_activity_keeps_the_readable_results_newest_first_and_skips_the_r
     assert!(sent.target.ends_with("max=2"), "target was {}", sent.target);
     assert_eq!(sent.header("authorization"), Some("Bearer lip_alice"));
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].date, json!(2));
+    assert_eq!(entries[0].date, Some(2));
     assert!(entries[0].win);
-    assert_eq!(entries[0].puzzle["id"], "a");
+    assert_eq!(entries[0].puzzle.id, "a");
 }
 
 #[tokio::test]

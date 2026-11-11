@@ -697,3 +697,85 @@ async fn lichess_puzzle_answers_keep_their_bytes() {
     // What those downloads counted, per account and kind.
     r.wire("usage", "usage", vec![]).await;
 }
+
+/// The recordings read back as each method's contract answer and written again unchanged: a
+/// frontend decoding the answer (`kchess_contracts::calls`) loses nothing it was sent.
+#[test]
+fn recorded_answers_read_back_as_their_contract_types() {
+    use kchess_contracts::calls::{self, CoreCall};
+
+    fn reads_back<C: CoreCall>(name: &str)
+    where
+        C::Answer: serde::Serialize,
+    {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/wire")
+            .join(format!("{name}.json"));
+        let recorded = std::fs::read_to_string(&path).expect("the recording");
+        let recorded = recorded.trim_end_matches('\n');
+        let answer: C::Answer = serde_json::from_str(recorded)
+            .unwrap_or_else(|cause| panic!("{name} reads as {}: {cause}", C::METHOD));
+        let sent = serde_json::to_string(&answer).expect("JSON");
+        assert_eq!(sent, recorded, "{name} as {} changed", C::METHOD);
+    }
+
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wire");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(dir).expect("the recordings") {
+        let file = entry.expect("a recording").file_name();
+        let name = file.to_string_lossy().trim_end_matches(".json").to_string();
+        let method = name.split('.').next().unwrap_or_default();
+        macro_rules! by_method {
+            ($($call:ident),* $(,)?) => {
+                match method {
+                    $(m if m == calls::$call::METHOD => reads_back::<calls::$call>(&name),)*
+                    _ => continue,
+                }
+            };
+        }
+        // The voice log document is recorded parsed, so it is not read back here.
+        by_method!(
+            PuzzleNext,
+            PuzzleSolve,
+            PuzzleDaily,
+            PuzzleById,
+            PuzzleDashboard,
+            PuzzleActivity,
+            StormDashboard,
+            PuzzleDbStatus,
+            PuzzleDbCancel,
+            PuzzleDbDelete,
+            LocalPuzzles,
+            LocalLadder,
+            RecordPuzzleAttempt,
+            PuzzleProgress,
+            SaveRun,
+            RunSummary,
+            ClearRuns,
+            SaveVoiceAttempt,
+            UpdateVoiceAttempt,
+            VoiceHistory,
+            ClearVoiceHistory,
+            Library,
+            StudyCommand,
+            SaveArchivedGame,
+            AddMistakes,
+            AnswerMistake,
+            MistakeGames,
+            SaveSession,
+            JoinedTournaments,
+            Session,
+            Mistakes,
+            RecordRepertoireMiss,
+            ClearRepertoireMisses,
+            RestoreRepertoireMisses,
+            ReviewRepertoireLine,
+            ViewPreferences,
+            SetViewPreference,
+            Usage,
+            ResetUsage,
+        );
+        checked += 1;
+    }
+    assert!(checked >= 80, "only {checked} recordings were read back");
+}

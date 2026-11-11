@@ -1,22 +1,22 @@
 //! Local scores for Storm, Streak, Rush and the practice drills.
 //! Neither is ever sent anywhere.
 
+use kchess_contracts::types::{Keyed, RunBest, RunInput, RunKind, RunRecord, RunSaved, RunSummary};
 use rusqlite::{Connection, params};
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
-use super::library::{js_json, object};
+use super::library::js_json;
 use super::sql::Sql as _;
 use crate::error::Result;
 use crate::host::{Host, Level};
 use crate::time::now_ms;
-use kchess_domain::js::number_to_json as num;
 
 /// The most recent runs a summary lists.
 const RECENT: i64 = 20;
 
 /// `runSummary(kind)`: the best score per variant, the recent runs and the total.
-pub fn run_summary(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value> {
-    let mut best = Map::new();
+pub fn run_summary(host: &dyn Host, db: &Connection, kind: RunKind) -> Result<RunSummary> {
+    let mut best = Keyed::default();
     let mut statement = db
         .prepare(
             "SELECT variant, MAX(score) AS score,
@@ -26,7 +26,7 @@ pub fn run_summary(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value
         )
         .sql()?;
     let rows = statement
-        .query_map(params![kind], |row| {
+        .query_map(params![kind.as_str()], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, f64>(1)?,
@@ -36,10 +36,7 @@ pub fn run_summary(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value
         .sql()?;
     for row in rows {
         let (variant, score, played_at) = row.sql()?;
-        best.insert(
-            variant,
-            json!({ "score": num(score), "playedAt": played_at }),
-        );
+        best.0.push((variant, RunBest { score, played_at }));
     }
 
     let mut recent = Vec::new();
@@ -47,10 +44,9 @@ pub fn run_summary(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value
         .prepare("SELECT id, kind, variant, score, detail, playedAt FROM runs WHERE kind = ?1 ORDER BY playedAt DESC, id DESC LIMIT ?2")
         .sql()?;
     let rows = statement
-        .query_map(params![kind, RECENT], |row| {
+        .query_map(params![kind.as_str(), RECENT], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, f64>(3)?,
                 row.get::<_, String>(4)?,
@@ -59,9 +55,9 @@ pub fn run_summary(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value
         })
         .sql()?;
     for row in rows {
-        let (id, kind, variant, score, detail, played_at) = row.sql()?;
-        // A detail that is not JSON reads as an empty object.
-        let detail = match serde_json::from_str::<Value>(&detail) {
+        let (id, variant, score, detail, played_at) = row.sql()?;
+        // A detail that is not a JSON object reads as an empty one.
+        let detail = match serde_json::from_str::<Map<String, Value>>(&detail) {
             Ok(detail) => detail,
             Err(cause) => {
                 host.log(
@@ -69,44 +65,38 @@ pub fn run_summary(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value
                     "runs",
                     &format!("Run row has invalid detail JSON: {cause}"),
                 );
-                json!({})
+                Map::new()
             }
         };
-        recent.push(json!({
-            "id": id,
-            "kind": kind,
-            "variant": variant,
-            "score": num(score),
-            "detail": detail,
-            "playedAt": played_at,
-        }));
+        recent.push(RunRecord {
+            id,
+            kind,
+            variant,
+            score,
+            detail,
+            played_at,
+        });
     }
 
     let total: i64 = db
         .query_row(
             "SELECT COUNT(*) AS n FROM runs WHERE kind = ?1",
-            params![kind],
+            params![kind.as_str()],
             |row| row.get(0),
         )
         .sql()?;
-    Ok(json!({
-        "kind": kind,
-        "best": Value::Object(best),
-        "recent": recent,
-        "total": total,
-    }))
+    Ok(RunSummary {
+        kind,
+        best,
+        recent,
+        total,
+    })
 }
 
 /// `saveRun(run)`: record a run; `isBest` when it beats every earlier score of its variant.
-pub fn save_run(host: &dyn Host, db: &Connection, run: &Value) -> Result<Value> {
-    let run = object(run, "run")?;
-    let kind = run.get("kind").and_then(Value::as_str).unwrap_or_default();
-    let variant = run
-        .get("variant")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let score = run.get("score").and_then(Value::as_f64).unwrap_or(f64::NAN);
-    let detail = js_json(run.get("detail").unwrap_or(&Value::Null));
+pub fn save_run(host: &dyn Host, db: &Connection, run: &RunInput) -> Result<RunSaved> {
+    let (kind, variant, score) = (run.kind.as_str(), run.variant.as_str(), run.score);
+    let detail = js_json(&Value::Object(run.detail.clone()));
     let previous: Option<f64> = db
         .query_row(
             "SELECT MAX(score) AS score FROM runs WHERE kind = ?1 AND variant = ?2",
@@ -120,13 +110,16 @@ pub fn save_run(host: &dyn Host, db: &Connection, run: &Value) -> Result<Value> 
     )
     .sql()?;
     let is_best = score > 0.0 && previous.is_none_or(|best| score > best);
-    Ok(json!({ "summary": run_summary(host, db, kind)?, "isBest": is_best }))
+    Ok(RunSaved {
+        summary: run_summary(host, db, run.kind)?,
+        is_best,
+    })
 }
 
 /// `clearRuns(kind?)`: forget the local scores of one kind, or of all of them.
-pub fn clear_runs(db: &Connection, kind: Option<&str>) -> Result<()> {
-    match kind.filter(|k| !k.is_empty()) {
-        Some(kind) => db.execute("DELETE FROM runs WHERE kind = ?1", params![kind]),
+pub fn clear_runs(db: &Connection, kind: Option<RunKind>) -> Result<()> {
+    match kind {
+        Some(kind) => db.execute("DELETE FROM runs WHERE kind = ?1", params![kind.as_str()]),
         None => db.execute("DELETE FROM runs", []),
     }
     .map(|_| ())
@@ -137,6 +130,7 @@ pub fn clear_runs(db: &Connection, kind: Option<&str>) -> Result<()> {
 mod tests {
     use super::*;
     use kchess_contracts::CoreEvent;
+    use serde_json::json;
 
     struct Logged(std::sync::Mutex<Vec<String>>);
     impl Host for Logged {
@@ -152,8 +146,22 @@ mod tests {
         db
     }
 
-    fn save(db: &Connection, host: &Logged, run_value: Value) -> Value {
-        save_run(host, db, &run_value).unwrap()
+    /// A run as the game sends it; the variant and detail may be left out here.
+    fn save(db: &Connection, host: &Logged, mut sent: Value) -> Value {
+        sent.as_object_mut()
+            .unwrap()
+            .entry("variant")
+            .or_insert(json!(""));
+        sent.as_object_mut()
+            .unwrap()
+            .entry("detail")
+            .or_insert(json!({}));
+        let run: RunInput = serde_json::from_value(sent).unwrap();
+        serde_json::to_value(save_run(host, db, &run).unwrap()).unwrap()
+    }
+
+    fn summary(db: &Connection, host: &Logged, kind: RunKind) -> Value {
+        serde_json::to_value(run_summary(host, db, kind).unwrap()).unwrap()
     }
 
     #[test]
@@ -161,7 +169,7 @@ mod tests {
         let db = database();
         let host = Logged(Default::default());
         assert_eq!(
-            run_summary(&host, &db, "storm").unwrap(),
+            summary(&db, &host, RunKind::Storm),
             json!({ "kind": "storm", "best": {}, "recent": [], "total": 0 })
         );
     }
@@ -223,7 +231,7 @@ mod tests {
                 json!({ "kind": "rush", "variant": "5m", "score": score }),
             );
         }
-        let summary = run_summary(&host, &db, "rush").unwrap();
+        let summary = summary(&db, &host, RunKind::Rush);
         assert_eq!(summary["total"], json!(RECENT + 5));
         assert_eq!(summary["recent"].as_array().unwrap().len(), RECENT as usize);
         assert_eq!(summary["recent"][0]["score"], json!(RECENT + 5));
@@ -239,7 +247,7 @@ mod tests {
             [],
         )
         .unwrap();
-        let summary = run_summary(&host, &db, "storm").unwrap();
+        let summary = summary(&db, &host, RunKind::Storm);
         assert_eq!(summary["recent"][0]["detail"], json!({}));
         let logged = host.0.lock().unwrap();
         assert_eq!(logged.len(), 1);
@@ -253,15 +261,44 @@ mod tests {
         for kind in ["storm", "streak", "rush"] {
             save(&db, &host, json!({ "kind": kind, "score": 3 }));
         }
-        let total = |kind: &str| run_summary(&host, &db, kind).unwrap()["total"].clone();
-        clear_runs(&db, Some("storm")).unwrap();
-        assert_eq!(total("storm"), json!(0));
-        assert_eq!(total("streak"), json!(1));
-        // An empty kind clears everything, as no kind does.
-        clear_runs(&db, Some("")).unwrap();
-        assert_eq!(total("streak"), json!(0));
-        save(&db, &host, json!({ "kind": "rush", "score": 3 }));
+        let total = |kind| summary(&db, &host, kind)["total"].clone();
+        clear_runs(&db, Some(RunKind::Storm)).unwrap();
+        assert_eq!(total(RunKind::Storm), json!(0));
+        assert_eq!(total(RunKind::Streak), json!(1));
         clear_runs(&db, None).unwrap();
-        assert_eq!(total("rush"), json!(0));
+        assert_eq!(total(RunKind::Streak), json!(0));
+        assert_eq!(total(RunKind::Rush), json!(0));
+    }
+
+    /// A run's row as earlier builds wrote it: the detail in the order sent, whole numbers
+    /// without a fraction.
+    #[test]
+    fn a_saved_run_is_stored_as_before() {
+        let db = database();
+        let host = Logged(Default::default());
+        save(
+            &db,
+            &host,
+            json!({ "kind": "storm", "variant": "3min", "score": 21,
+                    "detail": { "moves": 30, "accuracy": 87.5, "combo": 4, "hard": true } }),
+        );
+        let row: (String, String, f64, String) = db
+            .query_row("SELECT kind, variant, score, detail FROM runs", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                "storm".into(),
+                "3min".into(),
+                21.0,
+                r#"{"moves":30,"accuracy":87.5,"combo":4,"hard":true}"#.into()
+            )
+        );
+        assert_eq!(
+            summary(&db, &host, RunKind::Storm)["recent"][0]["detail"],
+            json!({ "moves": 30, "accuracy": 87.5, "combo": 4, "hard": true })
+        );
     }
 }

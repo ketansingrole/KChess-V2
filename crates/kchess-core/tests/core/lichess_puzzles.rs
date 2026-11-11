@@ -9,8 +9,10 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use fixtures::{MemoryStore, MemoryTokens, Recording, Reply, lichess_service, serve};
+use kchess_contracts::types::{PuzzleDifficulty, PuzzleGlicko, PuzzleRequest, PuzzleSolveRequest};
 use kchess_core::lichess::accounts::Reply as Outcome;
-use kchess_core::lichess::puzzles::{PuzzleRequest, PuzzleSolveRequest, puzzle_next, puzzle_solve};
+use kchess_core::lichess::puzzles::{puzzle_next, puzzle_solve};
+use kchess_domain::color::Color;
 
 fn service(base: &str) -> Arc<kchess_core::lichess::accounts::Lichess> {
     lichess_service(
@@ -100,7 +102,7 @@ async fn reports_a_solved_puzzle_as_json_and_returns_the_rating_change() {
     let Outcome::Done(result) = puzzle_solve(&lichess, &request).await.unwrap() else {
         panic!("the login is connected");
     };
-    assert_eq!(result.rating_diff, Some(serde_json::json!(12)));
+    assert_eq!(result.rating_diff, Some(Some(12)));
     let sent = &fixture.requests()[0];
     assert_eq!(sent.method, "POST");
     assert_eq!(sent.path(), "/api/puzzle/batch/mateIn2");
@@ -142,7 +144,7 @@ async fn a_refused_login_asks_the_user_to_connect_again() {
     let request = PuzzleRequest {
         account: "Alice".into(),
         angle: "mix".into(),
-        difficulty: "normal".into(),
+        difficulty: PuzzleDifficulty::Normal,
         color: None,
     };
     assert_eq!(
@@ -166,14 +168,21 @@ async fn a_theme_with_no_puzzles_left_is_an_empty_draw_not_a_failure() {
     let request = PuzzleRequest {
         account: "Alice".into(),
         angle: "Anderssens_Opening_Polish_Gambit".into(),
-        difficulty: "harder".into(),
-        color: Some("white".into()),
+        difficulty: PuzzleDifficulty::Harder,
+        color: Some(Color::White),
     };
     let Outcome::Done(draw) = puzzle_next(&lichess, &request).await.unwrap() else {
         panic!("the login is connected");
     };
-    assert_eq!(draw.puzzle, Value::Null);
-    assert_eq!(draw.glicko, Some(json!({ "rating": 1620.5 })));
+    assert_eq!(draw.puzzle, None);
+    assert_eq!(
+        draw.glicko,
+        Some(PuzzleGlicko {
+            rating: Some(1620.5),
+            deviation: None,
+            provisional: None
+        })
+    );
     assert_eq!(
         serde_json::to_value(&draw).unwrap(),
         json!({ "glicko": { "rating": 1620.5 } })
@@ -193,7 +202,7 @@ async fn a_theme_with_no_puzzles_left_is_an_empty_draw_not_a_failure() {
     let Outcome::Done(draw) = puzzle_next(&lichess, &request).await.unwrap() else {
         panic!("anonymous draws need no login");
     };
-    assert_eq!(draw.puzzle, Value::Null);
+    assert_eq!(draw.puzzle, None);
 }
 
 #[tokio::test]
@@ -203,7 +212,7 @@ async fn an_answer_that_is_not_a_puzzle_is_refused() {
     let request = PuzzleRequest {
         account: String::new(),
         angle: "mix".into(),
-        difficulty: "normal".into(),
+        difficulty: PuzzleDifficulty::Normal,
         color: None,
     };
     let error = puzzle_next(&lichess, &request).await.unwrap_err();
@@ -221,7 +230,7 @@ async fn requests_name_the_app() {
     let request = PuzzleRequest {
         account: String::new(),
         angle: "mix".into(),
-        difficulty: "normal".into(),
+        difficulty: PuzzleDifficulty::Normal,
         color: None,
     };
     puzzle_next(&lichess, &request).await.unwrap();
@@ -255,7 +264,7 @@ async fn next_moves_on_while_lichess_still_serves_the_puzzle_just_shown() {
     let request = PuzzleRequest {
         account: "Alice".into(),
         angle: "pawnEndgame".into(),
-        difficulty: "harder".into(),
+        difficulty: PuzzleDifficulty::Harder,
         color: None,
     };
     let mut drawn = Vec::new();
@@ -263,7 +272,7 @@ async fn next_moves_on_while_lichess_still_serves_the_puzzle_just_shown() {
         let Outcome::Done(draw) = puzzle_next(&lichess, &request).await.unwrap() else {
             panic!("a puzzle");
         };
-        drawn.push(draw.puzzle["id"].as_str().unwrap().to_string());
+        drawn.push(draw.puzzle.expect("a puzzle").id);
     }
     // Each Next shows another puzzle; once all were shown, the one shown longest ago returns.
     assert_eq!(drawn, ["AAAAA", "BBBBB", "CCCCC", "AAAAA"]);

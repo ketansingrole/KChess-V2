@@ -18,9 +18,13 @@ use kchess_domain::misc::value::{self, J};
 use kchess_domain::variant::Variant;
 use kchess_domain::{js, replay};
 
+mod library;
 mod lookups;
+mod puzzles;
 
+pub use library::*;
 pub use lookups::*;
+pub use puzzles::*;
 
 /// Why an argument was refused, as the caller is told.
 pub type Refusal = String;

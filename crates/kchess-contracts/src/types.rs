@@ -1220,42 +1220,44 @@ pub struct FollowingReport {
     pub problems: Vec<FollowingProblem>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageCell {
-    pub requests: f64,
+    pub requests: i64,
     /// Bytes received, after decompression.
-    pub bytes_in: f64,
+    pub bytes_in: i64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountUsage {
     pub total: UsageCell,
-    pub by_kind: BTreeMap<UsageKind, UsageCell>,
+    /// By the kind's wire name (`UsageKind`), in the order counted.
+    pub by_kind: Keyed<UsageCell>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountStorage {
-    pub games: f64,
+    pub games: i64,
     /// Approximate size of the stored games.
-    pub bytes: f64,
+    pub bytes: i64,
     /// Profile and rating data cached for the account.
-    pub cache_bytes: f64,
+    pub cache_bytes: i64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageReport {
-    /// When counting started; undefined when nothing has been counted.
-    pub since: Option<f64>,
-    /// Lower-cased username → downloads from Lichess; the empty key is traffic with no account (login, etc.).
-    pub accounts: BTreeMap<String, AccountUsage>,
+    /// Username → downloads from Lichess; the empty key is traffic with no account (login, etc.).
+    pub accounts: Keyed<AccountUsage>,
     /// Lower-cased username → what is kept on this computer.
-    pub storage: BTreeMap<String, AccountStorage>,
-    /// Size of the database file.
-    pub db_bytes: f64,
+    pub storage: Keyed<AccountStorage>,
+    /// When counting started; absent when nothing has been counted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<f64>,
+    /// Size of the databases on disk.
+    pub db_bytes: u64,
 }
 
 /// Lichess's view of one user's connection. `signal` runs 1 (poor, lag > 500 ms) to 4 (great, lag < 150 ms).
@@ -1286,21 +1288,40 @@ pub struct Puzzle {
     /// The position the player starts from: it is the player's move, after the opponent's `lastMove`.
     pub fen: String,
     /// UCI of the opponent's move that led here (for the board highlight).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_move: Option<String>,
     /// UCI moves, alternating player, opponent, … and ending with the player's move.
     pub solution: Vec<String>,
+    #[serde(with = "js_number")]
     pub rating: f64,
     pub themes: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "js_number::option"
+    )]
     pub plays: Option<f64>,
     /// Lichess game the position came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleGlicko {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "js_number::option"
+    )]
     pub rating: Option<f64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "js_number::option"
+    )]
     pub deviation: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provisional: Option<bool>,
 }
 
@@ -1312,7 +1333,11 @@ pub struct PuzzleRequest {
     /// A puzzle theme key (`mateIn2`, `fork`, …) or `mix`.
     pub angle: String,
     pub difficulty: PuzzleDifficulty,
-    #[serde(default, with = "kchess_domain::color::option_by_name")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "kchess_domain::color::option_by_name"
+    )]
     pub color: Option<Color>,
 }
 
@@ -1320,8 +1345,10 @@ pub struct PuzzleRequest {
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleDraw {
     /// Absent when Lichess has no puzzle left for this theme and difficulty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub puzzle: Option<Puzzle>,
     /// The account's current puzzle rating, when Lichess reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glicko: Option<PuzzleGlicko>,
 }
 
@@ -1339,8 +1366,13 @@ pub struct PuzzleSolveRequest {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleSolveResult {
-    /// Rating change Lichess applied; absent for unrated results.
-    pub rating_diff: Option<f64>,
+    /// Rating change Lichess applied; absent for unrated results, null when Lichess sent none.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_or_null"
+    )]
+    pub rating_diff: Option<Option<i64>>,
 }
 
 /// Returned instead of data when the account's Lichess login lacks (or lost) the puzzle permission.
@@ -1391,8 +1423,8 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Reply<T> {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleActivityEntry {
-    /// When it was played, in ms since the epoch.
-    pub date: f64,
+    /// When it was played, in ms since the epoch; null when Lichess did not say.
+    pub date: Option<i64>,
     pub win: bool,
     pub puzzle: Puzzle,
 }
@@ -1402,7 +1434,7 @@ pub struct PuzzleActivityEntry {
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleWrongMove {
     /// The index in the solution of the move it was played instead of.
-    pub index: f64,
+    pub index: u32,
     pub uci: String,
 }
 
@@ -1420,22 +1452,22 @@ pub struct PuzzleAttemptInput {
     /// A hint was asked for before the verdict.
     pub hinted: bool,
     /// Player moves right at the first try, and wrong at the first try, of `total` in the solution.
-    pub found: f64,
-    pub wrong: f64,
-    pub total: f64,
+    pub found: u32,
+    pub wrong: u32,
+    pub total: u32,
     /// The local calendar day (`YYYY-MM-DD`) it was played on.
     pub day: String,
     /// What was played at each wrong first try.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrong_moves: Option<Vec<PuzzleWrongMove>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleAttempt {
-    pub id: f64,
+    pub id: i64,
     /// When it was played, in ms since the epoch.
-    pub at: f64,
+    pub at: i64,
     pub day: String,
     pub puzzle: Puzzle,
     pub mode: PuzzleTrainMode,
@@ -1443,12 +1475,12 @@ pub struct PuzzleAttempt {
     pub outcome: PuzzleAttemptOutcome,
     pub hinted: bool,
     /// Player moves right at the first try (all of them for a solve), of `total`.
-    pub found: f64,
+    pub found: u32,
     /// Player moves wrong at the first try.
-    pub wrong: f64,
-    pub total: f64,
+    pub wrong: u32,
+    pub total: u32,
     /// What was played at each wrong first try, when the log kept it.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrong_moves: Option<Vec<PuzzleWrongMove>>,
 }
 
@@ -1456,25 +1488,25 @@ pub struct PuzzleAttempt {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleTotals {
-    pub attempts: f64,
-    pub solved: f64,
-    pub hinted: f64,
-    pub partial: f64,
-    pub missed: f64,
-    pub revealed: f64,
-    pub moves_found: f64,
-    pub moves_tried: f64,
+    pub attempts: i64,
+    pub solved: i64,
+    pub hinted: i64,
+    pub partial: i64,
+    pub missed: i64,
+    pub revealed: i64,
+    pub moves_found: i64,
+    pub moves_tried: i64,
 }
 
 /// The local attempt log, summarized. Retries are listed but not counted.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleProgress {
     /// Newest first.
     pub recent: Vec<PuzzleAttempt>,
     /// Consecutive local days with a solved puzzle, ending today (or yesterday until today has one).
-    pub day_streak: f64,
-    pub best_day_streak: f64,
+    pub day_streak: u32,
+    pub best_day_streak: u32,
     pub today: PuzzleTotals,
     pub all: PuzzleTotals,
 }
@@ -1484,7 +1516,7 @@ pub struct PuzzleProgress {
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleProgressQuery {
     pub today: String,
-    pub limit: f64,
+    pub limit: u32,
 }
 
 /// A puzzle-database download or import in progress (or finished), streamed to the window.
@@ -1542,10 +1574,11 @@ pub struct PuzzleDbProgress {
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleDbStatus {
     pub installed: bool,
-    pub count: f64,
+    pub count: i64,
     /// Approximate size on disk.
-    pub bytes: f64,
-    pub imported_at: Option<f64>,
+    pub bytes: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_at: Option<i64>,
     /// True while a download runs; its progress arrives as events.
     pub busy: bool,
 }
@@ -1553,18 +1586,22 @@ pub struct PuzzleDbStatus {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalPuzzleQuery {
+    /// A theme or, as Lichess's puzzle angles allow, an opening key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
-    pub min_rating: Option<f64>,
-    pub max_rating: Option<f64>,
-    pub count: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_rating: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_rating: Option<u32>,
+    pub count: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalLadderQuery {
-    pub from: f64,
-    pub to: f64,
-    pub count: f64,
+    pub from: u32,
+    pub to: u32,
+    pub count: u32,
 }
 
 /// A run's score and details, as the game saves it.
@@ -1574,25 +1611,30 @@ pub struct RunInput {
     pub kind: RunKind,
     /// Which flavour of the kind (`3min`, `find`, `kq-vs-k`, …).
     pub variant: String,
+    #[serde(with = "js_number")]
     pub score: f64,
-    /// Extra numbers and words shown with the score (accuracy, combo, …).
-    pub detail: BTreeMap<String, Value>,
+    /// Extra numbers, words and flags shown with the score (accuracy, combo, …), in order.
+    pub detail: serde_json::Map<String, Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RunRecord {
-    #[serde(flatten)]
-    pub input: RunInput,
-    pub id: f64,
-    pub played_at: f64,
+    pub id: i64,
+    pub kind: RunKind,
+    pub variant: String,
+    #[serde(with = "js_number")]
+    pub score: f64,
+    pub detail: serde_json::Map<String, Value>,
+    pub played_at: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RunBest {
+    #[serde(with = "js_number")]
     pub score: f64,
-    pub played_at: f64,
+    pub played_at: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -1600,11 +1642,11 @@ pub struct RunBest {
 pub struct RunSummary {
     pub kind: RunKind,
     /// Best score per variant.
-    pub best: BTreeMap<String, RunBest>,
+    pub best: Keyed<RunBest>,
     /// Newest first.
     pub recent: Vec<RunRecord>,
     /// All runs of this kind.
-    pub total: f64,
+    pub total: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -1620,6 +1662,7 @@ pub struct RunSaved {
 #[serde(rename_all = "camelCase")]
 pub struct VoiceWord {
     pub word: String,
+    #[serde(with = "js_number")]
     pub conf: f64,
 }
 
@@ -1667,22 +1710,37 @@ pub struct VoiceAttemptInput {
     pub words: Vec<VoiceWord>,
     pub outcome: VoiceOutcome,
     /// How KChess read it: SAN choices joined by `|`, a square, or `confirm`/`cancel`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parsed: Option<String>,
     /// What the player meant, when known: the square asked for, or the move they went on to play.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected: Option<String>,
     /// The position it was said in (FEN), so the phrase can be parsed again later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fen: Option<String>,
     /// An earlier attempt at the same move or question that this one repeats.
-    pub retry_of: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_of: Option<i64>,
 }
 
+/// A logged phrase: its id and time, then the phrase as saved.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct VoiceAttempt {
+    pub id: i64,
+    pub at: i64,
     #[serde(flatten)]
     pub input: VoiceAttemptInput,
-    pub id: f64,
-    pub at: f64,
+}
+
+/// A logged phrase's later outcome, and what the player meant once known.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceUpdate {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<VoiceOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -2047,6 +2105,348 @@ pub struct PopularityMonth {
     pub month: String,
     pub share: f64,
     pub games: f64,
+}
+
+/* ── The library, puzzles and preferences ────────────────────────────── */
+
+/// A number as JavaScript writes it: a whole one without a fraction (`3`, not `3.0`). For numbers
+/// the core keeps as written by `JSON.stringify` (stored documents, Lichess's answers).
+pub mod js_number {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    const MAX_SAFE: f64 = 9_007_199_254_740_991.0;
+
+    pub fn serialize<S: Serializer>(n: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+        if n.fract() == 0.0 && n.abs() <= MAX_SAFE {
+            serializer.serialize_i64(*n as i64)
+        } else {
+            serializer.serialize_f64(*n)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+        f64::deserialize(deserializer)
+    }
+
+    /// An optional one; `None` is `null` unless the field is skipped.
+    pub mod option {
+        use serde::{Deserialize, Deserializer, Serializer};
+
+        pub fn serialize<S: Serializer>(n: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error> {
+            match n {
+                Some(n) => super::serialize(n, serializer),
+                None => serializer.serialize_none(),
+            }
+        }
+
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Option<f64>, D::Error> {
+            Option::<f64>::deserialize(deserializer)
+        }
+    }
+}
+
+/// A JSON object read and written in its keys' order, every value a `V`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Keyed<V>(pub Vec<(String, V)>);
+
+impl<V> Default for Keyed<V> {
+    fn default() -> Self {
+        Keyed(Vec::new())
+    }
+}
+
+impl<V> Keyed<V> {
+    pub fn get(&self, key: &str) -> Option<&V> {
+        self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    /// The value of `key`, added last with `V::default()` when it is missing.
+    pub fn entry(&mut self, key: &str) -> &mut V
+    where
+        V: Default,
+    {
+        let at = match self.0.iter().position(|(k, _)| k == key) {
+            Some(at) => at,
+            None => {
+                self.0.push((key.to_string(), V::default()));
+                self.0.len() - 1
+            }
+        };
+        &mut self.0[at].1
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &V)> {
+        self.0.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl<V: Serialize> Serialize for Keyed<V> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (key, value) in &self.0 {
+            map.serialize_entry(key, value)?;
+        }
+        map.end()
+    }
+}
+
+impl<'de, V: Deserialize<'de>> Deserialize<'de> for Keyed<V> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Entries<V>(std::marker::PhantomData<V>);
+        impl<'de, V: Deserialize<'de>> serde::de::Visitor<'de> for Entries<V> {
+            type Value = Keyed<V>;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("an object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Keyed<V>, A::Error> {
+                let mut entries = Vec::with_capacity(map.size_hint().unwrap_or(0));
+                while let Some(entry) = map.next_entry()? {
+                    entries.push(entry);
+                }
+                Ok(Keyed(entries))
+            }
+        }
+        deserializer.deserialize_map(Entries(std::marker::PhantomData))
+    }
+}
+
+wire_enum!(#[doc = "The unfinished game or analysis a page keeps to resume, and the played game a board shows."] SessionKind, SESSION_KINDS {
+    Analysis = "analysis",
+    Local = "local",
+    Computer = "computer",
+    ArchiveComputer = "archive:computer",
+    ArchiveBoard = "archive:board",
+    ArchiveClock = "archive:clock",
+});
+
+impl SessionKind {
+    /// The kind a page names its session by (`computer`, `archive:board`, …).
+    pub fn named(name: &str) -> Option<SessionKind> {
+        SessionKind::ALL
+            .iter()
+            .copied()
+            .find(|kind| kind.as_str() == name)
+    }
+}
+
+/// A chapter to save: its name and PGN.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(expecting = "an object")]
+pub struct ChapterInput {
+    pub name: String,
+    pub pgn: String,
+}
+
+/// A study's chapter as stored: its id, name and PGN.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(expecting = "an object")]
+pub struct ChapterEntry {
+    pub id: String,
+    pub name: String,
+    pub pgn: String,
+}
+
+/// A Lichess study a local one is a copy of.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(expecting = "an object")]
+pub struct RemoteStudy {
+    pub id: String,
+    pub name: String,
+}
+
+/// One change to the local study library, by its `op`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum StudyCommand {
+    /// A study of one chapter, or (with `id`) one chapter's moves of a stored study.
+    Save {
+        name: String,
+        pgn: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        chapter_id: Option<String>,
+    },
+    /// A study of these chapters, new or (with `id`) replacing a stored one.
+    SaveChapters {
+        name: String,
+        chapters: Vec<ChapterInput>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    AddChapter {
+        id: String,
+        name: String,
+    },
+    RenameChapter {
+        id: String,
+        chapter_id: String,
+        name: String,
+    },
+    DuplicateChapter {
+        id: String,
+        chapter_id: String,
+    },
+    RemoveChapter {
+        id: String,
+        chapter_id: String,
+    },
+    /// A chapter to its new place.
+    MoveChapter {
+        id: String,
+        chapter_id: String,
+        index: u32,
+    },
+    /// Undo of a removed chapter: it goes back at its place.
+    RestoreChapter {
+        id: String,
+        chapter: ChapterEntry,
+        index: u32,
+    },
+    /// The study is a copy of a Lichess study, as downloaded (`baseline`).
+    MarkCloud {
+        id: String,
+        account: String,
+        remote_id: String,
+        baseline: String,
+    },
+    /// A Lichess study kept as a local one.
+    Offline {
+        account: String,
+        remote: RemoteStudy,
+        chapters: Vec<ChapterInput>,
+    },
+    Remove {
+        id: String,
+    },
+    /// Undo of a removed study: the study as `remove` answered it.
+    Restore {
+        study: Value,
+    },
+    Rename {
+        id: String,
+        name: String,
+    },
+    Duplicate {
+        id: String,
+    },
+}
+
+impl StudyCommand {
+    /// The stored study the command changes, when it names one.
+    pub fn study_id(&self) -> Option<&str> {
+        match self {
+            StudyCommand::Save { id, .. } | StudyCommand::SaveChapters { id, .. } => id.as_deref(),
+            StudyCommand::AddChapter { id, .. }
+            | StudyCommand::RenameChapter { id, .. }
+            | StudyCommand::DuplicateChapter { id, .. }
+            | StudyCommand::RemoveChapter { id, .. }
+            | StudyCommand::MoveChapter { id, .. }
+            | StudyCommand::RestoreChapter { id, .. }
+            | StudyCommand::MarkCloud { id, .. }
+            | StudyCommand::Remove { id }
+            | StudyCommand::Rename { id, .. }
+            | StudyCommand::Duplicate { id } => Some(id),
+            StudyCommand::Restore { study } => study.get("id").and_then(Value::as_str),
+            StudyCommand::Offline { .. } => None,
+        }
+    }
+
+    /// The chapter the command changes, when it names one.
+    pub fn chapter_id(&self) -> Option<&str> {
+        match self {
+            StudyCommand::Save { chapter_id, .. } => chapter_id.as_deref(),
+            StudyCommand::RenameChapter { chapter_id, .. }
+            | StudyCommand::DuplicateChapter { chapter_id, .. }
+            | StudyCommand::RemoveChapter { chapter_id, .. }
+            | StudyCommand::MoveChapter { chapter_id, .. } => Some(chapter_id),
+            StudyCommand::RestoreChapter { chapter, .. } => Some(&chapter.id),
+            _ => None,
+        }
+    }
+}
+
+/// What a study command did: the study or chapter it made or kept (`id`), a cloud copy kept
+/// apart (`conflict`), the study removed, and the studies it changed (all of them, unless the
+/// command was incremental: then only the changed ones, with every study's id in `order`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct StudyCommandResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed: Option<Value>,
+    pub studies: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<Vec<String>>,
+}
+
+/// The local library as saved. Its entries are the stored documents, read with the domain's
+/// codecs: studies, played games, mistake drills, sessions by kind, tournaments joined from
+/// KChess, the repertoires' missed positions and their review schedule.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Library {
+    pub studies: Vec<Value>,
+    pub games: Vec<Value>,
+    pub mistakes: Vec<Value>,
+    pub sessions: serde_json::Map<String, Value>,
+    pub joined_tournaments: Vec<Value>,
+    pub repertoire_misses: Value,
+    pub repertoire_schedule: Value,
+    /// Why the studies could not be read (they are kept, and shown as none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub study_error: Option<String>,
+}
+
+/// The drills after adding a review's mistakes; `added` counts the new ones.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct MistakesAdded {
+    pub added: u32,
+    pub items: Vec<Value>,
+}
+
+/// A reviewed game with positions in practice, and its game when known: a synced Lichess game
+/// (`gameId`, `account`), or one played here (the side named "You" is `player`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MistakeGame {
+    /// The review's key.
+    pub key: String,
+    pub fen: String,
+    pub moves: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub white: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub black: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "kchess_domain::color::option_by_name"
+    )]
+    pub player: Option<Color>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    #[serde(with = "js_number")]
+    pub played_at: f64,
 }
 
 #[cfg(test)]

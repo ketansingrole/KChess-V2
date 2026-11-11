@@ -384,19 +384,3 @@ impl Core {
         self.claim.release();
     }
 }
-
-/// `assertStudyCommand`: a restored study is decoded by the rules; other commands pass through.
-pub(crate) fn study_command(shape: &Value) -> Result<Value> {
-    if shape["op"].as_str() != Some("restore") {
-        return Ok(shape.clone());
-    }
-    let study = kchess_domain::library::decode_study(&shape["study"])
-        .ok_or_else(|| CoreError::new("That study cannot be restored."))?;
-    Ok(json!({ "op": "restore", "study": study }))
-}
-
-/// `assertArchivedGame`: the archived game as the rules decode it.
-pub(crate) fn archived_game(shape: &Value) -> Result<Value> {
-    kchess_domain::library::decode_archived_game(shape)
-        .ok_or_else(|| CoreError::new("This game cannot be saved."))
-}

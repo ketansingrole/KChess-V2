@@ -8,8 +8,9 @@
 use crate::time::now_ms;
 use std::collections::HashSet;
 
+use kchess_contracts::types::{LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleDbStatus};
 use rusqlite::{Connection, OptionalExtension, Statement, ToSql, params};
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
 use crate::store::sql::{Sql as _, transaction};
@@ -32,92 +33,6 @@ pub struct DbPuzzle {
     /// The Lichess game the puzzle comes from; empty for puzzles imported before it was kept.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub game_id: String,
-}
-
-/// One puzzle, whichever source it came from (`Puzzle`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Puzzle {
-    pub id: String,
-    pub fen: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_move: Option<String>,
-    pub solution: Vec<String>,
-    #[serde(serialize_with = "serialize_js_number")]
-    pub rating: f64,
-    pub themes: Vec<String>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_js_number_opt"
-    )]
-    pub plays: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub game_id: Option<String>,
-}
-
-/// `PuzzleDbStatus`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PuzzleDbStatus {
-    pub installed: bool,
-    /// Approximate size on disk.
-    pub count: i64,
-    pub bytes: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub imported_at: Option<i64>,
-    /// True while a download runs; its progress arrives as events.
-    pub busy: bool,
-}
-
-/// `LocalPuzzleQuery`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LocalPuzzleQuery {
-    /// A theme or, as Lichess's puzzle angles allow, an opening key.
-    #[serde(default)]
-    pub theme: Option<String>,
-    #[serde(default)]
-    pub min_rating: Option<f64>,
-    #[serde(default)]
-    pub max_rating: Option<f64>,
-    pub count: f64,
-}
-
-/// `LocalLadderQuery`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LocalLadderQuery {
-    pub from: f64,
-    pub to: f64,
-    pub count: f64,
-}
-
-/// JavaScript prints whole numbers without a fraction; match that in the JSON.
-fn serialize_js_number<S: Serializer>(
-    value: &f64,
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error> {
-    const MAX_SAFE: f64 = 9_007_199_254_740_991.0;
-    if value.is_finite() && value.fract() == 0.0 && value.abs() <= MAX_SAFE {
-        if *value < 0.0 {
-            serializer.serialize_i64(*value as i64)
-        } else {
-            serializer.serialize_u64(*value as u64)
-        }
-    } else {
-        serializer.serialize_f64(*value)
-    }
-}
-
-fn serialize_js_number_opt<S: Serializer>(
-    value: &Option<f64>,
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error> {
-    match value {
-        Some(number) => serialize_js_number(number, serializer),
-        None => serializer.serialize_none(),
-    }
 }
 
 const COLUMNS: &str =
@@ -400,9 +315,9 @@ pub fn query_puzzles(
     random: &mut dyn FnMut() -> f64,
 ) -> Result<Vec<Puzzle>> {
     require_installed(db)?;
-    let min = query.min_rating.unwrap_or(0.0);
-    let max = query.max_rating.unwrap_or(4000.0);
-    let count = query.count.max(0.0);
+    let min = query.min_rating.map_or(0.0, f64::from);
+    let max = query.max_rating.map_or(4000.0, f64::from);
+    let count = f64::from(query.count);
     if count == 0.0 {
         return Ok(Vec::new());
     }
@@ -500,10 +415,14 @@ pub fn query_ladder(
     require_installed(db)?;
     let mut used: HashSet<String> = HashSet::new();
     let mut ladder: Vec<Puzzle> = Vec::new();
+    let (from, to, count) = (
+        f64::from(query.from),
+        f64::from(query.to),
+        f64::from(query.count),
+    );
     let mut step = 0.0_f64;
-    while step < query.count {
-        let target =
-            js_round(query.from + ((query.to - query.from) * step) / (query.count - 1.0).max(1.0));
+    while step < count {
+        let target = js_round(from + ((to - from) * step) / (count - 1.0).max(1.0));
         // Widen the window until something unused turns up (the sample is thin at the extremes).
         for reach in [30.0, 80.0, 200.0, 500.0] {
             let pick = pick_window(db, target - reach, target + reach, &used, random)?
@@ -626,7 +545,7 @@ mod tests {
                 theme: Some("Kings_Gambit_Accepted".into()),
                 min_rating: None,
                 max_rating: None,
-                count: 20.0,
+                count: 20,
             },
             &mut random,
         )
@@ -646,9 +565,9 @@ mod tests {
             &db,
             &LocalPuzzleQuery {
                 theme: None,
-                min_rating: Some(1000.0),
-                max_rating: Some(1500.0),
-                count: 20.0,
+                min_rating: Some(1000),
+                max_rating: Some(1500),
+                count: 20,
             },
             &mut random,
         )
@@ -670,9 +589,9 @@ mod tests {
             &db,
             &LocalPuzzleQuery {
                 theme: Some("mate".to_string()),
-                min_rating: Some(0.0),
-                max_rating: Some(4000.0),
-                count: 30.0,
+                min_rating: Some(0),
+                max_rating: Some(4000),
+                count: 30,
             },
             &mut random,
         )
@@ -686,9 +605,9 @@ mod tests {
             &db,
             &LocalPuzzleQuery {
                 theme: Some("mateIn".to_string()),
-                min_rating: Some(0.0),
-                max_rating: Some(4000.0),
-                count: 10.0,
+                min_rating: Some(0),
+                max_rating: Some(4000),
+                count: 10,
             },
             &mut random,
         )
@@ -723,9 +642,9 @@ mod tests {
         let ladder = query_ladder(
             &db,
             &LocalLadderQuery {
-                from: 900.0,
-                to: 2000.0,
-                count: 6.0,
+                from: 900,
+                to: 2000,
+                count: 6,
             },
             &mut random,
         )
@@ -759,7 +678,7 @@ mod tests {
                 theme: None,
                 min_rating: None,
                 max_rating: None,
-                count: 1.0,
+                count: 1,
             },
             &mut random,
         )
@@ -823,7 +742,7 @@ mod tests {
                 theme: None,
                 min_rating: None,
                 max_rating: None,
-                count: 1.0,
+                count: 1,
             },
             &mut random,
         )

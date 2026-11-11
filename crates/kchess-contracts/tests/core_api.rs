@@ -174,13 +174,17 @@ fn a_call_sends_its_arguments_in_order_without_trailing_ones_left_out() {
     );
     // One left out between two given is sent as `null`, which the check reads alike.
     let command = calls::StudyCommand {
-        command: json!({ "op": "rename" }),
+        command: kchess_contracts::types::StudyCommand::Duplicate { id: "a".into() },
         incremental: None,
-        based_on: Some(json!("abc")),
+        based_on: Some(kchess_contracts::check::PgnText("abc".into())),
     };
     assert_eq!(
         command.args().expect("args"),
-        [json!({ "op": "rename" }), Value::Null, json!("abc")]
+        [
+            json!({ "op": "duplicate", "id": "a" }),
+            Value::Null,
+            json!("abc")
+        ]
     );
     assert_eq!(calls::ReviewGet::METHOD, "reviewGet");
 }

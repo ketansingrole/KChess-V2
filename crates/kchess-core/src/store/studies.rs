@@ -1,6 +1,7 @@
 //! Studies: the `Studies` working set, `studyCommand` and its storage (`studies` table).
 //! Split from the library store; bodies are unchanged.
 
+use kchess_contracts::types::{ChapterInput, RemoteStudy, StudyCommand, StudyCommandResult};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
 
@@ -163,49 +164,17 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
     value.filter(|s| !s.is_empty())
 }
 
-/// A name argument read with `.trim()`: a missing or null one throws the same `TypeError` the
-/// TypeScript code throws.
-fn name_field(command: &Map<String, Value>, key: &str) -> Result<String> {
-    match command.get(key) {
-        None => Err(CoreError::new(
-            "Cannot read properties of undefined (reading 'trim')",
-        )),
-        Some(Value::Null) => Err(CoreError::new(
-            "Cannot read properties of null (reading 'trim')",
-        )),
-        Some(Value::String(text)) => Ok(text.clone()),
-        Some(_) => Err(CoreError::new(format!(
-            "command.{key}.trim is not a function"
-        ))),
-    }
-}
-
 /// An incremental command loads only its target; other studies carry their order and size.
-fn read_command_studies(db: &Connection, command: &Map<String, Value>) -> Result<Vec<Value>> {
-    let op = command
-        .get("op")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let target = if op == "restore" {
-        command.get("study").and_then(id_of)
-    } else {
-        command.get("id").and_then(Value::as_str)
+fn read_command_studies(db: &Connection, command: &StudyCommand) -> Result<Vec<Value>> {
+    let offline_id: Option<String> = match command {
+        StudyCommand::Offline {
+            account, remote, ..
+        } => db
+            .query_row("SELECT id FROM studies WHERE lower(json_extract(body, '$.cloud.account')) = lower(?1) AND json_extract(body, '$.cloud.id') = ?2 ORDER BY position LIMIT 1",
+                params![account, remote.id], |row| row.get(0)).optional().sql()?,
+        _ => None,
     };
-    let offline_id: Option<String> = if op == "offline" {
-        let account = command
-            .get("account")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let remote = command
-            .get("remote")
-            .and_then(|remote| remote.get("id"))
-            .and_then(Value::as_str);
-        db.query_row("SELECT id FROM studies WHERE lower(json_extract(body, '$.cloud.account')) = lower(?1) AND json_extract(body, '$.cloud.id') = ?2 ORDER BY position LIMIT 1",
-            params![account, remote], |row| row.get(0)).optional().sql()?
-    } else {
-        None
-    };
-    let target = offline_id.as_deref().or(target);
+    let target = offline_id.as_deref().or(command.study_id());
     read_study_rows(db, StudyBodies::Only(target))
 }
 
@@ -222,25 +191,27 @@ pub const STALE_STUDY: &str =
 /// it); `None` for a command without a study id.
 pub(crate) fn check_based_on(
     db: &Connection,
-    command: &Value,
+    command: &StudyCommand,
     based_on: &str,
 ) -> Result<Option<String>> {
-    let Some(id) = command
-        .get("id")
-        .and_then(Value::as_str)
-        .filter(|id| !id.is_empty())
-    else {
+    // A restored study and a restored chapter name theirs inside what they bring back.
+    let (id, chapter_id) = match command {
+        StudyCommand::Restore { .. } => (None, None),
+        StudyCommand::RestoreChapter { id, .. } => (Some(id.as_str()), None),
+        _ => (command.study_id(), command.chapter_id()),
+    };
+    let Some(id) = id.filter(|id| !id.is_empty()) else {
         return Ok(None);
     };
     migrate_studies(db)?;
-    let study = read_command_studies(db, object(command, "study command")?)?
+    let study = read_command_studies(db, command)?
         .into_iter()
         .find(|study| study.get("id").and_then(Value::as_str) == Some(id));
     let chapters = study
         .as_ref()
         .and_then(|study| study.get("chapters"))
         .and_then(Value::as_array);
-    let chapter = match non_empty(command.get("chapterId").and_then(Value::as_str)) {
+    let chapter = match non_empty(chapter_id) {
         Some(chapter_id) => chapters.and_then(|chapters| {
             chapters
                 .iter()
@@ -261,21 +232,51 @@ pub(crate) fn check_based_on(
     }
 }
 
+/// Chapters as `saveChapters` reads them.
+fn chapter_list(chapters: &[ChapterInput]) -> Result<Value> {
+    serde_json::to_value(chapters).map_err(|cause| CoreError::new(cause.to_string()))
+}
+
+/// `{ ...study, ...updates }` with the chapters changed: the first chapter's PGN is the study's,
+/// and a cloud copy is marked as changed in structure.
+fn restructured(
+    study: &Map<String, Value>,
+    chapters: Vec<Value>,
+    now: f64,
+) -> Result<Map<String, Value>> {
+    let first = chapters
+        .first()
+        .and_then(|c| c.get("pgn"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let mut updates = vec![
+        ("chapters", Value::Array(chapters)),
+        ("pgn", first),
+        ("updatedAt", num(now)),
+    ];
+    if let Some(cloud) = study.get("cloud").filter(|c| truthy(Some(c))) {
+        let mut changed = object(cloud, "cloud")?.clone();
+        changed.insert("structureChanged".into(), Value::Bool(true));
+        updates.push(("cloud", Value::Object(changed)));
+    }
+    Ok(spread(study, updates))
+}
+
+/// A study's chapters, or none.
+fn chapters_of(study: &Map<String, Value>) -> Vec<Value> {
+    study
+        .get("chapters")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
 pub(crate) fn study_command(
     db: &Connection,
-    command: &Value,
+    command: &StudyCommand,
     now: f64,
     incremental: bool,
-) -> Result<Value> {
-    let command = object(command, "study command")?;
-    let op = command
-        .get("op")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let field = |key: &str| command.get(key).cloned().unwrap_or(Value::Null);
-    // `find(command.id)` takes any id; `command.id ? … : …` only a non-empty one.
-    let id_arg = command.get("id").and_then(Value::as_str);
-
+) -> Result<StudyCommandResult> {
     migrate_studies(db)?;
     let stored_sizes: Vec<(String, i64)> = db
         .prepare("SELECT id, textUnits FROM studies")
@@ -306,49 +307,48 @@ pub(crate) fn study_command(
         now,
         sizes,
     };
-    let mut result = Map::new();
-    match op {
-        "saveChapters" => {
-            let id =
-                studies.save_chapters(&name_field(command, "name")?, &field("chapters"), id_arg)?;
-            result.insert("id".into(), json!(id));
+    let mut result = StudyCommandResult::default();
+    let find = |studies: &Studies, id: &str| studies.find(id).cloned();
+    match command {
+        StudyCommand::SaveChapters { name, chapters, id } => {
+            let id = studies.save_chapters(name, &chapter_list(chapters)?, id.as_deref())?;
+            result.id = Some(id);
         }
-        "save" => {
-            let name = clean_name(&name_field(command, "name")?);
+        StudyCommand::Save {
+            name,
+            pgn,
+            id,
+            chapter_id,
+        } => {
+            let name = clean_name(name);
             if name.is_empty() {
                 return Err(CoreError::new("Name the study."));
             }
-            let Some(old) = non_empty(id_arg).and_then(|id| studies.find(id).cloned()) else {
+            let Some(old) = non_empty(id.as_deref()).and_then(|id| find(&studies, id)) else {
                 let id = studies.save_chapters(
                     &name,
-                    &json!([{ "name": name, "pgn": field("pgn") }]),
-                    id_arg,
+                    &json!([{ "name": name, "pgn": pgn }]),
+                    id.as_deref(),
                 )?;
-                result.insert("id".into(), json!(id));
+                result.id = Some(id);
                 return finish_studies(db, studies, result, &original, incremental);
             };
             let old = object(&old, "study")?.clone();
-            let chapters = old
-                .get("chapters")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let index: i64 = match non_empty(command.get("chapterId").and_then(Value::as_str)) {
+            let chapters = chapters_of(&old);
+            let index = match non_empty(chapter_id.as_deref()) {
                 Some(chapter_id) => chapters
                     .iter()
-                    .position(|c| c.get("id").and_then(Value::as_str) == Some(chapter_id))
-                    .map_or(-1, |i| i as i64),
-                None => 0,
+                    .position(|c| c.get("id").and_then(Value::as_str) == Some(chapter_id)),
+                None => Some(0),
             };
-            let pgn = field("pgn");
-            if index < 0 || !pgn.as_str().is_some_and(kchess_domain::tree::valid_pgn) {
+            let Some(index) = index.filter(|_| kchess_domain::tree::valid_pgn(pgn)) else {
                 return Err(CoreError::new("That chapter cannot be saved."));
-            }
+            };
             let mut updated_chapters = Vec::with_capacity(chapters.len());
             for (i, chapter) in chapters.into_iter().enumerate() {
-                if i as i64 == index {
+                if i == index {
                     let mut changed = object(&chapter, "chapter")?.clone();
-                    changed.insert("pgn".into(), pgn.clone());
+                    changed.insert("pgn".into(), json!(pgn));
                     updated_chapters.push(Value::Object(changed));
                 } else {
                     updated_chapters.push(chapter);
@@ -368,61 +368,52 @@ pub(crate) fn study_command(
                     ("updatedAt", num(now)),
                 ],
             );
-            let id = studies.commit(candidate)?;
-            result.insert("id".into(), json!(id));
+            result.id = Some(studies.commit(candidate)?);
         }
-        "addChapter" => {
-            let Some(study) = id_arg.and_then(|id| studies.find(id).cloned()) else {
+        StudyCommand::AddChapter { id, name } => {
+            let Some(study) = find(&studies, id) else {
                 return Err(CoreError::new("Name the new chapter."));
             };
-            let raw_name = name_field(command, "name")?;
-            let chapter_name = js::trim(&raw_name).to_string();
+            let chapter_name = js::trim(name).to_string();
             if chapter_name.is_empty() {
                 return Err(CoreError::new("Name the new chapter."));
             }
             let study = object(&study, "study")?.clone();
-            let mut chapters = study
-                .get("chapters")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
+            let mut chapters = chapters_of(&study);
             chapters.push(json!({ "name": chapter_name, "pgn": "*" }));
             let study_name = study
                 .get("name")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let study_id = id_of(&Value::Object(study.clone()))
+            let study_id = study
+                .get("id")
+                .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
             studies.save_chapters(study_name, &Value::Array(chapters), Some(&study_id))?;
-            let last = studies
+            result.id = studies
                 .find(&study_id)
                 .and_then(|saved| saved.get("chapters"))
                 .and_then(Value::as_array)
                 .and_then(|c| c.last())
-                .and_then(|c| c.get("id"))
-                .cloned()
-                .unwrap_or(Value::Null);
-            result.insert("id".into(), last);
+                .and_then(id_of)
+                .map(str::to_string);
         }
-        "renameChapter" => {
-            let study = id_arg.and_then(|id| studies.find(id).cloned());
-            if let Some(study) = study {
-                let raw_name = name_field(command, "name")?;
-                if js::trim(&raw_name).is_empty() {
+        StudyCommand::RenameChapter {
+            id,
+            chapter_id,
+            name,
+        } => {
+            if let Some(study) = find(&studies, id) {
+                if js::trim(name).is_empty() {
                     return finish_studies(db, studies, result, &original, incremental);
                 }
                 let study = object(&study, "study")?.clone();
-                let chapter_id = field("chapterId");
-                let new_name = clean_name(&raw_name);
-                let chapters: Vec<Value> = study
-                    .get("chapters")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default()
+                let new_name = clean_name(name);
+                let chapters: Vec<Value> = chapters_of(&study)
                     .into_iter()
                     .map(|c| {
-                        if c.get("id") == Some(&chapter_id) {
+                        if id_of(&c) == Some(chapter_id) {
                             let mut renamed = c.as_object().cloned().unwrap_or_default();
                             renamed.insert("name".into(), json!(new_name));
                             Value::Object(renamed)
@@ -440,23 +431,18 @@ pub(crate) fn study_command(
                 ))?;
             }
         }
-        "duplicateChapter" => {
-            let chapter_id = field("chapterId");
-            let study = id_arg.and_then(|id| studies.find(id).cloned());
+        StudyCommand::DuplicateChapter { id, chapter_id } => {
+            let study = find(&studies, id);
             let original = study
                 .as_ref()
                 .and_then(|s| s.get("chapters").and_then(Value::as_array))
-                .and_then(|chapters| chapters.iter().find(|c| c.get("id") == Some(&chapter_id)))
+                .and_then(|chapters| chapters.iter().find(|c| id_of(c) == Some(chapter_id)))
                 .cloned();
             let (Some(study), Some(original)) = (study, original) else {
                 return Err(CoreError::new("That chapter no longer exists."));
             };
             let study = object(&study, "study")?.clone();
-            let mut chapters = study
-                .get("chapters")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
+            let mut chapters = chapters_of(&study);
             if chapters.len() >= MAX_CHAPTERS {
                 return Err(CoreError::new("A study can contain up to 64 chapters."));
             }
@@ -479,130 +465,62 @@ pub(crate) fn study_command(
                     ("updatedAt", num(now)),
                 ],
             ))?;
-            result.insert("id".into(), json!(copy_id));
+            result.id = Some(copy_id);
         }
-        "removeChapter" => {
-            let chapter_id = field("chapterId");
-            let study = id_arg.and_then(|id| studies.find(id).cloned());
+        StudyCommand::RemoveChapter { id, chapter_id } => {
+            let study = find(&studies, id);
             let index = study
                 .as_ref()
                 .and_then(|s| s.get("chapters").and_then(Value::as_array))
-                .and_then(|chapters| {
-                    chapters
-                        .iter()
-                        .position(|c| c.get("id") == Some(&chapter_id))
-                });
+                .and_then(|chapters| chapters.iter().position(|c| id_of(c) == Some(chapter_id)));
             let (Some(study), Some(index)) = (study, index) else {
                 return Err(CoreError::new("That chapter no longer exists."));
             };
             let study = object(&study, "study")?.clone();
-            let all = study
-                .get("chapters")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
+            let all = chapters_of(&study);
             if all.len() == 1 {
                 return Err(CoreError::new("A study must keep at least one chapter."));
             }
             let chapters: Vec<Value> = all
                 .into_iter()
-                .filter(|c| c.get("id") != Some(&chapter_id))
+                .filter(|c| id_of(c) != Some(chapter_id))
                 .collect();
-            let first = chapters
-                .first()
-                .and_then(|c| c.get("pgn"))
-                .cloned()
-                .unwrap_or(Value::Null);
-            let mut updates = vec![
-                ("chapters", Value::Array(chapters.clone())),
-                ("pgn", first),
-                ("updatedAt", num(now)),
-            ];
-            if let Some(cloud) = study.get("cloud").filter(|c| truthy(Some(c))) {
-                let mut changed = object(cloud, "cloud")?.clone();
-                changed.insert("structureChanged".into(), Value::Bool(true));
-                updates.push(("cloud", Value::Object(changed)));
-            }
-            studies.commit(spread(&study, updates))?;
             let pick = index.min(chapters.len() - 1);
-            result.insert(
-                "id".into(),
-                chapters[pick].get("id").cloned().unwrap_or(Value::Null),
-            );
+            result.id = id_of(&chapters[pick]).map(str::to_string);
+            studies.commit(restructured(&study, chapters, now)?)?;
         }
-        "moveChapter" => {
-            let chapter_id = field("chapterId");
-            let study = id_arg.and_then(|id| studies.find(id).cloned());
-            let Some(study) = study else {
+        StudyCommand::MoveChapter {
+            id,
+            chapter_id,
+            index,
+        } => {
+            let Some(study) = find(&studies, id) else {
                 return Err(CoreError::new("That study no longer exists."));
             };
             let study = object(&study, "study")?.clone();
-            let mut chapters = study
-                .get("chapters")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let Some(from) = chapters
-                .iter()
-                .position(|c| c.get("id") == Some(&chapter_id))
-            else {
+            let mut chapters = chapters_of(&study);
+            let Some(from) = chapters.iter().position(|c| id_of(c) == Some(chapter_id)) else {
                 return Err(CoreError::new("That chapter no longer exists."));
             };
-            let to = (field("index").as_u64().unwrap_or(0) as usize).min(chapters.len() - 1);
+            let to = (*index as usize).min(chapters.len() - 1);
             if from != to {
                 let moved = chapters.remove(from);
                 chapters.insert(to, moved);
-                let first = chapters
-                    .first()
-                    .and_then(|c| c.get("pgn"))
-                    .cloned()
-                    .unwrap_or(Value::Null);
-                let mut updates = vec![
-                    ("chapters", Value::Array(chapters)),
-                    ("pgn", first),
-                    ("updatedAt", num(now)),
-                ];
-                if let Some(cloud) = study.get("cloud").filter(|c| truthy(Some(c))) {
-                    let mut changed = object(cloud, "cloud")?.clone();
-                    changed.insert("structureChanged".into(), Value::Bool(true));
-                    updates.push(("cloud", Value::Object(changed)));
-                }
-                studies.commit(spread(&study, updates))?;
+                studies.commit(restructured(&study, chapters, now)?)?;
             }
-            result.insert("id".into(), chapter_id);
+            result.id = Some(chapter_id.clone());
         }
-        "restoreChapter" => {
-            let chapter = field("chapter");
-            let study = id_arg.and_then(|id| studies.find(id).cloned());
-            let Some(study) = study else {
+        StudyCommand::RestoreChapter { id, chapter, index } => {
+            let Some(study) = find(&studies, id) else {
                 return Err(CoreError::new("That study no longer exists."));
             };
             let study = object(&study, "study")?.clone();
-            let mut chapters = study
-                .get("chapters")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let present = chapters.iter().any(|c| c.get("id") == chapter.get("id"));
-            if !present {
-                let index = field("index").as_u64().unwrap_or(0) as usize;
-                chapters.insert(index.min(chapters.len()), chapter.clone());
-                let first = chapters
-                    .first()
-                    .and_then(|c| c.get("pgn"))
-                    .cloned()
-                    .unwrap_or(Value::Null);
-                let mut updates = vec![
-                    ("chapters", Value::Array(chapters)),
-                    ("pgn", first),
-                    ("updatedAt", num(now)),
-                ];
-                if let Some(cloud) = study.get("cloud").filter(|c| truthy(Some(c))) {
-                    let mut changed = object(cloud, "cloud")?.clone();
-                    changed.insert("structureChanged".into(), Value::Bool(true));
-                    updates.push(("cloud", Value::Object(changed)));
-                }
-                let candidate = spread(&study, updates);
+            let mut chapters = chapters_of(&study);
+            if !chapters.iter().any(|c| id_of(c) == Some(&chapter.id)) {
+                let restored = serde_json::to_value(chapter)
+                    .map_err(|cause| CoreError::new(cause.to_string()))?;
+                chapters.insert((*index as usize).min(chapters.len()), restored);
+                let candidate = restructured(&study, chapters, now)?;
                 // The chapter comes back from the app: it must still read as a study's chapter.
                 if kchess_domain::library::decode_study(&Value::Object(candidate.clone())).is_none()
                 {
@@ -610,61 +528,54 @@ pub(crate) fn study_command(
                 }
                 studies.commit(candidate)?;
             }
-            result.insert(
-                "id".into(),
-                chapter.get("id").cloned().unwrap_or(Value::Null),
-            );
+            result.id = Some(chapter.id.clone());
         }
-        "markCloud" => {
-            if let Some(index) = id_arg.and_then(|id| studies.find_index(id)) {
+        StudyCommand::MarkCloud {
+            id,
+            account,
+            remote_id,
+            baseline,
+        } => {
+            if let Some(index) = studies.find_index(id) {
                 let cloud = json!({
-                    "account": field("account"),
-                    "id": field("remoteId"),
-                    "downloadedPgn": field("baseline"),
+                    "account": account,
+                    "id": remote_id,
+                    "downloadedPgn": baseline,
                 });
                 let study = object(&studies.items[index], "study")?.clone();
                 studies.items[index] = Value::Object(spread(&study, vec![("cloud", cloud)]));
             }
         }
-        "offline" => offline(&mut studies, command, &mut result)?,
-        "remove" => {
-            let removed = id_arg.and_then(|id| studies.find(id).cloned());
-            let id = field("id");
-            studies.items.retain(|item| item.get("id") != Some(&id));
-            if let Some(removed) = removed {
-                result.insert("removed".into(), removed);
-            }
+        StudyCommand::Offline {
+            account,
+            remote,
+            chapters,
+        } => offline(&mut studies, account, remote, chapters, &mut result)?,
+        StudyCommand::Remove { id } => {
+            result.removed = find(&studies, id);
+            studies.items.retain(|item| id_of(item) != Some(id));
         }
-        "restore" => {
-            let study = field("study");
-            let present = study
-                .get("id")
-                .and_then(Value::as_str)
-                .is_some_and(|id| studies.find(id).is_some());
+        StudyCommand::Restore { study } => {
+            let present = id_of(study).is_some_and(|id| studies.find(id).is_some());
             if !present {
-                let candidate = object(&study, "study")?.clone();
+                let candidate = object(study, "study")?.clone();
                 studies.commit(candidate)?;
             }
         }
-        "rename" => {
-            let study = id_arg.and_then(|id| studies.find(id).cloned());
-            if let Some(study) = study {
-                let raw_name = name_field(command, "name")?;
-                if !js::trim(&raw_name).is_empty() {
-                    let study = object(&study, "study")?.clone();
-                    let candidate = spread(
-                        &study,
-                        vec![
-                            ("name", json!(clean_name(&raw_name))),
-                            ("updatedAt", num(now)),
-                        ],
-                    );
-                    studies.commit(candidate)?;
-                }
+        StudyCommand::Rename { id, name } => {
+            if let Some(study) = find(&studies, id)
+                && !js::trim(name).is_empty()
+            {
+                let study = object(&study, "study")?.clone();
+                let candidate = spread(
+                    &study,
+                    vec![("name", json!(clean_name(name))), ("updatedAt", num(now))],
+                );
+                studies.commit(candidate)?;
             }
         }
-        "duplicate" => {
-            if let Some(study) = id_arg.and_then(|id| studies.find(id).cloned()) {
+        StudyCommand::Duplicate { id } => {
+            if let Some(study) = find(&studies, id) {
                 let study_name = study
                     .get("name")
                     .and_then(Value::as_str)
@@ -675,11 +586,9 @@ pub(crate) fn study_command(
                     &chapters,
                     None,
                 )?;
-                result.insert("id".into(), json!(id));
+                result.id = Some(id);
             }
         }
-        // Any other operation changes nothing; the list is still written, as before.
-        _ => {}
     }
     finish_studies(db, studies, result, &original, incremental)
 }
@@ -687,21 +596,13 @@ pub(crate) fn study_command(
 /// `offline`: a cloud copy of a study, kept beside a changed local one.
 fn offline(
     studies: &mut Studies,
-    command: &Map<String, Value>,
-    result: &mut Map<String, Value>,
+    account: &str,
+    remote: &RemoteStudy,
+    chapters: &[ChapterInput],
+    result: &mut StudyCommandResult,
 ) -> Result<()> {
-    let account = command
-        .get("account")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let remote = command.get("remote").cloned().unwrap_or(Value::Null);
-    let remote_id = remote.get("id").cloned().unwrap_or(Value::Null);
-    let remote_name = remote
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let chapters = command.get("chapters").cloned().unwrap_or(Value::Null);
+    let remote_name = remote.name.clone();
+    let chapters = chapter_list(chapters)?;
     let old = studies
         .items
         .iter()
@@ -712,7 +613,7 @@ fn offline(
                     .and_then(Value::as_str)
                     .map(str::to_lowercase)
                     == Some(account.to_lowercase())
-                    && cloud.get("id") == Some(&remote_id)
+                    && cloud.get("id").and_then(Value::as_str) == Some(remote.id.as_str())
             })
         })
         .cloned();
@@ -747,15 +648,15 @@ fn offline(
                 .join("\n\n")
         })
         .unwrap_or_default();
-    let cloud = json!({ "account": account, "id": remote_id, "downloadedPgn": downloaded });
+    let cloud = json!({ "account": account, "id": remote.id, "downloadedPgn": downloaded });
     for item in studies.items.iter_mut() {
         if id_of(item) == Some(id.as_str()) {
             let study = object(item, "study")?.clone();
             *item = Value::Object(spread(&study, vec![("cloud", cloud.clone())]));
         }
     }
-    result.insert("id".into(), json!(id));
-    result.insert("conflict".into(), Value::Bool(conflict));
+    result.id = Some(id);
+    result.conflict = Some(conflict);
     Ok(())
 }
 
@@ -790,10 +691,10 @@ fn study_matches(study: &Value, downloaded: &str) -> Result<bool> {
 fn finish_studies(
     db: &Connection,
     studies: Studies,
-    result: Map<String, Value>,
+    mut result: StudyCommandResult,
     original: &[Value],
     incremental: bool,
-) -> Result<Value> {
+) -> Result<StudyCommandResult> {
     // Serialize only changed studies; unrelated documents keep their bodies and row identities.
     let old: std::collections::HashMap<_, _> =
         original.iter().map(|study| (id_of(study), study)).collect();
@@ -803,24 +704,18 @@ fn finish_studies(
         .filter(|study| old.get(&id_of(study)).copied() != Some(*study))
         .cloned()
         .collect();
-    let order: Vec<Value> = studies
+    let order: Vec<String> = studies
         .items
         .iter()
-        .map(|study| study["id"].clone())
+        .map(|study| id_of(study).unwrap_or_default().to_string())
         .collect();
     // A command that changed nothing (unknown op, empty rename, missing target)
     // must not take the write lock: skip sizing work and the transaction entirely.
     // `migrate_studies` already ensured the marker, so there is nothing to write.
     if studies.items.as_slice() == original {
-        let mut out = result;
-        out.insert(
-            "studies".into(),
-            Value::Array(if incremental { changed } else { studies.items }),
-        );
-        if incremental {
-            out.insert("order".into(), Value::Array(order));
-        }
-        return Ok(Value::Object(out));
+        result.studies = if incremental { changed } else { studies.items };
+        result.order = incremental.then_some(order);
+        return Ok(result);
     }
     // Encode each full study once; placeholders reuse their persisted size.
     // The map backs both the size guard and the row writes below.
@@ -890,15 +785,9 @@ fn finish_studies(
         }
         Ok(())
     })?;
-    let mut out = result;
-    out.insert(
-        "studies".into(),
-        Value::Array(if incremental { changed } else { studies.items }),
-    );
-    if incremental {
-        out.insert("order".into(), Value::Array(order));
-    }
-    Ok(Value::Object(out))
+    result.studies = if incremental { changed } else { studies.items };
+    result.order = incremental.then_some(order);
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -911,16 +800,16 @@ mod tests {
         db
     }
 
+    /// A command as the window sends it, and the answer as the window reads it.
     fn run(db: &Connection, command: Value) -> Result<Value> {
-        study_command(db, &command, 5.0, true)
+        let command: StudyCommand = serde_json::from_value(command).expect("command");
+        study_command(db, &command, 5.0, true).map(|answer| json!(answer))
     }
 
     /// Every stored study, read whole.
     fn all(db: &Connection) -> Vec<Value> {
-        study_command(db, &json!({ "op": "list" }), 0.0, false).expect("list")["studies"]
-            .as_array()
-            .expect("studies")
-            .clone()
+        migrate_studies(db).expect("migrate");
+        read_studies(db).expect("studies")
     }
 
     fn study(db: &Connection, id: &str) -> Value {
@@ -996,7 +885,7 @@ mod tests {
 
         for (command, message) in [
             (
-                json!({ "op": "save", "id": id, "name": "  " }),
+                json!({ "op": "save", "id": id, "name": "  ", "pgn": "*" }),
                 "Name the study.",
             ),
             (
@@ -1006,18 +895,6 @@ mod tests {
             (
                 json!({ "op": "save", "id": id, "name": "R", "pgn": "1. e5 *" }),
                 "That chapter cannot be saved.",
-            ),
-            (
-                json!({ "op": "save", "id": id }),
-                "Cannot read properties of undefined (reading 'trim')",
-            ),
-            (
-                json!({ "op": "save", "id": id, "name": null }),
-                "Cannot read properties of null (reading 'trim')",
-            ),
-            (
-                json!({ "op": "save", "id": id, "name": 3 }),
-                "command.name.trim is not a function",
             ),
             (
                 json!({ "op": "addChapter", "id": "missing", "name": "X" }),
@@ -1030,7 +907,6 @@ mod tests {
         ] {
             assert_eq!(run(&db, command).expect_err("refused").message, message);
         }
-        assert!(run(&db, json!("not a command")).is_err());
     }
 
     /// Undo puts a removed chapter back where it was, once, and the study's PGN is its first
@@ -1250,7 +1126,8 @@ mod tests {
         let answer = run(&db, json!({ "op": "rename", "id": a, "name": "Again" })).expect("rename");
         assert_eq!(answer["studies"].as_array().map(Vec::len), Some(1));
         assert_eq!(answer["order"].as_array().map(Vec::len), Some(3));
-        let unchanged = run(&db, json!({ "op": "nothing" })).expect("unknown op");
+        let unchanged = run(&db, json!({ "op": "rename", "id": "missing", "name": "X" }))
+            .expect("a study no longer there");
         assert_eq!(unchanged["studies"], json!([]));
     }
 

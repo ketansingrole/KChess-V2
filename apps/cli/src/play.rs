@@ -4,7 +4,8 @@
 //! core's library as the app saves them, so either can carry the game on.
 
 use kchess_contracts::calls::{self, CoreCall};
-use kchess_contracts::check::LibraryId;
+use kchess_contracts::check::{ArchivedGame, LibraryId, SessionObject};
+use kchess_contracts::types::SessionKind;
 use std::time::{Duration, Instant};
 
 use kchess_domain::games::Setup;
@@ -136,23 +137,36 @@ impl Session<'_> {
         }
     }
 
+    /// Keep `session` as the session `kind`.
+    async fn save_session(&mut self, kind: &str, session: Value) {
+        let Some(kind) = SessionKind::named(kind) else {
+            eprintln!("[cli] Saving failed: no session is kept as {kind}");
+            self.failed = true;
+            return;
+        };
+        self.save(calls::SaveSession {
+            kind,
+            session: SessionObject(session),
+        })
+        .await;
+    }
+
     /// Carry out what Game history asks, keeping the played games as they leave them.
     async fn written(&mut self, writes: Vec<Write>) {
         history::apply_to(&mut self.games, &writes);
         for write in writes {
             match write {
-                Write::SaveGame(game) => self.save(calls::SaveArchivedGame { game }).await,
+                Write::SaveGame(game) => {
+                    self.save(calls::SaveArchivedGame {
+                        game: ArchivedGame(game),
+                    })
+                    .await
+                }
                 Write::RemoveGame(id) => {
                     self.save(calls::RemoveArchivedGame { id: LibraryId(id) })
                         .await
                 }
-                Write::SaveSession { kind, identity } => {
-                    self.save(calls::SaveSession {
-                        kind: json!(kind),
-                        session: identity,
-                    })
-                    .await
-                }
+                Write::SaveSession { kind, identity } => self.save_session(&kind, identity).await,
             }
         }
     }
@@ -180,11 +194,7 @@ impl Session<'_> {
             Game::Computer(game) => json!(game.snapshot(self.host().now)),
             Game::Local(game) => json!(game.snapshot(self.now())),
         };
-        self.save(calls::SaveSession {
-            kind: json!(self.kind()),
-            session: snapshot,
-        })
-        .await;
+        self.save_session(self.kind(), snapshot).await;
         let Some((source, has_play)) = self.archive_host() else {
             return;
         };
@@ -611,7 +621,7 @@ pub async fn interactive(
     fen: Option<String>,
 ) -> Result<(), String> {
     let library = core.request(calls::Library {}).await?;
-    let sessions = &library["sessions"];
+    let sessions = Value::Object(library.sessions);
     let started = Instant::now();
     let game = if computer {
         computer_game(core, &sessions["computer"], level, variant).await?
@@ -630,7 +640,7 @@ pub async fn interactive(
         .filter(|identity| identity.is_object())
         .cloned()
         .unwrap_or(Value::Null);
-    let games: Vec<Value> = library["games"].as_array().cloned().unwrap_or_default();
+    let games = library.games;
     let (history, writes) = HistoryPlace::new(kind, identity, true, Value::Null, false, &games);
     let mut session = Session {
         core,
