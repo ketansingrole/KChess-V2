@@ -6,9 +6,8 @@
 //! use, and (unless allowed) not on battery. A Lichess game is first looked up on Lichess, in
 //! case it was already analysed there.
 //!
-//! The TypeScript module state lives in `Reviews`' `State`, one per core instance. Storage is
-//! reached through `ReviewStorage` and the host through `ReviewHost`, so the core can plug in the
-//! real store and event delivery later. Battery state comes from the engine scheduler.
+//! Storage is reached through `ReviewStorage` and the host through `ReviewHost`. Battery state
+//! comes from the engine scheduler.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,8 +22,10 @@ use tokio::sync::watch;
 use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::status::{engine_identity, engine_status, fairy_variant, variant_engine_status};
-use super::uci::{UciController, lock, search_cancelled, signal_aborted};
+use super::scheduler::Priority;
+use super::slot::{EngineSlot, OpenEngine};
+use super::status::fairy_variant;
+use super::uci::{lock, search_cancelled, signal_aborted};
 use super::{EngineContext, after, clear_timer, domain, now_ms, parse_info, replace_timer};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
@@ -40,13 +41,11 @@ const SAVE_EVERY: usize = 6;
 /// How often paused automatic reviews look again whether they may run.
 const RECHECK_MS: u64 = 30_000;
 /// Free the engine after this long with nothing to review.
-const IDLE_MS: u64 = 60_000;
+const IDLE: Duration = Duration::from_secs(60);
 /// Automatic reviews of games from this long ago (`reviewAuto: 'recent'`).
 const RECENT_MS: i64 = 30 * 86_400_000;
 /// Principal variation moves kept per evaluation.
 const PV_LENGTH: usize = 10;
-/// The message of a review that failed without one of its own.
-const NO_ENGINE: &str = "Stockfish could not be found. Choose an engine in Settings.";
 
 /// The settings a review reads (`CoreSettings`' review fields).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -292,12 +291,6 @@ struct Job {
     requested: u64,
 }
 
-#[derive(Clone)]
-struct ReviewEngine {
-    key: String,
-    uci: Arc<UciController>,
-}
-
 /// The review service's state.
 #[derive(Default)]
 struct State {
@@ -318,15 +311,14 @@ struct State {
     skipped: HashSet<String>,
     pumping: bool,
     recheck: Option<AbortHandle>,
-    engine: Option<ReviewEngine>,
-    /// The search in progress, with the ticket that identifies it (`searchController`).
+    /// The search in progress, with the ticket that identifies it.
     search: Option<(u64, CancellationToken)>,
     search_ticket: u64,
-    idle: Option<AbortHandle>,
 }
 
 struct Shared {
     ctx: EngineContext,
+    engine: Arc<EngineSlot>,
     storage: Arc<dyn ReviewStorage>,
     state: Mutex<State>,
     /// `true` while no pump runs; `stop_reviews` waits for it (`drain`).
@@ -358,6 +350,7 @@ impl Reviews {
         let (idle_tx, _) = watch::channel(true);
         Reviews {
             shared: Arc::new(Shared {
+                engine: EngineSlot::new(ctx.clone(), IDLE),
                 ctx,
                 storage,
                 state: Mutex::new(State::default()),
@@ -529,11 +522,11 @@ impl Reviews {
     /// `restartReviewEngine`: the engine was deleted or replaced. The review in progress stops,
     /// keeping its work, and the engine is dropped.
     pub fn restart_review_engine(&self) {
-        let mut state = lock(&self.shared.state);
+        let state = lock(&self.shared.state);
         if let Some(running) = &state.running {
             running.cancelled.store(true, Ordering::SeqCst);
         }
-        close_engine_locked(&mut state);
+        close_engine_locked(&self.shared, &state);
     }
 
     /// `stopReviews`: the app is quitting. The queue empties, the running review stops, and this
@@ -551,13 +544,13 @@ impl Reviews {
                 running.cancelled.store(true, Ordering::SeqCst);
             }
             clear_timer(&mut state.recheck);
-            close_engine_locked(&mut state);
+            close_engine_locked(s, &state);
             state.host = None;
         }
         let mut idle = s.idle_tx.subscribe();
         let _ = idle.wait_for(|idle| *idle).await;
+        s.engine.close();
         let mut state = lock(&s.state);
-        clear_timer(&mut state.idle);
         state.skipped.clear();
         state.progress = None;
         state.paused = None;
@@ -730,19 +723,16 @@ fn schedule_recheck(s: &Arc<Shared>, ms: u64) {
     replace_timer(&mut lock(&s.state).recheck, timer);
 }
 
-/// `closeEngine` under the state lock: forgets the engine and stops its search.
-fn close_engine_locked(state: &mut State) {
-    clear_timer(&mut state.idle);
+/// Under the state lock: stops the search and closes the engine.
+fn close_engine_locked(s: &Shared, state: &State) {
     if let Some((_, token)) = &state.search {
         token.cancel();
     }
-    if let Some(engine) = state.engine.take() {
-        engine.uci.close();
-    }
+    s.engine.close();
 }
 
 fn close_engine(s: &Shared) {
-    close_engine_locked(&mut lock(&s.state));
+    close_engine_locked(s, &lock(&s.state));
 }
 
 /// Why automatic reviews may not run now, if they may not (`backgroundBlock`).
@@ -938,10 +928,8 @@ async fn pump(s: Arc<Shared>) {
     let (arm_idle, asked) = {
         let state = lock(&s.state);
         let present = state.host.is_some();
-        // The countdown only closes the engine: with none open (a pass that found nothing to
-        // review) it would just hold a task for a minute after every automatic look.
         (
-            present && state.running.is_none() && state.asked.is_empty() && state.engine.is_some(),
+            present && state.running.is_none() && state.asked.is_empty(),
             present && !state.asked.is_empty(),
         )
     };
@@ -952,13 +940,7 @@ async fn pump(s: Arc<Shared>) {
         kick(&s);
     }
     if arm_idle {
-        let weak = Arc::downgrade(&s);
-        let timer = after(IDLE_MS, move || {
-            if let Some(shared) = weak.upgrade() {
-                close_engine(&shared);
-            }
-        });
-        replace_timer(&mut lock(&s.state).idle, timer);
+        s.engine.release();
     }
 }
 
@@ -1089,17 +1071,11 @@ async fn run(s: &Arc<Shared>, job: Arc<Job>) {
         return;
     }
     if let Err(cause) = run_job(s, &job, &mut review).await {
-        let search_aborted = {
-            let state = lock(&s.state);
-            state
-                .search
-                .as_ref()
-                .is_some_and(|(_, token)| token.is_cancelled())
-                && state
-                    .engine
-                    .as_ref()
-                    .is_none_or(|engine| engine.uci.failed().is_none())
-        };
+        let search_aborted = lock(&s.state)
+            .search
+            .as_ref()
+            .is_some_and(|(_, token)| token.is_cancelled())
+            && s.engine.healthy();
         let interrupted = job.cancelled.load(Ordering::SeqCst) || cause.aborted || search_aborted;
         if interrupted {
             host_log(
@@ -1270,42 +1246,12 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
     Ok(())
 }
 
-/// The review engine for `configured`, started or reused (`openEngine`).
-/// A variant game (`variant`, a Lichess key) gets the bundled Fairy-Stockfish.
-async fn open_engine(s: &Arc<Shared>, configured: &str, variant: &str) -> Result<ReviewEngine> {
-    clear_timer(&mut lock(&s.state).idle);
-    let status = if variant.is_empty() {
-        engine_status(&*s.ctx.host, &s.ctx.locations, configured).await
-    } else {
-        variant_engine_status(&*s.ctx.host, &s.ctx.locations).await
-    };
-    if !status.ready {
-        return Err(CoreError::new(if variant.is_empty() {
-            NO_ENGINE
-        } else {
-            "Fairy-Stockfish, which reviews this variant, is missing."
-        }));
-    }
-    let key = engine_identity(&status).await?;
-    let engine = {
-        let mut state = lock(&s.state);
-        let current = state
-            .engine
-            .as_ref()
-            .is_some_and(|engine| engine.key == key && engine.uci.failed().is_none());
-        if !current {
-            close_engine_locked(&mut state);
-            let uci = Arc::new(s.ctx.spawn(&status)?);
-            state.engine = Some(ReviewEngine {
-                key: key.clone(),
-                uci,
-            });
-        }
-        state
-            .engine
-            .clone()
-            .ok_or_else(|| CoreError::new("The engine is unavailable."))?
-    };
+/// The review engine for `configured`, started or reused. A variant game (`variant`, a Lichess
+/// key) gets the bundled Fairy-Stockfish.
+async fn open_engine(s: &Arc<Shared>, configured: &str, variant: &str) -> Result<OpenEngine> {
+    s.engine.keep();
+    let located = s.engine.locate(configured, !variant.is_empty()).await?;
+    let engine = s.engine.open(&located)?;
     engine.uci.ready().await?;
     Ok(engine)
 }
@@ -1313,7 +1259,7 @@ async fn open_engine(s: &Arc<Shared>, configured: &str, variant: &str) -> Result
 /// One position's score at `depth` within `ms` (`search`). Cancelling it reaches the engine.
 async fn search(
     s: &Arc<Shared>,
-    target: &ReviewEngine,
+    target: &OpenEngine,
     job: &Arc<Job>,
     index: usize,
     depth: u32,
@@ -1346,7 +1292,7 @@ async fn search(
 
 async fn search_once(
     s: &Arc<Shared>,
-    target: &ReviewEngine,
+    target: &OpenEngine,
     job: &Arc<Job>,
     index: usize,
     depth: u32,
@@ -1354,9 +1300,8 @@ async fn search_once(
     token: &CancellationToken,
 ) -> Result<ReviewEval> {
     let score = Arc::new(Mutex::new(ReviewEval::default()));
-    let stop_token = token.clone();
     s.ctx
-        .lease(1, move || stop_token.cancel(), token, async {
+        .lease(Priority::Review, token, async {
             let host = host_of(s);
             if job.cancelled.load(Ordering::SeqCst)
                 || host

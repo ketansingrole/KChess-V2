@@ -23,6 +23,7 @@ use super::review::{
     GameToReview, Pause, ReviewHost, ReviewSettings, ReviewStatus, ReviewStorage, ReviewUpdate,
     Reviews, StoredReview,
 };
+use super::scheduler::Power;
 use super::search::Search;
 use super::uci::EngineHub;
 use crate::capabilities::Capabilities;
@@ -32,16 +33,15 @@ use crate::store::Database;
 
 /// How often the battery reading is refreshed while the core runs.
 const REFRESH_EVERY: Duration = Duration::from_secs(15);
-/// How long a Lichess review lookup may take on the host (it fetches a batch of games).
 /// Games a review pass looks at (the store's `gamesToReview` limit).
 const REVIEW_LIMIT: usize = 300;
 
-/// The battery reading the scheduler's on-battery function reads. A refresh asks the host once
-/// at a time, in the background.
+/// The battery reading the scheduler consults. A refresh asks the host once at a time, in the
+/// background.
 ///
-/// Intentionally stale-tolerant: refreshed at most every 15 s and on each lease via
-/// `before_lease` spawn-and-don't-wait, never blocking lease admission. A plug/unplug
-/// flip mid-queue uses the last reading (at most 2 threads on battery until refresh).
+/// Intentionally stale-tolerant: refreshed at most every 15 s and before each lease without
+/// waiting, never blocking lease admission. A plug/unplug flip mid-queue uses the last reading
+/// (at most 2 threads on battery until refresh).
 pub struct Battery {
     value: AtomicBool,
     refreshing: AtomicBool,
@@ -50,27 +50,29 @@ pub struct Battery {
     /// the connections they reach) then rather than at its next tick.
     stopped: CancellationToken,
     host: Arc<dyn Host>,
+    capabilities: Arc<Capabilities>,
 }
 
 impl Battery {
-    pub fn new(host: Arc<dyn Host>) -> Arc<Battery> {
+    pub fn new(host: Arc<dyn Host>, capabilities: Arc<Capabilities>) -> Arc<Battery> {
         Arc::new(Battery {
             value: AtomicBool::new(false),
             refreshing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             stopped: CancellationToken::new(),
             host,
+            capabilities,
         })
     }
 
-    /// The latest reading (`CorePlatform.onBattery()`, as of the last refresh).
+    /// The latest reading.
     pub fn value(&self) -> bool {
         self.value.load(Ordering::SeqCst)
     }
 
     /// Asks the host for the reading without waiting for the answer. A refresh already in flight
     /// is not repeated. Outside a runtime nothing is asked.
-    pub fn refresh(self: &Arc<Self>, capabilities: &Arc<Capabilities>) {
+    pub fn refresh(self: &Arc<Self>) {
         if self.closed.load(Ordering::SeqCst) || self.refreshing.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -79,9 +81,8 @@ impl Battery {
             return;
         };
         let battery = Arc::clone(self);
-        let capabilities = Arc::clone(capabilities);
         runtime.spawn(async move {
-            match capabilities.on_battery().await {
+            match battery.capabilities.on_battery().await {
                 Ok(on_battery) => battery.value.store(on_battery, Ordering::SeqCst),
                 Err(cause) => battery.host.log(
                     Level::Debug,
@@ -94,7 +95,7 @@ impl Battery {
     }
 
     /// Refreshes the reading on a slow interval until the core closes or is dropped.
-    pub fn start_refreshing(self: &Arc<Self>, capabilities: Arc<Capabilities>) {
+    pub fn start_refreshing(self: &Arc<Self>) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
@@ -112,7 +113,7 @@ impl Battery {
                 if battery.closed.load(Ordering::SeqCst) {
                     return;
                 }
-                battery.refresh(&capabilities);
+                battery.refresh();
             }
         });
     }
@@ -127,6 +128,16 @@ impl Battery {
 impl Drop for Battery {
     fn drop(&mut self) {
         self.stopped.cancel();
+    }
+}
+
+impl Power for Arc<Battery> {
+    fn on_battery(&self) -> bool {
+        self.value()
+    }
+
+    fn refresh(&self) {
+        Battery::refresh(self);
     }
 }
 

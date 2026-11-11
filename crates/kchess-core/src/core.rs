@@ -211,19 +211,10 @@ impl Core {
             Capabilities::with_credentials(Arc::clone(&host), credentials)
                 .with_connections(Arc::clone(&connections)),
         );
-        let battery = Battery::new(Arc::clone(&host));
-        let scheduler = {
-            let battery = Arc::clone(&battery);
-            Arc::new(Scheduler::new(move || battery.value()))
-        };
+        let battery = Battery::new(Arc::clone(&host), Arc::clone(&capabilities));
+        let scheduler = Arc::new(Scheduler::new(Arc::clone(&battery)));
         let hub = Arc::new(EngineHub::new(Arc::clone(&host)));
-        let mut ctx =
-            EngineContext::new(Arc::clone(&host), hub, scheduler, engine_locations(&config));
-        {
-            let battery = Arc::clone(&battery);
-            let capabilities = Arc::clone(&capabilities);
-            ctx.before_lease = Arc::new(move || battery.refresh(&capabilities));
-        }
+        let ctx = EngineContext::new(Arc::clone(&host), hub, scheduler, engine_locations(&config));
         let search = Search::new(ctx.clone());
         let analysis = Analysis::new(ctx.clone());
         let reviews = Reviews::new(ctx.clone(), Arc::new(ReviewRecords(Arc::clone(&database))));
@@ -645,9 +636,8 @@ impl Core {
 
     fn start(&self) {
         if !self.battery_started.swap(true, Ordering::SeqCst) {
-            self.battery.refresh(&self.capabilities);
-            self.battery
-                .start_refreshing(Arc::clone(&self.capabilities));
+            self.battery.refresh();
+            self.battery.start_refreshing();
             self.reviews.setup_reviews(Arc::new(self.review_bridge()));
         }
     }

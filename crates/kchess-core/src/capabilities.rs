@@ -423,7 +423,7 @@ mod tests {
     async fn a_battery_refresh_that_starts_after_close_ends_at_once() {
         let host: Arc<dyn Host> = Arc::new(Silent::default());
         let caps = Arc::new(Capabilities::new(Arc::clone(&host)));
-        let battery = crate::engine::bridge::Battery::new(host);
+        let battery = crate::engine::bridge::Battery::new(host, Arc::clone(&caps));
         let alive = || {
             tokio::runtime::Handle::current()
                 .metrics()
@@ -431,7 +431,7 @@ mod tests {
         };
         let before = alive();
         // One thread: the refresh is not polled before the capabilities close.
-        battery.refresh(&caps);
+        battery.refresh();
         assert_eq!(alive(), before + 1);
         caps.close();
         battery.close();

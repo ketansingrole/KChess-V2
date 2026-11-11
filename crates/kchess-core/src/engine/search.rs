@@ -1,10 +1,8 @@
-//! Computer moves (`bestMove`, `stopEngine`, `resetEngine` and
-//! `computerPlaying`). One warm engine process serves consecutive moves; a new search supersedes
+//! Computer moves. One warm engine process serves consecutive moves; a new search supersedes
 //! the one running (`SUPERSEDED`), and the process goes after two idle minutes.
 //!
-//! The TypeScript module state lives in `Search`'s `State`, one per core instance. As in
-//! TypeScript, `best_move` takes its place in line and supersedes the running search as soon as
-//! it is called, before its future is polled; the search itself runs inside the returned future.
+//! `best_move` takes its place in line and supersedes the running search as soon as it is
+//! called, before its future is polled; the search itself runs inside the returned future.
 //! Dropping that future ends the search.
 
 use std::collections::HashMap;
@@ -17,28 +15,26 @@ use futures_util::future::{BoxFuture, ready};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
-use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::status::{
-    EngineStatus, EngineTrust, computer_playing, engine_identity, engine_status, fairy_variant,
-    variant_engine_status,
-};
+use super::scheduler::Priority;
+use super::slot::EngineSlot;
+use super::status::{EngineTrust, computer_playing, fairy_variant};
 use super::uci::{
     UciController, error_summary, lock, search_cancelled, signal_aborted, truncate_for_log,
 };
-use super::{EngineContext, after, clear_timer, js_number, now_ms, random_unit, replace_timer};
+use super::{EngineContext, js_number, now_ms, random_unit};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
 
-/// The message a superseded search rejects with (`SUPERSEDED`).
+/// The message a superseded search rejects with.
 pub const SUPERSEDED: &str = "Engine search superseded.";
 /// The start position when a request gives none.
 const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 /// How long an idle warm engine is kept.
-const WARM_IDLE_MS: u64 = 120_000;
+const WARM_IDLE: Duration = Duration::from_secs(120);
 
-/// The random source `Math.random()` is read from; tests replace it.
+/// The random source for the weakest levels' random moves; tests replace it.
 pub type RandomSource = Arc<dyn Fn() -> f64 + Send + Sync>;
 
 /// `BestMoveOptions` after validation.
@@ -81,26 +77,18 @@ struct Request {
     configured: String,
 }
 
-#[derive(Clone)]
-struct Warm {
-    key: String,
-    uci: Arc<UciController>,
-}
-
 /// The search service's state.
 #[derive(Default)]
 struct State {
-    /// Bumped by every `stopEngine`; a search that sees a newer value was superseded.
+    /// Bumped by every `stop_engine`; a search that sees a newer value was superseded.
     generation: u64,
     /// The searches in progress or in line, by the connection that asked (each window plays its
     /// own computer game), with the ticket that identifies each.
     active: HashMap<u64, (u64, CancellationToken)>,
     ticket: u64,
     last_move_at: i64,
-    warm: Option<Warm>,
-    /// Finishes when the search queued last has finished (the promise chain `serial`).
+    /// Finishes when the search queued last has finished.
     serial: Option<oneshot::Receiver<()>>,
-    idle: Option<AbortHandle>,
 }
 
 struct Shared {
@@ -108,6 +96,7 @@ struct Shared {
     random: RandomSource,
     trust: EngineTrust,
     state: Mutex<State>,
+    warm: Arc<EngineSlot>,
 }
 
 /// The computer's search. Cloning shares the same engine and state.
@@ -134,35 +123,8 @@ impl Drop for Finish {
             state.active.remove(&self.connection);
         }
         if state.active.is_empty() {
-            let weak = Arc::downgrade(&self.shared);
-            let idle = after(WARM_IDLE_MS, move || {
-                if let Some(shared) = weak.upgrade() {
-                    close_warm(&shared);
-                }
-            });
-            replace_timer(&mut state.idle, idle);
+            self.shared.warm.release();
         }
-    }
-}
-
-fn close_warm(shared: &Shared) {
-    let mut state = lock(&shared.state);
-    if let Some(warm) = state.warm.take() {
-        warm.uci.close();
-    }
-}
-
-/// `stopEngine`'s body, under the state lock: every connection's search stops.
-fn stop_locked(state: &mut State, close: bool) {
-    state.generation += 1;
-    for (_, token) in state.active.values() {
-        token.cancel();
-    }
-    if close {
-        if let Some(warm) = state.warm.take() {
-            warm.uci.close();
-        }
-        clear_timer(&mut state.idle);
     }
 }
 
@@ -184,6 +146,7 @@ impl Search {
     pub fn with_random(ctx: EngineContext, random: RandomSource) -> Search {
         Search {
             shared: Arc::new(Shared {
+                warm: EngineSlot::new(ctx.clone(), WARM_IDLE),
                 ctx,
                 random,
                 trust: EngineTrust::default(),
@@ -209,10 +172,17 @@ impl Search {
             .is_trusted(path, &self.shared.ctx.locations.managed_dir)
     }
 
-    /// `stopEngine(close)`: supersedes every search (settings, a live game, closing); with
-    /// `close`, also ends the warm engine and its idle timer.
+    /// Supersedes every search (settings, a live game, closing); with `close`, also ends the warm
+    /// engine and its idle timer.
     pub fn stop_engine(&self, close: bool) {
-        stop_locked(&mut lock(&self.shared.state), close);
+        let mut state = lock(&self.shared.state);
+        state.generation += 1;
+        for (_, token) in state.active.values() {
+            token.cancel();
+        }
+        if close {
+            self.shared.warm.close();
+        }
     }
 
     /// Stops the search `connection` asked for (a window's takeback or teardown); other windows'
@@ -344,7 +314,7 @@ impl Search {
         if let Some((_, superseded)) = state.active.insert(connection, (ticket, token.clone())) {
             superseded.cancel();
         }
-        clear_timer(&mut state.idle);
+        self.shared.warm.keep();
         state.last_move_at = now_ms();
         let (done, queued) = oneshot::channel();
         let prev = state.serial.replace(queued);
@@ -401,31 +371,6 @@ fn level_profile(level: &str) -> Result<LevelProfile> {
     serde_json::from_value(info).map_err(|cause| CoreError::new(cause.to_string()))
 }
 
-/// The warm engine for `status`: kept when it is the same executable and still healthy,
-/// otherwise replaced.
-fn warm_engine(shared: &Shared, key: &str, status: &EngineStatus) -> Result<Arc<UciController>> {
-    let mut state = lock(&shared.state);
-    let current = state
-        .warm
-        .as_ref()
-        .is_some_and(|warm| warm.key == key && warm.uci.failed().is_none());
-    if !current {
-        if let Some(stale) = state.warm.take() {
-            stale.uci.close();
-        }
-        let uci = Arc::new(shared.ctx.spawn(status)?);
-        state.warm = Some(Warm {
-            key: key.to_string(),
-            uci,
-        });
-    }
-    state
-        .warm
-        .as_ref()
-        .map(|warm| Arc::clone(&warm.uci))
-        .ok_or_else(|| CoreError::new("The engine is unavailable."))
-}
-
 /// One attempt at the search: waits in line, locates the engine, reuses or starts the warm
 /// process, and searches under the scheduler's lease.
 async fn attempt(
@@ -438,34 +383,20 @@ async fn attempt(
     if token.is_cancelled() {
         return Err(signal_aborted());
     }
-    let status = match request.variant {
-        Some(_) => variant_engine_status(&*shared.ctx.host, &shared.ctx.locations).await,
-        None => {
-            engine_status(
-                &*shared.ctx.host,
-                &shared.ctx.locations,
-                &request.configured,
-            )
-            .await
-        }
-    };
-    if !status.ready {
-        return Err(CoreError::new(match request.variant {
-            Some(_) => "Fairy-Stockfish, which plays this variant, is missing.",
-            None => "Stockfish could not be found. Choose an engine in Settings.",
-        }));
-    }
-    *key = engine_identity(&status).await?;
+    let located = shared
+        .warm
+        .locate(&request.configured, request.variant.is_some())
+        .await?;
+    key.clone_from(&located.key);
     if epoch != lock(&shared.state).generation {
         return Err(search_cancelled());
     }
-    let target = warm_engine(shared, key, &status)?;
+    let target = shared.warm.open(&located)?.uci;
     let profile = level_profile(&request.level)?;
-    let stop_token = token.clone();
     let epoch_at_lease = epoch;
     shared
         .ctx
-        .lease(3, move || stop_token.cancel(), token, async {
+        .lease(Priority::Computer, token, async {
             // Re-check supersede after queue wait: a `stop_engine` during admission
             // only surfaces via token-cancel otherwise, which future generations
             // without token cancel would bypass.
