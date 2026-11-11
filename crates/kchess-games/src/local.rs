@@ -4,7 +4,9 @@
 
 use serde_json::{Value, json};
 
-use crate::{assign_written, rules, transition};
+use kchess_domain::games::local as session;
+
+use crate::{Transition, assign_written, transition};
 
 pub struct LocalGame {
     /// The `LocalState` document: the saved session and its pause flag.
@@ -25,8 +27,8 @@ fn read(now: f64, kind: &str) -> Result<Value, String> {
 impl LocalGame {
     /// A game from a saved session (`localState(saved)`), or a new one.
     pub fn new(saved: Option<&Value>, now: f64) -> Result<LocalGame, String> {
-        let state = rules("localState", &[saved.cloned().unwrap_or(Value::Null)])?;
-        let init = transition("localInit", &[], |kind| read(now, kind))?;
+        let state = session::state(&[saved.cloned().unwrap_or(Value::Null)])?;
+        let init = transition(session::init, &[], |kind| read(now, kind))?;
         let runtime = init
             .get("runtime")
             .cloned()
@@ -36,13 +38,13 @@ impl LocalGame {
 
     fn apply(
         &mut self,
-        method: &str,
+        step: Transition,
         input: &[Value],
         now: f64,
     ) -> Result<(Value, Flagged), String> {
         let mut args = vec![self.state.clone(), self.runtime.clone()];
         args.extend_from_slice(input);
-        let done = transition(method, &args, |kind| read(now, kind))?;
+        let done = transition(step, &args, |kind| read(now, kind))?;
         if let Some(next) = done.get("state") {
             assign_written(&mut self.state, next, &done["written"]);
         }
@@ -60,7 +62,7 @@ impl LocalGame {
 
     fn view(&self, query: Value, now: f64) -> Value {
         transition(
-            "localView",
+            session::view,
             &[self.state.clone(), self.runtime.clone(), query],
             |kind| read(now, kind),
         )
@@ -97,34 +99,34 @@ impl LocalGame {
     }
 
     pub fn expire(&mut self, now: f64) -> Result<Flagged, String> {
-        Ok(self.apply("localExpire", &[json!(now)], now)?.1)
+        Ok(self.apply(session::expire, &[json!(now)], now)?.1)
     }
 
     /// Play a move; its SAN, or `None` when it is not legal.
     pub fn play(&mut self, uci: &str, now: f64) -> Result<(Option<String>, Flagged), String> {
-        let (san, flagged) = self.apply("localMove", &[json!(uci)], now)?;
+        let (san, flagged) = self.apply(session::play, &[json!(uci)], now)?;
         Ok((san.as_str().map(str::to_string), flagged))
     }
 
     pub fn takeback(&mut self, now: f64) -> Result<Flagged, String> {
-        Ok(self.apply("localTakeback", &[], now)?.1)
+        Ok(self.apply(session::takeback, &[], now)?.1)
     }
 
     /// A new game from `setup` with `clock` (`{ white: {minutes, increment}, black: … }` or null).
     pub fn start(&mut self, setup: Value, clock: Value, now: f64) -> Result<Flagged, String> {
-        Ok(self.apply("localStart", &[setup, clock], now)?.1)
+        Ok(self.apply(session::start, &[setup, clock], now)?.1)
     }
 
     pub fn resign(&mut self, color: &str, now: f64) -> Result<Flagged, String> {
-        Ok(self.apply("localResign", &[json!(color)], now)?.1)
+        Ok(self.apply(session::resign, &[json!(color)], now)?.1)
     }
 
     pub fn agree_draw(&mut self, now: f64) -> Result<Flagged, String> {
-        Ok(self.apply("localAgreeDraw", &[], now)?.1)
+        Ok(self.apply(session::agree_draw, &[], now)?.1)
     }
 
     pub fn toggle_pause(&mut self, now: f64) -> Result<Flagged, String> {
-        Ok(self.apply("localTogglePause", &[], now)?.1)
+        Ok(self.apply(session::toggle_pause, &[], now)?.1)
     }
 }
 

@@ -5,7 +5,9 @@
 
 use serde_json::{Value, json};
 
-use crate::{assign_written, transition};
+use kchess_domain::games::archive as session;
+
+use crate::{Transition, assign_written, transition};
 
 /// What the page tells the archive when a transition reads it.
 pub struct Host<'a> {
@@ -87,7 +89,7 @@ impl GameArchive {
         host: &Host<'_>,
     ) -> Result<(GameArchive, Vec<Effect>), String> {
         let state = transition(
-            "archiveState",
+            session::state,
             &[identity.cloned().unwrap_or(Value::Null)],
             |kind| read(host, kind),
         )?;
@@ -97,7 +99,7 @@ impl GameArchive {
                 .cloned()
                 .ok_or("An archive could not start.")?,
         };
-        let effects = archive.apply("archiveInit", &[json!(resume)], host)?;
+        let effects = archive.apply(session::init, &[json!(resume)], host)?;
         // A resumed game was saved before, so taking back its only move removes that entry
         // (`archiveInit` reads nothing when resuming, and the state starts without play).
         let id = archive.state["identity"]["id"].clone();
@@ -109,13 +111,13 @@ impl GameArchive {
 
     fn apply(
         &mut self,
-        method: &str,
+        step: Transition,
         input: &[Value],
         host: &Host<'_>,
     ) -> Result<Vec<Effect>, String> {
         let mut args = vec![self.state.clone()];
         args.extend_from_slice(input);
-        let done = transition(method, &args, |kind| read(host, kind))?;
+        let done = transition(step, &args, |kind| read(host, kind))?;
         if let Some(next) = done.get("state") {
             assign_written(&mut self.state, next, &done["written"]);
         }
@@ -124,12 +126,12 @@ impl GameArchive {
 
     /// The game changed: save it to history when the rules say so.
     pub fn save(&mut self, finished: bool, host: &Host<'_>) -> Result<Vec<Effect>, String> {
-        self.apply("archiveSave", &[json!(finished)], host)
+        self.apply(session::save, &[json!(finished)], host)
     }
 
     /// A new game begins: the next one gets its own place in history.
     pub fn reset(&mut self, host: &Host<'_>) -> Result<Vec<Effect>, String> {
-        self.apply("archiveReset", &[], host)
+        self.apply(session::reset, &[], host)
     }
 
     /// The identity to keep as the `archive:<kind>` session.

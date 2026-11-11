@@ -12,6 +12,8 @@ use serde_json::{Value, json};
 
 use super::AnalysisPage;
 use crate::assets::icon;
+use kchess_domain::trainer::analysis_tree;
+
 use crate::game::rules;
 use crate::game::tree::{comment_text, move_number};
 use crate::theme::{Palette, radii, tint};
@@ -35,16 +37,11 @@ fn text(method: &str, args: &[Value]) -> String {
         .unwrap_or_default()
 }
 
-/// The NAGs with `nag` as the move's annotation (or none); `None` when nothing is left. The rules
-/// answer numbers as floats.
+/// The NAGs with `nag` as the move's annotation (or none); `None` when nothing is left.
 pub(super) fn with_glyph(nags: Option<&[i64]>, nag: Option<i64>) -> Option<Vec<i64>> {
-    let nags = rules("setMoveGlyph", &[json!(nags), json!(nag)]).ok()?;
-    let nags: Vec<i64> = nags
-        .as_array()?
-        .iter()
-        .map(|nag| crate::game::whole(nag) as i64)
-        .collect();
-    (!nags.is_empty()).then_some(nags)
+    let nags: Vec<f64> = nags.unwrap_or_default().iter().map(|&n| n as f64).collect();
+    let nags = analysis_tree::set_move_glyph(&nags, nag.map(|n| n as f64))?;
+    Some(nags.into_iter().map(|n| n as i64).collect())
 }
 
 /// The notes field and what it was last filled for.
@@ -97,10 +94,7 @@ impl AnalysisPage {
         if typed == self.shown_comment() {
             return;
         }
-        let next = text(
-            "withCommentText",
-            &[json!(self.raw_comment()), json!(typed)],
-        );
+        let next = analysis_tree::with_comment_text(&self.raw_comment(), &typed);
         let path = self.path.clone();
         self.root.node_at_mut(&path).comments = (!next.is_empty()).then(|| vec![next]);
         self.typing_comment = Some(path);
@@ -143,9 +137,7 @@ impl AnalysisPage {
         } else {
             format!("{} {}", move_number(node.ply - 1., true), node.san)
         };
-        let clock = rules("commentClock", &[json!(self.raw_comment())])
-            .ok()
-            .and_then(|seconds| seconds.as_f64())
+        let clock = kchess_domain::position::comment_clock(&self.raw_comment())
             .map(|seconds| format_clock(seconds * 1000.));
         let current = self.glyph_of(&self.path);
         let open = self.notes.editing || !self.shown_comment().is_empty();

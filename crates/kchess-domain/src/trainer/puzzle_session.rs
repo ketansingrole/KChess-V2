@@ -12,9 +12,10 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use super::Out;
 use super::puzzle_progress::{Outcome, Verdict, classify, moves};
 use crate::js;
+
+type Out = Result<Value, String>;
 
 const OFFLINE_TEXT: &str = "You’re offline. Choose Downloaded to use puzzles on this device, or reconnect for online puzzles.";
 const REJECTED_TEXT: &str = "Lichess did not accept the result: reconnect your account.";
@@ -69,7 +70,7 @@ struct Report {
     failed: Option<String>,
 }
 
-/// The observable state (`PuzzleSessionState` in TypeScript).
+/// The observable state.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct State {
@@ -206,7 +207,7 @@ struct Detail {
     total: u32,
 }
 
-/// `OFFLINE_OFFSET` by difficulty; an unknown difficulty has no offset (NaN, as in TypeScript).
+/// The offline rating offset by difficulty; an unknown difficulty has none (NaN).
 fn offset(difficulty: &str) -> f64 {
     match difficulty {
         "easiest" => -600.0,
@@ -219,7 +220,7 @@ fn offset(difficulty: &str) -> f64 {
 }
 
 /// `isReconnect`: a non-array object with a `needsReconnect` property.
-pub(super) fn is_reconnect(value: &Value) -> bool {
+pub fn is_reconnect(value: &Value) -> bool {
     value
         .as_object()
         .is_some_and(|object| object.contains_key("needsReconnect"))
@@ -632,10 +633,9 @@ fn take<T: DeserializeOwned>(arg: &Map<String, Value>, key: &str) -> Result<T, S
 }
 
 /// The `{ state, internal }` input shared by every transition.
-fn session_from(args: &[Value]) -> Result<(Map<String, Value>, Session), String> {
-    let arg = args
-        .first()
-        .and_then(Value::as_object)
+fn session_from(input: &Value) -> Result<(Map<String, Value>, Session), String> {
+    let arg = input
+        .as_object()
         .ok_or("the session input must be an object")?
         .clone();
     let session = Session {
@@ -665,96 +665,104 @@ fn reply(arg: &Map<String, Value>) -> Result<Reply, String> {
     Ok(Ok(outcome.get("ok").cloned().unwrap_or(Value::Null)))
 }
 
-/// `{ state, selection }` → whether the session syncs its result to Lichess.
-fn syncs_call(args: &[Value]) -> Out {
-    let arg = args
-        .first()
-        .and_then(Value::as_object)
-        .ok_or("the input must be an object")?;
-    let state: State = take(arg, "state")?;
-    let selection: Selection = take(arg, "selection")?;
-    Ok(json!(syncs_to_lichess(&state, &selection)))
+/// The session before its first puzzle: `{ state, internal }`.
+pub fn initial() -> Value {
+    json!({ "state": initial_state(), "internal": Internal::default() })
 }
 
-/// This module's methods for `api::call`; None when the method is not one of them.
-pub(super) fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result = match method {
-        "puzzleSessionInitial" => Ok(json!({
-            "state": initial_state(),
-            "internal": Internal::default(),
-        })),
-        "puzzleSessionInvalidate" => session_from(args).and_then(|(_, mut session)| {
-            session.invalidate();
-            session.finish()
-        }),
-        "puzzleSessionLoadBegin" => session_from(args).and_then(|(arg, mut session)| {
-            let selection: Selection = take(&arg, "selection")?;
-            let online = arg.get("online").and_then(Value::as_bool).unwrap_or(false);
-            session.load_begin(&selection, online);
-            session.finish()
-        }),
-        "puzzleSessionLoadSettled" => session_from(args).and_then(|(arg, mut session)| {
-            let token: Resume = take(&arg, "resume")?;
-            let now: Selection = take(&arg, "selection")?;
-            let outcome = reply(&arg)?;
-            session.load_settled(token, outcome, &now);
-            session.finish()
-        }),
-        "puzzleSessionRetry" | "puzzleSessionShow" => {
-            session_from(args).and_then(|(arg, mut session)| {
-                let puzzle = arg.get("puzzle").cloned().unwrap_or(Value::Null);
-                let selection: Selection = take(&arg, "selection")?;
-                if method == "puzzleSessionRetry" {
-                    session.retry(puzzle, &selection);
-                } else {
-                    // A puzzle chosen now replaces whatever a load still on its way would show.
-                    session.internal.load_gen += 1;
-                    session.show(puzzle, &selection, false);
-                }
-                session.finish()
-            })
-        }
-        "puzzleSessionReportBegin" => session_from(args).and_then(|(arg, mut session)| {
-            let win = arg.get("win").and_then(Value::as_bool).unwrap_or(false);
-            let detail: Option<Detail> = take(&arg, "detail")?;
-            let selection: Selection = take(&arg, "selection")?;
-            session.report_begin(win, detail, &selection);
-            session.finish()
-        }),
-        "puzzleSessionMove" => session_from(args).and_then(|(arg, mut session)| {
-            let index = arg.get("index").and_then(Value::as_u64).unwrap_or(u64::MAX);
-            let correct = arg.get("correct").and_then(Value::as_bool).unwrap_or(false);
-            let uci = arg.get("uci").and_then(Value::as_str);
-            session.played(usize::try_from(index).unwrap_or(usize::MAX), correct, uci);
-            session.finish()
-        }),
-        "puzzleSessionEnd" => session_from(args).and_then(|(_, mut session)| {
-            session.end_attempt();
-            session.finish()
-        }),
-        "puzzleSessionReportSettled" => session_from(args).and_then(|(arg, mut session)| {
-            let token: Resume = take(&arg, "resume")?;
-            let now: Selection = take(&arg, "selection")?;
-            let outcome = reply(&arg)?;
-            session.report_settled(token, outcome, &now);
-            session.finish()
-        }),
-        "puzzleSessionResetSession" => session_from(args).and_then(|(_, mut session)| {
-            session.internal.session_version += 1;
-            session.state.session = Tally::default();
-            session.finish()
-        }),
-        "puzzleSessionSyncs" => syncs_call(args),
-        "isReconnect" => Ok(json!(args.first().is_some_and(is_reconnect))),
-        _ => return None,
-    };
-    Some(result)
+/// Ends the attempt on the board without a result, so no reply still on its way counts.
+pub fn invalidate(input: &Value) -> Out {
+    let (_, mut session) = session_from(input)?;
+    session.invalidate();
+    session.finish()
+}
+
+/// Asks for the next puzzle of `selection`, from Lichess when `online`.
+pub fn load_begin(input: &Value) -> Out {
+    let (arg, mut session) = session_from(input)?;
+    let selection: Selection = take(&arg, "selection")?;
+    let online = arg.get("online").and_then(Value::as_bool).unwrap_or(false);
+    session.load_begin(&selection, online);
+    session.finish()
+}
+
+/// The reply to a load (`resume`, `outcome`), counted only while it is still current.
+pub fn load_settled(input: &Value) -> Out {
+    let (arg, mut session) = session_from(input)?;
+    let token: Resume = take(&arg, "resume")?;
+    let now: Selection = take(&arg, "selection")?;
+    let outcome = reply(&arg)?;
+    session.load_settled(token, outcome, &now);
+    session.finish()
+}
+
+/// Plays an earlier `puzzle` again, unrated and uncounted.
+pub fn retry(input: &Value) -> Out {
+    let (arg, mut session) = session_from(input)?;
+    let puzzle = arg.get("puzzle").cloned().unwrap_or(Value::Null);
+    let selection: Selection = take(&arg, "selection")?;
+    session.retry(puzzle, &selection);
+    session.finish()
+}
+
+/// Shows a chosen `puzzle`, replacing whatever a load still on its way would show.
+pub fn show(input: &Value) -> Out {
+    let (arg, mut session) = session_from(input)?;
+    let puzzle = arg.get("puzzle").cloned().unwrap_or(Value::Null);
+    let selection: Selection = take(&arg, "selection")?;
+    session.internal.load_gen += 1;
+    session.show(puzzle, &selection, false);
+    session.finish()
+}
+
+/// The attempt's result (`win`, `detail`), sent to Lichess when the selection syncs.
+pub fn report_begin(input: &Value) -> Out {
+    let (arg, mut session) = session_from(input)?;
+    let win = arg.get("win").and_then(Value::as_bool).unwrap_or(false);
+    let detail: Option<Detail> = take(&arg, "detail")?;
+    let selection: Selection = take(&arg, "selection")?;
+    session.report_begin(win, detail, &selection);
+    session.finish()
+}
+
+/// A move played on the board: its `index` in the solution, whether `correct`, and its `uci`.
+pub fn played(input: &Value) -> Out {
+    let (arg, mut session) = session_from(input)?;
+    let index = arg.get("index").and_then(Value::as_u64).unwrap_or(u64::MAX);
+    let correct = arg.get("correct").and_then(Value::as_bool).unwrap_or(false);
+    let uci = arg.get("uci").and_then(Value::as_str);
+    session.played(usize::try_from(index).unwrap_or(usize::MAX), correct, uci);
+    session.finish()
+}
+
+/// The puzzle is over: its attempt is counted and logged.
+pub fn end(input: &Value) -> Out {
+    let (_, mut session) = session_from(input)?;
+    session.end_attempt();
+    session.finish()
+}
+
+/// Lichess's reply to a result (`resume`, `outcome`), counted only while it is still current.
+pub fn report_settled(input: &Value) -> Out {
+    let (arg, mut session) = session_from(input)?;
+    let token: Resume = take(&arg, "resume")?;
+    let now: Selection = take(&arg, "selection")?;
+    let outcome = reply(&arg)?;
+    session.report_settled(token, outcome, &now);
+    session.finish()
+}
+
+/// Starts the session's tally again.
+pub fn reset_session(input: &Value) -> Out {
+    let (_, mut session) = session_from(input)?;
+    session.internal.session_version += 1;
+    session.state.session = Tally::default();
+    session.finish()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{call, counts_for_rating};
-    use serde_json::{Value, json};
+    use super::*;
 
     fn selection() -> Value {
         json!({ "account": "", "angle": "mix", "difficulty": "normal", "color": "", "mode": "offline" })
@@ -771,27 +779,27 @@ mod tests {
         })
     }
 
-    fn step(method: &str, from: &Value, extra: Value) -> Value {
+    fn step(transition: fn(&Value) -> Out, from: &Value, extra: Value) -> Value {
         let mut arg = json!({ "state": from["state"], "internal": from["internal"] });
         for (key, value) in extra.as_object().unwrap() {
             arg[key] = value.clone();
         }
-        call(method, &[arg]).unwrap().unwrap()
+        transition(&arg).unwrap()
     }
 
     /// A puzzle tried again from the history marked the session as retrying, and that mark
     /// carried over: a puzzle shown next was neither counted nor synced to Lichess.
     #[test]
     fn a_retry_marks_only_its_own_attempt() {
-        let start = call("puzzleSessionInitial", &[]).unwrap().unwrap();
+        let start = initial();
         let retried = step(
-            "puzzleSessionRetry",
+            retry,
             &start,
             json!({ "puzzle": puzzle("old"), "selection": selection() }),
         );
         assert_eq!(retried["state"]["isRetry"], json!(true));
         let shown = step(
-            "puzzleSessionShow",
+            show,
             &retried,
             json!({ "puzzle": puzzle("new"), "selection": selection() }),
         );
@@ -802,14 +810,14 @@ mod tests {
     /// The local database answering with no puzzle (`[null]`) is out of puzzles, not one to show.
     #[test]
     fn an_offline_load_without_a_puzzle_is_exhausted() {
-        let start = call("puzzleSessionInitial", &[]).unwrap().unwrap();
+        let start = initial();
         let loading = step(
-            "puzzleSessionLoadBegin",
+            load_begin,
             &start,
             json!({ "selection": selection(), "online": true }),
         );
         let settled = step(
-            "puzzleSessionLoadSettled",
+            load_settled,
             &loading,
             json!({
                 "resume": loading["call"]["resume"],
@@ -824,20 +832,20 @@ mod tests {
     /// A load still on its way replaced the puzzle chosen while it loaded.
     #[test]
     fn a_shown_puzzle_is_not_replaced_by_an_earlier_load() {
-        let start = call("puzzleSessionInitial", &[]).unwrap().unwrap();
+        let start = initial();
         let loading = step(
-            "puzzleSessionLoadBegin",
+            load_begin,
             &start,
             json!({ "selection": selection(), "online": true }),
         );
         let resume = loading["call"]["resume"].clone();
         let shown = step(
-            "puzzleSessionShow",
+            show,
             &loading,
             json!({ "puzzle": puzzle("chosen"), "selection": selection() }),
         );
         let late = step(
-            "puzzleSessionLoadSettled",
+            load_settled,
             &shown,
             json!({
                 "resume": resume,

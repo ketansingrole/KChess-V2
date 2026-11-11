@@ -1,10 +1,8 @@
 //! The stand-alone chess clock for a real board: two faces, top (the player across the table) and
 //! bottom, each with its own minutes and a shared increment. Times are milliseconds; `at` is the
-//! host's monotonic clock. The GPUI app holds an `OtbClock`; other hosts keep its state
-//! as JSON and move it through the `otbClock*` rules below.
+//! host's monotonic clock.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 /// A face of the clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,118 +242,28 @@ impl OtbClock {
     }
 }
 
-fn clock_arg(args: &[Value]) -> Result<OtbClock, String> {
-    serde_json::from_value(args.first().cloned().unwrap_or(Value::Null))
-        .map_err(|cause| format!("clock must be an otbClock state: {cause}"))
-}
-
-fn number_arg(args: &[Value], index: usize, name: &str) -> Result<f64, String> {
-    args.get(index)
-        .and_then(Value::as_f64)
-        .filter(|value| value.is_finite())
-        .ok_or_else(|| format!("{name} must be a number"))
-}
-
-fn side_arg(args: &[Value], index: usize) -> Result<Side, String> {
-    serde_json::from_value(args.get(index).cloned().unwrap_or(Value::Null))
-        .map_err(|_| "side must be \"top\" or \"bottom\"".to_string())
-}
-
-fn config_arg(value: Option<&Value>) -> Result<Config, String> {
-    let value = value.cloned().unwrap_or(Value::Null);
-    let number = |key: &str| value[key].as_f64().filter(|n| n.is_finite());
-    match (
-        number("minutes"),
-        number("bottomMinutes"),
-        number("increment"),
-    ) {
-        (Some(minutes), Some(bottom_minutes), Some(increment)) => Ok(Config {
-            minutes,
-            bottom_minutes,
-            increment,
-        }),
-        _ => Err("config must have minutes, bottomMinutes and increment".into()),
-    }
-}
-
-/// A press, pause, start or expiry at the time given: the new state, and whether a flag fell.
-fn transition(
-    args: &[Value],
-    change: impl FnOnce(&mut OtbClock) -> Result<bool, String>,
-) -> Result<Value, String> {
-    let mut clock = clock_arg(args)?;
-    let flag_fell = change(&mut clock)?;
-    Ok(json!({ "clock": clock, "flagFell": flag_fell }))
-}
-
-/// The `otbClock*` rules: the state in, the new state (and what happened) out.
-pub(crate) fn call(method: &str, args: &[Value]) -> Option<Result<Value, String>> {
-    let at = |index| number_arg(args, index, "at");
-    Some(match method {
-        "otbClockNew" => config_arg(args.first()).map(|config| json!(OtbClock::new(config))),
-        "otbClockLeft" => {
-            clock_arg(args).and_then(|clock| Ok(json!(clock.left(side_arg(args, 1)?, at(2)?))))
-        }
-        "otbClockExpire" => transition(args, |clock| Ok(clock.expire(at(1)?))),
-        "otbClockPress" => transition(args, |clock| Ok(clock.press(side_arg(args, 1)?, at(2)?))),
-        "otbClockPause" => transition(args, |clock| Ok(clock.pause(at(1)?))),
-        "otbClockStart" => transition(args, |clock| Ok(clock.start(at(1)?))),
-        "otbClockReset" => clock_arg(args).map(|mut clock| {
-            clock.reset();
-            json!(clock)
-        }),
-        "otbClockConfigure" => clock_arg(args).and_then(|mut clock| {
-            clock.configure(config_arg(args.get(1))?);
-            Ok(json!(clock))
-        }),
-        "otbClockArchive" => clock_arg(args).map(|clock| {
-            json!({
-                "hasPlay": clock.has_play(),
-                "reason": clock.reason(),
-                "timeControl": clock.time_control(),
-                "clockSummary": clock.summary(),
-            })
-        }),
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The rules move the same clock the GPUI app holds, through its JSON.
+    /// A pressed clock is archived with its time control and each face's moves and time.
     #[test]
-    fn the_rules_move_the_clock_through_its_state() {
-        let config = json!({ "minutes": 5, "bottomMinutes": 3, "increment": 2 });
-        let state = call("otbClockNew", &[config]).unwrap().unwrap();
-        let started = call("otbClockStart", &[state, json!(0)]).unwrap().unwrap();
-        assert_eq!(started["flagFell"], json!(false));
-        assert_eq!(started["clock"]["running"], json!("bottom"));
-        let state = started["clock"].clone();
-        let left = call(
-            "otbClockLeft",
-            &[state.clone(), json!("bottom"), json!(10_000)],
-        );
-        assert_eq!(left.unwrap().unwrap(), json!(170_000.0));
-        let pressed = call("otbClockPress", &[state, json!("bottom"), json!(10_000)])
-            .unwrap()
-            .unwrap();
-        let archive = call("otbClockArchive", &[pressed["clock"].clone()])
-            .unwrap()
-            .unwrap();
-        assert_eq!(archive["hasPlay"], json!(true));
-        assert_eq!(archive["timeControl"], json!("180+2 / 300+2"));
+    fn a_used_clock_archives_its_play() {
+        let mut clock = OtbClock::new(Config {
+            minutes: 5.,
+            bottom_minutes: 3.,
+            increment: 2.,
+        });
+        assert!(!clock.start(0.));
+        assert_eq!(clock.running, Some(Side::Bottom));
+        assert_eq!(clock.left(Side::Bottom, 10_000.), 170_000.);
+        clock.press(Side::Bottom, 10_000.);
+        assert!(clock.has_play());
+        assert_eq!(clock.time_control(), "180+2 / 300+2");
         assert_eq!(
-            archive["clockSummary"],
-            json!("Bottom: 1 moves · 172s left; Top: 0 moves · 300s left")
+            clock.summary(),
+            "Bottom: 1 moves · 172s left; Top: 0 moves · 300s left"
         );
-        assert!(
-            call("otbClockPress", &[json!({}), json!("bottom"), json!(0)])
-                .unwrap()
-                .is_err()
-        );
-        assert!(call("localStart", &[]).is_none());
     }
 
     fn clock() -> OtbClock {

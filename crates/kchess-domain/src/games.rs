@@ -1,13 +1,13 @@
-//! Game sessions: the computer game, the
-//! board game with clocks, and the archive identity and completion rules. The TypeScript
-//! classes keep their API and their host; every decision is made here.
+//! Game sessions: the computer game, the board game with clocks, and the archive identity and
+//! completion rules. Every decision is made here; the host keeps the state and performs the
+//! effects.
 //!
 //! A transition takes the session state (and its private runtime) as JSON, plus its input, and
 //! returns the new state with the effects the host must perform, in order. Host reads (`now`,
 //! `allowed`, `ready`, the archive's `source`, …) are asked for one at a time: when a transition
 //! needs a read the host has not supplied yet, it answers `{"read": kind}` and the host calls
-//! its getter once and asks again. So each read happens once, when the transition reaches it,
-//! exactly as the TypeScript read it. The last argument of a transition is the list of reads
+//! its getter once and asks again. So each read happens once, when the transition reaches it.
+//! The last argument of a transition is the list of reads
 //! supplied so far.
 
 pub mod archive;
@@ -309,7 +309,7 @@ pub(crate) fn with_move(
     Some((next, san))
 }
 
-/// A `{ variant, fen }` setup, as the TypeScript `GameSetup` carries it.
+/// A `{ variant, fen }` setup.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Setup {
     pub variant: String,
@@ -535,41 +535,6 @@ pub(crate) fn engine_level(level: &str) -> Result<Value, String> {
         Some(entry) => to_value(entry),
         None => Err(format!("unknown engine level {level}")),
     }
-}
-
-/// This module's methods for `api::call`; None when the method is not one of them.
-pub fn call(method: &str, args: &[Value]) -> Option<Result<Value, String>> {
-    Some(match method {
-        "computerState" => computer::state(args),
-        "computerInit" => computer::init(args),
-        "computerView" => computer::view(args),
-        "computerAvailability" => computer::availability(args),
-        "computerExpire" => computer::expire(args),
-        "computerMove" => computer::play(args),
-        "computerSearchStart" => computer::search_start(args),
-        "computerSearchReply" => computer::search_reply(args),
-        "computerSearchFailed" => computer::search_failed(args),
-        "computerSearchEnd" => computer::search_end(args),
-        "computerStart" => computer::start(args),
-        "computerTakeback" => computer::takeback(args),
-        "computerResign" => computer::resign(args),
-        "computerDispose" => computer::dispose(args),
-        "localState" => local::state(args),
-        "localInit" => local::init(args),
-        "localView" => local::view(args),
-        "localExpire" => local::expire(args),
-        "localMove" => local::play(args),
-        "localTakeback" => local::takeback(args),
-        "localStart" => local::start(args),
-        "localResign" => local::resign(args),
-        "localAgreeDraw" => local::agree_draw(args),
-        "localTogglePause" => local::toggle_pause(args),
-        "archiveState" => archive::state(args),
-        "archiveInit" => archive::init(args),
-        "archiveSave" => archive::save(args),
-        "archiveReset" => archive::reset(args),
-        _ => return otb_clock::call(method, args),
-    })
 }
 
 #[cfg(test)]

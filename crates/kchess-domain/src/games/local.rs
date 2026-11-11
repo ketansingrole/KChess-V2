@@ -37,7 +37,7 @@ pub struct State {
     pub paused: bool,
 }
 
-/// The private field the TypeScript class kept beside its state.
+/// What the host keeps beside the state: when the turn began.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Runtime {

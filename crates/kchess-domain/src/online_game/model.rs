@@ -57,9 +57,8 @@ pub struct FinishedGame {
     pub days: Option<f64>,
 }
 
-/// `onlineGameState()` plus the two private fields the class kept: the connection epoch and the
-/// request generation (`RequestScope`'s counter). Options are `undefined` in the TypeScript and
-/// `null` on the wire.
+/// The game's state, with the connection epoch and the request generation (a newer request
+/// supersedes every earlier one). Absent options are `null` on the wire.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Model {
@@ -400,7 +399,7 @@ pub fn nullish(v: Option<&Value>) -> Option<&Value> {
     v.filter(|v| !v.is_null())
 }
 
-/// `String(x ?? fallback)` for a string the TypeScript keeps as text.
+/// `String(x ?? fallback)`: any value as text, `fallback` when absent.
 pub fn string_or(v: Option<&Value>, fallback: &str) -> String {
     match nullish(v) {
         Some(v) => js::to_string(Some(v)),

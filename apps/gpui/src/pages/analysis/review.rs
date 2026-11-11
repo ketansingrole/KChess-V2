@@ -1344,8 +1344,7 @@ pub(super) fn eval_chart(
 #[cfg(test)]
 mod tests {
     use super::tried_nag;
-    use crate::game::rules;
-    use serde_json::json;
+    use kchess_domain::trainer::analysis_tree::move_glyph;
 
     /// A tried move is labelled as the app labels it (`NAGS`), and
     /// the glyph the rules give that NAG is the one the move list shows.
@@ -1353,8 +1352,8 @@ mod tests {
     fn a_judged_tried_move_gets_its_glyph() {
         for (judgment, glyph) in [("inaccuracy", "?!"), ("mistake", "?"), ("blunder", "??")] {
             let nag = tried_nag(judgment).unwrap();
-            let shown = rules("moveGlyph", &[json!([nag])]).unwrap();
-            assert_eq!(shown["glyph"], json!(glyph), "{judgment}");
+            let shown = move_glyph(&[nag as f64]).unwrap();
+            assert_eq!(shown.glyph, glyph, "{judgment}");
         }
         assert_eq!(tried_nag("good"), None);
     }

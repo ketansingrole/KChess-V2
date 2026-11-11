@@ -20,6 +20,7 @@ const RETIRED: &[&str] = &[
     "FILES",
     "RANKS",
     "START_SETUP",
+    "computerDispose",
     "gameResult",
     "hasScore",
     "materialBalance",
@@ -27,6 +28,7 @@ const RETIRED: &[&str] = &[
     "pgnFromMoves",
     "playMove",
     "puzzleFromDb",
+    "puzzleSessionSyncs",
 ];
 
 use std::io::{Read, Write};
