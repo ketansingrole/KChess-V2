@@ -748,15 +748,12 @@ impl OnlineState {
         cx.spawn(async move |this, cx| {
             let joined = joined.await.unwrap_or_default();
             let now = chrono::Utc::now().timestamp_millis() as f64;
-            let current: Vec<&Value> = joined
-                .iter()
-                .filter(|entry| entry["until"].as_f64().is_some_and(|until| until > now))
-                .collect();
+            let current: Vec<_> = joined.iter().filter(|entry| entry.until > now).collect();
             let participant = current
                 .iter()
-                .find(|entry| entry["account"].as_str() == Some(active.as_str()))
+                .find(|entry| entry.account == active)
                 .or(current.last())
-                .and_then(|entry| entry["account"].as_str().map(str::to_string));
+                .map(|entry| entry.account.clone());
             let account = participant.unwrap_or(if wanted { active } else { String::new() });
             if let Err(cause) = core
                 .request(calls::StayConnected {

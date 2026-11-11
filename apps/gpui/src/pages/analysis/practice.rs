@@ -9,7 +9,7 @@ use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::calls;
 use kchess_contracts::check::LibraryId;
-use serde_json::Value;
+use kchess_contracts::types::Drill;
 use shakmaty::{Color, Square};
 
 use super::AnalysisPage;
@@ -40,7 +40,7 @@ pub struct Practice {
     /// The review being practised.
     pub key: String,
     /// Its positions in practice, in move order: the mistake items and their plies.
-    positions: Vec<(usize, Value)>,
+    positions: Vec<(usize, Drill)>,
     index: usize,
     pub status: Status,
     /// The last wrong move tried here, as SAN.
@@ -61,15 +61,13 @@ fn san(variant: &str, fen: &str, uci: &str) -> Option<String> {
 }
 
 impl Practice {
-    fn current(&self) -> Option<&(usize, Value)> {
+    fn current(&self) -> Option<&(usize, Drill)> {
         self.positions.get(self.index)
     }
 
     /// The solution's first move: the one to find.
     fn answer(&self) -> Option<String> {
-        self.current()?.1["solution"][0]
-            .as_str()
-            .map(str::to_string)
+        self.current()?.1.solution.first().cloned()
     }
 
     /// Solving: the engine (and anything else that knows) would tell.
@@ -81,12 +79,12 @@ impl Practice {
 impl AnalysisPage {
     pub fn start_practice(&mut self, key: &str, cx: &mut Context<Self>) {
         let prefix = format!("{key}:");
-        let mut positions: Vec<(usize, Value)> = self
+        let mut positions: Vec<(usize, Drill)> = self
             .review
             .mistakes
             .iter()
             .filter_map(|item| {
-                let ply = item["id"].as_str()?.strip_prefix(&prefix)?.parse().ok()?;
+                let ply = item.id.strip_prefix(&prefix)?.parse().ok()?;
                 Some((ply, item.clone()))
             })
             .collect();
@@ -140,7 +138,7 @@ impl AnalysisPage {
     fn played(&self) -> Option<(String, String, String, Color)> {
         let (ply, item) = self.practice.as_ref()?.current()?;
         let uci = self.mainline().get(*ply)?.clone();
-        let fen = item["fen"].as_str()?;
+        let fen = item.fen.as_str();
         let mut fields = fen.split(' ');
         let color = if fields.nth(1) == Some("b") {
             Color::Black
@@ -153,12 +151,7 @@ impl AnalysisPage {
             if color == Color::Black { "…" } else { "." },
             san(self.root.variant().key(), fen, &uci)?
         );
-        Some((
-            uci,
-            label,
-            item["judgment"].as_str().unwrap_or("mistake").to_string(),
-            color,
-        ))
+        Some((uci, label, item.judgment.clone(), color))
     }
 
     /// The board is at the position before the mistake (on the main line, which is the game).
@@ -239,19 +232,16 @@ impl AnalysisPage {
             self.answer_mistake(&item, clean, cx);
             return Some(self.play_move(uci, cx));
         }
-        practice.tried = item["fen"]
-            .as_str()
-            .and_then(|fen| san(&variant, fen, uci))
-            .unwrap_or_else(|| uci.to_string());
+        practice.tried = san(&variant, &item.fen, uci).unwrap_or_else(|| uci.to_string());
         practice.helped = true;
         practice.status = Status::Wrong;
         self.redraw(cx);
         Some(false)
     }
 
-    fn answer_mistake(&mut self, item: &Value, clean: bool, cx: &mut Context<Self>) {
+    fn answer_mistake(&mut self, item: &Drill, clean: bool, cx: &mut Context<Self>) {
         let answered = cx.global::<AppCore>().request(calls::AnswerMistake {
-            id: LibraryId(item["id"].as_str().unwrap_or_default().to_string()),
+            id: LibraryId(item.id.clone()),
             solved: clean,
         });
         cx.spawn(async move |this, cx| match answered.await {
@@ -391,13 +381,7 @@ impl AnalysisPage {
         };
         let answer_san = practice
             .current()
-            .and_then(|(_, item)| {
-                san(
-                    self.root.variant().key(),
-                    item["fen"].as_str()?,
-                    &practice.answer()?,
-                )
-            })
+            .and_then(|(_, item)| san(self.root.variant().key(), &item.fen, &practice.answer()?))
             .unwrap_or_default();
         let body: Vec<AnyElement> = if practice.status == Status::Done {
             let found = practice.found.iter().filter(|found| **found).count();

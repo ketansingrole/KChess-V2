@@ -4,11 +4,11 @@ use kchess_contracts::check::{
     OptionalAccount, StandingPage, TournamentId, TournamentPassword, Username,
 };
 use kchess_contracts::core_api::TournamentsApi;
+use kchess_contracts::types::JoinedTournament;
 use kchess_contracts::types::{
     NewArena, Reply, TournamentDetail, TournamentList, TournamentStatus, TournamentSummary,
     TournamentSystem,
 };
-use serde_json::json;
 
 use crate::core::Core;
 use crate::error::Result;
@@ -29,13 +29,7 @@ impl Core {
         let account = account.map(str::to_owned);
         self.database
             .write_async(move |ctx| {
-                library::forget_tournament(
-                    ctx.host,
-                    ctx.db,
-                    system.as_str(),
-                    &id,
-                    account.as_deref(),
-                )
+                library::forget_tournament(ctx.host, ctx.db, system, &id, account.as_deref())
             })
             .await
     }
@@ -98,18 +92,18 @@ impl TournamentsApi for Core {
         self.services.online().stay_connected(&name);
         let now = now_ms();
         // Arenas end at `finishesAt`; Swiss events have no fixed end, so allow a day.
-        let mut entry = json!({
-            "system": system.as_str(),
-            "id": id,
-            "account": name,
-            "name": id,
-            "until": now + 86_400_000i64,
-        });
+        let mut entry = JoinedTournament {
+            system,
+            id: id.clone(),
+            account: name.clone(),
+            name: id.clone(),
+            until: (now + 86_400_000i64) as f64,
+        };
         match tournaments::tournament(lichess, system, &id, &name, 1).await {
             Ok(detail) => {
-                entry["name"] = json!(detail.summary.name);
+                entry.name = detail.summary.name;
                 if let Some(finishes_at) = detail.summary.finishes_at {
-                    entry["until"] = json!(finishes_at);
+                    entry.until = finishes_at as f64;
                 }
             }
             Err(cause) => self.host.log(

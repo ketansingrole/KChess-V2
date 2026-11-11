@@ -2233,7 +2233,7 @@ pub struct PopularityMonth {
 
 /* ── Online play, watching and tournaments, as the core answers them ────── */
 
-pub use kchess_domain::library::PlayedGame;
+pub use kchess_domain::library::{Drill, PlayedGame};
 pub use kchess_domain::records::challenge::{
     ChallengeInfo, PlayerRef, TimeControl as ChallengeTimeControl,
 };
@@ -2981,9 +2981,9 @@ pub struct StudyCommandResult {
 pub struct Library {
     pub studies: Vec<Value>,
     pub games: Vec<PlayedGame>,
-    pub mistakes: Vec<Value>,
+    pub mistakes: Vec<Drill>,
     pub sessions: serde_json::Map<String, Value>,
-    pub joined_tournaments: Vec<Value>,
+    pub joined_tournaments: Vec<JoinedTournament>,
     pub repertoire_misses: Value,
     pub repertoire_schedule: Value,
     /// Why the studies could not be read (they are kept, and shown as none).
@@ -2991,11 +2991,31 @@ pub struct Library {
     pub study_error: Option<String>,
 }
 
+/// A tournament joined from KChess, kept until it ends so its account's event stream stays open.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct JoinedTournament {
+    pub system: TournamentSystem,
+    pub id: String,
+    /// The account that joined it.
+    pub account: String,
+    pub name: String,
+    /// When it ends (or a day after joining a Swiss), in milliseconds since the epoch.
+    #[serde(with = "js_number")]
+    pub until: f64,
+}
+
+impl JoinedTournament {
+    /// Joined by `account`, compared without case.
+    pub fn joined_by(&self, account: &str) -> bool {
+        self.account.eq_ignore_ascii_case(account)
+    }
+}
+
 /// The drills after adding a review's mistakes; `added` counts the new ones.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct MistakesAdded {
     pub added: u32,
-    pub items: Vec<Value>,
+    pub items: Vec<Drill>,
 }
 
 /// A reviewed game with positions in practice, and its game when known: a synced Lichess game
@@ -3055,6 +3075,18 @@ mod tests {
         }
         let parts: Parts = serde_json::from_str(&text).unwrap();
         assert_eq!(serde_json::to_string(&parts).unwrap(), text);
+    }
+
+    /// A joined tournament keeps the bytes the core wrote by hand: its end a whole number.
+    #[test]
+    fn a_joined_tournament_keeps_its_bytes() {
+        for text in [
+            r#"[{"system":"arena","id":"abcd","account":"Alice","name":"Hourly","until":1700000000000}]"#,
+            r#"[{"system":"swiss","id":"efgh","account":"bob","name":"Weekly","until":1.5}]"#,
+        ] {
+            let joined: Vec<JoinedTournament> = serde_json::from_str(text).unwrap();
+            assert_eq!(serde_json::to_string(&joined).unwrap(), text);
+        }
     }
 
     /// A game saved before `playable` existed is one the Board API can play.

@@ -11,7 +11,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::check::LibraryId;
-use kchess_contracts::types::MistakeGame;
+use kchess_contracts::types::{Drill, MistakeGame};
 use serde_json::{Value, json};
 
 use crate::assets::icon;
@@ -35,21 +35,13 @@ fn now() -> f64 {
         .map_or(0., |since| since.as_millis() as f64)
 }
 
-fn due_at(item: &Value) -> f64 {
-    item["dueAt"].as_f64().unwrap_or(0.)
-}
-
-fn id_of(item: &Value) -> &str {
-    item["id"].as_str().unwrap_or_default()
-}
-
 /// A drill as a puzzle for the board.
-fn puzzle(item: &Value) -> Value {
+fn puzzle(item: &Drill) -> Value {
     json!({
-        "id": item["id"],
-        "fen": item["fen"],
-        "solution": item["solution"],
-        "variant": item.get("variant").cloned().unwrap_or(Value::Null),
+        "id": item.id,
+        "fen": item.fen,
+        "solution": item.solution,
+        "variant": item.variant,
         "rating": 0,
         "themes": [],
     })
@@ -76,11 +68,11 @@ fn title(game: &MistakeGame) -> String {
 }
 
 /// How many of a game's drills have each judgment.
-fn judgment_counts(items: &[&Value]) -> Vec<(&'static str, String)> {
+fn judgment_counts(items: &[&Drill]) -> Vec<(&'static str, String)> {
     let count = |judgment: &str| {
         items
             .iter()
-            .filter(|item| item["judgment"] == json!(judgment))
+            .filter(|item| item.judgment == judgment)
             .count()
     };
     crate::reviews::judgment_counts(&json!({
@@ -104,7 +96,7 @@ pub(crate) enum MistakeAction {
 }
 
 pub struct Mistakes {
-    items: Vec<Value>,
+    items: Vec<Drill>,
     /// Until the saved drills arrive, "no mistakes yet" would not be true.
     loading: bool,
     /// Each load of the overview; an answer to an earlier one is dropped.
@@ -215,10 +207,10 @@ impl Mistakes {
         cx.notify();
     }
 
-    fn due(&self) -> Vec<&Value> {
+    fn due(&self) -> Vec<&Drill> {
         self.items
             .iter()
-            .filter(|item| due_at(item) <= self.now)
+            .filter(|item| item.due_at_ms() <= self.now)
             .collect()
     }
 
@@ -230,7 +222,18 @@ impl Mistakes {
 
     #[cfg(test)]
     pub(crate) fn seed(&mut self, items: Vec<Value>, cx: &mut Context<Self>) {
-        self.items = items;
+        // A drill as the core lists it, with what a test leaves out filled in.
+        self.items = items
+            .into_iter()
+            .map(|item| {
+                let mut drill =
+                    json!({ "judgment": "mistake", "dueAt": 0, "streak": 0, "attempts": 0 });
+                for (key, value) in item.as_object().into_iter().flatten() {
+                    drill[key] = value.clone();
+                }
+                serde_json::from_value(drill).expect("a drill")
+            })
+            .collect();
         cx.notify();
     }
 
@@ -271,23 +274,27 @@ impl Mistakes {
 
     /// The next position: the one due longest, or with `all` the next one at all (Review early).
     fn next(&mut self, all: bool, cx: &mut Context<Self>) {
-        let mut candidates: Vec<&Value> = if all {
+        let mut candidates: Vec<&Drill> = if all {
             self.items.iter().collect()
         } else {
             self.due()
         };
-        candidates.sort_by(|a, b| due_at(a).total_cmp(&due_at(b)));
+        candidates.sort_by(|a, b| a.due_at_ms().total_cmp(&b.due_at_ms()));
         let current = self.current.as_deref();
         let item = candidates
             .iter()
-            .find(|item| self.done || Some(id_of(item)) != current)
+            .find(|item| self.done || Some(item.id.as_str()) != current)
             .map(|item| (*item).clone());
         // The position on the board is the only one left: keep it rather than blank the board.
-        if item.is_none() && candidates.iter().any(|item| Some(id_of(item)) == current) {
+        if item.is_none()
+            && candidates
+                .iter()
+                .any(|item| Some(item.id.as_str()) == current)
+        {
             return;
         }
         self.done = false;
-        self.current = item.as_ref().map(|item| id_of(item).to_string());
+        self.current = item.as_ref().map(|item| item.id.clone());
         if let Some(item) = item {
             self.puzzle
                 .update(cx, |board, cx| board.start(&puzzle(&item), None, cx));
@@ -444,12 +451,15 @@ impl Mistakes {
             .enumerate()
             .map(|(index, game)| {
                 let key = game.key.as_str();
-                let items: Vec<&Value> = self
+                let items: Vec<&Drill> = self
                     .items
                     .iter()
-                    .filter(|item| id_of(item).starts_with(&format!("{key}:")))
+                    .filter(|item| item.id.starts_with(&format!("{key}:")))
                     .collect();
-                let due = items.iter().filter(|item| due_at(item) <= self.now).count();
+                let due = items
+                    .iter()
+                    .filter(|item| item.due_at_ms() <= self.now)
+                    .count();
                 let positions = items.len();
                 let sub = format!(
                     "{} · {positions} {}{}",
@@ -580,7 +590,7 @@ impl Mistakes {
         let learned = self
             .items
             .iter()
-            .filter(|item| item["streak"].as_f64().unwrap_or(0.) >= LEARNED_STREAK)
+            .filter(|item| item.streak() >= LEARNED_STREAK)
             .count();
         let stat = |label: &'static str, value: usize| {
             v_flex()
@@ -735,11 +745,14 @@ mod tests {
 
     #[test]
     fn counts_read_worst_first() {
-        let items = [
-            json!({ "judgment": "mistake" }),
-            json!({ "judgment": "blunder" }),
-            json!({ "judgment": "blunder" }),
-        ];
+        let drill = |judgment: &str| -> kchess_contracts::types::Drill {
+            serde_json::from_value(json!({
+                "id": "k:1", "fen": "", "solution": [], "judgment": judgment,
+                "dueAt": 0, "streak": 0, "attempts": 0,
+            }))
+            .expect("a drill")
+        };
+        let items = [drill("mistake"), drill("blunder"), drill("blunder")];
         let items: Vec<_> = items.iter().collect();
         let counts: Vec<String> = judgment_counts(&items)
             .into_iter()

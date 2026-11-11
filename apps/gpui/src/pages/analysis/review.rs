@@ -4,7 +4,7 @@
 
 use kchess_contracts::calls;
 use kchess_contracts::check::{Fen, Moves, ReviewKey, Side};
-use kchess_contracts::types::{MistakeGame, ReviewCurrent, ReviewRequest, StoredReview};
+use kchess_contracts::types::{Drill, MistakeGame, ReviewCurrent, ReviewRequest, StoredReview};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
@@ -97,13 +97,13 @@ pub struct ReviewState {
     tried: HashSet<String>,
     pub practice_feedback: Option<String>,
     /// The positions in practice (`MistakeExercise`), as the core keeps them.
-    pub mistakes: Vec<Value>,
+    pub mistakes: Vec<Drill>,
     /// The last review analysed, by review and its last update.
     analysed: RefCell<Option<(String, f64, Analysed)>>,
 }
 
 impl ReviewState {
-    pub fn new(mistakes: Vec<Value>) -> ReviewState {
+    pub fn new(mistakes: Vec<Drill>) -> ReviewState {
         ReviewState {
             mistakes,
             ..ReviewState::default()
@@ -433,20 +433,16 @@ impl AnalysisPage {
     /// This review's positions already in practice, and the sides they are from.
     fn saved_positions(&self, key: &str) -> (usize, HashSet<&'static str>) {
         let prefix = format!("{key}:");
-        let items: Vec<&Value> = self
+        let items: Vec<&Drill> = self
             .review
             .mistakes
             .iter()
-            .filter(|item| {
-                item["id"]
-                    .as_str()
-                    .is_some_and(|id| id.starts_with(&prefix))
-            })
+            .filter(|item| item.id.starts_with(&prefix))
             .collect();
         let sides = items
             .iter()
             .map(|item| {
-                if item["fen"].as_str().and_then(|fen| fen.split(' ').nth(1)) == Some("b") {
+                if item.fen.split(' ').nth(1) == Some("b") {
                     "black"
                 } else {
                     "white"
@@ -729,7 +725,7 @@ impl AnalysisPage {
     pub fn practise_game(
         &mut self,
         game: &MistakeGame,
-        items: Vec<Value>,
+        items: Vec<Drill>,
         cx: &mut Context<Self>,
     ) -> bool {
         let key = game.key.clone();

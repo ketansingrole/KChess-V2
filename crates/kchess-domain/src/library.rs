@@ -252,7 +252,50 @@ pub const MAX_ARCHIVED_GAMES: usize = 500;
 
 /* ── Mistake drills ── */
 
-pub fn decode_mistakes(raw: &Value) -> Option<Vec<Value>> {
+/// A position from a reviewed game to practise: the move that was missed and the line after it.
+/// Its numbers keep the form they were written in (a drill answered since it was read writes
+/// whole numbers, one read back from the profile fractional ones): the `*_ms`, `streak` and
+/// `attempts` methods read them.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Drill {
+    /// The review's key and the ply, `key:ply`.
+    pub id: String,
+    pub fen: String,
+    /// The best move, then the line after it (UCI).
+    pub solution: Vec<String>,
+    /// `inaccuracy`, `mistake` or `blunder`.
+    pub judgment: String,
+    pub due_at: serde_json::Number,
+    /// Right answers in a row.
+    pub streak: serde_json::Number,
+    pub attempts: serde_json::Number,
+    /// Played by this variant's rules; standard chess when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<Variant>,
+}
+
+impl Drill {
+    /// When it is next due, in milliseconds since the epoch.
+    pub fn due_at_ms(&self) -> f64 {
+        self.due_at.as_f64().unwrap_or_default()
+    }
+
+    pub fn streak(&self) -> f64 {
+        self.streak.as_f64().unwrap_or_default()
+    }
+
+    pub fn attempts(&self) -> f64 {
+        self.attempts.as_f64().unwrap_or_default()
+    }
+}
+
+/// A finite number, written as `serde_json` writes an `f64` (with a fraction).
+fn float(n: f64) -> serde_json::Number {
+    serde_json::Number::from_f64(n).unwrap_or_else(|| 0.into())
+}
+
+pub fn decode_mistakes(raw: &Value) -> Option<Vec<Drill>> {
     let doc = object(Some(raw))?;
     if finite(doc.get("version")) != Some(1.0) {
         return None;
@@ -293,19 +336,16 @@ pub fn decode_mistakes(raw: &Value) -> Option<Vec<Value>> {
                 let due_at = finite(item.get("dueAt"))?;
                 let streak = integer(item.get("streak"))?;
                 let attempts = integer(item.get("attempts"))?;
-                let mut drill = json!({
-                    "id": id,
-                    "fen": fen,
-                    "solution": solution,
-                    "judgment": js::to_string(item.get("judgment")),
-                    "dueAt": number(due_at),
-                    "streak": number(streak),
-                    "attempts": number(attempts),
-                });
-                if let Some(variant) = variant {
-                    drill["variant"] = json!(variant);
-                }
-                Some(drill)
+                Some(Drill {
+                    id: id.into(),
+                    fen: fen.into(),
+                    solution: solution.into_iter().map(String::from).collect(),
+                    judgment: js::to_string(item.get("judgment")),
+                    due_at: float(due_at),
+                    streak: float(streak),
+                    attempts: float(attempts),
+                    variant,
+                })
             })
             .collect(),
     )
@@ -383,6 +423,6 @@ mod tests {
         ]});
         let items = decode_mistakes(&doc).unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["judgment"], json!("3"));
+        assert_eq!(items[0].judgment, "3");
     }
 }
