@@ -31,8 +31,8 @@ use crate::archive::{self, Refusal};
 use crate::download;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
-use crate::ids::hex;
 use crate::usage::{Meter, Unmetered};
+use kchess_delta::hex;
 
 /// The GitHub endpoint for the latest official Stockfish release.
 pub const RELEASE_URL: &str =

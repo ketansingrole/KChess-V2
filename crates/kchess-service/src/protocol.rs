@@ -117,7 +117,7 @@ pub fn protocol() -> String {
     for kind in kchess_contracts::ErrorKind::ALL {
         add(kind.as_str());
     }
-    kchess_core::ids::hex(&hash.finalize()[..8])
+    kchess_delta::hex(&hash.finalize()[..8])
 }
 
 /// Reads one frame; `None` when the other side closed between frames.

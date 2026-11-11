@@ -20,9 +20,9 @@ use crate::ai::{
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use crate::host::Level;
-use crate::ids::hex;
 use crate::lichess::oauth::{Redirect, default_look, new_pkce, new_state, wait_for_redirect};
 use crate::time::now_ms;
+use kchess_delta::hex;
 use kchess_domain::coach::{self, Brief};
 use kchess_domain::records::oauth::connection_page;
 use kchess_domain::tactics::Mates;

@@ -11,6 +11,8 @@ publish.workspace = true
 # is checked against (tests/facade_dispatch.rs).
 kchess-contracts = { path = "../kchess-contracts" }
 kchess-domain = { path = "../kchess-domain" }
+# Lowercase hex and the SHA-256 of a file (`hex`, `file_digest`).
+kchess-delta = { path = "../kchess-delta" }
 # The speech helper's pipe protocol (`voice/recognizer.rs`, the fake helper).
 kchess-voice = { path = "../kchess-voice" }
 serde.workspace = true

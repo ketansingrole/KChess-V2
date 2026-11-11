@@ -348,7 +348,7 @@ impl VoiceModelCache {
             return None;
         }
         let path = legacy.clone();
-        let digest = tokio::task::spawn_blocking(move || archive::sha256_file(&path))
+        let digest = tokio::task::spawn_blocking(move || kchess_delta::file_digest(&path))
             .await
             .ok()?
             .ok()?;
@@ -600,7 +600,7 @@ fn verify(folder: &Path, marker: &Marker) -> Result<Option<u64>> {
             Err(cause) if cause.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(cause) => return Err(CoreError::wrap("Could not check the voice model", cause)),
         }
-        let digest = archive::sha256_file(&path)
+        let digest = kchess_delta::file_digest(&path)
             .map_err(|cause| CoreError::wrap("Could not check the voice model", cause))?;
         if digest != file.sha256 {
             return Ok(None);
@@ -629,7 +629,7 @@ fn describe(folder: &Path) -> io::Result<Vec<MarkerFile>> {
                 out.push(MarkerFile {
                     path: relative,
                     size: entry.metadata()?.len(),
-                    sha256: archive::sha256_file(&path)?,
+                    sha256: kchess_delta::file_digest(&path)?,
                 });
             }
         }
@@ -673,7 +673,7 @@ fn build(
     model: &VoiceModel,
     cancel: &CancellationToken,
 ) -> Result<Marker> {
-    let digest = archive::sha256_file(zip)
+    let digest = kchess_delta::file_digest(zip)
         .map_err(|cause| CoreError::wrap("Could not read the voice model archive", cause))?;
     if digest != model.sha256 {
         return Err(CoreError::new(CHECKSUM_MESSAGE));

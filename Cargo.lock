@@ -4269,6 +4269,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "kchess-contracts",
+ "kchess-delta",
  "kchess-domain",
  "kchess-hack",
  "kchess-voice",
