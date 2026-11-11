@@ -84,7 +84,7 @@ impl Session<'_> {
 
     fn fen(&self) -> String {
         let setup = self.setup();
-        kchess_domain::replay::replay_setup(&setup.variant, &setup.fen, self.moves())
+        kchess_domain::replay::replay_setup(setup.variant, &setup.fen, self.moves())
             .map(|replay| replay.fen)
             .unwrap_or_else(|| setup.fen.clone())
     }
@@ -93,7 +93,7 @@ impl Session<'_> {
     /// board; anything that is not a legal move there is passed on as typed for the rules to
     /// judge.
     fn typed_uci(&self, text: &str) -> String {
-        kchess_games::typed_uci(&self.setup().variant, &self.fen(), text)
+        kchess_games::typed_uci(self.setup().variant, &self.fen(), text)
             .unwrap_or_else(|| text.to_string())
     }
 
@@ -121,7 +121,7 @@ impl Session<'_> {
             ("Result", result),
             ("White", white),
         ];
-        kchess_domain::pgn::setup_pgn(&setup.variant, &setup.fen, self.moves(), &headers)
+        kchess_domain::pgn::setup_pgn(setup.variant, &setup.fen, self.moves(), &headers)
     }
 
     fn show(&self) {
@@ -155,27 +155,37 @@ impl Session<'_> {
         }
     }
 
-    fn archive_host(&self) -> (Value, bool) {
+    /// The game as Game history keeps it and whether it has play; none, said, when it cannot be
+    /// described.
+    fn archive_host(&self) -> Option<(Value, bool)> {
         let source = match &self.game {
-            Game::Computer(game) => game.archive_snapshot(),
-            Game::Local(game) => game.archive_snapshot(),
+            Game::Computer(game) => game.archive_snapshot().map(|archived| json!(archived)),
+            Game::Local(game) => Ok(json!(game.archive_snapshot())),
         };
         let has_play = !self.moves().is_empty() || self.result().is_some();
-        (source, has_play)
+        match source {
+            Ok(source) => Some((source, has_play)),
+            Err(cause) => {
+                eprintln!("[cli] Game history: {cause}");
+                None
+            }
+        }
     }
 
     /// The session and its Game history entry, saved as the app saves them.
     async fn persist(&mut self) {
         let snapshot = match &self.game {
-            Game::Computer(game) => game.snapshot(&self.host()),
-            Game::Local(game) => game.snapshot(self.now()),
+            Game::Computer(game) => json!(game.snapshot(self.host().now)),
+            Game::Local(game) => json!(game.snapshot(self.now())),
         };
         self.save(calls::SaveSession {
             kind: json!(self.kind()),
             session: snapshot,
         })
         .await;
-        let (source, has_play) = self.archive_host();
+        let Some((source, has_play)) = self.archive_host() else {
+            return;
+        };
         let finished = self.over();
         let writes = self.history.save(finished, source, has_play, &self.games);
         self.written(writes).await;
@@ -184,7 +194,7 @@ impl Session<'_> {
     /// Play as `color` (`white`, `black` or `random`): a new game, as the app's New game starts
     /// one, unless the game on the board is still being played.
     async fn choose_color(&mut self, color: &str) -> Result<(), String> {
-        let color = kchess_games::draw_color(color);
+        let color = kchess_games::draw_color(color)?;
         let Game::Computer(game) = &self.game else {
             return Ok(());
         };
@@ -213,7 +223,7 @@ impl Session<'_> {
     /// random position, the others from their usual start, the clock as it was.
     async fn choose_setup(&mut self, variant: Variant, fen: Option<&str>) -> Result<(), String> {
         let now = self.now();
-        if fen.is_none() && self.setup().variant == variant.key() && !self.over() {
+        if fen.is_none() && self.setup().variant == variant && !self.over() {
             return Ok(());
         }
         if !self.moves().is_empty() && !self.over() {
@@ -224,15 +234,12 @@ impl Session<'_> {
         let fen = if let Some(fen) = fen {
             playable_fen(variant, fen)?
         } else if variant == Variant::Chess960 {
-            kchess_domain::rules::chess960_fen(kchess_games::random_chess960())
+            kchess_domain::rules::chess960_fen(kchess_games::random_chess960()?)
         } else {
-            kchess_domain::rules::default_fen(variant.key()).ok_or("variant")?
+            variant.default_fen()
         };
         self.reset_history().await;
-        let setup = Setup {
-            variant: variant.key().to_string(),
-            fen,
-        };
+        let setup = Setup { variant, fen };
         let host = self.host();
         match &mut self.game {
             Game::Local(game) => {
@@ -250,7 +257,9 @@ impl Session<'_> {
 
     /// A new game gets its own Game history entry.
     async fn reset_history(&mut self) {
-        let (source, has_play) = self.archive_host();
+        let Some((source, has_play)) = self.archive_host() else {
+            return;
+        };
         let writes = self.history.reset(source, has_play, &self.games);
         self.written(writes).await;
     }
@@ -389,7 +398,7 @@ impl Session<'_> {
         let now = self.now();
         match &mut self.game {
             Game::Computer(game) => {
-                let effects = game.expire(&host);
+                let effects = game.expire(host.now);
                 let fell = effects.contains(&computer::Effect::Flagged);
                 self.computer_effects(effects).await;
                 fell
@@ -465,7 +474,7 @@ fn playable_fen(variant: Variant, fen: &str) -> Result<String, String> {
     let playable = if variant.standard_rules() {
         kchess_domain::position::fen_problem(fen).is_none()
     } else {
-        kchess_domain::rules::setup_start(variant.key(), fen).is_some()
+        kchess_domain::rules::setup_start(variant, fen).is_some()
     };
     if playable {
         Ok(fen.to_string())
@@ -519,7 +528,7 @@ async fn computer_game(
         allowed: true,
         ready: true,
     };
-    Ok(Game::Computer(ComputerGame::new(
+    Ok(Game::Computer(ComputerGame::resume(
         Some(&saved).filter(|s| s.is_object()),
         &host,
     )?))
@@ -605,7 +614,7 @@ pub async fn interactive(
     let game = if computer {
         computer_game(core, &sessions["computer"], level, variant).await?
     } else {
-        Game::Local(LocalGame::new(
+        Game::Local(LocalGame::resume(
             Some(&sessions["local"]).filter(|s| s.is_object()),
             0.0,
         )?)

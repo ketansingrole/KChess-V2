@@ -14,18 +14,17 @@ use fixtures::{
 use kchess_contracts::types::WatchPhase;
 use kchess_core::lichess::accounts::Lichess;
 use kchess_core::lichess::watch::{
-    BroadcastUpdate, GameSetup, LineUpTiming, Spectator, WatchFrame, WatchSink, WatchState,
-    WatchTarget, align_tv_moves, broadcast_game, broadcast_summaries, parse_game_details,
-    parse_tv_game,
+    BroadcastUpdate, LineUpTiming, Spectator, WatchFrame, WatchSink, WatchState, WatchTarget,
+    align_tv_moves, broadcast_game, broadcast_summaries, parse_game_details, parse_tv_game,
 };
 use kchess_domain::misc::checks;
 use kchess_domain::misc::value::J;
 use kchess_domain::replay;
+use kchess_domain::variant::{Setup, Variant};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 const INITIAL: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-const STANDARD: &str = "standard";
 
 #[derive(Default)]
 struct Sink {
@@ -185,7 +184,7 @@ async fn a_game_described_without_its_position_is_shown_from_the_next_one() {
             .starts_with("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b")
     );
     assert_eq!(
-        first.variant, STANDARD,
+        first.variant, "standard",
         "a game from a position plays standard rules"
     );
     let last = frames.last().unwrap();
@@ -566,7 +565,7 @@ fn reads_the_start_moves_and_result_from_a_game_export() {
         "rated": true
     }));
     let setup = game.setup.clone().unwrap();
-    assert_eq!(setup.variant, "chess960");
+    assert_eq!(setup.variant, Variant::Chess960);
     assert_eq!(
         setup.fen,
         "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1"
@@ -578,7 +577,7 @@ fn reads_the_start_moves_and_result_from_a_game_export() {
     // Crazyhouse replays, pockets and all; a variant KChess cannot play gets the board without a
     // move list.
     let house = parse_tv_game(&json!({ "variant": "crazyhouse", "moves": "e4" }));
-    assert_eq!(house.setup.unwrap().variant, "crazyhouse");
+    assert_eq!(house.setup.unwrap().variant, Variant::Crazyhouse);
     assert!(
         parse_tv_game(&json!({ "variant": "bughouse", "moves": "e4" }))
             .setup
@@ -600,15 +599,14 @@ fn san() -> Vec<String> {
 
 fn key(ply: usize) -> String {
     let uci: Vec<String> = line_uci()[..ply].iter().map(|m| m.to_string()).collect();
-    let fen = replay::replay_setup(STANDARD, INITIAL, &uci).unwrap().fen;
+    let fen = replay::replay_setup(Variant::Standard, INITIAL, &uci)
+        .unwrap()
+        .fen;
     fen.split(' ').take(2).collect::<Vec<_>>().join(" ")
 }
 
-fn standard_setup() -> GameSetup {
-    GameSetup {
-        variant: "standard",
-        fen: INITIAL.to_string(),
-    }
+fn standard_setup() -> Setup {
+    Setup::standard()
 }
 
 #[test]

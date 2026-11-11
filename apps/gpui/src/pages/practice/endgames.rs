@@ -33,24 +33,12 @@ pub use kchess_domain::training::lessons::{Chapter, Course, Step};
 
 /// The endgame drills against Stockfish.
 pub fn drills() -> &'static [Drill] {
-    match kchess_domain::training::data::data() {
-        Ok(data) => &data.endgame_drills,
-        Err(cause) => {
-            crate::log::write(Level::Warn, "endgame-training", &cause);
-            &[]
-        }
-    }
+    &kchess_domain::training::data::data().endgame_drills
 }
 
 /// The checkmate and endgame courses.
 pub fn courses() -> &'static [Course] {
-    match kchess_domain::training::lessons::data() {
-        Ok(data) => &data.courses,
-        Err(cause) => {
-            crate::log::write(Level::Warn, "endgame-training", &cause);
-            &[]
-        }
-    }
+    &kchess_domain::training::lessons::data().courses
 }
 
 /// A drill or chapter finished at least once.

@@ -121,7 +121,8 @@ impl AnalysisPage {
         kchess_domain::records::review::review_key(
             &self.root.fen,
             &self.mainline(),
-            self.fairy_variant(),
+            self.fairy_variant()
+                .and_then(kchess_domain::variant::Variant::from_key),
         )
     }
 
@@ -390,7 +391,7 @@ impl AnalysisPage {
             .origin
             .as_ref()
             .and_then(|origin| origin.player)
-            .map(|player| kchess_games::color_name(player).to_string())
+            .map(|player| kchess_domain::color::name(player).to_string())
         else {
             return;
         };
@@ -460,7 +461,7 @@ impl AnalysisPage {
             .origin
             .as_ref()
             .and_then(|origin| origin.player)
-            .map(kchess_games::color_name);
+            .map(kchess_domain::color::name);
         let sides: Vec<&'static str> = match player {
             Some(player) => vec![player],
             None => vec!["white", "black"],
@@ -585,7 +586,12 @@ impl AnalysisPage {
         let Some(fen) = puzzle["fen"].as_str() else {
             return false;
         };
-        let Ok(pgn) = kchess_domain::pgn::setup_pgn("standard", fen, &solution, &[]) else {
+        let Ok(pgn) = kchess_domain::pgn::setup_pgn(
+            kchess_domain::variant::Variant::Standard,
+            fen,
+            &solution,
+            &[],
+        ) else {
             return false;
         };
         if !self.load_pgn(&pgn, cx) {
@@ -595,7 +601,7 @@ impl AnalysisPage {
         self.tried_done.clear();
         let mut tried = Vec::new();
         for wrong in wrong_moves {
-            let index = crate::game::whole(&wrong["index"]) as usize;
+            let index = wrong["index"].as_u64().unwrap_or_default() as usize;
             let Some(uci) = wrong["uci"].as_str() else {
                 continue;
             };

@@ -2,7 +2,6 @@
 //! after a line of moves.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use crate::{position, rules};
 
@@ -45,19 +44,11 @@ pub fn evaluate<S: AsRef<str>>(
 ) -> Result<Status, String> {
     const INVALID: &str = "Invalid drill position.";
     let start = rules::standard_from_fen(fen).ok_or(INVALID)?;
-    let mut seen: HashMap<String, u32> = HashMap::from([(
-        rules::repetition_key(&rules::make_fen(&start)).to_string(),
-        1,
-    )]);
+    let mut seen = rules::Repetitions::starting_at(&rules::make_fen(&start));
     let (after, line) = position::line(start, moves, false, false);
     let mut repeated = false;
     for step in &line {
-        let key = rules::repetition_key(&step.fen).to_string();
-        let count = seen.get(&key).copied().unwrap_or(0) + 1;
-        seen.insert(key, count);
-        if count >= 3 {
-            repeated = true;
-        }
+        repeated |= seen.reached(&step.fen);
     }
     let pos = match line.last() {
         Some(last) => rules::standard_from_fen(&last.fen).ok_or(INVALID)?,

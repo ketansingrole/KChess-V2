@@ -594,7 +594,7 @@ impl PositionExplorer {
             .entry(key)
             .or_insert_with(|| {
                 let variant = self.variant.as_deref().unwrap_or("standard");
-                let position = kchess_domain::rules::setup_start(variant, fen).unwrap_or_default();
+                let position = crate::game::setup_position(variant, fen).unwrap_or_default();
                 let last = uci
                     .get(0..2)
                     .and_then(|from| from.parse().ok())

@@ -133,14 +133,14 @@ impl Resumes for ComputerPage {
     }
 
     fn snapshot(&mut self, _: &mut Context<Self>) -> Value {
-        self.game.snapshot(&self.host())
+        json!(self.game.snapshot(self.host().now))
     }
 
     fn resume(&mut self, saved: Option<Sessions>, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(mut saved) = saved {
             let game = saved.take(computer::SESSION);
             if !game.is_null() {
-                match ComputerGame::new(Some(&game), &self.host()) {
+                match ComputerGame::resume(Some(&game), &self.host()) {
                     Ok(game) => self.game = game,
                     Err(cause) => {
                         self.log_warn(&format!("The saved game could not be read: {cause}"))
@@ -164,12 +164,19 @@ impl ComputerPage {
             allowed: true,
             ready: false,
         };
-        let game = match ComputerGame::new(None, &host) {
+        let game = match ComputerGame::resume(None, &host) {
             Ok(game) => game,
             Err(cause) => panic!("a new computer game always starts: {cause}"),
         };
-        let board = cx
-            .new(|_| ChessBoard::new(view::board_state(game.setup(), &[], 0, game.color(), None)));
+        let board = cx.new(|_| {
+            ChessBoard::new(view::board_state(
+                &json!(game.setup()),
+                &[],
+                0,
+                game.color(),
+                None,
+            ))
+        });
         let (levels, labels) = level_choices(cx);
         let selected = levels.iter().position(|id| id == game.level());
         let level = cx.new(|cx| SelectState::new(labels, selected.map(IndexPath::new), window, cx));
@@ -276,7 +283,9 @@ impl ComputerPage {
 
     /// The game keeps its place in Game history from `identity` (null: a place of its own).
     fn keep_history(&mut self, identity: Value, cx: &mut Context<Self>) {
-        let source = self.game.archive_snapshot();
+        let Some(source) = self.archive_source() else {
+            return;
+        };
         let has_play = !self.game.moves().is_empty();
         self.history = Some(HistoryPlace::new(
             computer::HISTORY,
@@ -286,6 +295,19 @@ impl ComputerPage {
             has_play,
             cx,
         ));
+    }
+
+    /// The game as Game history keeps it; none, and a warning, when it cannot be described.
+    fn archive_source(&self) -> Option<Value> {
+        match self.game.archive_snapshot() {
+            Ok(archived) => Some(json!(archived)),
+            Err(cause) => {
+                self.log_warn(&format!(
+                    "The game could not be kept in Game history: {cause}"
+                ));
+                None
+            }
+        }
     }
 
     /// Engine help became allowed or forbidden (a live Lichess game started or ended).
@@ -460,7 +482,7 @@ impl ComputerPage {
         let user = self.user_color();
         let (white, black) = computer::players(user, engine);
         let mut game = PlayedGame::new(
-            self.game.setup(),
+            &json!(self.game.setup()),
             self.game.moves().to_vec(),
             self.orientation(),
             white,
@@ -506,7 +528,7 @@ impl ComputerPage {
         }
         let color = self.user_color();
         let initial = self.game.clock().map_or(0., |clock| clock.minutes) * 60.;
-        let remaining = self.game.remaining(color, &host);
+        let remaining = self.game.remaining(color, host.now);
         self.low_time.warn(color, remaining, initial, cx);
     }
 
@@ -524,19 +546,13 @@ impl ComputerPage {
     }
 
     pub(crate) fn setup_variant(&self) -> String {
-        self.game.setup()["variant"]
-            .as_str()
-            .unwrap_or("standard")
-            .to_string()
+        self.game.setup().variant.key().to_string()
     }
 
     /// The FEN the game started from.
     #[cfg(test)]
     pub(crate) fn setup_fen(&self) -> String {
-        self.game.setup()["fen"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string()
+        self.game.setup().fen.clone()
     }
 
     /// The side at the bottom of the board.
@@ -551,11 +567,11 @@ impl ComputerPage {
 
     /// The position after the first `ply` moves.
     fn position_at(&self, ply: usize) -> Option<shakmaty::variant::VariantPosition> {
-        view::position_at(self.game.setup(), &self.moves(), ply)
+        view::position_at(&json!(self.game.setup()), &self.moves(), ply)
     }
 
     fn sans(&self) -> Vec<String> {
-        view::sans(self.game.setup(), &self.moves())
+        view::sans(&json!(self.game.setup()), &self.moves())
     }
 
     /// The player may move now: it is their turn at the latest position, and not before the
@@ -589,8 +605,10 @@ impl ComputerPage {
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.after_change(cx);
         SessionSaver::changed(self, cx);
-        let (source, has_play) = (self.game.archive_snapshot(), !self.moves().is_empty());
-        if let Some(history) = &mut self.history {
+        let has_play = !self.moves().is_empty();
+        if let Some(source) = self.archive_source()
+            && let Some(history) = &mut self.history
+        {
             history.save(false, source, has_play, cx);
         }
     }
@@ -599,10 +617,14 @@ impl ComputerPage {
     /// After a saved game that could not be read, this one is the player's to keep.
     fn reset_archive(&mut self, cx: &mut Context<Self>) {
         self.saver.open();
-        let (source, has_play) = (self.game.archive_snapshot(), !self.moves().is_empty());
-        match &mut self.history {
-            Some(history) => history.reset(source, has_play, cx),
-            None => self.keep_history(Value::Null, cx),
+        if self.history.is_none() {
+            return self.keep_history(Value::Null, cx);
+        }
+        let has_play = !self.moves().is_empty();
+        if let Some(source) = self.archive_source()
+            && let Some(history) = &mut self.history
+        {
+            history.reset(source, has_play, cx);
         }
     }
 
@@ -610,7 +632,7 @@ impl ComputerPage {
         let interactive = self.interactive();
         let live = self.game.result().is_none();
         let mut state = view::board_state(
-            self.game.setup(),
+            &json!(self.game.setup()),
             &self.moves(),
             self.ply(),
             self.orientation(),
@@ -627,7 +649,7 @@ impl ComputerPage {
         if running && self.ticker.is_none() {
             self.ticker = Some(crate::timer::every(crate::timer::TICK, cx, |this, cx| {
                 let host = this.host();
-                let effects = this.game.expire(&host);
+                let effects = this.game.expire(host.now);
                 let acted = !effects.is_empty();
                 this.perform(Ok(effects), cx);
                 this.warn_low_time(cx);
@@ -659,9 +681,9 @@ impl ComputerPage {
     /// New game against Stockfish, from the options the player chose.
     fn open_options(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = Current {
-            setup: self.game.setup().clone(),
+            setup: json!(self.game.setup()),
             clock: json!(self.game.clock()),
-            color: kchess_games::color_name(self.user_color()).to_string(),
+            color: kchess_domain::color::name(self.user_color()).to_string(),
             level: self.game.level().to_string(),
         };
         let page = cx.entity().downgrade();
@@ -695,7 +717,7 @@ impl ComputerPage {
                 let chosen = Chosen {
                     setup,
                     clock: json!(this.game.clock()),
-                    color: kchess_games::color_name(color),
+                    color: kchess_domain::color::name(color),
                     level: this.game.level().to_string(),
                 };
                 this.start_chosen(chosen, window, cx);
@@ -714,7 +736,10 @@ impl ComputerPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let color = crate::game::draw_color(color);
+        let color = match crate::game::draw_color(color) {
+            Ok(color) => color,
+            Err(cause) => return self.log_warn(&cause),
+        };
         let level = level.to_string();
         SessionSaver::when_read(
             self,
@@ -722,7 +747,7 @@ impl ComputerPage {
                 let chosen = Chosen {
                     setup: json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN }),
                     clock: json!(this.game.clock()),
-                    color: kchess_games::color_name(color),
+                    color: kchess_domain::color::name(color),
                     level,
                 };
                 this.start_chosen(chosen, window, cx);
@@ -991,7 +1016,7 @@ impl ComputerPage {
             .position_at(self.moves().len())
             .map(|position| {
                 json!({
-                    "variant": self.game.setup()["variant"],
+                    "variant": self.game.setup().variant.key(),
                     "fen": kchess_domain::rules::make_fen(&position),
                 })
             })
@@ -1111,7 +1136,8 @@ impl ComputerPage {
 
     /// The opening the moves on the board reached, as `(eco, name)`.
     fn opening(&self) -> Option<(SharedString, SharedString)> {
-        let opening = crate::game::opening_at(self.game.setup(), &self.moves(), self.ply())?;
+        let opening =
+            crate::game::opening_at(&json!(self.game.setup()), &self.moves(), self.ply())?;
         Some((opening.eco.into(), opening.name.into()))
     }
 
@@ -1119,7 +1145,7 @@ impl ComputerPage {
         if !self.game.timed() {
             return None;
         }
-        let remaining = self.game.remaining(color, &self.host());
+        let remaining = self.game.remaining(color, self.host().now);
         Some(format_clock(remaining).into())
     }
 
@@ -1257,7 +1283,7 @@ impl Render for ComputerPage {
         let moves = self.moves();
         let ply = self.ply();
         let interactive = self.interactive();
-        let first = view::first_move(self.game.setup());
+        let first = view::first_move(&json!(self.game.setup()));
         let in_progress = self.in_progress();
         let result = self.game.result();
         let side_of = |color: Color| {
@@ -1396,7 +1422,7 @@ impl Render for ComputerPage {
         let frontend = crate::settings::frontend(cx);
         let zen = frontend.zen_mode;
         let show_opening = frontend.show_opening_name && self.setup_variant() == "standard";
-        let setup_label = crate::game::setup_label(self.game.setup());
+        let setup_label = crate::game::setup_label(&json!(self.game.setup()));
         let opening = show_opening.then(|| self.opening()).flatten();
         let panel = widgets::side_panel(&palette)
             .relative()
@@ -1608,7 +1634,7 @@ pub(crate) fn playable(setup: &Value) -> bool {
     if crate::game::standard_rules(variant) {
         crate::game::position_problem(fen).is_none()
     } else {
-        kchess_domain::rules::setup_start(variant, fen).is_some()
+        crate::game::setup_position(variant, fen).is_some()
     }
 }
 

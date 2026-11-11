@@ -5,6 +5,7 @@
 //! moves and SAN come from `kchess_domain::replay`, and every remote answer is validated before it
 //! is trusted: a move that is not legal from its position fails the lookup.
 
+use kchess_domain::variant::Variant;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -1046,13 +1047,14 @@ fn is_legal_position(variant: &str, fen: &str) -> bool {
     if variant == "standard" {
         position::fen_problem(fen).is_none()
     } else {
-        kchess_domain::rules::setup_start(variant, fen).is_some()
+        Variant::from_key(variant)
+            .is_some_and(|v| kchess_domain::rules::setup_start(v, fen).is_some())
     }
 }
 
 /// The piece count and whether any castling right remains, for the tablebase limits.
 fn material(fen: &str) -> (usize, bool) {
-    let Some(replay) = replay::replay_setup::<&str>("standard", fen, &[]) else {
+    let Some(replay) = replay::replay_setup::<&str>(Variant::Standard, fen, &[]) else {
         return (usize::MAX, true);
     };
     let mut fields = replay.fen.split(' ');
@@ -1064,7 +1066,7 @@ fn material(fen: &str) -> (usize, bool) {
 
 /// The SAN of a legal move from `fen`, or None when it is not legal there.
 fn legal_san(variant: &str, fen: &str, uci: &str) -> Option<String> {
-    let replay = replay::replay_setup(variant, fen, &[uci])?;
+    let replay = replay::replay_setup(Variant::from_key(variant)?, fen, &[uci])?;
     replay.played.first().map(|played| played.san.clone())
 }
 

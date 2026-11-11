@@ -1,6 +1,6 @@
 [package]
 name = "kchess-games"
-description = "Computer, over-the-board and Game history sessions as the KChess frontends drive the domain's transitions."
+description = "Computer, over-the-board and Game history sessions as the KChess frontends drive them."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

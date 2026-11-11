@@ -589,8 +589,8 @@ fn variant_analysis_request(command: &str, variant: Variant, text: &str) -> Resu
     let text = text.trim();
     let fen = match text {
         "" => return Err(format!("{command} requires a FEN or moves.")),
-        "startpos" => Some(rules::make_fen(&rules::default_position(variant.rules()))),
-        text => rules::setup_start(variant.key(), text).map(|position| rules::make_fen(&position)),
+        "startpos" => Some(variant.default_fen()),
+        text => rules::setup_start(variant, text).map(|position| rules::make_fen(&position)),
     };
     let variant = variant.key();
     if let Some(fen) = fen {
@@ -677,8 +677,9 @@ fn opening_name(words: &[String]) -> Result<Value, String> {
 fn position_info(words: &[String]) -> Result<Value, String> {
     let request = analysis_request("position", words)?;
     let variant = request["variant"].as_str().unwrap_or("standard");
-    let fen = request["fen"].as_str().unwrap_or_default();
-    let position = kchess_domain::rules::setup_start(variant, fen);
+    let fen = request["fen"].as_str().ok_or("setup.fen")?;
+    let position = kchess_domain::variant::Variant::from_key(variant)
+        .and_then(|variant| kchess_domain::rules::setup_start(variant, fen));
     let info = position.as_ref().map(kchess_domain::position::info);
     let legal = position
         .as_ref()

@@ -6,17 +6,16 @@ use serde_json::{Map, Value, json};
 
 use crate::js::{self, finite, integer, string, text};
 use crate::replay;
-use crate::rules;
 use crate::tree;
 
 pub const MAX_STUDIES: usize = 50;
 pub const MAX_CHAPTERS: usize = 64;
 pub const MAX_MISTAKES: usize = 500;
 
-use crate::variant::VARIANTS;
+use crate::variant::Variant;
 
-fn is_variant(v: Option<&Value>) -> Option<&str> {
-    string(v).filter(|s| VARIANTS.contains(s))
+fn is_variant(v: Option<&Value>) -> Option<Variant> {
+    string(v).and_then(Variant::from_key)
 }
 
 fn object(v: Option<&Value>) -> Option<&Map<String, Value>> {
@@ -218,7 +217,7 @@ pub fn decode_mistakes(raw: &Value) -> Option<Vec<Value>> {
                 // A drill from a variant game is played by that variant's rules.
                 let variant = match item.get("variant") {
                     None | Some(Value::Null) => None,
-                    Some(variant) => Some(string(Some(variant)).filter(|v| known_variant(v))?),
+                    Some(variant) => Some(string(Some(variant)).and_then(Variant::from_key)?),
                 };
                 let playable = match variant {
                     Some(variant) => replay::replay_setup_count(variant, fen, &solution)? + 1,
@@ -246,11 +245,6 @@ pub fn decode_mistakes(raw: &Value) -> Option<Vec<Value>> {
             })
             .collect(),
     )
-}
-
-/// Whether a variant key is one KChess can play.
-pub fn known_variant(key: &str) -> bool {
-    rules::lichess_variant(key).is_some()
 }
 
 #[cfg(test)]

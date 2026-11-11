@@ -192,7 +192,11 @@ impl EditorPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> EditorPage {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 None,
                 None,
@@ -305,7 +309,7 @@ impl EditorPage {
         if !self.read_fen(fen) {
             self.setup = start_setup();
         }
-        if kchess_domain::rules::lichess_variant(variant).is_some() {
+        if crate::game::analysable(variant) {
             self.variant = variant.to_string();
         }
         self.orientation = orientation;
@@ -359,7 +363,7 @@ impl EditorPage {
         if standard_rules(&self.variant) {
             return position_problem(&fen).map(str::to_string);
         }
-        kchess_domain::rules::setup_start(&self.variant, &fen)
+        crate::game::setup_position(&self.variant, &fen)
             .is_none()
             .then(|| {
                 format!(
@@ -454,7 +458,11 @@ impl EditorPage {
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
         let mut state = BoardState::of(
-            &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),
+            &kchess_domain::rules::setup_start(
+                kchess_domain::variant::Variant::Standard,
+                STANDARD_FEN,
+            )
+            .unwrap_or_default(),
             self.orientation,
             None,
             None,
@@ -566,7 +574,7 @@ impl EditorPage {
     /// The variant's usual start (Horde's, Racing Kings'), or standard chess's.
     fn start_position(&mut self, cx: &mut Context<Self>) {
         let usual = (!standard_rules(&self.variant))
-            .then(|| kchess_domain::rules::default_fen(&self.variant))
+            .then(|| crate::game::default_fen(&self.variant))
             .flatten();
         let variant = self.variant.clone();
         if !usual.is_some_and(|fen| self.read_fen(&fen)) {

@@ -23,23 +23,23 @@ pub struct EngineLevelInfo {
 }
 
 /// The ladder from the weakest level to the strongest.
-pub fn ladder() -> Result<&'static [EngineLevelInfo], String> {
-    Ok(&data()?.engine_ladder)
+pub fn ladder() -> &'static [EngineLevelInfo] {
+    &data().engine_ladder
 }
 
 /// The levels a new profile enables.
-pub fn default_levels() -> Result<&'static [String], String> {
-    Ok(&data()?.default_engine_levels)
+pub fn default_levels() -> &'static [String] {
+    &data().default_engine_levels
 }
 
 /// The ladder entry for a level, none for an unknown one.
-pub fn info(id: &str) -> Result<Option<&'static EngineLevelInfo>, String> {
-    Ok(ladder()?.iter().find(|entry| entry.id == id))
+pub fn info(id: &str) -> Option<&'static EngineLevelInfo> {
+    ladder().iter().find(|entry| entry.id == id)
 }
 
 /// "Grandmaster · ~2550", "Stockfish Max · Full strength".
 pub fn label(id: &str) -> Result<String, String> {
-    let entry = info(id)?.ok_or_else(|| format!("unknown engine level {id}"))?;
+    let entry = info(id).ok_or_else(|| format!("unknown engine level {id}"))?;
     let strength = match entry.elo {
         Some(elo) => format!("~{}", js::number_to_string(elo)),
         None => "Full strength".into(),
@@ -48,16 +48,16 @@ pub fn label(id: &str) -> Result<String, String> {
 }
 
 /// The known levels of `levels`, in ladder order; the default levels when none is known.
-pub fn normalize(levels: &[String]) -> Result<Vec<String>, String> {
-    let kept: Vec<String> = ladder()?
+pub fn normalize(levels: &[String]) -> Vec<String> {
+    let kept: Vec<String> = ladder()
         .iter()
         .filter(|entry| levels.contains(&entry.id))
         .map(|entry| entry.id.clone())
         .collect();
     if kept.is_empty() {
-        Ok(data()?.default_engine_levels.clone())
+        default_levels().to_vec()
     } else {
-        Ok(kept)
+        kept
     }
 }
 
@@ -71,11 +71,8 @@ mod tests {
         assert_eq!(label("max").as_deref(), Ok("Stockfish Max · Full strength"));
         assert_eq!(
             normalize(&["gm".into(), "bogus".into(), "beginner".into()]),
-            Ok(vec!["beginner".into(), "gm".into()])
+            vec!["beginner".to_string(), "gm".into()]
         );
-        assert_eq!(
-            normalize(&[]).ok(),
-            data().ok().map(|d| d.default_engine_levels.clone())
-        );
+        assert_eq!(normalize(&[]), default_levels());
     }
 }

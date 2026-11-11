@@ -58,7 +58,10 @@ enum Stage {
 pub fn random_square(previous: Option<&str>, allowed: Option<&[String]>) -> String {
     let mut draws: Vec<f64> = Vec::new();
     loop {
-        draws.push(random_unit());
+        let Some(draw) = crate::game::drawn(random_unit()) else {
+            return "e4".into();
+        };
+        draws.push(draw);
         if let Some(square) = kchess_domain::voice::random_square(previous, &draws, allowed) {
             return square;
         }
@@ -159,7 +162,11 @@ impl Coordinates {
     pub fn new(cx: &mut Context<Self>) -> Coordinates {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 None,
                 None,
@@ -266,7 +273,9 @@ impl Coordinates {
         self.run_epoch += 1;
         self.question = 0;
         self.voice.feedback = None;
-        self.orientation = crate::game::draw_color(self.side);
+        if let Some(orientation) = crate::game::drawn(crate::game::draw_color(self.side)) {
+            self.orientation = orientation;
+        }
         self.score = 0;
         self.mistakes = 0;
         self.pending_file = None;
@@ -454,8 +463,11 @@ impl Coordinates {
                 _ => self.orientation,
             }
         };
-        let position =
-            kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default();
+        let position = kchess_domain::rules::setup_start(
+            kchess_domain::variant::Variant::Standard,
+            STANDARD_FEN,
+        )
+        .unwrap_or_default();
         let mut state = BoardState::of(&position, orientation, None, None);
         // An empty board is no legal position: the board draws the FEN's pieces, none here.
         state.fen = fen.to_string();

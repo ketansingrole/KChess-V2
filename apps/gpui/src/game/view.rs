@@ -1,16 +1,17 @@
 //! What the game pages show of a game: the position at a move, the moves in SAN, the last move,
 //! a typed move and the board's state, from a setup (`{ variant, fen }`) and its UCI moves.
 
+use kchess_domain::variant::Variant;
 use serde_json::Value;
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Chess, Color, Position as _, Square};
 
 use crate::board::BoardState;
 
-/// The setup's variant and FEN.
-fn setup_parts(setup: &Value) -> (&str, &str) {
+/// The setup's variant (none for one KChess does not play) and FEN.
+fn setup_parts(setup: &Value) -> (Option<Variant>, &str) {
     (
-        setup["variant"].as_str().unwrap_or("standard"),
+        Variant::from_key(setup["variant"].as_str().unwrap_or("standard")),
         setup["fen"].as_str().unwrap_or_default(),
     )
 }
@@ -18,6 +19,7 @@ fn setup_parts(setup: &Value) -> (&str, &str) {
 /// The position after the first `ply` moves.
 pub fn position_at(setup: &Value, moves: &[String], ply: usize) -> Option<VariantPosition> {
     let (variant, fen) = setup_parts(setup);
+    let variant = variant?;
     let replay = kchess_domain::replay::replay_setup(variant, fen, &moves[..ply.min(moves.len())])?;
     kchess_domain::rules::setup_start(variant, &replay.fen)
 }
@@ -25,7 +27,8 @@ pub fn position_at(setup: &Value, moves: &[String], ply: usize) -> Option<Varian
 /// Each move in SAN.
 pub fn sans(setup: &Value, moves: &[String]) -> Vec<String> {
     let (variant, fen) = setup_parts(setup);
-    kchess_domain::replay::replay_setup(variant, fen, moves)
+    variant
+        .and_then(|variant| kchess_domain::replay::replay_setup(variant, fen, moves))
         .map(|replay| replay.played.into_iter().map(|played| played.san).collect())
         .unwrap_or_default()
 }
@@ -52,7 +55,7 @@ pub fn first_move(setup: &Value) -> crate::widgets::FirstMove {
 /// A move typed as SAN or UCI, as UCI when it is legal in `position` (`kchess_games::typed_uci`).
 pub fn typed_uci(setup: &Value, position: &VariantPosition, text: &str) -> Option<String> {
     let (variant, _) = setup_parts(setup);
-    kchess_games::typed_uci(variant, &kchess_domain::rules::make_fen(position), text)
+    kchess_games::typed_uci(variant?, &kchess_domain::rules::make_fen(position), text)
 }
 
 /// The board for the game at `ply`, with `movable` the side that may move now.

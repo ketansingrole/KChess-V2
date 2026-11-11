@@ -50,10 +50,6 @@ fn outcome(pos: &VariantPosition, no_moves: bool) -> Option<Option<Color>> {
     }
 }
 
-fn color_name(color: Color) -> &'static str {
-    rules::turn_name(color)
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Info {
@@ -92,7 +88,7 @@ pub fn info(pos: &VariantPosition) -> Info {
     let check = pos.is_check();
     Info {
         fen: rules::make_fen(pos),
-        turn: color_name(pos.turn()),
+        turn: crate::color::name(pos.turn()),
         check,
         checkmate: !ended && check && no_moves,
         stalemate: !ended && !check && no_moves,
@@ -104,7 +100,7 @@ pub fn info(pos: &VariantPosition) -> Info {
         variant_end: ended,
         end: ended || pos.is_insufficient_material() || no_moves,
         outcome: outcome(pos, no_moves).map(|winner| match winner {
-            Some(color) => json!({ "winner": color_name(color) }),
+            Some(color) => json!({ "winner": crate::color::name(color) }),
             None => json!({}),
         }),
         halfmoves: pos.halfmoves(),
@@ -343,7 +339,7 @@ pub fn fen_setup(fen: &str) -> Option<BoardSetup> {
     let board = written.split(' ').next().unwrap_or_default().to_string();
     Some(BoardSetup {
         board,
-        turn: color_name(setup.turn),
+        turn: crate::color::name(setup.turn),
     })
 }
 
@@ -525,7 +521,7 @@ pub fn pgn_mainline(text: &str, limit: usize) -> Option<Mainline> {
         let Some(m) = rules::parse_san(&pos, data.san.as_str()) else {
             break;
         };
-        let mover = color_name(pos.turn());
+        let mover = crate::color::name(pos.turn());
         let uci = rules::make_uci(&m);
         pos.play_unchecked(m);
         let clock = data
@@ -714,7 +710,11 @@ mod tests {
     /// rook only, as the rules do.
     #[test]
     fn dests_castle_as_the_board_asks() {
-        let pos = rules::setup_start("standard", "4k3/8/8/8/8/8/8/4K2R w K - 0 1").unwrap();
+        let pos = rules::setup_start(
+            crate::variant::Variant::Standard,
+            "4k3/8/8/8/8/8/8/4K2R w K - 0 1",
+        )
+        .unwrap();
         let king = |mode| {
             dests(&pos, mode)
                 .into_iter()
@@ -731,7 +731,7 @@ mod tests {
     #[test]
     fn crazyhouse_drops_list_each_pocket_piece_and_its_squares() {
         let pos = crate::rules::setup_start(
-            "crazyhouse",
+            crate::variant::Variant::Crazyhouse,
             "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3",
         )
         .unwrap();
@@ -747,7 +747,7 @@ mod tests {
         assert!(
             super::drop_dests(
                 &crate::rules::setup_start(
-                    "standard",
+                    crate::variant::Variant::Standard,
                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
                 )
                 .unwrap()

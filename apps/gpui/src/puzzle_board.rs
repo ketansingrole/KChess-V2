@@ -113,7 +113,11 @@ impl PuzzleBoard {
     pub fn new(material: bool, window: &mut Window, cx: &mut Context<Self>) -> PuzzleBoard {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 None,
                 None,
@@ -567,7 +571,7 @@ impl PuzzleBoard {
         let (fen, variant) = self
             .on_board
             .as_ref()
-            .map(|board| (board.fen().to_string(), board.variant().to_string()))
+            .map(|board| (board.fen().to_string(), board.variant().key().to_string()))
             .unwrap_or_default();
         let heard = match event {
             crate::voice::VoiceEvent::Missed { heard, .. } => {

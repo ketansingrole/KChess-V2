@@ -138,11 +138,7 @@ pub async fn run(
                 .is_some_and(|fen| start(fen) == start(&line.fen))
     };
     // The key the core gives the review, so a failure reported for it ends the wait.
-    let key = kchess_domain::records::review::review_key(
-        &line.fen,
-        &line.moves,
-        line.variant.map(Variant::key),
-    );
+    let key = kchess_domain::records::review::review_key(&line.fen, &line.moves, line.variant);
     let mut wait = Wait::new(events);
     while !(ours(&stored) && stored["complete"] == json!(true)) {
         match wait.next().await {

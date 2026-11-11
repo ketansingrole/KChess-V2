@@ -26,8 +26,8 @@ impl OnBoard {
     }
 
     /// The variant it is played in: a drill from a variant game keeps the game's.
-    pub fn variant(&self) -> &str {
-        self.puzzle["variant"].as_str().unwrap_or("standard")
+    pub fn variant(&self) -> kchess_domain::variant::Variant {
+        self.state.variant
     }
 
     /// `playing`, `solved` or `failed`.
@@ -194,7 +194,7 @@ mod tests {
     fn a_puzzle_shows_its_board_and_its_solution() {
         let mut board = OnBoard::start(&puzzle());
         assert_eq!(board.fen(), puzzle()["fen"].as_str().unwrap());
-        assert_eq!(board.variant(), "standard");
+        assert_eq!(board.variant(), kchess_domain::variant::Variant::Standard);
         assert_eq!(board.index(), 0);
         assert_eq!(board.solution(0).as_deref(), Some("h5f7"));
         assert_eq!(board.solution(1), None);
@@ -242,7 +242,10 @@ mod tests {
 
         let mut drill = line.clone();
         drill["variant"] = json!("chess960");
-        assert_eq!(OnBoard::start(&drill).variant(), "chess960");
+        assert_eq!(
+            OnBoard::start(&drill).variant(),
+            kchess_domain::variant::Variant::Chess960
+        );
     }
 
     #[test]

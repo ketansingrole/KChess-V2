@@ -4,13 +4,14 @@
 use serde_json::{Value, json};
 use shakmaty::variant::VariantPosition;
 
-use kchess_domain::js;
+use super::side;
 use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use kchess_domain::records::review::Score;
 use kchess_domain::records::{
     context, games, lichess, oauth, online, ratings, review, studies, time_control,
 };
 use kchess_domain::rules;
+use kchess_domain::{color, js};
 
 use super::{Out, arg};
 
@@ -35,7 +36,8 @@ fn setup_position(value: Option<&Value>) -> Result<VariantPosition, String> {
         .get("fen")
         .and_then(Value::as_str)
         .ok_or("setup.fen")?;
-    rules::setup_start(variant, fen).ok_or_else(|| "setup is not a legal position".into())
+    rules::setup_start(super::variant(variant)?, fen)
+        .ok_or_else(|| "setup is not a legal position".into())
 }
 
 /// An argument as text, as a template string reads any value.
@@ -70,12 +72,16 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
     let minutes = || js::to_number(arg(args, 0));
     let increment = || js::to_number(arg(args, 1));
     Some(match method {
-        "reviewKey" => list(args, 1, "moves").map(|moves| {
-            json!(review::review_key(
+        "reviewKey" => list(args, 1, "moves").and_then(|moves| {
+            let variant = arg(args, 2)
+                .and_then(Value::as_str)
+                .map(super::variant)
+                .transpose()?;
+            Ok(json!(review::review_key(
                 &text_of(args, 0),
                 &texts_of(moves),
-                arg(args, 2).and_then(Value::as_str)
-            ))
+                variant
+            )))
         }),
         "endEval" => Ok(
             match review::end_eval(str_or_empty(args, 0), str_or_empty(args, 1)) {
@@ -106,21 +112,24 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
             .and_then(Value::as_str)
             .map(|pgn| Ok(json!(studies::summarize_study(pgn))))
             .unwrap_or_else(|| Err("pgn must be a string".into())),
-        "opponent" => Ok(json!(games::opponent(str_or_empty(args, 0)))),
+        "opponent" => Ok(json!(color::name(!side(str_or_empty(args, 0))))),
         "boardResult" => setup_position(arg(args, 0)).and_then(|pos| {
-            let variant = arg(args, 1).and_then(Value::as_str).unwrap_or("");
+            let variant = super::variant(arg(args, 1).and_then(Value::as_str).unwrap_or(""))?;
             let draw = arg(args, 2)
                 .filter(|draw| !js::falsy(Some(draw)))
                 .map(|draw| js::to_string(Some(draw)));
             serde_json::to_value(games::board_result(&pos, variant, draw.as_deref()))
                 .map_err(|e| e.to_string())
         }),
-        "timeoutWinner" => setup_position(arg(args, 0))
-            .map(|pos| json!(games::timeout_winner(&pos, str_or_empty(args, 1)))),
-        "pgnResult" => Ok(json!(games::pgn_result(
+        "timeoutWinner" => setup_position(arg(args, 0)).map(|pos| {
+            json!(games::timeout_winner(&pos, side(str_or_empty(args, 1))).map(color::name))
+        }),
+        "pgnResult" => Ok(json!(games::Outcome::tag(games::Outcome::of(
             !js::falsy(arg(args, 0)),
-            arg(args, 1).and_then(Value::as_str)
-        ))),
+            arg(args, 1)
+                .and_then(Value::as_str)
+                .and_then(color::from_name)
+        )))),
         "isGameInProgress" => Ok(json!(games::is_game_in_progress(arg(args, 0)))),
         "archivedPlayerSide" => Ok(json!(games::archived_player_side(
             arg(args, 0).unwrap_or(&Value::Null)

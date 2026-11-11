@@ -4,12 +4,15 @@
 pub mod calendar;
 pub mod chesscom;
 pub mod coach;
+pub mod color;
+pub mod embedded;
 pub mod games;
 pub mod js;
 pub mod library;
 pub mod links;
 pub mod misc;
 pub mod online_game;
+pub mod perf;
 pub mod pgn;
 pub mod position;
 pub mod puzzle;

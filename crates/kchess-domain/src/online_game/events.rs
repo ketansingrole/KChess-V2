@@ -5,10 +5,11 @@
 use serde_json::{Value, json};
 
 use super::model::{
-    ClockConfig, Effect, FinishedGame, Run, Setup, at, default_fen, is_running, nullish,
-    number_or_zero, string_or, turn_of, variant_from_lichess,
+    ClockConfig, Effect, FinishedGame, Run, Setup, at, is_running, nullish, number_or_zero,
+    string_or, turn_of,
 };
 use crate::js;
+use crate::variant::Variant;
 
 /// `CORRESPONDENCE`: the days per move Lichess allows.
 const CORRESPONDENCE: [f64; 7] = [1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 14.0];
@@ -395,21 +396,19 @@ impl Run<'_> {
             nullish(event.get("daysPerTurn")).map(|v| js::to_number(Some(v)));
         self.m.online_tournament = string_or(event.get("tournamentId"), "");
         let key = js::string(at(event.get("variant"), "key"));
-        let variant = variant_from_lichess(key);
+        let variant = Variant::from_lichess(key);
         self.m.online_unsupported = if variant.is_some() {
             String::new()
         } else {
             key.unwrap_or("unknown").to_string()
         };
-        let variant = variant.unwrap_or("standard");
+        let variant = variant.unwrap_or_default();
         let fen = match js::string(event.get("initialFen")) {
-            None | Some("") | Some("startpos") => default_fen(variant),
+            None | Some("") | Some("startpos") => variant.default_fen(),
             Some(fen) => fen.to_string(),
         };
-        self.m.online_setup = Setup {
-            variant: variant.to_string(),
-            fen,
-        };
+        self.m.online_setup = Setup { variant, fen };
+
         // Match by account; if neither side does, keep the colour `gameStart` announced.
         let ours = if self.m.online_account.is_empty() {
             self.ctx.active_account.clone()

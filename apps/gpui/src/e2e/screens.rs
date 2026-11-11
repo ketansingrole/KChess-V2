@@ -590,9 +590,11 @@ fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
         "color": "white",
         "level": "club",
     });
-    let snapshot = ComputerGame::new(Some(&session), &host)
-        .expect("the computer game")
-        .snapshot(&host);
+    let snapshot = serde_json::json!(
+        ComputerGame::resume(Some(&session), &host)
+            .expect("the computer game")
+            .snapshot(host.now)
+    );
     if unfinished {
         let saved = cx.update(|cx| {
             cx.global::<crate::core::AppCore>()

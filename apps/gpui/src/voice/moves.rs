@@ -71,7 +71,7 @@ pub struct VoiceMoves {
 /// confirm, cancel, or nothing; nothing too when the setup is not a legal position.
 pub fn spoken_move(text: &str, setup: &Value) -> SpokenMove {
     let field = |key: &str| setup[key].as_str().unwrap_or_default();
-    match kchess_domain::rules::setup_start(field("variant"), field("fen")) {
+    match crate::game::setup_position(field("variant"), field("fen")) {
         Some(pos) => kchess_domain::voice::spoken_move(text, &pos),
         None => {
             crate::log::write(

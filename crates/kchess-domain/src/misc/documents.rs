@@ -8,7 +8,7 @@ use super::value::{J, own_entries};
 use crate::js;
 use crate::replay;
 use crate::tree::{self, TreeNode};
-use crate::variant::VARIANTS;
+use crate::variant::Variant;
 
 /// A document check: the arguments, normalized, or the message it rejected them with.
 pub type Check = fn(Vec<J>) -> Result<J, String>;
@@ -50,21 +50,20 @@ fn ms(v: Option<&J>) -> f64 {
     finite_of(v).map_or(0.0, |n| n.max(0.0))
 }
 
-fn variant_of(setup: Option<&J>) -> Option<&str> {
-    let variant = setup?.get("variant")?.str()?;
-    VARIANTS.contains(&variant).then_some(variant)
+fn variant_of(setup: Option<&J>) -> Option<Variant> {
+    Variant::from_key(setup?.get("variant")?.str()?)
 }
 
 /// `{ variant, fen }` from a decoded setup.
-fn setup_object(variant: &str, fen: &str) -> J {
+fn setup_object(variant: Variant, fen: &str) -> J {
     J::Obj(vec![
-        ("variant".into(), J::Str(variant.into())),
+        ("variant".into(), J::Str(variant.key().into())),
         ("fen".into(), J::Str(fen.into())),
     ])
 }
 
 /// `playable(setup, moves)`: a list of legal UCI moves from the setup's position.
-fn playable(variant: &str, fen: &str, moves: Option<&J>) -> Option<Vec<String>> {
+fn playable(variant: Variant, fen: &str, moves: Option<&J>) -> Option<Vec<String>> {
     let Some(J::Arr(items)) = moves else {
         return None;
     };
@@ -93,7 +92,8 @@ fn clock_side(raw: Option<&J>) -> Option<(f64, f64)> {
     let raw = object_or_none(raw?)?;
     let minutes = integer_of(raw.get("minutes"))?;
     let increment = integer_of(raw.get("increment"))?;
-    ((0.0..=180.0).contains(&minutes) && (0.0..=180.0).contains(&increment))
+    crate::games::Clock { minutes, increment }
+        .fits()
         .then_some((minutes, increment))
 }
 
@@ -254,8 +254,8 @@ fn decode_computer(raw: &J) -> Option<J> {
     let setup_source = raw.get("setup").filter(|s| s.truthy());
     // Another variant's FEN (Crazyhouse's pockets) may run as long as an over-the-board game's.
     let limit = match variant_of(setup_source) {
-        Some("standard" | "chess960") | None => 100,
-        Some(_) => 120,
+        Some(variant) if !variant.standard_rules() => 120,
+        _ => 100,
     };
     // Version 1 games began at the standard start and had no clock.
     let (variant, fen) = match (
@@ -264,7 +264,7 @@ fn decode_computer(raw: &J) -> Option<J> {
         setup_source.and_then(|s| text_of(s.get("fen"), limit)),
     ) {
         (Some(2.0), Some(variant), Some(fen)) => (variant, fen),
-        _ => ("standard", crate::rules::INITIAL_FEN),
+        _ => (Variant::Standard, crate::rules::INITIAL_FEN),
     };
     if !matches!(version, Some(v) if v == 1.0 || v == 2.0) {
         return None;

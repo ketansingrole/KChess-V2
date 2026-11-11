@@ -22,18 +22,25 @@ pub struct State {
     pub had_play: bool,
 }
 
-/// What the archive asks its host at the moment it needs it.
-pub trait Host {
+/// What the frontend tells the archive.
+pub struct Host<'a> {
     /// The game has moves.
-    fn has_play(&mut self) -> bool;
+    pub has_play: bool,
     /// The game as its archive snapshot describes it.
-    fn source(&mut self) -> Value;
-    /// The game already in history with this id, if any.
-    fn stored(&mut self, id: &str) -> Option<Value>;
+    pub source: &'a Value,
+    /// The games already in history.
+    pub games: &'a [Value],
     /// Milliseconds since the epoch.
-    fn now(&mut self) -> f64;
-    /// A new unique id.
-    fn new_id(&mut self) -> String;
+    pub now: f64,
+    /// A new unique id, for the entry a new game gets.
+    pub new_id: String,
+}
+
+impl Host<'_> {
+    /// The game already in history with this id, if any.
+    pub fn stored(&self, id: &str) -> Option<&Value> {
+        self.games.iter().find(|game| is(game.get("id"), id))
+    }
 }
 
 /// What the archive asks its caller to write to history.
@@ -60,15 +67,16 @@ fn with_fields(game: &Value, fields: Vec<(&str, Option<Value>)>) -> Value {
 }
 
 /// A new identity, with the host's id and clock.
-fn new_identity(host: &mut dyn Host) -> Identity {
-    let id = host.new_id();
-    let started_at = host.now();
-    Identity { id, started_at }
+fn new_identity(host: &Host) -> Identity {
+    Identity {
+        id: host.new_id.clone(),
+        started_at: host.now,
+    }
 }
 
 impl State {
     /// The identity kept, or a new one made by the host.
-    pub fn new(identity: Option<Identity>, host: &mut dyn Host) -> State {
+    pub fn new(identity: Option<Identity>, host: &Host) -> State {
         State {
             identity: identity.unwrap_or_else(|| new_identity(host)),
             had_play: false,
@@ -76,14 +84,14 @@ impl State {
     }
 
     /// Store the game as it stands, or remove it when there is nothing to keep.
-    pub fn save(&mut self, host: &mut dyn Host, finished: bool) -> Vec<Effect> {
+    pub fn save(&mut self, finished: bool, host: &Host) -> Vec<Effect> {
         let mut fx = Vec::new();
         self.save_into(host, finished, &mut fx);
         fx
     }
 
-    fn save_into(&mut self, host: &mut dyn Host, finished: bool, fx: &mut Vec<Effect>) {
-        if !host.has_play() {
+    fn save_into(&mut self, host: &Host, finished: bool, fx: &mut Vec<Effect>) {
+        if !host.has_play {
             if self.had_play {
                 fx.push(Effect::Remove(self.identity.id.clone()));
             }
@@ -93,10 +101,10 @@ impl State {
         // The entry starts with its first move, not when the previous game was replaced: a
         // session can wait days for that move, and History orders games by `startedAt`.
         if !self.had_play && host.stored(&self.identity.id).is_none() {
-            self.identity.started_at = host.now();
+            self.identity.started_at = host.now;
         }
         self.had_play = true;
-        let snapshot = host.source();
+        let snapshot = host.source;
         let open = is(snapshot.get("result"), "*");
         let from_clock = is(snapshot.get("source"), "clock");
         let reason = if finished && open && !from_clock {
@@ -104,9 +112,9 @@ impl State {
         } else {
             snapshot.get("reason").cloned()
         };
-        let updated_at = host.now();
+        let updated_at = host.now;
         let game = with_fields(
-            &snapshot,
+            snapshot,
             vec![
                 ("id", Some(json!(self.identity.id))),
                 ("startedAt", Some(json!(self.identity.started_at))),
@@ -119,10 +127,10 @@ impl State {
     }
 
     /// Keep the game as far as it went, then start a new entry.
-    pub fn reset(&mut self, host: &mut dyn Host) -> Vec<Effect> {
+    pub fn reset(&mut self, host: &Host) -> Vec<Effect> {
         let mut fx = Vec::new();
         let previous = host.stored(&self.identity.id);
-        let latest = host.source();
+        let latest = host.source;
         match previous {
             Some(previous) if previous.get("moves") == latest.get("moves") => {
                 let result = if is(previous.get("result"), "*") {
@@ -139,7 +147,7 @@ impl State {
                     previous.get("reason").cloned()
                 };
                 fx.push(Effect::Save(with_fields(
-                    &previous,
+                    previous,
                     vec![
                         ("result", result),
                         ("finished", Some(json!(true))),
@@ -155,9 +163,13 @@ impl State {
     }
 
     /// Close the entry being replaced and start afresh, unless the game is `resume`d.
-    pub fn init(&mut self, host: &mut dyn Host, resume: bool) -> Vec<Effect> {
+    pub fn init(&mut self, resume: bool, host: &Host) -> Vec<Effect> {
         let mut fx = Vec::new();
         if resume {
+            // A resumed game was saved before, so taking back its only move removes that entry.
+            if host.stored(&self.identity.id).is_some() {
+                self.had_play = true;
+            }
             return fx;
         }
         let open = host
@@ -165,7 +177,7 @@ impl State {
             .filter(|previous| js::falsy(previous.get("finished")));
         if let Some(previous) = open {
             fx.push(Effect::Save(with_fields(
-                &previous,
+                previous,
                 vec![("finished", Some(json!(true)))],
             )));
         }

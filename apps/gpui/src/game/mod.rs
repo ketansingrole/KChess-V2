@@ -35,12 +35,20 @@ pub use kchess_domain::links::{
     BroadcastLink, GameLink, broadcast_link, game_link, is_username, pgn_orientation, profile_link,
     study_link,
 };
-pub use kchess_games::{computer, draw_color, local, random_chess960, random_unit, whole};
+pub use kchess_games::{computer, draw_color, local, random_chess960, random_unit};
+
+/// A random draw, or none when the system had no randomness to give, which is logged: the
+/// caller then leaves things as they are.
+pub fn drawn<T>(draw: Result<T, String>) -> Option<T> {
+    draw.map_err(|cause| crate::log::write(kchess_contracts::Level::Warn, "random", &cause))
+        .ok()
+}
 
 /// A `{ variant, fen }` setup's UCI moves as PGN, as far as they are legal, after `headers` (a
 /// JSON object of strings). `None` when the setup is not a legal one or a header is not one.
 pub fn setup_pgn(setup: &Value, moves: &[String], headers: &Value) -> Option<String> {
     let (variant, fen) = (setup["variant"].as_str()?, setup["fen"].as_str()?);
+    let variant = Variant::from_key(variant)?;
     let headers: Vec<(&str, &str)> = match headers {
         Value::Object(headers) => headers
             .iter()
@@ -67,10 +75,7 @@ pub fn opening_at<S: AsRef<str>>(setup: &Value, moves: &[S], ply: usize) -> Opti
 
 /// A computer level's search profile; none for a level the ladder does not know.
 pub fn engine_level(level: &str) -> Option<&'static EngineLevelInfo> {
-    engine_levels::info(level).unwrap_or_else(|cause| {
-        crate::log::write(Level::Warn, "engine-levels", &cause);
-        None
-    })
+    engine_levels::info(level)
 }
 
 /// "Grandmaster · ~2550"; empty for a level the ladder does not know.
@@ -205,7 +210,18 @@ pub fn position_problem(fen: &str) -> Option<&'static str> {
 /// Whether the analysis board can take a game in this variant: every variant KChess plays. A
 /// variant other than standard chess and Chess960 is analysed by Fairy-Stockfish.
 pub fn analysable(variant: &str) -> bool {
-    kchess_domain::rules::lichess_variant(variant).is_some()
+    Variant::from_key(variant).is_some()
+}
+
+/// A FEN as a position of the variant a Lichess key names; none for a variant KChess does not
+/// play or a position its rules refuse.
+pub fn setup_position(variant: &str, fen: &str) -> Option<shakmaty::variant::VariantPosition> {
+    kchess_domain::rules::setup_start(Variant::from_key(variant)?, fen)
+}
+
+/// The usual start of the variant a Lichess key names; none for one KChess does not play.
+pub fn default_fen(variant: &str) -> Option<String> {
+    Variant::from_key(variant).map(Variant::default_fen)
 }
 
 /// Whether a game in this variant is played by standard rules: standard chess, and Chess960, which

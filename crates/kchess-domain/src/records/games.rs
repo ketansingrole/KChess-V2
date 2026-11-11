@@ -4,39 +4,67 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use shakmaty::Position;
 use shakmaty::variant::VariantPosition;
-use std::collections::HashMap;
+use shakmaty::{Color, Position};
 
 use crate::js;
-use crate::{position, replay, rules};
+use crate::variant::Variant;
 
-/// Why a variant game ends on a win, by variant (`VARIANT_WIN`).
-const VARIANT_WIN: &[(&str, &str)] = &[
-    ("kingOfTheHill", "King reached the centre"),
-    ("threeCheck", "Third check"),
-    ("antichess", "Lost every piece"),
-    ("atomic", "King exploded"),
-    ("horde", "Horde captured"),
-    ("racingKings", "King reached the eighth rank"),
-];
+use crate::{position, replay, rules};
 
 /// How a game ended: the winner, none for a draw, and why.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GameEnd {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub winner: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::color::option_by_name"
+    )]
+    pub winner: Option<Color>,
     pub reason: String,
 }
 
-/// The other colour: anything but white is black's opponent.
-pub fn opponent(color: &str) -> &'static str {
-    if color == "white" { "black" } else { "white" }
+/// A finished game's result: a side won, or it was drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Wins(Color),
+    Draw,
+}
+
+impl Outcome {
+    /// The result of a game that is `over`, with `winner` (none for a draw).
+    pub fn of(over: bool, winner: Option<Color>) -> Option<Outcome> {
+        over.then(|| winner.map_or(Outcome::Draw, Outcome::Wins))
+    }
+
+    /// The PGN `Result` tag; `*` while the game goes on.
+    pub fn tag(outcome: Option<Outcome>) -> &'static str {
+        match outcome {
+            None => "*",
+            Some(Outcome::Wins(Color::White)) => "1-0",
+            Some(Outcome::Wins(Color::Black)) => "0-1",
+            Some(Outcome::Draw) => "1/2-1/2",
+        }
+    }
+
+    /// A PGN `Result` tag's outcome; none for `*` or anything else.
+    pub fn from_tag(tag: &str) -> Option<Outcome> {
+        match tag {
+            "1-0" => Some(Outcome::Wins(Color::White)),
+            "0-1" => Some(Outcome::Wins(Color::Black)),
+            "1/2-1/2" => Some(Outcome::Draw),
+            _ => None,
+        }
+    }
 }
 
 /// How the position ended the game, or the draw already found by repetition or the fifty-move
 /// rule (`draw`); none while the game goes on.
-pub fn board_result(pos: &VariantPosition, variant: &str, draw: Option<&str>) -> Option<GameEnd> {
+pub fn board_result(
+    pos: &VariantPosition,
+    variant: Variant,
+    draw: Option<&str>,
+) -> Option<GameEnd> {
     let facts = position::info(pos);
     if let Some(outcome) = &facts.outcome {
         let reason = if facts.checkmate {
@@ -44,10 +72,7 @@ pub fn board_result(pos: &VariantPosition, variant: &str, draw: Option<&str>) ->
         } else if facts.stalemate {
             "Stalemate"
         } else if facts.variant_end {
-            VARIANT_WIN
-                .iter()
-                .find(|(key, _)| *key == variant)
-                .map_or("Game over", |(_, reason)| reason)
+            variant.win_reason().unwrap_or("Game over")
         } else {
             "Insufficient material"
         };
@@ -55,7 +80,7 @@ pub fn board_result(pos: &VariantPosition, variant: &str, draw: Option<&str>) ->
             winner: outcome
                 .get("winner")
                 .and_then(Value::as_str)
-                .map(str::to_string),
+                .and_then(crate::color::from_name),
             reason: reason.to_string(),
         });
     }
@@ -66,27 +91,9 @@ pub fn board_result(pos: &VariantPosition, variant: &str, draw: Option<&str>) ->
 }
 
 /// Who wins when `flagged` runs out of time: the other side, unless it cannot possibly mate.
-pub fn timeout_winner(pos: &VariantPosition, flagged: &str) -> Option<&'static str> {
-    let winner = opponent(flagged);
-    let facts = position::info(pos);
-    let cannot_win = if winner == "white" {
-        facts.cannot_win.white
-    } else {
-        facts.cannot_win.black
-    };
-    (!cannot_win).then_some(winner)
-}
-
-/// The PGN result token.
-pub fn pgn_result(over: bool, winner: Option<&str>) -> &'static str {
-    if !over {
-        return "*";
-    }
-    match winner {
-        Some("white") => "1-0",
-        Some("black") => "0-1",
-        _ => "1/2-1/2",
-    }
+pub fn timeout_winner(pos: &VariantPosition, flagged: Color) -> Option<Color> {
+    let winner = !flagged;
+    (!pos.has_insufficient_material(winner)).then_some(winner)
 }
 
 fn ended(pos: &VariantPosition) -> bool {
@@ -96,18 +103,13 @@ fn ended(pos: &VariantPosition) -> bool {
 /// Threefold repetition or the fifty-move rule over `moves` from `pos`, reading each move
 /// trimmed when `trim`; the count stops at the first move that is not legal.
 fn repetition(mut pos: VariantPosition, moves: &[&str]) -> Option<&'static str> {
-    let mut seen: HashMap<String, u32> = HashMap::new();
-    seen.insert(rules::repetition_key(&rules::make_fen(&pos)).to_string(), 1);
+    let mut seen = rules::Repetitions::starting_at(&rules::make_fen(&pos));
     for &uci in moves {
         let Some(m) = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u)) else {
             break;
         };
         pos.play_unchecked(m);
-        let count = seen
-            .entry(rules::repetition_key(&rules::make_fen(&pos)).to_string())
-            .or_insert(0);
-        *count += 1;
-        if *count >= 3 {
+        if seen.reached(&rules::make_fen(&pos)) {
             return Some("Threefold repetition");
         }
     }
@@ -116,9 +118,9 @@ fn repetition(mut pos: VariantPosition, moves: &[&str]) -> Option<&'static str> 
 
 /// Repetition or the fifty-move rule reached by UCI `moves` from a setup, for the variants where
 /// those rules apply.
-pub fn setup_draw_reason(variant: &str, fen: &str, moves: &[&str]) -> Option<&'static str> {
+pub fn setup_draw_reason(variant: Variant, fen: &str, moves: &[&str]) -> Option<&'static str> {
     let replayed = replay::replay_setup(variant, fen, moves)?;
-    if !crate::variant::Variant::from_key(variant).is_some_and(|v| v.counts_repetition()) {
+    if !variant.counts_repetition() {
         return None;
     }
     let start = rules::setup_start(variant, fen)?;

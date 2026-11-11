@@ -87,7 +87,7 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
         allowed: true,
         ready: false,
     };
-    let game = ComputerGame::new(Some(session), &host).ok()?;
+    let game = ComputerGame::resume(Some(session), &host).ok()?;
     let moves = game.moves();
     if moves.is_empty() || game.over() {
         return None;
@@ -100,13 +100,14 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
     // Whose move it is and the move number, from the position reached: a game started from a
     // position (Black to move, or at move 30) does not count from the usual start. White moves
     // on even plies when the position cannot be replayed.
-    let (to_move, number) = view::position_at(game.setup(), moves, moves.len()).map_or_else(
-        || {
-            let even = moves.len().is_multiple_of(2);
-            (Color::from_white(even), moves.len() / 2 + 1)
-        },
-        |reached| (reached.turn(), reached.fullmoves().get() as usize),
-    );
+    let (to_move, number) = view::position_at(&serde_json::json!(game.setup()), moves, moves.len())
+        .map_or_else(
+            || {
+                let even = moves.len().is_multiple_of(2);
+                (Color::from_white(even), moves.len() / 2 + 1)
+            },
+            |reached| (reached.turn(), reached.fullmoves().get() as usize),
+        );
     let level = crate::game::engine_level(game.level());
     let name = level.map_or("", |level| level.label.as_str());
     let strength = level.map(|level| match level.elo {
@@ -114,10 +115,9 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
         None => "Full strength".to_string(),
     });
     // A variant is named first, as the game page names it.
-    let variant = game.setup()["variant"]
-        .as_str()
-        .filter(|variant| *variant != "standard")
-        .map(crate::game::variant_label);
+    let variant = Some(game.setup().variant)
+        .filter(|variant| *variant != kchess_domain::variant::Variant::Standard)
+        .map(|variant| crate::game::variant_label(variant.key()));
     Some(Unfinished {
         opponent: (format!("Stockfish · {name}"), strength),
         state: variant

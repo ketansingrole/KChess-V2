@@ -201,7 +201,7 @@ pub fn cached_library(ctx: &StoreContext, now: f64) -> Result<Value> {
 /// `library(now)`: the whole snapshot.
 pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Value> {
     let mut sessions = Map::new();
-    for kind in SESSION_KINDS {
+    for &kind in SESSION_KINDS {
         let value = read_session(host, db, kind)?;
         if truthy(Some(&value)) {
             sessions.insert(kind.to_string(), value);

@@ -150,7 +150,7 @@ impl Resumes for LocalPage {
     }
 
     fn snapshot(&mut self, _: &mut Context<Self>) -> Value {
-        self.game.snapshot(self.now())
+        json!(self.game.snapshot(self.now()))
     }
 
     /// The board game and its history places resume from their sessions alone: reading the
@@ -159,7 +159,7 @@ impl Resumes for LocalPage {
         if let Some(mut saved) = saved {
             let game = saved.take(local::SESSION);
             if !game.is_null() {
-                match LocalGame::new(Some(&game), self.now()) {
+                match LocalGame::resume(Some(&game), self.now()) {
                     Ok(game) => self.game = game,
                     Err(cause) => crate::log::write(
                         Level::Warn,
@@ -168,7 +168,7 @@ impl Resumes for LocalPage {
                     ),
                 }
             }
-            let (source, has_play) = (self.game.archive_snapshot(), self.has_play());
+            let (source, has_play) = (json!(self.game.archive_snapshot()), self.has_play());
             self.history = Some(HistoryPlace::new(
                 local::HISTORY,
                 saved.take(&session_kind(local::HISTORY)),
@@ -205,12 +205,19 @@ impl LocalPage {
             });
         })
         .detach();
-        let game = match LocalGame::new(None, 0.) {
+        let game = match LocalGame::resume(None, 0.) {
             Ok(game) => game,
             Err(cause) => panic!("a new local game always starts: {cause}"),
         };
-        let board = cx
-            .new(|_| ChessBoard::new(view::board_state(game.setup(), &[], 0, Color::White, None)));
+        let board = cx.new(|_| {
+            ChessBoard::new(view::board_state(
+                &json!(game.setup()),
+                &[],
+                0,
+                Color::White,
+                None,
+            ))
+        });
         let (moves, typed) = MoveBox::new(Self::typed_move, window, cx);
         let clock = OtbClock::default();
         let number_input = |value: f64, window: &mut Window, cx: &mut Context<Self>| {
@@ -360,8 +367,8 @@ impl LocalPage {
         self.game.moves().to_vec()
     }
 
-    fn setup(&self) -> &Value {
-        self.game.setup()
+    fn setup(&self) -> Value {
+        json!(self.game.setup())
     }
 
     fn shown_ply(&self) -> usize {
@@ -387,7 +394,7 @@ impl LocalPage {
 
     /// Who is to move at the latest position.
     fn turn(&self) -> Color {
-        view::turn(view::position_at(self.setup(), &self.moves(), self.moves().len()).as_ref())
+        view::turn(view::position_at(&self.setup(), &self.moves(), self.moves().len()).as_ref())
     }
 
     /// The board faces whoever is to move while automatic turning is on.
@@ -433,7 +440,7 @@ impl LocalPage {
     /// The live position as the rules read a spoken move in it.
     fn voice_setup(&self) -> Value {
         let moves = self.moves();
-        view::position_at(self.setup(), &moves, moves.len()).map_or(Value::Null, |position| {
+        view::position_at(&self.setup(), &moves, moves.len()).map_or(Value::Null, |position| {
             json!({
                 "variant": self.setup()["variant"],
                 "fen": kchess_domain::rules::make_fen(&position),
@@ -444,7 +451,7 @@ impl LocalPage {
     fn sync_voice(&mut self, cx: &mut Context<Self>) {
         let context = format!("{}:{}", self.moves().len(), self.shown_ply());
         let taking = self.voice_taking();
-        let line = view::sans(self.setup(), &self.moves());
+        let line = view::sans(&self.setup(), &self.moves());
         self.voice.sync(
             &context,
             Some(line),
@@ -489,7 +496,7 @@ impl LocalPage {
         if !self.interactive() {
             return;
         }
-        let position = view::position_at(self.setup(), &self.moves(), self.moves().len());
+        let position = view::position_at(&self.setup(), &self.moves(), self.moves().len());
         let variant = self.setup()["variant"]
             .as_str()
             .unwrap_or("standard")
@@ -504,7 +511,7 @@ impl LocalPage {
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.after_change(cx);
         SessionSaver::changed(self, cx);
-        let (source, has_play) = (self.game.archive_snapshot(), self.has_play());
+        let (source, has_play) = (json!(self.game.archive_snapshot()), self.has_play());
         if let Some(history) = &mut self.history {
             history.save(false, source, has_play, cx);
         }
@@ -535,9 +542,11 @@ impl LocalPage {
         }
         if !self.game.over() {
             for color in [Color::White, Color::Black] {
-                let initial = self.game.clock().map_or(0., |clock| {
-                    clock.side(kchess_games::color_name(color)).minutes
-                }) * 60.;
+                let initial = self
+                    .game
+                    .clock()
+                    .map_or(0., |clock| clock.side(color).minutes)
+                    * 60.;
                 let remaining = self.game.remaining(color, now);
                 self.low_time.warn(color, remaining, initial, cx);
             }
@@ -560,7 +569,7 @@ impl LocalPage {
         let shown = self.shown_ply();
         let turn = self.turn();
         let mut state = view::board_state(
-            self.setup(),
+            &self.setup(),
             &moves,
             shown,
             self.orientation(cx),
@@ -606,7 +615,7 @@ impl LocalPage {
     /// After a saved game that could not be read, this one is the players' to keep.
     fn start(&mut self, setup: Value, clock: Value, cx: &mut Context<Self>) {
         self.saver.open();
-        let (source, has_play) = (self.game.archive_snapshot(), self.has_play());
+        let (source, has_play) = (json!(self.game.archive_snapshot()), self.has_play());
         match &mut self.history {
             Some(history) => history.reset(source, has_play, cx),
             None => {
@@ -680,7 +689,7 @@ impl LocalPage {
 
     fn open_new_game(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let page = cx.entity().downgrade();
-        let current = self.setup().clone();
+        let current = self.setup();
         let form = cx.new(|cx| {
             NewGame::new(
                 &current,
@@ -756,7 +765,7 @@ impl LocalPage {
         PlayedGame {
             result: self.game.outcome(),
             ..PlayedGame::new(
-                self.setup(),
+                &self.setup(),
                 self.moves(),
                 self.orientation(cx),
                 "White",
@@ -785,7 +794,7 @@ impl LocalPage {
             "Black": "Black",
             "Result": Outcome::tag(self.game.outcome()),
         });
-        match crate::game::setup_pgn(self.setup(), &self.moves(), &headers) {
+        match crate::game::setup_pgn(&self.setup(), &self.moves(), &headers) {
             Some(pgn) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(pgn));
                 window.push_notification("PGN copied", cx);
@@ -1259,7 +1268,7 @@ impl Render for LocalPage {
         let shown = self.shown_ply();
         let live = self.game.result().is_none();
         let orientation = self.orientation(cx);
-        let display = view::position_at(self.setup(), &moves, shown);
+        let display = view::position_at(&self.setup(), &moves, shown);
         let display_turn = view::turn(display.as_ref());
         let frontend = cx
             .global::<SettingsHandle>()
@@ -1391,11 +1400,11 @@ impl LocalPage {
         let board_size = self.board_size(window);
         let narrow = widgets::is_narrow(self.panel_area.size().width);
         let moves = self.moves();
-        let sans = view::sans(self.setup(), &moves);
+        let sans = view::sans(&self.setup(), &moves);
         let shown = self.shown_ply();
         let over = self.game.over();
         let result = self.game.result();
-        let display = view::position_at(self.setup(), &moves, shown);
+        let display = view::position_at(&self.setup(), &moves, shown);
         let frontend = cx
             .global::<SettingsHandle>()
             .0
@@ -1404,7 +1413,7 @@ impl LocalPage {
             .frontend
             .clone();
         let (timed, paused) = (self.game.timed(), self.game.paused());
-        let variant_label = crate::game::setup_label(self.setup());
+        let variant_label = crate::game::setup_label(&self.setup());
         let clock_label = self.game.clock().map(|clock| {
             let mut label = widgets::time_control(clock.white.minutes, clock.white.increment);
             if clock.black.minutes != clock.white.minutes {
@@ -1417,7 +1426,7 @@ impl LocalPage {
         });
         let banner = match &result {
             Some(result) => {
-                let winner = result.winner.as_deref();
+                let winner = result.winner;
                 widgets::StatusBanner::new(
                     if winner.is_some() {
                         Tone::Win
@@ -1430,8 +1439,8 @@ impl LocalPage {
                         icon("handshake")
                     },
                     match winner {
-                        Some("white") => "White wins".into(),
-                        Some(_) => "Black wins".into(),
+                        Some(Color::White) => "White wins".into(),
+                        Some(Color::Black) => "Black wins".into(),
                         None => "Draw".into(),
                     },
                 )
@@ -1472,7 +1481,7 @@ impl LocalPage {
         };
         let opening =
             (frontend.show_opening_name && self.setup()["variant"] == "standard").then(|| {
-                let opening = crate::game::opening_at(self.setup(), &moves, shown)?;
+                let opening = crate::game::opening_at(&self.setup(), &moves, shown)?;
                 Some((opening.eco, opening.name))
             });
         let page = cx.entity().downgrade();
@@ -1534,7 +1543,7 @@ impl LocalPage {
                 widgets::MoveSheet {
                     sans: &sans,
                     shown,
-                    first: view::first_move(self.setup()),
+                    first: view::first_move(&self.setup()),
                 },
                 if !timed {
                     "No moves yet".into()
@@ -1787,14 +1796,16 @@ impl NewGame {
             .flatten();
         let number = cx.new(|cx| {
             let mut input = InputState::new(window, cx);
-            let n = current_number.unwrap_or_else(crate::game::random_chess960);
+            let n = current_number
+                .or_else(|| crate::game::drawn(crate::game::random_chess960()))
+                .unwrap_or(518);
             input.set_value(n.to_string(), window, cx);
             input
         });
         let usual = match current_variant {
             "standard" => Some(STANDARD_FEN.to_string()),
             "chess960" => None,
-            variant => kchess_domain::rules::default_fen(variant),
+            variant => crate::game::default_fen(variant),
         };
         let fen = cx.new(|cx| {
             let label = format!(
@@ -1884,12 +1895,12 @@ impl NewGame {
             return None;
         }
         if variant != "standard" {
-            return kchess_domain::rules::setup_start(&variant, &text)
+            return crate::game::setup_position(&variant, &text)
                 .is_none()
                 .then(|| "Not a legal position".into());
         }
         position_problem(&text).map(SharedString::from).or_else(|| {
-            kchess_domain::rules::setup_start("standard", &text)
+            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &text)
                 .is_none()
                 .then(|| "Not a legal position".into())
         })
@@ -1916,7 +1927,7 @@ impl NewGame {
                 .is_none()
                 .then(|| json!({ "variant": variant, "fen": text }));
         }
-        let fen = kchess_domain::rules::default_fen(&variant)?;
+        let fen = crate::game::default_fen(&variant)?;
         Some(json!({ "variant": variant, "fen": fen }))
     }
 
@@ -1998,12 +2009,13 @@ impl Render for NewGame {
                                 .icon(icon("shuffle"))
                                 .label("Random")
                                 .on_click(cx.listener(|this, _, window, cx| {
+                                    let Some(n) =
+                                        crate::game::drawn(crate::game::random_chess960())
+                                    else {
+                                        return;
+                                    };
                                     this.number.update(cx, |input, cx| {
-                                        input.set_value(
-                                            crate::game::random_chess960().to_string(),
-                                            window,
-                                            cx,
-                                        )
+                                        input.set_value(n.to_string(), window, cx)
                                     });
                                     cx.notify();
                                 })),

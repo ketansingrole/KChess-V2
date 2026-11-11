@@ -70,7 +70,7 @@ pub fn position(game: &Value) -> Option<String> {
 pub fn read(game: &Value, text: &str) -> Option<Reply> {
     let fen = position(game)?;
     let variant = game["variant"].as_str().unwrap_or("standard");
-    let start = kchess_domain::rules::setup_start(variant, &fen)?;
+    let start = crate::game::setup_position(variant, &fen)?;
     let text = text.trim();
     let uci = crate::game::view::typed_uci(&json!({ "variant": variant }), &start, text)?;
     let played = kchess_domain::position::play_uci(&start, &uci)?;

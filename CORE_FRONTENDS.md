@@ -23,8 +23,8 @@ with `CoreHandle::reply(id, reply)`.
 
 ## Game sessions
 
-`kchess_games::computer::ComputerGame`, `local::LocalGame`, `puzzle::OnBoard` and
-`archive::GameArchive` run the domain's typed state machines: the frontend gives them what they
-ask of it when they ask (the clock, whether engine help is allowed) and carries out the effects
-they return (searches, sounds, saving the session and its Game history entry, `history`). The app
-and the CLI share them, so a game started in one carries on in the other.
+`kchess_games::computer::ComputerGame` and `local::LocalGame` are the domain's typed sessions,
+`puzzle::OnBoard` plays a puzzle out, and `history::HistoryPlace` keeps a game's place in Game
+history: the frontend calls them with what it knows (the clock, whether engine help is allowed)
+and carries out their effects (searches, sounds, saving the session and its Game history entry).
+The app and the CLI share them, so a game started in one carries on in the other.

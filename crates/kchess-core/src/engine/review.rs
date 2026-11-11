@@ -17,6 +17,7 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use kchess_domain::records::review::{Score, is_reviewable_perf};
 use kchess_domain::replay::{ReplayedPosition, replay_positions_in};
+use kchess_domain::variant::Variant;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tokio::sync::watch;
@@ -603,24 +604,25 @@ impl Reviews {
     }
 }
 
-/// The variant a review plays by: a variant Fairy-Stockfish reviews, or empty for standard chess
-/// and Chess960.
-fn fairy_key(variant: Option<&str>) -> &str {
+/// The variant a review plays by: a variant Fairy-Stockfish reviews, or standard chess (for
+/// Chess960 too).
+fn fairy_key(variant: Option<&str>) -> Variant {
     variant
-        .filter(|variant| fairy_variant(variant).is_some())
-        .unwrap_or("")
+        .and_then(Variant::from_key)
+        .filter(|variant| variant.fairy_name().is_some())
+        .unwrap_or_default()
 }
 
-/// The key a review of `moves` from `fen` is stored under; `variant` is empty for standard chess.
-fn review_key(fen: &str, moves: &[String], variant: &str) -> String {
-    kchess_domain::records::review::review_key(fen, moves, Some(variant).filter(|v| !v.is_empty()))
+/// The key a review of `moves` from `fen` is stored under.
+fn review_key(fen: &str, moves: &[String], variant: Variant) -> String {
+    kchess_domain::records::review::review_key(fen, moves, Some(variant))
 }
 
 /// `jobFor(request, background)`: the job for a request, or None when its moves reach no position.
 /// `requested` orders requests (0 for automatic reviews).
 fn job_for(request: &ReviewRequest, background: bool, requested: u64) -> Result<Option<Job>> {
-    let variant = fairy_key(request.variant.as_deref()).to_string();
-    let positions = replay_positions_in(&variant, &request.fen, &request.moves);
+    let variant = fairy_key(request.variant.as_deref());
+    let positions = replay_positions_in(variant, &request.fen, &request.moves);
     if positions.len() < 2 {
         return Ok(None);
     }
@@ -637,10 +639,14 @@ fn job_for(request: &ReviewRequest, background: bool, requested: u64) -> Result<
         }
         prefixes.push(format!(" moves {acc}"));
     }
-    let key = review_key(&fen, &moves, &variant);
+    let key = review_key(&fen, &moves, variant);
     Ok(Some(Job {
         key,
-        variant,
+        variant: if variant.is_standard() {
+            String::new()
+        } else {
+            variant.key().to_string()
+        },
         fen,
         moves,
         positions,
@@ -863,13 +869,16 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
                 Some("standard") | None => {
                     kchess_domain::review::lichess_line(&game.moves, game.pgn.as_deref(), None)
                 }
-                Some(variant) => kchess_domain::review::lichess_line_in(
-                    variant,
-                    &game.moves,
-                    game.pgn.as_deref(),
-                    None,
-                )
-                .unwrap_or_default(),
+                Some(variant) => Variant::from_key(variant)
+                    .and_then(|variant| {
+                        kchess_domain::review::lichess_line_in(
+                            variant,
+                            &game.moves,
+                            game.pgn.as_deref(),
+                            None,
+                        )
+                    })
+                    .unwrap_or_default(),
             };
             let variant = fairy_variant(&game.perf).map(|_| game.perf.clone());
             let request = ReviewRequest {

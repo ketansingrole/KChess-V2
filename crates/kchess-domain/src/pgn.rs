@@ -898,7 +898,7 @@ pub fn pgn_from_uci<S: AsRef<str>>(moves: &[S]) -> String {
 /// replay them after `headers`. A setup that is not a legal position is refused
 /// (`games::ILLEGAL_SETUP`).
 pub fn setup_pgn<S: AsRef<str>>(
-    variant: &str,
+    variant: crate::variant::Variant,
     fen: &str,
     moves: &[S],
     headers: &[(&str, &str)],
@@ -909,12 +909,11 @@ pub fn setup_pgn<S: AsRef<str>>(
     for (key, value) in headers {
         game.put_header(key, (*value).to_string());
     }
-    if variant != "standard" {
+    if !variant.is_standard() {
         // The PGN `Variant` header takes the names other PGN readers know, not the Lichess keys.
-        let name = crate::variant::Variant::from_key(variant).map_or(variant, |v| v.label());
-        game.put_header("Variant", name.to_string());
+        game.put_header("Variant", variant.label().to_string());
     }
-    if fen != rules::INITIAL_FEN || variant == "chess960" {
+    if fen != rules::INITIAL_FEN || variant == crate::variant::Variant::Chess960 {
         game.put_header("SetUp", "1".into());
         game.put_header("FEN", fen.to_string());
     }
@@ -932,7 +931,13 @@ mod tests {
         let koth = rules::make_fen(&rules::default_position(
             shakmaty::variant::Variant::KingOfTheHill,
         ));
-        let pgn = setup_pgn("kingOfTheHill", &koth, &["e2e4"], &[]).unwrap();
+        let pgn = setup_pgn(
+            crate::variant::Variant::KingOfTheHill,
+            &koth,
+            &["e2e4"],
+            &[],
+        )
+        .unwrap();
         assert!(pgn.contains("[Variant \"King of the Hill\"]"), "{pgn}");
         assert_eq!(
             rules::pgn_variant(Some("King of the Hill")),
@@ -944,7 +949,7 @@ mod tests {
     #[test]
     fn setup_pgns_carry_their_headers_and_start() {
         let pgn = setup_pgn(
-            "standard",
+            crate::variant::Variant::Standard,
             "4k3/8/8/8/8/8/8/4K2R w K - 0 1",
             &["e1g1"],
             &[("White", "You")],
@@ -968,12 +973,13 @@ mod tests {
     fn a_setup_pgn_refuses_an_illegal_setup() {
         let kingless = "8/8/8/8/8/8/8/8 w - - 0 1";
         assert_eq!(
-            setup_pgn("standard", kingless, &["e2e4"], &[("White", "You")]),
+            setup_pgn(
+                crate::variant::Variant::Standard,
+                kingless,
+                &["e2e4"],
+                &[("White", "You")]
+            ),
             Err(crate::games::ILLEGAL_SETUP.to_string())
-        );
-        assert_eq!(
-            setup_pgn("noSuchVariant", rules::INITIAL_FEN, &["e2e4"], &[]).ok(),
-            None
         );
     }
 

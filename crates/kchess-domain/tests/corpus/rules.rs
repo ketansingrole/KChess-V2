@@ -4,6 +4,7 @@ use serde_json::{Map, Value, json};
 use shakmaty::variant::VariantPosition;
 
 use kchess_domain::position::{self, DestMode};
+use kchess_domain::variant::Variant;
 use kchess_domain::{coach, pgn, records, replay, review, rules, tree};
 
 use super::{Out, arg};
@@ -22,13 +23,13 @@ fn texts<'a>(args: &'a [Value], i: usize, name: &str) -> Result<Vec<&'a str>, St
 }
 
 /// `{ variant, fen }`
-fn setup(args: &[Value], i: usize) -> Result<(&str, &str), String> {
+fn setup(args: &[Value], i: usize) -> Result<(Variant, &str), String> {
     let setup = arg(args, i)
         .and_then(Value::as_object)
         .ok_or_else(|| "setup must be an object".to_string())?;
     let field = |key| setup.get(key).and_then(Value::as_str);
     Ok((
-        field("variant").ok_or_else(|| "setup.variant".to_string())?,
+        super::variant(field("variant").ok_or_else(|| "setup.variant".to_string())?)?,
         field("fen").ok_or_else(|| "setup.fen".to_string())?,
     ))
 }
@@ -116,7 +117,7 @@ fn answer(method: &str, args: &[Value]) -> Result<Option<Value>, String> {
         }
         "pvSan" => {
             let max = arg(args, 2).and_then(Value::as_u64).unwrap_or(12) as usize;
-            let variant = arg(args, 3).and_then(Value::as_str).unwrap_or_default();
+            let variant = super::variant(arg(args, 3).and_then(Value::as_str).unwrap_or_default())?;
             to_value(tree::pv_san(
                 text(args, 0, "fen")?,
                 &texts(args, 1, "pv")?,
@@ -207,7 +208,9 @@ fn answer(method: &str, args: &[Value]) -> Result<Option<Value>, String> {
             Value::String(rules::chess960_fen(n.floor() as i64))
         }
         "defaultFen" => Value::String(
-            rules::default_fen(text(args, 0, "variant")?).ok_or_else(|| "variant".to_string())?,
+            Variant::from_key(text(args, 0, "variant")?)
+                .ok_or_else(|| "variant".to_string())?
+                .default_fen(),
         ),
         "fenSetup" => to_value(position::fen_setup(text(args, 0, "fen")?))?,
         "fenProblem" => to_value(position::fen_problem(text(args, 0, "fen")?))?,

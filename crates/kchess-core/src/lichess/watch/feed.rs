@@ -6,9 +6,10 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{BroadcastGame, MAX_BROADCAST_PGN, VARIANTS, WatchClock, WatchPlayer};
+use super::{BroadcastGame, MAX_BROADCAST_PGN, WatchClock, WatchPlayer};
 use crate::lichess::decode::{Text, present, read};
 use crate::lichess::reviews::split_whitespace;
+use kchess_domain::variant::{Setup, Variant};
 use kchess_domain::{js, position, rules};
 
 /* ── Feed decoding (pure) ── */
@@ -219,25 +220,10 @@ pub fn parse_game_details(raw: &Value) -> GameDetails {
 pub struct TvGame {
     pub details: GameDetails,
     /// Absent for variants KChess cannot replay.
-    pub setup: Option<GameSetup>,
+    pub setup: Option<Setup>,
     pub san: Vec<String>,
     pub status: Option<String>,
     pub winner: Option<&'static str>,
-}
-
-/// The rules and the position before the first move (`GameSetup`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GameSetup {
-    pub variant: &'static str,
-    pub fen: String,
-}
-
-/// `variantFromLichess(key)`: the playable variant of a Lichess key; `fromPosition` is standard.
-pub fn variant_from_lichess(key: Option<&str>) -> Option<&'static str> {
-    match key {
-        None | Some("") | Some("fromPosition") => Some("standard"),
-        Some(key) => VARIANTS.iter().copied().find(|variant| *variant == key),
-    }
 }
 
 #[derive(Deserialize)]
@@ -289,13 +275,9 @@ pub fn parse_tv_game(raw: &Value) -> TvGame {
         Winner::White => "white",
         Winner::Black => "black",
     });
-    let variant = variant_from_lichess(Some(variant.unwrap_or("standard")));
-    let setup = variant.and_then(|variant| {
-        let fen = match initial {
-            Some(fen) => Some(fen.to_string()),
-            None => rules::default_fen(variant),
-        }?;
-        Some(GameSetup { variant, fen })
+    let setup = Variant::from_lichess(Some(variant.unwrap_or("standard"))).map(|variant| Setup {
+        variant,
+        fen: initial.map_or_else(|| variant.default_fen(), str::to_string),
     });
     TvGame {
         details,
@@ -318,7 +300,7 @@ pub fn parse_tv_game(raw: &Value) -> TvGame {
 /// after it. `feed` holds the positions the feed showed, and `live[i]` is the move from `feed[i]`
 /// to `feed[i + 1]`. Undefined until the export reaches a position the feed sent.
 pub fn align_tv_moves(
-    setup: &GameSetup,
+    setup: &Setup,
     san: &[String],
     feed: &[String],
     live: &[Option<String>],
@@ -355,7 +337,7 @@ pub fn align_tv_moves(
 }
 
 /// `replaySetup(setup, moves)`: how many UCI moves replay and the position after them.
-fn replay_uci(setup: &GameSetup, moves: &[String]) -> Option<(usize, String)> {
+fn replay_uci(setup: &Setup, moves: &[String]) -> Option<(usize, String)> {
     let replay = kchess_domain::replay::replay_setup(setup.variant, &setup.fen, moves)?;
     Some((replay.played.len(), replay.fen))
 }
@@ -475,14 +457,5 @@ mod tests {
                 rating: Some(1500.0),
             }
         );
-    }
-
-    #[test]
-    fn variants_follow_the_lichess_keys_kchess_plays() {
-        assert_eq!(variant_from_lichess(None), Some("standard"));
-        assert_eq!(variant_from_lichess(Some("fromPosition")), Some("standard"));
-        assert_eq!(variant_from_lichess(Some("chess960")), Some("chess960"));
-        assert_eq!(variant_from_lichess(Some("crazyhouse")), Some("crazyhouse"));
-        assert_eq!(variant_from_lichess(Some("bughouse")), None);
     }
 }

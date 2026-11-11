@@ -15,7 +15,6 @@ use std::num::NonZeroU32;
 
 use crate::js;
 
-/// The standard starting position.
 pub const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 /// The first four FEN fields: what makes positions the same for repetition.
@@ -30,6 +29,25 @@ pub fn repetition_key(fen: &str) -> &str {
         }
     }
     fen
+}
+
+/// The positions a game has reached, counted as repetition counts them (`repetition_key`).
+pub struct Repetitions(std::collections::HashMap<String, u32>);
+
+impl Repetitions {
+    /// The count of a game starting at `fen`, which counts once.
+    pub fn starting_at(fen: &str) -> Repetitions {
+        let mut repetitions = Repetitions(std::collections::HashMap::new());
+        repetitions.reached(fen);
+        repetitions
+    }
+
+    /// `fen` is reached: whether it has now been on the board three times.
+    pub fn reached(&mut self, fen: &str) -> bool {
+        let count = self.0.entry(repetition_key(fen).to_string()).or_insert(0);
+        *count += 1;
+        *count >= 3
+    }
 }
 
 /// Half-moves since the game's start: 0 is White's first move still to play.
@@ -55,11 +73,6 @@ pub fn is_uci_text(token: &str) -> bool {
 /// A Crazyhouse drop in UCI: `P@e4`.
 pub fn is_drop_text(token: &str) -> bool {
     matches!(*token.as_bytes(), [role, b'@', file, rank] if b"PNBRQ".contains(&role) && is_square_text(file, rank))
-}
-
-/// The Lichess variant keys KChess can play.
-pub fn lichess_variant(key: &str) -> Option<Variant> {
-    crate::variant::Variant::from_key(key).map(crate::variant::Variant::rules)
 }
 
 /// `parseVariant`, for the PGN `Variant` header.
@@ -421,9 +434,9 @@ fn valid_ep_square(setup: &Setup, square: Square) -> bool {
     }
 }
 
-/// A FEN text as a position under a Lichess variant key (`setupStart`).
-pub fn setup_start(variant: &str, fen: &str) -> Option<VariantPosition> {
-    setup_position(lichess_variant(variant)?, parse_fen(fen)?)
+/// A FEN text as a position of `variant`; none when it is not a legal one there.
+pub fn setup_start(variant: crate::variant::Variant, fen: &str) -> Option<VariantPosition> {
+    setup_position(variant.rules(), parse_fen(fen)?)
 }
 
 /// `Chess.fromSetup(parseFen(fen))`: standard rules.
@@ -984,17 +997,8 @@ pub fn variant_of(pos: &VariantPosition) -> Variant {
     pos.variant()
 }
 
-pub fn turn_name(color: Color) -> &'static str {
-    if color.is_white() { "white" } else { "black" }
-}
-
 pub fn default_position(variant: Variant) -> VariantPosition {
     VariantPosition::new(variant)
-}
-
-/// The start of the variant a Lichess key names, as a FEN.
-pub fn default_fen(variant: &str) -> Option<String> {
-    lichess_variant(variant).map(|variant| make_fen(&default_position(variant)))
 }
 
 /// The Chess960 starting position numbered `n` in the Scharnagl scheme (any whole number, taken

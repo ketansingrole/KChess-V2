@@ -2,10 +2,10 @@
 //! context]` in, `{ state, effects, ret?, call?, pending?, rethrow }` out.
 
 use serde::de::DeserializeOwned;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use kchess_domain::js;
-use kchess_domain::online_game::model::{Ctx, Left, Model, Op, Outcome, Pending, Reply, Run};
+use kchess_domain::online_game::model::{Call, Ctx, Left, Model, Op, Outcome, Pending, Reply, Run};
 
 use super::Out;
 
@@ -75,8 +75,25 @@ fn step(
     let ctx: Ctx = read(args, i)?;
     let outcome = body(&mut model, &ctx)?;
     let mut out = json_of(&outcome)?;
+    if let Some(call) = &outcome.call {
+        let (method, args) = method_and_args(call);
+        out["call"] = json!({ "method": method, "args": args });
+    }
     out["state"] = json_of(&model)?;
     Ok(out)
+}
+
+/// A call as the recorded suites wrote it: the core method's name and arguments.
+fn method_and_args(call: &Call) -> (&'static str, Vec<Value>) {
+    match call {
+        Call::StartOnline(options) => ("startOnline", vec![options.clone()]),
+        Call::CancelOnline => ("cancelOnline", Vec::new()),
+        Call::ResumeOnline => ("resumeOnline", Vec::new()),
+        Call::OpenGame { account, id } => ("openGame", vec![json!(account), json!(id)]),
+        Call::PlayOnline { id, uci } => ("playOnline", vec![json!(id), json!(uci)]),
+        Call::OnlineAction { id, action } => ("onlineAction", vec![json!(id), json!(action)]),
+        Call::OnlineChat { id } => ("onlineChat", vec![json!(id)]),
+    }
 }
 
 fn text(value: Option<&Value>) -> String {

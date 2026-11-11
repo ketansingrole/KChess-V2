@@ -48,8 +48,13 @@ use kchess_domain::voice::knight_moves;
 fn knight_challenge(min: u32, max: u32) -> (String, String, u32) {
     let mut draws: Vec<f64> = Vec::new();
     for _ in 0..64 {
-        draws.push(random_unit());
-        draws.push(random_unit());
+        let (Some(first), Some(second)) = (
+            crate::game::drawn(random_unit()),
+            crate::game::drawn(random_unit()),
+        ) else {
+            break;
+        };
+        draws.extend([first, second]);
         if let Some(found) =
             kchess_domain::voice::knight_challenge(f64::from(min), f64::from(max), &draws)
         {
@@ -92,8 +97,11 @@ impl KnightPaths {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> KnightPaths {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", crate::game::STANDARD_FEN)
-                    .unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    crate::game::STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 None,
                 None,
@@ -349,8 +357,11 @@ impl KnightPaths {
             cx,
         );
         let fen = kchess_domain::voice::knight_fen(&self.knight);
-        let position = kchess_domain::rules::setup_start("standard", crate::game::STANDARD_FEN)
-            .unwrap_or_default();
+        let position = kchess_domain::rules::setup_start(
+            kchess_domain::variant::Variant::Standard,
+            crate::game::STANDARD_FEN,
+        )
+        .unwrap_or_default();
         let movable = running && self.knight != self.goal;
         let mut state = BoardState::of(&position, Color::White, None, None);
         // A lone knight is no legal position: the board draws the FEN's pieces.

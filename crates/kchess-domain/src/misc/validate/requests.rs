@@ -1,6 +1,17 @@
 //! Validators of request objects: each decodes one into a typed struct and checks its fields.
 
 use super::*;
+use crate::variant::Variant;
+
+/// The variant a request names when it is not played by standard rules; an unknown one is
+/// refused.
+fn other_variant(key: Option<&str>) -> Checked<Option<Variant>> {
+    match key.map(Variant::from_key) {
+        None => Ok(None),
+        Some(None) => Err("Invalid variant.".into()),
+        Some(Some(variant)) => Ok((!variant.standard_rules()).then_some(variant)),
+    }
+}
 
 /// `assertNewArena`: the arena's clock, schedule and options, and no other keys.
 #[derive(Deserialize, Serialize)]
@@ -615,6 +626,7 @@ impl<'de> Deserialize<'de> for Detail {
 /// A plain object as an ordered list of entries.
 pub(super) mod entries {
     use super::*;
+
     use serde::ser::SerializeMap;
 
     pub fn serialize<S: serde::Serializer, T: Serialize>(
@@ -802,12 +814,7 @@ pub fn assert_best_move_options(value: J) -> Checked<BestMoveOptions> {
         _ => Some("Invalid engine options."),
     })?;
     // Another variant (Fairy-Stockfish plays it) starts from a position legal by its own rules.
-    if let Some(variant) = options
-        .variant
-        .as_deref()
-        .filter(|variant| !matches!(*variant, "standard" | "chess960"))
-    {
-        one_of(variant, VARIANTS, Some("Invalid variant."), "variant")?;
+    if let Some(variant) = other_variant(options.variant.as_deref())? {
         let position = options.fen.as_deref().ok_or("Invalid position.")?;
         max_chars(position, 120, Some("Invalid position."), "fen")?;
         if crate::rules::setup_start(variant, position).is_none() {
@@ -850,7 +857,10 @@ pub struct AnalysisRequest {
 /// A variant game's position for analysis: its root under the variant's rules, and its moves
 /// played there to the position asked about. Its FEN may carry what the variant keeps
 /// (Crazyhouse's pockets, Three-check's checks) and Horde's 36 pawns.
-pub(super) fn variant_analysis_position(request: &AnalysisRequest, variant: &str) -> Checked<()> {
+pub(super) fn variant_analysis_position(
+    request: &AnalysisRequest,
+    variant: Variant,
+) -> Checked<()> {
     let invalid = || "Invalid analysis position or move history.".to_string();
     for text in std::iter::once(&request.fen).chain(request.root_fen.as_ref()) {
         max_chars(text, 120, None, "fen")?;
@@ -882,12 +892,7 @@ pub fn assert_analysis_request(value: J) -> Checked<AnalysisRequest> {
         _ => None,
     })?;
     // Standard chess and Chess960 are checked as they always were, below.
-    if let Some(variant) = request
-        .variant
-        .as_deref()
-        .filter(|variant| !matches!(*variant, "standard" | "chess960"))
-    {
-        one_of(variant, VARIANTS, Some("Invalid variant."), "variant")?;
+    if let Some(variant) = other_variant(request.variant.as_deref())? {
         within(
             request.lines,
             1,
@@ -950,12 +955,7 @@ pub(super) fn assert_review_request(value: J) -> Checked<ReviewRequest> {
         _ => Some("Invalid review request."),
     })?;
     // A variant game (Fairy-Stockfish reviews it) is replayed by its variant's rules.
-    if let Some(variant) = request
-        .variant
-        .as_deref()
-        .filter(|variant| !matches!(*variant, "standard" | "chess960"))
-    {
-        one_of(variant, VARIANTS, Some("Invalid variant."), "variant")?;
+    if let Some(variant) = other_variant(request.variant.as_deref())? {
         max_chars(&request.fen, 120, Some("Invalid position."), "fen")?;
         move_list(&request.moves)?;
         if let Some(id) = &request.game_id {

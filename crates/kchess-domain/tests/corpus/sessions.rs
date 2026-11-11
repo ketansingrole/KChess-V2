@@ -1,9 +1,11 @@
 //! The game sessions as the recorded suites drove them: a transition took the state (and its
 //! runtime) as JSON with its input and the host reads supplied so far, and answered either the
 //! finished transition (`{done: {value, state, runtime, written, effects}}`) or the next read it
-//! lacked (`{read: kind}`), the host asking again with one more read. This adapter runs the typed
-//! sessions over that protocol: the reads are taken lazily, in order, and the first one missing
-//! is the answer; the fields each transition wrote are worked out from what it did.
+//! lacked (`{read: kind}`), the host asking again with one more read. The typed sessions take
+//! what the frontend knows as plain values, so this adapter takes the reads each transition made,
+//! in the order it made them, and the first one missing is the answer; the fields each
+//! transition wrote are worked out from what it did. Within a recorded case every read of one
+//! kind answered the same, so the first answer is the host's value.
 
 use std::collections::HashMap;
 
@@ -11,12 +13,13 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
+use kchess_domain::color;
 use kchess_domain::games::archive::{self, Identity};
 use kchess_domain::games::computer::{self, ComputerGame, Effect};
 use kchess_domain::games::local::{self, LocalClock, LocalGame};
-use kchess_domain::games::{self, Clock, Setup};
+use kchess_domain::games::{Board, Clock, Host, Setup};
 
-use super::Out;
+use super::{Out, side};
 
 /// Why the reads could not answer a transition: a read missing, or malformed.
 enum Problem {
@@ -33,6 +36,10 @@ struct Reads<'a> {
     stored: Vec<Option<Value>>,
     sources: Vec<Value>,
     has_play: Vec<bool>,
+    /// The first answers of the archive's reads.
+    games: Option<Vec<Value>>,
+    now: Option<f64>,
+    id: Option<String>,
 }
 
 impl<'a> Reads<'a> {
@@ -68,50 +75,73 @@ impl<'a> Reads<'a> {
     }
 
     fn now(&mut self) -> f64 {
-        self.typed("now", Value::as_f64)
+        let now = self.typed("now", Value::as_f64);
+        self.now.get_or_insert(now);
+        now
     }
 
     fn now_or(&mut self, at: Option<f64>) -> f64 {
         at.unwrap_or_else(|| self.now())
     }
-}
 
-impl games::Host for Reads<'_> {
-    fn now(&mut self) -> f64 {
-        Reads::now(self)
-    }
     fn allowed(&mut self) -> bool {
         self.typed("allowed", Value::as_bool)
     }
+
     fn ready(&mut self) -> bool {
         self.typed("ready", Value::as_bool)
     }
-}
 
-impl archive::Host for Reads<'_> {
     fn has_play(&mut self) -> bool {
         let has = self.typed("hasPlay", Value::as_bool);
         self.has_play.push(has);
         has
     }
+
     fn source(&mut self) -> Value {
         let source = self.take("source").unwrap_or(Value::Null);
         self.sources.push(source.clone());
         source
     }
+
     fn stored(&mut self, id: &str) -> Option<Value> {
         let games: Vec<Value> = self.typed("games", |v| v.as_array().cloned());
         let entry = games
-            .into_iter()
-            .find(|game| game.get("id").and_then(Value::as_str) == Some(id));
+            .iter()
+            .find(|game| game.get("id").and_then(Value::as_str) == Some(id))
+            .cloned();
+        self.games.get_or_insert(games);
         self.stored.push(entry.clone());
         entry
     }
-    fn now(&mut self) -> f64 {
-        Reads::now(self)
-    }
+
     fn new_id(&mut self) -> String {
-        self.typed("id", |v| v.as_str().map(str::to_string))
+        let id = self.typed("id", |v| v.as_str().map(str::to_string));
+        self.id.get_or_insert(id).clone()
+    }
+
+    /// The reads a save made: whether the game has play, its entry and start when it begins with
+    /// this move, then its snapshot and the time.
+    fn save(&mut self, state: &archive::State) {
+        if !self.has_play() {
+            return;
+        }
+        if !state.had_play && self.stored(&state.identity.id).is_none() {
+            self.now();
+        }
+        self.source();
+        self.now();
+    }
+
+    /// The archive's host, from the first answer of each read taken.
+    fn archive_host<'s>(&'s self, games: &'s [Value]) -> archive::Host<'s> {
+        archive::Host {
+            has_play: self.has_play.first().copied().unwrap_or(false),
+            source: self.sources.first().unwrap_or(&Value::Null),
+            games,
+            now: self.now.unwrap_or(0.0),
+            new_id: self.id.clone().unwrap_or_default(),
+        }
     }
 }
 
@@ -143,6 +173,9 @@ fn transition(
         stored: Vec::new(),
         sources: Vec::new(),
         has_play: Vec::new(),
+        games: None,
+        now: None,
+        id: None,
     };
     let done = body(inputs, &mut reads);
     match reads.problem {
@@ -190,15 +223,27 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         "computerState" => optional_arg(args, 0)
             .map(|saved| to_value(&computer::State::from_saved(saved.unwrap_or_default()))),
         "computerInit" => transition(args, |_, reads| {
+            let now = reads.now();
+            let host = Host {
+                now,
+                allowed: reads.allowed(),
+                ready: false,
+            };
             Ok(Done {
-                runtime: Some(to_value(&computer::Runtime::start(reads))),
+                runtime: Some(to_value(&computer::Runtime::start(&host))),
                 ..Done::default()
             })
         }),
         "computerView" => transition(args, computer_view),
         "computerAvailability" => computer_change(args, |game, _, reads| {
             let had_times = game.state().times.is_some();
-            let effects = game.availability_changed(reads);
+            let allowed = reads.allowed();
+            let host = Host {
+                now: reads.now(),
+                allowed,
+                ready: false,
+            };
+            let effects = game.availability_changed(&host);
             let mut written = Vec::new();
             if !effects.is_empty() && had_times {
                 written.push("times");
@@ -215,11 +260,42 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         }),
         "computerMove" => computer_step(args, |game, inputs, reads| {
             let uci: String = arg(inputs, 2, "uci")?;
-            let (played, effects) = game.play(reads, &uci);
+            let mut host = idle();
+            if !game.runtime().disposed {
+                host.allowed = reads.allowed();
+                if host.allowed {
+                    host.ready = reads.ready();
+                    let state = game.state();
+                    if host.ready
+                        && state.ply == state.moves.len()
+                        && !game.over()
+                        && !state.thinking
+                        && game.board().turn() == state.color
+                    {
+                        host.now = reads.now();
+                    }
+                }
+            }
+            let (played, effects) = game.play(&uci, &host);
             Ok((json!(played), effects))
         }),
         "computerSearchStart" => computer_change(args, |game, _, reads| {
-            let request = game.search_start(reads)?;
+            let mut host = idle();
+            let state = game.state();
+            if !game.runtime().disposed
+                && !state.thinking
+                && game.board().turn() != state.color
+                && !game.over()
+            {
+                host.ready = reads.ready();
+                if host.ready {
+                    host.allowed = reads.allowed();
+                    if host.allowed {
+                        host.now = reads.now();
+                    }
+                }
+            }
+            let request = game.search_start(&host)?;
             let written = if request.is_some() {
                 vec!["thinking"]
             } else {
@@ -229,12 +305,23 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         }),
         "computerSearchReply" => computer_step(args, |game, inputs, reads| {
             let reply: Reply = arg(inputs, 2, "reply")?;
-            let effects = game.search_reply(reads, reply.epoch, reply.count, &reply.reply);
+            let mut host = idle();
+            if !game.runtime().disposed
+                && reply.epoch == game.state().epoch
+                && reply.count == game.state().moves.len()
+                && !game.over()
+            {
+                host.allowed = reads.allowed();
+                if host.allowed {
+                    host.now = reads.now();
+                }
+            }
+            let effects = game.reply(reply.epoch, reply.count, &reply.reply, &host);
             Ok((Value::Null, effects))
         }),
         "computerSearchFailed" => computer_change(args, |game, inputs, _| {
             let epoch = epoch_arg(inputs)?;
-            Ok((Value::Null, vec![game.search_failed(epoch)], Vec::new()))
+            Ok((Value::Null, vec![game.failure(epoch)], Vec::new()))
         }),
         "computerSearchEnd" => computer_change(args, |game, inputs, _| {
             let epoch = epoch_arg(inputs)?;
@@ -249,7 +336,14 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         "computerStart" => computer_change(args, |game, inputs, reads| {
             let setup: Setup = arg(inputs, 2, "setup")?;
             let clock: Option<Clock> = optional_arg(inputs, 3)?;
-            let effects = game.start(reads, setup, clock)?;
+            let mut host = idle();
+            if clock.is_none_or(|clock| clock.checked().is_ok())
+                && !game.runtime().disposed
+                && Board::new(setup.clone(), Vec::new()).is_ok()
+            {
+                host.now = reads.now();
+            }
+            let effects = game.start(Some(setup), Some(clock), &host)?;
             let fields = [
                 "setup", "clock", "moves", "ply", "resigned", "flagged", "times",
             ];
@@ -257,7 +351,12 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
             Ok((Value::Null, effects, written))
         }),
         "computerTakeback" => computer_change(args, |game, _, reads| {
-            let effects = game.takeback(reads);
+            let mut host = idle();
+            let state = game.state();
+            if !game.runtime().disposed && !state.moves.is_empty() && state.flagged.is_none() {
+                host.now = reads.now();
+            }
+            let effects = game.takeback(&host);
             let written = after_cancel(&effects, &["resigned", "flagged", "moves", "ply"]);
             Ok((Value::Null, effects, written))
         }),
@@ -285,22 +384,36 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         }),
         "localMove" => local_step(args, |game, inputs, reads| {
             let uci: String = arg(inputs, 2, "uci")?;
-            let (san, flagged) = game.play(&uci, || reads.now());
+            let at = if game.over() { 0.0 } else { reads.now() };
+            let (san, flagged) = game.play(&uci, at);
             Ok((json!(san), flagged))
         }),
         "localTakeback" => local_step(args, |game, _, reads| {
-            game.takeback(|| reads.now());
+            let state = game.state();
+            let timed_out = state
+                .times
+                .is_some_and(|times| times.white <= 0.0 || times.black <= 0.0);
+            let at = if state.moves.is_empty() || timed_out {
+                0.0
+            } else {
+                reads.now()
+            };
+            game.takeback(at);
             Ok((Value::Null, false))
         }),
         "localStart" => local_change(args, Method::Start, |game, inputs, reads| {
             let setup: Setup = arg(inputs, 2, "setup")?;
             let clock: Option<LocalClock> = optional_arg(inputs, 3)?;
-            game.start(setup, clock, || reads.now())?;
+            let legal = clock
+                .is_none_or(|clock| clock.white.checked().is_ok() && clock.black.checked().is_ok())
+                && Board::new(setup.clone(), Vec::new()).is_ok();
+            let at = if legal { reads.now() } else { 0.0 };
+            game.start(setup, clock, at)?;
             Ok((Value::Null, false))
         }),
         "localResign" => local_step(args, |game, inputs, _| {
             let color: String = arg(inputs, 2, "color")?;
-            game.resign(&color);
+            game.resign(side(&color));
             Ok((Value::Null, false))
         }),
         "localAgreeDraw" => local_step(args, |game, _, _| {
@@ -313,26 +426,47 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         }),
         "archiveState" => transition(args, |inputs, reads| {
             let identity: Option<Identity> = optional_arg(inputs, 0)?;
+            if identity.is_none() {
+                reads.new_id();
+                reads.now();
+            }
+            let state = archive::State::new(identity, &reads.archive_host(&[]));
             Ok(Done {
-                value: to_value(&archive::State::new(identity, reads)),
+                value: to_value(&state),
                 ..Done::default()
             })
         }),
         "archiveInit" => archive_step(args, |archive, inputs, reads| {
             let resume: bool = arg(inputs, 1, "resume")?;
-            let effects = archive.init(reads, resume);
+            if !resume {
+                reads.stored(&archive.identity.id);
+                reads.new_id();
+                reads.now();
+            }
+            let games = reads.games.clone().unwrap_or_default();
+            let effects = archive.init(resume, &reads.archive_host(&games));
             let written = if resume { vec![] } else { vec!["identity"] };
             Ok((effects, written))
         }),
         "archiveSave" => archive_step(args, |archive, inputs, reads| {
             let finished: bool = arg(inputs, 1, "finished")?;
             let had_play = archive.had_play;
-            let effects = archive.save(reads, finished);
+            reads.save(archive);
+            let games = reads.games.clone().unwrap_or_default();
+            let effects = archive.save(finished, &reads.archive_host(&games));
             Ok((effects, save_written(had_play, reads, 0)))
         }),
         "archiveReset" => archive_step(args, |archive, _, reads| {
             let had_play = archive.had_play;
-            let effects = archive.reset(reads);
+            let previous = reads.stored(&archive.identity.id);
+            let latest = reads.source();
+            if !previous.is_some_and(|previous| previous.get("moves") == latest.get("moves")) {
+                reads.save(archive);
+            }
+            reads.new_id();
+            reads.now();
+            let games = reads.games.clone().unwrap_or_default();
+            let effects = archive.reset(&reads.archive_host(&games));
             let previous = reads.stored.first().cloned().flatten();
             let latest = reads.sources.first().cloned().unwrap_or(Value::Null);
             let kept =
@@ -360,6 +494,15 @@ struct Reply {
     count: usize,
     #[serde(rename = "move")]
     reply: String,
+}
+
+/// A host with nothing read yet.
+fn idle() -> Host {
+    Host {
+        now: 0.0,
+        allowed: false,
+        ready: false,
+    }
 }
 
 fn epoch_arg(inputs: &[Value]) -> Result<u64, String> {
@@ -448,23 +591,25 @@ fn computer_view(inputs: &[Value], reads: &mut Reads) -> Result<Done, String> {
         .unwrap_or_default()
     {
         "over" => json!(game.over()),
-        "winner" => json!(game.winner()),
+        "winner" => json!(game.winner().map(color::name)),
         "result" => to_value(&game.result()),
         "running" => json!(game.running()),
         "draw" => json!(game.draw()),
         "remaining" => {
-            let color = query
-                .get("color")
-                .and_then(Value::as_str)
-                .unwrap_or("white");
+            let color = side(
+                query
+                    .get("color")
+                    .and_then(Value::as_str)
+                    .unwrap_or("white"),
+            );
             let at = reads.now_or(query.get("at").and_then(Value::as_f64));
             json!(game.remaining(color, at))
         }
         "snapshot" => {
             let mut saved = to_value(&game.snapshot(0.0));
             if game.state().times.is_some() {
-                let white = game.remaining("white", reads.now());
-                let black = game.remaining("black", reads.now());
+                let white = game.remaining(color::Color::White, reads.now());
+                let black = game.remaining(color::Color::Black, reads.now());
                 saved["times"] = json!({ "white": white, "black": black });
             }
             saved
@@ -564,18 +709,20 @@ fn local_view(inputs: &[Value], reads: &mut Reads) -> Result<Done, String> {
         "result" => to_value(&game.result()),
         "running" => json!(game.running()),
         "remaining" => {
-            let color = query
-                .get("color")
-                .and_then(Value::as_str)
-                .unwrap_or("white");
+            let color = side(
+                query
+                    .get("color")
+                    .and_then(Value::as_str)
+                    .unwrap_or("white"),
+            );
             let at = reads.now_or(query.get("at").and_then(Value::as_f64));
             json!(game.remaining(color, at))
         }
         "snapshot" => {
             let mut saved = to_value(&game.snapshot(0.0));
             if game.state().times.is_some() {
-                let white = game.remaining("white", reads.now());
-                let black = game.remaining("black", reads.now());
+                let white = game.remaining(color::Color::White, reads.now());
+                let black = game.remaining(color::Color::Black, reads.now());
                 saved["times"] = json!({ "white": white, "black": black });
             }
             saved

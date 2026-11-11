@@ -7,27 +7,8 @@ use serde_json::{Map, Value};
 use crate::js;
 use crate::records;
 use crate::replay::replay_setup;
-use crate::rules::{default_position, lichess_variant, make_fen};
-
-/// The standard start.
 use crate::rules::INITIAL_FEN;
-
-/// `GameSetup`: the rules and the position before the first move.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Setup {
-    pub variant: String,
-    pub fen: String,
-}
-
-impl Setup {
-    pub fn standard() -> Setup {
-        Setup {
-            variant: "standard".into(),
-            fen: INITIAL_FEN.into(),
-        }
-    }
-}
+pub use crate::variant::Setup;
 
 /// `{ initial, increment }` in seconds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -164,43 +145,6 @@ pub enum Call {
     },
 }
 
-impl Call {
-    /// The core method's name.
-    pub fn method(&self) -> &'static str {
-        match self {
-            Call::StartOnline(_) => "startOnline",
-            Call::CancelOnline => "cancelOnline",
-            Call::ResumeOnline => "resumeOnline",
-            Call::OpenGame { .. } => "openGame",
-            Call::PlayOnline { .. } => "playOnline",
-            Call::OnlineAction { .. } => "onlineAction",
-            Call::OnlineChat { .. } => "onlineChat",
-        }
-    }
-
-    /// The core method's arguments.
-    pub fn args(&self) -> Vec<Value> {
-        match self {
-            Call::StartOnline(options) => vec![options.clone()],
-            Call::CancelOnline | Call::ResumeOnline => Vec::new(),
-            Call::OpenGame { account, id } => vec![account.as_str().into(), id.as_str().into()],
-            Call::PlayOnline { id, uci } => vec![id.as_str().into(), uci.as_str().into()],
-            Call::OnlineAction { id, action } => vec![id.as_str().into(), action.as_str().into()],
-            Call::OnlineChat { id } => vec![id.as_str().into()],
-        }
-    }
-}
-
-impl Serialize for Call {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut call = serializer.serialize_struct("Call", 2)?;
-        call.serialize_field("method", self.method())?;
-        call.serialize_field("args", &self.args())?;
-        call.end()
-    }
-}
-
 /// The game a real-time seek left: a correspondence game being played, to go back to.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Left {
@@ -276,7 +220,7 @@ pub struct Outcome {
     pub effects: Vec<Effect>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ret: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     pub call: Option<Call>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending: Option<Pending>,
@@ -386,7 +330,7 @@ impl Model {
     /// move played. An illegal setup falls back to the standard start with no history.
     pub fn replayed(&self) -> Replayed {
         let setup = &self.online_setup;
-        match replay_setup(&setup.variant, &setup.fen, &self.online_moves) {
+        match replay_setup(setup.variant, &setup.fen, &self.online_moves) {
             None => Replayed {
                 setup: Setup::standard(),
                 played: Vec::new(),
@@ -400,7 +344,7 @@ impl Model {
                 };
                 Replayed {
                     setup: Setup {
-                        variant: setup.variant.clone(),
+                        variant: setup.variant,
                         fen,
                     },
                     played: replay.played.into_iter().map(|m| m.san).collect(),
@@ -413,7 +357,7 @@ impl Model {
     pub fn turn(&self) -> &'static str {
         // `replayed()` without its SAN and FEN: only the side to move is wanted.
         let setup = &self.online_setup;
-        match crate::replay::replay_setup_turn(&setup.variant, &setup.fen, &self.online_moves) {
+        match crate::replay::replay_setup_turn(setup.variant, &setup.fen, &self.online_moves) {
             None => turn_of(&Setup::standard().fen),
             // Without a move the position is the setup as given.
             Some((0, _)) => turn_of(&setup.fen),
@@ -460,8 +404,8 @@ impl Model {
         if let Some(days) = game.days {
             out.insert("days".into(), days.into());
         }
-        if game.setup.variant != "standard" {
-            out.insert("variant".into(), game.setup.variant.clone().into());
+        if !game.setup.variant.is_standard() {
+            out.insert("variant".into(), game.setup.variant.key().into());
         } else if game.setup.fen != INITIAL_FEN {
             out.insert("fen".into(), game.setup.fen.clone().into());
         }
@@ -512,22 +456,6 @@ pub fn turn_of(fen: &str) -> &'static str {
         "black"
     } else {
         "white"
-    }
-}
-
-/// `variantFromLichess`: the playable variant for a Lichess key; `fromPosition` is standard rules.
-pub fn variant_from_lichess(key: Option<&str>) -> Option<&'static str> {
-    match key {
-        None | Some("") | Some("fromPosition") => Some("standard"),
-        Some(key) => crate::variant::Variant::from_key(key).map(|variant| variant.key()),
-    }
-}
-
-/// `defaultFen(variant)`: the variant's usual start (Chess960's standard start is the usual one).
-pub fn default_fen(variant: &str) -> String {
-    match lichess_variant(variant) {
-        Some(rules) => make_fen(&default_position(rules)),
-        None => INITIAL_FEN.into(),
     }
 }
 

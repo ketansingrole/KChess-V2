@@ -12,9 +12,7 @@ use std::sync::LazyLock;
 
 const THEMES_JSON: &str = include_str!("../data/themes.json");
 
-static PRESETS: LazyLock<Value> = LazyLock::new(|| {
-    serde_json::from_str(THEMES_JSON).unwrap_or_else(|_| Value::Array(Vec::new()))
-});
+static PRESETS: LazyLock<Value> = LazyLock::new(|| crate::embedded::parse("themes", THEMES_JSON));
 
 /// The preset themes, in the order the picker lists them.
 pub fn presets() -> &'static Value {

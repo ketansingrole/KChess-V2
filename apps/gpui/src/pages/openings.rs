@@ -96,7 +96,11 @@ fn percent(value: f64) -> String {
 }
 
 fn line_of(moves: &[String]) -> Vec<(String, String, String)> {
-    let Some(replay) = kchess_domain::replay::replay_setup("standard", STANDARD_FEN, moves) else {
+    let Some(replay) = kchess_domain::replay::replay_setup(
+        kchess_domain::variant::Variant::Standard,
+        STANDARD_FEN,
+        moves,
+    ) else {
         return Vec::new();
     };
     let positions = kchess_domain::replay::replay_positions(STANDARD_FEN, moves);
@@ -292,7 +296,11 @@ impl OpeningsPage {
         let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 Some(Color::White),
                 None,
@@ -377,8 +385,11 @@ impl OpeningsPage {
         self.previews
             .entry(fen.to_string())
             .or_insert_with(|| {
-                let position =
-                    kchess_domain::rules::setup_start("standard", fen).unwrap_or_default();
+                let position = kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    fen,
+                )
+                .unwrap_or_default();
                 let mut state = BoardState::of(&position, Color::White, None, None);
                 state.preview = true;
                 cx.new(|_| ChessBoard::new(state))
@@ -520,7 +531,9 @@ impl OpeningsPage {
         let fen = line_of(&line)
             .last()
             .map_or_else(|| STANDARD_FEN.to_string(), |(_, _, fen)| fen.clone());
-        let position = kchess_domain::rules::setup_start("standard", &fen).unwrap_or_default();
+        let position =
+            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &fen)
+                .unwrap_or_default();
         let last = line
             .last()
             .and_then(|uci| Some((uci.get(0..2)?.parse().ok()?, uci.get(2..4)?.parse().ok()?)));
@@ -537,8 +550,9 @@ impl OpeningsPage {
             .last()
             .map_or_else(|| STANDARD_FEN.to_string(), |(_, _, fen)| fen.clone());
         let setup = json!({ "variant": "standard", "fen": fen });
-        let typed = kchess_domain::rules::setup_start("standard", &fen)
-            .and_then(|position| view::typed_uci(&setup, &position, &text));
+        let typed =
+            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &fen)
+                .and_then(|position| view::typed_uci(&setup, &position, &text));
         if let Some(uci) = typed {
             self.move_input
                 .update(cx, |input, cx| input.set_value("", window, cx));

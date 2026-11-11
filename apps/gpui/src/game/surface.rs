@@ -175,7 +175,11 @@ impl MoveBox {
             return None;
         }
         let uci = position.and_then(|position| {
-            kchess_games::typed_uci(variant, &kchess_domain::rules::make_fen(position), &text)
+            kchess_games::typed_uci(
+                kchess_domain::variant::Variant::from_key(variant)?,
+                &kchess_domain::rules::make_fen(position),
+                &text,
+            )
         });
         match &uci {
             Some(_) => {

@@ -1,6 +1,7 @@
 //! Rating-history keys, display names, histories rebuilt from
 //! games and the merge of Lichess's own histories with them.
 
+use crate::perf::Speed;
 use crate::variant::Variant;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -17,14 +18,18 @@ const fn named(variant: Variant) -> (&'static str, &'static str) {
     (variant.key(), variant.label())
 }
 
+const fn speed(speed: Speed) -> (&'static str, &'static str) {
+    (speed.key(), speed.label())
+}
+
 /// The label for each rating-history key.
 pub const DISPLAY_NAMES: &[(&str, &str)] = &[
-    ("ultraBullet", "UltraBullet"),
-    ("bullet", "Bullet"),
-    ("blitz", "Blitz"),
-    ("rapid", "Rapid"),
-    ("classical", "Classical"),
-    ("correspondence", "Correspondence"),
+    speed(Speed::UltraBullet),
+    speed(Speed::Bullet),
+    speed(Speed::Blitz),
+    speed(Speed::Rapid),
+    speed(Speed::Classical),
+    speed(Speed::Correspondence),
     named(Variant::Chess960),
     named(Variant::Crazyhouse),
     named(Variant::Antichess),
