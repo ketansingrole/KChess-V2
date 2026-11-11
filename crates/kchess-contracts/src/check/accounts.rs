@@ -439,6 +439,38 @@ impl Validate for InsightsQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn names_and_messages_are_trimmed() {
+        assert_eq!(checked::<GameAccount>(json!(" Alice ")), Ok(json!("Alice")));
+        assert_eq!(
+            checked::<GameAccount>(json!(" hikaru@chess.com ")),
+            Ok(json!("hikaru@chess.com"))
+        );
+        assert_eq!(checked::<GameAccount>(json!("a b")), Err(USERNAME.into()));
+        assert_eq!(
+            checked::<ChesscomUsername>(json!(" hikaru_n ")),
+            Ok(json!("hikaru_n"))
+        );
+        assert_eq!(
+            checked::<ChesscomUsername>(json!("a")),
+            Err(CHESSCOM_USERNAME.into())
+        );
+        assert_eq!(
+            checked::<FriendList>(json!([" Alice ", "bob42"])),
+            Ok(json!(["Alice", "bob42"]))
+        );
+        assert_eq!(
+            checked::<FriendList>(json!([])),
+            Err("Choose at least one player.".into())
+        );
+        assert_eq!(checked::<MessageText>(json!("  hi  ")), Ok(json!("hi")));
+        assert_eq!(
+            checked::<MessageText>(json!("   ")),
+            Err("Type a message first.".into())
+        );
+    }
 
     #[test]
     fn a_game_result_filter_is_one_of_three() {

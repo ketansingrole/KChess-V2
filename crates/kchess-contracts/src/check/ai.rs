@@ -53,6 +53,39 @@ impl Validate for AiRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    /// A position of 100 bytes, lines of 64 moves and a played move of 5 are explained; one more
+    /// of any is not.
+    #[test]
+    fn a_request_is_short_enough_to_explain() {
+        let line = |n: usize| vec!["e2e4"; n];
+        let request = |fen: usize, moves: usize, best: usize, refutation: usize, played: &str| {
+            json!({
+                "kind": "move",
+                "fen": "f".repeat(fen),
+                "moves": line(moves),
+                "best": line(best),
+                "refutation": line(refutation),
+                "played": played,
+            })
+        };
+        let explained = request(100, 64, 64, 64, "e7e8q");
+        assert_eq!(checked::<AiRequest>(explained.clone()), Ok(explained));
+        for refused in [
+            request(101, 0, 0, 0, "e2e4"),
+            request(10, 65, 0, 0, "e2e4"),
+            request(10, 0, 65, 0, "e2e4"),
+            request(10, 0, 0, 65, "e2e4"),
+            request(10, 0, 0, 0, "e7e8qq"),
+        ] {
+            assert_eq!(
+                checked::<AiRequest>(refused.clone()),
+                Err(UNEXPLAINABLE.into()),
+                "{refused}"
+            );
+        }
+    }
 
     #[test]
     fn a_model_is_named_and_short() {

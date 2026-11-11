@@ -102,3 +102,28 @@ impl Validate for AppTheme {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_theme_has_a_name_and_one_palette_or_both() {
+        let palette = json!({ "bg": "#000000", "text": "#ffffff", "primary": "#1a2b3c" });
+        for side in ["light", "dark"] {
+            let mut theme = json!({ "id": "night", "name": " Night " });
+            theme[side] = palette.clone();
+            let theme = check::<AppTheme>(J::from(&theme)).expect("one palette is enough");
+            assert_eq!(theme.name, "Night");
+        }
+        assert_eq!(
+            checked::<AppTheme>(json!({ "id": "night", "name": "Night" })),
+            Err("Add a \"dark\" or \"light\" palette.".into())
+        );
+        assert_eq!(
+            checked::<AppTheme>(json!({ "id": "night", "name": 1, "dark": palette })),
+            Err(NAME.into())
+        );
+    }
+}

@@ -207,6 +207,15 @@ mod tests {
     }
 
     #[test]
+    fn a_reply_is_its_value_or_its_error() {
+        assert_eq!(HostReply::Value(json!(true)).into_result(), Ok(json!(true)));
+        assert_eq!(
+            HostReply::Error("No.".into()).into_result(),
+            Err("No.".into())
+        );
+    }
+
+    #[test]
     fn capabilities_cross_by_name() {
         assert_eq!(
             serde_json::to_value([Capability::Browser, Capability::Focus]).expect("json"),

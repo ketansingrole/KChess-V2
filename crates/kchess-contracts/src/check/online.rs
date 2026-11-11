@@ -403,6 +403,46 @@ impl Validate for NewArena {
 mod tests {
     use super::*;
 
+    #[test]
+    fn texts_and_names_are_kept_as_sent_or_trimmed() {
+        use serde_json::json;
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        assert_eq!(checked::<FullFen>(json!(start)), Ok(json!(start)));
+        assert_eq!(
+            checked::<FullFen>(json!("e4")),
+            Err("Invalid position.".into())
+        );
+        assert_eq!(
+            checked::<TournamentId>(json!("abcd1234")),
+            Ok(json!("abcd1234"))
+        );
+        assert_eq!(
+            checked::<TournamentId>(json!("abc")),
+            Err("Invalid tournament.".into())
+        );
+        assert_eq!(
+            checked::<TournamentPassword>(json!("open")),
+            Ok(json!("open"))
+        );
+        assert_eq!(
+            checked::<TournamentPassword>(json!("x".repeat(101))),
+            Err("Invalid password.".into())
+        );
+        assert_eq!(
+            checked::<BroadcastQuery>(json!("  world ")),
+            Ok(json!("world"))
+        );
+        assert_eq!(
+            checked::<PresenceUsers>(json!([" Alice ", "bob42"])),
+            Ok(json!(["Alice", "bob42"]))
+        );
+        assert_eq!(
+            checked::<PresenceUsers>(json!("Alice")),
+            Err("Invalid users.".into())
+        );
+        assert_eq!(checked::<PresenceUsers>(json!([1])), Err(USERNAME.into()));
+    }
+
     fn obj(fields: Vec<(&str, J)>) -> J {
         J::Obj(fields.into_iter().map(|(k, v)| (k.into(), v)).collect())
     }
