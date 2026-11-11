@@ -231,7 +231,35 @@ wire_enum!(#[doc = "What a connected account can do about a player on Lichess."]
 
 union!(#[doc = "Tournament pairing system."] TournamentSystem { Arena = "arena", Swiss = "swiss" });
 union!(#[doc = "Whether play is rated or casual."] LookupMode { Rated = "rated", Casual = "casual" });
-union!(#[doc = "Filter games by result."] GameResultFilter { Win = "win", Loss = "loss", Draw = "draw" });
+/// Filter games by result. A refusal names it `GameResult`, as the recorded checks did.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(expecting = "enum GameResult")]
+pub enum GameResultFilter {
+    #[serde(rename = "win")]
+    Win,
+    #[serde(rename = "loss")]
+    Loss,
+    #[serde(rename = "draw")]
+    Draw,
+}
+
+impl GameResultFilter {
+    /// Every value, in declaration order.
+    pub const ALL: &[GameResultFilter] = &[
+        GameResultFilter::Win,
+        GameResultFilter::Loss,
+        GameResultFilter::Draw,
+    ];
+
+    /// Its wire value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            GameResultFilter::Win => "win",
+            GameResultFilter::Loss => "loss",
+            GameResultFilter::Draw => "draw",
+        }
+    }
+}
 union!(#[doc = "Whether a challenge was received or sent."] ChallengeDirection { In = "in", Out = "out" });
 union!(#[doc = "Which online stream a message arrived on."] Lane { Events = "events", Game = "game", Seek = "seek" });
 union!(#[doc = "Connection state of the online play session."] OnlinePhase {

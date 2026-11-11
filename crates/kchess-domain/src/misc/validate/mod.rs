@@ -136,7 +136,6 @@ fn each<T>(items: &[T], check: impl Fn(&T) -> Checked<()>) -> Checked<()> {
 /* ── Shared fields ── */
 
 const USERNAME: &str = "Enter a valid Lichess username.";
-const NOTIFY: &str = "Invalid notification setting.";
 const VOICE: &str = "Invalid voice entry.";
 const ATTEMPT: &str = "Invalid puzzle attempt.";
 
@@ -152,19 +151,6 @@ fn username(text: &str, path: &str) -> Checked<String> {
 fn game_account(text: &str, path: &str) -> Checked<String> {
     let trimmed = js::trim(text);
     matches(trimmed, patterns::game_account, Some(USERNAME), path, "")?;
-    Ok(trimmed.to_owned())
-}
-
-/// A Chess.com username, trimmed.
-fn chesscom_username(text: &str) -> Checked<String> {
-    let trimmed = js::trim(text);
-    matches(
-        trimmed,
-        patterns::chesscom_username,
-        Some("Enter a valid Chess.com username."),
-        "",
-        "",
-    )?;
     Ok(trimmed.to_owned())
 }
 
@@ -235,9 +221,10 @@ use requests::*;
 use values::*;
 
 pub use requests::{
-    AnalysisRequest, BestMoveOptions, GamePageQuery, assert_analysis_request,
-    assert_best_move_options, assert_game_page_query, assert_watch_target,
+    AnalysisRequest, BestMoveOptions, assert_analysis_request, assert_best_move_options,
+    assert_watch_target,
 };
+
 pub use values::{assert_moves, assert_username};
 
 /* ── One check per argument ── */
@@ -341,26 +328,20 @@ checks! {
     voice_audio => assert_voice_audio,
     username => assert_username,
     game_id => assert_game_id,
-    game_account => assert_game_account,
-    chesscom_username => assert_chesscom_username,
     game_ids => assert_game_ids,
     uci => assert_uci,
     fen => assert_fen,
     moves => assert_moves,
     level => assert_level,
     usernames => assert_usernames,
-    friend_list => assert_friend_list,
     action => assert_action,
     chat_room => assert_chat_room,
-    relation_action => assert_relation_action,
     chat_text => assert_chat_text,
     new_arena => assert_new_arena,
-    message_text => assert_message_text,
     decline_reason => assert_decline_reason,
     tournament_system => assert_tournament_system,
     tournament_id => assert_tournament_id,
     tournament_password => assert_tournament_password,
-    insights_query => assert_insights_query,
     perf_type => assert_perf_type,
     variant => assert_variant,
     lichess_id => assert_lichess_id,
@@ -368,8 +349,6 @@ checks! {
     optional_account => assert_optional_account,
     online_options => assert_online_options,
     theme => assert_theme,
-    core_settings => assert_core_settings,
-    settings => assert_settings,
     puzzle_request => assert_puzzle_request,
     puzzle_solve => assert_puzzle_solve,
     days => assert_days,
@@ -391,7 +370,6 @@ checks! {
     voice_update => assert_voice_update,
     voice_id => assert_voice_id,
     voice_limit => assert_voice_limit,
-    game_page_query => assert_game_page_query,
     study_sync_request => assert_study_sync_request,
     broadcast_query => assert_broadcast_query,
     lines => assert_lines,
@@ -475,135 +453,6 @@ mod tests {
             ("chapterId", J::Str("c1".into())),
         ]);
         assert!(checks::study_command_shape(without_place).is_err());
-    }
-
-    fn settings() -> Vec<(&'static str, J)> {
-        let mut fields = vec![
-            ("appearance", J::Str("system".into())),
-            ("boardTheme", J::Str("classic".into())),
-            ("lightTheme", J::Str("light".into())),
-            ("darkTheme", J::Str("dark".into())),
-            ("pieceSet", J::Str("cburnett".into())),
-            ("pieceAnimation", J::Str("normal".into())),
-            ("coordinates", J::Str("inside".into())),
-            ("soundVolume", J::Num(7.0)),
-            ("enginePath", J::Str(String::new())),
-            ("promotion", J::Str("ask".into())),
-            (
-                "engineLevels",
-                J::Arr(vec![J::Str("gm".into()), J::Str("club".into())]),
-            ),
-            ("reviewAuto", J::Str("off".into())),
-            ("correspondencePoll", J::Num(30.0)),
-        ];
-        for flag in [
-            "soundEnabled",
-            "premove",
-            "showLegalMoves",
-            "notificationsEnabled",
-            "notifyActive",
-            "notifyBackground",
-            "notifyOpponentMove",
-            "notifyLowTime",
-            "notifyGameEvents",
-            "notifyComputerMove",
-            "notifySound",
-            "voicePushToTalk",
-            "voiceConfirmMoves",
-            "voiceHistory",
-            "updateAutoCheck",
-            "updateAutoDownload",
-            "updateInstallOnQuit",
-            "reviewOnBattery",
-            "receiveChallenges",
-            "notifyChallenges",
-            "onlineChat",
-            "zenMode",
-            "blindfold",
-            "cloudEval",
-            "showOpeningName",
-            "swipeNavigation",
-            "swipeIndicator",
-            "puzzleAutoNext",
-            "confirmCorrespondence",
-            "figurineNotation",
-        ] {
-            fields.push((flag, J::Bool(true)));
-        }
-        fields
-    }
-
-    #[test]
-    fn settings_normalize_in_the_renderers_order() {
-        let normalized = checks::settings(obj(settings())).unwrap();
-        assert_eq!(normalized["soundVolume"], json!(1));
-        assert_eq!(normalized["engineLevels"], json!(["club", "gm"]));
-        let keys: Vec<&String> = normalized.as_object().unwrap().keys().collect();
-        assert_eq!(keys[..3], ["appearance", "boardTheme", "lightTheme"]);
-    }
-
-    /// A frontend from before move confirmation sends no `confirmCorrespondence`: its settings
-    /// still save, with confirmation on.
-    #[test]
-    fn settings_without_move_confirmation_keep_it_on() {
-        let older: Vec<_> = settings()
-            .into_iter()
-            .filter(|(key, _)| *key != "confirmCorrespondence")
-            .collect();
-        let normalized = checks::settings(obj(older)).unwrap();
-        assert_eq!(normalized["confirmCorrespondence"], json!(true));
-        let mut off = settings();
-        off.retain(|(key, _)| *key != "confirmCorrespondence");
-        off.push(("confirmCorrespondence", J::Bool(false)));
-        let normalized = checks::settings(obj(off)).unwrap();
-        assert_eq!(normalized["confirmCorrespondence"], json!(false));
-        let mut wrong = settings();
-        wrong.retain(|(key, _)| *key != "confirmCorrespondence");
-        wrong.push(("confirmCorrespondence", J::Num(1.0)));
-        assert_eq!(
-            checks::settings(obj(wrong)).unwrap_err(),
-            "Invalid move confirmation setting."
-        );
-    }
-
-    #[test]
-    fn each_setting_keeps_its_message() {
-        for (key, value, message) in [
-            ("notificationsEnabled", J::Num(1.0), NOTIFY),
-            ("notifyLowTime", J::Null, NOTIFY),
-            (
-                "engineLevels",
-                J::Arr(vec![J::Num(1.0)]),
-                "Invalid engine level.",
-            ),
-            (
-                "engineLevels",
-                J::Arr(vec![]),
-                "Keep at least one computer level.",
-            ),
-            ("soundVolume", J::Num(f64::NAN), "Invalid sound volume."),
-            (
-                "soundVolume",
-                J::Num(f64::INFINITY),
-                "Invalid sound volume.",
-            ),
-            (
-                "correspondencePoll",
-                J::Num(1.5),
-                "Invalid correspondence check interval.",
-            ),
-            ("lightTheme", J::Str("Bad".into()), "Invalid color theme."),
-        ] {
-            let mut fields = settings();
-            fields.iter_mut().find(|(k, _)| *k == key).unwrap().1 = value;
-            assert_eq!(checks::settings(obj(fields)), Err(message.into()), "{key}");
-        }
-        let mut missing = settings();
-        missing.retain(|(k, _)| *k != "zenMode");
-        assert_eq!(
-            checks::settings(obj(missing)),
-            Err("Invalid settings.".into())
-        );
     }
 
     #[test]

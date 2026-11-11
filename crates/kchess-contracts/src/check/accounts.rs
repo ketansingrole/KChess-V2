@@ -499,6 +499,159 @@ mod tests {
     }
 
     #[test]
+    fn a_relation_is_one_of_four_actions() {
+        assert_eq!(
+            check::<RelationAction>(J::Str("block".into())),
+            Ok(RelationAction::Block)
+        );
+        assert_eq!(
+            check::<RelationAction>(J::Str("mute".into())),
+            Err("Invalid action.".into())
+        );
+    }
+
+    fn obj(fields: Vec<(&str, J)>) -> J {
+        J::Obj(fields.into_iter().map(|(k, v)| (k.into(), v)).collect())
+    }
+
+    fn settings() -> Vec<(&'static str, J)> {
+        let mut fields = vec![
+            ("appearance", J::Str("system".into())),
+            ("boardTheme", J::Str("classic".into())),
+            ("lightTheme", J::Str("light".into())),
+            ("darkTheme", J::Str("dark".into())),
+            ("pieceSet", J::Str("cburnett".into())),
+            ("pieceAnimation", J::Str("normal".into())),
+            ("coordinates", J::Str("inside".into())),
+            ("soundVolume", J::Num(7.0)),
+            ("enginePath", J::Str(String::new())),
+            ("promotion", J::Str("ask".into())),
+            (
+                "engineLevels",
+                J::Arr(vec![J::Str("gm".into()), J::Str("club".into())]),
+            ),
+            ("reviewAuto", J::Str("off".into())),
+            ("correspondencePoll", J::Num(30.0)),
+        ];
+        for flag in [
+            "soundEnabled",
+            "premove",
+            "showLegalMoves",
+            "notificationsEnabled",
+            "notifyActive",
+            "notifyBackground",
+            "notifyOpponentMove",
+            "notifyLowTime",
+            "notifyGameEvents",
+            "notifyComputerMove",
+            "notifySound",
+            "voicePushToTalk",
+            "voiceConfirmMoves",
+            "voiceHistory",
+            "updateAutoCheck",
+            "updateAutoDownload",
+            "updateInstallOnQuit",
+            "reviewOnBattery",
+            "receiveChallenges",
+            "notifyChallenges",
+            "onlineChat",
+            "zenMode",
+            "blindfold",
+            "cloudEval",
+            "showOpeningName",
+            "swipeNavigation",
+            "swipeIndicator",
+            "puzzleAutoNext",
+            "confirmCorrespondence",
+            "figurineNotation",
+        ] {
+            fields.push((flag, J::Bool(true)));
+        }
+        fields
+    }
+
+    #[test]
+    fn settings_normalize_in_the_renderers_order() {
+        let normalized = check::<Settings>(obj(settings())).unwrap();
+        assert_eq!(normalized.frontend.sound_volume, 1.0);
+        assert_eq!(
+            normalized.core.engine_levels,
+            [
+                crate::types::EngineLevel::Club,
+                crate::types::EngineLevel::Gm
+            ]
+        );
+    }
+
+    /// A frontend from before move confirmation sends no `confirmCorrespondence`: its settings
+    /// still save, with confirmation on.
+    #[test]
+    fn settings_without_move_confirmation_keep_it_on() {
+        let older: Vec<_> = settings()
+            .into_iter()
+            .filter(|(key, _)| *key != "confirmCorrespondence")
+            .collect();
+        let normalized = check::<Settings>(obj(older)).unwrap();
+        assert!(normalized.frontend.confirm_correspondence);
+        let mut off = settings();
+        off.retain(|(key, _)| *key != "confirmCorrespondence");
+        off.push(("confirmCorrespondence", J::Bool(false)));
+        let normalized = check::<Settings>(obj(off)).unwrap();
+        assert!(!normalized.frontend.confirm_correspondence);
+        let mut wrong = settings();
+        wrong.retain(|(key, _)| *key != "confirmCorrespondence");
+        wrong.push(("confirmCorrespondence", J::Num(1.0)));
+        assert_eq!(
+            check::<Settings>(obj(wrong)).unwrap_err(),
+            "Invalid move confirmation setting."
+        );
+    }
+
+    #[test]
+    fn each_setting_keeps_its_message() {
+        for (key, value, message) in [
+            ("notificationsEnabled", J::Num(1.0), NOTIFY),
+            ("notifyLowTime", J::Null, NOTIFY),
+            (
+                "engineLevels",
+                J::Arr(vec![J::Num(1.0)]),
+                "Invalid engine level.",
+            ),
+            (
+                "engineLevels",
+                J::Arr(vec![]),
+                "Keep at least one computer level.",
+            ),
+            ("soundVolume", J::Num(f64::NAN), "Invalid sound volume."),
+            (
+                "soundVolume",
+                J::Num(f64::INFINITY),
+                "Invalid sound volume.",
+            ),
+            (
+                "correspondencePoll",
+                J::Num(1.5),
+                "Invalid correspondence check interval.",
+            ),
+            ("lightTheme", J::Str("Bad".into()), "Invalid color theme."),
+        ] {
+            let mut fields = settings();
+            fields.iter_mut().find(|(k, _)| *k == key).unwrap().1 = value;
+            assert_eq!(
+                check::<Settings>(obj(fields)).map(|_| ()),
+                Err(message.into()),
+                "{key}"
+            );
+        }
+        let mut missing = settings();
+        missing.retain(|(k, _)| *k != "zenMode");
+        assert_eq!(
+            check::<Settings>(obj(missing)).map(|_| ()),
+            Err("Invalid settings.".into())
+        );
+    }
+
+    #[test]
     fn an_optional_account_is_empty_or_a_name() {
         assert_eq!(
             check::<OptionalAccount>(J::Str(String::new())),
