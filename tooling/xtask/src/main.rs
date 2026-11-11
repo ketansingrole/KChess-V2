@@ -32,6 +32,7 @@ mod util;
 mod voice;
 #[cfg(test)]
 mod workflows;
+mod worktrees;
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -62,7 +63,7 @@ const COMMANDS: &[Command] = &[
              and restarts it on every save, back on the same page",
         )],
         run: |rest| {
-            sweep::build_folder(false);
+            sweep::build_folder(false)?;
             app::run(rest)
         },
     },
@@ -117,13 +118,12 @@ const COMMANDS: &[Command] = &[
             "[--dry-run]",
             "Delete what the build folder keeps of builds no current one uses, and on macOS the \
              object files no program uses (`check`, `check-fast` and `app` do it first), then \
-             those of the checkout's mutants tree (the pre-push hook's, which sweeps it too); \
+             those of the checkout's mutants tree (the pre-push hook's, which sweeps it too), then \
+             the build folders of other worktrees nobody is building in: merged into main and idle \
+             2 h, idle 3 days, or any while under 50 GB is free; refuses below 15 GB free; \
              --dry-run says how much would go. CARGO_TARGET_DIR picks the build",
         )],
-        run: |rest| {
-            sweep::build_folder(rest.iter().any(|arg| arg == "--dry-run"));
-            Ok(())
-        },
+        run: |rest| sweep::build_folder(rest.iter().any(|arg| arg == "--dry-run")),
     },
     Command {
         name: "mutants",

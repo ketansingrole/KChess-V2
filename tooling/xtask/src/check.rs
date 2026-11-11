@@ -229,7 +229,7 @@ fn coverage() -> Result {
 /// app's tests to its `gpui` job, which runs them on Linux beside it.
 pub fn check(args: &[String]) -> Result {
     let app = !args.iter().any(|arg| arg == "--without-app-tests");
-    crate::sweep::build_folder(false);
+    crate::sweep::build_folder(false)?;
     step("format and lints", lints)?;
     step("notices", crate::licenses::check_notices)?;
     step("workspace hack", crate::hack::check)?;
@@ -451,7 +451,7 @@ fn changed_files(base: &str, uncommitted: bool) -> Result<Vec<String>> {
 /// `check-fast`: format, lints, the steps that read a changed file, and the tests of the packages
 /// changed since main (committed or not). Never a substitute for `check` before a push to main.
 pub fn fast() -> Result {
-    crate::sweep::build_folder(false);
+    crate::sweep::build_folder(false)?;
     let base = crate::util::merge_base(&root())?;
     let files = changed_files(&base, true)?;
     let scopes: Vec<Scope> = files

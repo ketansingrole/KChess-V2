@@ -12,9 +12,11 @@ use std::path::{Path, PathBuf};
 
 use crate::util::{Result, git, say};
 
-const TREE: &str = ".data/mutants-tree";
+/// The tree, from the checkout.
+pub(crate) const TREE: &str = ".data/mutants-tree";
 
-const LOCK: &str = ".data/mutants-tree.lock";
+/// The lock held while the tree is in use, from the checkout.
+pub(crate) const LOCK: &str = ".data/mutants-tree.lock";
 
 /// A checkout's mutants tree, set to one commit and locked until this is dropped.
 pub struct Tree {

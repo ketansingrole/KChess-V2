@@ -218,6 +218,11 @@ and in the App Store. Its readers play chess; they are not developers.
   use `git stash` (one stash list serves every worktree, so a pop can take another session's
   work); keep work in progress as commits on your own branch, and never commit in a checkout or
   on a branch another session is using.
+- Each worktree builds its own `target/` (6–37 GB). Remove your worktree (`git worktree remove
+  <path>`) once its branch has merged, and each agent worktree you started once you have taken
+  its work. The sweep that `check-fast`, `check` and `app` run first also deletes the build
+  folders of other worktrees nobody is building in (`tooling/xtask/src/worktrees.rs`), and
+  refuses a build when under 15 GB is free.
 - Bug fixes must retain a regression for the concrete failure sequence. When generated
   tests expose a failure, preserve its replay seed/path and a focused reproducer.
 - Do not lower the coverage floors (`tooling/xtask/src/check.rs`) without a measurement that
