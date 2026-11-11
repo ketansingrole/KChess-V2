@@ -19,10 +19,8 @@ impl SystemApi for Core {
 
     async fn custom_themes(&self) -> Result<CustomThemeReport> {
         let (host, data_dir) = (Arc::clone(&self.host), self.data_dir());
-        let report =
-            tokio::task::spawn_blocking(move || crate::themes::custom_themes(&*host, &data_dir))
-                .await
-                .map_err(|_| CoreError::new("Custom themes could not be read."))??;
-        serde_json::from_value(report).map_err(|cause| CoreError::wrap("custom themes", cause))
+        tokio::task::spawn_blocking(move || crate::themes::custom_themes(&*host, &data_dir))
+            .await
+            .map_err(|_| CoreError::new("Custom themes could not be read."))?
     }
 }

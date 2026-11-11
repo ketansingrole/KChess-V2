@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use kchess_domain::misc::constants::SESSION_KINDS;
 use kchess_domain::misc::value::J;
-use kchess_domain::misc::{self, checks, documents};
+use kchess_domain::misc::{self, documents};
 
 use kchess_contracts::{check, types};
 
@@ -95,7 +95,7 @@ fn validator(method: &str) -> Option<fn(J) -> Out> {
         "assertSide" => typed::<check::Side>,
         "assertStudyCommandShape" => typed::<types::StudyCommand>,
         "assertStudySyncRequest" => typed::<types::StudySyncRequest>,
-        "assertTheme" => checks::theme,
+        "assertTheme" => typed::<types::AppTheme>,
         "assertTournamentId" => typed::<check::TournamentId>,
         "assertTournamentPassword" => tournament_password,
         "assertTournamentSystem" => typed::<types::TournamentSystem>,
@@ -120,7 +120,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
             "{method} was called without its lossless arguments"
         )));
     };
-    Some(misc::inputs(user, sidecar).and_then(|values| answer(method, values)))
+    Some(super::sidecar::inputs(user, sidecar).and_then(|values| answer(method, values)))
 }
 
 fn answer(method: &str, values: Vec<J>) -> Out {

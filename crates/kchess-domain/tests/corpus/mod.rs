@@ -8,6 +8,7 @@ mod online_game;
 mod records;
 mod rules;
 mod sessions;
+mod sidecar;
 mod theme;
 mod trainer;
 mod training;

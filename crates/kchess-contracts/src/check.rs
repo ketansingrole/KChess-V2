@@ -1,13 +1,12 @@
-//! An argument's check is its type: a core method declared with a typed argument (no `= check`
-//! in `core_api!`) receives it decoded and checked by the type's [`Validate`], whose refusal is
-//! the message the caller sees.
+//! An argument's check is its type: a core method receives each argument decoded and checked by
+//! the type's [`Validate`], whose refusal is the message the caller sees.
 //!
 //! Arguments arrive as the values a frontend sent (`J`: JSON, where a `null` at the top is an
 //! argument not given). A value of the wrong type takes the message its type names for that place
 //! (`decode`'s `messages`, by the keys of the rejected value's path, `[]` for a list position);
 //! without one, the decoder's own text prefixed by the path (`speeds[0]: unknown variant …`).
-//! The rules corpus (`kchess-domain/tests/rules_corpus.rs`) pins these messages: a type that
-//! replaces a `kchess_domain::misc::checks` validator answers its recorded cases there.
+//! The rules corpus (`kchess-domain/tests/rules_corpus.rs`) pins these messages: each type answers
+//! the cases recorded for the validator it replaced.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -27,6 +26,7 @@ mod online;
 mod puzzles;
 mod reviews;
 mod studies;
+mod themes;
 
 pub use accounts::*;
 pub use ai::*;

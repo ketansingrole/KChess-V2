@@ -1,5 +1,5 @@
 //! Library documents: the session decoders and the session checks a frontend's library calls
-//! pass through; the other document checks are in `validate/`.
+//! pass through; a method's arguments are checked by their types (`kchess_contracts::check`).
 
 use std::cell::RefCell;
 

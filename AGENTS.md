@@ -153,8 +153,8 @@ and in the App Store. Its readers play chess; they are not developers.
   call it by `CoreApi` method name and subscribe to its events, usually through the profile's
   shared core service (`crates/kchess-service`, `docs/shared-core.md`); host capabilities they
   answer go through `host:request`. A new method is one declaration in `core_api!`
-  (`kchess-contracts/src/core_api.rs`): its name, each argument with its check
-  (`kchess_domain::misc::checks`), its answer, its assistance gate and the profile areas it
+  (`kchess-contracts/src/core_api.rs`): its name, each argument with its type, which is its check
+  (`kchess_contracts::check::Validate`), its answer, its assistance gate and the profile areas it
   writes. That makes its typed call, its row in `METHODS` and its method on the area's trait,
   which the core implements in `crates/kchess-core/src/facade/`. Events are `CoreEvent` variants
   (`kchess-contracts/src/events.rs`).

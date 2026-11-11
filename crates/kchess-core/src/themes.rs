@@ -1,11 +1,12 @@
-//! The user's own app themes: `*.json` files in the profile's `themes` folder, each checked by
-//! the theme validator (`assertTheme`). Every KChess app on the profile reads the same files.
+//! The user's own app themes: `*.json` files in the profile's `themes` folder, each checked as
+//! an `AppTheme`. Every KChess app on the profile reads the same files.
 
-use kchess_domain::misc::checks;
+use kchess_contracts::check::check;
+use kchess_contracts::types::{AppTheme, CustomThemeReport};
 use kchess_domain::misc::value::J;
 use std::path::{Path, PathBuf};
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
@@ -44,8 +45,8 @@ pub fn dir(data_dir: &Path) -> PathBuf {
     data_dir.join("themes")
 }
 
-/// Every valid theme file, as `CustomThemeReport`; a bad file is reported, never fatal.
-pub fn custom_themes(host: &dyn Host, data_dir: &Path) -> Result<Value> {
+/// Every valid theme file; a bad file is reported, never fatal.
+pub fn custom_themes(host: &dyn Host, data_dir: &Path) -> Result<CustomThemeReport> {
     let dir = dir(data_dir);
     std::fs::create_dir_all(&dir).map_err(|e| CoreError::wrap("The themes folder", e))?;
     let template = dir.join("_template.json");
@@ -71,12 +72,10 @@ pub fn custom_themes(host: &dyn Host, data_dir: &Path) -> Result<Value> {
     }
     for name in files.iter().take(MAX_FILES) {
         match read_theme(&dir.join(name)) {
-            Ok(mut theme) => {
-                if let Some(fields) = theme.as_object_mut() {
-                    fields.insert("custom".into(), Value::Bool(true));
-                }
-                themes.push(theme);
-            }
+            Ok(theme) => themes.push(AppTheme {
+                custom: Some(true),
+                ..theme
+            }),
             Err(cause) => {
                 host.log(
                     Level::Warn,
@@ -87,10 +86,14 @@ pub fn custom_themes(host: &dyn Host, data_dir: &Path) -> Result<Value> {
             }
         }
     }
-    Ok(json!({ "themes": themes, "dir": dir.display().to_string(), "problems": problems }))
+    Ok(CustomThemeReport {
+        themes,
+        dir: dir.display().to_string(),
+        problems,
+    })
 }
 
-fn read_theme(path: &Path) -> Result<Value> {
+fn read_theme(path: &Path) -> Result<AppTheme> {
     let size = std::fs::metadata(path)
         .map_err(|_| CoreError::new("unreadable"))?
         .len();
@@ -100,7 +103,7 @@ fn read_theme(path: &Path) -> Result<Value> {
     let text = std::fs::read_to_string(path).map_err(|_| CoreError::new("unreadable"))?;
     let value: Value =
         serde_json::from_str(&text).map_err(|_| CoreError::new("The file is not valid JSON."))?;
-    checks::theme(J::from(&value)).map_err(CoreError::new)
+    check::<AppTheme>(J::from(&value)).map_err(CoreError::new)
 }
 
 #[cfg(test)]
@@ -127,17 +130,17 @@ mod tests {
         std::fs::write(folder.join("a-broken.json"), "{").unwrap();
         std::fs::write(folder.join("_draft.json"), "{").unwrap();
         let report = custom_themes(&Quiet, profile.path()).unwrap();
-        assert_eq!(report["themes"].as_array().unwrap().len(), 1);
-        assert_eq!(report["themes"][0]["id"], "mine");
-        assert_eq!(report["themes"][0]["name"], "Mine");
-        assert_eq!(report["themes"][0]["custom"], true);
         assert_eq!(
-            report["problems"],
-            json!(["a-broken.json: The file is not valid JSON."])
+            serde_json::to_string(&report.themes).unwrap(),
+            r##"[{"id":"mine","name":"Mine","dark":{"bg":"#000","text":"#fff","primary":"#f00"},"custom":true}]"##
+        );
+        assert_eq!(
+            report.problems,
+            ["a-broken.json: The file is not valid JSON."]
         );
         // The template is written once and never loaded.
         assert!(folder.join("_template.json").exists());
         let template: Value = serde_json::from_str(TEMPLATE).unwrap();
-        assert!(checks::theme(J::from(&template)).is_ok());
+        assert!(check::<AppTheme>(J::from(&template)).is_ok());
     }
 }

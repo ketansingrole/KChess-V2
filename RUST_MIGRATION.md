@@ -40,7 +40,7 @@ live in `crates/kchess-core/tests/`.
 ## The facade
 
 `crates/kchess-core/src/facade.rs` (and `facade/`) answers every `CoreApi` method once the
-generated dispatch has checked its arguments (`kchess_domain::misc::checks`) and, for a method
+generated dispatch has checked its arguments (each argument's type, `kchess_contracts::check`) and, for a method
 declared with `#[assist(..)]`, refused engine help during a live game: login and account epochs,
 settings that stop the engines, challenge and tournament bookkeeping, the settings and data
 projections, the closed state and the close sequence. The profile claim (one live core per

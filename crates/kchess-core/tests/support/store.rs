@@ -7,11 +7,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use kchess_contracts::check::check;
+use kchess_contracts::check::{Username, check};
 use kchess_contracts::types::{GamePageQuery, InsightsQuery, Settings};
 use kchess_core::store::{Database, StoreContext, games, import};
 use kchess_core::{Config, CoreError};
-use kchess_domain::misc::checks;
 use kchess_domain::misc::value::J;
 use rusqlite::Connection;
 use rusqlite::types::ValueRef;
@@ -260,7 +259,7 @@ pub fn encrypt(plain: &str) -> String {
 
 /// The facade's username check (`assertUsername`).
 pub fn check_username(name: &str) -> Result<(), String> {
-    checks::username(J::Str(name.into())).map(|_| ())
+    check::<Username>(J::Str(name.into())).map(|_| ())
 }
 
 /// The facade's check of a page query.

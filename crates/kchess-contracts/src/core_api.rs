@@ -3,16 +3,15 @@
 //! (`check_arguments`), the trait the core implements (`CoreApi`, one part per area) and the
 //! dispatch that runs a call by name on it (`dispatch`).
 //!
-//! Each argument names its check (`kchess_domain::misc::checks`): the method receives what the
-//! check normalized, `Raw(…)` the argument as sent once it passed, and `Optional(…)` checks only
-//! an argument that was given (`null` otherwise).
+//! Each argument's type is its check (`check::Validate`): the method receives the argument decoded,
+//! checked and normalized; an optional one (after `;`) is `None` when absent or `null`.
 
 use serde_json::Value;
 
 use kchess_domain::misc::value::J;
 
 pub use crate::api::{Assist, Method, Param, as_checked};
-use crate::api::{answer, core_api, count_error, take};
+use crate::api::{answer, core_api, count_error};
 use crate::check::*;
 use crate::error::CoreError;
 use crate::types::*;

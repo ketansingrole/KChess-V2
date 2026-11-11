@@ -19,7 +19,6 @@ use crate::store::{self, import};
 
 mod accounts;
 mod ai;
-pub(crate) mod args;
 mod chesscom;
 mod engine;
 mod games;

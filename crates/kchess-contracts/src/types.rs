@@ -94,7 +94,7 @@ wire_enum!(#[doc = "How long a piece takes to slide to its square."] PieceAnimat
     Normal = "normal",
     Slow = "slow",
 });
-wire_enum!(#[doc = "What a desktop notification is about; each kind (except `test`) has its own switch in Settings."] NotificationKind, NOTIFICATION_KINDS {
+union!(#[doc = "What a desktop notification is about; each kind (except `test`) has its own switch in Settings."] NotificationKind {
     OpponentMove = "opponentMove",
     LowTime = "lowTime",
     GameEvents = "gameEvents",
@@ -156,7 +156,7 @@ wire_enum!(#[doc = "Where a training puzzle came from: Lichess unrated, the down
     Offline = "offline",
     Rated = "rated",
 });
-wire_enum!(#[doc = "What a training attempt counts as, each move scored by its first try: every move found (`solved`, or `hinted`"] #[doc = "after a hint), `partial` (some found, some wrong), `missed` (none found) or `revealed` (the solution shown"] #[doc = "before any wrong move). Local only: Lichess results stay a win or a loss."] PuzzleAttemptOutcome, PUZZLE_ATTEMPT_OUTCOMES {
+union!(#[doc = "What a training attempt counts as, each move scored by its first try: every move found (`solved`, or `hinted`"] #[doc = "after a hint), `partial` (some found, some wrong), `missed` (none found) or `revealed` (the solution shown"] #[doc = "before any wrong move). Local only: Lichess results stay a win or a loss."] PuzzleAttemptOutcome {
     Solved = "solved",
     Hinted = "hinted",
     Partial = "partial",
@@ -187,7 +187,7 @@ wire_enum!(#[doc = "What became of a spoken phrase. Moves: `played` at once, `pe
     Correct = "correct",
     Wrong = "wrong",
 });
-wire_enum!(#[doc = "Severity of a move mistake in review."] Judgment, JUDGMENTS {
+union!(#[doc = "Severity of a move mistake in review."] Judgment {
     Inaccuracy = "inaccuracy",
     Mistake = "mistake",
     Blunder = "blunder",
@@ -227,7 +227,7 @@ wire_enum!(#[doc = "Lichess rating category, including variants."] PerfType, PER
     RacingKings = "racingKings",
     Crazyhouse = "crazyhouse",
 });
-wire_enum!(#[doc = "Format for exporting a game."] ExportKind, EXPORT_KINDS {
+union!(#[doc = "Format for exporting a game."] ExportKind {
     Gif = "gif",
     Png = "png",
     Pgn = "pgn",
@@ -328,16 +328,25 @@ pub struct ThemePalette {
     /// Accent: buttons, links, focus.
     pub primary: String,
     /// Slightly raised areas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub muted: Option<String>,
     /// Cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elevated: Option<String>,
     /// Hover and selected backgrounds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accented: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_muted: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub success: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info: Option<String>,
 }
 
@@ -347,9 +356,12 @@ pub struct ThemePalette {
 pub struct AppTheme {
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub light: Option<ThemePalette>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dark: Option<ThemePalette>,
     /// Loaded from the user's themes folder rather than shipped with the app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom: Option<bool>,
 }
 

@@ -105,65 +105,6 @@ impl Assist {
     }
 }
 
-/// What an argument check answers: the normalized argument, or why it was refused.
-pub type Checked = Result<Value, String>;
-
-/// One argument's check, as the declaration names it: a validator of the argument alone
-/// (`fn(J) -> Checked`), or of the argument among the others (`fn(J, &[J]) -> Checked`), or one
-/// wrapped in `Optional` or `Raw`. `Marker` only tells these apart.
-pub trait ArgCheck<Marker> {
-    /// The argument (`J::Undef` when absent) among all of them.
-    fn check(&self, value: J, args: &[J]) -> Checked;
-}
-
-#[doc(hidden)]
-pub struct Alone;
-#[doc(hidden)]
-pub struct Among;
-#[doc(hidden)]
-pub struct Skipped<M>(M);
-#[doc(hidden)]
-pub struct AsSent<M>(M);
-
-impl<F: Fn(J) -> Checked> ArgCheck<Alone> for F {
-    fn check(&self, value: J, _: &[J]) -> Checked {
-        self(value)
-    }
-}
-
-impl<F: Fn(J, &[J]) -> Checked> ArgCheck<Among> for F {
-    fn check(&self, value: J, args: &[J]) -> Checked {
-        self(value, args)
-    }
-}
-
-/// A check run only on an argument that was given: an absent one is `null`.
-pub struct Optional<C>(pub C);
-
-impl<M, C: ArgCheck<M>> ArgCheck<Skipped<M>> for Optional<C> {
-    fn check(&self, value: J, args: &[J]) -> Checked {
-        match value {
-            J::Undef => Ok(Value::Null),
-            value => self.0.check(value, args),
-        }
-    }
-}
-
-/// A check whose method reads the argument as sent, not as the check normalizes it.
-pub struct Raw<C>(pub C);
-
-impl<M, C: ArgCheck<M>> ArgCheck<AsSent<M>> for Raw<C> {
-    fn check(&self, value: J, args: &[J]) -> Checked {
-        self.0.check(value.clone(), args)?;
-        Ok(value.into_value())
-    }
-}
-
-#[doc(hidden)]
-pub fn run_check<M>(check: &impl ArgCheck<M>, args: &[J], at: usize) -> Checked {
-    check.check(args.get(at).cloned().unwrap_or(J::Undef), args)
-}
-
 #[doc(hidden)]
 pub fn count_error(method: &str) -> String {
     format!("Invalid argument count for {method}.")
@@ -178,13 +119,6 @@ pub fn as_checked(args: Vec<Value>) -> Vec<J> {
             value => J::from(value),
         })
         .collect()
-}
-
-/// An argument as its check normalized it, in the type the method takes.
-#[doc(hidden)]
-pub fn take<T: DeserializeOwned>(method: &str, at: usize, value: Value) -> Result<T, String> {
-    serde_json::from_value(value)
-        .map_err(|cause| format!("Invalid argument {} of {method}: {cause}", at + 1))
 }
 
 /// The argument at `at` (`J::Undef` when absent) checked as its type.
@@ -207,8 +141,7 @@ pub fn answer(value: impl Serialize) -> Result<Value, CoreError> {
 
 /// Declares the core's methods, grouped by area: each line names the typed call, the method,
 /// the function the core implements, each argument with its type (the optional ones after `;`),
-/// and the answer. An argument is checked by its type (`check::Validate`), or, until every method
-/// is typed, by the `kchess_domain::misc::checks` function named after `=`. `#[check(f)]` checks
+/// and the answer. An argument is checked by its type (`check::Validate`). `#[check(f)]` checks
 /// the arguments together once each passed (`f(&(a, b, …))`), `#[assist(Gate)]` refuses the method
 /// during a live game and `#[writes(Area, …)]` reports the profile areas it changes.
 macro_rules! core_api {
@@ -216,12 +149,6 @@ macro_rules! core_api {
     (@assist $gate:ident) => { Some(Assist::$gate) };
     (@count) => { 0usize };
     (@count $head:ident $($tail:ident)*) => { 1usize + core_api!(@count $($tail)*) };
-    (@arg $method:ident, $args:ident, $at:ident, $ty:ty) => {
-        crate::api::typed::<$ty>($args, $at)
-    };
-    (@arg $method:ident, $args:ident, $at:ident, $ty:ty, $check:expr) => {
-        run_check(&$check, $args, $at).and_then(|value| take::<$ty>($method, $at, value))
-    };
     ($(
         $(#[doc = $area_doc:literal])*
         trait $area:ident {
@@ -231,8 +158,8 @@ macro_rules! core_api {
                 $(#[writes($($written:ident),*)])?
                 $(#[check($together:path)])?
                 $call:ident = $method:literal fn $fn:ident(
-                    $($arg:ident : $ty:ty $(= $check:expr)?),*
-                    $(; $($opt:ident : $opt_ty:ty $(= $opt_check:expr)?),+)?
+                    $($arg:ident : $ty:ty),*
+                    $(; $($opt:ident : $opt_ty:ty),+)?
                 ) -> $answer:ty;
             )*
         }
@@ -289,12 +216,11 @@ macro_rules! core_api {
                     }
                     let mut at = 0;
                     $(
-                        let $arg: $ty = core_api!(@arg method, args, at, $ty $(, $check)?)?;
+                        let $arg: $ty = crate::api::typed::<$ty>(args, at)?;
                         at += 1;
                     )*
                     $($(
-                        let $opt: $opt_ty =
-                            core_api!(@arg method, args, at, $opt_ty $(, $opt_check)?)?;
+                        let $opt: $opt_ty = crate::api::typed::<$opt_ty>(args, at)?;
                         at += 1;
                     )+)?
                     let all = ($($arg,)* $($($opt,)+)?);
@@ -344,7 +270,9 @@ macro_rules! core_api {
                         $($($opt: $opt_ty,)+)?
                     ) -> impl ::std::future::Future<Output = Result<$answer, CoreError>> + Send {
                         ::std::future::ready(self.answer_method($method).and_then(|answer| {
-                            take($method, 0, answer).map_err(CoreError::new)
+                            serde_json::from_value(answer).map_err(|cause| {
+                                CoreError::new(format!("Invalid answer of {}: {cause}", $method))
+                            })
                         }))
                     }
                 )*
