@@ -3,6 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use kchess_delta::REPOSITORY;
+
 pub type Result<T = ()> = std::result::Result<T, String>;
 
 /// The repository's root (this crate lives in `tooling/xtask`).
@@ -12,8 +14,6 @@ pub fn root() -> PathBuf {
         .canonicalize()
         .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
 }
-
-use kchess_delta::REPOSITORY;
 
 /// The repository the release tooling works on: `GH_REPO` (CI sets it to the one it runs in, so
 /// `gh` and these agree), else KChess's.
@@ -36,11 +36,6 @@ pub fn modified(path: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path)
         .and_then(|file| file.modified())
         .ok()
-}
-
-/// The file name of program `name` on this platform (`.exe` on Windows).
-pub fn exe(name: &str) -> String {
-    format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }
 
 /// Runs `program` in the repository, its output going to this terminal.
@@ -430,16 +425,6 @@ mod tests {
         assert_eq!(repository_from(Some(String::new())), REPOSITORY);
         assert_eq!(repository_from(None), "ketansingrole/KChess-V2");
         assert_eq!(repository(), repository_from(std::env::var("GH_REPO").ok()));
-    }
-
-    #[test]
-    fn programs_are_named_for_this_platform() {
-        let expected = if cfg!(windows) {
-            "kchess-cli.exe"
-        } else {
-            "kchess-cli"
-        };
-        assert_eq!(exe("kchess-cli"), expected);
     }
 
     #[test]

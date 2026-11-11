@@ -48,16 +48,17 @@ fn pin() -> Result<Pin> {
     })
 }
 
-/// Where the runtime is staged.
 pub fn staged() -> PathBuf {
-    root().join("target/voice-runtime")
+    root()
+        .join("target")
+        .join(kchess_delta::installed::BUILT_VOICE)
 }
 
 /// Stage the helper built for `profile` unless what is staged is already as new. Staging replaces
 /// the folder, so a running helper is left alone when nothing changed.
 pub fn stage_if_outdated(profile: &str) -> Result<()> {
     use crate::util::modified;
-    let executable = crate::util::exe(kchess_delta::installed::VOICE_HELPER);
+    let executable = kchess_delta::installed::program(kchess_delta::installed::VOICE_HELPER);
     let built = modified(&root().join("target").join(profile).join(&executable));
     if outdated(modified(&staged().join(&executable)), built) {
         stage(profile)?;
@@ -121,7 +122,7 @@ fn stage_with(runtime: &Runtime<impl Fn(&str, &Path) -> Result>, profile: &str) 
             .map_err(|cause| cause.to_string())?;
     let _ = std::fs::remove_dir_all(target);
     std::fs::create_dir_all(target).map_err(|cause| cause.to_string())?;
-    let executable = crate::util::exe(kchess_delta::installed::VOICE_HELPER);
+    let executable = kchess_delta::installed::program(kchess_delta::installed::VOICE_HELPER);
     let helper = built.join(&executable);
     if !helper.exists() {
         return Err(format!(
@@ -223,7 +224,7 @@ mod tests {
             zip.write_all(&archived(bytes)).unwrap();
         }
         let archive = zip.finish().unwrap().into_inner();
-        let executable = crate::util::exe(kchess_delta::installed::VOICE_HELPER);
+        let executable = kchess_delta::installed::program(kchess_delta::installed::VOICE_HELPER);
         let built = scratch.join("built");
         let licenses = scratch.join("licenses");
         for (dir, name, text) in [

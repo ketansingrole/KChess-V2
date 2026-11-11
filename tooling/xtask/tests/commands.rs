@@ -1,4 +1,5 @@
-//! The `cargo xtask` binary itself: its help and its refusal of an unknown command.
+//! The `cargo xtask` binary itself: its help, its refusal of an unknown command, `sweep` on a
+//! scratch build folder and `ci-times`' refusal of a bad argument.
 
 use std::process::Command;
 

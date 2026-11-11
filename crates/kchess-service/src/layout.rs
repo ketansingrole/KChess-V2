@@ -13,7 +13,7 @@ use kchess_core::{Config, TestSwitches};
 use kchess_delta::installed;
 
 /// The product name, which names the profile folder.
-pub const APP_NAME: &str = "KChess";
+pub const APP_NAME: &str = installed::PROFILE;
 
 /// How a variable of the environment is read.
 type Var = Box<dyn Fn(&str) -> Option<OsString>>;
@@ -63,23 +63,9 @@ impl Layout {
             .unwrap_or_default()
     }
 
-    /// The app's own profile: `KChess` in the platform's application data.
+    /// The app's own profile (`kchess_delta::installed::own_profile`).
     pub fn own_profile(&self) -> PathBuf {
-        let home = self.home();
-        if cfg!(target_os = "macos") {
-            home.join("Library/Application Support").join(APP_NAME)
-        } else if cfg!(windows) {
-            self.var("APPDATA")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join("AppData/Roaming"))
-                .join(APP_NAME)
-        } else {
-            self.var("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .filter(|dir| dir.is_absolute())
-                .unwrap_or_else(|| home.join(".config"))
-                .join(APP_NAME)
-        }
+        installed::own_profile(|name| self.var(name))
     }
 
     /// The profile a frontend opens unless told another: `KCHESS_USER_DATA_DIR`, else its own.
@@ -127,7 +113,7 @@ impl Layout {
             variant_engine_path: self
                 .dev_path("KCHESS_VARIANT_ENGINE_PATH")
                 .or_else(|| self.beside(&fairy))
-                .or_else(|| self.built(Path::new("fairy-stockfish/bin").join(&fairy))),
+                .or_else(|| self.built(Path::new(installed::BUILT_FAIRY).join(&fairy))),
             // Beside the executable, in a Mac bundle's Resources, or staged by
             // `cargo xtask voice-runtime`.
             voice_helper_path: self
@@ -136,7 +122,7 @@ impl Layout {
                 .or_else(|| self.beside(Path::new("../Resources").join(&voice)))
                 .or_else(|| {
                     self.built(
-                        Path::new("voice-runtime")
+                        Path::new(installed::BUILT_VOICE)
                             .join(installed::program(installed::VOICE_HELPER)),
                     )
                 }),

@@ -52,7 +52,9 @@ fn build_with(source: &Source<impl Fn(&str, &Path) -> Result>) -> Result<PathBuf
         fetch,
     } = source;
     let stamp = dir.join("bin/COMMIT");
-    let target = dir.join("bin").join(crate::util::exe("fairy-stockfish"));
+    let target = dir.join("bin").join(kchess_delta::installed::program(
+        kchess_delta::installed::FAIRY_STOCKFISH,
+    ));
     if target.exists() && std::fs::read_to_string(&stamp).is_ok_and(|built| built.trim() == *commit)
     {
         return Ok(target);
@@ -96,7 +98,7 @@ fn build_with(source: &Source<impl Fn(&str, &Path) -> Result>) -> Result<PathBuf
         make.args(arguments.split(' ')).arg(&src);
         run_with(&mut make)?;
     }
-    let built = src.join(crate::util::exe("stockfish"));
+    let built = src.join(kchess_delta::installed::program("stockfish"));
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|cause| cause.to_string())?;
     }
@@ -184,9 +186,9 @@ mod tests {
 
         assert_eq!(
             target,
-            scratch
-                .join("bin")
-                .join(crate::util::exe("fairy-stockfish"))
+            scratch.join("bin").join(kchess_delta::installed::program(
+                kchess_delta::installed::FAIRY_STOCKFISH
+            ))
         );
         assert_eq!(
             std::fs::read_to_string(&target).unwrap(),

@@ -186,7 +186,7 @@ fn notarize(apps: &[&Path], stage: &Path) -> Result {
 
 /// The unsigned bundle at `app`, the Mac App Store's with `store`; the programs and libraries in
 /// it that are signed before it. The app finds Stockfish, Fairy-Stockfish, the core service and
-/// the voice runtime beside itself (apps/gpui/src/profile.rs, core.rs); the command line only
+/// the voice runtime beside itself (crates/kchess-service/src/layout.rs); the command line only
 /// where it can reach the core, which a sandboxed (store) app's core is not.
 pub fn assemble(
     identity: &Identity,

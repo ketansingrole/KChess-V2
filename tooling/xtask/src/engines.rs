@@ -10,7 +10,9 @@ use crate::util::{Result, root, say};
 /// The shipped Stockfish's program in `dir` when the folder already holds the pinned release
 /// (the core's installer records its tag in `VERSION`).
 fn fetched(dir: &Path) -> Option<PathBuf> {
-    let program = dir.join(crate::util::exe(kchess_delta::installed::STOCKFISH));
+    let program = dir.join(kchess_delta::installed::program(
+        kchess_delta::installed::STOCKFISH,
+    ));
     let version = std::fs::read_to_string(dir.join("VERSION")).ok()?;
     (program.is_file() && version.trim() == crate::pinned::stockfish_tag()).then_some(program)
 }
@@ -111,7 +113,9 @@ mod tests {
     #[test]
     fn only_the_pinned_release_is_kept() {
         let dir = tempfile::tempdir().unwrap();
-        let program = dir.path().join(crate::util::exe("stockfish"));
+        let program = dir.path().join(kchess_delta::installed::program(
+            kchess_delta::installed::STOCKFISH,
+        ));
         assert_eq!(fetched(dir.path()), None);
         std::fs::write(&program, "engine").unwrap();
         assert_eq!(fetched(dir.path()), None, "no VERSION");

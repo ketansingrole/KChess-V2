@@ -8,7 +8,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-# The update patches (`deltas`).
+# What releases and installed apps agree on: versions, notes, asset and install names, the
+# checksums and their signature, and the update patches (`deltas`).
 kchess-delta = { path = "../../crates/kchess-delta" }
 # The libvosk file the speech helper loads (`voice`).
 kchess-voice = { path = "../../crates/kchess-voice" }

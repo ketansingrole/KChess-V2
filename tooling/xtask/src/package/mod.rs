@@ -1,4 +1,4 @@
-//! `cargo xtask package [--skip-build|--build-only] [--snap]`: the app for this machine, with its
+//! `cargo xtask package [--skip-build|--build-only] [--snap|--mas]`: the app for this machine, with its
 //! own native Stockfish, the core service, the command line and the voice runtime beside it, in the
 //! formats KChess has always shipped: macOS a .dmg and a .zip (Apple Silicon); Windows the per-user
 //! NSIS installer (.exe); Linux an .AppImage and a .deb. The updater installs each kind
@@ -30,7 +30,7 @@ use std::process::Command;
 
 use kchess_delta::{Asset, installed};
 
-use crate::util::{Result, exe, root, run_with, say};
+use crate::util::{Result, root, run_with, say};
 
 pub const AUTHOR: &str = "Ketan Singrole";
 pub const COPYRIGHT: &str = "Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.";
@@ -109,16 +109,25 @@ pub struct Built {
 impl Built {
     /// The programs a package installs side by side, each with the name it is installed as: the
     /// app as `app`, the engines, the core service and, with `cli`, the command line. The app
-    /// finds them by these names beside itself (`apps/gpui/src/profile.rs`).
+    /// finds them by these names beside itself (`crates/kchess-service/src/layout.rs`).
     pub fn programs(&self, app: &str, cli: bool) -> Vec<(&Path, String)> {
         let mut programs = vec![
-            (self.app.as_path(), exe(app)),
-            (self.stockfish.as_path(), exe(installed::STOCKFISH)),
-            (self.fairy.as_path(), exe(installed::FAIRY_STOCKFISH)),
-            (self.service.as_path(), exe(installed::SERVICE)),
+            (self.app.as_path(), installed::program(app)),
+            (
+                self.stockfish.as_path(),
+                installed::program(installed::STOCKFISH),
+            ),
+            (
+                self.fairy.as_path(),
+                installed::program(installed::FAIRY_STOCKFISH),
+            ),
+            (
+                self.service.as_path(),
+                installed::program(installed::SERVICE),
+            ),
         ];
         if cli {
-            programs.push((self.cli.as_path(), exe(installed::CLI)));
+            programs.push((self.cli.as_path(), installed::program(installed::CLI)));
         }
         programs
     }
@@ -221,9 +230,9 @@ fn build(skip: bool) -> Result<Built> {
     std::fs::create_dir_all(root().join("target/package")).map_err(|cause| cause.to_string())?;
     crate::licenses::write(&licenses)?;
     let built = Built {
-        app: target.join(exe("KChess")),
-        service: target.join(exe("kchess-service")),
-        cli: target.join(exe("kchess-cli")),
+        app: target.join(installed::program("KChess")),
+        service: target.join(installed::program(installed::SERVICE)),
+        cli: target.join(installed::program(installed::CLI)),
         stockfish,
         fairy,
         voice,

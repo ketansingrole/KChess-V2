@@ -3,9 +3,9 @@
 //! Electron's updater (electron-updater 6.8, every Electron release up to 2026.10.15) reads
 //! `latest-mac.yml`, `latest.yml` (Windows) or `latest-linux.yml` from the newest published GitHub
 //! release, so every release must carry them. They name the stepping-stone release `STEP`, frozen:
-//! its installers take over the Electron profile at their first start
-//! (`crates/kchess-core/src/electron_migration.rs`, the Mac bridge for `com.kchess.electron`), and
-//! its own updater then brings the installation to the newest release.
+//! its installers take over the Electron profile at their first start (with the Mac bridge for
+//! `com.kchess.electron`), and its own updater then brings the installation to the newest
+//! release.
 //!
 //! Each file's `url` is relative to the newest release's download folder
 //! (`GitHubProvider.resolveFiles`), and `../<STEP tag>/<name>` resolves into the step's own
