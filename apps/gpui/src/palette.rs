@@ -289,11 +289,10 @@ fn settings_commands(cx: &App) -> Vec<Command> {
 /// ⌘C and ⌘N where they copy or start, F where it turns the board, and Z for zen mode on a page
 /// it applies to.
 fn page_commands(cx: &App) -> Vec<Command> {
-    let own_settings = crate::shell::zen_page(cx)
-        .then(|| toggles(true, cx).collect::<Vec<_>>())
-        .unwrap_or_default();
+    let own_settings = crate::shell::zen_page(cx).then(|| toggles(true, cx));
     own_settings
         .into_iter()
+        .flatten()
         .chain(crate::shell::page_commands(cx).into_iter().map(|command| {
             let keys = match command.info.role {
                 Some(ActionRole::Copy) => crate::menu::keys(&gpui_kit::component::input::Copy, cx),

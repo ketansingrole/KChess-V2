@@ -265,18 +265,12 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("z", ToggleZen, Some("!Input")),
         KeyBinding::new("f", FlipBoard, Some("!Input")),
     ]);
-    cx.on_action(|_: &ShowShortcuts, cx| {
-        on_window(cx, |window, cx| crate::shortcuts::open(window, cx))
-    });
-    cx.on_action(|_: &ShowWhatsNew, cx| {
-        on_window(cx, |window, cx| crate::whats_new::open(window, cx))
-    });
-    cx.on_action(|_: &Copy, cx| on_window(cx, |window, cx| crate::shell::copy_on_page(window, cx)));
-    cx.on_action(|_: &Paste, cx| on_window(cx, |window, cx| crate::links::open_pasted(window, cx)));
-    cx.on_action(|_: &New, cx| on_window(cx, |window, cx| crate::shell::new_on_page(window, cx)));
-    cx.on_action(|_: &ToggleSidebar, cx| {
-        on_window(cx, |window, cx| crate::shell::toggle_sidebar(window, cx))
-    });
+    cx.on_action(|_: &ShowShortcuts, cx| on_window(cx, crate::shortcuts::open));
+    cx.on_action(|_: &ShowWhatsNew, cx| on_window(cx, crate::whats_new::open));
+    cx.on_action(|_: &Copy, cx| on_window(cx, crate::shell::copy_on_page));
+    cx.on_action(|_: &Paste, cx| on_window(cx, crate::links::open_pasted));
+    cx.on_action(|_: &New, cx| on_window(cx, crate::shell::new_on_page));
+    cx.on_action(|_: &ToggleSidebar, cx| on_window(cx, crate::shell::toggle_sidebar));
     cx.on_action(|_: &GoBack, cx| go(-1, cx));
     cx.on_action(|_: &GoForward, cx| go(1, cx));
     cx.on_action(|_: &ZoomIn, cx| zoom(1, cx));
