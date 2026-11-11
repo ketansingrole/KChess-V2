@@ -7,24 +7,8 @@ use super::PUZZLE_DB_URL;
 use super::args::{count, parse, reply_json, text, to_json};
 use crate::core::Core;
 use crate::error::{CoreError, Result};
-use crate::host::Level;
 use crate::lichess::puzzles as lichess;
 use crate::store::{runs, voice_log};
-
-impl Core {
-    /// A puzzle database operation's answer; a failure is logged.
-    fn puzzle_operation<T: serde::Serialize>(&self, result: Result<T>) -> Result<Value> {
-        to_json(result).inspect_err(|cause| self.puzzle_failed(cause))
-    }
-
-    fn puzzle_failed(&self, cause: &CoreError) {
-        self.host.log(
-            Level::Warn,
-            "puzzles",
-            &format!("Puzzle operation failed: {}", cause.message),
-        );
-    }
-}
 
 impl PuzzlesApi for Core {
     async fn puzzle_next(&self, request: Value) -> Result<Value> {
@@ -61,11 +45,11 @@ impl PuzzlesApi for Core {
     }
 
     async fn puzzle_db_status(&self) -> Result<Value> {
-        self.puzzle_operation(self.puzzles.status().await)
+        to_json(self.puzzles.status().await)
     }
 
     async fn puzzle_db_install(&self) -> Result<Value> {
-        self.puzzle_operation(self.puzzles.install(PUZZLE_DB_URL.into()).await)
+        to_json(self.puzzles.install(PUZZLE_DB_URL.into()).await)
     }
 
     async fn puzzle_db_cancel(&self) -> Result<Value> {
@@ -74,27 +58,27 @@ impl PuzzlesApi for Core {
     }
 
     async fn puzzle_db_delete(&self) -> Result<Value> {
-        self.puzzle_operation(self.puzzles.delete().await)
+        to_json(self.puzzles.delete().await)
     }
 
     async fn local_puzzles(&self, query: Value) -> Result<Value> {
-        let query = parse(query, "query").inspect_err(|cause| self.puzzle_failed(cause))?;
-        self.puzzle_operation(self.puzzles.query(query).await)
+        let query = parse(query, "query")?;
+        to_json(self.puzzles.query(query).await)
     }
 
     async fn local_ladder(&self, query: Value) -> Result<Value> {
-        let query = parse(query, "query").inspect_err(|cause| self.puzzle_failed(cause))?;
-        self.puzzle_operation(self.puzzles.ladder(query).await)
+        let query = parse(query, "query")?;
+        to_json(self.puzzles.ladder(query).await)
     }
 
     async fn record_puzzle_attempt(&self, attempt: Value) -> Result<Value> {
-        let attempt = parse(attempt, "attempt").inspect_err(|cause| self.puzzle_failed(cause))?;
-        self.puzzle_operation(self.puzzles.record_attempt(attempt).await)
+        let attempt = parse(attempt, "attempt")?;
+        to_json(self.puzzles.record_attempt(attempt).await)
     }
 
     async fn puzzle_progress(&self, query: Value) -> Result<Value> {
-        let query = parse(query, "query").inspect_err(|cause| self.puzzle_failed(cause))?;
-        self.puzzle_operation(self.puzzles.progress(query).await)
+        let query = parse(query, "query")?;
+        to_json(self.puzzles.progress(query).await)
     }
 
     async fn save_run(&self, run: Value) -> Result<Value> {

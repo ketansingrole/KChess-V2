@@ -220,7 +220,7 @@ impl PuzzleService {
         }
     }
 
-    async fn logged<T>(&self, method: &str, result: Result<T>) -> Result<T> {
+    fn logged<T>(&self, method: &str, result: Result<T>) -> Result<T> {
         if let Err(error) = &result {
             self.inner.failed(method, error);
         }
@@ -233,7 +233,7 @@ impl PuzzleService {
             .inner
             .with_db(move |db| queries::read_status(db, running))
             .await;
-        self.logged("status", result).await
+        self.logged("status", result)
     }
 
     pub async fn query(&self, query: LocalPuzzleQuery) -> Result<Vec<Puzzle>> {
@@ -241,7 +241,7 @@ impl PuzzleService {
             .inner
             .with_db(move |db| queries::query_puzzles(db, &query, &mut random()))
             .await;
-        self.logged("query", result).await
+        self.logged("query", result)
     }
 
     pub async fn ladder(&self, query: LocalLadderQuery) -> Result<Vec<Puzzle>> {
@@ -249,7 +249,7 @@ impl PuzzleService {
             .inner
             .with_db(move |db| queries::query_ladder(db, &query, &mut random()))
             .await;
-        self.logged("ladder", result).await
+        self.logged("ladder", result)
     }
 
     /// Keep a training attempt; the progress it leaves, as of the attempt's own day.
@@ -268,7 +268,7 @@ impl PuzzleService {
                 attempts::progress(db, &query)
             })
             .await;
-        self.logged("recordAttempt", result).await
+        self.logged("recordAttempt", result)
     }
 
     pub async fn progress(&self, query: attempts::ProgressQuery) -> Result<serde_json::Value> {
@@ -276,7 +276,7 @@ impl PuzzleService {
             .inner
             .with_db(move |db| attempts::progress(db, &query))
             .await;
-        self.logged("progress", result).await
+        self.logged("progress", result)
     }
 
     pub async fn delete(&self) -> Result<PuzzleDbStatus> {
@@ -292,7 +292,7 @@ impl PuzzleService {
                 })
                 .await
         };
-        self.logged("delete", result).await
+        self.logged("delete", result)
     }
 
     /// Stop a running download; it resolves with the current status.
@@ -360,7 +360,7 @@ impl PuzzleService {
             }
             Err(error) => Err(error),
         };
-        self.logged("install", result).await
+        self.logged("install", result)
     }
 
     async fn download(
