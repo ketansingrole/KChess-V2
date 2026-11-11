@@ -19,8 +19,7 @@ use crate::lichess::client::{Auth, Lane};
 use crate::lichess::decode::{Loose, read};
 use crate::lichess::stream::STALLED;
 use kchess_contracts::error::{CoreError, Result as CoreResult};
-use kchess_contracts::types::WatchSource;
-use kchess_contracts::types::{UsageKind, WatchPhase};
+use kchess_contracts::types::{UsageKind, WatchPhase, WatchSource};
 use kchess_domain::color::Color;
 
 /// A TV feed record, `{ t, d }`: a featured game or a move. Other kinds, and records whose
