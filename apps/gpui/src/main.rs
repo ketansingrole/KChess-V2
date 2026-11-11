@@ -26,6 +26,7 @@ mod game_image;
 mod gpui_patches;
 mod interface_zoom;
 mod links;
+mod loading;
 mod log;
 mod menu;
 mod microphone;

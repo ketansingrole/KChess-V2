@@ -206,15 +206,9 @@ impl FriendsPage {
         let overview = cx
             .global::<AppCore>()
             .request(calls::GameLibraryOverview {});
-        cx.spawn(async move |this, cx| {
-            if let Ok(overview) = overview.await {
-                let _ = this.update(cx, |this, cx| {
-                    this.versus = overview["versus"].clone();
-                    cx.notify();
-                });
-            }
-        })
-        .detach();
+        crate::loading::fetch(cx, "friends", overview, |this, overview, _| {
+            this.versus = overview["versus"].clone();
+        });
     }
 
     /// `loadProfiles`: saved profiles at once, the rest in one request per thousand players; every
@@ -302,20 +296,13 @@ impl FriendsPage {
             let presence = core.request(calls::Presence {
                 usernames: json!(chunk),
             });
-            cx.spawn(async move |this, cx| {
-                if let Ok(report) = presence.await
-                    && let Some(users) = report["users"].as_object()
-                {
-                    let users = users.clone();
-                    let _ = this.update(cx, |this, cx| {
-                        for (name, presence) in users {
-                            this.status.insert(key(&name), presence);
-                        }
-                        cx.notify();
-                    });
+            crate::loading::fetch(cx, "friends", presence, |this, report, _| {
+                if let Some(users) = report["users"].as_object() {
+                    for (name, presence) in users {
+                        this.status.insert(key(name), presence.clone());
+                    }
                 }
-            })
-            .detach();
+            });
         }
     }
 

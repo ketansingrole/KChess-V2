@@ -14,6 +14,7 @@ use shakmaty::Color;
 use super::OnlinePage;
 use crate::assets::icon;
 use crate::game::played::PlayedGame;
+use crate::game::surface::{self, Steps};
 use crate::game::view;
 use crate::online::{OnlineHandle, OnlineState, Phase};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, panel_style};
@@ -448,6 +449,22 @@ fn connection(online: &OnlineState, mine: bool, palette: &Palette) -> Option<Any
     )
 }
 
+impl Steps for OnlinePage {
+    fn steps(&self, cx: &App) -> Option<(usize, usize)> {
+        let online = crate::online::handle(cx);
+        let online = online.read(cx);
+        Some((online.ply(), online.moves().len()))
+    }
+
+    fn step_to(&mut self, ply: usize, _: &mut Window, cx: &mut Context<Self>) {
+        crate::online::handle(cx).update(cx, |online, cx| online.view_ply(ply, cx));
+    }
+
+    fn wheel(&mut self) -> &mut view::Wheel {
+        &mut self.wheel
+    }
+}
+
 impl OnlinePage {
     /// The game's panel at its height beside (or under) the board.
     pub(super) fn render_game_panel(
@@ -587,37 +604,15 @@ impl OnlinePage {
         board_column = board_column
             .child(line(!orientation))
             .child(crate::board::cached(&self.board))
-            // The mouse wheel over the board steps through the moves.
-            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
-                let Some(key) = this
-                    .wheel
-                    .turn(event.delta.pixel_delta(window.line_height()))
-                else {
-                    return;
-                };
-                let online = crate::online::handle(cx);
-                let (ply, count) = {
-                    let online = online.read(cx);
-                    (online.ply(), online.moves().len())
-                };
-                if let Some(next) = view::navigate(key, ply, count) {
-                    online.update(cx, |online, cx| online.view_ply(next, cx));
-                }
-                cx.stop_propagation();
-            }))
             .child(line(orientation));
+        let board_column = surface::wheel(board_column, cx);
 
-        self.layout
-            .render("online-game", board_column, panel, window, cx)
-            .track_focus(&self.focus)
-            // A click anywhere on the page gives the keys back to it (the board keeps them only
-            // from Tab), before a text field takes them for itself, as on the computer's page.
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+        let page = self
+            .layout
+            .render("online-game", board_column, panel, window, cx);
+        // A move waiting to be confirmed takes Return and Escape first.
+        surface::keys(page, &self.focus, cx)
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if !crate::board::page_has_keys(&this.focus, window, cx)
                     || event.keystroke.modifiers.modified()
                 {
@@ -631,23 +626,9 @@ impl OnlinePage {
                     }
                     if matches!(event.keystroke.key.as_str(), "enter" | "escape") {
                         cx.stop_propagation();
-                        return;
                     }
                 }
-                let online = crate::online::handle(cx);
-                let (ply, count) = {
-                    let online = online.read(cx);
-                    (online.ply(), online.moves().len())
-                };
-                if let Some(next) = view::navigate(&event.keystroke.key, ply, count) {
-                    online.update(cx, |online, cx| online.view_ply(next, cx));
-                    cx.stop_propagation();
-                }
             }))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| window.focus(&this.focus, cx)),
-            )
             .children(self.chat_dock(cx, &palette))
     }
 

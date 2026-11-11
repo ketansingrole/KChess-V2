@@ -529,6 +529,7 @@ fn a_computer_game_takes_back_from_quick_pick(cx: &mut gpui_kit::TestAppContext)
 fn a_game_over_the_board_is_drawn_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.open("Over the board");
+    super::local::wait_resumed(&mut app);
     app.find("chess-board");
     let shown = |app: &mut Harness| {
         app.press("secondary-k");

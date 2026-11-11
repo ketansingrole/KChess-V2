@@ -173,15 +173,9 @@ impl PuzzleRush {
         let core = cx.global::<AppCore>().clone();
         for mode in ["storm", "streak", "rush"] {
             let summary = core.request(calls::RunSummary { kind: json!(mode) });
-            cx.spawn(async move |this, cx| {
-                if let Ok(summary) = summary.await {
-                    let _ = this.update(cx, |this, cx| {
-                        this.summaries.insert(mode.to_string(), summary);
-                        cx.notify();
-                    });
-                }
-            })
-            .detach();
+            crate::loading::fetch(cx, "puzzles", summary, move |this, summary, _| {
+                this.summaries.insert(mode.to_string(), summary);
+            });
         }
     }
 

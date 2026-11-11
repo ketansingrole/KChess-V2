@@ -77,10 +77,8 @@ pub struct TournamentsPage {
     /// Only what KChess can play (`playable`), or everything.
     playable_only: bool,
     list: Option<Value>,
-    loading: bool,
-    error: Option<SharedString>,
-    /// Each list request; an answer to an earlier one (another account's) is dropped.
-    list_request: u64,
+    /// The list's request: an answer to an earlier one (another account's) is dropped.
+    loading: crate::loading::Loading,
     /// `JoinedTournament`s the core keeps.
     joined: Vec<Value>,
     open: Option<Open>,
@@ -175,9 +173,7 @@ impl TournamentsPage {
         let mut page = TournamentsPage {
             playable_only: false,
             list: None,
-            loading: false,
-            error: None,
-            list_request: 0,
+            loading: Default::default(),
             joined: Vec::new(),
             open: None,
             password,
@@ -208,10 +204,7 @@ impl TournamentsPage {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.list_request += 1;
-        let request = self.list_request;
-        self.loading = true;
-        self.error = None;
+        let turn = self.loading.start();
         cx.notify();
         let call = cx.global::<AppCore>().request(calls::Tournaments {
             account: Self::account_arg(cx),
@@ -220,13 +213,12 @@ impl TournamentsPage {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
                 // A later refresh (another account's) owns the list and its spinner now.
-                if request != this.list_request {
+                if !this.loading.answered(turn) {
                     return;
                 }
-                this.loading = false;
                 match answer {
                     Ok(list) => this.list = Some(list),
-                    Err(cause) => this.error = Some(cause.message.into()),
+                    Err(cause) => this.loading.failed("tournaments", &cause),
                 }
                 cx.notify();
             });
@@ -236,15 +228,9 @@ impl TournamentsPage {
 
     fn reload_joined(&mut self, cx: &mut Context<Self>) {
         let call = cx.global::<AppCore>().request(calls::JoinedTournaments {});
-        cx.spawn(async move |this, cx| {
-            if let Ok(joined) = call.await {
-                let _ = this.update(cx, |this, cx| {
-                    this.joined = joined.as_array().cloned().unwrap_or_default();
-                    cx.notify();
-                });
-            }
-        })
-        .detach();
+        crate::loading::fetch(cx, "tournaments", call, |this, joined, _| {
+            this.joined = joined.as_array().cloned().unwrap_or_default();
+        });
     }
 
     /// Joined from KChess by `account` and not over yet.
@@ -512,7 +498,7 @@ impl TournamentsPage {
     pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
         let Some(open) = &self.open else {
             let mut actions = Vec::new();
-            if !self.loading {
+            if !self.loading.busy() {
                 actions.push(Action::Refresh);
             }
             actions.push(Action::Create);
@@ -637,7 +623,7 @@ impl Render for TournamentsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let showing_event = self.open.is_some();
-        let failed = self.list.is_none() && self.error.is_some();
+        let failed = self.list.is_none() && self.loading.error().is_some();
         let page = cx.entity().downgrade();
         let choose = move |index: usize, _: &mut Window, cx: &mut App| {
             let _ = page.update(cx, |page, cx| {
@@ -694,8 +680,8 @@ impl Render for TournamentsPage {
                                     .outline()
                                     .icon(icon("refresh-cw"))
                                     .label("Refresh")
-                                    .loading(self.loading)
-                                    .disabled(self.loading)
+                                    .loading(self.loading.busy())
+                                    .disabled(self.loading.busy())
                                     .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
                             )
                         })
@@ -826,16 +812,15 @@ mod tests {
     fn only_the_latest_tournament_list_lands(cx: &mut gpui_kit::TestAppContext) {
         use gpui_kit::AppContext as _;
         let mut app = crate::e2e::Harness::start(cx);
-        let (first, second) = app.with_window(|window, cx| {
+        let page = app.with_window(|window, cx| {
             let page = cx.new(|cx| super::TournamentsPage::new(window, cx));
             page.update(cx, |page, cx| {
                 page.refresh(cx);
-                let first = page.list_request;
                 page.refresh(cx);
-                (first, page.list_request)
-            })
+            });
+            page
         });
-        assert_ne!(first, second);
+        app.wait_for("the latest list", |_, cx| !page.read(cx).loading.busy());
     }
 
     #[test]
