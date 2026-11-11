@@ -44,6 +44,19 @@ impl Version {
         let text = tag.trim();
         Version::parse(text.strip_prefix('v').unwrap_or(text))
     }
+
+    /// The version a release tag names: exactly `v` and the version (`v2026.10.12`).
+    pub fn of_release_tag(tag: &str) -> Option<Version> {
+        Version::parse(tag.strip_prefix('v')?)
+    }
+
+    /// The release after this one in the same month.
+    pub fn next(self) -> Version {
+        Version {
+            counter: self.counter + 1,
+            ..self
+        }
+    }
 }
 
 impl fmt::Display for Version {
@@ -72,6 +85,20 @@ mod tests {
         assert!(Version::of_tag("v2026.11.0") > Version::of_tag("v2026.10.12"));
         assert!(Version::of_tag("v2026.10.12") > Version::of_tag("2026.9.30"));
         assert_eq!(version(2026, 11, 3).to_string(), "2026.11.3");
+        assert_eq!(version(2026, 11, 3).next(), version(2026, 11, 4));
+        assert_eq!(
+            Version::of_release_tag("v2026.11.5"),
+            Some(version(2026, 11, 5))
+        );
+        for refused in [
+            "2026.11.5",
+            " v2026.11.5",
+            "vv2026.11.5",
+            "v2026.11.05",
+            "v",
+        ] {
+            assert_eq!(Version::of_release_tag(refused), None, "{refused}");
+        }
         for refused in [
             "",
             "v1.2",

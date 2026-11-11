@@ -54,9 +54,9 @@ pub fn plain(notes: &str) -> Result<String> {
     if let Some(c) = text.chars().find(|&c| refused(c)) {
         return Err(format!(
             "The release notes have {c:?} (U+{:04X}), which App Store Connect refuses. Write it \
-             in words in apps/gpui/WHATS_NEW.md, or give it a plain look-alike in \
-             tooling/xtask/src/store_notes.rs.",
-            c as u32
+             in words in {}, or give it a plain look-alike in tooling/xtask/src/store_notes.rs.",
+            c as u32,
+            kchess_delta::notes::FILE
         ));
     }
     let text = if text.is_empty() {
@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn every_section_of_whats_new_goes_to_the_store() {
         let notes =
-            std::fs::read_to_string(crate::util::root().join("apps/gpui/WHATS_NEW.md")).unwrap();
+            std::fs::read_to_string(crate::util::root().join(kchess_delta::notes::FILE)).unwrap();
         for section in notes.split("\n## ").skip(1) {
             let heading = section.lines().next().unwrap_or_default();
             if let Err(error) = plain(section) {
