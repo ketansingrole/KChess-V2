@@ -49,7 +49,6 @@ const MAX_TEXT: usize = 2_000_000;
 const MAX_NODES: usize = 10_000;
 const MAX_DEPTH: usize = 1024;
 
-/// `startingPosition(headers)`.
 fn starting_position(game: &Game) -> Option<VariantPosition> {
     let variant = rules::pgn_variant(game.header("Variant"))?;
     match game.header("FEN").filter(|fen| !fen.is_empty()) {
@@ -58,7 +57,7 @@ fn starting_position(game: &Game) -> Option<VariantPosition> {
     }
 }
 
-/// The tree's root position: `newTree` re-reads the start under standard rules, falling back to
+/// The tree's root position: the start re-read under standard rules, falling back to
 /// the usual start. A variant's start is its own (a Crazyhouse pocket, Three-check's checks are in
 /// its FEN).
 fn root_position(start: &VariantPosition) -> VariantPosition {
@@ -70,7 +69,7 @@ fn root_position(start: &VariantPosition) -> VariantPosition {
     }
 }
 
-/// `treeFromPgn`: one bounded PGN document, or None when it cannot be imported without loss.
+/// One bounded PGN document, or None when it cannot be imported without loss.
 pub fn tree_from_pgn(text: &str) -> Option<TreeNode> {
     if js::utf16_len(text) > MAX_TEXT {
         return None;
@@ -159,7 +158,7 @@ fn walk(game: &Game, root: TreeNode, start: VariantPosition) -> Option<TreeNode>
     }
 }
 
-/// Whether `treeFromPgn` accepts the document, without building the tree: the same limits
+/// Whether `tree_from_pgn` accepts the document, without building the tree: the same limits
 /// and move checks, but no SAN, UCI or FEN text.
 pub fn valid_pgn(text: &str) -> bool {
     if js::utf16_len(text) > MAX_TEXT {
@@ -175,7 +174,7 @@ pub fn valid_pgn(text: &str) -> bool {
     check(game, &start)
 }
 
-/// What a study's card shows of a document `treeFromPgn` accepts, read without building the tree:
+/// What a study's card shows of a document `tree_from_pgn` accepts, read without building the tree:
 /// the main line's final position and length, the moves and root with comments, the variations,
 /// and the headers. Building the tree writes SAN, UCI and a FEN for every move, and was most of
 /// opening the Studies page.

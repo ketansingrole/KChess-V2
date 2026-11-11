@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::js;
 
-/// The most of a response body an error shows (JavaScript's `slice(0, 250)`).
+/// The most of a response body an error shows, in UTF-16 units.
 const DETAIL_UNITS: usize = 250;
 
 /// The detail a failed Lichess response shows: an HTML page (Lichess's 404 for unknown users, or

@@ -1,6 +1,5 @@
-//! The reads of `OnlineGame`: server events (`readOnlineEvent`), connection reports
-//! (`readOnlineState`, `checkingOnline`), and the game-state transitions they share with `finish`
-//! and `resetGame`.
+//! The reads of an online game: server events, connection reports, and the game-state
+//! transitions they share with `finish` and `reset_game`.
 
 use serde_json::{Value, json};
 
@@ -11,7 +10,7 @@ use super::model::{
 use crate::js;
 use crate::variant::Variant;
 
-/// `CORRESPONDENCE`: the days per move Lichess allows.
+/// The days per move Lichess allows.
 const CORRESPONDENCE: [f64; 7] = [1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 14.0];
 /// The chat a game keeps: the latest lines.
 const CHAT_KEPT: usize = 300;
@@ -29,7 +28,7 @@ fn moves_of(v: Option<&Value>) -> Vec<String> {
 }
 
 impl Run<'_> {
-    /// `readOnlineEvent`: one server event. Events for other games, and types that carry no
+    /// One server event. Events for other games, and types that carry no
     /// game state, are ignored.
     pub fn read_event(&mut self, event: &Value) {
         match js::string(event.get("type")) {
@@ -42,7 +41,7 @@ impl Run<'_> {
         }
     }
 
-    /// `readOnlineState`: a connection report, which the epoch makes authoritative.
+    /// A connection report, which the epoch makes authoritative.
     pub fn read_connection(&mut self, connection: &Value) {
         let session = js::to_number(connection.get("session"));
         if session < self.m.state_epoch {
@@ -80,7 +79,7 @@ impl Run<'_> {
         }
     }
 
-    /// `checkingOnline`: the game is unreachable while Lichess is asked about it.
+    /// The game is unreachable while Lichess is asked about it.
     pub fn checking(&mut self) {
         self.m.online_phase = "disconnected".into();
         self.m.online_status = "Checking Lichess for an ongoing game…".into();
@@ -95,7 +94,7 @@ impl Run<'_> {
         self.clock_pause();
     }
 
-    /// `resetGame`: forget the board, keeping the game's identity.
+    /// Forget the board, keeping the game's identity.
     pub fn reset_game(&mut self) {
         self.effect(Effect::ResetView);
         let m = &mut self.m;
@@ -119,7 +118,7 @@ impl Run<'_> {
         m.online_rating = None;
     }
 
-    /// `finish`: the game is over. A rated or casual finish is remembered for a rematch, and a
+    /// The game is over. A rated or casual finish is remembered for a rematch, and a
     /// game that was being played announces its result.
     pub fn finish(&mut self, winner: Option<&str>, reason: &str, notify: bool) {
         let previous = self.m.online_phase.clone();

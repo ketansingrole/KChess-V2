@@ -280,7 +280,7 @@ impl<'de> Deserializer<'de> for J {
     }
 
     /// Whatever `typeof value === 'object'` holds for decodes as a struct or a map, by its own
-    /// entries (a list by its indices, not by position), as the TypeScript validators read it.
+    /// entries (a list by its indices, not by position).
     fn deserialize_struct<V: Visitor<'de>>(
         self,
         _name: &'static str,

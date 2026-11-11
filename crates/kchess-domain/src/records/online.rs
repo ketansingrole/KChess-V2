@@ -1,6 +1,6 @@
-//! Validation of Lichess board-API events. The schema: an object is anything with the keys (arrays included, as valibot reads
-//! them), unknown keys pass through, an optional key may be absent but not null, and the event
-//! type picks the schema like valibot's `variant`.
+//! Validation of Lichess board-API events. The schema: an object is anything with the keys (arrays
+//! included, their indices as keys), unknown keys pass through, an optional key may be absent but
+//! not null, and the event's `type` picks the schema.
 
 use serde_json::{Map, Value};
 
@@ -22,7 +22,7 @@ const TYPES: &[&str] = &[
     "challengeDeclined",
 ];
 
-/// One valibot schema: what a value must be.
+/// What a value must be.
 enum Check {
     /// A string of at most this many UTF-16 units.
     Str(usize),
@@ -89,7 +89,7 @@ const EXPIRATION: &[Field] = &[
     req("millisToMove", Check::Clock),
 ];
 
-/// `stateFields`: the game state, with or without its `type`.
+/// The game state, with or without its `type`.
 const STATE: &[Field] = &[
     req("moves", Check::Str(10_000)),
     req("status", Check::Str(usize::MAX)),
@@ -148,7 +148,7 @@ fn entries_of_type(kind: &str) -> Option<&'static [Field]> {
     })
 }
 
-/// valibot's view of an object: an object, or an array with its indices as keys.
+/// An object, or an array with its indices as keys.
 fn entries(input: &Value) -> Option<Map<String, Value>> {
     match input {
         Value::Object(map) => Some(map.clone()),
@@ -211,7 +211,7 @@ fn check(value: &Value, schema: &Check) -> Option<Value> {
     }
 }
 
-/// `validateOnlineEvent`: the event, or None when it is not one this client reads (no `type`,
+/// The event, or None when it is not one this client reads (no `type`,
 /// or an unknown one); an error when a recognized event is malformed.
 pub fn validate(raw: &Value) -> Result<Option<Value>, String> {
     let Value::Object(map) = raw else {
@@ -253,7 +253,7 @@ fn moves_are_valid(moves: &str) -> bool {
             .all(|token| rules::is_uci_text(token) || rules::is_drop_text(token))
 }
 
-/// `GAME_ID`: 8 to 12 letters and digits.
+/// 8 to 12 letters and digits.
 fn is_game_id(text: &str) -> bool {
     (8..=12).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_alphanumeric())
 }

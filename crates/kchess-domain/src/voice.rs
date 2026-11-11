@@ -655,7 +655,7 @@ fn unit_number(unit: Option<&u16>) -> f64 {
     }
 }
 
-/// `charCodeAt(0) - 97` of a square name (NaN when empty).
+/// A square name's first UTF-16 unit minus `a`'s (so `a` is 0); None when empty.
 fn file_offset(square: &str) -> Option<i64> {
     square
         .encode_utf16()
@@ -1022,7 +1022,7 @@ pub fn knight_challenge(min: f64, max: f64, draws: &[f64]) -> Option<KnightChall
     None
 }
 
-/// `${n || ''}`: zero and NaN print as nothing.
+/// A number's text; zero and NaN print as nothing.
 fn js_or_empty(n: f64) -> String {
     if n == 0.0 || n.is_nan() {
         String::new()

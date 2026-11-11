@@ -264,7 +264,7 @@ fn offset(difficulty: &str) -> f64 {
     }
 }
 
-/// `isReconnect`: a non-array object with a `needsReconnect` property.
+/// A non-array object with a `needsReconnect` property.
 pub fn is_reconnect(value: &Value) -> bool {
     value
         .as_object()

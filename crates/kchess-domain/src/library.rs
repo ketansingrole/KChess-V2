@@ -1,6 +1,5 @@
-//! Library document decoders: semantic validation before a
-//! document reaches the library or a board. Each accepts and rejects exactly what the
-//! TypeScript decoder does and produces the same normalized value.
+//! Library document decoders: semantic validation before a document reaches the library or a
+//! board. Each returns the document normalized.
 
 use serde_json::{Map, Value, json};
 
@@ -64,7 +63,6 @@ fn cloud_id(s: &str) -> bool {
     s.len() == 8 && s.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
-/// `decodeStudy`
 pub fn decode_study(raw: &Value) -> Option<Value> {
     let item = object(Some(raw))?;
     let id = string(item.get("id"))?;
@@ -102,7 +100,7 @@ pub fn decode_study(raw: &Value) -> Option<Value> {
     Some(Value::Object(study))
 }
 
-/// `decodeStudies`: invalid studies are left out rather than failing the whole library.
+/// Invalid studies are left out rather than failing the whole library.
 pub fn decode_studies(raw: &Value) -> Option<Vec<Value>> {
     let doc = object(Some(raw))?;
     let version = js::to_number(doc.get("version"));
@@ -126,7 +124,6 @@ pub fn decode_studies(raw: &Value) -> Option<Vec<Value>> {
 
 /* ── Played games ── */
 
-/// `decodeArchivedGame`
 pub fn decode_archived_game(raw: &Value) -> Option<Value> {
     let g = object(Some(raw))?;
     let id = text(g.get("id"), 80)?;
@@ -187,7 +184,6 @@ pub const MAX_ARCHIVED_GAMES: usize = 500;
 
 /* ── Mistake drills ── */
 
-/// `decodeMistakes`
 pub fn decode_mistakes(raw: &Value) -> Option<Vec<Value>> {
     let doc = object(Some(raw))?;
     if finite(doc.get("version")) != Some(1.0) {

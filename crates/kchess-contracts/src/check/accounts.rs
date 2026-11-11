@@ -526,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_normalize_in_the_renderers_order() {
+    fn settings_are_normalized() {
         let normalized = check::<Settings>(obj(settings())).unwrap();
         assert_eq!(normalized.frontend.sound_volume, 1.0);
         assert_eq!(

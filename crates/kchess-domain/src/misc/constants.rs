@@ -132,9 +132,9 @@ pub const TV_CHANNELS: [(&str, &str); 16] = [
     ("computer", "Computer"),
 ];
 
-/// Largest serialized document the core stores (`MAX_DOCUMENT`).
+/// Largest serialized document the core stores.
 pub const MAX_DOCUMENT: usize = 2_000_000;
 pub const MAX_CHAPTERS: usize = 64;
 pub const MAX_MOVES: usize = 1024;
-/// `Number.MAX_SAFE_INTEGER`
+/// The largest integer a JSON number holds exactly.
 pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;

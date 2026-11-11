@@ -35,7 +35,6 @@ fn host<'a>(source: &'a Value, has_play: bool, games: &'a [Value]) -> Host<'a> {
     }
 }
 
-/// A random version-4 UUID.
 fn new_id() -> String {
     let mut bytes = [0u8; 16];
     if getrandom::fill(&mut bytes).is_err() {

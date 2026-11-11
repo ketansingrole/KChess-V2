@@ -596,7 +596,6 @@ mod tests {
         assert_eq!(request["mateAfter"], -7);
     }
 
-    /// The rules API answers `reviewMoment` and `puzzleClue` with these.
     #[test]
     fn a_review_names_a_moment_and_a_puzzle_a_clue() {
         let review = json!({

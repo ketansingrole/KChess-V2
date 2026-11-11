@@ -1,5 +1,5 @@
-//! The regular expressions the validators use, as hand-written matchers. Each takes the same
-//! strings the TypeScript pattern accepts (anchored, JavaScript `\d` and `\w` are ASCII).
+//! The patterns the validators use, as hand-written matchers. Each is anchored, and `\d` and `\w`
+//! are ASCII.
 
 use super::unicode_tables::{LETTERS, NUMBERS};
 

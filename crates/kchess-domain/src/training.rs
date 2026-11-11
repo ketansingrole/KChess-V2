@@ -18,7 +18,7 @@ pub use clock::low_time_threshold;
 
 use crate::js;
 
-/// `String(n).padStart(2, '0')`
+/// A number's text, padded to two characters with a leading `0`.
 pub(crate) fn pad2(n: f64) -> String {
     let text = js::number_to_string(n);
     if text.len() < 2 {
@@ -28,7 +28,8 @@ pub(crate) fn pad2(n: f64) -> String {
     }
 }
 
-/// The end index of `array.slice(0, end)` over `len` items.
+/// The end index of a slice of `len` items cut at `end`: NaN is 0, fractions truncate, and a
+/// negative end counts from the back.
 pub(crate) fn js_slice_end(len: usize, end: f64) -> usize {
     let end = if end.is_nan() { 0.0 } else { end.trunc() };
     let len = len as f64;

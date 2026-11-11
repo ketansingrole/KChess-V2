@@ -210,7 +210,6 @@ impl ComputerGame {
         &self.state.setup
     }
 
-    /// The game's moves, in UCI.
     pub fn moves(&self) -> &[String] {
         &self.state.moves
     }
@@ -235,17 +234,14 @@ impl ComputerGame {
         self.state.clock
     }
 
-    /// The clocks run in this game.
     pub fn timed(&self) -> bool {
         self.state.times.is_some()
     }
 
-    /// The engine is searching.
     pub fn thinking(&self) -> bool {
         self.state.thinking
     }
 
-    /// A side's flag has fallen.
     pub fn flagged(&self) -> bool {
         self.state.flagged.is_some()
     }

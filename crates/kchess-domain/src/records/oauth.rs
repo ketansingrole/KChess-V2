@@ -8,7 +8,6 @@ use crate::js;
 /// The colour keys of one scheme, in their order.
 const COLOR_KEYS: &[&str] = &["bg", "elevated", "text", "textMuted", "primary", "border"];
 
-/// `APPEARANCES`.
 const APPEARANCES: &[&str] = &["system", "light", "dark"];
 
 /// KChess's default look, used until the app sends its own colours.

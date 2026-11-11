@@ -10,7 +10,7 @@ use crate::js;
 use crate::pgn::{Game, make_pgn, parse_pgn};
 use crate::rules::{self, UciMove};
 
-/// `isVariantEnd()`. Antichess ends only when the side to move has no pieces left.
+/// Antichess ends only when the side to move has no pieces left.
 fn variant_end(pos: &VariantPosition) -> bool {
     match pos {
         VariantPosition::Antichess(_) => pos.us().is_empty(),
@@ -18,7 +18,7 @@ fn variant_end(pos: &VariantPosition) -> bool {
     }
 }
 
-/// `allDests()`'s moves: none once the variant has ended.
+/// The legal moves: none once the variant has ended.
 fn moves(pos: &VariantPosition) -> shakmaty::MoveList {
     if variant_end(pos) {
         shakmaty::MoveList::new()
@@ -27,7 +27,7 @@ fn moves(pos: &VariantPosition) -> shakmaty::MoveList {
     }
 }
 
-/// `outcome()`: `Some(None)` is a draw.
+/// `Some(None)` is a draw.
 fn outcome(pos: &VariantPosition, no_moves: bool) -> Option<Option<Color>> {
     let ended = variant_end(pos);
     if let VariantPosition::Antichess(_) = pos {
@@ -58,13 +58,13 @@ pub struct Info {
     pub check: bool,
     pub checkmate: bool,
     pub stalemate: bool,
-    /// `isInsufficientMaterial()`: neither side can win.
+    /// Neither side can win.
     pub insufficient: bool,
-    /// `hasInsufficientMaterial(color)` for each side.
+    /// Each side that has too little material to win.
     pub cannot_win: CannotWin,
     pub variant_end: bool,
     pub end: bool,
-    /// `outcome()`: absent while the game goes on, `{}` for a draw.
+    /// Absent while the game goes on, `{}` for a draw.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outcome: Option<Value>,
     pub halfmoves: u32,
@@ -132,10 +132,9 @@ pub fn drop_dests(pos: &VariantPosition) -> Vec<(Role, Vec<Square>)> {
 /// How destinations are listed.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DestMode {
-    /// `allDests()`, and `chessgroundDests(pos, { chess960: true })`: castling onto the rook
-    /// only.
+    /// Castling onto the rook only.
     Rules,
-    /// `chessgroundDests(pos)`: standard castling also onto the king's square.
+    /// Standard castling also onto the king's square.
     Board,
 }
 
@@ -156,7 +155,7 @@ pub fn dests(pos: &VariantPosition, mode: DestMode) -> Vec<(Square, Vec<Square>)
         }
         let mut list: Vec<Square> = squares.into_iter().collect();
         if mode == DestMode::Board && Some(from) == king && from.file() == shakmaty::File::E {
-            // Chessground needs both kinds of castling destination.
+            // The board takes both kinds of castling destination.
             if squares.contains(Square::A1) {
                 list.push(Square::C1);
             } else if squares.contains(Square::A8) {
@@ -253,7 +252,7 @@ pub fn legal_sans(pos: &VariantPosition) -> Vec<String> {
     sans
 }
 
-/// A move played: `makeUci` of the move (castling king-to-rook), its SAN and the result.
+/// A move played: its UCI (castling king-to-rook), its SAN and the result.
 #[derive(Debug, Serialize)]
 pub struct Played {
     pub uci: String,
@@ -272,7 +271,7 @@ fn played(pos: &VariantPosition, m: shakmaty::Move) -> Played {
     }
 }
 
-/// `uci` played as `normalizeMove` + `isLegal` + `play` would (castling either way).
+/// `uci` played when it is legal (castling onto the king's square or the rook's).
 pub fn play_uci(pos: &VariantPosition, uci: &str) -> Option<Played> {
     let m = rules::parse_uci(uci).and_then(|u| rules::legal_move(pos, u))?;
     Some(played(pos, m))
@@ -292,7 +291,7 @@ pub struct LineMove {
 }
 
 /// Moves (UCI, or SAN with `san`) played one after another until one is not legal.
-/// UCI moves are trimmed first with `trim`, as `replaySetup` reads them.
+/// UCI moves are trimmed first.
 pub fn line<S: AsRef<str>>(
     mut pos: VariantPosition,
     moves: &[S],
@@ -377,7 +376,6 @@ pub fn fen_problem(fen: &str) -> Option<&'static str> {
 
 /* ── PGN games ── */
 
-/// `startingPosition(headers)`.
 pub fn starting_position(game: &Game) -> Option<VariantPosition> {
     let variant = rules::pgn_variant(game.header("Variant"))?;
     match game.header("FEN").filter(|fen| !fen.is_empty()) {
@@ -429,7 +427,7 @@ pub fn pgn_games(text: &str) -> Vec<PgnGame> {
         .collect()
 }
 
-/// The value of the last `[%clk h:mm:ss]` in a comment, as `parseComment` reads it.
+/// The value of the last `[%clk h:mm:ss]` in a comment.
 pub fn comment_clock(comment: &str) -> Option<f64> {
     let mut clock = None;
     let mut rest = comment;
