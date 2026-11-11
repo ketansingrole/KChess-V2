@@ -335,7 +335,7 @@ impl PracticePage {
         view.into_any_element()
     }
 
-    /// The page keeps the keys and hands them to the drill on screen (`keydown` in each drill).
+    /// The page keeps the keys and hands them to the drill on screen.
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         match Tab::stored(cx) {
             Tab::Coordinates => {

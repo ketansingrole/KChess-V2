@@ -401,7 +401,7 @@ impl Live {
         self.redraw(cx);
     }
 
-    /// One side's clock, the side to move's running while connected (`clockOf`).
+    /// One side's clock, the side to move's running while connected.
     pub(super) fn clock(&self, color: Color, connected: bool) -> Option<(String, bool)> {
         let frame = self.frame.as_ref()?;
         let base = frame[if color == Color::White {

@@ -207,7 +207,7 @@ impl FriendsPage {
         });
     }
 
-    /// `loadProfiles`: saved profiles at once, the rest in one request per thousand players; every
+    /// Saved profiles at once, the rest in one request per thousand players; every
     /// few minutes the rest is everyone, so a play time that grew shows as new games.
     fn load_profiles(&mut self, cx: &mut Context<Self>) {
         let names: Vec<String> = Self::friends(cx)
@@ -302,7 +302,7 @@ impl FriendsPage {
         }
     }
 
-    /// `addAccount`: follow the player typed and download their games.
+    /// Follow the player typed and download their games.
     fn follow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.input.read(cx).value().trim().to_string();
         if name.is_empty() {

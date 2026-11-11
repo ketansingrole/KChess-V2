@@ -107,13 +107,11 @@ pub fn short_game_date(millis: f64) -> String {
         .unwrap_or_default()
 }
 
-/// The Chess960 start numbered `n` (`chess960Fen`).
+/// The Chess960 start numbered `n`.
 pub fn chess960(n: i64) -> String {
     kchess_domain::rules::chess960_fen(n)
 }
 
-/// A FEN typed or pasted, as the board editor reads it (`setupFromFen`): the placement and side
-/// from the rules, castling rights as written, and a plausible en passant square.
 /// The FEN of a board editor setup (`editor_setup`'s shape): castling and en passant only where
 /// the pieces allow them. None, logged, for anything else.
 pub fn setup_fen(setup: &Value) -> Option<String> {
@@ -191,7 +189,7 @@ fn castling_letters(board: &str, rights: &str) -> String {
         .collect()
 }
 
-/// Why a position cannot be played, in the words the board editor uses (`positionProblem`).
+/// Why a position cannot be played, in the words the board editor uses.
 pub fn position_problem(fen: &str) -> Option<&'static str> {
     Some(match kchess_domain::position::fen_problem(fen)? {
         "fen" => "That is not a valid FEN",

@@ -30,7 +30,7 @@ const DECLINE: [(&str, &str); 9] = [
     ("variant", "Not this variant"),
 ];
 
-/// "5+3", "3 days per move", "No clock" (`describeControl`).
+/// "5+3", "3 days per move", "No clock".
 pub fn describe_control(challenge: &Value) -> String {
     let control = &challenge["timeControl"];
     match control["type"].as_str() {
@@ -49,7 +49,7 @@ pub fn describe_control(challenge: &Value) -> String {
     }
 }
 
-/// "you play white", "random colours" (`colorText`): the colour is the challenger's.
+/// "you play white", "random colours": the colour is the challenger's.
 pub fn color_text(challenge: &Value) -> String {
     let color = challenge["color"].as_str().unwrap_or("random");
     if color == "random" {

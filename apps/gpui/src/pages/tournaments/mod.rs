@@ -42,7 +42,7 @@ fn refresh_due(status: &Value, since: Duration) -> bool {
     }
 }
 
-/// `control`: "3+2", "½+0".
+/// "3+2", "½+0".
 pub fn control(clock: &Value) -> String {
     crate::widgets::time_control(
         clock["limit"].as_f64().unwrap_or_default() / 60.,

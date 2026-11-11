@@ -36,7 +36,7 @@ pub enum Phase {
     Disconnected,
 }
 
-/// The find-a-game form (`onlineMinutes` and the rest).
+/// The find-a-game form.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Form {
     pub minutes: f64,
@@ -65,7 +65,7 @@ impl Default for Form {
     }
 }
 
-/// `performance.now()`: milliseconds on a clock that only goes forward.
+/// Milliseconds on a clock that only goes forward.
 pub fn now() -> f64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.
@@ -87,7 +87,6 @@ pub struct OnlineState {
     pub phase: Phase,
     /// The rules' state of the game.
     model: Model,
-    /// `ClockState`.
     clock: ClockState,
     /// The position looked at while reviewing; `None` follows the game.
     pub view_ply: Option<usize>,
@@ -573,7 +572,7 @@ impl OnlineState {
         })
     }
 
-    /// `prepareForGame`: an accepted challenge's game is about to start.
+    /// An accepted challenge's game is about to start.
     fn prepare_for_game(&mut self, account: &str, id: &str) {
         self.model.online_account = account.to_string();
         self.model.online_id = id.to_string();
@@ -969,7 +968,7 @@ pub fn handle(cx: &App) -> Entity<OnlineState> {
     cx.global::<OnlineHandle>().0.clone()
 }
 
-/// The account Lichess actions use (`activeOnlineAccount`): the one chosen for online play when it
+/// The account Lichess actions use: the one chosen for online play when it
 /// is connected, else the first connected one.
 pub fn active_account(accounts: &[Value], cx: &App) -> Option<String> {
     let preferred = crate::prefs::get::<String>(cx, crate::accounts::ONLINE_ACCOUNT, String::new());

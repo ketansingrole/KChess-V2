@@ -15,7 +15,7 @@ use crate::theme::Palette;
 use crate::widgets::{self, Choice};
 use kchess_domain::records::ratings::{merge_rating_histories, normalize_rating_key};
 
-/// `chartModes`, by perf key.
+/// The chart's speeds, by perf key.
 const MODES: [(&str, &str); 6] = [
     ("bullet", "Bullet"),
     ("blitz", "Blitz"),

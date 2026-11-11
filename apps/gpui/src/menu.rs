@@ -35,31 +35,25 @@ gpui_kit::actions!(
 
 /// Act on the window in front. A key reaches its action while that window is being updated, so
 /// the window is changed just after.
-fn on_window(cx: &mut App, change: fn(&mut Window)) {
+fn on_window(cx: &mut App, change: impl FnOnce(&mut Window, &mut App) + 'static) {
     cx.defer(move |cx| {
         if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, _| change(window));
+            let _ = window.update(cx, |_, window, cx| change(window, cx));
         }
     });
 }
 
 /// Interface size one step either way, or back to Auto; changed after the key's dispatch.
 fn zoom(direction: i8, cx: &mut App) {
-    cx.defer(move |cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, cx| {
-                crate::interface_zoom::step_window(direction, window, cx)
-            });
-        }
+    on_window(cx, move |window, cx| {
+        crate::interface_zoom::step_window(direction, window, cx)
     });
 }
 
 /// Back (-1) or forward (1) through the pages visited, as a swipe goes; after the key's dispatch.
 fn go(direction: crate::swipe::Direction, cx: &mut App) {
-    cx.defer(move |cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, cx| crate::shell::go(direction, window, cx));
-        }
+    on_window(cx, move |window, cx| {
+        crate::shell::go(direction, window, cx)
     });
 }
 
@@ -71,13 +65,8 @@ fn show_palette(prefix: &'static str, cx: &mut App) {
     else {
         return;
     };
-    // The key reaches here while the window is being updated; it is updated next.
-    cx.defer(move |cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, cx| {
-                palette.update(cx, |palette, cx| palette.show(prefix, window, cx))
-            });
-        }
+    on_window(cx, move |window, cx| {
+        palette.update(cx, |palette, cx| palette.show(prefix, window, cx))
     });
 }
 
@@ -277,46 +266,16 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("f", FlipBoard, Some("!Input")),
     ]);
     cx.on_action(|_: &ShowShortcuts, cx| {
-        cx.defer(|cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, cx| crate::shortcuts::open(window, cx));
-            }
-        })
+        on_window(cx, |window, cx| crate::shortcuts::open(window, cx))
     });
     cx.on_action(|_: &ShowWhatsNew, cx| {
-        cx.defer(|cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, cx| crate::whats_new::open(window, cx));
-            }
-        })
+        on_window(cx, |window, cx| crate::whats_new::open(window, cx))
     });
-    cx.on_action(|_: &Copy, cx| {
-        cx.defer(|cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, cx| crate::shell::copy_on_page(window, cx));
-            }
-        })
-    });
-    cx.on_action(|_: &Paste, cx| {
-        cx.defer(|cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, cx| crate::links::open_pasted(window, cx));
-            }
-        })
-    });
-    cx.on_action(|_: &New, cx| {
-        cx.defer(|cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, cx| crate::shell::new_on_page(window, cx));
-            }
-        })
-    });
+    cx.on_action(|_: &Copy, cx| on_window(cx, |window, cx| crate::shell::copy_on_page(window, cx)));
+    cx.on_action(|_: &Paste, cx| on_window(cx, |window, cx| crate::links::open_pasted(window, cx)));
+    cx.on_action(|_: &New, cx| on_window(cx, |window, cx| crate::shell::new_on_page(window, cx)));
     cx.on_action(|_: &ToggleSidebar, cx| {
-        cx.defer(|cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, cx| crate::shell::toggle_sidebar(window, cx));
-            }
-        })
+        on_window(cx, |window, cx| crate::shell::toggle_sidebar(window, cx))
     });
     cx.on_action(|_: &GoBack, cx| go(-1, cx));
     cx.on_action(|_: &GoForward, cx| go(1, cx));
@@ -339,12 +298,8 @@ pub fn init(cx: &mut App) {
     });
     cx.on_action(|_: &Commands, cx| show_palette(">", cx));
     cx.on_action(|_: &OpenSettings, cx| {
-        cx.defer(|cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, cx| {
-                    crate::shell::open(crate::pages::Page::Settings, window, cx)
-                });
-            }
+        on_window(cx, |window, cx| {
+            crate::shell::open(crate::pages::Page::Settings, window, cx)
         })
     });
     // Everything is saved, with the window still open to say what could not be, before quitting.
@@ -363,9 +318,9 @@ pub fn init(cx: &mut App) {
             }
         })
     });
-    cx.on_action(|_: &Minimize, cx| on_window(cx, |window| window.minimize_window()));
-    cx.on_action(|_: &Zoom, cx| on_window(cx, |window| window.zoom_window()));
-    cx.on_action(|_: &ToggleFullScreen, cx| on_window(cx, |window| window.toggle_fullscreen()));
+    cx.on_action(|_: &Minimize, cx| on_window(cx, |window, _| window.minimize_window()));
+    cx.on_action(|_: &Zoom, cx| on_window(cx, |window, _| window.zoom_window()));
+    cx.on_action(|_: &ToggleFullScreen, cx| on_window(cx, |window, _| window.toggle_fullscreen()));
     // Closing the window ends the app, which then saves and closes the core; macOS keeps it
     // running, as its apps do, and the Dock icon opens the window again.
     cx.on_window_closed(|cx, _| {
