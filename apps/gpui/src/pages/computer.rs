@@ -6,6 +6,7 @@
 use kchess_contracts::calls;
 use kchess_contracts::check::Moves;
 use kchess_contracts::types::EngineLevel;
+use kchess_domain::games::archive::Snapshot;
 use kchess_domain::training::clock::format_clock;
 use std::time::Instant;
 
@@ -300,9 +301,9 @@ impl ComputerPage {
     }
 
     /// The game as Game history keeps it; none, and a warning, when it cannot be described.
-    fn archive_source(&self) -> Option<Value> {
+    fn archive_source(&self) -> Option<Snapshot> {
         match self.game.archive_snapshot() {
-            Ok(archived) => Some(json!(archived)),
+            Ok(archived) => Some(archived),
             Err(cause) => {
                 self.log_warn(&format!(
                     "The game could not be kept in Game history: {cause}"

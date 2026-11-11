@@ -893,7 +893,7 @@ impl InsightsPage {
             .filter(|(title, rows)| *title != "By clock" || !rows.is_empty())
             .collect();
         let openings = &report.by_opening;
-        let best = best_and_weakest(&openings);
+        let best = best_and_weakest(openings);
         // Each section's height for balancing: its title and a row per entry.
         let heights: Vec<f32> = parts
             .iter()

@@ -2233,6 +2233,7 @@ pub struct PopularityMonth {
 
 /* ── Online play, watching and tournaments, as the core answers them ────── */
 
+pub use kchess_domain::library::PlayedGame;
 pub use kchess_domain::records::challenge::{
     ChallengeInfo, PlayerRef, TimeControl as ChallengeTimeControl,
 };
@@ -2979,7 +2980,7 @@ pub struct StudyCommandResult {
 #[serde(rename_all = "camelCase")]
 pub struct Library {
     pub studies: Vec<Value>,
-    pub games: Vec<Value>,
+    pub games: Vec<PlayedGame>,
     pub mistakes: Vec<Value>,
     pub sessions: serde_json::Map<String, Value>,
     pub joined_tournaments: Vec<Value>,

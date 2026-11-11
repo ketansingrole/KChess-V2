@@ -16,7 +16,9 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_domain::games::archive::Snapshot;
 use kchess_domain::games::otb_clock::{Config, OtbClock, Side};
+use kchess_domain::variant::Setup;
 use kchess_games::Outcome;
 use kchess_games::history::session_kind;
 use serde_json::{Value, json};
@@ -168,7 +170,7 @@ impl Resumes for LocalPage {
                     ),
                 }
             }
-            let (source, has_play) = (json!(self.game.archive_snapshot()), self.has_play());
+            let (source, has_play) = (self.game.archive_snapshot(), self.has_play());
             self.history = Some(HistoryPlace::new(
                 local::HISTORY,
                 saved.take(&session_kind(local::HISTORY)),
@@ -511,7 +513,7 @@ impl LocalPage {
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.after_change(cx);
         SessionSaver::changed(self, cx);
-        let (source, has_play) = (json!(self.game.archive_snapshot()), self.has_play());
+        let (source, has_play) = (self.game.archive_snapshot(), self.has_play());
         if let Some(history) = &mut self.history {
             history.save(false, source, has_play, cx);
         }
@@ -615,7 +617,7 @@ impl LocalPage {
     /// After a saved game that could not be read, this one is the players' to keep.
     fn start(&mut self, setup: Value, clock: Value, cx: &mut Context<Self>) {
         self.saver.open();
-        let (source, has_play) = (json!(self.game.archive_snapshot()), self.has_play());
+        let (source, has_play) = (self.game.archive_snapshot(), self.has_play());
         match &mut self.history {
             Some(history) => history.reset(source, has_play, cx),
             None => {
@@ -805,18 +807,18 @@ impl LocalPage {
 
     /* ── Chess clock ─────────────────────────────────────────────────── */
 
-    fn clock_snapshot(&self) -> Value {
-        json!({
-            "source": "clock",
-            "setup": { "variant": "standard", "fen": STANDARD_FEN },
-            "moves": [],
-            "white": "Bottom player",
-            "black": "Top player",
-            "result": "*",
-            "reason": self.clock.reason(),
-            "timeControl": self.clock.time_control(),
-            "clockSummary": self.clock.summary(),
-        })
+    fn clock_snapshot(&self) -> Snapshot {
+        Snapshot {
+            source: "clock".into(),
+            setup: Setup::standard(),
+            moves: Vec::new(),
+            white: "Bottom player".into(),
+            black: "Top player".into(),
+            result: "*".into(),
+            reason: self.clock.reason(),
+            time_control: self.clock.time_control(),
+            clock_summary: Some(self.clock.summary()),
+        }
     }
 
     fn clock_changed(&mut self, cx: &mut Context<Self>) {

@@ -637,7 +637,7 @@ fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
                 let length = moves.len() - index * 2;
                 let at = now - (index as u64 + 1) * 20 * 3_600_000;
                 played.save(
-                    serde_json::json!({
+                    serde_json::from_value(serde_json::json!({
                         "id": format!("home-{index}"),
                         "source": source,
                         "setup": { "variant": "standard", "fen": crate::game::STANDARD_FEN },
@@ -650,7 +650,8 @@ fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
                         "timeControl": "300+3",
                         "startedAt": at,
                         "updatedAt": at,
-                    }),
+                    }))
+                    .expect("a played game"),
                     cx,
                 );
             }
@@ -965,7 +966,7 @@ fn content(out: &Path, appearance: Appearance) {
             for (index, result) in results.iter().enumerate() {
                 let length = moves.len() - index * 2;
                 played.save(
-                    serde_json::json!({
+                    serde_json::from_value(serde_json::json!({
                         "id": format!("seed-{index}"),
                         "source": "computer",
                         "setup": { "variant": "standard", "fen": crate::game::STANDARD_FEN },
@@ -978,7 +979,8 @@ fn content(out: &Path, appearance: Appearance) {
                         "timeControl": "300+3",
                         "startedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
                         "updatedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
-                    }),
+                    }))
+                    .expect("a played game"),
                     cx,
                 );
             }

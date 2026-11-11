@@ -1,6 +1,7 @@
 //! Library document decoders: semantic validation before a document reaches the library or a
 //! board. Each returns the document normalized.
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::js::{self, finite, integer, string, text};
@@ -11,7 +12,7 @@ pub const MAX_STUDIES: usize = 50;
 pub const MAX_CHAPTERS: usize = 64;
 pub const MAX_MISTAKES: usize = 500;
 
-use crate::variant::Variant;
+use crate::variant::{Setup, Variant};
 
 fn is_variant(v: Option<&Value>) -> Option<Variant> {
     string(v).and_then(Variant::from_key)
@@ -124,7 +125,73 @@ pub fn decode_studies(raw: &Value) -> Option<Vec<Value>> {
 
 /* ── Played games ── */
 
-pub fn decode_archived_game(raw: &Value) -> Option<Value> {
+/// A game played in KChess as Game history keeps it: against the computer (`computer`), two
+/// people at one board (`board`) or the chess clock (`clock`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayedGame {
+    pub id: String,
+    pub source: String,
+    /// When its first move was played, in milliseconds since the epoch.
+    pub started_at: f64,
+    pub updated_at: f64,
+    pub white: String,
+    pub black: String,
+    /// `*` while it is unfinished, else `1-0`, `0-1` or `1/2-1/2`.
+    pub result: String,
+    pub reason: String,
+    /// It will not be played on (a resumed game's entry is open until then).
+    pub finished: bool,
+    pub setup: Setup,
+    /// UCI moves from the setup.
+    pub moves: Vec<String>,
+    pub time_control: String,
+    /// The clocks at the end, for a chess clock game.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock_summary: Option<String>,
+}
+
+impl PlayedGame {
+    /// The side named “You” in a computer game; none for a game at the board.
+    pub fn player_side(&self) -> Option<shakmaty::Color> {
+        if self.white == "You" {
+            Some(shakmaty::Color::White)
+        } else if self.black == "You" {
+            Some(shakmaty::Color::Black)
+        } else {
+            None
+        }
+    }
+
+    /// How the game ended for its player: `win`, `loss` or `draw` for the side named “You”, the
+    /// winning colour (`white`, `black`) or `draw` at the board; `unfinished`, `ongoing` or
+    /// `clock` when it has no result.
+    pub fn outcome(&self) -> &'static str {
+        if self.source == "clock" {
+            return "clock";
+        }
+        match self.result.as_str() {
+            "*" if !self.finished => "ongoing",
+            "*" => "unfinished",
+            "1/2-1/2" => "draw",
+            result => {
+                let winner = if result == "1-0" {
+                    shakmaty::Color::White
+                } else {
+                    shakmaty::Color::Black
+                };
+                match self.player_side() {
+                    None => crate::color::name(winner),
+                    Some(you) if you == winner => "win",
+                    Some(_) => "loss",
+                }
+            }
+        }
+    }
+}
+
+/// A stored or sent played game, checked: every field in bounds and every move legal.
+pub fn decode_archived_game(raw: &Value) -> Option<PlayedGame> {
     let g = object(Some(raw))?;
     let id = text(g.get("id"), 80)?;
     let source = string(g.get("source")).filter(|s| ["computer", "board", "clock"].contains(s))?;
@@ -161,23 +228,24 @@ pub fn decode_archived_game(raw: &Value) -> Option<Value> {
     if replay::replay_setup_count(variant, fen, &moves) != Some(moves.len()) {
         return None;
     }
-    let mut game = Map::new();
-    game.insert("id".into(), id.into());
-    game.insert("source".into(), source.into());
-    game.insert("startedAt".into(), number(started_at));
-    game.insert("updatedAt".into(), number(updated_at));
-    game.insert("white".into(), white.into());
-    game.insert("black".into(), black.into());
-    game.insert("result".into(), result.into());
-    game.insert("reason".into(), reason.into());
-    game.insert("finished".into(), (*finished).into());
-    game.insert("setup".into(), json!({ "variant": variant, "fen": fen }));
-    game.insert("moves".into(), moves.into());
-    game.insert("timeControl".into(), time_control.into());
-    if let Some(summary) = clock_summary {
-        game.insert("clockSummary".into(), summary.into());
-    }
-    Some(Value::Object(game))
+    Some(PlayedGame {
+        id: id.into(),
+        source: source.into(),
+        started_at,
+        updated_at,
+        white: white.into(),
+        black: black.into(),
+        result: result.into(),
+        reason: reason.into(),
+        finished: *finished,
+        setup: Setup {
+            variant,
+            fen: fen.into(),
+        },
+        moves: moves.into_iter().map(String::from).collect(),
+        time_control: time_control.into(),
+        clock_summary: clock_summary.map(String::from),
+    })
 }
 
 pub const MAX_ARCHIVED_GAMES: usize = 500;
@@ -255,6 +323,37 @@ mod tests {
             "white": "A", "black": "B", "result": "*", "reason": "", "finished": false,
             "setup": { "variant": "standard", "fen": START }, "moves": moves, "timeControl": "-",
         })
+    }
+
+    #[test]
+    fn played_games_end_for_their_player_or_by_colour() {
+        let computer = |white: &str, black: &str, result: &str| {
+            let mut game = decode_archived_game(&game(&[])).unwrap();
+            game.source = "computer".into();
+            (game.white, game.black, game.result) = (white.into(), black.into(), result.into());
+            game.finished = true;
+            game
+        };
+        assert_eq!(computer("You", "Stockfish", "1-0").outcome(), "win");
+        assert_eq!(computer("You", "Stockfish", "0-1").outcome(), "loss");
+        assert_eq!(computer("Stockfish", "You", "1-0").outcome(), "loss");
+        assert_eq!(computer("Stockfish", "You", "0-1").outcome(), "win");
+        assert_eq!(computer("You", "Stockfish", "1/2-1/2").outcome(), "draw");
+        assert_eq!(computer("White", "Black", "0-1").outcome(), "black");
+        assert_eq!(computer("You", "Stockfish", "*").outcome(), "unfinished");
+        let board = decode_archived_game(&game(&[])).unwrap();
+        assert_eq!(board.outcome(), "ongoing");
+        let clock = PlayedGame {
+            source: "clock".into(),
+            result: "1-0".into(),
+            ..board
+        };
+        assert_eq!(clock.outcome(), "clock");
+        assert_eq!(
+            computer("White", "You", "*").player_side(),
+            Some(shakmaty::Color::Black)
+        );
+        assert_eq!(computer("White", "Black", "*").player_side(), None);
     }
 
     #[test]

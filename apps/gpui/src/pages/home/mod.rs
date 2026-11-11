@@ -6,8 +6,10 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::Variant;
 use kchess_contracts::calls;
-use serde_json::Value;
+use kchess_contracts::types::PlayedGame;
+use serde_json::{Value, json};
 use shakmaty::{Color, Position as _};
 
 use crate::assets::icon;
@@ -26,11 +28,9 @@ use crate::widgets::Pressable as _;
 mod lichess;
 
 /// A game's variant by name, when it is not standard chess.
-fn variant_of(game: &Value) -> Option<String> {
-    game["setup"]["variant"]
-        .as_str()
-        .filter(|variant| *variant != "standard")
-        .map(crate::game::variant_label)
+fn variant_of(game: &PlayedGame) -> Option<String> {
+    (game.setup.variant != Variant::Standard)
+        .then(|| crate::game::variant_label(game.setup.variant.key()))
 }
 
 /// Recent games on Home.
@@ -59,7 +59,7 @@ pub struct HomePage {
     activity: Option<(String, Entity<lichess::LichessActivity>)>,
     /// The newest played games (`RECENT`), as of a revision of the played games: Home drew them
     /// by sorting every played game on every frame.
-    recent: std::cell::RefCell<(Option<u64>, Vec<Value>)>,
+    recent: std::cell::RefCell<(Option<u64>, Vec<PlayedGame>)>,
     /// The page's content, as last laid out: it, not the window, decides what goes beside what.
     area: Measured,
     focus: FocusHandle,
@@ -156,19 +156,16 @@ pub(crate) enum Action {
 
 /// Your newest `limit` saved games, newest first; the chess clock's are not games to show.
 /// Only those are copied: Home reads this on every render, and up to 500 games are saved.
-fn played_games(cx: &App, limit: usize) -> Vec<Value> {
-    let mut games: Vec<&Value> = cx
+fn played_games(cx: &App, limit: usize) -> Vec<PlayedGame> {
+    let mut games: Vec<&PlayedGame> = cx
         .global::<PlayedHandle>()
         .0
         .read(cx)
         .games()
         .iter()
-        .filter(|game| game["source"] != "clock")
+        .filter(|game| game.source != "clock")
         .collect();
-    games.sort_by(|a, b| {
-        let started = |game: &Value| game["startedAt"].as_f64().unwrap_or_default();
-        started(b).total_cmp(&started(a))
-    });
+    games.sort_by(|a, b| b.started_at.total_cmp(&a.started_at));
     games.into_iter().take(limit).cloned().collect()
 }
 
@@ -196,7 +193,7 @@ impl HomePage {
     }
 
     /// The newest played games, worked out again only once the played games change.
-    fn with_recent<R>(&self, cx: &App, read: impl FnOnce(&[Value]) -> R) -> R {
+    fn with_recent<R>(&self, cx: &App, read: impl FnOnce(&[PlayedGame]) -> R) -> R {
         let revision = cx.global::<PlayedHandle>().0.read(cx).revision();
         let mut kept = self.recent.borrow_mut();
         if kept.0 != Some(revision) {
@@ -210,9 +207,7 @@ impl HomePage {
         if self.continue_game.is_some() {
             return None;
         }
-        self.with_recent(cx, |games| {
-            games.first()?["id"].as_str().map(str::to_string)
-        })
+        self.with_recent(cx, |games| games.first().map(|game| game.id.clone()))
     }
 
     /// What Home's buttons can do now.
@@ -428,16 +423,25 @@ impl Render for HomePage {
         }
         let tiles = v_flex().gap(GAP).children(rows);
 
-        let mut games = self.with_recent(cx, <[Value]>::to_vec);
+        let mut games = self.with_recent(cx, <[PlayedGame]>::to_vec);
         // The game you left, else the last one you finished, else the starting position.
         let session = self.continue_game.as_ref().map(|(_, session)| session);
         let latest = games.first().cloned();
-        let (setup, moves) = session
-            .or(latest.as_ref())
-            .map_or_else(Default::default, line);
-        let side = session
-            .or(latest.as_ref())
-            .map_or(Color::White, orientation);
+        let (setup, moves, side) = match (session, &latest) {
+            (Some(session), _) => {
+                let (setup, moves) = line(session);
+                (setup, moves, orientation(session))
+            }
+            (None, Some(game)) => {
+                let side = if game.black == "You" {
+                    Color::Black
+                } else {
+                    Color::White
+                };
+                (json!(game.setup), game.moves.clone(), side)
+            }
+            (None, None) => (Value::Null, Vec::new(), Color::White),
+        };
         let drawn = format!("{setup}{moves:?}{side:?}");
         if self.board.as_ref().is_none_or(|(shown, _)| *shown != drawn) {
             let mut state = view::board_state(&setup, &moves, moves.len(), side, None);
@@ -445,13 +449,7 @@ impl Render for HomePage {
             self.board = Some((drawn, cx.new(|_| ChessBoard::new(state))));
         }
         let board = self.board.as_ref().map(|(_, board)| board.clone());
-        let names = |game: &Value| {
-            format!(
-                "{} vs {}",
-                game["white"].as_str().unwrap_or_default(),
-                game["black"].as_str().unwrap_or_default()
-            )
-        };
+        let names = |game: &PlayedGame| format!("{} vs {}", game.white, game.black);
         // What the board shows: its title, the line under it, and the game it opens.
         let (title, detail, opens) = match (&self.continue_game, &latest) {
             (Some((game, _)), _) => (
@@ -467,10 +465,7 @@ impl Render for HomePage {
             // The last game, as its row in Recent games says it: who won, and against whom; and
             // the opening it was.
             (None, Some(game)) => {
-                let key = (
-                    game["id"].as_str().unwrap_or_default().to_string(),
-                    game["moves"].as_array().map_or(0, Vec::len),
-                );
+                let key = (game.id.clone(), game.moves.len());
                 if self
                     .last_opening
                     .as_ref()
@@ -496,13 +491,11 @@ impl Render for HomePage {
                                 h_flex()
                                     .gap(px(8.))
                                     .child(crate::pages::history::badge(
-                                        &crate::pages::history::outcome(game),
+                                        game.outcome(),
                                         None,
                                         &palette,
                                     ))
-                                    .child(short_date(
-                                        game["startedAt"].as_f64().unwrap_or_default(),
-                                    )),
+                                    .child(short_date(game.started_at)),
                             )
                             .children(opening.map(|opening| {
                                 div()
@@ -514,7 +507,7 @@ impl Render for HomePage {
                             }))
                             .into_any_element(),
                     ),
-                    game["id"].as_str().map(str::to_string),
+                    Some(game.id.clone()),
                 )
             }
             (None, None) => (None, None, None),
@@ -663,7 +656,7 @@ impl Render for HomePage {
                 v_flex()
                     .mx(px(-12.))
                     .children(games.into_iter().enumerate().map(|(index, game)| {
-                        let id = game["id"].as_str().unwrap_or_default().to_string();
+                        let id = game.id.clone();
                         h_flex()
                             .id(("home-game", index))
                             .test_support()
@@ -689,7 +682,7 @@ impl Render for HomePage {
                                     .test_support()
                                     .flex_none()
                                     .child(crate::pages::history::badge(
-                                        &crate::pages::history::outcome(&game),
+                                        game.outcome(),
                                         Some(crate::pages::history::BADGE_WIDTH),
                                         &palette,
                                     )),
@@ -708,9 +701,8 @@ impl Render for HomePage {
                                     .text_right()
                                     .text_color(palette.text_muted)
                                     .child({
-                                        let count = crate::pages::history::move_count(
-                                            game["moves"].as_array().map_or(0, Vec::len),
-                                        );
+                                        let count =
+                                            crate::pages::history::move_count(game.moves.len());
                                         match variant_of(&game) {
                                             Some(variant) => format!("{variant} · {count}"),
                                             None => count,
@@ -723,9 +715,7 @@ impl Render for HomePage {
                                     .flex_none()
                                     .text_right()
                                     .text_color(palette.text_muted)
-                                    .child(short_date(
-                                        game["startedAt"].as_f64().unwrap_or_default(),
-                                    )),
+                                    .child(short_date(game.started_at)),
                             )
                     })),
             );

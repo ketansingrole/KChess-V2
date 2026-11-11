@@ -55,6 +55,13 @@ impl Validate for SessionObject {
 #[serde(transparent)]
 pub struct ArchivedGame(pub Value);
 
+impl ArchivedGame {
+    /// A played game, to send.
+    pub fn of(game: &kchess_domain::library::PlayedGame) -> ArchivedGame {
+        ArchivedGame(serde_json::to_value(game).unwrap_or(Value::Null))
+    }
+}
+
 impl Validate for ArchivedGame {
     fn validate(value: J) -> Result<Self, Refusal> {
         if !value.truthy() || !value.is_object() {

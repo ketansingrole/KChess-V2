@@ -1,7 +1,7 @@
 //! The library snapshot (`library`), its readers, and the studies-table migration.
 //! Named `library_import` because `store::import` already owns the JSON-backup/legacy-database profile migration.
 
-use kchess_contracts::types::Library;
+use kchess_contracts::types::{Library, PlayedGame};
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
@@ -153,7 +153,7 @@ pub(crate) fn read_session(host: &dyn Host, db: &Connection, kind: &str) -> Resu
 }
 
 /// The played games, newest first; a game that no longer replays is skipped.
-pub(crate) fn read_games(host: &dyn Host, db: &Connection) -> Result<Vec<Value>> {
+pub(crate) fn read_games(host: &dyn Host, db: &Connection) -> Result<Vec<PlayedGame>> {
     let mut statement = db
         .prepare("SELECT id, body FROM archived_games ORDER BY seq DESC")
         .sql()?;

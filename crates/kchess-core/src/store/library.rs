@@ -3,7 +3,7 @@
 //! document in `kchess.db`. The decoders and semantic validation are `kchess_domain`'s.
 
 use kchess_contracts::types::{
-    Keyed, MistakeGame, MistakesAdded, SessionKind, StudyCommand, StudyCommandResult,
+    Keyed, MistakeGame, MistakesAdded, PlayedGame, SessionKind, StudyCommand, StudyCommandResult,
 };
 use kchess_domain::color::Color;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -140,9 +140,10 @@ fn archive_overhead() -> i64 {
 }
 
 /// Add or replace a game; it becomes the most recent.
-pub fn write_game(db: &Connection, game: &Value) -> Result<()> {
-    let id = game.get("id").and_then(Value::as_str).unwrap_or_default();
-    let body = js_json(game);
+pub fn write_game(db: &Connection, game: &PlayedGame) -> Result<()> {
+    let id = game.id.as_str();
+    let body =
+        js_json(&serde_json::to_value(game).map_err(|cause| CoreError::new(cause.to_string()))?);
     let (count, bytes): (i64, i64) = db
         .query_row(
             "SELECT COUNT(*) AS count, COALESCE(SUM(length(body)), 0) AS bytes
@@ -334,13 +335,9 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Vec<MistakeGame
     if keys.is_empty() {
         return Ok(Vec::new());
     }
-    let mut played = Map::new();
+    let mut played = std::collections::HashMap::new();
     for game in super::library_import::read_games(host, db)? {
-        let fen = game
-            .pointer("/setup/fen")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if let Some(key) = line_review_key(fen, &string_list(game.get("moves"))) {
+        if let Some(key) = line_review_key(&game.setup.fen, &game.moves) {
             played.entry(key).or_insert(game);
         }
     }
@@ -401,14 +398,7 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Vec<MistakeGame
                 at = created as f64;
             }
         } else if let Some(game) = played.get(&entry.key) {
-            let white = game
-                .get("white")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let black = game
-                .get("black")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let (white, black) = (game.white.as_str(), game.black.as_str());
             entry.white = Some(white.to_string());
             entry.black = Some(black.to_string());
             if (white == "You") != (black == "You") {
@@ -418,7 +408,7 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Vec<MistakeGame
                     Color::Black
                 });
             }
-            at = js::to_number(game.get("startedAt"));
+            at = game.started_at;
         }
         entry.played_at = at;
         games.push(entry);
@@ -1171,7 +1161,12 @@ mod tests {
             "black": "You", "result": "1-0", "reason": "Checkmate", "timeControl": "-", "finished": true, "setup": { "variant": "standard", "fen": START },
             "moves": BLUNDER,
         });
-        write_game(&db, &game).map(|()| Value::Null).expect("save");
+        write_game(
+            &db,
+            &kchess_domain::library::decode_archived_game(&game).expect("a played game"),
+        )
+        .map(|()| Value::Null)
+        .expect("save");
         let games = mistake_games(&QUIET, &db).expect("games");
         assert_eq!(
             (
@@ -1388,7 +1383,11 @@ mod tests {
             cache: &cache,
         };
         let read = || cached_library(&ctx, 0.0).expect("library");
-        write_game(&db, &played("one")).expect("save");
+        write_game(
+            &db,
+            &kchess_domain::library::decode_archived_game(&played("one")).expect("a played game"),
+        )
+        .expect("save");
         assert_eq!(game_ids(&read()), ["one"]);
         let changes = db.total_changes();
         assert!(cache.library(changes).is_some(), "the read is kept");
@@ -1398,7 +1397,11 @@ mod tests {
         );
         assert_eq!(game_ids(&read()), ["one"]);
 
-        write_game(&db, &played("two")).expect("save");
+        write_game(
+            &db,
+            &kchess_domain::library::decode_archived_game(&played("two")).expect("a played game"),
+        )
+        .expect("save");
         assert_eq!(game_ids(&read()), ["two", "one"]);
         save_session(&db, "local", json!({ "x": 1 })).ok();
         db.execute("DELETE FROM archived_games WHERE id = 'two'", [])

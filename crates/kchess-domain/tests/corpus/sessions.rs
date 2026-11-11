@@ -14,10 +14,11 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
 use kchess_domain::color;
-use kchess_domain::games::archive::{self, Identity};
+use kchess_domain::games::archive::{self, Identity, Snapshot};
 use kchess_domain::games::computer::{self, ComputerGame, Effect};
 use kchess_domain::games::local::{self, LocalClock, LocalGame};
 use kchess_domain::games::{Board, Clock, Host, Setup};
+use kchess_domain::library::PlayedGame;
 
 use super::{Out, side};
 
@@ -133,11 +134,28 @@ impl<'a> Reads<'a> {
         self.now();
     }
 
+    /// The games and the snapshot the archive read, as the typed archive takes them.
+    fn archive_reads(&self) -> Result<(Vec<PlayedGame>, Option<Snapshot>), String> {
+        let games = self.games.clone().unwrap_or_default();
+        let games = serde_json::from_value(Value::Array(games)).map_err(|e| e.to_string())?;
+        let source = match self.sources.first() {
+            None | Some(Value::Null) => None,
+            Some(source) => {
+                Some(serde_json::from_value(source.clone()).map_err(|e| e.to_string())?)
+            }
+        };
+        Ok((games, source))
+    }
+
     /// The archive's host, from the first answer of each read taken.
-    fn archive_host<'s>(&'s self, games: &'s [Value]) -> archive::Host<'s> {
+    fn archive_host<'s>(
+        &'s self,
+        games: &'s [PlayedGame],
+        source: Option<&'s Snapshot>,
+    ) -> archive::Host<'s> {
         archive::Host {
             has_play: self.has_play.first().copied().unwrap_or(false),
-            source: self.sources.first().unwrap_or(&Value::Null),
+            source,
             games,
             now: self.now.unwrap_or(0.0),
             new_id: self.id.clone().unwrap_or_default(),
@@ -430,7 +448,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
                 reads.new_id();
                 reads.now();
             }
-            let state = archive::State::new(identity, &reads.archive_host(&[]));
+            let state = archive::State::new(identity, &reads.archive_host(&[], None));
             Ok(Done {
                 value: to_value(&state),
                 ..Done::default()
@@ -443,18 +461,24 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
                 reads.new_id();
                 reads.now();
             }
-            let games = reads.games.clone().unwrap_or_default();
-            let effects = archive.init(resume, &reads.archive_host(&games));
+            let (games, source) = reads.archive_reads()?;
+            let effects = archive.init(resume, &reads.archive_host(&games, source.as_ref()));
             let written = if resume { vec![] } else { vec!["identity"] };
-            Ok((effects, written))
+            let base = reads.stored.first().cloned().flatten();
+            Ok((effects, written, Spread::over(base, &["finished"])))
         }),
         "archiveSave" => archive_step(args, |archive, inputs, reads| {
             let finished: bool = arg(inputs, 1, "finished")?;
             let had_play = archive.had_play;
             reads.save(archive);
-            let games = reads.games.clone().unwrap_or_default();
-            let effects = archive.save(finished, &reads.archive_host(&games));
-            Ok((effects, save_written(had_play, reads, 0)))
+            let (games, source) = reads.archive_reads()?;
+            let effects = archive.save(finished, &reads.archive_host(&games, source.as_ref()));
+            let base = reads.sources.first().cloned();
+            Ok((
+                effects,
+                save_written(had_play, reads, 0),
+                Spread::over(base, SAVED),
+            ))
         }),
         "archiveReset" => archive_step(args, |archive, _, reads| {
             let had_play = archive.had_play;
@@ -465,19 +489,25 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
             }
             reads.new_id();
             reads.now();
-            let games = reads.games.clone().unwrap_or_default();
-            let effects = archive.reset(&reads.archive_host(&games));
+            let (games, source) = reads.archive_reads()?;
+            let effects = archive.reset(&reads.archive_host(&games, source.as_ref()));
             let previous = reads.stored.first().cloned().flatten();
             let latest = reads.sources.first().cloned().unwrap_or(Value::Null);
-            let kept =
-                previous.is_some_and(|previous| previous.get("moves") == latest.get("moves"));
+            let kept = previous
+                .as_ref()
+                .is_some_and(|previous| previous.get("moves") == latest.get("moves"));
             let mut written = if kept {
                 Vec::new()
             } else {
                 save_written(had_play, reads, 1)
             };
             written.extend(["hadPlay", "identity"]);
-            Ok((effects, written))
+            let spread = if kept {
+                Spread::over(previous, &["result", "finished", "reason"])
+            } else {
+                Spread::over(Some(latest), SAVED)
+            };
+            Ok((effects, written, spread))
         }),
         _ => return None,
     })
@@ -747,21 +777,53 @@ fn save_written(had_play: bool, reads: &Reads, stored: usize) -> Vec<&'static st
     }
 }
 
+/// The fields a fresh save sets over the game's snapshot.
+const SAVED: &[&str] = &["id", "startedAt", "reason", "updatedAt", "finished"];
+
+/// How the recorded suites wrote a saved game: the object it was made from (the snapshot, or
+/// the stored entry) as it was read, with the fields the archive set overwritten in place.
+struct Spread {
+    base: Value,
+    fields: &'static [&'static str],
+}
+
+impl Spread {
+    fn over(base: Option<Value>, fields: &'static [&'static str]) -> Spread {
+        Spread {
+            base: base.unwrap_or(Value::Null),
+            fields,
+        }
+    }
+
+    fn write(&self, game: &PlayedGame) -> Value {
+        let typed = to_value(game);
+        let mut out: Map<String, Value> = self.base.as_object().cloned().unwrap_or_default();
+        for key in self.fields {
+            if let Some(value) = typed.get(*key) {
+                out.insert((*key).to_string(), value.clone());
+            }
+        }
+        Value::Object(out)
+    }
+}
+
 fn archive_step(
     args: &[Value],
     body: impl FnOnce(
         &mut archive::State,
         &[Value],
         &mut Reads,
-    ) -> Result<(Vec<archive::Effect>, Vec<&'static str>), String>,
+    ) -> Result<(Vec<archive::Effect>, Vec<&'static str>, Spread), String>,
 ) -> Out {
     transition(args, |inputs, reads| {
         let mut state: archive::State = arg(inputs, 0, "state")?;
-        let (effects, written) = body(&mut state, inputs, reads)?;
+        let (effects, written, spread) = body(&mut state, inputs, reads)?;
         let effects = effects
             .into_iter()
             .map(|effect| match effect {
-                archive::Effect::Save(game) => json!({ "type": "save", "game": game }),
+                archive::Effect::Save(game) => {
+                    json!({ "type": "save", "game": spread.write(&game) })
+                }
                 archive::Effect::Remove(id) => json!({ "type": "remove", "id": id }),
             })
             .collect();
