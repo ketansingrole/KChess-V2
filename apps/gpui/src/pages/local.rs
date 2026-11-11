@@ -2,9 +2,8 @@
 //! board, any variant, with or without a clock; or a chess clock for a real board. Both keep their
 //! place in Game history, and the board game resumes in either app.
 
-use kchess_contracts::calls;
 use kchess_domain::training::clock::format_clock;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -18,37 +17,26 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_domain::games::otb_clock::{Config, OtbClock, Side};
+use kchess_games::Outcome;
+use kchess_games::history::session_kind;
 use serde_json::{Value, json};
 use shakmaty::Color;
 
 use crate::assets::icon;
 use crate::board::{BoardEvent, ChessBoard};
-use crate::core::AppCore;
-use crate::export::{Exporter, GameExport};
+use crate::export::Exporter;
 use crate::game::history::HistoryPlace;
-use crate::game::local::{Flagged, LocalGame};
+use crate::game::local::{self, Flagged, LocalGame};
+use crate::game::played::PlayedGame;
+use crate::game::session::{Resumes, SessionSaver, Sessions};
+use crate::game::surface::{self, Faces, MoveBox, Steps};
 use crate::game::{STANDARD_FEN, chess960, position_problem, view};
 use crate::part::Part;
 use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout, panel_style};
+use crate::played::PlayedHandle;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Side as PieceSide, Tone};
-
-/// Clocks are checked this often while one runs (`useIntervalFn(…, 100)`).
-const TICK: Duration = Duration::from_millis(100);
-const SAVE_DELAY: Duration = Duration::from_millis(150);
-
-/// The clocks the new-game form offers (`CLOCKS`).
-const CLOCKS: &[(&str, Option<(f64, f64)>)] = &[
-    ("No clock", None),
-    ("3+2", Some((3., 2.))),
-    ("5+0", Some((5., 0.))),
-    ("5+3", Some((5., 3.))),
-    ("10+0", Some((10., 0.))),
-    ("15+10", Some((15., 10.))),
-    ("30+0", Some((30., 0.))),
-    ("90+30", Some((90., 30.))),
-];
 
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -89,25 +77,24 @@ pub struct LocalPage {
     game: LocalGame,
     board: Entity<ChessBoard>,
     exporter: Entity<Exporter>,
-    move_input: Entity<InputState>,
-    move_message: Option<SharedString>,
+    moves: MoveBox,
     started: Instant,
     /// The move shown while looking back; `None` at the latest.
     shown: Option<usize>,
     fixed_orientation: Color,
+    /// The board game's session: read to resume it, saved as it changes.
+    saver: SessionSaver<LocalPage>,
     history: Option<HistoryPlace>,
     clock: OtbClock,
     clock_history: Option<HistoryPlace>,
     clock_inputs: [Entity<InputState>; 3],
     clock_layout: Entity<SelectState<Vec<SharedString>>>,
-    save: Option<Task<()>>,
     ticker: Option<Task<()>>,
     /// Each player's low-time warning.
     low_time: crate::game::low_time::LowTime,
     clock_ticker: Option<Task<()>>,
-    /// What the clocks showed at the last tick: a tick redraws only when a clock face changes
-    /// (each second, each tenth in the last ten).
-    ticked: Option<[String; 2]>,
+    /// What the chess clock's faces showed at the last tick.
+    clock_faces: Faces<[String; 2]>,
     layout: PlayLayout,
     /// The side panel, measured for `.panel-actions`' narrow rule.
     panel_area: Measured,
@@ -117,17 +104,79 @@ pub struct LocalPage {
     faces: [Entity<Part<LocalPage>>; 2],
     /// Whether each clock is running, as the page last drew it.
     faces_active: [bool; 2],
-    /// What the game's clock faces showed at its last tick (`ticked` is the chess clock's).
-    faces_ticked: Option<[String; 2]>,
+    /// What the game's clock faces showed at the last tick.
+    game_faces: Faces<[String; 2]>,
     focus: FocusHandle,
     /// The mouse wheel over the board, which steps through the moves.
-    wheel: crate::game::view::Wheel,
+    wheel: view::Wheel,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Focusable for LocalPage {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
+    }
+}
+
+impl Steps for LocalPage {
+    /// The chess clock has no moves to step through.
+    fn steps(&self, cx: &App) -> Option<(usize, usize)> {
+        (self.mode(cx) == Mode::Board).then(|| (self.shown_ply(), self.moves().len()))
+    }
+
+    fn step_to(&mut self, ply: usize, _: &mut Window, cx: &mut Context<Self>) {
+        self.show_ply(ply, cx);
+    }
+
+    fn wheel(&mut self) -> &mut view::Wheel {
+        &mut self.wheel
+    }
+}
+
+impl Resumes for LocalPage {
+    fn saver(&mut self) -> &mut SessionSaver<Self> {
+        &mut self.saver
+    }
+
+    fn snapshot(&mut self, _: &mut Context<Self>) -> Value {
+        self.game.snapshot(self.now())
+    }
+
+    /// The board game and its history places resume from their sessions alone: reading the
+    /// whole library replays every played game.
+    fn resume(&mut self, saved: Option<Sessions>, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(mut saved) = saved {
+            let game = saved.take(local::SESSION);
+            if !game.is_null() {
+                match LocalGame::new(Some(&game), self.now()) {
+                    Ok(game) => self.game = game,
+                    Err(cause) => crate::log::write(
+                        Level::Warn,
+                        "local",
+                        &format!("The saved game could not be read: {cause}"),
+                    ),
+                }
+            }
+            let (source, has_play) = (self.game.archive_snapshot(self.now()), self.has_play());
+            self.history = Some(HistoryPlace::new(
+                local::HISTORY,
+                saved.take(&session_kind(local::HISTORY)),
+                true,
+                source,
+                has_play,
+                cx,
+            ));
+            let clock_source = self.clock_snapshot();
+            self.clock_history = Some(HistoryPlace::new(
+                local::CLOCK_HISTORY,
+                saved.take(&session_kind(local::CLOCK_HISTORY)),
+                false,
+                clock_source,
+                false,
+                cx,
+            ));
+        }
+        self.after_change(cx);
     }
 }
 
@@ -145,36 +194,13 @@ impl LocalPage {
             });
         })
         .detach();
-        // The board game and its history places resume from their sessions alone: reading the
-        // whole library replays every played game.
-        let bridge = &cx.global::<AppCore>().bridge;
-        let read = |kind: &str| {
-            bridge
-                .request_now(calls::Session { kind: json!(kind) })
-                .unwrap_or(Value::Null)
-        };
-        let library = json!({ "sessions": {
-            "local": read("local"),
-            "archive:board": read("archive:board"),
-            "archive:clock": read("archive:clock"),
-        } });
-        let saved = &library["sessions"]["local"];
-        let game = LocalGame::new((!saved.is_null()).then_some(saved), 0.)
-            .or_else(|_| LocalGame::new(None, 0.));
-        let game = match game {
+        let game = match LocalGame::new(None, 0.) {
             Ok(game) => game,
             Err(cause) => panic!("a new local game always starts: {cause}"),
         };
-        let board = cx.new(|_| {
-            ChessBoard::new(view::board_state(
-                &game.state["setup"],
-                &[],
-                0,
-                Color::White,
-                None,
-            ))
-        });
-        let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
+        let board = cx
+            .new(|_| ChessBoard::new(view::board_state(game.setup(), &[], 0, Color::White, None)));
+        let (moves, typed) = MoveBox::new(Self::typed_move, window, cx);
         let clock = OtbClock::default();
         let number_input = |value: f64, window: &mut Window, cx: &mut Context<Self>| {
             cx.new(|cx| {
@@ -203,9 +229,9 @@ impl LocalPage {
         let settings = cx.global::<SettingsHandle>().0.clone();
         let voice = crate::voice::handle(cx);
         let mut subscriptions = vec![
-            cx.subscribe_in(&board, window, |this, _, event: &BoardEvent, window, cx| {
+            cx.subscribe_in(&board, window, |this, _, event: &BoardEvent, _, cx| {
                 if let BoardEvent::Move(uci) = event {
-                    this.play(uci, window, cx)
+                    this.play(uci, cx)
                 }
             }),
             cx.subscribe_in(
@@ -216,15 +242,11 @@ impl LocalPage {
                 },
             ),
             cx.observe(&voice, |_, _, cx| cx.notify()),
-            cx.subscribe_in(
-                &move_input,
-                window,
-                |this, _, event: &InputEvent, window, cx| {
-                    if let InputEvent::PressEnter { .. } = event {
-                        this.typed_move(window, cx);
-                    }
-                },
-            ),
+            // A save that failed is said on the page until one succeeds.
+            cx.observe(&cx.global::<PlayedHandle>().0.clone(), |_, _, cx| {
+                cx.notify()
+            }),
+            typed,
             cx.subscribe_in(&settings, window, |this, _, _: &SettingsChanged, _, cx| {
                 this.after_change(cx)
             }),
@@ -253,14 +275,29 @@ impl LocalPage {
                 }
             }));
         }
-        let mut page = LocalPage {
+        let saver = SessionSaver::start(
+            local::SESSION,
+            &[
+                session_kind(local::HISTORY),
+                session_kind(local::CLOCK_HISTORY),
+            ],
+            window,
+            cx,
+        );
+        // The chess clock's session ends with the app: it is saved to history as it stands.
+        let page = cx.entity().downgrade();
+        crate::core::on_quit(cx, move |cx| {
+            let page = page.upgrade()?;
+            Some(page.update(cx, |page, cx| page.end_clock(cx)))
+        });
+        LocalPage {
             game,
             board,
-            move_input,
-            move_message: None,
+            moves,
             started,
             shown: None,
             fixed_orientation: Color::White,
+            saver,
             history: None,
             clock,
             clock_history: None,
@@ -268,11 +305,10 @@ impl LocalPage {
             turned: std::collections::HashMap::new(),
             voice: crate::voice::moves::VoiceMoves::new("local", cx),
             clock_layout,
-            save: None,
             ticker: None,
             low_time: Default::default(),
             clock_ticker: None,
-            ticked: None,
+            clock_faces: Faces::default(),
             layout: PlayLayout::default(),
             panel_area: Measured::default(),
             panel: Part::panel(|this, window, cx| this.render_panel(window, cx), cx),
@@ -281,33 +317,12 @@ impl LocalPage {
                 Part::new(|this, _, cx| this.render_clock_face(Color::Black, cx), cx),
             ],
             faces_active: [false; 2],
-            faces_ticked: None,
+            game_faces: Faces::default(),
             exporter: cx.new(|_| Exporter::default()),
             focus: cx.focus_handle(),
             wheel: Default::default(),
             _subscriptions: subscriptions,
-        };
-        let (source, has_play) = (page.game.archive_snapshot(0.), page.has_play());
-        page.history = Some(HistoryPlace::new(
-            "board", &library, true, source, has_play, cx,
-        ));
-        let clock_source = page.clock_snapshot();
-        page.clock_history = Some(HistoryPlace::new(
-            "clock",
-            &library,
-            false,
-            clock_source,
-            false,
-            cx,
-        ));
-        page.after_change(cx);
-        let weak = cx.entity().downgrade();
-        crate::core::on_quit(cx, move |cx| {
-            let page = weak.upgrade()?;
-            let pending = page.update(cx, |page, cx| page.flush(cx));
-            Some(crate::core::all_saved(pending))
-        });
-        page
+        }
     }
 
     /// The turned faces' pictures as drawn now, by player.
@@ -321,16 +336,22 @@ impl LocalPage {
             .collect()
     }
 
+    /// The saved game has been read.
+    #[cfg(test)]
+    pub(crate) fn resumed(&self) -> bool {
+        self.saver.loaded()
+    }
+
     fn now(&self) -> f64 {
         self.started.elapsed().as_secs_f64() * 1000.
     }
 
     fn moves(&self) -> Vec<String> {
-        serde_json::from_value(self.game.state["moves"].clone()).unwrap_or_default()
+        self.game.moves()
     }
 
     fn setup(&self) -> &Value {
-        &self.game.state["setup"]
+        self.game.setup()
     }
 
     fn shown_ply(&self) -> usize {
@@ -376,8 +397,14 @@ impl LocalPage {
         }
     }
 
-    pub(crate) fn play(&mut self, uci: &str, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.at_live() {
+    /// Moves are taken at the latest position of a game on, and not before the saved game is
+    /// restored, which would replace the move (and nothing is saved before then).
+    fn interactive(&self) -> bool {
+        self.saver.loaded() && !self.game.over(self.now()) && self.at_live()
+    }
+
+    pub(crate) fn play(&mut self, uci: &str, cx: &mut Context<Self>) {
+        if !self.interactive() {
             return self.after_change(cx);
         }
         let now = self.now();
@@ -395,7 +422,7 @@ impl LocalPage {
 
     /// Spoken moves are taken while the game is on, at its last move.
     fn voice_taking(&self) -> bool {
-        !self.game.over(self.now()) && self.at_live()
+        self.interactive()
     }
 
     /// The live position as the rules read a spoken move in it.
@@ -425,7 +452,7 @@ impl LocalPage {
     fn voice_heard(
         &mut self,
         event: &crate::voice::VoiceEvent,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !self.voice.owns(event) {
@@ -448,80 +475,78 @@ impl LocalPage {
         if let crate::voice::moves::Action::Play(uci) =
             self.voice.hear(&heard, &setup, turn, |_| None, cx)
         {
-            self.play(&uci, window, cx);
+            self.play(&uci, cx);
         }
         cx.notify();
     }
 
     fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.move_input.read(cx).value().trim().to_string();
-        if text.is_empty() || self.game.over(self.now()) || !self.at_live() {
+        if !self.interactive() {
             return;
         }
         let position = view::position_at(self.setup(), &self.moves(), self.moves().len());
-        match position.and_then(|position| view::typed_uci(self.setup(), &position, &text)) {
-            Some(uci) => {
-                self.move_message = None;
-                self.move_input
-                    .update(cx, |input, cx| input.set_value("", window, cx));
-                self.play(&uci, window, cx);
-            }
-            None => {
-                self.move_message = Some("Enter a legal move, such as Nf3 or g1f3".into());
-                cx.notify();
-            }
+        let variant = self.setup()["variant"]
+            .as_str()
+            .unwrap_or("standard")
+            .to_string();
+        match self.moves.take(&variant, position.as_ref(), window, cx) {
+            Some(uci) => self.play(&uci, cx),
+            None => cx.notify(),
         }
     }
 
     /// The game changed: show it, keep the clock running, save it shortly, keep its history place.
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.after_change(cx);
-        self.save = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(SAVE_DELAY).await;
-            let save = this.update(cx, |this, cx| this.save_now(cx)).ok();
-            if let Some(save) = save {
-                let _ = save.await;
-            }
-        }));
+        SessionSaver::changed(self, cx);
         let (source, has_play) = (self.game.archive_snapshot(self.now()), self.has_play());
         if let Some(history) = &mut self.history {
             history.save(false, source, has_play, cx);
         }
     }
 
-    fn save_now(&mut self, cx: &mut Context<Self>) -> crate::core::BoxedSave {
-        self.save = None;
-        let snapshot = self.game.snapshot(self.now());
-        let save = cx.global::<AppCore>().request(calls::SaveSession {
-            kind: json!("local"),
-            session: snapshot,
-        });
-        Box::pin(async move {
-            save.await.map(|_| ()).map_err(|cause| {
-                crate::log::write(
-                    Level::Warn,
-                    "library",
-                    &format!("saving session failed: local {}", cause.message),
-                );
-                format!("The game could not be saved: {}", cause.message)
-            })
-        })
-    }
-
-    /// Everything to finish before the app quits: the board game, the clock session and history.
-    fn flush(&mut self, cx: &mut Context<Self>) -> Vec<crate::core::BoxedSave> {
-        let mut pending = vec![self.save_now(cx)];
+    /// The app quits: the chess clock stops and its session is saved to history as it ended.
+    fn end_clock(&mut self, cx: &mut Context<Self>) -> crate::core::BoxedSave {
         let now = self.now();
         self.clock.pause(now);
         let (source, has_play) = (self.clock_snapshot(), self.clock.has_play());
         if let Some(history) = &mut self.clock_history {
             history.save(true, source, has_play, cx);
-            pending.push(history.flushed(cx));
         }
-        if let Some(history) = &self.history {
-            pending.push(history.flushed(cx));
+        cx.global::<PlayedHandle>().0.read(cx).flushed()
+    }
+
+    /// The game's clocks tick: a flag falls, a clock runs low, and a face redraws only when it
+    /// shows something else.
+    fn tick(&mut self, cx: &mut Context<Self>) -> bool {
+        let now = self.now();
+        let flagged = self.game.expire(now);
+        let fell = matches!(flagged, Ok(Flagged(true)));
+        self.flagged(flagged, cx);
+        if fell {
+            self.ticker = None;
+            self.changed(cx);
+            return false;
         }
-        pending
+        if !self.game.over(now) {
+            for color in [Color::White, Color::Black] {
+                let initial = self.game.clock()[kchess_games::color_name(color)]["minutes"]
+                    .as_f64()
+                    .unwrap_or_default()
+                    * 60.;
+                let remaining = self.game.remaining(color, now);
+                self.low_time.warn(color, remaining, initial, cx);
+            }
+        }
+        let shown =
+            [Color::White, Color::Black].map(|color| clock_face(self.game.remaining(color, now)));
+        let changed = self.game_faces.each_changed(shown);
+        for (face, changed) in self.faces.iter().zip(changed) {
+            if changed {
+                face.update(cx, |_, cx| cx.notify());
+            }
+        }
+        true
     }
 
     fn after_change(&mut self, cx: &mut Context<Self>) {
@@ -530,60 +555,20 @@ impl LocalPage {
         let over = self.game.over(now);
         let moves = self.moves();
         let shown = self.shown_ply();
-        let live = !over && self.at_live();
         let turn = self.turn();
         let mut state = view::board_state(
             self.setup(),
             &moves,
             shown,
             self.orientation(cx),
-            live.then_some(turn),
+            self.interactive().then_some(turn),
         );
-        state.blindfold = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .blindfold
-            && !over;
+        surface::board_options(&mut state, !over, None, cx);
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
-        let running = !self.game.state["times"].is_null() && !over;
+        let running = self.game.timed() && !over;
         if running && self.ticker.is_none() {
-            self.ticker = Some(cx.spawn(async move |this, cx| {
-                loop {
-                    cx.background_executor().timer(TICK).await;
-                    let alive = this.update(cx, |this, cx| {
-                        let now = this.now();
-                        let flagged = this.game.expire(now);
-                        let fell = matches!(flagged, Ok(Flagged(true)));
-                        this.flagged(flagged, cx);
-                        if fell {
-                            this.ticker = None;
-                            this.changed(cx);
-                        }
-                        if !fell && !this.game.over(now) {
-                            for color in ["white", "black"] {
-                                let initial = this.game.state["clock"][color]["minutes"]
-                                    .as_f64()
-                                    .unwrap_or_default()
-                                    * 60.;
-                                let remaining = this.game.remaining(color, now);
-                                if this.low_time.crossed(color, remaining, initial) {
-                                    crate::sound::play(crate::sound::Sound::LowTime, cx);
-                                }
-                            }
-                        }
-                        let shown = ["white", "black"]
-                            .map(|side| clock_face(this.game.remaining(side, now)));
-                        this.redraw_faces_if_ticked(shown, cx);
-                    });
-                    if alive.is_err() {
-                        break;
-                    }
-                }
-            }));
+            self.ticker = Some(surface::every(surface::TICK, cx, Self::tick));
         } else if !running {
             self.ticker = None;
         }
@@ -614,10 +599,23 @@ impl LocalPage {
         self.after_change(cx);
     }
 
+    /// A new game starts: the one before keeps its place in history and this one gets its own.
+    /// After a saved game that could not be read, this one is the players' to keep.
     fn start(&mut self, setup: Value, clock: Value, cx: &mut Context<Self>) {
+        self.saver.open();
         let (source, has_play) = (self.game.archive_snapshot(self.now()), self.has_play());
-        if let Some(history) = &mut self.history {
-            history.reset(source, has_play, cx);
+        match &mut self.history {
+            Some(history) => history.reset(source, has_play, cx),
+            None => {
+                self.history = Some(HistoryPlace::new(
+                    local::HISTORY,
+                    Value::Null,
+                    true,
+                    source,
+                    has_play,
+                    cx,
+                ))
+            }
         }
         let flagged = self.game.start(setup, clock, self.now());
         self.flagged(flagged, cx);
@@ -634,14 +632,7 @@ impl LocalPage {
     }
 
     fn resign(&mut self, color: Color, cx: &mut Context<Self>) {
-        let flagged = self.game.resign(
-            if color == Color::White {
-                "white"
-            } else {
-                "black"
-            },
-            self.now(),
-        );
+        let flagged = self.game.resign(color, self.now());
         self.flagged(flagged, cx);
         self.changed(cx);
     }
@@ -709,8 +700,24 @@ impl LocalPage {
         self.replace_game(setup, Value::Null, window, cx);
     }
 
-    /// Start a game, asking first when one on the board is still being played.
+    /// Start a game, asking first when one on the board is still being played: once the saved
+    /// game is read, so that it is the one asked about.
     pub(crate) fn replace_game(
+        &mut self,
+        setup: Value,
+        clock: Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        SessionSaver::when_read(
+            self,
+            move |this, window, cx| this.confirm_new_game(setup, clock, window, cx),
+            window,
+            cx,
+        );
+    }
+
+    fn confirm_new_game(
         &mut self,
         setup: Value,
         clock: Value,
@@ -738,55 +745,40 @@ impl LocalPage {
         });
     }
 
-    fn pgn_result(&self) -> &'static str {
-        match self.game.result(self.now()) {
-            None => "*",
-            Some(result) => match result["winner"].as_str() {
-                Some("white") => "1-0",
-                Some("black") => "0-1",
-                _ => "1/2-1/2",
-            },
-        }
-    }
-
-    /// The game an Export saves, between "White" and "Black".
-    fn game_export(&self, cx: &App) -> GameExport {
-        let setup = self.setup();
-        GameExport {
-            variant: setup["variant"].as_str().unwrap_or("standard").to_string(),
-            fen: setup["fen"].as_str().unwrap_or_default().to_string(),
-            moves: self.moves(),
-            orientation: self.orientation(cx),
-            white: "White".into(),
-            black: "Black".into(),
-            ply: None,
-            result: Some(self.pgn_result().into()),
-            lichess_id: None,
-            pgn: None,
-            shown: None,
+    /// The game as its Export saves it and the analysis board opens it, between "White" and
+    /// "Black".
+    fn played_game(&self, cx: &App) -> PlayedGame {
+        PlayedGame {
+            result: self.game.outcome(self.now()),
+            ..PlayedGame::new(
+                self.setup(),
+                self.moves(),
+                self.orientation(cx),
+                "White",
+                "Black",
+            )
         }
     }
 
     /// Analyse the game on the analysis board at the position shown (standard and Chess960).
     fn analyse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(pgn) = crate::game::setup_pgn(self.setup(), &self.moves(), &Value::Null) else {
-            return;
+        let game = PlayedGame {
+            ply: Some(self.shown_ply()),
+            ..self.played_game(cx)
         };
-        let ply = self.shown_ply();
-        let origin = json!({ "white": "White", "black": "Black" });
         crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-            analysis.open_game(&pgn, ply, None, Some(origin.clone()), false, cx)
+            analysis.open_played(&game, false, cx)
         });
     }
 
     fn copy_pgn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let date = chrono::Local::now().format("%Y.%m.%d").to_string();
         let headers = json!({
-            "Event": "Over the board (KChess)",
+            "Event": local::EVENT,
             "Date": date,
             "White": "White",
             "Black": "Black",
-            "Result": self.pgn_result(),
+            "Result": Outcome::tag(self.game.outcome(self.now())),
         });
         match crate::game::setup_pgn(self.setup(), &self.moves(), &headers) {
             Some(pgn) => {
@@ -815,47 +807,23 @@ impl LocalPage {
 
     fn clock_changed(&mut self, cx: &mut Context<Self>) {
         if self.clock.running.is_some() && self.clock_ticker.is_none() {
-            self.clock_ticker = Some(cx.spawn(async move |this, cx| {
-                loop {
-                    cx.background_executor().timer(TICK).await;
-                    let alive = this.update(cx, |this, cx| {
-                        let now = this.now();
-                        if this.clock.expire(now) {
-                            crate::sound::play(crate::sound::Sound::LowTime, cx);
-                            this.clock_flagged(cx);
-                        }
-                        let shown = [Side::Top, Side::Bottom]
-                            .map(|side| clock_face(this.clock.left(side, now)));
-                        this.redraw_if_ticked(shown, cx);
-                    });
-                    if alive.is_err() {
-                        break;
-                    }
+            self.clock_ticker = Some(surface::every(surface::TICK, cx, |this, cx| {
+                let now = this.now();
+                if this.clock.expire(now) {
+                    crate::sound::play(crate::sound::Sound::LowTime, cx);
+                    this.clock_flagged(cx);
                 }
+                let shown =
+                    [Side::Top, Side::Bottom].map(|side| clock_face(this.clock.left(side, now)));
+                if this.clock_faces.changed(shown) {
+                    cx.notify();
+                }
+                true
             }));
         } else if self.clock.running.is_none() {
             self.clock_ticker = None;
         }
         cx.notify();
-    }
-
-    /// A tick redraws the page only when a clock face shows something else.
-    fn redraw_if_ticked(&mut self, shown: [String; 2], cx: &mut Context<Self>) {
-        if self.ticked.as_ref() != Some(&shown) {
-            self.ticked = Some(shown);
-            cx.notify();
-        }
-    }
-
-    /// A game's tick redraws a clock face beside the board only when it shows something else,
-    /// and only that face.
-    fn redraw_faces_if_ticked(&mut self, shown: [String; 2], cx: &mut Context<Self>) {
-        let before = self.faces_ticked.replace(shown.clone());
-        for (ix, face) in self.faces.iter().enumerate() {
-            if before.as_ref().map(|before| &before[ix]) != Some(&shown[ix]) {
-                face.update(cx, |_, cx| cx.notify());
-            }
-        }
     }
 
     /// A flag fell: the session is saved to history as it ended.
@@ -926,35 +894,26 @@ impl LocalPage {
         cx.notify();
     }
 
-    /// Keys when the page itself has focus (not a text field): in the clock, Space presses the
-    /// running clock and P pauses; on the board, the arrows step through the moves and F flips it.
-    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    /// The chess clock's keys when the page itself has focus (not a text field): Space presses
+    /// the running clock and P pauses.
+    fn clock_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !crate::board::page_has_keys(&self.focus, window, cx)
             || event.keystroke.modifiers.modified()
         {
             return;
         }
-        let key = event.keystroke.key.as_str();
-        if self.mode(cx) == Mode::Clock {
-            match key {
-                "space" => {
-                    let side = self.clock.running.unwrap_or(Side::Top);
-                    self.press(side, cx);
-                }
-                "p" => {
-                    if self.clock.pause(self.now()) {
-                        self.clock_flagged(cx);
-                    }
-                    self.clock_changed(cx);
-                }
-                _ => return,
+        match event.keystroke.key.as_str() {
+            "space" => {
+                let side = self.clock.running.unwrap_or(Side::Top);
+                self.press(side, cx);
             }
-        } else if key == "f" {
-            self.flip(cx);
-        } else if let Some(ply) = view::navigate(key, self.shown_ply(), self.moves().len()) {
-            self.show_ply(ply, cx);
-        } else {
-            return;
+            "p" => {
+                if self.clock.pause(self.now()) {
+                    self.clock_flagged(cx);
+                }
+                self.clock_changed(cx);
+            }
+            _ => return,
         }
         cx.stop_propagation();
     }
@@ -1292,14 +1251,8 @@ impl Render for LocalPage {
         let palette = *cx.global::<Palette>();
         if self.mode(cx) == Mode::Clock {
             let clock = self.render_clock(&palette, window, cx);
-            return div()
-                .size_full()
-                .track_focus(&self.focus)
-                .on_key_down(cx.listener(Self::key))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| window.focus(&this.focus, cx)),
-                )
+            return surface::keys(div().size_full(), &self.focus, cx)
+                .on_key_down(cx.listener(Self::clock_key))
                 .child(clock)
                 .into_any_element();
         }
@@ -1307,7 +1260,6 @@ impl Render for LocalPage {
         let board_size = self.board_size(window);
         let moves = self.moves();
         let shown = self.shown_ply();
-        let over = self.game.over(now);
         let live = self.game.result(now).is_none();
         let orientation = self.orientation(cx);
         let display = view::position_at(self.setup(), &moves, shown);
@@ -1323,8 +1275,7 @@ impl Render for LocalPage {
             .as_ref()
             .map(kchess_domain::rules::make_fen)
             .unwrap_or_default();
-        let timed = !self.game.state["times"].is_null();
-        let paused = self.game.state["paused"].as_bool() == Some(true);
+        let (timed, paused) = (self.game.timed(), self.game.paused());
         self.faces_active = [Color::White, Color::Black]
             .map(|color| live && display_turn == color && timed && !paused);
         let mut pockets = [
@@ -1367,14 +1318,14 @@ impl Render for LocalPage {
                     timed.then(|| self.faces[face(color)].clone().into_any_element()),
                 )
             };
-        let interactive = !over && self.at_live();
-        let entry = widgets::move_entry(&self.move_input, interactive, &palette);
+        let interactive = self.interactive();
+        let entry = widgets::move_entry(&self.moves.input, interactive, &palette);
         let (voice, voice_line) = crate::voice::moves::board_bar(
             &self.voice,
             cx.entity().downgrade(),
             crate::voice::moves::Access {
                 write: |this: &mut Self| &mut this.voice,
-                play: |this: &mut Self, uci, window, cx| this.play(uci, window, cx),
+                play: |this: &mut Self, uci, _, cx| this.play(uci, cx),
             },
             crate::voice::moves::BoardBar {
                 id: "local-voice",
@@ -1391,27 +1342,16 @@ impl Render for LocalPage {
             .gap(widgets::STACK_GAP)
             .child(line(!orientation, None))
             .child(crate::board::cached(&self.board))
-            // The mouse wheel over the board steps through the moves.
-            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
-                let Some(key) = this
-                    .wheel
-                    .turn(event.delta.pixel_delta(window.line_height()))
-                else {
-                    return;
-                };
-                if let Some(ply) = view::navigate(key, this.shown_ply(), this.moves().len()) {
-                    this.show_ply(ply, cx);
-                }
-                cx.stop_propagation();
-            }))
             .child(line(orientation, Some(widgets::move_row(entry, voice))))
             .children(voice_line)
-            .children(self.move_message.clone().map(|message| {
+            .children(self.moves.message(&palette))
+            .children(self.saver.problems(cx).into_iter().map(|error| {
                 div()
                     .text_size(px(12.))
-                    .text_color(palette.text_muted)
-                    .child(message)
+                    .text_color(palette.error)
+                    .child(error)
             }));
+        let board_column = surface::wheel(board_column, cx);
 
         let panel = if self.layout.is_stacked() {
             self.render_panel(window, cx)
@@ -1430,22 +1370,14 @@ impl Render for LocalPage {
                 .into_any_element()
         };
         let tabs = mode_tabs(Mode::Board, &palette, cx).into_any_element();
-        self.layout
+        let page = self
+            .layout
             .render_under("local-page", tabs, board_column, panel, window, cx)
-            .track_focus(&self.focus)
             // ⌘Z outside the move box takes back, as the button does.
             .on_action(
                 cx.listener(|this, _: &Undo, window, cx| this.act(Action::TakeBack, window, cx)),
-            )
-            // A click anywhere on the page gives the keys back to it, before a text field (the
-            // move box) takes them for itself, as on the analysis board.
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
-            .on_key_down(cx.listener(Self::key))
-            .into_any_element()
+            );
+        surface::keys(page, &self.focus, cx).into_any_element()
     }
 }
 
@@ -1475,21 +1407,18 @@ impl LocalPage {
             .settings
             .frontend
             .clone();
-        let timed = !self.game.state["times"].is_null();
-        let paused = self.game.state["paused"].as_bool() == Some(true);
+        let (timed, paused) = (self.game.timed(), self.game.paused());
         let variant_label = crate::game::setup_label(self.setup());
-        let clock_label = self.game.state["clock"].as_object().map(|clock| {
-            let white = &clock["white"];
-            let black = &clock["black"];
-            let mut label = format!(
-                "{}+{}",
-                white["minutes"].as_f64().unwrap_or_default(),
-                white["increment"].as_f64().unwrap_or_default()
+        let clock_label = self.game.clock().as_object().map(|clock| {
+            let minutes = |color: &str| clock[color]["minutes"].as_f64().unwrap_or_default();
+            let mut label = widgets::time_control(
+                minutes("white"),
+                clock["white"]["increment"].as_f64().unwrap_or_default(),
             );
-            if black["minutes"] != white["minutes"] {
+            if minutes("black") != minutes("white") {
                 label.push_str(&format!(
                     " (Black {} min)",
-                    black["minutes"].as_f64().unwrap_or_default()
+                    widgets::clock_minutes(minutes("black"))
                 ));
             }
             label
@@ -1605,7 +1534,7 @@ impl LocalPage {
                         )
                         .text_size(px(12.))
                     })
-                    .child(widgets::view_toggles(frontend.blindfold, frontend.zen_mode)),
+                    .child(widgets::view_toggles(cx)),
             )
             .child(banner)
             .child(widgets::section_title(
@@ -1620,7 +1549,7 @@ impl LocalPage {
                     shown,
                     first: view::first_move(self.setup()),
                 },
-                if self.game.state["times"].is_null() {
+                if !timed {
                     "No moves yet".into()
                 } else {
                     "The first move starts the clock".into()
@@ -1633,7 +1562,11 @@ impl LocalPage {
                 shown,
                 moves.len(),
                 select,
-                ("Flip board".into(), Some("F"), flip),
+                (
+                    "Flip board".into(),
+                    crate::menu::keys(&crate::menu::FlipBoard, cx),
+                    flip,
+                ),
             ))
             .child(
                 h_flex()
@@ -1720,7 +1653,7 @@ impl LocalPage {
                         crate::export::export_menu(
                             "local-export",
                             &self.exporter,
-                            self.game_export(cx),
+                            self.played_game(cx),
                             Anchor::BottomCenter,
                             false,
                             cx,
@@ -1749,12 +1682,7 @@ impl LocalPage {
     /// A player's clock beside their name: its own `Part`, which a tick redraws.
     fn render_clock_face(&mut self, color: Color, cx: &mut Context<Self>) -> AnyElement {
         let palette = *cx.global::<Palette>();
-        let name = if color == Color::White {
-            "white"
-        } else {
-            "black"
-        };
-        let text = clock_face(self.game.remaining(name, self.now()));
+        let text = clock_face(self.game.remaining(color, self.now()));
         let label = format!(
             "{} clock, {text}",
             if color == Color::White {
@@ -1784,9 +1712,8 @@ impl LocalPage {
         if played && !self.timed_out() {
             actions.push(Action::TakeBack);
         }
-        if played && !over && !self.game.state["times"].is_null() {
-            let paused = self.game.state["paused"].as_bool() == Some(true);
-            actions.push(if paused {
+        if played && !over && self.game.timed() {
+            actions.push(if self.game.paused() {
                 Action::Resume
             } else {
                 Action::Pause
@@ -1824,7 +1751,7 @@ impl LocalPage {
 
     /// A clock ran out: taking back cannot refill it, so the game stays lost on time.
     fn timed_out(&self) -> bool {
-        let times = &self.game.state["times"];
+        let times = &self.game.state()["times"];
         !times.is_null()
             && (times["white"].as_f64() == Some(0.) || times["black"].as_f64() == Some(0.))
     }
@@ -1898,7 +1825,7 @@ impl NewGame {
         });
         let clock = cx.new(|cx| {
             SelectState::new(
-                CLOCKS
+                crate::game::CLOCKS
                     .iter()
                     .map(|(label, _)| SharedString::from(*label))
                     .collect(),
@@ -2016,7 +1943,8 @@ impl NewGame {
             .read(cx)
             .selected_index(cx)
             .map_or(0, |index| index.row);
-        let Some((minutes, increment)) = CLOCKS.get(row).and_then(|(_, clock)| *clock) else {
+        let Some((minutes, increment)) = crate::game::CLOCKS.get(row).and_then(|(_, clock)| *clock)
+        else {
             return Value::Null;
         };
         let odds = self

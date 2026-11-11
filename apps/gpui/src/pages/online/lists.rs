@@ -34,18 +34,10 @@ const DECLINE: [(&str, &str); 9] = [
 pub fn describe_control(challenge: &Value) -> String {
     let control = &challenge["timeControl"];
     match control["type"].as_str() {
-        Some("clock") => {
-            let minutes = control["limit"].as_f64().unwrap_or_default() / 60.;
-            let minutes = if minutes.fract() == 0. {
-                format!("{minutes:.0}")
-            } else {
-                format!("{minutes:.1}")
-            };
-            format!(
-                "{minutes}+{}",
-                control["increment"].as_f64().unwrap_or_default()
-            )
-        }
+        Some("clock") => crate::widgets::time_control(
+            control["limit"].as_f64().unwrap_or_default() / 60.,
+            control["increment"].as_f64().unwrap_or_default(),
+        ),
         Some("correspondence") => {
             let days = control["days"].as_f64().unwrap_or_default();
             format!(

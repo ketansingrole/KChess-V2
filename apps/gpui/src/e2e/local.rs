@@ -6,7 +6,16 @@ fn board(cx: &mut gpui_kit::TestAppContext) -> Harness {
     let mut app = Harness::start(cx);
     app.open("Over the board");
     app.find("chess-board");
+    wait_resumed(&mut app);
     app
+}
+
+/// Until the saved game is read: the board takes no move before.
+pub(super) fn wait_resumed(app: &mut Harness) {
+    app.wait_for("the saved game to be read", |_, cx| {
+        crate::shell::view::<crate::pages::local::LocalPage>(cx)
+            .is_some_and(|page| page.read(cx).resumed())
+    });
 }
 
 /// Type each move into the move box, as the players take turns at it.
@@ -35,7 +44,7 @@ fn a_timed_games_clock_runs_for_the_side_to_move(cx: &mut gpui_kit::TestAppConte
                 "black": { "minutes": 5, "increment": 0 },
             });
             local.replace_game(setup, clock, window, cx);
-            local.play("e2e4", window, cx);
+            local.play("e2e4", cx);
         });
     });
     let label = |app: &mut Harness, face: usize| {
@@ -679,7 +688,7 @@ fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
                 "black": { "minutes": 0.05, "increment": 0 },
             });
             local.replace_game(setup, clock, window, cx);
-            local.play("e2e4", window, cx);
+            local.play("e2e4", cx);
         });
     });
     app.wait_for_in_real_time("the low-time warning", |_, cx| {

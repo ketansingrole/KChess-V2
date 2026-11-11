@@ -291,8 +291,7 @@ fn page_commands(cx: &App) -> Vec<Command> {
             let keys = match command.info.role {
                 Some(ActionRole::Copy) => crate::menu::keys(&gpui_kit::component::input::Copy, cx),
                 Some(ActionRole::New) => crate::menu::keys(&crate::menu::New, cx),
-                // F is each board's own key, not one bound for the app.
-                Some(ActionRole::Flip) => Some("F".to_string()),
+                Some(ActionRole::Flip) => crate::menu::keys(&crate::menu::FlipBoard, cx),
                 None => None,
             };
             Command::of(command).kbds(keys)

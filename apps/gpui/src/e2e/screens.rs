@@ -229,11 +229,11 @@ fn crazyhouse() {
                 for uci in [
                     "e2e4", "d7d5", "e4d5", "d8d5", "b1c3", "d5a5", "f1b5", "c7c6", "b5c6",
                 ] {
-                    local.play(uci, window, cx);
+                    local.play(uci, cx);
                 }
                 // Black takes back with the knight: White holds two pawns, Black a pawn and a
                 // bishop.
-                local.play("b8c6", window, cx);
+                local.play("b8c6", cx);
             });
         })
         .expect("the window");
@@ -277,14 +277,14 @@ fn figurines() {
         })
         .expect("the window");
         settle(&mut cx, window);
-        cx.update_window(window, |_, window, cx| {
+        cx.update_window(window, |_, _, cx| {
             let local = crate::shell::view::<crate::pages::local::LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 for uci in [
                     "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5c6", "d7c6", "e1g1", "f7f6",
                     "d2d4", "c8g4", "d4e5", "d8d1", "f1d1",
                 ] {
-                    local.play(uci, window, cx);
+                    local.play(uci, cx);
                 }
             });
         })
@@ -744,7 +744,7 @@ fn low_clock() {
                     "black": { "minutes": 0.15, "increment": 0 },
                 });
                 local.replace_game(setup, clock, window, cx);
-                local.play("e2e4", window, cx);
+                local.play("e2e4", cx);
             });
         })
         .expect("the window");
@@ -786,8 +786,8 @@ fn over_the_board() {
                     "black": { "minutes": 5, "increment": 3 },
                 });
                 local.replace_game(setup, clock, window, cx);
-                local.play("e2e4", window, cx);
-                local.play("e7e5", window, cx);
+                local.play("e2e4", cx);
+                local.play("e7e5", cx);
             });
         })
         .expect("the window");

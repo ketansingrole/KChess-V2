@@ -237,7 +237,7 @@ impl TournamentsPage {
     ) -> AnyElement {
         let mut body = v_flex().gap(px(12.));
         // With nothing listed, the failure takes the list's place, with the way to ask again.
-        if let (None, Some(error)) = (&self.list, &self.error) {
+        if let (None, Some(error)) = (&self.list, self.loading.error()) {
             return widgets::card(palette)
                 .id("tournaments-error")
                 .test_support()
@@ -246,15 +246,15 @@ impl TournamentsPage {
                         .child(
                             h_flex().justify_center().mt(px(8.)).child(
                                 widgets::try_again("tournaments-try-again")
-                                    .loading(self.loading)
-                                    .disabled(self.loading)
+                                    .loading(self.loading.busy())
+                                    .disabled(self.loading.busy())
                                     .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
                             ),
                         ),
                 )
                 .into_any_element();
         }
-        if let Some(error) = &self.error {
+        if let Some(error) = self.loading.error() {
             body = body.child(
                 div()
                     .text_size(px(13.))
@@ -264,7 +264,7 @@ impl TournamentsPage {
         }
         let Some(list) = &self.list else {
             return body
-                .when(self.error.is_none(), |body| {
+                .when(self.loading.error().is_none(), |body| {
                     body.child(widgets::loading("Loading…", palette))
                 })
                 .into_any_element();

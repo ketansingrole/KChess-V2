@@ -16,6 +16,8 @@ use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::core::AppCore;
+use crate::game::played::GameOrigin;
+use crate::pages::analysis::Opening;
 use crate::pages::history::lichess::{RowDetail, game_row};
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::rating_history::{Retry, has_points};
@@ -1757,7 +1759,15 @@ fn open_exported_at(
     let export = cx
         .global::<AppCore>()
         .request(calls::ExportGame { id: json!(id) });
-    let origin = json!({ "white": white, "black": black, "gameId": id });
+    let opening = Opening {
+        ply,
+        orientation: Some(orientation),
+        origin: Some(GameOrigin {
+            game_id: Some(id.to_string()),
+            ..GameOrigin::named(&white, &black)
+        }),
+        review: false,
+    };
     let pgn = async move {
         match export.await {
             Ok(Value::String(pgn)) => Ok(pgn),
@@ -1765,7 +1775,7 @@ fn open_exported_at(
             Err(cause) => Err(format!("Could not open the game: {}", cause.message)),
         }
     };
-    open_fetched(pgn, Some(orientation), ply, Some(origin), window, cx);
+    open_fetched(pgn, opening, window, cx);
 }
 
 /// A public Lichess study's chapter (its first when `chapter` is empty), from the side the study
@@ -1789,7 +1799,11 @@ pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App)
                 let orientation = pgn.as_deref().and_then(crate::game::pgn_orientation);
                 let pgn =
                     async move { pgn.ok_or_else(|| "That study could not be read".to_string()) };
-                open_fetched(pgn, orientation, 0, None, window, cx);
+                let opening = Opening {
+                    orientation,
+                    ..Opening::default()
+                };
+                open_fetched(pgn, opening, window, cx);
             });
         })
         .detach();
@@ -1799,9 +1813,7 @@ pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App)
 /// unsaved work), or say why it cannot be opened.
 pub fn open_fetched(
     pgn: impl std::future::Future<Output = Result<String, String>> + 'static,
-    orientation: Option<shakmaty::Color>,
-    ply: usize,
-    origin: Option<Value>,
+    opening: Opening,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -1819,7 +1831,7 @@ pub fn open_fetched(
                 }
                 Ok(pgn) => {
                     crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-                        analysis.open_game(&pgn, ply, orientation, origin.clone(), false, cx)
+                        analysis.open_pgn(&pgn, opening.clone(), cx)
                     });
                 }
                 Err(message) => window.push_notification(message, cx),

@@ -95,8 +95,7 @@ pub struct PuzzleStats {
     history: Value,
     dashboard: Value,
     storm: Value,
-    loading: bool,
-    error: Option<String>,
+    loading: crate::loading::Loading,
     reconnect: bool,
     sort: &'static str,
     themes: Vec<Theme>,
@@ -104,7 +103,6 @@ pub struct PuzzleStats {
     days_select: Entity<SelectState<Vec<Choice>>>,
     sort_select: Entity<SelectState<Vec<Choice>>>,
     account_select: Entity<SelectState<Vec<Choice>>>,
-    epoch: u64,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -176,8 +174,7 @@ impl PuzzleStats {
             history: Value::Null,
             dashboard: Value::Null,
             storm: Value::Null,
-            loading: false,
-            error: None,
+            loading: Default::default(),
             reconnect: false,
             sort: "weak",
             themes,
@@ -185,7 +182,6 @@ impl PuzzleStats {
             days_select,
             sort_select,
             account_select,
-            epoch: 0,
             _subscriptions: subscriptions,
         }
     }
@@ -217,20 +213,17 @@ impl PuzzleStats {
 
     /// `loadStats`: profile, rating history, dashboard and Storm results together.
     pub fn load(&mut self, cx: &mut Context<Self>) {
-        self.epoch += 1;
-        let epoch = self.epoch;
         let who = self.account.clone();
         if who.is_empty() {
             self.profile = Value::Null;
             self.history = Value::Null;
             self.dashboard = Value::Null;
             self.storm = Value::Null;
-            self.loading = false;
+            self.loading.stop();
             cx.notify();
             return;
         }
-        self.loading = true;
-        self.error = None;
+        let turn = self.loading.start();
         self.reconnect = false;
         cx.notify();
         let days = crate::prefs::get::<u32>(cx, DAYS, 30);
@@ -256,10 +249,9 @@ impl PuzzleStats {
             let (profile, history, dashboard, storm) =
                 (calls.0.await, calls.1.await, calls.2.await, calls.3.await);
             let _ = this.update(cx, |this, cx| {
-                if epoch != this.epoch {
+                if !this.loading.answered(turn) {
                     return;
                 }
-                this.loading = false;
                 this.profile = profile.unwrap_or(Value::Null);
                 this.history = history.unwrap_or(Value::Null);
                 this.storm = storm.unwrap_or(Value::Null);
@@ -271,7 +263,7 @@ impl PuzzleStats {
                     Ok(board) => this.dashboard = board,
                     Err(cause) => {
                         this.dashboard = Value::Null;
-                        this.error = Some(cause.message);
+                        this.loading.failed("puzzles", &cause);
                     }
                 }
                 this.draw(cx);
@@ -585,7 +577,7 @@ impl Render for PuzzleStats {
                     .small()
                     .icon(icon("refresh-cw"))
                     .label("Refresh")
-                    .loading(self.loading)
+                    .loading(self.loading.busy())
                     .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
             );
         // A card without a line under its number is as tall as its neighbours.
@@ -684,7 +676,7 @@ impl Render for PuzzleStats {
                 ),
             )
             .into_any_element()
-        } else if let Some(error) = &self.error {
+        } else if let Some(error) = self.loading.error() {
             div()
                 .text_size(px(13.))
                 .text_color(palette.error)
@@ -814,7 +806,7 @@ impl PuzzleStats {
                 )
                 .into_any_element();
         }
-        if self.loading && !self.storm.is_object() {
+        if self.loading.busy() && !self.storm.is_object() {
             return widgets::card(palette)
                 .gap(px(12.))
                 .child(widgets::heading("Your results on Lichess", palette))

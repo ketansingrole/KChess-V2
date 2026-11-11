@@ -17,6 +17,7 @@ use shakmaty::Color;
 use super::{AnalysisPage, TOOL, stop_analysis};
 use crate::assets::icon;
 use crate::core::AppCore;
+use crate::game::played::{GameOrigin, PlayedGame};
 use crate::game::tree::{moves_of, path_of};
 use crate::reviews::ReviewHandle;
 use crate::theme::{Palette, judgment_color, radii};
@@ -62,12 +63,25 @@ pub struct ReviewMark {
     pub classification: Option<String>,
 }
 
+/// How a game opens on the board.
+#[derive(Clone, Default)]
+pub struct Opening {
+    /// The move shown.
+    pub ply: usize,
+    /// How the board faces; as it was when `None`.
+    pub orientation: Option<Color>,
+    /// Where the game came from.
+    pub origin: Option<GameOrigin>,
+    /// Review it once open.
+    pub review: bool,
+}
+
 /// The review state of the board.
 #[derive(Default)]
 pub struct ReviewState {
-    /// Where the game on the board came from (`GameOrigin`): its players, your side, its Lichess
-    /// game. Nothing for a game set up or typed here.
-    pub origin: Option<Value>,
+    /// Where the game on the board came from: its players, your side, its Lichess game. Nothing
+    /// for a game set up or typed here.
+    pub origin: Option<GameOrigin>,
     /// The review shown: of the main line, or of the game before moves were added to it.
     pub shown: String,
     /// The main line it was last looked up for.
@@ -303,15 +317,15 @@ impl AnalysisPage {
         self.review.requested = self.mainline_key();
         self.wanted.clear();
         stop_analysis(false, cx);
-        let origin = self.review.origin.clone().unwrap_or(Value::Null);
+        let origin = self.review.origin.clone().unwrap_or_default();
         let mut request = json!({ "fen": self.root.fen, "moves": moves });
         // Fairy-Stockfish reviews the other variants.
         if let Some(variant) = self.fairy_variant() {
             request["variant"] = json!(variant);
         }
-        if let Some(id) = origin["gameId"].as_str() {
+        if let Some(id) = &origin.game_id {
             request["gameId"] = json!(id);
-            request["account"] = origin["account"].clone();
+            request["account"] = json!(origin.account);
         }
         let asked = cx
             .global::<AppCore>()
@@ -375,7 +389,8 @@ impl AnalysisPage {
             .review
             .origin
             .as_ref()
-            .and_then(|origin| origin["player"].as_str().map(str::to_string))
+            .and_then(|origin| origin.player)
+            .map(|player| kchess_games::color_name(player).to_string())
         else {
             return;
         };
@@ -444,8 +459,8 @@ impl AnalysisPage {
             .review
             .origin
             .as_ref()
-            .and_then(|origin| origin["player"].as_str())
-            .map(|player| if player == "black" { "black" } else { "white" });
+            .and_then(|origin| origin.player)
+            .map(kchess_games::color_name);
         let sides: Vec<&'static str> = match player {
             Some(player) => vec![player],
             None => vec!["white", "black"],
@@ -524,29 +539,33 @@ impl AnalysisPage {
         .detach();
     }
 
-    /// Open a game on the board (`loadPgn`) at a move, facing as it was played, with where it came
-    /// from, and review it when asked (`startReview`).
-    pub fn open_game(
-        &mut self,
-        pgn: &str,
-        ply: usize,
-        orientation: Option<Color>,
-        origin: Option<Value>,
-        review: bool,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    /// Open a game document on the board, as `opening` says: at a move, facing as it was played,
+    /// with where it came from, and reviewed when asked.
+    pub fn open_pgn(&mut self, pgn: &str, opening: Opening, cx: &mut Context<Self>) -> bool {
         if !self.load_pgn(pgn, cx) {
             return false;
         }
-        if let Some(orientation) = orientation {
+        if let Some(orientation) = opening.orientation {
             self.orientation = orientation;
         }
-        self.review.origin = origin;
-        self.go_to_ply(ply, cx);
-        if review {
+        self.review.origin = opening.origin;
+        self.go_to_ply(opening.ply, cx);
+        if opening.review {
             self.request_review(cx);
         }
         true
+    }
+
+    /// Open a game a page played or showed, at the move it shows, facing as it does; `review`
+    /// reviews it.
+    pub fn open_played(&mut self, game: &PlayedGame, review: bool, cx: &mut Context<Self>) -> bool {
+        let opening = Opening {
+            ply: game.ply.unwrap_or(game.moves.len()),
+            orientation: Some(game.orientation),
+            origin: Some(game.origin()),
+            review,
+        };
+        self.open_pgn(&game.analysis_pgn(), opening, cx)
     }
 
     /// Study a puzzle (`usePuzzleAnalysis().open`): its solution is the line, each move tried
@@ -710,13 +729,12 @@ impl AnalysisPage {
             if !self.load_pgn(&pgn, cx) {
                 return false;
             }
-            self.review.origin = Some(json!({
-                "gameId": game["gameId"],
-                "account": game["account"],
-                "white": game["white"],
-                "black": game["black"],
-                "player": game["player"],
-            }));
+            self.review.origin = Some(GameOrigin {
+                player: crate::game::played::color_of(&game["player"]),
+                game_id: game["gameId"].as_str().map(str::to_string),
+                account: game["account"].as_str().map(str::to_string),
+                ..GameOrigin::named(&game["white"], &game["black"])
+            });
         }
         self.review.mistakes = items;
         self.start_practice(&key, cx);
@@ -726,15 +744,10 @@ impl AnalysisPage {
 
     /// The players' names: from where the game came from, or else its PGN headers.
     pub(super) fn player_name(&self, color: Color) -> String {
-        let key = if color == Color::White {
-            "white"
-        } else {
-            "black"
-        };
         self.review
             .origin
             .as_ref()
-            .and_then(|origin| origin[key].as_str())
+            .and_then(|origin| origin.name(color))
             .map(str::to_string)
             .or_else(|| {
                 let header = self.header(if color == Color::White {
@@ -796,7 +809,7 @@ impl AnalysisPage {
                 .review
                 .origin
                 .as_ref()
-                .and_then(|origin| origin["gameId"].as_str())
+                .and_then(|origin| origin.game_id.as_deref())
                 .is_some_and(|id| !kchess_domain::chesscom::is_game_id(id));
         let reviewed = review
             .as_ref()
@@ -945,7 +958,7 @@ impl AnalysisPage {
                                 .review
                                 .origin
                                 .as_ref()
-                                .is_some_and(|origin| origin["player"].is_string())
+                                .is_some_and(|origin| origin.player.is_some())
                             {
                                 "Practice your mistakes"
                             } else {

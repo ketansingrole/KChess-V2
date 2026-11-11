@@ -42,12 +42,7 @@ const VARIANTS: [(&str, &str); 9] = [
 const LATER: &str = "later";
 
 fn minutes_label(minutes: f64) -> String {
-    match minutes {
-        0.25 => "¼ min".into(),
-        0.5 => "½ min".into(),
-        0.75 => "¾ min".into(),
-        m => format!("{m} min"),
-    }
+    format!("{} min", crate::widgets::clock_minutes(minutes))
 }
 
 fn duration_label(minutes: f64) -> String {

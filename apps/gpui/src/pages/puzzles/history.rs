@@ -258,15 +258,9 @@ impl PuzzleHistory {
         let progress = cx.global::<AppCore>().request(calls::PuzzleProgress {
             query: json!({ "today": today, "limit": 200 }),
         });
-        cx.spawn(async move |this, cx| {
-            if let Ok(progress) = progress.await {
-                let _ = this.update(cx, |this, cx| {
-                    this.progress = progress;
-                    cx.notify();
-                });
-            }
-        })
-        .detach();
+        crate::loading::fetch(cx, "puzzles", progress, |this, progress, _| {
+            this.progress = progress;
+        });
         if account != self.account {
             self.account = account;
             self.activity.clear();

@@ -1613,6 +1613,23 @@ impl Render for Workspace {
                                     }
                                 },
                             ))
+                            // F turns the page's board, while no text field has the keys.
+                            .on_action(cx.listener(
+                                |this, _: &crate::menu::FlipBoard, window, cx| {
+                                    let page = this.pages.current_handle();
+                                    match page {
+                                        Some(page)
+                                            if this.pages.page_focused(window, cx)
+                                                && page.has_role(ActionRole::Flip, cx) =>
+                                        {
+                                            cx.defer_in(window, move |_, window, cx| {
+                                                page.run_role(ActionRole::Flip, window, cx)
+                                            });
+                                        }
+                                        _ => cx.propagate(),
+                                    }
+                                },
+                            ))
                             // A mouse's back and forward buttons go as a swipe does.
                             .on_mouse_down(
                                 MouseButton::Navigate(NavigationDirection::Back),

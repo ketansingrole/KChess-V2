@@ -1141,16 +1141,6 @@ impl Render for EditorPage {
         div()
             .size_full()
             .track_focus(&self.focus)
-            // F turns the board, as its button does, while no text field has the keys.
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if crate::board::page_has_keys(&this.focus, window, cx)
-                    && !event.keystroke.modifiers.modified()
-                    && event.keystroke.key == "f"
-                {
-                    this.flip(cx);
-                    cx.stop_propagation();
-                }
-            }))
             // The FEN box takes these for its own text first.
             .on_action(cx.listener(|this, _: &Undo, _, cx| this.undo(cx)))
             .on_action(cx.listener(|this, _: &Redo, _, cx| this.redo(cx)))

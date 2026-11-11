@@ -323,18 +323,7 @@ impl AnalysisPage {
         let Some(practice) = &self.practice else {
             return div().into_any_element();
         };
-        let player = self
-            .review
-            .origin
-            .as_ref()
-            .and_then(|origin| origin["player"].as_str())
-            .map(|player| {
-                if player == "black" {
-                    Color::Black
-                } else {
-                    Color::White
-                }
-            });
+        let player = self.review.origin.as_ref().and_then(|origin| origin.player);
         let named = self.review.origin.is_some()
             || !self.header("White").is_empty()
             || !self.header("Black").is_empty();

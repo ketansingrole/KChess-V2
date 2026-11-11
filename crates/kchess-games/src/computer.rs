@@ -6,7 +6,10 @@ use serde_json::{Value, json};
 
 use kchess_domain::games::computer as session;
 
-use crate::{Transition, assign_written, transition};
+use shakmaty::Color;
+
+use crate::driver::{self, Driver};
+use crate::{Outcome, Transition};
 
 /// What a transition asks the page to do.
 #[derive(Clone, Debug, PartialEq)]
@@ -42,9 +45,21 @@ pub struct Host {
 }
 
 pub struct ComputerGame {
-    /// The `ComputerState` document (the saved session plus `thinking` and `epoch`).
-    pub state: Value,
-    runtime: Value,
+    driver: Driver,
+}
+
+/// The session a computer game is saved as, and the Game history kind it keeps its place by.
+pub const SESSION: &str = "computer";
+pub const HISTORY: &str = "computer";
+/// Its PGN's `Event`.
+pub const EVENT: &str = "Computer game (KChess)";
+
+/// White's and Black's names in a game the player plays as `color` against `engine`.
+pub fn players(color: Color, engine: &str) -> (&str, &str) {
+    match color {
+        Color::White => ("You", engine),
+        Color::Black => (engine, "You"),
+    }
 }
 
 struct Done {
@@ -76,69 +91,141 @@ impl ComputerGame {
     /// A game from a saved session (`computerState(saved)`), or a new one.
     pub fn new(saved: Option<&Value>, host: &Host) -> Result<ComputerGame, String> {
         let state = session::state(&[saved.cloned().unwrap_or(Value::Null)])?;
-        let init = transition(session::init, &[], |kind| read(host, kind))?;
-        let runtime = init
-            .get("runtime")
-            .cloned()
-            .ok_or("A computer game could not start.")?;
-        Ok(ComputerGame { state, runtime })
+        let driver = Driver::start(
+            state,
+            session::init,
+            |kind| read(host, kind),
+            "computer game",
+        )?;
+        Ok(ComputerGame { driver })
+    }
+
+    /// The `ComputerState` document (the saved session plus `thinking` and `epoch`).
+    pub fn state(&self) -> &Value {
+        &self.driver.state
+    }
+
+    /// The game's start: its `{ variant, fen }`.
+    pub fn setup(&self) -> &Value {
+        &self.driver.state["setup"]
+    }
+
+    /// The game's moves, in UCI.
+    pub fn moves(&self) -> Vec<String> {
+        crate::moves_of(&self.driver.state)
+    }
+
+    /// The move shown: the moves before it are on the board.
+    pub fn ply(&self) -> usize {
+        (crate::whole(&self.driver.state["ply"]) as usize).min(self.moves().len())
+    }
+
+    /// Show the position after `ply` moves (at most every move).
+    pub fn show_ply(&mut self, ply: usize) {
+        self.driver.state["ply"] = json!(ply.min(self.moves().len()));
+    }
+
+    /// The player's side.
+    pub fn color(&self) -> Color {
+        if self.driver.state["color"] == "black" {
+            Color::Black
+        } else {
+            Color::White
+        }
+    }
+
+    /// Play `color` from the next game on.
+    pub fn set_color(&mut self, color: Color) {
+        self.driver.state["color"] = json!(crate::color_name(color));
+    }
+
+    /// The engine level's id.
+    pub fn level(&self) -> &str {
+        self.driver.state["level"].as_str().unwrap_or("club")
+    }
+
+    /// Play at `level` from the next search on.
+    pub fn set_level(&mut self, level: &str) {
+        self.driver.state["level"] = json!(level);
+    }
+
+    /// The clock chosen (`{ minutes, increment }`), null when untimed.
+    pub fn clock(&self) -> &Value {
+        &self.driver.state["clock"]
+    }
+
+    /// Play on `clock` from the next game on.
+    pub fn set_clock(&mut self, clock: Value) {
+        self.driver.state["clock"] = clock;
+    }
+
+    /// The clocks run in this game.
+    pub fn timed(&self) -> bool {
+        !self.driver.state["times"].is_null()
+    }
+
+    /// The engine is searching.
+    pub fn thinking(&self) -> bool {
+        self.driver.state["thinking"].as_bool() == Some(true)
+    }
+
+    /// A side's flag has fallen.
+    pub fn flagged(&self) -> bool {
+        !self.driver.state["flagged"].is_null()
+    }
+
+    /// The result once the game has ended, from the player's win, loss or draw.
+    pub fn outcome(&self, host: &Host) -> Option<Outcome> {
+        let result = self.result(host)?;
+        let user = self.color();
+        Some(match result["kind"].as_str() {
+            Some("win") => Outcome::Wins(user),
+            Some("loss") => Outcome::Wins(!user),
+            _ => Outcome::Draw,
+        })
     }
 
     fn apply(&mut self, step: Transition, input: &[Value], host: &Host) -> Result<Done, String> {
-        let mut args = vec![self.state.clone(), self.runtime.clone()];
-        args.extend_from_slice(input);
-        let done = transition(step, &args, |kind| read(host, kind))?;
-        if let Some(next) = done.get("state") {
-            assign_written(&mut self.state, next, &done["written"]);
-        }
-        if let Some(runtime) = done.get("runtime") {
-            self.runtime = runtime.clone();
-        }
+        let done = self.driver.apply(step, input, |kind| read(host, kind))?;
         Ok(Done {
-            value: done.get("value").cloned().unwrap_or(Value::Null),
+            value: driver::value(&done),
             effects: effects(&done),
         })
     }
 
     /// A getter of the game; nothing changes.
     fn view(&self, query: Value, host: &Host) -> Value {
-        transition(
-            session::view,
-            &[self.state.clone(), self.runtime.clone(), query],
-            |kind| read(host, kind),
-        )
-        .ok()
-        .and_then(|done| done.get("value").cloned())
-        .unwrap_or(Value::Null)
+        self.driver
+            .view(session::view, query, |kind| read(host, kind))
     }
 
     pub fn over(&self, host: &Host) -> bool {
-        self.view(json!({ "view": "over" }), host).as_bool() == Some(true)
+        self.view(driver::named("over"), host).as_bool() == Some(true)
     }
 
     /// `{ kind, title, detail }` once the game has ended.
     pub fn result(&self, host: &Host) -> Option<Value> {
-        Some(self.view(json!({ "view": "result" }), host)).filter(|value| !value.is_null())
+        Some(self.view(driver::named("result"), host)).filter(|value| !value.is_null())
     }
 
     /// A side's clock in milliseconds.
-    pub fn remaining(&self, color: &str, host: &Host) -> f64 {
+    pub fn remaining(&self, color: Color, host: &Host) -> f64 {
         self.view(
-            json!({ "view": "remaining", "color": color, "at": host.now }),
+            json!({ "view": "remaining", "color": crate::color_name(color), "at": host.now }),
             host,
         )
         .as_f64()
         .unwrap_or(0.)
     }
 
-    /// The session to save (`saveSession('computer', …)`).
+    /// The session to save.
     pub fn snapshot(&self, host: &Host) -> Value {
-        self.view(json!({ "view": "snapshot" }), host)
+        self.view(driver::named("snapshot"), host)
     }
 
     /// The finished game for the history (`saveArchivedGame`).
     pub fn archive_snapshot(&self, host: &Host) -> Value {
-        self.view(json!({ "view": "archiveSnapshot" }), host)
+        self.view(driver::named("archiveSnapshot"), host)
     }
 
     pub fn availability_changed(&mut self, host: &Host) -> Result<Vec<Effect>, String> {
@@ -159,7 +246,7 @@ impl ComputerGame {
 
     /// The engine search to send now, if it is the engine's turn and nothing is searching.
     pub fn search_start(&mut self, host: &Host) -> Result<Option<SearchRequest>, String> {
-        if self.state["thinking"].as_bool() == Some(true) {
+        if self.thinking() {
             return Ok(None);
         }
         let request = self.apply(session::search_start, &[], host)?.value;
@@ -218,8 +305,8 @@ impl ComputerGame {
         clock: Option<Value>,
         host: &Host,
     ) -> Result<Vec<Effect>, String> {
-        let setup = setup.unwrap_or_else(|| self.state["setup"].clone());
-        let clock = clock.unwrap_or_else(|| self.state["clock"].clone());
+        let setup = setup.unwrap_or_else(|| self.state()["setup"].clone());
+        let clock = clock.unwrap_or_else(|| self.state()["clock"].clone());
         Ok(self.apply(session::start, &[setup, clock], host)?.effects)
     }
 
@@ -266,7 +353,7 @@ mod tests {
         );
         let request = game.search_start(&host(20.)).unwrap().expect("a search");
         assert_eq!(request.moves, vec!["e2e4"]);
-        assert_eq!(game.state["thinking"], true);
+        assert_eq!(game.state()["thinking"], true);
         // A second start while it searches sends nothing.
         assert!(game.search_start(&host(21.)).unwrap().is_none());
         let effects = game.search_reply(&request, "e7e5", &host(30.)).unwrap();
@@ -275,8 +362,8 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Effect::Moved { san, computer: true } if san == "e5"))
         );
-        assert_eq!(game.state["moves"], json!(["e2e4", "e7e5"]));
-        assert_eq!(game.state["thinking"], false);
+        assert_eq!(game.state()["moves"], json!(["e2e4", "e7e5"]));
+        assert_eq!(game.state()["thinking"], false);
     }
 
     /// Taking back after the player's flag fell left their clock at 0 ms: the game went on and
@@ -294,10 +381,10 @@ mod tests {
         let request = game.search_start(&host(2.)).unwrap().expect("a search");
         game.search_reply(&request, "e7e5", &host(3.)).unwrap();
         game.expire(&host(200_000.)).unwrap();
-        assert!(!game.state["flagged"].is_null());
+        assert!(!game.state()["flagged"].is_null());
         game.takeback(&host(200_001.)).unwrap();
-        assert!(!game.state["flagged"].is_null());
-        assert_eq!(game.state["moves"], json!(["e2e4", "e7e5"]));
+        assert!(!game.state()["flagged"].is_null());
+        assert_eq!(game.state()["moves"], json!(["e2e4", "e7e5"]));
     }
 
     #[test]
@@ -307,7 +394,7 @@ mod tests {
         let request = game.search_start(&host(2.)).unwrap().unwrap();
         game.takeback(&host(3.)).unwrap();
         game.search_reply(&request, "e7e5", &host(4.)).unwrap();
-        assert_eq!(game.state["moves"], json!([]));
+        assert_eq!(game.state()["moves"], json!([]));
     }
 
     /// Another variant's game is played by its rules and searched in it: a drop is a move, and
@@ -358,10 +445,10 @@ mod tests {
         assert!(game.play("e2e4", &host(0.)).unwrap().0);
         let request = game.search_start(&host(0.)).unwrap().unwrap();
         game.search_reply(&request, "e7e5", &host(500.)).unwrap();
-        assert_eq!(game.remaining("white", &host(500.)), 60_000.);
+        assert_eq!(game.remaining(Color::White, &host(500.)), 60_000.);
         assert!(game.play("d2d4", &host(1_000.)).unwrap().0);
-        assert_eq!(game.remaining("white", &host(1_000.)), 59_500.);
-        assert_eq!(game.remaining("black", &host(31_000.)), 30_000.);
+        assert_eq!(game.remaining(Color::White, &host(1_000.)), 59_500.);
+        assert_eq!(game.remaining(Color::Black, &host(31_000.)), 30_000.);
         assert!(game.expire(&host(30_000.)).unwrap().is_empty());
         assert!(!game.over(&host(30_000.)));
         assert_eq!(game.result(&host(30_000.)), None);
@@ -376,6 +463,30 @@ mod tests {
         let archived = game.archive_snapshot(&host(61_000.));
         assert_eq!(archived["result"], "1-0");
         assert_eq!(archived["timeControl"], "60+0");
+    }
+
+    /// A finished computer game is written with its winner, not as a draw: its result view is
+    /// the player's win or loss and names no winner. The tag matches its history entry's.
+    #[test]
+    fn a_resigned_computer_game_is_a_loss_for_the_player() {
+        let mut game = ComputerGame::new(None, &host(0.)).unwrap();
+        assert_eq!(Outcome::tag(game.outcome(&host(0.))), "*");
+        assert!(game.play("e2e4", &host(1.)).unwrap().0);
+        game.resign(&host(2.)).unwrap();
+        assert_eq!(game.outcome(&host(3.)), Some(Outcome::Wins(Color::Black)));
+        assert_eq!(
+            Outcome::tag(game.outcome(&host(3.))),
+            game.archive_snapshot(&host(3.))["result"]
+        );
+        game.set_color(Color::Black);
+        game.start(None, None, &host(4.)).unwrap();
+        let request = game
+            .search_start(&host(5.))
+            .unwrap()
+            .expect("White's search");
+        game.search_reply(&request, "e2e4", &host(6.)).unwrap();
+        game.resign(&host(7.)).unwrap();
+        assert_eq!(Outcome::tag(game.outcome(&host(8.))), "1-0");
     }
 
     #[test]
@@ -395,7 +506,7 @@ mod tests {
         game.search_start(&host(2.)).unwrap().unwrap();
         let effects = game.availability_changed(&host_at(3., false)).unwrap();
         assert_eq!(effects, [Effect::StopEngine]);
-        assert_eq!(game.state["thinking"], false);
+        assert_eq!(game.state()["thinking"], false);
     }
 
     /// A failed search is reported, and one cancelled meanwhile is not.
@@ -408,7 +519,7 @@ mod tests {
             game.search_failed(&request, &host(3.)).unwrap(),
             [Effect::Failed]
         );
-        assert_eq!(game.state["thinking"], false);
+        assert_eq!(game.state()["thinking"], false);
         let request = game.search_start(&host(4.)).unwrap().unwrap();
         game.takeback(&host(5.)).unwrap();
         assert!(game.search_failed(&request, &host(6.)).unwrap().is_empty());

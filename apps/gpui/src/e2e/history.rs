@@ -8,6 +8,7 @@ const SCHOLARS_MATE: [&str; 7] = ["e4", "e5", "Qh5", "Nc6", "Bc4", "Nf6", "Qxf7#
 /// Play moves over the board by typing them, from wherever the app is.
 fn play_over_the_board(app: &mut Harness, moves: &[&str]) {
     app.open("Over the board");
+    super::local::wait_resumed(app);
     for (played, text) in moves.iter().enumerate() {
         app.click_label("Enter a chess move in SAN or UCI");
         app.type_text(text);
@@ -224,6 +225,7 @@ fn the_list_is_narrowed_by_result(cx: &mut gpui_kit::TestAppContext) {
     let mut app = mate_in_history(cx);
     // A second game, left unfinished after one move.
     app.open("Over the board");
+    super::local::wait_resumed(&mut app);
     app.click("local-new");
     app.click("start-local");
     app.wait_for_moves(&[]);
@@ -334,6 +336,7 @@ fn a_crazyhouse_game_shows_its_pockets(cx: &mut gpui_kit::TestAppContext) {
     use crate::pages::local::LocalPage;
     let mut app = Harness::start(cx);
     app.open("Over the board");
+    super::local::wait_resumed(&mut app);
     app.with_window(|window, cx| {
         let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
@@ -577,6 +580,7 @@ fn an_open_game_steps_to_the_next_and_previous(cx: &mut gpui_kit::TestAppContext
     let mut app = mate_in_history(cx);
     // A newer game, left unfinished after one move: it is listed first.
     app.open("Over the board");
+    super::local::wait_resumed(&mut app);
     app.click("local-new");
     app.click("start-local");
     app.wait_for_moves(&[]);
@@ -646,6 +650,7 @@ fn board_games_are_searched_by_opponent_or_opening(cx: &mut gpui_kit::TestAppCon
     let mut app = mate_in_history(cx);
     // A second game, 1. e4 alone: a King's Pawn Game, but no Wayward Queen Attack.
     app.open("Over the board");
+    super::local::wait_resumed(&mut app);
     app.click("local-new");
     app.click("start-local");
     app.wait_for_moves(&[]);
@@ -680,6 +685,7 @@ fn board_games_are_searched_by_opponent_or_opening(cx: &mut gpui_kit::TestAppCon
 fn the_games_listed_are_exported_as_one_pgn(cx: &mut gpui_kit::TestAppContext) {
     let mut app = mate_in_history(cx);
     app.open("Over the board");
+    super::local::wait_resumed(&mut app);
     app.click("local-new");
     app.click("start-local");
     app.wait_for_moves(&[]);

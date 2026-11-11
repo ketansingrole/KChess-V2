@@ -8,6 +8,7 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::*;
 
 use crate::game::{BroadcastLink, GameLink};
+use crate::pages::analysis::Opening;
 use crate::pages::{ActionInfo, PageCommand};
 
 /// Something pasted that KChess can open.
@@ -175,7 +176,11 @@ impl Link {
                 move |window, cx| {
                     let pgn = pgn.clone();
                     crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-                        analysis.open_game(&pgn, usize::MAX, None, None, false, cx)
+                        let opening = Opening {
+                            ply: usize::MAX,
+                            ..Opening::default()
+                        };
+                        analysis.open_pgn(&pgn, opening, cx)
                     });
                 },
             )],

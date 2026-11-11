@@ -339,6 +339,11 @@ fn adopt(shown: &Settings, stored: &Settings, next: &Settings) -> Settings {
     serde_json::from_value(Value::Object(merged)).unwrap_or_else(|_| shown.clone())
 }
 
+/// The app's own preferences, as shown now.
+pub fn frontend(cx: &App) -> &kchess_contracts::types::FrontendPreferences {
+    &cx.global::<SettingsHandle>().0.read(cx).settings.frontend
+}
+
 /// Change settings from a view (`toggleSetting`, the Settings page); they save themselves.
 pub fn change(cx: &mut App, change: impl FnOnce(&mut Settings) + 'static) {
     let handle = cx.global::<SettingsHandle>().0.clone();

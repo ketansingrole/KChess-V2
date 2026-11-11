@@ -1,7 +1,9 @@
 //! Importing onto the analysis board: pasted or dropped PGN and FEN, files, and Lichess games
 //! and studies fetched by link.
 
+use super::Opening;
 use super::*;
+use crate::game::played::GameOrigin;
 use kchess_contracts::calls;
 
 impl AnalysisPage {
@@ -191,10 +193,14 @@ impl AnalysisPage {
                 Err(cause) => Err(format!("Could not fetch that game: {}", cause.message)),
             }
         };
-        let origin = json!({ "gameId": link.id });
-        // A link without a move opens at the start, as Lichess does.
-        let ply = link.ply.unwrap_or(0);
-        self.import_fetched(pgn, ply, Some(link.orientation), Some(origin), window, cx);
+        let opening = Opening {
+            // A link without a move opens at the start, as Lichess does.
+            ply: link.ply.unwrap_or(0),
+            orientation: Some(link.orientation),
+            origin: Some(GameOrigin::lichess(link.id)),
+            review: false,
+        };
+        self.import_fetched(pgn, opening, window, cx);
     }
 
     /// Fetch a public Lichess study's chapter by its link and open it as the study shows it.
@@ -215,16 +221,14 @@ impl AnalysisPage {
                 Err(cause) => Err(format!("Could not fetch that study: {}", cause.message)),
             }
         };
-        self.import_fetched(pgn, 0, None, None, window, cx);
+        self.import_fetched(pgn, Opening::default(), window, cx);
     }
 
     /// Open a game being fetched for the import (`None` when Lichess sent nothing readable).
     pub(super) fn import_fetched(
         &mut self,
         pgn: impl std::future::Future<Output = Result<Option<String>, String>> + 'static,
-        ply: usize,
-        orientation: Option<Color>,
-        origin: Option<Value>,
+        mut opening: Opening,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -245,9 +249,10 @@ impl AnalysisPage {
                 let unplayable = matches!(&pgn, Ok(Some(pgn)) if !crate::game::pgn_analysable(pgn));
                 let opened = match pgn {
                     Ok(Some(pgn)) => {
-                        let orientation =
-                            orientation.or_else(|| crate::game::pgn_orientation(&pgn));
-                        this.open_game(&pgn, ply, orientation, origin, false, cx)
+                        opening.orientation = opening
+                            .orientation
+                            .or_else(|| crate::game::pgn_orientation(&pgn));
+                        this.open_pgn(&pgn, opening, cx)
                     }
                     Ok(None) => false,
                     Err(message) => {

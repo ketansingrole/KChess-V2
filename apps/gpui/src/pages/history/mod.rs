@@ -22,6 +22,7 @@ use crate::played::{PlayedGames, PlayedHandle};
 use crate::replay::GameReplay;
 
 pub(crate) mod lichess;
+use crate::pages::analysis::Opening;
 use crate::theme::Palette;
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Look, Pill};
@@ -151,10 +152,14 @@ fn time_label(control: &str) -> String {
     control
         .split(" / ")
         .map(|side| match side.split_once('+') {
-            Some((seconds, increment)) => match seconds.parse::<f64>() {
-                Ok(seconds) => format!("{}+{increment}", seconds / 60.),
-                Err(_) => side.to_string(),
-            },
+            Some((seconds, increment)) => {
+                match (seconds.parse::<f64>(), increment.parse::<f64>()) {
+                    (Ok(seconds), Ok(increment)) => {
+                        crate::widgets::time_control(seconds / 60., increment)
+                    }
+                    _ => side.to_string(),
+                }
+            }
             None => side.to_string(),
         })
         .collect::<Vec<_>>()
@@ -247,7 +252,7 @@ fn analysable(game: &Value) -> bool {
 fn analyse(game: &Value, window: &mut Window, cx: &mut App) {
     let Some(pgn) = pgn(game) else { return };
     crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-        analysis.open_game(&pgn, 0, None, None, false, cx)
+        analysis.open_pgn(&pgn, Opening::default(), cx)
     });
 }
 
@@ -1720,6 +1725,8 @@ mod tests {
         assert_eq!(time_label("300+3"), "5+3");
         assert_eq!(time_label("180+2 / 600+2"), "3+2 / 10+2");
         assert_eq!(time_label("90+0"), "1.5+0");
+        // A 30-second clock reads as Tournaments and the challenges write it.
+        assert_eq!(time_label("30+0"), "½+0");
     }
 
     #[test]

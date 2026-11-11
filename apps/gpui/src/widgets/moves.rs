@@ -153,9 +153,9 @@ pub fn move_controls(
     ply: usize,
     count: usize,
     select: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
-    flip: (SharedString, Option<&'static str>, ClickHandler),
+    flip: (SharedString, Option<String>, ClickHandler),
 ) -> impl IntoElement {
-    let flip_tooltip: SharedString = match flip.1 {
+    let flip_tooltip: SharedString = match &flip.1 {
         Some(key) => format!("{} ({key})", flip.0).into(),
         None => flip.0.clone(),
     };
