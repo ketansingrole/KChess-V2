@@ -55,7 +55,7 @@ pub struct VoiceModel {
 }
 
 impl VoiceModel {
-    /// The Vosk English model (`VOICE_MODEL` in the TypeScript core).
+    /// The Vosk English model.
     pub fn official() -> VoiceModel {
         VoiceModel {
             name: "vosk-model-small-en-us-0.15".into(),

@@ -93,7 +93,7 @@ impl EngineHub {
         }
     }
 
-    /// `withEngineMaintenance`'s first half: refuses new engines, runs `stop_owners`, and waits
+    /// Refuses new engines, runs `stop_owners`, and waits
     /// for every engine to exit. The returned hold keeps engines refused until it is dropped.
     pub async fn suspend(&self, stop_owners: impl FnOnce()) -> Result<MaintenanceHold> {
         self.assert_available()?;
@@ -111,7 +111,7 @@ impl EngineHub {
         self
     }
 
-    /// `assertEngineAvailable`: refuses new engines while an executable is being replaced.
+    /// Refuses new engines while an executable is being replaced.
     pub fn assert_available(&self) -> Result<()> {
         if self.maintenance.load(Ordering::SeqCst) {
             return Err(CoreError::new("Stockfish is being updated. Retry shortly."));
@@ -119,7 +119,7 @@ impl EngineHub {
         Ok(())
     }
 
-    /// `withEngineMaintenance`: stops every engine, waits for all to exit within the deadline,
+    /// Stops every engine, waits for all to exit within the deadline,
     /// then runs `action`. The flag clears on every exit path.
     pub async fn with_maintenance<T, Fut>(
         &self,
@@ -133,7 +133,7 @@ impl EngineHub {
         action().await
     }
 
-    /// `closeEngines`: terminates every engine and waits for their exit.
+    /// Terminates every engine and waits for their exit.
     pub async fn close_engines(&self) -> Result<()> {
         self.close_all("Stockfish did not exit during shutdown.")
             .await
@@ -615,8 +615,8 @@ impl Inner {
         let _ = self.kill.send(());
     }
 
-    /// Hands one stdout line to every listener: `on_line` first, then the match, as TypeScript
-    /// does. Callbacks run without the state lock, so they may call back into the controller.
+    /// Hands one stdout line to every listener: `on_line` first, then the match. Callbacks run
+    /// without the state lock, so they may call back into the controller.
     fn dispatch(&self, line: &str) {
         let listeners: Vec<(u64, Matcher, Option<LineSink>)> = lock(&self.state)
             .listeners
@@ -849,7 +849,7 @@ fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// `truncateForLog`: one line, at most `max` characters.
+/// One line, at most `max` characters.
 pub(crate) fn truncate_for_log(text: &str, max: usize) -> String {
     let single = collapse_whitespace(text);
     let count = single.chars().count();
@@ -860,13 +860,13 @@ pub(crate) fn truncate_for_log(text: &str, max: usize) -> String {
     format!("{head}…({} more chars)", count - max)
 }
 
-/// `errorSummary` for a `CoreError`: the name and the message, bounded.
+/// A `CoreError` for the log: the name and the message, bounded.
 pub(crate) fn error_summary(error: &CoreError) -> String {
     let name = if error.aborted { "AbortError" } else { "Error" };
     truncate_for_log(&format!("{name}: {}", error.message), 300)
 }
 
-/// `uciCommandName`: the command word and the move count, never the position itself.
+/// A UCI command for the log: the command word and the move count, never the position itself.
 fn uci_command_name(command: &str) -> String {
     let head = command.split_whitespace().next().unwrap_or(command);
     let moves = if command.contains(" moves ") {

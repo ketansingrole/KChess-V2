@@ -29,7 +29,7 @@ pub(crate) mod slot;
 pub mod status;
 pub mod uci;
 
-/// How a status becomes the process that runs it (`spawnEngine`). The default runs the engine
+/// How a status becomes the process that runs it. The default runs the engine
 /// `status` names; tests substitute a scripted engine.
 pub type CommandFactory = Arc<dyn Fn(&EngineStatus) -> Command + Send + Sync>;
 

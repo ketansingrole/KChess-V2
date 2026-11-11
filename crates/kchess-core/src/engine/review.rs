@@ -643,7 +643,7 @@ fn empty_review(job: &Job) -> StoredReview {
     }
 }
 
-/// `hasScore`: whether the evaluation carries a score (the rules decide).
+/// Whether the evaluation carries a score (the rules decide).
 fn has_score(score: Option<&ReviewEval>) -> bool {
     let value = score.map_or(Value::Null, |score| {
         serde_json::to_value(score).unwrap_or(Value::Null)
@@ -698,7 +698,7 @@ fn review_status_of(s: &Shared) -> ReviewStatus {
     }
 }
 
-/// `sendStatus`: the host hears of the status outside the state lock.
+/// The host hears of the status outside the state lock.
 fn send_status(s: &Shared) {
     let Some(host) = host_of(s) else { return };
     host.status(review_status_of(s));
@@ -735,7 +735,7 @@ fn close_engine(s: &Shared) {
     close_engine_locked(s, &lock(&s.state));
 }
 
-/// Why automatic reviews may not run now, if they may not (`backgroundBlock`).
+/// Why automatic reviews may not run now, if they may not.
 async fn background_block(s: &Arc<Shared>) -> Result<Option<Pause>> {
     let Some(host) = host_of(s) else {
         return Ok(Some(Pause::Off));

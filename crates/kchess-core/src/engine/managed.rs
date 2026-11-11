@@ -234,7 +234,7 @@ pub trait EngineHandoff: Send + Sync {
 /// Held for the duration of one replacement; dropping it resumes the engine owners.
 pub type EngineGuard = Box<dyn Send>;
 
-/// What the managed directory holds (`ManagedEngine` in the TypeScript contracts).
+/// What the managed directory holds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ManagedEngine {
