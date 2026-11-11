@@ -13,7 +13,6 @@ use serde_json::{Value, json};
 use super::{Theme, theme_name};
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::rules;
 use crate::play_layout::Measured;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice, Look, Pill};
@@ -308,10 +307,7 @@ impl PuzzleHistory {
                 }
                 this.loading = false;
                 match result {
-                    Ok(result)
-                        if rules("isReconnect", std::slice::from_ref(&result))
-                            == Ok(json!(true)) =>
-                    {
+                    Ok(result) if kchess_domain::trainer::puzzle_session::is_reconnect(&result) => {
                         this.reconnect = true;
                     }
                     Ok(result) => {

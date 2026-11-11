@@ -20,7 +20,7 @@ use shakmaty::Color;
 
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::puzzle::{PuzzleSession, Step, local_day};
+use crate::game::puzzle::{PuzzleSession, Step, Transition, local_day, transitions};
 use crate::game::rules;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
 use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
@@ -281,10 +281,10 @@ impl PuzzlesPage {
                         uci,
                     } => {
                         let step = this.session.apply(
-                            "puzzleSessionMove",
+                            transitions::played,
                             json!({ "index": index, "correct": correct, "uci": uci }),
                         );
-                        this.follow(step, "puzzleSessionLoadSettled", cx);
+                        this.follow(step, transitions::load_settled, cx);
                     }
                     PuzzleBoardEvent::Outcome { win, detail } => {
                         this.report(*win, detail.clone(), cx)
@@ -354,7 +354,7 @@ impl PuzzlesPage {
             page.update(cx, |page, cx| {
                 let record = page
                     .session
-                    .apply("puzzleSessionInvalidate", json!({}))
+                    .apply(transitions::invalidate, json!({}))
                     .record?;
                 let save = cx
                     .global::<AppCore>()
@@ -471,15 +471,15 @@ impl PuzzlesPage {
 
     fn load_next(&mut self, cx: &mut Context<Self>) {
         let step = self.session.apply(
-            "puzzleSessionLoadBegin",
+            transitions::load_begin,
             json!({ "selection": self.selection(cx), "online": true }),
         );
-        self.follow(step, "puzzleSessionLoadSettled", cx);
+        self.follow(step, transitions::load_settled, cx);
         self.sync_board(cx);
     }
 
     /// Run the transitions' host calls in order until one asks for nothing more.
-    fn follow(&mut self, step: Step, settle: &'static str, cx: &mut Context<Self>) {
+    fn follow(&mut self, step: Step, settle: Transition, cx: &mut Context<Self>) {
         if let Some(record) = step.record {
             self.record(record, cx);
         }
@@ -540,10 +540,10 @@ impl PuzzlesPage {
 
     fn report(&mut self, win: bool, detail: Value, cx: &mut Context<Self>) {
         let step = self.session.apply(
-            "puzzleSessionReportBegin",
+            transitions::report_begin,
             json!({ "win": win, "detail": detail, "selection": self.selection(cx) }),
         );
-        self.follow(step, "puzzleSessionReportSettled", cx);
+        self.follow(step, transitions::report_settled, cx);
     }
 
     /* ── The board ────────────────────────────────────────────────────── */
@@ -568,8 +568,8 @@ impl PuzzlesPage {
 
     /// The puzzle is over: count and log it, and go on to the next one after a solve when asked.
     fn done(&mut self, cx: &mut Context<Self>) {
-        let step = self.session.apply("puzzleSessionEnd", json!({}));
-        self.follow(step, "puzzleSessionLoadSettled", cx);
+        let step = self.session.apply(transitions::end, json!({}));
+        self.follow(step, transitions::load_settled, cx);
         let solved = self.puzzle.read(cx).status() == "solved";
         let auto_next = cx
             .global::<SettingsHandle>()
@@ -635,10 +635,10 @@ impl PuzzlesPage {
     pub(crate) fn retry(&mut self, puzzle: Value, cx: &mut Context<Self>) {
         crate::prefs::set(cx, TAB, "train");
         let step = self.session.apply(
-            "puzzleSessionRetry",
+            transitions::retry,
             json!({ "puzzle": puzzle, "selection": self.selection(cx) }),
         );
-        self.follow(step, "puzzleSessionLoadSettled", cx);
+        self.follow(step, transitions::load_settled, cx);
         self.sync_board(cx);
         cx.notify();
     }
@@ -712,8 +712,8 @@ impl PuzzlesPage {
     }
 
     fn reset_session(&mut self, cx: &mut Context<Self>) {
-        let step = self.session.apply("puzzleSessionResetSession", json!({}));
-        self.follow(step, "puzzleSessionLoadSettled", cx);
+        let step = self.session.apply(transitions::reset_session, json!({}));
+        self.follow(step, transitions::load_settled, cx);
         cx.notify();
     }
 }

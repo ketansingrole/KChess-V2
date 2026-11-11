@@ -259,7 +259,7 @@ pub fn add_move_plan(input: &MoveInput) -> Option<AddedMove> {
     let fen = rules::make_fen(&pos);
     let mut child_path = moves_of(input.path);
     child_path.push(played_uci.clone());
-    let child = (!input.child_ucis.contains(&played_uci)).then(|| NewNode {
+    let child = (!input.child_ucis.contains(&played_uci)).then_some(NewNode {
         uci: played_uci,
         san,
         fen,

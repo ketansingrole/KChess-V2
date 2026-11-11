@@ -4,7 +4,9 @@
 
 use serde_json::{Value, json};
 
-use crate::{assign_written, rules, transition};
+use kchess_domain::games::computer as session;
+
+use crate::{Transition, assign_written, transition};
 
 /// What a transition asks the page to do.
 #[derive(Clone, Debug, PartialEq)]
@@ -73,8 +75,8 @@ fn effects(done: &Value) -> Vec<Effect> {
 impl ComputerGame {
     /// A game from a saved session (`computerState(saved)`), or a new one.
     pub fn new(saved: Option<&Value>, host: &Host) -> Result<ComputerGame, String> {
-        let state = rules("computerState", &[saved.cloned().unwrap_or(Value::Null)])?;
-        let init = transition("computerInit", &[], |kind| read(host, kind))?;
+        let state = session::state(&[saved.cloned().unwrap_or(Value::Null)])?;
+        let init = transition(session::init, &[], |kind| read(host, kind))?;
         let runtime = init
             .get("runtime")
             .cloned()
@@ -82,10 +84,10 @@ impl ComputerGame {
         Ok(ComputerGame { state, runtime })
     }
 
-    fn apply(&mut self, method: &str, input: &[Value], host: &Host) -> Result<Done, String> {
+    fn apply(&mut self, step: Transition, input: &[Value], host: &Host) -> Result<Done, String> {
         let mut args = vec![self.state.clone(), self.runtime.clone()];
         args.extend_from_slice(input);
-        let done = transition(method, &args, |kind| read(host, kind))?;
+        let done = transition(step, &args, |kind| read(host, kind))?;
         if let Some(next) = done.get("state") {
             assign_written(&mut self.state, next, &done["written"]);
         }
@@ -101,7 +103,7 @@ impl ComputerGame {
     /// A getter of the game; nothing changes.
     fn view(&self, query: Value, host: &Host) -> Value {
         transition(
-            "computerView",
+            session::view,
             &[self.state.clone(), self.runtime.clone(), query],
             |kind| read(host, kind),
         )
@@ -140,18 +142,18 @@ impl ComputerGame {
     }
 
     pub fn availability_changed(&mut self, host: &Host) -> Result<Vec<Effect>, String> {
-        Ok(self.apply("computerAvailability", &[], host)?.effects)
+        Ok(self.apply(session::availability, &[], host)?.effects)
     }
 
     pub fn expire(&mut self, host: &Host) -> Result<Vec<Effect>, String> {
         Ok(self
-            .apply("computerExpire", &[json!(host.now)], host)?
+            .apply(session::expire, &[json!(host.now)], host)?
             .effects)
     }
 
     /// Play the player's move; false when it is not legal or not their turn.
     pub fn play(&mut self, uci: &str, host: &Host) -> Result<(bool, Vec<Effect>), String> {
-        let done = self.apply("computerMove", &[json!(uci)], host)?;
+        let done = self.apply(session::play, &[json!(uci)], host)?;
         Ok((done.value.as_bool() == Some(true), done.effects))
     }
 
@@ -160,7 +162,7 @@ impl ComputerGame {
         if self.state["thinking"].as_bool() == Some(true) {
             return Ok(None);
         }
-        let request = self.apply("computerSearchStart", &[], host)?.value;
+        let request = self.apply(session::search_start, &[], host)?.value;
         if request.is_null() {
             return Ok(None);
         }
@@ -180,9 +182,9 @@ impl ComputerGame {
         host: &Host,
     ) -> Result<Vec<Effect>, String> {
         let input = json!({ "epoch": request.epoch, "count": request.count, "move": reply });
-        let effects = self.apply("computerSearchReply", &[input], host)?.effects;
+        let effects = self.apply(session::search_reply, &[input], host)?.effects;
         self.apply(
-            "computerSearchEnd",
+            session::search_end,
             &[json!({ "epoch": request.epoch })],
             host,
         )?;
@@ -196,13 +198,13 @@ impl ComputerGame {
     ) -> Result<Vec<Effect>, String> {
         let effects = self
             .apply(
-                "computerSearchFailed",
+                session::search_failed,
                 &[json!({ "epoch": request.epoch })],
                 host,
             )?
             .effects;
         self.apply(
-            "computerSearchEnd",
+            session::search_end,
             &[json!({ "epoch": request.epoch })],
             host,
         )?;
@@ -218,15 +220,15 @@ impl ComputerGame {
     ) -> Result<Vec<Effect>, String> {
         let setup = setup.unwrap_or_else(|| self.state["setup"].clone());
         let clock = clock.unwrap_or_else(|| self.state["clock"].clone());
-        Ok(self.apply("computerStart", &[setup, clock], host)?.effects)
+        Ok(self.apply(session::start, &[setup, clock], host)?.effects)
     }
 
     pub fn takeback(&mut self, host: &Host) -> Result<Vec<Effect>, String> {
-        Ok(self.apply("computerTakeback", &[], host)?.effects)
+        Ok(self.apply(session::takeback, &[], host)?.effects)
     }
 
     pub fn resign(&mut self, host: &Host) -> Result<Vec<Effect>, String> {
-        Ok(self.apply("computerResign", &[], host)?.effects)
+        Ok(self.apply(session::resign, &[], host)?.effects)
     }
 }
 

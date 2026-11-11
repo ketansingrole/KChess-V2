@@ -58,10 +58,14 @@ pub fn rules_as<T: DeserializeOwned + Send>(method: &str, args: &[Value]) -> Res
     })
 }
 
+/// A session transition (`kchess_domain::games`): its inputs followed by the host reads supplied
+/// so far, in; the finished transition or the next read it needs, out.
+pub type Transition = fn(&[Value]) -> Result<Value, String>;
+
 /// Run a session transition: the rules answer with the finished transition or with the next
 /// host read they need; each read is answered once, in the order the rules take it.
 pub fn transition(
-    method: &str,
+    step: Transition,
     args: &[Value],
     mut read: impl FnMut(&str) -> Result<Value, String>,
 ) -> Result<Value, String> {
@@ -70,14 +74,14 @@ pub fn transition(
     call.extend_from_slice(args);
     call.push(Value::Object(Map::new()));
     loop {
-        let mut out = rules(method, &call)?;
+        let mut out = step(&call)?;
         if let Some(done) = out.get_mut("done") {
             return Ok(done.take());
         }
         let kind = out
             .get("read")
             .and_then(Value::as_str)
-            .ok_or_else(|| format!("{method} asked for nothing it could be given"))?
+            .ok_or("a transition asked for nothing it could be given")?
             .to_string();
         let value = read(&kind)?;
         let Some(Value::Object(reads)) = call.last_mut() else {
@@ -88,7 +92,7 @@ pub fn transition(
             .or_insert_with(|| Value::Array(Vec::new()))
         {
             Value::Array(values) => values.push(value),
-            _ => return Err(format!("{method} reads were not a list")),
+            _ => return Err("a transition's reads were not a list".into()),
         }
     }
 }
@@ -187,14 +191,17 @@ mod tests {
 
     #[test]
     fn a_host_read_that_fails_fails_the_transition() {
-        let error = transition("localInit", &[], |kind| Err(format!("no {kind}"))).unwrap_err();
+        let error = transition(kchess_domain::games::local::init, &[], |kind| {
+            Err(format!("no {kind}"))
+        })
+        .unwrap_err();
         assert_eq!(error, "no now");
     }
 
     #[test]
     fn each_read_is_answered_in_order() {
         let mut asked = Vec::new();
-        let done = transition("localInit", &[], |kind| {
+        let done = transition(kchess_domain::games::local::init, &[], |kind| {
             asked.push(kind.to_string());
             Ok(json!(5))
         })

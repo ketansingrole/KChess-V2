@@ -70,7 +70,7 @@ struct Report {
     failed: Option<String>,
 }
 
-/// The observable state (`PuzzleSessionState` in TypeScript).
+/// The observable state.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct State {
@@ -207,7 +207,7 @@ struct Detail {
     total: u32,
 }
 
-/// `OFFLINE_OFFSET` by difficulty; an unknown difficulty has no offset (NaN, as in TypeScript).
+/// The offline rating offset by difficulty; an unknown difficulty has none (NaN).
 fn offset(difficulty: &str) -> f64 {
     match difficulty {
         "easiest" => -600.0,

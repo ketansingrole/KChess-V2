@@ -6,7 +6,10 @@
 
 use serde_json::{Map, Value, json};
 
-use super::rules;
+pub use kchess_domain::trainer::puzzle_session as transitions;
+
+/// One of the session's transitions (`transitions::load_begin`, …).
+pub type Transition = fn(&Value) -> Result<Value, String>;
 
 /// A host call a transition is waiting for, and what to hand back with its reply.
 pub struct Call {
@@ -35,7 +38,7 @@ pub struct PuzzleSession {
 
 impl PuzzleSession {
     pub fn new() -> PuzzleSession {
-        let initial = rules("puzzleSessionInitial", &[]).unwrap_or(Value::Null);
+        let initial = transitions::initial();
         PuzzleSession {
             state: initial["state"].clone(),
             internal: initial["internal"].clone(),
@@ -43,7 +46,7 @@ impl PuzzleSession {
     }
 
     /// Run one transition and keep its state.
-    pub fn apply(&mut self, method: &str, input: Value) -> Step {
+    pub fn apply(&mut self, transition: Transition, input: Value) -> Step {
         let mut args = Map::new();
         args.insert("state".into(), self.state.clone());
         args.insert("internal".into(), self.internal.clone());
@@ -52,13 +55,13 @@ impl PuzzleSession {
         if let Value::Object(input) = input {
             args.extend(input);
         }
-        let step = match rules(method, &[Value::Object(args)]) {
+        let step = match transition(&Value::Object(args)) {
             Ok(step) => step,
             Err(cause) => {
                 crate::log::write(
                     kchess_contracts::Level::Warn,
                     "puzzles",
-                    &format!("{method} failed: {cause}"),
+                    &format!("a puzzle session step failed: {cause}"),
                 );
                 return Step {
                     call: None,
@@ -103,7 +106,7 @@ mod tests {
         let mut session = PuzzleSession::new();
         assert_eq!(session.phase(), "idle");
         let step = session.apply(
-            "puzzleSessionLoadBegin",
+            transitions::load_begin,
             json!({
                 "selection": { "account": "", "angle": "mix", "difficulty": "normal", "color": "random", "mode": "practice" },
                 "online": true,

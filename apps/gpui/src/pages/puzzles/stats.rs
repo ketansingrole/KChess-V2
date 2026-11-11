@@ -15,7 +15,6 @@ use super::{Theme, theme_name};
 use crate::assets::icon;
 use crate::chart::{ChartPoint, LineChart};
 use crate::core::AppCore;
-use crate::game::rules;
 use crate::theme::Palette;
 use crate::widgets::{self, Choice};
 
@@ -265,10 +264,7 @@ impl PuzzleStats {
                 this.history = history.unwrap_or(Value::Null);
                 this.storm = storm.unwrap_or(Value::Null);
                 match dashboard {
-                    Ok(board)
-                        if rules("isReconnect", std::slice::from_ref(&board))
-                            == Ok(json!(true)) =>
-                    {
+                    Ok(board) if kchess_domain::trainer::puzzle_session::is_reconnect(&board) => {
                         this.dashboard = Value::Null;
                         this.reconnect = true;
                     }
