@@ -2,9 +2,11 @@
 //! also ends, the engine's rules for the game's variant, the position command, and how a job
 //! that went wrong is told apart and logged.
 
+use std::collections::BTreeSet;
 use std::future::Future;
+use std::sync::Arc;
 
-use tokio::sync::oneshot;
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use super::uci::{error_summary, search_cancelled};
@@ -13,34 +15,67 @@ use crate::tasks::aborted as signal_aborted;
 use kchess_contracts::error::{CoreError, Result};
 
 /// A service's jobs in the order they were asked for: each starts once the one before it ended.
+///
+/// Places take numbered tickets. A place dropped once its turn has come passes the turn to the
+/// next place still in line; one dropped while it waits only leaves the line, so the place after
+/// it still waits for the job running now.
 #[derive(Default)]
 pub(crate) struct Line {
-    last: Option<oneshot::Receiver<()>>,
+    queue: Arc<watch::Sender<Queue>>,
+    issued: u64,
+}
+
+/// Whose turn it is, and the places that left the line before their turn came.
+#[derive(Default)]
+struct Queue {
+    serving: u64,
+    left: BTreeSet<u64>,
 }
 
 impl Line {
-    /// The next place in line. Dropping it lets the job after it start.
+    /// The next place in line. Dropping it ends its job's turn, or its wait for one.
     pub fn join(&mut self) -> Place {
-        let (done, queued) = oneshot::channel();
+        let ticket = self.issued;
+        self.issued += 1;
         Place {
-            before: self.last.replace(queued),
-            _done: done,
+            queue: Arc::clone(&self.queue),
+            ticket,
         }
     }
 }
 
 /// One job's place in a `Line`.
 pub(crate) struct Place {
-    before: Option<oneshot::Receiver<()>>,
-    _done: oneshot::Sender<()>,
+    queue: Arc<watch::Sender<Queue>>,
+    ticket: u64,
 }
 
 impl Place {
-    /// Waits until the job before has ended, however it ended.
+    /// Waits until every job before has ended, however it ended.
     pub async fn turn(&mut self) {
-        if let Some(before) = self.before.take() {
-            let _ = before.await;
-        }
+        let ticket = self.ticket;
+        // The sender lives in this place, so the wait ends only when the turn comes.
+        let _ = self
+            .queue
+            .subscribe()
+            .wait_for(|queue| queue.serving == ticket)
+            .await;
+    }
+}
+
+impl Drop for Place {
+    fn drop(&mut self) {
+        let ticket = self.ticket;
+        self.queue.send_modify(|queue| {
+            if queue.serving != ticket {
+                queue.left.insert(ticket);
+                return;
+            }
+            queue.serving += 1;
+            while queue.left.remove(&queue.serving) {
+                queue.serving += 1;
+            }
+        });
     }
 }
 
@@ -150,6 +185,50 @@ mod tests {
         assert!(!waiting.is_finished());
         drop(first);
         waiting.await.unwrap();
+    }
+
+    /// A place dropped while it waits (a cancelled `settled()`, a search stopped in line) must
+    /// not let the place after it start while the job before it still runs.
+    #[tokio::test]
+    async fn a_place_dropped_in_line_does_not_let_the_next_start_early() {
+        let mut line = Line::default();
+        let mut running = line.join();
+        running.turn().await;
+        let waiting = line.join();
+        let mut last = line.join();
+        let after = tokio::spawn(async move { last.turn().await });
+        drop(waiting);
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !after.is_finished(),
+            "started while the running job had not ended"
+        );
+        drop(running);
+        after.await.unwrap();
+    }
+
+    /// A place dropped once its own turn has come passes the turn on, also past places dropped
+    /// earlier.
+    #[tokio::test]
+    async fn the_turn_passes_over_every_place_dropped_in_line() {
+        let mut line = Line::default();
+        let running = line.join();
+        let (gone, also_gone) = (line.join(), line.join());
+        let mut last = line.join();
+        drop(also_gone);
+        drop(gone);
+        drop(running);
+        last.turn().await;
+        let mut next = line.join();
+        let waits = tokio::spawn(async move { next.turn().await });
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!waits.is_finished());
+        drop(last);
+        waits.await.unwrap();
     }
 
     #[tokio::test]
