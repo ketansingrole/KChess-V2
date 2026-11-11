@@ -9,7 +9,9 @@
 //!
 //! The calls go through the corpus's own dispatcher (`corpus/`), which reads each method's JSON
 //! arguments and calls the typed rules. Methods whose rules were deleted, since nothing but the
-//! corpus called them, are `RETIRED`: their recorded cases are kept and skipped.
+//! corpus called them, are `RETIRED`: their recorded cases are kept and skipped. A game session
+//! now refuses a setup that is not a legal position, where it used to play on from the standard
+//! start: the cases recorded with one are `superseded`, counted and skipped.
 
 mod corpus;
 
@@ -31,6 +33,9 @@ const RETIRED: &[&str] = &[
     "puzzleFromDb",
     "puzzleSessionSyncs",
 ];
+
+/// The cases recorded with a game session on an illegal setup.
+const SUPERSEDED: usize = 190;
 
 use std::io::{Read, Write};
 use std::path::Path;
@@ -116,6 +121,7 @@ fn check_the_corpus() {
     let mut rewritten = Vec::new();
     let mut differ = Vec::new();
     let mut cases = 0;
+    let mut superseded = 0;
     for line in text.lines() {
         let mut case: Value = serde_json::from_str(line).unwrap();
         let (method, args) = (case["m"].as_str().unwrap(), case["a"].as_str().unwrap());
@@ -124,6 +130,11 @@ fn check_the_corpus() {
             continue;
         }
         let actual = digest(&corpus::call(method, args));
+        if actual == format!("e:{}", kchess_domain::games::ILLEGAL_SETUP) && actual != case["d"] {
+            superseded += 1;
+            rewritten.push(case.to_string());
+            continue;
+        }
         cases += 1;
         if actual != case["d"] {
             if differ.len() < 20 {
@@ -143,6 +154,14 @@ fn check_the_corpus() {
         out.finish().unwrap();
         return;
     }
-    assert_eq!(cases, 30_232, "the corpus checks {cases} cases");
+    assert_eq!(
+        cases + superseded,
+        30_232,
+        "the corpus checks {cases} cases"
+    );
+    assert_eq!(
+        superseded, SUPERSEDED,
+        "cases recorded with an illegal setup"
+    );
     assert!(differ.is_empty(), "answers changed:\n{}", differ.join("\n"));
 }

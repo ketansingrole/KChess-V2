@@ -91,7 +91,7 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
         allowed: true,
         ready: false,
     };
-    if ComputerGame::new(Some(session), &host).ok()?.over(&host) {
+    if ComputerGame::new(Some(session), &host).ok()?.over() {
         return None;
     }
     let black = session["color"] == "black";

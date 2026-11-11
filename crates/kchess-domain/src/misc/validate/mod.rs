@@ -13,6 +13,7 @@ use serde_json::Value;
 use super::constants::*;
 use super::patterns;
 use super::value::{self, J};
+use crate::variant::VARIANTS;
 use crate::{js, replay};
 
 /// A custom message, as the TypeScript source wrote it.

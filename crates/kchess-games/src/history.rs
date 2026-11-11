@@ -28,21 +28,6 @@ pub fn session_kind(kind: &str) -> String {
     format!("archive:{kind}")
 }
 
-/// The entries the rules read: only the one of the game with this identity. The rules look a
-/// game up by its identity's id alone, and a copy of every played game, which they then copy
-/// again for each read, made half of opening Over the board over a full history.
-fn entries_of(games: &[Value], identity: &Value) -> Vec<Value> {
-    let id = &identity["id"];
-    if id.is_null() {
-        return Vec::new();
-    }
-    games
-        .iter()
-        .filter(|game| game["id"] == *id)
-        .cloned()
-        .collect()
-}
-
 impl HistoryPlace {
     /// The place kept by `identity` (the `archive:<kind>` session, null when there is none),
     /// among the played `games`; `resume` continues the saved game's entry instead of starting a
@@ -60,14 +45,17 @@ impl HistoryPlace {
             archive: None,
             saved_identity: identity.clone(),
         };
-        let games = entries_of(games, &identity);
-        let host = Host {
+        let mut host = Host {
             source,
             has_play,
-            games: &games,
+            games,
             now: crate::now_ms(),
         };
-        let started = GameArchive::new((!identity.is_null()).then_some(&identity), resume, &host);
+        let started = GameArchive::new(
+            (!identity.is_null()).then_some(&identity),
+            resume,
+            &mut host,
+        );
         let writes = match started {
             Ok((archive, effects)) => {
                 place.archive = Some(archive);
@@ -85,7 +73,7 @@ impl HistoryPlace {
         source: Value,
         has_play: bool,
         games: &[Value],
-    ) -> Result<Vec<Write>, String> {
+    ) -> Vec<Write> {
         self.run(
             |archive, host| archive.save(finished, host),
             source,
@@ -95,34 +83,28 @@ impl HistoryPlace {
     }
 
     /// A new game begins: the one before keeps its place and this one gets its own.
-    pub fn reset(
-        &mut self,
-        source: Value,
-        has_play: bool,
-        games: &[Value],
-    ) -> Result<Vec<Write>, String> {
+    pub fn reset(&mut self, source: Value, has_play: bool, games: &[Value]) -> Vec<Write> {
         self.run(|archive, host| archive.reset(host), source, has_play, games)
     }
 
     fn run(
         &mut self,
-        step: impl FnOnce(&mut GameArchive, &Host<'_>) -> Result<Vec<Effect>, String>,
+        step: impl FnOnce(&mut GameArchive, &mut Host<'_>) -> Vec<Effect>,
         source: Value,
         has_play: bool,
         games: &[Value],
-    ) -> Result<Vec<Write>, String> {
+    ) -> Vec<Write> {
         let Some(archive) = self.archive.as_mut() else {
-            return Ok(Vec::new());
+            return Vec::new();
         };
-        let games = entries_of(games, &archive.identity());
-        let host = Host {
+        let mut host = Host {
             source,
             has_play,
-            games: &games,
+            games,
             now: crate::now_ms(),
         };
-        let effects = step(archive, &host)?;
-        Ok(self.writes(effects))
+        let effects = step(archive, &mut host);
+        self.writes(effects)
     }
 
     /// The archive's effects as writes, then the identity when it changed.
@@ -166,22 +148,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// The rules read only the entry of the game they keep, not a copy of every played game.
-    #[test]
-    fn the_rules_read_only_their_games_entry() {
-        let games = [
-            json!({ "id": "a", "moves": [] }),
-            json!({ "id": "b", "moves": ["e2e4"] }),
-            json!({ "moves": [] }),
-        ];
-        assert_eq!(
-            entries_of(&games, &json!({ "id": "b", "startedAt": 1 })),
-            [games[1].clone()]
-        );
-        assert!(entries_of(&games, &json!({ "id": "c" })).is_empty());
-        assert!(entries_of(&games, &Value::Null).is_empty());
-    }
-
     /// A new place keeps its identity once; a game with a move is saved under it, and the
     /// identity is not written again until a new game gets its own.
     #[test]
@@ -192,7 +158,7 @@ mod tests {
             "board",
             Value::Null,
             true,
-            game.archive_snapshot(0.),
+            game.archive_snapshot(),
             false,
             &games,
         );
@@ -201,23 +167,23 @@ mod tests {
             panic!("a new place keeps its identity: {writes:?}");
         };
         assert_eq!(kind, "archive:board");
-        game.play("e2e4", 1.).unwrap();
-        let source = game.archive_snapshot(1.);
-        let writes = place.save(false, source.clone(), true, &games).unwrap();
+        game.play("e2e4", 1.);
+        let source = game.archive_snapshot();
+        let writes = place.save(false, source.clone(), true, &games);
         assert!(
             matches!(writes.first(), Some(Write::SaveGame(game)) if game["id"] == identity["id"]),
             "{writes:?}"
         );
         apply_to(&mut games, &writes);
         assert_eq!(games.len(), 1);
-        let writes = place.save(false, source.clone(), true, &games).unwrap();
+        let writes = place.save(false, source.clone(), true, &games);
         assert!(
             writes
                 .iter()
                 .all(|write| !matches!(write, Write::SaveSession { .. })),
             "{writes:?}"
         );
-        let writes = place.reset(source, true, &games).unwrap();
+        let writes = place.reset(source, true, &games);
         assert!(
             writes.iter().any(|write| matches!(
                 write,

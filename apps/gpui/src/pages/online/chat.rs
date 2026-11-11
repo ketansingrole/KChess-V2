@@ -46,10 +46,10 @@ impl OnlinePage {
         let open: bool = crate::prefs::get(cx, OPEN_KEY, false);
         let spectators: bool = crate::prefs::get(cx, SPECTATORS_KEY, false);
         let me = online.account().to_lowercase();
-        let lines: Vec<serde_json::Value> = online.model()["chat"]
-            .as_array()
-            .into_iter()
-            .flatten()
+        let lines: Vec<serde_json::Value> = online
+            .model()
+            .chat
+            .iter()
             .filter(|line| spectators || line["room"] == json!("player"))
             .cloned()
             .collect();

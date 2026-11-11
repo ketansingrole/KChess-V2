@@ -1,313 +1,34 @@
-//! Game sessions: the computer game, the board game with clocks, and the archive identity and
-//! completion rules. Every decision is made here; the host keeps the state and performs the
-//! effects.
-//!
-//! A transition takes the session state (and its private runtime) as JSON, plus its input, and
-//! returns the new state with the effects the host must perform, in order. Host reads (`now`,
-//! `allowed`, `ready`, the archive's `source`, …) are asked for one at a time: when a transition
-//! needs a read the host has not supplied yet, it answers `{"read": kind}` and the host calls
-//! its getter once and asks again. So each read happens once, when the transition reaches it.
-//! The last argument of a transition is the list of reads
-//! supplied so far.
+//! Game sessions: the computer game, the board game with clocks, the board clock and the archive
+//! identity. Each is a typed state machine: the caller holds it, calls its methods with what it
+//! asks of the host, and carries out the effects it returns, in order.
 
 pub mod archive;
 pub mod computer;
 pub mod local;
 pub mod otb_clock;
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
 use shakmaty::variant::VariantPosition;
-use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
-use std::rc::Rc;
 
-use crate::position::Info;
+use crate::position::{self, Info};
+use crate::records::games::{self as results, GameEnd};
 use crate::replay;
 use crate::rules;
 
-pub(crate) use crate::rules::INITIAL_FEN;
+pub use crate::rules::INITIAL_FEN;
 
-/// Why a transition stops early: it needs a host read it does not have yet, or it failed.
-#[derive(Debug)]
-pub(crate) enum Stop {
-    Read(&'static str),
-    Error(String),
+/// What a board game asks its host at the moment it needs it.
+pub trait Host {
+    /// The host's clock in milliseconds.
+    fn now(&mut self) -> f64;
+    /// Engine assistance is allowed now.
+    fn allowed(&mut self) -> bool;
+    /// The engine is ready to search.
+    fn ready(&mut self) -> bool;
 }
 
-impl From<String> for Stop {
-    fn from(message: String) -> Self {
-        Stop::Error(message)
-    }
-}
-
-pub(crate) type Flow<T> = Result<T, Stop>;
-
-/// The host reads supplied so far, in the order they are taken.
-pub(crate) struct Reads<'a> {
-    values: &'a Map<String, Value>,
-    taken: HashMap<&'static str, usize>,
-}
-
-impl<'a> Reads<'a> {
-    fn take(&mut self, kind: &'static str) -> Flow<Value> {
-        let index = self.taken.entry(kind).or_insert(0);
-        let value = self
-            .values
-            .get(kind)
-            .and_then(Value::as_array)
-            .and_then(|list| list.get(*index))
-            .cloned();
-        *index += 1;
-        value.ok_or(Stop::Read(kind))
-    }
-
-    fn typed<T>(&mut self, kind: &'static str, read: impl FnOnce(&Value) -> Option<T>) -> Flow<T> {
-        let value = self.take(kind)?;
-        read(&value).ok_or_else(|| Stop::Error(format!("the host's {kind} read is malformed")))
-    }
-
-    pub(crate) fn now(&mut self) -> Flow<f64> {
-        self.typed("now", Value::as_f64)
-    }
-    /// `at` when the host gave it, else the host's clock.
-    pub(crate) fn now_or(&mut self, at: Option<f64>) -> Flow<f64> {
-        match at {
-            Some(at) => Ok(at),
-            None => self.now(),
-        }
-    }
-    pub(crate) fn allowed(&mut self) -> Flow<bool> {
-        self.typed("allowed", Value::as_bool)
-    }
-    pub(crate) fn ready(&mut self) -> Flow<bool> {
-        self.typed("ready", Value::as_bool)
-    }
-    pub(crate) fn has_play(&mut self) -> Flow<bool> {
-        self.typed("hasPlay", Value::as_bool)
-    }
-    pub(crate) fn id(&mut self) -> Flow<String> {
-        self.typed("id", |v| v.as_str().map(str::to_string))
-    }
-    pub(crate) fn source(&mut self) -> Flow<Value> {
-        self.take("source")
-    }
-    pub(crate) fn games(&mut self) -> Flow<Vec<Value>> {
-        self.typed("games", |v| v.as_array().cloned())
-    }
-}
-
-/// What a transition returns when it completes.
-#[derive(Default)]
-pub(crate) struct Done {
-    pub value: Value,
-    pub state: Option<Value>,
-    pub runtime: Option<Value>,
-    /// The state fields the transition assigned, each replaced even when its value is unchanged.
-    pub written: Vec<&'static str>,
-    pub effects: Vec<Value>,
-}
-
-/// Run one transition: `args` are the inputs followed by the reads supplied so far.
-pub(crate) fn transition(
-    args: &[Value],
-    body: impl FnOnce(&[Value], &mut Reads) -> Flow<Done>,
-) -> Result<Value, String> {
-    let (reads, inputs) = args.split_last().ok_or("the reads are missing")?;
-    let values = reads.as_object().ok_or("the reads must be an object")?;
-    let mut reads = Reads {
-        values,
-        taken: HashMap::new(),
-    };
-    match body(inputs, &mut reads) {
-        Ok(done) => {
-            let mut out = Map::new();
-            out.insert("value".into(), done.value);
-            if let Some(state) = done.state {
-                out.insert("state".into(), state);
-            }
-            if let Some(runtime) = done.runtime {
-                out.insert("runtime".into(), runtime);
-            }
-            out.insert("written".into(), json!(done.written));
-            out.insert("effects".into(), Value::Array(done.effects));
-            Ok(json!({ "done": out }))
-        }
-        Err(Stop::Read(kind)) => Ok(json!({ "read": kind })),
-        Err(Stop::Error(message)) => Err(message),
-    }
-}
-
-/// One game session during a transition: its state, its runtime and what the transition did.
-pub(crate) struct Session<S, R> {
-    pub state: S,
-    pub rt: R,
-    pub fx: Vec<Value>,
-    pub written: Vec<&'static str>,
-}
-
-impl<S: Serialize + DeserializeOwned, R: Serialize + DeserializeOwned> Session<S, R> {
-    fn load(args: &[Value]) -> Result<Self, String> {
-        Ok(Self {
-            state: arg(args, 0, "state")?,
-            rt: arg(args, 1, "runtime")?,
-            fx: Vec::new(),
-            written: Vec::new(),
-        })
-    }
-
-    fn done(self, value: Value) -> Flow<Done> {
-        Ok(Done {
-            value,
-            state: Some(to_value(&self.state)?),
-            runtime: Some(to_value(&self.rt)?),
-            written: self.written,
-            effects: self.fx,
-        })
-    }
-
-    pub(crate) fn wrote(&mut self, key: &'static str) {
-        self.written.push(key);
-    }
-
-    /// A transition that changes the game: `body` returns the value the host receives.
-    pub(crate) fn step(
-        args: &[Value],
-        body: impl FnOnce(&mut Self, &[Value], &mut Reads) -> Flow<Value>,
-    ) -> Result<Value, String> {
-        transition(args, |inputs, reads| {
-            let mut game = Self::load(inputs)?;
-            let value = body(&mut game, inputs, reads)?;
-            game.done(value)
-        })
-    }
-
-    /// A getter of the game, asked by its third input, without changing it.
-    pub(crate) fn query(
-        args: &[Value],
-        get: impl FnOnce(&Self, &mut Reads, &Value) -> Flow<Value>,
-    ) -> Result<Value, String> {
-        transition(args, |inputs, reads| {
-            let game = Self::load(inputs)?;
-            let query: Value = arg(inputs, 2, "query")?;
-            Ok(Done {
-                value: get(&game, reads, &query)?,
-                ..Done::default()
-            })
-        })
-    }
-}
-
-/// The clock the board games (local and computer) share: each side's time, charged to the side to
-/// move while the game says its clock runs.
-pub(crate) trait Clocked {
-    fn setup(&self) -> &Setup;
-    fn moves(&self) -> &[String];
-    fn times(&self) -> Option<Times>;
-    /// When the side to move started its turn, on the host's clock.
-    fn turn_started(&self) -> f64;
-    /// `running`: the side to move is losing time now.
-    fn running(&self) -> Result<bool, String>;
-
-    fn info(&self) -> Result<Rc<Info>, String> {
-        position_info(self.setup(), self.moves())
-    }
-
-    fn turn(&self) -> Result<&'static str, String> {
-        Ok(self.info()?.turn)
-    }
-
-    fn draw(&self) -> Result<Option<String>, String> {
-        draw_reason(self.setup(), self.moves())
-    }
-
-    fn remaining_at(&self, color: &str, at: f64) -> Result<f64, String> {
-        let left = self.times().map_or(0.0, |times| times.get(color));
-        if self.running()? && self.turn()? == color {
-            Ok((left - (at - self.turn_started())).max(0.0))
-        } else {
-            Ok(left)
-        }
-    }
-
-    /// `remaining(color, at?)`: `at` defaults to the host's clock, read when needed.
-    fn remaining(&self, reads: &mut Reads, color: &str, at: Option<f64>) -> Flow<f64> {
-        let at = reads.now_or(at)?;
-        Ok(self.remaining_at(color, at)?)
-    }
-
-    /// The `remaining` view: `{ color, at? }`.
-    fn remaining_view(&self, reads: &mut Reads, query: &Value) -> Flow<Value> {
-        let color = query
-            .get("color")
-            .and_then(Value::as_str)
-            .unwrap_or("white");
-        let at = query.get("at").and_then(Value::as_f64);
-        Ok(json!(self.remaining(reads, color, at)?))
-    }
-
-    /// Both sides' time at `at`: what a clock keeps when it stops.
-    fn times_at(&self, at: f64) -> Result<Times, String> {
-        Ok(Times {
-            white: self.remaining_at("white", at)?,
-            black: self.remaining_at("black", at)?,
-        })
-    }
-
-    /// A snapshot's times: each side's remaining time now, or null without a clock.
-    fn saved_times(&self, reads: &mut Reads) -> Flow<Value> {
-        Ok(match self.times() {
-            Some(_) => {
-                let white = self.remaining(reads, "white", None)?;
-                let black = self.remaining(reads, "black", None)?;
-                json!({ "white": white, "black": black })
-            }
-            None => Value::Null,
-        })
-    }
-
-    /// The side to move, when its time has run out at `at` on a running clock.
-    fn out_of_time(&self, at: f64) -> Result<Option<&'static str>, String> {
-        if !self.running()? {
-            return Ok(None);
-        }
-        let turn = self.turn()?;
-        Ok((self.remaining_at(turn, at)? <= 0.0).then_some(turn))
-    }
-
-    /// The clock once `mover` moves at `at` and gains `increment` milliseconds; none without one.
-    fn charged(&self, mover: &str, at: f64, increment: f64) -> Result<Option<Times>, String> {
-        let Some(mut times) = self.times() else {
-            return Ok(None);
-        };
-        let spent = if self.running()? {
-            at - self.turn_started()
-        } else {
-            0.0
-        };
-        let left = (times.get(mover) - spent).max(0.0);
-        times.set(mover, left + increment);
-        Ok(Some(times))
-    }
-}
-
-/// The moves once `uci` is played after `moves`, with its SAN; none when it is not legal there.
-pub(crate) fn with_move(
-    setup: &Setup,
-    moves: &[String],
-    uci: &str,
-) -> Option<(Vec<String>, String)> {
-    let mut next = moves.to_vec();
-    next.push(uci.to_string());
-    let texts: Vec<&str> = next.iter().map(String::as_str).collect();
-    let replayed = replay::replay_setup(&setup.variant, &setup.fen, &texts)?;
-    if replayed.played.len() != moves.len() + 1 {
-        return None;
-    }
-    let san = replayed.played.last()?.san.clone();
-    Some((next, san))
-}
+/// What a session answers for a setup that is not a legal position.
+pub const ILLEGAL_SETUP: &str = "the setup is not a legal position";
 
 /// A `{ variant, fen }` setup.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -317,12 +38,15 @@ pub struct Setup {
 }
 
 impl Setup {
-    pub(crate) fn json(&self) -> Value {
-        json!({ "variant": self.variant, "fen": self.fen })
+    /// The ordinary game from the usual start.
+    pub fn standard() -> Setup {
+        Setup {
+            variant: "standard".into(),
+            fen: INITIAL_FEN.into(),
+        }
     }
 
-    /// `isStandardStart`: the ordinary game, from the usual start.
-    pub(crate) fn is_standard_start(&self) -> bool {
+    pub fn is_standard_start(&self) -> bool {
         self.variant == "standard" && self.fen == INITIAL_FEN
     }
 }
@@ -335,9 +59,9 @@ pub struct Clock {
 }
 
 impl Clock {
-    /// A clock a game may start with: what a saved session keeps (`clock_side`, 0 to 180
-    /// minutes and seconds). `1e306` minutes made the times infinite, which are stored as
-    /// `null` and failed every later move, so the game could only be reset.
+    /// A clock a game may start with: what a saved session keeps (0 to 180 minutes and
+    /// seconds). `1e306` minutes made the times infinite, which are stored as `null` and failed
+    /// every later move, so the game could only be reset.
     pub fn checked(self) -> Result<Clock, String> {
         let fits = |value: f64| (0.0..=180.0).contains(&value);
         if fits(self.minutes) && fits(self.increment) {
@@ -356,7 +80,7 @@ pub struct Times {
 }
 
 impl Times {
-    pub(crate) fn get(&self, color: &str) -> f64 {
+    pub fn get(&self, color: &str) -> f64 {
         if color == "white" {
             self.white
         } else {
@@ -364,7 +88,7 @@ impl Times {
         }
     }
 
-    pub(crate) fn set(&mut self, color: &str, value: f64) {
+    pub fn set(&mut self, color: &str, value: f64) {
         if color == "white" {
             self.white = value;
         } else {
@@ -373,167 +97,149 @@ impl Times {
     }
 }
 
-/// Argument `i` as a typed value; a missing or null argument is an error.
-pub(crate) fn arg<T: DeserializeOwned>(args: &[Value], i: usize, name: &str) -> Result<T, String> {
-    let value = args
-        .get(i)
-        .filter(|value| !value.is_null())
-        .ok_or_else(|| format!("{name} is missing"))?;
-    serde_json::from_value(value.clone()).map_err(|error| format!("{name}: {error}"))
+/// A setup, its moves and what they reach: the position, how it ended, and any draw by
+/// repetition or the fifty-move rule. Worked out once per change of the moves.
+#[derive(Clone, Debug)]
+pub struct Board {
+    setup: Setup,
+    moves: Vec<String>,
+    position: VariantPosition,
+    info: Info,
+    draw: Option<String>,
+    end: Option<GameEnd>,
 }
 
-/// Argument `i` as a typed value when the host gave one (null is absent).
-pub(crate) fn optional_arg<T: DeserializeOwned>(
-    args: &[Value],
-    i: usize,
-) -> Result<Option<T>, String> {
-    match args.get(i).filter(|value| !value.is_null()) {
-        None => Ok(None),
-        Some(value) => serde_json::from_value(value.clone())
-            .map(Some)
-            .map_err(|error| error.to_string()),
-    }
-}
-
-pub(crate) fn to_value<T: Serialize>(value: &T) -> Result<Value, String> {
-    serde_json::to_value(value).map_err(|error| error.to_string())
-}
-
-/// The position a setup reaches after `moves` (`setupPositionAfter`): the standard start when
-/// the setup is not a legal position.
-pub(crate) fn position_after<S: AsRef<str>>(
-    setup: &Setup,
-    moves: &[S],
-) -> Result<VariantPosition, String> {
-    let texts: Vec<&str> = moves.iter().map(|m| m.as_ref()).collect();
-    replay::replay_setup(&setup.variant, &setup.fen, &texts)
-        .and_then(|replayed| rules::setup_start(&setup.variant, &replayed.fen))
-        .or_else(|| rules::setup_start("standard", INITIAL_FEN))
-        .ok_or_else(|| "the standard start is not a position".to_string())
-}
-
-/// Values derived from a setup and its moves, kept for the few games most recently asked about. A
-/// clock ticks several times a second and asks for the turn, the result and the draw each time;
-/// without this, every question replays the whole game. A changed setup or move list is a miss.
-pub(crate) struct Memo<T>(RefCell<VecDeque<(Setup, Vec<String>, T)>>);
-
-impl<T: Clone> Memo<T> {
-    /// Room for both clocked games (local and computer) and the moves just before a takeback.
-    const CAPACITY: usize = 4;
-
-    pub(crate) const fn new() -> Self {
-        Self(RefCell::new(VecDeque::new()))
-    }
-
-    /// The value for this setup and these moves; computed again only when they changed.
-    pub(crate) fn get(
-        &self,
-        setup: &Setup,
-        moves: &[String],
-        compute: impl FnOnce() -> Result<T, String>,
-    ) -> Result<T, String> {
-        {
-            let mut entries = self.0.borrow_mut();
-            let known = entries.iter().position(|(known_setup, known_moves, _)| {
-                known_setup == setup && known_moves.as_slice() == moves
-            });
-            // The most recently asked about is dropped last.
-            if let Some(entry) = known.and_then(|i| entries.remove(i)) {
-                let value = entry.2.clone();
-                entries.push_back(entry);
-                return Ok(value);
-            }
-        }
-        let value = compute()?;
-        let mut entries = self.0.borrow_mut();
-        if entries.len() == Self::CAPACITY {
-            entries.pop_front();
-        }
-        entries.push_back((setup.clone(), moves.to_vec(), value.clone()));
-        Ok(value)
-    }
-}
-
-thread_local! {
-    /// The position a setup and its moves reach.
-    pub(crate) static POSITIONS: Memo<Rc<Info>> = const { Memo::new() };
-    /// `setupDrawReason` of a setup and its moves.
-    pub(crate) static DRAWS: Memo<Option<String>> = const { Memo::new() };
-}
-
-/// `position::info` of the position a setup and its moves reach.
-pub(crate) fn position_info(setup: &Setup, moves: &[String]) -> Result<Rc<Info>, String> {
-    POSITIONS.with(|memo| {
-        memo.get(setup, moves, || {
-            Ok(Rc::new(crate::position::info(&position_after(
-                setup, moves,
-            )?)))
+impl Board {
+    /// The board of a setup and its moves; moves past the first illegal one are kept but not
+    /// played. An illegal setup is refused.
+    pub fn new(setup: Setup, moves: Vec<String>) -> Result<Board, String> {
+        let replayed =
+            replay::replay_setup(&setup.variant, &setup.fen, &moves).ok_or(ILLEGAL_SETUP)?;
+        let position = rules::setup_start(&setup.variant, &replayed.fen).ok_or(ILLEGAL_SETUP)?;
+        let texts: Vec<&str> = moves.iter().map(String::as_str).collect();
+        let draw =
+            results::setup_draw_reason(&setup.variant, &setup.fen, &texts).map(str::to_string);
+        let end = results::board_result(&position, &setup.variant, draw.as_deref());
+        Ok(Board {
+            info: position::info(&position),
+            setup,
+            moves,
+            position,
+            draw,
+            end,
         })
-    })
+    }
+
+    pub fn setup(&self) -> &Setup {
+        &self.setup
+    }
+
+    pub fn moves(&self) -> &[String] {
+        &self.moves
+    }
+
+    pub fn position(&self) -> &VariantPosition {
+        &self.position
+    }
+
+    pub fn info(&self) -> &Info {
+        &self.info
+    }
+
+    /// The side to move.
+    pub fn turn(&self) -> &'static str {
+        self.info.turn
+    }
+
+    /// The repetition or fifty-move draw reached, if any.
+    pub fn draw(&self) -> Option<&str> {
+        self.draw.as_deref()
+    }
+
+    /// How the position ended the game (or the draw reached); none while it goes on.
+    pub fn end(&self) -> Option<&GameEnd> {
+        self.end.as_ref()
+    }
+
+    /// The winner the position itself names, if any.
+    pub fn outcome_winner(&self) -> Option<&str> {
+        self.info
+            .outcome
+            .as_ref()
+            .and_then(|outcome| outcome.get("winner"))
+            .and_then(serde_json::Value::as_str)
+    }
+
+    /// Who wins when `flagged` runs out of time here: the other side, unless it cannot mate.
+    pub fn timeout_winner(&self, flagged: &str) -> Option<&'static str> {
+        results::timeout_winner(&self.position, flagged)
+    }
+
+    /// The board once `uci` is played, with its SAN; none when it is not legal here.
+    pub fn with_move(&self, uci: &str) -> Option<(Board, String)> {
+        let mut next = self.moves.clone();
+        next.push(uci.to_string());
+        let replayed = replay::replay_setup(&self.setup.variant, &self.setup.fen, &next)?;
+        if replayed.played.len() != next.len() {
+            return None;
+        }
+        let san = replayed.played.last()?.san.clone();
+        Some((Board::new(self.setup.clone(), next).ok()?, san))
+    }
+
+    /// The side to move after the first `count` moves.
+    pub fn turn_after(&self, count: usize) -> &'static str {
+        let moves = &self.moves[..count.min(self.moves.len())];
+        match replay::replay_setup_turn(&self.setup.variant, &self.setup.fen, moves) {
+            Some((_, shakmaty::Color::Black)) => "black",
+            _ => "white",
+        }
+    }
 }
 
-/// `setupDrawReason` of a setup and its moves.
-pub(crate) fn draw_reason(setup: &Setup, moves: &[String]) -> Result<Option<String>, String> {
-    DRAWS.with(|memo| memo.get(setup, moves, || setup_draw_reason(setup, moves)))
+/// The clock both board games share: each side's time, charged to the side to move while the
+/// game says its clock runs, from `turn_started` on the host's clock.
+pub(crate) struct Clocking<'a> {
+    pub times: Option<Times>,
+    pub turn_started: f64,
+    pub running: bool,
+    pub turn: &'a str,
 }
 
-/// The repetition or fifty-move draw already reached from a setup.
-pub(crate) fn setup_draw_reason<S: AsRef<str>>(
-    setup: &Setup,
-    moves: &[S],
-) -> Result<Option<String>, String> {
-    let texts: Vec<&str> = moves.iter().map(|m| m.as_ref()).collect();
-    Ok(
-        crate::records::games::setup_draw_reason(&setup.variant, &setup.fen, &texts)
-            .map(str::to_string),
-    )
-}
+impl Clocking<'_> {
+    pub fn remaining(&self, color: &str, at: f64) -> f64 {
+        let left = self.times.map_or(0.0, |times| times.get(color));
+        if self.running && self.turn == color {
+            (left - (at - self.turn_started)).max(0.0)
+        } else {
+            left
+        }
+    }
 
-pub(crate) fn opponent(color: &str) -> Result<String, String> {
-    Ok(crate::records::games::opponent(color).to_string())
-}
+    /// Both sides' time at `at`: what a clock keeps when it stops.
+    pub fn times_at(&self, at: f64) -> Times {
+        Times {
+            white: self.remaining("white", at),
+            black: self.remaining("black", at),
+        }
+    }
 
-fn setup_position(variant: &str, fen: &str) -> Result<VariantPosition, String> {
-    rules::setup_start(variant, fen).ok_or_else(|| "setup is not a legal position".to_string())
-}
+    /// The side to move, when its time has run out at `at` on a running clock.
+    pub fn out_of_time(&self, at: f64) -> Option<&str> {
+        (self.running && self.remaining(self.turn, at) <= 0.0).then_some(self.turn)
+    }
 
-pub(crate) fn timeout_winner(
-    variant: &str,
-    fen: &str,
-    flagged: &str,
-) -> Result<Option<String>, String> {
-    let pos = setup_position(variant, fen)?;
-    Ok(crate::records::games::timeout_winner(&pos, flagged).map(str::to_string))
-}
-
-/// How the position ended the game, or null while the game goes on.
-pub(crate) fn board_result(variant: &str, fen: &str, draw: Option<&str>) -> Result<Value, String> {
-    let pos = setup_position(variant, fen)?;
-    to_value(&crate::records::games::board_result(
-        &pos,
-        variant,
-        draw.filter(|d| !d.is_empty()),
-    ))
-}
-
-pub(crate) fn pgn_result(over: bool, winner: Option<&str>) -> Result<String, String> {
-    Ok(crate::records::games::pgn_result(over, winner).to_string())
-}
-
-/// The winner the position itself names, if any (`position.outcome()?.winner`).
-pub(crate) fn outcome_winner(info: &Info) -> Option<String> {
-    info.outcome
-        .as_ref()
-        .and_then(|outcome| outcome.get("winner"))
-        .and_then(Value::as_str)
-        .map(str::to_string)
-}
-
-/// The ladder entry for an engine level; an error for an unknown one.
-pub(crate) fn engine_level(level: &str) -> Result<Value, String> {
-    match crate::training::engine_levels::info(level)? {
-        Some(entry) => to_value(entry),
-        None => Err(format!("unknown engine level {level}")),
+    /// The clock once `mover` moves at `at` and gains `increment` milliseconds; none without one.
+    pub fn charged(&self, mover: &str, at: f64, increment: f64) -> Option<Times> {
+        let mut times = self.times?;
+        let spent = if self.running {
+            at - self.turn_started
+        } else {
+            0.0
+        };
+        let left = (times.get(mover) - spent).max(0.0);
+        times.set(mover, left + increment);
+        Some(times)
     }
 }
 
@@ -541,58 +247,17 @@ pub(crate) fn engine_level(level: &str) -> Result<Value, String> {
 mod tests {
     use super::*;
 
+    /// An illegal setup was replaced by the standard start without a word: the game showed the
+    /// usual position and refused every move.
     #[test]
-    fn a_setup_reaches_the_standard_start_when_illegal() {
+    fn an_illegal_setup_is_refused() {
         let illegal = Setup {
             variant: "standard".into(),
             fen: "8/8/8/8/8/8/8/8 w - - 0 1".into(),
         };
-        let start = position_after(&illegal, &[] as &[String]).expect("the standard start");
-        assert_eq!(rules::make_fen(&start), INITIAL_FEN);
-    }
-
-    #[test]
-    fn a_memo_is_worked_out_again_when_the_setup_or_moves_change() {
-        let start = Setup {
-            variant: "standard".into(),
-            fen: INITIAL_FEN.into(),
-        };
-        let memo = Memo::new();
-        let computed = std::cell::Cell::new(0);
-        let get = |setup: &Setup, moves: &[String]| {
-            memo.get(setup, moves, || {
-                computed.set(computed.get() + 1);
-                Ok(moves.len())
-            })
-        };
-        let e4 = vec!["e2e4".to_string()];
-        assert_eq!(get(&start, &e4), Ok(1));
-        assert_eq!(get(&start, &e4), Ok(1));
-        assert_eq!(computed.get(), 1);
-        assert_eq!(get(&start, &[]), Ok(0));
-        assert_eq!(get(&start, &["d2d4".to_string()]), Ok(1));
-        let chess960 = Setup {
-            variant: "chess960".into(),
-            ..start.clone()
-        };
-        assert_eq!(get(&chess960, &["d2d4".to_string()]), Ok(1));
-        assert_eq!(computed.get(), 4);
-        // The four most recent are kept: e4 is still known, the empty start was dropped.
-        assert_eq!(get(&start, &e4), Ok(1));
-        assert_eq!(computed.get(), 4);
-        let extra = vec!["g1f3".to_string()];
-        assert_eq!(get(&start, &extra), Ok(1));
-        assert_eq!(get(&start, &[]), Ok(0));
-        assert_eq!(computed.get(), 6);
-    }
-
-    #[test]
-    fn a_missing_read_asks_the_host_for_it() {
-        let empty = Map::new();
-        let mut reads = Reads {
-            values: &empty,
-            taken: HashMap::new(),
-        };
-        assert!(matches!(reads.now(), Err(Stop::Read("now"))));
+        assert_eq!(Board::new(illegal, Vec::new()).unwrap_err(), ILLEGAL_SETUP);
+        let board = Board::new(Setup::standard(), vec!["e2e4".into()]).unwrap();
+        assert_eq!(board.turn(), "black");
+        assert_eq!(board.turn_after(0), "white");
     }
 }

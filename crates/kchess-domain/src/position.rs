@@ -54,7 +54,7 @@ fn color_name(color: Color) -> &'static str {
     rules::turn_name(color)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Info {
     pub fen: String,
@@ -79,7 +79,7 @@ pub struct Info {
     pub pieces: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct CannotWin {
     pub white: bool,
     pub black: bool,

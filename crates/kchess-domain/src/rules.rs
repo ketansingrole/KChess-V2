@@ -59,17 +59,7 @@ pub fn is_drop_text(token: &str) -> bool {
 
 /// The Lichess variant keys KChess can play.
 pub fn lichess_variant(key: &str) -> Option<Variant> {
-    Some(match key {
-        "standard" | "chess960" => Variant::Chess,
-        "kingOfTheHill" => Variant::KingOfTheHill,
-        "threeCheck" => Variant::ThreeCheck,
-        "antichess" => Variant::Antichess,
-        "atomic" => Variant::Atomic,
-        "horde" => Variant::Horde,
-        "racingKings" => Variant::RacingKings,
-        "crazyhouse" => Variant::Crazyhouse,
-        _ => return None,
-    })
+    crate::variant::Variant::from_key(key).map(crate::variant::Variant::rules)
 }
 
 /// `parseVariant`, for the PGN `Variant` header.

@@ -3,30 +3,30 @@
 //! the UCI moves from the root joined with spaces. The rules decide what a path means, whether a
 //! move is new, where a node goes and how it is written; this walks the tree and applies them.
 
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 
 use kchess_domain::trainer::analysis_tree::{self, Score};
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TreeNode {
-    /// Empty at the root.
-    pub uci: String,
-    pub san: String,
-    pub fen: String,
-    /// Half-moves since the game's start: 0 is White's first move still to play.
-    pub ply: f64,
-    pub children: Vec<TreeNode>,
-    /// PGN headers, on the root.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub headers: Option<Map<String, Value>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub comments: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub starting_comments: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub nags: Option<Vec<i64>>,
+pub use kchess_domain::tree::TreeNode;
+
+/// A tree's PGN, as the page shows and saves it.
+pub trait TreePgn {
+    fn pgn_text(&self) -> String;
+}
+
+impl TreePgn for TreeNode {
+    /// Its PGN; a header that is not text, which no tree the app builds has, is logged and gives
+    /// nothing.
+    fn pgn_text(&self) -> String {
+        self.to_pgn().unwrap_or_else(|error| {
+            crate::log::write(
+                kchess_contracts::Level::Warn,
+                "analysis",
+                &format!("the tree could not be written as PGN: {error}"),
+            );
+            String::new()
+        })
+    }
 }
 
 pub use analysis_tree::{comment_text, moves_of, path_of};
@@ -67,8 +67,8 @@ pub fn pv_san(fen: &str, pv: &[String], max: usize, variant: &str) -> Vec<PvMove
 }
 
 /// "1.", "1…", or nothing: the number to print before a move at `ply`.
-pub fn move_number(ply: f64, always: bool) -> String {
-    analysis_tree::move_number(ply, always)
+pub fn move_number(ply: u32, always: bool) -> String {
+    analysis_tree::move_number(f64::from(ply), always)
 }
 
 /// The annotation a move is marked with: its glyph ("!?") and name.
@@ -76,265 +76,6 @@ pub fn move_glyph(node: &TreeNode) -> Option<(String, String)> {
     let nags: Vec<f64> = node.nags.as_ref()?.iter().map(|&nag| nag as f64).collect();
     let glyph = analysis_tree::move_glyph(&nags)?;
     Some((glyph.glyph.to_string(), glyph.label.to_string()))
-}
-
-impl TreeNode {
-    /// A tree holding only its start; an unusable FEN starts from the usual position.
-    pub fn new(fen: Option<&str>) -> TreeNode {
-        let (fen, ply) = kchess_domain::tree::tree_root(fen.unwrap_or(super::STANDARD_FEN));
-        TreeNode {
-            fen,
-            ply: f64::from(ply),
-            ..TreeNode::default()
-        }
-    }
-
-    /// The Lichess key of the variant the tree is played in (its `Variant` header), standard
-    /// without one.
-    pub fn variant(&self) -> &'static str {
-        let name = self
-            .headers
-            .as_ref()
-            .and_then(|headers| headers.get("Variant"))
-            .and_then(Value::as_str);
-        super::variant_key(name).unwrap_or("standard")
-    }
-
-    /// One bounded PGN document, or `None` when it cannot be imported without loss.
-    pub fn from_pgn(text: &str) -> Option<TreeNode> {
-        // A tree nests once a ply: it is built and converted on a stack deep enough for it.
-        kchess_domain::tree::on_large_stack(|| {
-            kchess_domain::tree::tree_from_pgn(text).map(|tree| TreeNode::from_rules(&tree))
-        })
-        .ok()
-        .flatten()
-    }
-
-    fn from_rules(node: &kchess_domain::tree::TreeNode) -> TreeNode {
-        TreeNode {
-            uci: node.uci.clone(),
-            san: node.san.clone(),
-            fen: node.fen.clone(),
-            ply: f64::from(node.ply),
-            children: node.children.iter().map(TreeNode::from_rules).collect(),
-            headers: node.headers.clone(),
-            comments: node.comments.clone(),
-            starting_comments: node.starting_comments.clone(),
-            nags: node
-                .nags
-                .as_ref()
-                .map(|nags| nags.iter().map(|&nag| i64::from(nag)).collect()),
-        }
-    }
-
-    /// The tree as PGN, with its own headers.
-    pub fn to_pgn(&self) -> String {
-        fn strip(node: &TreeNode) -> Value {
-            let mut out = Map::new();
-            out.insert("san".into(), json!(node.san));
-            out.insert(
-                "children".into(),
-                Value::Array(node.children.iter().map(strip).collect()),
-            );
-            if let Some(comments) = &node.comments {
-                out.insert("comments".into(), json!(comments));
-            }
-            if let Some(comments) = &node.starting_comments {
-                out.insert("startingComments".into(), json!(comments));
-            }
-            if let Some(nags) = &node.nags {
-                out.insert("nags".into(), json!(nags));
-            }
-            Value::Object(out)
-        }
-        let mut document = Map::new();
-        document.insert("fen".into(), json!(self.fen));
-        document.insert(
-            "children".into(),
-            Value::Array(self.children.iter().map(strip).collect()),
-        );
-        if let Some(comments) = &self.comments {
-            document.insert("comments".into(), json!(comments));
-        }
-        kchess_domain::tree::tree_to_pgn(&Value::Object(document), self.headers.as_ref())
-            .unwrap_or_else(|error| {
-                crate::log::write(
-                    kchess_contracts::Level::Warn,
-                    "analysis",
-                    &format!("the tree could not be written as PGN: {error}"),
-                );
-                String::new()
-            })
-    }
-
-    /// The moves from the start to `path` alone, as a tree of their own: the comments and
-    /// annotations on the way and the variant, without side lines or the game's other headers.
-    pub fn line_to(&self, path: &str) -> TreeNode {
-        let alone = |node: &TreeNode, children: Vec<TreeNode>| TreeNode {
-            uci: node.uci.clone(),
-            san: node.san.clone(),
-            fen: node.fen.clone(),
-            ply: node.ply,
-            children,
-            headers: None,
-            comments: node.comments.clone(),
-            starting_comments: node.starting_comments.clone(),
-            nags: node.nags.clone(),
-        };
-        let nodes = self.nodes_along(path);
-        let mut line = Vec::new();
-        for node in nodes.iter().skip(1).rev() {
-            line = vec![alone(node, line)];
-        }
-        let mut root = alone(self, line);
-        root.headers = self
-            .headers
-            .as_ref()
-            .and_then(|headers| headers.get("Variant"))
-            .map(|variant| Map::from_iter([("Variant".to_string(), variant.clone())]));
-        root
-    }
-
-    /// The nodes from the root to `path`, as far as the path exists.
-    pub fn nodes_along(&self, path: &str) -> Vec<&TreeNode> {
-        let mut nodes = vec![self];
-        for uci in moves_of(path) {
-            let Some(parent) = nodes.last() else { break };
-            match parent.children.iter().find(|child| child.uci == uci) {
-                Some(next) => nodes.push(next),
-                None => break,
-            }
-        }
-        nodes
-    }
-
-    pub fn node_at(&self, path: &str) -> &TreeNode {
-        self.nodes_along(path).last().copied().unwrap_or(self)
-    }
-
-    pub fn node_at_mut(&mut self, path: &str) -> &mut TreeNode {
-        let mut node = self;
-        for uci in moves_of(path) {
-            let Some(index) = node.children.iter().position(|child| child.uci == uci) else {
-                break;
-            };
-            node = &mut node.children[index];
-        }
-        node
-    }
-
-    /// The path as far as it exists in the tree.
-    pub fn existing_path(&self, path: &str) -> String {
-        let moves: Vec<String> = self
-            .nodes_along(path)
-            .iter()
-            .skip(1)
-            .map(|node| node.uci.clone())
-            .collect();
-        path_of(&moves)
-    }
-
-    /// Play `uci` after `path`, re-using the node when that move was already tried; the new
-    /// path, or `None` when the move is not legal there.
-    pub fn add_move(&mut self, path: &str, uci: &str) -> Option<String> {
-        let variant = self.variant();
-        let parent = self.node_at(path);
-        let child_ucis: Vec<String> = parent
-            .children
-            .iter()
-            .map(|child| child.uci.clone())
-            .collect();
-        let plan = analysis_tree::add_move_plan(&analysis_tree::MoveInput {
-            path,
-            uci,
-            fen: &parent.fen,
-            ply: parent.ply,
-            child_ucis: &child_ucis,
-            // Standard rules read Chess960 castling too.
-            variant: if super::standard_rules(variant) {
-                ""
-            } else {
-                variant
-            },
-        })?;
-        if let Some(child) = plan.child {
-            let child = TreeNode {
-                uci: child.uci,
-                san: child.san,
-                fen: child.fen,
-                ply: child.ply,
-                ..TreeNode::default()
-            };
-            self.node_at_mut(path).children.push(child);
-        }
-        Some(plan.child_path)
-    }
-
-    /// Follow the first child from `path` to the end of that line.
-    pub fn line_end(&self, path: &str) -> String {
-        let mut chain = Vec::new();
-        let mut node = self.node_at(path);
-        while let Some(child) = node.children.first() {
-            chain.push(child.uci.clone());
-            node = child;
-        }
-        analysis_tree::line_end(path, &chain)
-    }
-
-    /// The index of each node along `path` among its parent's children.
-    fn indices_along(&self, path: &str) -> Vec<u64> {
-        let nodes = self.nodes_along(path);
-        nodes
-            .windows(2)
-            .map(|pair| {
-                pair[0]
-                    .children
-                    .iter()
-                    .position(|child| child.uci == pair[1].uci)
-                    .unwrap_or_default() as u64
-            })
-            .collect()
-    }
-
-    /// Where the variation shown at `path` branched off: the position before its last move that
-    /// is not a first child. `None` on the main line.
-    pub fn fork_before(&self, path: &str) -> Option<String> {
-        let moves = moves_of(&self.existing_path(path));
-        let last = self
-            .indices_along(path)
-            .iter()
-            .rposition(|&index| index > 0)?;
-        Some(path_of(&moves[..last]))
-    }
-
-    /// True when every move on `path` is a first child.
-    pub fn on_mainline(&self, path: &str) -> bool {
-        analysis_tree::on_mainline(&self.indices_along(path))
-    }
-
-    /// Remove the move at `path` and everything after it; the parent's path.
-    pub fn delete_at(&mut self, path: &str) -> String {
-        let plan = analysis_tree::delete_at_plan(path);
-        if let Some(uci) = plan.uci {
-            self.node_at_mut(&plan.parent_path)
-                .children
-                .retain(|child| child.uci != uci);
-        }
-        plan.parent_path
-    }
-
-    /// Make the line through `path` the main line at every branch on the way.
-    pub fn promote(&mut self, path: &str) {
-        let moves = moves_of(path);
-        for (depth, from) in analysis_tree::promote_plan(&self.indices_along(path)) {
-            let from = from as usize;
-            let holder = self.node_at_mut(&path_of(&moves[..depth.min(moves.len())]));
-            if from < holder.children.len() {
-                let child = holder.children.remove(from);
-                holder.children.insert(0, child);
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -368,7 +109,7 @@ mod tests {
                     node = next;
                     plies += 1;
                 }
-                // Dropping the tree recurses once a ply too, here on the small stack.
+                // Dropped here, on the small stack.
                 drop(tree);
                 plies
             })
@@ -400,7 +141,7 @@ mod tests {
             "[Event \"Club\"]\n[White \"A\"]\n\n1. e4 {Best by test} e5 (1... c5 2. Nf3) 2. Nf3 $1 Nc6 3. Bb5 1-0",
         )
         .unwrap();
-        let line = tree.line_to("e2e4 e7e5 g1f3").to_pgn();
+        let line = tree.line_to("e2e4 e7e5 g1f3").pgn_text();
         assert!(
             line.contains("1. e4 { Best by test } e5 2. Nf3 $1 *"),
             "{line}"
@@ -413,7 +154,7 @@ mod tests {
         let fen = "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1";
         let mut tree = TreeNode::new(Some(fen));
         let path = tree.add_move("", "e2e4").unwrap();
-        let line = tree.line_to(&path).to_pgn();
+        let line = tree.line_to(&path).pgn_text();
         assert!(line.contains(fen) && line.contains("1. e4"), "{line}");
     }
 
@@ -456,7 +197,7 @@ mod tests {
     fn pgn_round_trips_variations_and_comments() {
         let pgn = "[Event \"Test\"]\n\n1. e4 { best by test } e5 (1... c5 2. Nf3) 2. Nf3 *";
         let tree = TreeNode::from_pgn(pgn).unwrap();
-        let again = TreeNode::from_pgn(&tree.to_pgn()).unwrap();
+        let again = TreeNode::from_pgn(&tree.pgn_text()).unwrap();
         assert_eq!(again, tree);
         assert_eq!(
             tree.node_at("e2e4").comments.as_deref(),

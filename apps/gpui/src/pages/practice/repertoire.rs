@@ -6,6 +6,7 @@
 //! same starting position are one tree. An opening chosen on the Openings page is drilled without a
 //! study: its named line, then the explorer's popular moves for a few more.
 
+use crate::game::tree::TreePgn as _;
 use kchess_contracts::calls;
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -95,14 +96,14 @@ fn same_castle(a: &str, b: &str) -> bool {
 }
 
 /// Adds another chapter's moves (and comments) from the same position to a tree.
-fn merge(into: &mut TreeNode, from: TreeNode) {
-    for comment in from.comments.unwrap_or_default() {
+fn merge(into: &mut TreeNode, mut from: TreeNode) {
+    for comment in from.comments.take().unwrap_or_default() {
         let comments = into.comments.get_or_insert_with(Vec::new);
         if !comments.contains(&comment) {
             comments.push(comment);
         }
     }
-    for child in from.children {
+    for child in std::mem::take(&mut from.children) {
         match into
             .children
             .iter_mut()
@@ -1030,7 +1031,7 @@ impl Repertoire {
         cx.notify();
         let saved = library
             .read(cx)
-            .command(json!({ "op": "save", "name": name, "pgn": tree.to_pgn() }));
+            .command(json!({ "op": "save", "name": name, "pgn": tree.pgn_text() }));
         cx.spawn_in(window, async move |this, cx| {
             let saved = saved.await;
             let _ = this.update_in(cx, |this, window, cx| {

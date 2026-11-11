@@ -38,14 +38,14 @@ impl HistoryPlace {
     pub fn save(&mut self, finished: bool, source: Value, has_play: bool, cx: &mut App) {
         let games = cx.global::<PlayedHandle>().0.read(cx).games();
         let writes = self.0.save(finished, source, has_play, games);
-        write(writes, cx);
+        write(Ok(writes), cx);
     }
 
     /// A new game begins: the one before keeps its place and this one gets its own.
     pub fn reset(&mut self, source: Value, has_play: bool, cx: &mut App) {
         let games = cx.global::<PlayedHandle>().0.read(cx).games();
         let writes = self.0.reset(source, has_play, games);
-        write(writes, cx);
+        write(Ok(writes), cx);
     }
 }
 

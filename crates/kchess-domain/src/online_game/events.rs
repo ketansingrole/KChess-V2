@@ -27,7 +27,7 @@ fn moves_of(v: Option<&Value>) -> Vec<String> {
         .collect()
 }
 
-impl Run {
+impl Run<'_> {
     /// `readOnlineEvent`: one server event. Events for other games, and types that carry no
     /// game state, are ignored.
     pub fn read_event(&mut self, event: &Value) {

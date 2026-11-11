@@ -871,9 +871,12 @@ pub fn parse_pgn(pgn: &str) -> Vec<Game> {
 
 /// SAN of UCI moves from the standard start, as far as they are legal.
 pub fn san_history<S: AsRef<str>>(moves: &[S]) -> Vec<String> {
-    crate::replay::replay_setup("standard", rules::INITIAL_FEN, moves)
-        .map(|r| r.played.into_iter().map(|m| m.san).collect())
-        .unwrap_or_default()
+    let start = shakmaty::variant::VariantPosition::Chess(shakmaty::Chess::default());
+    crate::replay::replay_from(start, moves)
+        .played
+        .into_iter()
+        .map(|m| m.san)
+        .collect()
 }
 
 /// SAN moves, not validated, as a PGN with the default headers.
@@ -892,44 +895,34 @@ pub fn pgn_from_uci<S: AsRef<str>>(moves: &[S]) -> String {
 }
 
 /// UCI moves from a setup, as far as they are legal, with the headers another program needs to
-/// replay them after `headers`. A setup that is not a legal position gives the headers alone.
+/// replay them after `headers`. A setup that is not a legal position is refused
+/// (`games::ILLEGAL_SETUP`).
 pub fn setup_pgn<S: AsRef<str>>(
     variant: &str,
     fen: &str,
     moves: &[S],
     headers: &[(&str, &str)],
-) -> String {
+) -> Result<String, String> {
+    let replay = crate::replay::replay_setup(variant, fen, moves)
+        .ok_or_else(|| crate::games::ILLEGAL_SETUP.to_string())?;
     let mut game = Game::empty();
     for (key, value) in headers {
         game.put_header(key, (*value).to_string());
     }
     if variant != "standard" {
         // The PGN `Variant` header takes the names other PGN readers know, not the Lichess keys.
-        let name = match variant {
-            "chess960" => "Chess960",
-            "kingOfTheHill" => "King of the Hill",
-            "threeCheck" => "Three-check",
-            "antichess" => "Antichess",
-            "atomic" => "Atomic",
-            "horde" => "Horde",
-            "racingKings" => "Racing Kings",
-            "crazyhouse" => "Crazyhouse",
-            other => other,
-        };
+        let name = crate::variant::Variant::from_key(variant).map_or(variant, |v| v.label());
         game.put_header("Variant", name.to_string());
     }
     if fen != rules::INITIAL_FEN || variant == "chess960" {
         game.put_header("SetUp", "1".into());
         game.put_header("FEN", fen.to_string());
     }
-    let sans: Vec<String> = crate::replay::replay_setup(variant, fen, moves)
-        .map(|r| r.played.into_iter().map(|m| m.san).collect())
-        .unwrap_or_default();
     let mut parent = 0;
-    for san in &sans {
-        parent = game.add_move(parent, PgnNode::with(san, None, None, None));
+    for played in &replay.played {
+        parent = game.add_move(parent, PgnNode::with(&played.san, None, None, None));
     }
-    make_pgn(&game)
+    Ok(make_pgn(&game))
 }
 
 #[cfg(test)]
@@ -939,7 +932,7 @@ mod tests {
         let koth = rules::make_fen(&rules::default_position(
             shakmaty::variant::Variant::KingOfTheHill,
         ));
-        let pgn = setup_pgn("kingOfTheHill", &koth, &["e2e4"], &[]);
+        let pgn = setup_pgn("kingOfTheHill", &koth, &["e2e4"], &[]).unwrap();
         assert!(pgn.contains("[Variant \"King of the Hill\"]"), "{pgn}");
         assert_eq!(
             rules::pgn_variant(Some("King of the Hill")),
@@ -947,7 +940,7 @@ mod tests {
         );
     }
 
-    /// The headers come first, then what replaying the moves needs; an illegal setup keeps them.
+    /// The headers come first, then what replaying the moves needs.
     #[test]
     fn setup_pgns_carry_their_headers_and_start() {
         let pgn = setup_pgn(
@@ -955,7 +948,8 @@ mod tests {
             "4k3/8/8/8/8/8/8/4K2R w K - 0 1",
             &["e1g1"],
             &[("White", "You")],
-        );
+        )
+        .unwrap();
         assert!(pgn.contains("[White \"You\"]"), "{pgn}");
         assert!(
             pgn.contains("[FEN \"4k3/8/8/8/8/8/8/4K2R w K - 0 1\"]"),
@@ -965,6 +959,21 @@ mod tests {
         assert_eq!(
             pgn_from_uci(&["e2e4", "e7e5", "e1e3"]),
             pgn_from_san(&["e4", "e5"])
+        );
+    }
+
+    /// An illegal setup gave a PGN of the headers alone, which read back as a game from the
+    /// standard start with no moves.
+    #[test]
+    fn a_setup_pgn_refuses_an_illegal_setup() {
+        let kingless = "8/8/8/8/8/8/8/8 w - - 0 1";
+        assert_eq!(
+            setup_pgn("standard", kingless, &["e2e4"], &[("White", "You")]),
+            Err(crate::games::ILLEGAL_SETUP.to_string())
+        );
+        assert_eq!(
+            setup_pgn("noSuchVariant", rules::INITIAL_FEN, &["e2e4"], &[]).ok(),
+            None
         );
     }
 

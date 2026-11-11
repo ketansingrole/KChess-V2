@@ -276,7 +276,7 @@ impl ComputerPage {
 
     /// The game keeps its place in Game history from `identity` (null: a place of its own).
     fn keep_history(&mut self, identity: Value, cx: &mut Context<Self>) {
-        let source = self.game.archive_snapshot(&self.host());
+        let source = self.game.archive_snapshot();
         let has_play = !self.game.moves().is_empty();
         self.history = Some(HistoryPlace::new(
             computer::HISTORY,
@@ -292,7 +292,7 @@ impl ComputerPage {
     fn availability(&mut self, cx: &mut Context<Self>) {
         let host = self.host();
         let effects = self.game.availability_changed(&host);
-        self.perform(effects, cx);
+        self.perform(Ok(effects), cx);
         self.computer_turn(cx);
         self.after_change(cx);
     }
@@ -372,6 +372,7 @@ impl ComputerPage {
                 Effect::Failed => {
                     self.check_engine(cx);
                 }
+                Effect::Cancelled => {}
             }
         }
     }
@@ -391,7 +392,7 @@ impl ComputerPage {
         let search = cx.global::<AppCore>().request(calls::BestMove {
             moves: json!(request.moves),
             level: json!(request.level),
-            options: Some(request.options.clone()),
+            options: Some(json!(request.options)),
         });
         cx.notify();
         self.search = Some(cx.spawn(async move |this, cx| {
@@ -418,10 +419,10 @@ impl ComputerPage {
                     self.log_warn(&format!("engine operation failed: {}", cause.message));
                     self.error = Some(cause.message.into());
                 }
-                self.game.search_failed(request, &host)
+                self.game.search_failed(request)
             }
         };
-        self.perform(effects, cx);
+        self.perform(Ok(effects), cx);
         self.changed(cx);
     }
 
@@ -431,15 +432,11 @@ impl ComputerPage {
             return self.after_change(cx);
         }
         let host = self.host();
-        match self.game.play(uci, &host) {
-            Ok((played, effects)) => {
-                self.perform(Ok(effects), cx);
-                if !played {
-                    // Put the piece back where the position says it is.
-                    self.after_change(cx);
-                }
-            }
-            Err(cause) => self.log_warn(&cause),
+        let (played, effects) = self.game.play(uci, &host);
+        self.perform(Ok(effects), cx);
+        if !played {
+            // Put the piece back where the position says it is.
+            self.after_change(cx);
         }
         self.changed(cx);
     }
@@ -464,13 +461,13 @@ impl ComputerPage {
         let (white, black) = computer::players(user, engine);
         let mut game = PlayedGame::new(
             self.game.setup(),
-            self.game.moves(),
+            self.game.moves().to_vec(),
             self.orientation(),
             white,
             black,
         );
         game.ply = Some(self.ply());
-        game.result = self.game.outcome(&self.host());
+        game.result = self.game.outcome();
         game.player = Some(user);
         game
     }
@@ -494,7 +491,7 @@ impl ComputerPage {
     }
 
     fn moves(&self) -> Vec<String> {
-        self.game.moves()
+        self.game.moves().to_vec()
     }
 
     fn ply(&self) -> usize {
@@ -504,11 +501,11 @@ impl ComputerPage {
     /// Sound the low-time warning as the player's clock runs low.
     fn warn_low_time(&mut self, cx: &mut Context<Self>) {
         let host = self.host();
-        if self.game.over(&host) {
+        if self.game.over() {
             return;
         }
         let color = self.user_color();
-        let initial = self.game.clock()["minutes"].as_f64().unwrap_or_default() * 60.;
+        let initial = self.game.clock().map_or(0., |clock| clock.minutes) * 60.;
         let remaining = self.game.remaining(color, &host);
         self.low_time.warn(color, remaining, initial, cx);
     }
@@ -564,11 +561,10 @@ impl ComputerPage {
     /// The player may move now: it is their turn at the latest position, and not before the
     /// saved game is restored, which would replace the move (and nothing is saved before then).
     fn interactive(&self) -> bool {
-        let host = self.host();
         self.saver.loaded()
             && self.engine == Engine::Ready
             && self.allowed
-            && !self.game.over(&host)
+            && !self.game.over()
             && self.ply() == self.moves().len()
             && self
                 .position_at(self.ply())
@@ -585,7 +581,7 @@ impl ComputerPage {
     }
 
     fn in_progress(&self) -> bool {
-        !self.moves().is_empty() && self.game.result(&self.host()).is_none()
+        !self.moves().is_empty() && self.game.result().is_none()
     }
 
     /// The game changed: show it, keep the clocks running, save it shortly and keep its place in
@@ -593,10 +589,7 @@ impl ComputerPage {
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.after_change(cx);
         SessionSaver::changed(self, cx);
-        let (source, has_play) = (
-            self.game.archive_snapshot(&self.host()),
-            !self.moves().is_empty(),
-        );
+        let (source, has_play) = (self.game.archive_snapshot(), !self.moves().is_empty());
         if let Some(history) = &mut self.history {
             history.save(false, source, has_play, cx);
         }
@@ -606,10 +599,7 @@ impl ComputerPage {
     /// After a saved game that could not be read, this one is the player's to keep.
     fn reset_archive(&mut self, cx: &mut Context<Self>) {
         self.saver.open();
-        let (source, has_play) = (
-            self.game.archive_snapshot(&self.host()),
-            !self.moves().is_empty(),
-        );
+        let (source, has_play) = (self.game.archive_snapshot(), !self.moves().is_empty());
         match &mut self.history {
             Some(history) => history.reset(source, has_play, cx),
             None => self.keep_history(Value::Null, cx),
@@ -618,7 +608,7 @@ impl ComputerPage {
 
     fn after_change(&mut self, cx: &mut Context<Self>) {
         let interactive = self.interactive();
-        let live = self.game.result(&self.host()).is_none();
+        let live = self.game.result().is_none();
         let mut state = view::board_state(
             self.game.setup(),
             &self.moves(),
@@ -633,19 +623,19 @@ impl ComputerPage {
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
         self.sync_voice(cx);
-        let running = self.game.timed() && !self.game.over(&self.host());
+        let running = self.game.timed() && !self.game.over();
         if running && self.ticker.is_none() {
             self.ticker = Some(surface::every(surface::TICK, cx, |this, cx| {
                 let host = this.host();
                 let effects = this.game.expire(&host);
-                let acted = effects.as_ref().is_ok_and(|effects| !effects.is_empty());
-                this.perform(effects, cx);
+                let acted = !effects.is_empty();
+                this.perform(Ok(effects), cx);
                 this.warn_low_time(cx);
                 let shown = [Color::White, Color::Black].map(|color| this.clock_text(color));
                 if this.faces.changed(shown) || acted {
                     cx.notify();
                 }
-                if this.game.over(&this.host()) {
+                if this.game.over() {
                     this.ticker = None;
                     this.changed(cx);
                     return false;
@@ -670,7 +660,7 @@ impl ComputerPage {
     fn open_options(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = Current {
             setup: self.game.setup().clone(),
-            clock: self.game.clock().clone(),
+            clock: json!(self.game.clock()),
             color: kchess_games::color_name(self.user_color()).to_string(),
             level: self.game.level().to_string(),
         };
@@ -704,7 +694,7 @@ impl ComputerPage {
             move |this, window, cx| {
                 let chosen = Chosen {
                     setup,
-                    clock: this.game.clock().clone(),
+                    clock: json!(this.game.clock()),
                     color: kchess_games::color_name(color),
                     level: this.game.level().to_string(),
                 };
@@ -731,7 +721,7 @@ impl ComputerPage {
             move |this, window, cx| {
                 let chosen = Chosen {
                     setup: json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN }),
-                    clock: this.game.clock().clone(),
+                    clock: json!(this.game.clock()),
                     color: kchess_games::color_name(color),
                     level,
                 };
@@ -752,8 +742,10 @@ impl ComputerPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.game
-            .set_clock(json!({ "minutes": minutes, "increment": 0 }));
+        self.game.set_clock(Some(kchess_domain::games::Clock {
+            minutes,
+            increment: 0.,
+        }));
         self.start_from(setup, color, window, cx);
     }
 
@@ -777,9 +769,10 @@ impl ComputerPage {
         self.flipped = false;
         self.reset_archive(cx);
         let host = self.host();
-        let effects = self
-            .game
-            .start(Some(chosen.setup), Some(chosen.clock), &host);
+        let effects = serde_json::from_value(chosen.setup)
+            .and_then(|setup| Ok((setup, serde_json::from_value(chosen.clock)?)))
+            .map_err(|error| format!("the chosen game: {error}"))
+            .and_then(|(setup, clock)| self.game.start(Some(setup), Some(clock), &host));
         self.perform(effects, cx);
         self.select_level(window, cx);
         self.changed(cx);
@@ -807,7 +800,7 @@ impl ComputerPage {
 
     /// The finished game can be reviewed on the analysis board.
     fn can_review(&self) -> bool {
-        self.game.result(&self.host()).is_some() && !self.moves().is_empty()
+        self.game.result().is_some() && !self.moves().is_empty()
     }
 
     /// Run an action as its button does, asking first where the button asks.
@@ -838,14 +831,13 @@ impl ComputerPage {
     fn takeback(&mut self, cx: &mut Context<Self>) {
         let host = self.host();
         let effects = self.game.takeback(&host);
-        self.perform(effects, cx);
+        self.perform(Ok(effects), cx);
         self.changed(cx);
     }
 
     fn resign(&mut self, cx: &mut Context<Self>) {
-        let host = self.host();
-        let effects = self.game.resign(&host);
-        self.perform(effects, cx);
+        let effects = self.game.resign();
+        self.perform(Ok(effects), cx);
         self.changed(cx);
     }
 
@@ -977,7 +969,7 @@ impl ComputerPage {
 
     /// What voice input says while no move is taken.
     fn voice_idle(&self) -> &'static str {
-        if self.game.result(&self.host()).is_some() {
+        if self.game.result().is_some() {
             "The game is over. Say “new game” to play again."
         } else if self.ply() != self.moves().len() {
             "Go to the last move to keep playing"
@@ -1132,7 +1124,6 @@ impl ComputerPage {
     }
 
     fn render_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let host = self.host();
         if self.engine == Engine::Missing {
             let checking = self.engine == Engine::Checking;
             let standard = crate::game::standard_rules(&self.setup_variant());
@@ -1168,41 +1159,29 @@ impl ComputerPage {
                 )
                 .into_any_element();
         }
-        if let Some(result) = self.game.result(&host) {
-            let kind = result["kind"].as_str().unwrap_or_default();
-            let (tone, glyph) = match kind {
-                "win" => (Tone::Win, icon("trophy")),
-                "loss" => (Tone::Loss, icon("flag")),
-                _ => (Tone::Plain, icon("handshake")),
+        if let Some(result) = self.game.result() {
+            let (tone, glyph) = match result.kind {
+                computer::Kind::Win => (Tone::Win, icon("trophy")),
+                computer::Kind::Loss => (Tone::Loss, icon("flag")),
+                computer::Kind::Draw => (Tone::Plain, icon("handshake")),
             };
-            return widgets::StatusBanner::new(
-                tone,
-                glyph,
-                result["title"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string()
-                    .into(),
-            )
-            .announce()
-            .when_some(
-                result["detail"]
-                    .as_str()
-                    .map(|detail| SharedString::from(detail.to_string())),
-                |banner, value| banner.detail(value),
-            )
-            .when_some(
-                self.can_review().then(|| {
-                    Button::new("review-game")
-                        .outline()
-                        .small()
-                        .label("Review game")
-                        .on_click(cx.listener(|this, _, window, cx| this.review_game(window, cx)))
-                        .into_any_element()
-                }),
-                |banner, value| banner.extra(value),
-            )
-            .into_any_element();
+            return widgets::StatusBanner::new(tone, glyph, result.title.into())
+                .announce()
+                .detail(SharedString::from(result.detail))
+                .when_some(
+                    self.can_review().then(|| {
+                        Button::new("review-game")
+                            .outline()
+                            .small()
+                            .label("Review game")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.review_game(window, cx)),
+                            )
+                            .into_any_element()
+                    }),
+                    |banner, value| banner.extra(value),
+                )
+                .into_any_element();
         }
         if self.ply() != self.moves().len() {
             return widgets::StatusBanner::new(
@@ -1266,7 +1245,6 @@ fn level_choices(cx: &App) -> (Vec<String>, Vec<SharedString>) {
 impl Render for ComputerPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let host = self.host();
         let board_size = self.layout.board_size(window);
         let narrow = widgets::is_narrow(self.panel_area.size().width);
         let user = self.user_color();
@@ -1274,14 +1252,14 @@ impl Render for ComputerPage {
         let turn = position
             .as_ref()
             .map_or(Color::White, shakmaty::Position::turn);
-        let live = self.game.result(&host).is_none();
+        let live = self.game.result().is_none();
         let sans = self.sans();
         let moves = self.moves();
         let ply = self.ply();
         let interactive = self.interactive();
         let first = view::first_move(self.game.setup());
         let in_progress = self.in_progress();
-        let result = self.game.result(&host);
+        let result = self.game.result();
         let side_of = |color: Color| {
             if color == Color::White {
                 Side::White
@@ -1411,18 +1389,10 @@ impl Render for ComputerPage {
         let flip: widgets::ClickHandler = Box::new(move |_, window, cx| {
             let _ = flip_page.update(cx, |page, cx| page.ask(Question::SwitchSides, window, cx));
         });
-        let clock_label = self.game.clock().as_object().map(|clock| {
-            widgets::time_control(
-                clock
-                    .get("minutes")
-                    .and_then(Value::as_f64)
-                    .unwrap_or_default(),
-                clock
-                    .get("increment")
-                    .and_then(Value::as_f64)
-                    .unwrap_or_default(),
-            )
-        });
+        let clock_label = self
+            .game
+            .clock()
+            .map(|clock| widgets::time_control(clock.minutes, clock.increment));
         let frontend = crate::settings::frontend(cx);
         let zen = frontend.zen_mode;
         let show_opening = frontend.show_opening_name && self.setup_variant() == "standard";

@@ -1,6 +1,5 @@
-//! The state of one online game as `OnlineGame` holds it, what a
-//! transition reads from its host, and what it returns to the driver: the next state, the effects
-//! the host must see in order, and any network call the driver must make.
+//! The state of one online game, what a transition reads from its host, and what it returns to
+//! the driver: the effects the host must see in order, and any network call the driver must make.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -12,8 +11,6 @@ use crate::rules::{default_position, lichess_variant, make_fen};
 
 /// The standard start.
 use crate::rules::INITIAL_FEN;
-
-use crate::misc::constants::VARIANTS;
 
 /// `GameSetup`: the rules and the position before the first move.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -99,7 +96,7 @@ pub struct Model {
     pub generation: f64,
 }
 
-/// What the class read from its host at the moment of a transition.
+/// What the host read at the moment of a transition.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Ctx {
@@ -108,8 +105,7 @@ pub struct Ctx {
     pub chat_enabled: bool,
 }
 
-/// One effect for the driver, in order. Host callbacks are optional on the host, so the driver
-/// calls them with `?.`; `warn` and `failed` take the cause the driver caught.
+/// One effect for the driver, in order; `warn` and `failed` take the cause the driver caught.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "effect", rename_all = "camelCase")]
 pub enum Effect {
@@ -144,32 +140,163 @@ pub enum Effect {
     },
 }
 
-/// A network call the driver makes with the host's API, then reports back with `settle`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Call {
-    pub method: &'static str,
-    pub args: Vec<Value>,
+/// A network call the driver makes with the core, then reports back with `settle`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Call {
+    /// A seek or challenge with these options.
+    StartOnline(Value),
+    CancelOnline,
+    ResumeOnline,
+    OpenGame {
+        account: String,
+        id: String,
+    },
+    PlayOnline {
+        id: String,
+        uci: String,
+    },
+    OnlineAction {
+        id: String,
+        action: String,
+    },
+    OnlineChat {
+        id: String,
+    },
 }
 
 impl Call {
-    pub fn new(method: &'static str, args: Vec<Value>) -> Call {
-        Call { method, args }
+    /// The core method's name.
+    pub fn method(&self) -> &'static str {
+        match self {
+            Call::StartOnline(_) => "startOnline",
+            Call::CancelOnline => "cancelOnline",
+            Call::ResumeOnline => "resumeOnline",
+            Call::OpenGame { .. } => "openGame",
+            Call::PlayOnline { .. } => "playOnline",
+            Call::OnlineAction { .. } => "onlineAction",
+            Call::OnlineChat { .. } => "onlineChat",
+        }
+    }
+
+    /// The core method's arguments.
+    pub fn args(&self) -> Vec<Value> {
+        match self {
+            Call::StartOnline(options) => vec![options.clone()],
+            Call::CancelOnline | Call::ResumeOnline => Vec::new(),
+            Call::OpenGame { account, id } => vec![account.as_str().into(), id.as_str().into()],
+            Call::PlayOnline { id, uci } => vec![id.as_str().into(), uci.as_str().into()],
+            Call::OnlineAction { id, action } => vec![id.as_str().into(), action.as_str().into()],
+            Call::OnlineChat { id } => vec![id.as_str().into()],
+        }
     }
 }
 
-/// What a transition returns to its driver.
-#[derive(Serialize)]
+impl Serialize for Call {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut call = serializer.serialize_struct("Call", 2)?;
+        call.serialize_field("method", self.method())?;
+        call.serialize_field("args", &self.args())?;
+        call.end()
+    }
+}
+
+/// The game a real-time seek left: a correspondence game being played, to go back to.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Left {
+    pub id: String,
+    pub account: String,
+}
+
+/// What a call `begin` made needs to settle its reply. `generation` is the request's: a newer
+/// request supersedes it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "op", rename_all = "camelCase")]
+pub enum Pending {
+    Start {
+        generation: f64,
+        correspondence: bool,
+        previous: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        left: Option<Left>,
+    },
+    Stop,
+    Reconnect {
+        generation: f64,
+    },
+    Open {
+        generation: f64,
+        account: String,
+        id: String,
+    },
+    Move {
+        generation: f64,
+        id: String,
+        epoch: f64,
+        sent: f64,
+    },
+    Action {
+        generation: f64,
+        id: String,
+        epoch: f64,
+        action: String,
+    },
+    Chat {
+        id: String,
+    },
+}
+
+/// A network-backed operation the host asks for.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Op {
+    /// A seek or challenge with these options.
+    Start(Value),
+    Stop,
+    Reconnect,
+    Open {
+        account: String,
+        id: String,
+    },
+    Move(String),
+    Action(String),
+    Chat(String),
+}
+
+/// The core's reply to a call: its answer, or a failure whose cause the driver keeps.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Reply {
+    Ok(Value),
+    Failed,
+}
+
+/// What a transition returns to its driver; the state changed in place.
+#[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Transition {
-    pub state: Model,
+pub struct Outcome {
     pub effects: Vec<Effect>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ret: Option<Value>,
+    pub ret: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub call: Option<Call>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pending: Option<Value>,
+    pub pending: Option<Pending>,
+    /// The call's failure is the operation's: the host reports its cause.
     pub rethrow: bool,
+}
+
+/// The board's view of the state.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct View {
+    /// The live position.
+    pub position: Setup,
+    /// The SAN of each move played.
+    pub history: Vec<String>,
+    /// Moves this side has made.
+    pub own_moves: usize,
+    pub correspondence: bool,
+    /// The challenge that starts a rematch of the last game.
+    pub rematch: Option<Value>,
 }
 
 /// A replay of the moves: the position they reach and the SAN of each move played.
@@ -178,15 +305,15 @@ pub struct Replayed {
     pub played: Vec<String>,
 }
 
-/// One transition's working copy of the state and its effects.
-pub struct Run {
-    pub m: Model,
+/// One transition: the state it changes, its effects so far, and what the host read.
+pub struct Run<'a> {
+    pub m: &'a mut Model,
     pub fx: Vec<Effect>,
-    pub ctx: Ctx,
+    pub ctx: &'a Ctx,
 }
 
-impl Run {
-    pub fn new(m: Model, ctx: Ctx) -> Run {
+impl<'a> Run<'a> {
+    pub fn new(m: &'a mut Model, ctx: &'a Ctx) -> Run<'a> {
         Run {
             m,
             fx: Vec::new(),
@@ -220,22 +347,37 @@ impl Run {
         self.m.generation
     }
 
-    pub fn done(
-        self,
-        ret: Option<Value>,
-        call: Option<Call>,
-        pending: Option<Value>,
-        rethrow: bool,
-    ) -> Result<Value, String> {
-        serde_json::to_value(Transition {
-            state: self.m,
+    /// The effects so far, and nothing more.
+    pub fn done(self) -> Outcome {
+        Outcome {
             effects: self.fx,
-            ret,
-            call,
-            pending,
-            rethrow,
-        })
-        .map_err(|e| e.to_string())
+            ..Outcome::default()
+        }
+    }
+
+    /// The operation's answer.
+    pub fn answer(self, ret: bool) -> Outcome {
+        Outcome {
+            ret: Some(ret),
+            ..self.done()
+        }
+    }
+
+    /// The call to make, and what settles its reply.
+    pub fn call(self, call: Call, pending: Pending) -> Outcome {
+        Outcome {
+            call: Some(call),
+            pending: Some(pending),
+            ..self.done()
+        }
+    }
+
+    /// The call failed, and the host reports why.
+    pub fn rethrow(self) -> Outcome {
+        Outcome {
+            rethrow: true,
+            ..self.done()
+        }
     }
 }
 
@@ -377,7 +519,7 @@ pub fn turn_of(fen: &str) -> &'static str {
 pub fn variant_from_lichess(key: Option<&str>) -> Option<&'static str> {
     match key {
         None | Some("") | Some("fromPosition") => Some("standard"),
-        Some(key) => VARIANTS.iter().copied().find(|variant| *variant == key),
+        Some(key) => crate::variant::Variant::from_key(key).map(|variant| variant.key()),
     }
 }
 

@@ -138,7 +138,8 @@ impl TreeView<'_> {
                 .iter()
                 .flatten()
                 .copied()
-                .find(|nag| (1..=6).contains(nag)),
+                .find(|nag| (1..=6).contains(nag))
+                .map(i64::from),
             mainline: self.mainline.contains(path),
             fen: node.fen.clone(),
         };

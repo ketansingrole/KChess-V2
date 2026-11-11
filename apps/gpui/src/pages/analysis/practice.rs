@@ -150,7 +150,7 @@ impl AnalysisPage {
         let label = format!(
             "{number}{} {}",
             if color == Color::Black { "…" } else { "." },
-            san(self.root.variant(), fen, &uci)?
+            san(self.root.variant().key(), fen, &uci)?
         );
         Some((
             uci,
@@ -224,7 +224,7 @@ impl AnalysisPage {
         if !self.at_position() || !self.practice.as_ref().is_some_and(Practice::hides_engine) {
             return None;
         }
-        let variant = self.root.variant().to_string();
+        let variant = self.root.variant().key().to_string();
         let practice = self.practice.as_mut()?;
         let (_, item) = practice.current()?.clone();
         if Some(uci.to_string()) == practice.answer() {
@@ -392,7 +392,7 @@ impl AnalysisPage {
             .current()
             .and_then(|(_, item)| {
                 san(
-                    self.root.variant(),
+                    self.root.variant().key(),
                     item["fen"].as_str()?,
                     &practice.answer()?,
                 )

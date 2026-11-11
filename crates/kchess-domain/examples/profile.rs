@@ -136,7 +136,10 @@ fn main() {
             .sum::<usize>()
     });
     time("summarize x300", 20, || {
-        reviews.iter().filter_map(review::summarize).count()
+        reviews
+            .iter()
+            .filter_map(|r| review::summarize(r).ok())
+            .count()
     });
     let synced: Vec<Value> = serde_json::from_str(
         &std::fs::read_to_string(format!("{dir}/synced-studies.json")).expect("synced"),

@@ -1,14 +1,16 @@
-//! `LocalGame` : two people at one board. The rules run it
-//! (`crates/kchess-domain/src/games/local.rs`); the page answers `now` and carries out the one
-//! effect, a flag falling.
+//! Two people at one board as a frontend drives it: the rules
+//! (`kchess_domain::games::local`) run it; the page reports its clock and sounds a falling flag.
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use shakmaty::Color;
 
-use kchess_domain::games::local as session;
+use kchess_domain::games::Setup;
+use kchess_domain::games::local::{self as session, Saved, State};
+use kchess_domain::records::games::GameEnd;
 
-use crate::driver::{self, Driver};
-use crate::{Outcome, Transition};
+pub use kchess_domain::games::local::LocalClock;
+
+use crate::Outcome;
 
 /// The session a board game is saved as, and the Game history kinds of the board game and of
 /// the chess clock.
@@ -19,186 +21,173 @@ pub const CLOCK_HISTORY: &str = "clock";
 pub const EVENT: &str = "Over the board (KChess)";
 
 pub struct LocalGame {
-    driver: Driver,
-}
-
-/// Whether a transition let a flag fall (`flagged`).
-pub struct Flagged(pub bool);
-
-fn read(now: f64, kind: &str) -> Result<Value, String> {
-    match kind {
-        "now" => Ok(json!(now)),
-        other => Err(format!("A local game has no host read {other}")),
-    }
+    game: session::LocalGame,
+    /// The game's start as `{ variant, fen }`, for the views.
+    setup: Value,
 }
 
 impl LocalGame {
-    /// A game from a saved session (`localState(saved)`), or a new one.
+    /// A game from a saved session, or a new one.
     pub fn new(saved: Option<&Value>, now: f64) -> Result<LocalGame, String> {
-        let state = session::state(&[saved.cloned().unwrap_or(Value::Null)])?;
-        let driver = Driver::start(state, session::init, |kind| read(now, kind), "local game")?;
-        Ok(LocalGame { driver })
+        let saved: Saved = match saved {
+            Some(saved) => serde_json::from_value(saved.clone())
+                .map_err(|error| format!("the saved game: {error}"))?,
+            None => Saved::default(),
+        };
+        let runtime = session::Runtime { turn_started: now };
+        let game = session::LocalGame::new(State::from_saved(saved), runtime)?;
+        let setup = serde_json::json!(game.state().setup);
+        Ok(LocalGame { game, setup })
     }
 
-    /// The `LocalState` document: the saved session and its pause flag.
-    pub fn state(&self) -> &Value {
-        &self.driver.state
+    /// The session document: the saved session and its pause flag.
+    pub fn state(&self) -> &State {
+        self.game.state()
     }
 
-    /// The game's start: its `{ variant, fen }`.
+    /// The game's start, as `{ variant, fen }`.
     pub fn setup(&self) -> &Value {
-        &self.driver.state["setup"]
+        &self.setup
     }
 
     /// The game's moves, in UCI.
-    pub fn moves(&self) -> Vec<String> {
-        crate::moves_of(&self.driver.state)
+    pub fn moves(&self) -> &[String] {
+        &self.game.state().moves
     }
 
-    /// The clocks chosen (`{ white: {minutes, increment}, black: … }`), null when untimed.
-    pub fn clock(&self) -> &Value {
-        &self.driver.state["clock"]
+    /// The clocks chosen, none when untimed.
+    pub fn clock(&self) -> Option<LocalClock> {
+        self.game.state().clock
     }
 
     /// The clocks run in this game.
     pub fn timed(&self) -> bool {
-        !self.driver.state["times"].is_null()
+        self.game.state().times.is_some()
     }
 
     /// The clocks are paused.
     pub fn paused(&self) -> bool {
-        self.driver.state["paused"].as_bool() == Some(true)
+        self.game.state().paused
     }
 
-    fn apply(
-        &mut self,
-        step: Transition,
-        input: &[Value],
-        now: f64,
-    ) -> Result<(Value, Flagged), String> {
-        let done = self.driver.apply(step, input, |kind| read(now, kind))?;
-        let flagged = done["effects"]
-            .as_array()
-            .is_some_and(|effects| effects.iter().any(|effect| effect["type"] == "flagged"));
-        Ok((driver::value(&done), Flagged(flagged)))
-    }
-
-    fn view(&self, query: Value, now: f64) -> Value {
-        self.driver
-            .view(session::view, query, |kind| read(now, kind))
-    }
-
-    /// `{ winner?, reason }` once the game has ended.
-    pub fn result(&self, now: f64) -> Option<Value> {
-        Some(self.view(driver::named("result"), now)).filter(|value| !value.is_null())
+    /// The winner, if any, and why, once the game has ended.
+    pub fn result(&self) -> Option<&GameEnd> {
+        self.game.result()
     }
 
     /// The result once the game has ended, from the winner it names.
-    pub fn outcome(&self, now: f64) -> Option<Outcome> {
-        let result = self.result(now)?;
-        Some(match result["winner"].as_str() {
+    pub fn outcome(&self) -> Option<Outcome> {
+        let result = self.result()?;
+        Some(match result.winner.as_deref() {
             Some("white") => Outcome::Wins(Color::White),
             Some("black") => Outcome::Wins(Color::Black),
             _ => Outcome::Draw,
         })
     }
 
-    pub fn over(&self, now: f64) -> bool {
-        self.view(driver::named("over"), now).as_bool() == Some(true)
+    pub fn over(&self) -> bool {
+        self.game.over()
     }
 
     /// A side's clock in milliseconds.
     pub fn remaining(&self, color: Color, now: f64) -> f64 {
-        self.view(
-            json!({ "view": "remaining", "color": crate::color_name(color), "at": now }),
-            now,
-        )
-        .as_f64()
-        .unwrap_or(0.)
+        self.game.remaining(crate::color_name(color), now)
     }
 
+    /// The session to save.
     pub fn snapshot(&self, now: f64) -> Value {
-        self.view(driver::named("snapshot"), now)
+        serde_json::to_value(self.game.snapshot(now)).unwrap_or(Value::Null)
     }
 
-    pub fn archive_snapshot(&self, now: f64) -> Value {
-        self.view(driver::named("archiveSnapshot"), now)
+    /// The game as Game history keeps it.
+    pub fn archive_snapshot(&self) -> Value {
+        serde_json::to_value(self.game.archive_snapshot()).unwrap_or(Value::Null)
     }
 
-    pub fn expire(&mut self, now: f64) -> Result<Flagged, String> {
-        Ok(self.apply(session::expire, &[json!(now)], now)?.1)
+    /// Whether a flag fell now.
+    pub fn expire(&mut self, now: f64) -> bool {
+        self.game.expire(now)
     }
 
-    /// Play a move; its SAN, or `None` when it is not legal.
-    pub fn play(&mut self, uci: &str, now: f64) -> Result<(Option<String>, Flagged), String> {
-        let (san, flagged) = self.apply(session::play, &[json!(uci)], now)?;
-        Ok((san.as_str().map(str::to_string), flagged))
+    /// Play a move: its SAN, or `None` when it is not legal; and whether a flag fell instead.
+    pub fn play(&mut self, uci: &str, now: f64) -> (Option<String>, bool) {
+        self.game.play(uci, || now)
     }
 
-    pub fn takeback(&mut self, now: f64) -> Result<Flagged, String> {
-        Ok(self.apply(session::takeback, &[], now)?.1)
+    pub fn takeback(&mut self, now: f64) {
+        self.game.takeback(|| now);
     }
 
-    /// A new game from `setup` with `clock` (`{ white: {minutes, increment}, black: … }` or null).
-    pub fn start(&mut self, setup: Value, clock: Value, now: f64) -> Result<Flagged, String> {
-        Ok(self.apply(session::start, &[setup, clock], now)?.1)
+    /// A new game from `setup` with `clock`.
+    pub fn start(
+        &mut self,
+        setup: Setup,
+        clock: Option<LocalClock>,
+        now: f64,
+    ) -> Result<(), String> {
+        self.game.start(setup, clock, || now)?;
+        self.setup = serde_json::json!(self.game.state().setup);
+        Ok(())
     }
 
-    pub fn resign(&mut self, color: Color, now: f64) -> Result<Flagged, String> {
-        Ok(self
-            .apply(session::resign, &[json!(crate::color_name(color))], now)?
-            .1)
+    pub fn resign(&mut self, color: Color) {
+        self.game.resign(crate::color_name(color));
     }
 
-    pub fn agree_draw(&mut self, now: f64) -> Result<Flagged, String> {
-        Ok(self.apply(session::agree_draw, &[], now)?.1)
+    pub fn agree_draw(&mut self) {
+        self.game.agree_draw();
     }
 
-    pub fn toggle_pause(&mut self, now: f64) -> Result<Flagged, String> {
-        Ok(self.apply(session::toggle_pause, &[], now)?.1)
+    /// Whether a flag fell instead of the clocks pausing or resuming.
+    pub fn toggle_pause(&mut self, now: f64) -> bool {
+        self.game.toggle_pause(now)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kchess_domain::games::Clock;
+    use serde_json::json;
+
+    fn clock(minutes: f64, increment: f64) -> Clock {
+        Clock { minutes, increment }
+    }
+
+    fn one_minute() -> Option<LocalClock> {
+        Some(LocalClock {
+            white: clock(1., 0.),
+            black: clock(1., 0.),
+        })
+    }
 
     /// Taking back after a flag fell left that side on 0 ms: it lost on time again as soon as it
     /// was back on move. As on Lichess, a time-out is final.
     #[test]
     fn a_time_out_is_not_taken_back() {
         let mut game = LocalGame::new(None, 0.).unwrap();
-        let side = json!({ "minutes": 1, "increment": 0 });
-        game.start(
-            json!({
-                "variant": "standard",
-                "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-            }),
-            json!({ "white": side, "black": side }),
-            0.,
-        )
-        .unwrap();
-        game.play("e2e4", 1.).unwrap();
-        game.play("e7e5", 2.).unwrap();
-        assert!(game.expire(200_000.).unwrap().0);
-        game.takeback(200_001.).unwrap();
-        assert!(game.over(200_001.));
-        assert_eq!(game.state()["moves"], json!(["e2e4", "e7e5"]));
+        game.start(Setup::standard(), one_minute(), 0.).unwrap();
+        game.play("e2e4", 1.);
+        game.play("e7e5", 2.);
+        assert!(game.expire(200_000.));
+        game.takeback(200_001.);
+        assert!(game.over());
+        assert_eq!(game.moves(), ["e2e4", "e7e5"]);
     }
 
     #[test]
     fn both_sides_move_and_a_resignation_ends_the_game() {
         let mut game = LocalGame::new(None, 0.).unwrap();
-        assert_eq!(game.play("e2e4", 1.).unwrap().0.as_deref(), Some("e4"));
-        assert_eq!(game.play("e7e5", 2.).unwrap().0.as_deref(), Some("e5"));
-        assert_eq!(game.play("e2e4", 3.).unwrap().0, None);
-        game.resign(Color::White, 4.).unwrap();
-        assert!(game.over(5.));
-        assert_eq!(game.result(5.).unwrap()["winner"], "black");
-        assert_eq!(Outcome::tag(game.outcome(5.)), "0-1");
+        assert_eq!(game.play("e2e4", 1.).0.as_deref(), Some("e4"));
+        assert_eq!(game.play("e7e5", 2.).0.as_deref(), Some("e5"));
+        assert_eq!(game.play("e2e4", 3.).0, None);
+        game.resign(Color::White);
+        assert!(game.over());
+        assert_eq!(game.result().unwrap().winner.as_deref(), Some("black"));
+        assert_eq!(Outcome::tag(game.outcome()), "0-1");
         assert_eq!(
-            Outcome::tag(game.outcome(5.)),
-            game.archive_snapshot(5.)["result"]
+            Outcome::tag(game.outcome()),
+            game.archive_snapshot()["result"]
         );
     }
 
@@ -206,17 +195,15 @@ mod tests {
     #[test]
     fn a_flag_falls_when_the_time_is_up() {
         let mut game = LocalGame::new(None, 0.).unwrap();
-        assert!(!game.over(0.));
-        let setup = game.state()["setup"].clone();
-        let clock = json!({ "white": { "minutes": 1, "increment": 0 }, "black": { "minutes": 1, "increment": 0 } });
-        game.start(setup, clock, 0.).unwrap();
-        let (_, flagged) = game.play("e2e4", 1_000.).unwrap();
-        assert!(!flagged.0);
-        assert!(!game.expire(30_000.).unwrap().0);
-        assert!(game.expire(100_000.).unwrap().0);
-        assert!(game.over(100_000.));
+        assert!(!game.over());
+        game.start(Setup::standard(), one_minute(), 0.).unwrap();
+        let (_, flagged) = game.play("e2e4", 1_000.);
+        assert!(!flagged);
+        assert!(!game.expire(30_000.));
+        assert!(game.expire(100_000.));
+        assert!(game.over());
         assert_eq!(game.snapshot(100_000.)["moves"], json!(["e2e4"]));
-        let archived = game.archive_snapshot(100_000.);
+        let archived = game.archive_snapshot();
         assert_eq!(archived["source"], "board");
         assert_eq!(archived["result"], "1-0");
     }
@@ -224,77 +211,66 @@ mod tests {
     #[test]
     fn a_clock_runs_from_the_first_move_and_pauses() {
         let mut game = LocalGame::new(None, 0.).unwrap();
-        let setup = game.state()["setup"].clone();
-        let clock = json!({ "white": { "minutes": 1, "increment": 0 }, "black": { "minutes": 1, "increment": 0 } });
-        game.start(setup, clock, 0.).unwrap();
+        game.start(Setup::standard(), one_minute(), 0.).unwrap();
         assert_eq!(game.remaining(Color::White, 10_000.), 60_000.);
-        game.play("e2e4", 1_000.).unwrap();
+        game.play("e2e4", 1_000.);
         assert!(game.remaining(Color::Black, 11_000.) < 60_000.);
-        game.toggle_pause(11_000.).unwrap();
+        game.toggle_pause(11_000.);
         let paused = game.remaining(Color::Black, 11_000.);
         assert_eq!(game.remaining(Color::Black, 40_000.), paused);
-    }
-
-    fn one_minute() -> Value {
-        json!({ "white": { "minutes": 1, "increment": 0 }, "black": { "minutes": 1, "increment": 0 } })
     }
 
     #[test]
     fn a_flag_falls_once_the_side_to_move_runs_out() {
         let mut game = LocalGame::new(None, 0.).unwrap();
-        let setup = game.state()["setup"].clone();
-        game.start(setup, one_minute(), 0.).unwrap();
-        game.play("e2e4", 1_000.).unwrap();
-        assert!(!game.expire(30_000.).unwrap().0);
-        assert!(!game.over(30_000.));
-        assert!(game.expire(62_000.).unwrap().0);
-        assert!(game.over(62_000.));
-        assert_eq!(game.result(62_000.).unwrap()["winner"], "white");
+        game.start(Setup::standard(), one_minute(), 0.).unwrap();
+        game.play("e2e4", 1_000.);
+        assert!(!game.expire(30_000.));
+        assert!(!game.over());
+        assert!(game.expire(62_000.));
+        assert!(game.over());
+        assert_eq!(game.result().unwrap().winner.as_deref(), Some("white"));
     }
 
     #[test]
     fn an_agreed_draw_ends_the_game_without_a_winner() {
         let mut game = LocalGame::new(None, 0.).unwrap();
-        game.play("e2e4", 1.).unwrap();
-        game.agree_draw(2.).unwrap();
-        assert!(game.over(3.));
-        assert!(
-            game.result(3.)
-                .unwrap()
-                .get("winner")
-                .is_none_or(Value::is_null)
-        );
+        game.play("e2e4", 1.);
+        game.agree_draw();
+        assert!(game.over());
+        assert_eq!(game.result().unwrap().winner, None);
     }
 
     #[test]
     fn a_takeback_undoes_the_last_move() {
         let mut game = LocalGame::new(None, 0.).unwrap();
-        game.play("e2e4", 1.).unwrap();
-        game.takeback(2.).unwrap();
+        game.play("e2e4", 1.);
+        game.takeback(2.);
         // White is to move again, so e4 is legal once more and e5 is not.
-        assert_eq!(game.play("e7e5", 3.).unwrap().0, None);
-        assert_eq!(game.play("e2e4", 4.).unwrap().0.as_deref(), Some("e4"));
+        assert_eq!(game.play("e7e5", 3.).0, None);
+        assert_eq!(game.play("e2e4", 4.).0.as_deref(), Some("e4"));
     }
 
     #[test]
     fn checkmate_ends_the_game() {
         let mut game = LocalGame::new(None, 0.).unwrap();
         for (ply, uci) in ["f2f3", "e7e5", "g2g4", "d8h4"].iter().enumerate() {
-            assert!(!game.over(ply as f64));
-            game.play(uci, ply as f64).unwrap();
+            assert!(!game.over());
+            game.play(uci, ply as f64);
         }
-        assert!(game.over(10.));
-        assert_eq!(game.result(10.).unwrap()["winner"], "black");
+        assert!(game.over());
+        assert_eq!(game.result().unwrap().winner.as_deref(), Some("black"));
     }
 
     #[test]
     fn a_saved_game_resumes_where_it_was_left() {
         let mut game = LocalGame::new(None, 0.).unwrap();
-        game.play("e2e4", 1.).unwrap();
-        game.play("e7e5", 2.).unwrap();
-        let mut resumed = LocalGame::new(Some(game.state()), 3.).unwrap();
-        assert_eq!(resumed.play("e2e4", 4.).unwrap().0, None);
-        assert_eq!(resumed.play("g1f3", 5.).unwrap().0.as_deref(), Some("Nf3"));
+        game.play("e2e4", 1.);
+        game.play("e7e5", 2.);
+        let saved = game.snapshot(3.);
+        let mut resumed = LocalGame::new(Some(&saved), 3.).unwrap();
+        assert_eq!(resumed.play("e2e4", 4.).0, None);
+        assert_eq!(resumed.play("g1f3", 5.).0.as_deref(), Some("Nf3"));
     }
 
     /// `1e306` minutes made both times infinite, stored as `null`: every later move failed to
@@ -302,19 +278,23 @@ mod tests {
     #[test]
     fn a_clock_no_game_can_have_is_refused_at_the_start() {
         let mut game = LocalGame::new(None, 0.).unwrap();
-        let setup = game.state()["setup"].clone();
         for (minutes, increment) in [(1e306, 0.), (-5., 0.), (5., -1.), (181., 0.), (5., 1e9)] {
-            let side = json!({ "minutes": minutes, "increment": increment });
-            let clock = json!({ "white": side, "black": { "minutes": 5, "increment": 0 } });
+            let clock = LocalClock {
+                white: clock(minutes, increment),
+                black: clock(5., 0.),
+            };
             assert!(
-                game.start(setup.clone(), clock, 0.).is_err(),
+                game.start(Setup::standard(), Some(clock), 0.).is_err(),
                 "{minutes} {increment}"
             );
-            assert_eq!(game.play("e2e4", 1.).unwrap().0.as_deref(), Some("e4"));
-            game.takeback(2.).unwrap();
+            assert_eq!(game.play("e2e4", 1.).0.as_deref(), Some("e4"));
+            game.takeback(2.);
         }
-        let clock = json!({ "white": { "minutes": 180, "increment": 180 }, "black": { "minutes": 0, "increment": 0 } });
-        game.start(setup, clock, 0.)
+        let clock = LocalClock {
+            white: clock(180., 180.),
+            black: clock(0., 0.),
+        };
+        game.start(Setup::standard(), Some(clock), 0.)
             .expect("the longest and shortest clocks");
     }
 }

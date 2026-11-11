@@ -29,7 +29,7 @@ pub use spectator::Spectator;
 
 pub use kchess_domain::misc::constants::TV_CHANNELS;
 
-pub(crate) use kchess_domain::misc::constants::VARIANTS;
+pub(crate) use kchess_domain::variant::VARIANTS;
 /// How many earlier games a TV channel keeps for the session.
 const PAST_GAMES: usize = 6;
 /// The longest broadcast PGN read, in UTF-16 units (`pgn.slice(0, 200_000)`).

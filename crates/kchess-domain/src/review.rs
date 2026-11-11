@@ -254,8 +254,7 @@ fn harmonic_mean(values: &[f64]) -> f64 {
 /* ── A stored review ── */
 
 /// The parts of a `StoredReview` the analysis reads. Values outside the stored shape (a score
-/// that is not a number, judgments that are not strings) make the input unsupported, and the
-/// caller uses the TypeScript rules, whose JavaScript coercions they depend on.
+/// that is not a number, judgments that are not strings) are refused.
 struct Review<'a> {
     fen: &'a str,
     /// The Lichess key of a variant game's variant; empty for standard chess.
@@ -276,16 +275,19 @@ fn number_field(map: &Map<String, Value>, key: &str) -> Result<Option<f64>, ()> 
 }
 
 impl<'a> Review<'a> {
-    fn read(raw: &'a Value) -> Option<Review<'a>> {
-        let map = raw.as_object()?;
-        let fen = map.get("fen")?.as_str()?;
+    fn read(raw: &'a Value) -> Result<Review<'a>, String> {
+        let malformed = |field: &str| format!("the review's {field} is malformed");
+        let map = raw.as_object().ok_or_else(|| malformed("record"))?;
+        let fen = map
+            .get("fen")
+            .and_then(Value::as_str)
+            .ok_or_else(|| malformed("fen"))?;
         let moves = map
-            .get("moves")?
-            .as_array()?
-            .iter()
-            .map(Value::as_str)
-            .collect::<Option<Vec<_>>>()?;
-        let evals = match map.get("evals")? {
+            .get("moves")
+            .and_then(Value::as_array)
+            .and_then(|moves| moves.iter().map(Value::as_str).collect::<Option<Vec<_>>>())
+            .ok_or_else(|| malformed("moves"))?;
+        let evals = match map.get("evals").ok_or_else(|| malformed("evals"))? {
             Value::Array(items) => items
                 .iter()
                 .map(|item| match item {
@@ -300,8 +302,8 @@ impl<'a> Review<'a> {
                     _ => Err(()),
                 })
                 .collect::<Result<Vec<_>, ()>>()
-                .ok()?,
-            _ => return None,
+                .map_err(|()| malformed("evals"))?,
+            _ => return Err(malformed("evals")),
         };
         let judgments = match map.get("judgments") {
             None | Some(Value::Null) => None,
@@ -314,9 +316,9 @@ impl<'a> Review<'a> {
                         _ => Err(()),
                     })
                     .collect::<Result<Vec<_>, ()>>()
-                    .ok()?,
+                    .map_err(|()| malformed("judgments"))?,
             ),
-            Some(_) => return None,
+            Some(_) => return Err(malformed("judgments")),
         };
         let accuracy = match map.get("accuracy") {
             None | Some(Value::Null) => [None, None],
@@ -326,11 +328,14 @@ impl<'a> Review<'a> {
                     Some(Value::Number(n)) => n.as_f64().map(Some).ok_or(()),
                     Some(_) => Err(()),
                 };
-                [side("white").ok()?, side("black").ok()?]
+                match (side("white"), side("black")) {
+                    (Ok(white), Ok(black)) => [white, black],
+                    _ => return Err(malformed("accuracy")),
+                }
             }
-            Some(_) => return None,
+            Some(_) => return Err(malformed("accuracy")),
         };
-        Some(Review {
+        Ok(Review {
             fen,
             variant: map.get("variant").and_then(Value::as_str).unwrap_or(""),
             moves,
@@ -353,8 +358,9 @@ struct Analysis {
     weights: Option<Vec<f64>>,
 }
 
-/// `analyseReview`, or None when the input needs the TypeScript rules (see `Review::read`).
-fn analyse(review: &Review) -> Option<Analysis> {
+/// `analyseReview`; a start that is not a legal position is refused once a score needs a side to
+/// move.
+fn analyse(review: &Review) -> Result<Analysis, String> {
     // Only each position's side to move and end matter here, not its FEN. The end check is
     // skipped when every position already has a score: `eval_at` then never reads it, and the
     // check would generate every legal move at every ply.
@@ -385,9 +391,8 @@ fn analyse(review: &Review) -> Option<Analysis> {
             None => None,
         }
     };
-    // With no legal start, the TypeScript rules throw as soon as a score needs a side to move.
     if positions.is_empty() && eval_at(0).is_some() {
-        return None;
+        return Err("the review's start is not a legal position".into());
     }
     let white_at = |i: usize| -> bool {
         match positions.get(i) {
@@ -479,7 +484,7 @@ fn analyse(review: &Review) -> Option<Analysis> {
         }
         Value::Object(side)
     };
-    Some(Analysis {
+    Ok(Analysis {
         moves,
         sides: [side(true), side(false)],
         start_chances: eval_at(0).map(|s| win_chances(s, white_at(0))),
@@ -541,9 +546,9 @@ fn weighted_accuracy(
     result
 }
 
-/// `analyseReview`: per-move labels, accuracy and chances, and both sides' figures. None when
-/// the stored review needs the TypeScript rules.
-pub fn analyse_review(raw: &Value) -> Option<Value> {
+/// `analyseReview`: per-move labels, accuracy and chances, and both sides' figures; why not, for
+/// a review that cannot be analysed.
+pub fn analyse_review(raw: &Value) -> Result<Value, String> {
     let analysis = analyse(&Review::read(raw)?)?;
     let [white, black] = analysis.sides;
     let mut out = Map::new();
@@ -553,7 +558,7 @@ pub fn analyse_review(raw: &Value) -> Option<Value> {
     if let Some(chances) = analysis.start_chances {
         out.insert("startChances".into(), json!(chances));
     }
-    Some(Value::Object(out))
+    Ok(Value::Object(out))
 }
 
 /// Where the middlegame and the endgame begin, in a simpler form of Lichess's division, in a game of `count` plies from `pos`, as ply
@@ -597,8 +602,8 @@ pub fn phase_starts(
 /// the game's, the phases divided by `phase_starts` (a simpler form of Lichess's division). None
 /// when the review cannot be analysed.
 pub fn review_phases(raw: &Value) -> Option<Value> {
-    let review = Review::read(raw)?;
-    let analysis = analyse(&review)?;
+    let review = Review::read(raw).ok()?;
+    let analysis = analyse(&review).ok()?;
     let count = analysis.colors.len();
     let start = replay::start_of(review.variant, review.fen)?;
     let (middle, end) = phase_starts(start, count, |pos, i| {
@@ -626,8 +631,8 @@ pub fn review_phases(raw: &Value) -> Option<Value> {
 
 /// Display classifications enrich review labels without changing Lichess judgments or practice.
 pub fn review_classifications(raw: &Value) -> Option<Value> {
-    let review = Review::read(raw)?;
-    let analysis = analyse(&review)?;
+    let review = Review::read(raw).ok()?;
+    let analysis = analyse(&review).ok()?;
     let mut pos = replay::start_of(review.variant, review.fen)?;
     let evals = raw.get("evals")?.as_array()?;
     let mut labels = Vec::with_capacity(analysis.moves.len());
@@ -757,8 +762,8 @@ fn sound_sacrifice(
     material(&line) <= baseline - 2
 }
 
-/// `summarize`: what the game list shows for a review.
-pub fn summarize(raw: &Value) -> Option<Value> {
+/// `summarize`: what the game list shows for a review; why not, for one that cannot be analysed.
+pub fn summarize(raw: &Value) -> Result<Value, String> {
     let analysis = analyse(&Review::read(raw)?)?;
     let [white, black] = analysis.sides;
     let field = |key: &str| raw.get(key).cloned();
@@ -770,7 +775,7 @@ pub fn summarize(raw: &Value) -> Option<Value> {
     }
     out.insert("white".into(), white);
     out.insert("black".into(), black);
-    Some(Value::Object(out))
+    Ok(Value::Object(out))
 }
 
 /* ── Synced Lichess games ── */
@@ -858,6 +863,27 @@ pub fn lichess_line_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A review with a score that is not a number, or a start that is not a legal position,
+    /// was analysed as `null`, with nothing to say why.
+    #[test]
+    fn a_review_that_cannot_be_analysed_says_why() {
+        let review = |fen: &str, evals: Value| json!({ "fen": fen, "moves": ["e2e4"], "evals": evals, "source": "kchess" });
+        let scored = json!([{ "cp": 20 }, { "cp": 30 }]);
+        assert!(analyse_review(&review(INITIAL_FEN, scored.clone())).is_ok());
+        assert_eq!(
+            analyse_review(&review(INITIAL_FEN, json!([{ "cp": "20" }, { "cp": 30 }]))),
+            Err("the review's evals is malformed".into())
+        );
+        assert_eq!(
+            analyse_review(&review("8/8/8/8/8/8/8/8 w - - 0 1", scored.clone())),
+            Err("the review's start is not a legal position".into())
+        );
+        assert_eq!(
+            summarize(&json!({ "fen": INITIAL_FEN, "evals": scored })),
+            Err("the review's moves is malformed".into())
+        );
+    }
 
     #[test]
     fn reads_variant_lichess_lines() {

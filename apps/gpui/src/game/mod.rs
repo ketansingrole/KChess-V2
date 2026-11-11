@@ -28,6 +28,7 @@ pub const CLOCKS: &[(&str, Option<(f64, f64)>)] = &[
 /// The usual starting position.
 pub const STANDARD_FEN: &str = kchess_domain::rules::INITIAL_FEN;
 
+use kchess_domain::variant::Variant;
 use serde_json::{Value, json};
 
 pub use kchess_domain::links::{
@@ -37,7 +38,7 @@ pub use kchess_domain::links::{
 pub use kchess_games::{computer, draw_color, local, random_chess960, random_unit, whole};
 
 /// A `{ variant, fen }` setup's UCI moves as PGN, as far as they are legal, after `headers` (a
-/// JSON object of strings). `None` when the setup or a header is not one.
+/// JSON object of strings). `None` when the setup is not a legal one or a header is not one.
 pub fn setup_pgn(setup: &Value, moves: &[String], headers: &Value) -> Option<String> {
     let (variant, fen) = (setup["variant"].as_str()?, setup["fen"].as_str()?);
     let headers: Vec<(&str, &str)> = match headers {
@@ -47,7 +48,7 @@ pub fn setup_pgn(setup: &Value, moves: &[String], headers: &Value) -> Option<Str
             .collect::<Option<_>>()?,
         _ => Vec::new(),
     };
-    Some(kchess_domain::pgn::setup_pgn(variant, fen, moves, &headers))
+    kchess_domain::pgn::setup_pgn(variant, fen, moves, &headers).ok()
 }
 
 use kchess_contracts::Level;
@@ -213,7 +214,7 @@ pub fn analysable(variant: &str) -> bool {
 /// plays with king-takes-rook castling. Stockfish reviews them and their mistakes become drills;
 /// Fairy-Stockfish reviews the other variants.
 pub fn standard_rules(variant: &str) -> bool {
-    matches!(variant, "standard" | "chess960")
+    Variant::from_key(variant).is_some_and(Variant::standard_rules)
 }
 
 /// Whether a PGN's `Variant` header names a game the analysis board can play (any variant KChess
@@ -238,30 +239,7 @@ pub fn pgn_variant_key(pgn: &str) -> Option<&'static str> {
         }
         rest = tag[end + 1..].trim_start();
     }
-    variant_key(name)
-}
-
-/// The Lichess key of the variant a PGN `Variant` header value names, standard without one;
-/// `None` for a variant KChess does not know.
-pub fn variant_key(name: Option<&str>) -> Option<&'static str> {
-    use shakmaty::variant::Variant;
-    Some(match kchess_domain::rules::pgn_variant(name)? {
-        Variant::Chess => {
-            let name = name.unwrap_or_default().to_lowercase();
-            if name.contains("960") || name.contains("fischer") {
-                "chess960"
-            } else {
-                "standard"
-            }
-        }
-        Variant::Crazyhouse => "crazyhouse",
-        Variant::KingOfTheHill => "kingOfTheHill",
-        Variant::ThreeCheck => "threeCheck",
-        Variant::Antichess => "antichess",
-        Variant::Atomic => "atomic",
-        Variant::Horde => "horde",
-        Variant::RacingKings => "racingKings",
-    })
+    Variant::from_pgn_name(name).map(Variant::key)
 }
 
 /// A position's setup for a game started from it: Chess960 when it can still castle with a king
@@ -385,8 +363,8 @@ mod setup_tests {
     }
 }
 
-/// A variant's Lichess key, its name and its one-line hint (`data/variants.json`).
-#[derive(serde::Deserialize, Clone, Debug)]
+/// A variant's Lichess key, its name and its one-line hint.
+#[derive(Clone, Debug)]
 pub struct VariantText {
     pub key: String,
     pub label: String,
@@ -397,20 +375,23 @@ pub struct VariantText {
 pub fn variants() -> &'static [VariantText] {
     static VARIANTS: std::sync::OnceLock<Vec<VariantText>> = std::sync::OnceLock::new();
     VARIANTS.get_or_init(|| {
-        serde_json::from_str(include_str!(
-            "../../../../crates/kchess-domain/data/variants.json"
-        ))
-        .unwrap_or_default()
+        Variant::ALL
+            .into_iter()
+            .map(|variant| VariantText {
+                key: variant.key().into(),
+                label: variant.label().into(),
+                hint: variant.hint().into(),
+            })
+            .collect()
     })
 }
 
 /// A variant's name ("King of the Hill") from its key ("kingOfTheHill"); the key itself for one
 /// KChess does not know.
 pub fn variant_label(key: &str) -> String {
-    variants()
-        .iter()
-        .find(|text| text.key == key)
-        .map_or_else(|| key.to_string(), |text| text.label.clone())
+    Variant::from_key(key)
+        .map_or(key, |variant| variant.label())
+        .to_string()
 }
 
 /// What a game page names its start by: the variant ("Crazyhouse"), or "From position" for

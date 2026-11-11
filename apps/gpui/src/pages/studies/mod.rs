@@ -228,7 +228,10 @@ fn import_chapters(text: &str) -> Result<Vec<(String, String)>, &'static str> {
 
 /// An imported study's name when none is given: its players, else its event.
 fn import_name(first: &str) -> Option<String> {
-    let headers = TreeNode::from_pgn(first)?.headers.unwrap_or_default();
+    let headers = TreeNode::from_pgn(first)?
+        .headers
+        .take()
+        .unwrap_or_default();
     let header = |key: &str| {
         headers
             .get(key)
