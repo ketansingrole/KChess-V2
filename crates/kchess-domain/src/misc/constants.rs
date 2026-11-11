@@ -33,7 +33,8 @@ pub const ONLINE_ACTIONS: &[&str] = &[
     "claimDraw",
     "berserk",
 ];
-pub const CORRESPONDENCE_DAYS: &[f64] = &[1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 14.0];
+/// The days per move a correspondence game may give.
+pub const CORRESPONDENCE_DAYS: [f64; 7] = [1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 14.0];
 pub const DECLINE_REASONS: &[&str] = &[
     "generic",
     "later",
@@ -133,7 +134,8 @@ pub const EXPLORER_SPEEDS: &[&str] = &[
     "classical",
     "correspondence",
 ];
-pub const EXPLORER_RATINGS: &[f64] = &[
+/// The rating groups of the Lichess opening explorer, in order.
+pub const EXPLORER_RATINGS: [f64; 9] = [
     400.0, 1000.0, 1200.0, 1400.0, 1600.0, 1800.0, 2000.0, 2200.0, 2500.0,
 ];
 /// Lichess variant keys KChess can play: the one list every crate checks a variant against.
@@ -147,18 +149,6 @@ pub const VARIANTS: &[&str] = &[
     "horde",
     "racingKings",
     "crazyhouse",
-];
-/// The settings the core keeps, in its order.
-pub const CORE_SETTINGS_KEYS: &[&str] = &[
-    "enginePath",
-    "engineLevels",
-    "reviewAuto",
-    "reviewOnBattery",
-    "receiveChallenges",
-    "onlineChat",
-    "correspondencePoll",
-    "cloudEval",
-    "voiceHistory",
 ];
 pub const SESSION_KINDS: &[&str] = &[
     "analysis",

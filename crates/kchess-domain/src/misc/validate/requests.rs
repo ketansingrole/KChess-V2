@@ -169,7 +169,7 @@ pub(super) fn assert_online_options(value: J) -> Checked<OnlineOptions> {
     one_of(&options.color, CHALLENGE_COLORS, Some("Invalid color."), "")?;
     if let Some(days) = options.days {
         let msg = Some("Invalid days per move.");
-        one_of_numbers(days as f64, CORRESPONDENCE_DAYS, msg, "")?;
+        one_of_numbers(days as f64, &CORRESPONDENCE_DAYS, msg, "")?;
     }
     if let Some(variant) = &options.variant {
         one_of(variant, VARIANTS, Some("Invalid variant."), "")?;
@@ -276,7 +276,7 @@ pub(super) fn assert_theme(value: J) -> Checked<Theme> {
     Ok(theme)
 }
 
-/// The settings the core keeps (`CORE_SETTINGS_KEYS`), in its order.
+/// The settings the core keeps, in its order.
 #[derive(Deserialize, Serialize)]
 #[serde(expecting = "an object")]
 #[serde(rename_all = "camelCase")]
@@ -1207,7 +1207,7 @@ pub fn assert_lookup_options(value: J) -> Checked<LookupOptions> {
     }
     if let Some(ratings) = &options.ratings {
         each(ratings, |rating| {
-            one_of_numbers(*rating as f64, EXPLORER_RATINGS, None, "ratings")
+            one_of_numbers(*rating as f64, &EXPLORER_RATINGS, None, "ratings")
         })?;
         max_items(ratings, 9, None, "ratings")?;
     }

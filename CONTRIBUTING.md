@@ -36,10 +36,10 @@ To reproduce CI's Linux build locally, start Docker (on macOS, `brew install col
 - Match the surrounding code: naming, comment density, and idiom. `cargo fmt` formats it.
 - Put headless features in the core (`crates/kchess-core`) behind `CoreApi` (`kchess-contracts`),
   pure chess or training rules in `crates/kchess-domain`, and views in `apps/gpui`. Documents a
-  user keeps belong in the core's library. Every core method validates its arguments
-  (`crates/kchess-domain/src/misc/contracts.rs`).
+  user keeps belong in the core's library. Every core method names a check for each argument in
+  its `core_api!` declaration (`crates/kchess-contracts/src/core_api.rs`).
 - New settings need three things: the `Settings` type, the `SETTINGS_KEYS` list in
-  `crates/kchess-core/src/store/mod.rs`, and a new entry at the end of `MIGRATIONS` in
+  `crates/kchess-core/src/store/games.rs`, and a new entry at the end of `MIGRATIONS` in
   `crates/kchess-core/src/store/migrations.rs` (never edit an earlier migration).
 - Be gentle with Lichess. Bulk downloads run one request at a time, and requests should be
   attributed for the data-usage counters (`with_usage` in `crates/kchess-core/src/lichess`).

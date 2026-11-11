@@ -31,10 +31,10 @@ subscribe to its events, usually through the shared core service; host capabilit
 
 The core is called as `call(method, args) → json`, by name, by design: one dispatch serves the
 app, the CLI and the shared core service alike. Typing lands elsewhere: the method list in
-`CoreApi`, the argument tables in `kchess-domain` `misc/contracts.rs` (a validator for every
-argument; minimum arity, no excess arguments), and typed `arg<T>` / `json<T>` at each call site in
-`kchess-core/src/core.rs`. `kchess-core/tests/core/facade_dispatch.rs` pins the names a string can
-get wrong: the facade answers exactly `CoreApi`. The core calls the domain's rules as typed
+one `core_api!` declaration per method in `kchess-contracts` (a check for every argument; minimum
+arity, no excess arguments), which makes the `CoreApi` traits the core implements and the dispatch
+that runs a call by name on them. `kchess-core/tests/core/facade_dispatch.rs` pins the names a
+string can get wrong: the core answers exactly `METHODS`. The core calls the domain's rules as typed
 functions.
 
 ## Stateful modules

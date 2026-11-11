@@ -271,8 +271,9 @@ window can do.
 KChess apps from different releases do not share a core. A person running two apps updates the
 older one; nothing tries to make two versions work together.
 
-- Every build computes a **protocol hash**: a hash of `methods()` and `CoreEvents` in
-  `kchess-contracts`, plus the framing version. Clients built from the same release always agree.
+- Every build computes a **protocol hash**: a hash of the method names and parameters
+  (`METHODS`), the event names (`CoreEvent::NAMES`) and the error kinds in `kchess-contracts`,
+  plus the framing version. Clients built from the same release always agree.
 - `hello` carries the client's app, release and protocol hash.
   - Same hash: `welcome`.
   - Different hash, and the client is the only connection: the service closes and the client

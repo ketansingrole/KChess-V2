@@ -29,6 +29,7 @@ use crate::play_layout::Measured;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill};
+use kchess_domain::misc::constants::EXPLORER_RATINGS;
 
 const PREFS: &str = "kchess:explorer";
 /// Following moves waits for the board to settle.
@@ -57,8 +58,6 @@ const SPEEDS: [(&str, &str); 6] = [
     ("classical", "Classical"),
     ("correspondence", "Corr"),
 ];
-/// `EXPLORER_RATINGS`.
-const RATINGS: [f64; 9] = [400., 1000., 1200., 1400., 1600., 1800., 2000., 2200., 2500.];
 
 /// The explorer's settings, as both apps keep them.
 #[derive(Clone, Serialize, Deserialize)]
@@ -647,7 +646,7 @@ impl PositionExplorer {
                     h_flex()
                         .flex_wrap()
                         .gap(px(4.))
-                        .children(RATINGS.map(|rating| {
+                        .children(EXPLORER_RATINGS.map(|rating| {
                             toggle(
                                 SharedString::from(format!("rating-{rating}")),
                                 format!("{rating}"),

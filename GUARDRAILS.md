@@ -57,10 +57,11 @@ whose CI did not run and pass every job, and every push to `main` runs CI to the
 - The core (`crates/kchess-core`) never depends on a frontend. Frontends reach it by `CoreApi`
   method name, through the profile's core service or an embedded core; host capabilities they
   answer (`openExternal`, `focus`, `onBattery`) arrive as `host:request` events.
-- Every core method has a row in the argument table (`crates/kchess-domain/src/misc/contracts.rs`)
-  naming a validator for every argument, including optional ones; it declares the minimum arity
-  and rejects excess arguments before any check runs. Domain and service validation still runs
-  after. `tests/facade_dispatch.rs` checks the facade answers exactly the methods of `CoreApi`.
+- Every core method is declared once in `core_api!` (`crates/kchess-contracts/src/core_api.rs`),
+  naming a check for every argument, including optional ones; a call with too few or too many
+  arguments is refused before any check runs. Domain and service validation still runs after. The
+  core implements the trait the declaration makes, so a method it does not answer fails to
+  compile; `tests/core/facade_dispatch.rs` checks it answers no other name.
 - The Rust puzzle service is the only owner of `puzzles.db`; the core's store
   (`crates/kchess-core/src/store`) is the only owner of `kchess.db`.
 

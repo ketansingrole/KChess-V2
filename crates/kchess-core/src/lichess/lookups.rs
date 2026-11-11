@@ -38,10 +38,7 @@ pub const EXPLORER_SPEEDS: [&str; 6] = [
     "classical",
     "correspondence",
 ];
-/// `EXPLORER_RATINGS` of the contracts.
-pub const EXPLORER_RATINGS: [f64; 9] = [
-    400.0, 1000.0, 1200.0, 1400.0, 1600.0, 1800.0, 2000.0, 2200.0, 2500.0,
-];
+use kchess_domain::misc::constants::EXPLORER_RATINGS;
 
 const CLOUD_TTL: Duration = Duration::from_secs(10 * 60);
 const CLOUD_MAX: usize = 500;

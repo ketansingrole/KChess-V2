@@ -18,6 +18,7 @@ use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
+use kchess_domain::misc::constants::CORRESPONDENCE_DAYS;
 use kchess_domain::records::time_control::{
     can_direct_challenge, can_play_online, perf_for, total_seconds,
 };
@@ -36,8 +37,6 @@ const TIME_CONTROLS: [(f64, &str); 6] = [
     (60., "Classical"),
 ];
 const INCREMENTS: [f64; 7] = [0., 1., 2., 3., 5., 10., 20.];
-/// `CORRESPONDENCE_DAYS`.
-const DAYS: [f64; 7] = [1., 2., 3., 5., 7., 10., 14.];
 
 /// "5+3 · Rapid · Casual", or "3 days per move · Casual" (`summary`).
 pub fn summary(form: &crate::online::Form, variant_label: Option<&str>) -> String {
@@ -600,7 +599,8 @@ impl OnlinePage {
                 None,
                 pills(
                     "online-days",
-                    DAYS.iter()
+                    CORRESPONDENCE_DAYS
+                        .iter()
                         .map(|days| {
                             (
                                 None,
@@ -608,8 +608,11 @@ impl OnlinePage {
                             )
                         })
                         .collect(),
-                    DAYS.iter().position(|days| *days == form.days).unwrap_or(2),
-                    |form, index| form.days = DAYS[index],
+                    CORRESPONDENCE_DAYS
+                        .iter()
+                        .position(|days| *days == form.days)
+                        .unwrap_or(2),
+                    |form, index| form.days = CORRESPONDENCE_DAYS[index],
                 )
                 .into_any_element(),
             ));

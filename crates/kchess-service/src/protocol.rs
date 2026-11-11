@@ -14,13 +14,6 @@ pub const MAX_FRAME: usize = 16 * 1024 * 1024;
 /// Raised when the framing itself changes; part of the protocol fingerprint.
 const FRAMING: &str = "kchess-frames-1";
 
-/// The contracts both sides are built from: every method and event, with their types.
-const CONTRACTS: [&str; 3] = [
-    include_str!("../../kchess-contracts/src/core_api.rs"),
-    include_str!("../../kchess-contracts/src/types.rs"),
-    include_str!("../../kchess-contracts/src/library.rs"),
-];
-
 /// What a client can do for the core when it asks (`host:request`), by name.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -102,7 +95,7 @@ pub enum Frame {
     },
     /// Stop a call in flight; its result is an error.
     Cancel { id: u64 },
-    /// A core event (`CoreEvents` names, and `host:request`).
+    /// A core event (a `CoreEvent` by its name).
     Event { name: String, payload: Value },
     /// The client's window gained or lost focus.
     Focus { focused: bool },
@@ -114,13 +107,28 @@ pub fn release() -> String {
     env!("KCHESS_RELEASE").to_string()
 }
 
-/// The protocol fingerprint: the framing and the contracts this build speaks. Two builds share a
-/// core only when theirs match.
+/// The protocol fingerprint: the framing, and the methods, events and error kinds this build
+/// speaks. Two builds share a core only when theirs match.
 pub fn protocol() -> String {
     let mut hash = Sha256::new();
-    hash.update(FRAMING.as_bytes());
-    for contract in CONTRACTS {
-        hash.update(contract.as_bytes());
+    let mut add = |part: &str| {
+        hash.update(part.as_bytes());
+        hash.update([0]);
+    };
+    add(FRAMING);
+    for method in kchess_contracts::core_api::METHODS {
+        add(method.name);
+        for param in method.params {
+            add(param.name);
+            add(if param.optional { "?" } else { "" });
+        }
+        add(")");
+    }
+    for name in kchess_contracts::CoreEvent::NAMES {
+        add(name);
+    }
+    for kind in kchess_contracts::ErrorKind::ALL {
+        add(kind.as_str());
     }
     hex(&hash.finalize()[..8])
 }
