@@ -719,63 +719,63 @@ fn recorded_answers_read_back_as_their_contract_types() {
         assert_eq!(sent, recorded, "{name} as {} changed", C::METHOD);
     }
 
+    macro_rules! readers {
+        ($($call:ident),* $(,)?) => {
+            [$((calls::$call::METHOD, reads_back::<calls::$call> as fn(&str)),)*]
+        };
+    }
+    // The voice log document is recorded parsed, so it is not read back here.
+    let readers = readers!(
+        PuzzleNext,
+        PuzzleSolve,
+        PuzzleDaily,
+        PuzzleById,
+        PuzzleDashboard,
+        PuzzleActivity,
+        StormDashboard,
+        PuzzleDbStatus,
+        PuzzleDbCancel,
+        PuzzleDbDelete,
+        LocalPuzzles,
+        LocalLadder,
+        RecordPuzzleAttempt,
+        PuzzleProgress,
+        SaveRun,
+        RunSummary,
+        ClearRuns,
+        SaveVoiceAttempt,
+        UpdateVoiceAttempt,
+        VoiceHistory,
+        ClearVoiceHistory,
+        Library,
+        StudyCommand,
+        SaveArchivedGame,
+        AddMistakes,
+        AnswerMistake,
+        MistakeGames,
+        SaveSession,
+        JoinedTournaments,
+        Session,
+        Mistakes,
+        RecordRepertoireMiss,
+        ClearRepertoireMisses,
+        RestoreRepertoireMisses,
+        ReviewRepertoireLine,
+        ViewPreferences,
+        SetViewPreference,
+        Usage,
+        ResetUsage,
+    );
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wire");
     let mut checked = 0;
     for entry in std::fs::read_dir(dir).expect("the recordings") {
         let file = entry.expect("a recording").file_name();
         let name = file.to_string_lossy().trim_end_matches(".json").to_string();
         let method = name.split('.').next().unwrap_or_default();
-        macro_rules! by_method {
-            ($($call:ident),* $(,)?) => {
-                match method {
-                    $(m if m == calls::$call::METHOD => reads_back::<calls::$call>(&name),)*
-                    _ => continue,
-                }
-            };
+        if let Some((_, read)) = readers.iter().find(|(called, _)| *called == method) {
+            read(&name);
+            checked += 1;
         }
-        // The voice log document is recorded parsed, so it is not read back here.
-        by_method!(
-            PuzzleNext,
-            PuzzleSolve,
-            PuzzleDaily,
-            PuzzleById,
-            PuzzleDashboard,
-            PuzzleActivity,
-            StormDashboard,
-            PuzzleDbStatus,
-            PuzzleDbCancel,
-            PuzzleDbDelete,
-            LocalPuzzles,
-            LocalLadder,
-            RecordPuzzleAttempt,
-            PuzzleProgress,
-            SaveRun,
-            RunSummary,
-            ClearRuns,
-            SaveVoiceAttempt,
-            UpdateVoiceAttempt,
-            VoiceHistory,
-            ClearVoiceHistory,
-            Library,
-            StudyCommand,
-            SaveArchivedGame,
-            AddMistakes,
-            AnswerMistake,
-            MistakeGames,
-            SaveSession,
-            JoinedTournaments,
-            Session,
-            Mistakes,
-            RecordRepertoireMiss,
-            ClearRepertoireMisses,
-            RestoreRepertoireMisses,
-            ReviewRepertoireLine,
-            ViewPreferences,
-            SetViewPreference,
-            Usage,
-            ResetUsage,
-        );
-        checked += 1;
     }
     assert!(checked >= 80, "only {checked} recordings were read back");
 }

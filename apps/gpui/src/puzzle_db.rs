@@ -14,10 +14,10 @@ use crate::assets::icon;
 use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, format_bytes};
+use kchess_contracts::types::PuzzleDbStatus;
 
 pub struct PuzzleDb {
-    /// `PuzzleDbStatus`: installed, count, bytes, importedAt, busy.
-    pub status: Value,
+    pub status: PuzzleDbStatus,
     progress: Option<Value>,
     error: Option<String>,
     _events: Subscription,
@@ -32,7 +32,7 @@ impl Global for PuzzleDbHandle {}
 pub fn init(cx: &mut App) {
     let events = cx.global::<AppCore>().events.clone();
     let db = cx.new(|cx: &mut Context<PuzzleDb>| PuzzleDb {
-        status: Value::Null,
+        status: PuzzleDbStatus::default(),
         progress: None,
         error: None,
         _events: cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
@@ -48,7 +48,7 @@ pub fn init(cx: &mut App) {
 
 impl PuzzleDb {
     pub fn installed(&self) -> bool {
-        self.status["installed"] == json!(true)
+        self.status.installed
     }
 
     /// Read the database's state again (a page was shown).
@@ -143,7 +143,7 @@ impl PuzzleDb {
     }
 
     fn busy(&self) -> bool {
-        self.status["busy"] == json!(true)
+        self.status.busy
             || self.progress.as_ref().is_some_and(|progress| {
                 matches!(
                     progress["phase"].as_str(),
@@ -227,19 +227,15 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
                 ),
             )
             .into_any_element()
-    } else if this.status["installed"] == json!(true) {
+    } else if this.status.installed {
         let mut line = format!(
             "{} · {} on disk",
-            widgets::format_counted(
-                this.status["count"].as_f64().unwrap_or_default(),
-                "puzzle",
-                "puzzles"
-            ),
-            format_bytes(this.status["bytes"].as_f64().unwrap_or_default())
+            widgets::format_counted(this.status.count as f64, "puzzle", "puzzles"),
+            format_bytes(this.status.bytes as f64)
         );
-        if let Some(at) = this.status["importedAt"].as_f64() {
+        if let Some(at) = this.status.imported_at {
             use chrono::TimeZone as _;
-            if let Some(day) = chrono::Local.timestamp_millis_opt(at as i64).single() {
+            if let Some(day) = chrono::Local.timestamp_millis_opt(at).single() {
                 line.push_str(&format!(" · downloaded {}", day.format("%-m/%-d/%Y")));
             }
         }

@@ -8,7 +8,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::calls;
-use serde_json::{Value, json};
+use kchess_contracts::check::LibraryId;
+use serde_json::Value;
 use shakmaty::{Color, Square};
 
 use super::AnalysisPage;
@@ -250,13 +251,13 @@ impl AnalysisPage {
 
     fn answer_mistake(&mut self, item: &Value, clean: bool, cx: &mut Context<Self>) {
         let answered = cx.global::<AppCore>().request(calls::AnswerMistake {
-            id: item["id"].clone(),
-            solved: json!(clean),
+            id: LibraryId(item["id"].as_str().unwrap_or_default().to_string()),
+            solved: clean,
         });
         cx.spawn(async move |this, cx| match answered.await {
             Ok(items) => {
                 let _ = this.update(cx, |this, _| {
-                    this.review.mistakes = items.as_array().cloned().unwrap_or_default();
+                    this.review.mistakes = items;
                 });
             }
             Err(cause) => crate::log::write(

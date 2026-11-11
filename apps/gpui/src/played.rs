@@ -8,7 +8,9 @@ use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
 use kchess_contracts::Level;
 use kchess_contracts::calls;
-use kchess_contracts::check::LibraryId;
+use kchess_contracts::check::{ArchivedGame, LibraryId, SessionObject};
+use kchess_contracts::types::Library;
+use kchess_contracts::types::SessionKind;
 use serde_json::{Value, json};
 
 use crate::core::{Answer, AppCore, Reads};
@@ -54,8 +56,8 @@ pub struct PlayedHandle(pub Entity<PlayedGames>);
 impl Global for PlayedHandle {}
 
 /// Start from the games of the library read before the first page opens, and start the writer.
-pub fn init(library: &Value, cx: &mut App) {
-    let games = library["games"].as_array().cloned().unwrap_or_default();
+pub fn init(library: &Library, cx: &mut App) {
+    let games = library.games.clone();
     let (writes, queue) = mpsc::unbounded();
     let entity = cx.new(|_| PlayedGames {
         games,
@@ -136,7 +138,9 @@ fn write_in_order(
 async fn send(core: &AppCore, write: &Write) -> Result<(), kchess_contracts::CoreError> {
     match write {
         Write::Game(game) => core
-            .request(calls::SaveArchivedGame { game: game.clone() })
+            .request(calls::SaveArchivedGame {
+                game: ArchivedGame(game.clone()),
+            })
             .await
             .map(drop),
         Write::Remove(id) => {
@@ -145,13 +149,16 @@ async fn send(core: &AppCore, write: &Write) -> Result<(), kchess_contracts::Cor
             })
             .await
         }
-        Write::Session(key, value) => core
-            .request(calls::SaveSession {
-                kind: json!(key),
-                session: value.clone(),
+        Write::Session(key, value) => {
+            let kind = SessionKind::named(key).ok_or_else(|| {
+                kchess_contracts::CoreError::new(format!("No session is kept as {key}."))
+            })?;
+            core.request(calls::SaveSession {
+                kind,
+                session: SessionObject(value.clone()),
             })
             .await
-            .map(drop),
+        }
         Write::Flushed(..) => Ok(()),
     }
 }
@@ -267,10 +274,8 @@ impl PlayedGames {
             }) else {
                 return;
             };
-            if let Ok(library) = library.await
-                && let Some(games) = library["games"].as_array()
-            {
-                let games = games.clone();
+            if let Ok(library) = library.await {
+                let games = library.games;
                 let _ = this.update(cx, |this, cx| match this.reads.answer(read) {
                     Answer::Show => {
                         this.games = games;

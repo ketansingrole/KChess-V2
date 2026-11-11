@@ -4,7 +4,7 @@
 
 use kchess_contracts::calls;
 use kchess_contracts::check::Username;
-use kchess_contracts::types::{LichessStudy, Reply};
+use kchess_contracts::types::{ChapterInput, LichessStudy, RemoteStudy, Reply, StudyCommand};
 use std::collections::HashMap;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -233,27 +233,35 @@ impl StudiesPage {
                         return;
                     }
                 };
-                let chapters: Vec<Value> = chapters
+                let text = |chapter: &Value, key: &str| {
+                    chapter[key].as_str().unwrap_or_default().to_string()
+                };
+                let chapters: Vec<ChapterInput> = chapters
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .map(|chapter| json!({ "name": chapter["name"], "pgn": chapter["pgn"] }))
+                    .map(|chapter| ChapterInput {
+                        name: text(chapter, "name"),
+                        pgn: text(chapter, "pgn"),
+                    })
                     .collect();
                 // A chapter in a variant KChess does not play cannot be replayed.
                 if chapters
                     .iter()
-                    .any(|chapter| !crate::game::pgn_analysable(chapter["pgn"].as_str().unwrap_or_default()))
+                    .any(|chapter| !crate::game::pgn_analysable(&chapter.pgn))
                 {
                     let note = super::VARIANT_IMPORT.to_string();
                     let _ = cx.update(|window, cx| fail(note, window, cx));
                     return;
                 }
-                let command = json!({
-                    "op": "offline",
-                    "account": account,
-                    "remote": { "id": id, "name": item.name },
-                    "chapters": chapters,
-                });
+                let command = StudyCommand::Offline {
+                    account,
+                    remote: RemoteStudy {
+                        id,
+                        name: item.name,
+                    },
+                    chapters,
+                };
                 let answer = cx.update(|_, cx| library.read(cx).command(command));
                 let Ok(answer) = answer else { return };
                 let result = answer.await;
@@ -263,10 +271,10 @@ impl StudiesPage {
                             library.apply(&result);
                             cx.notify();
                         });
-                        match result["id"].as_str() {
+                        match result.id {
                             Some(saved) => then(
-                                saved.to_string(),
-                                result["conflict"] == json!(true),
+                                saved,
+                                result.conflict == Some(true),
                                 window,
                                 cx,
                             ),

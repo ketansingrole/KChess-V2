@@ -8,8 +8,8 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{IndexPath, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
-use kchess_contracts::types::CoordinateMode;
-use serde_json::{Value, json};
+use kchess_contracts::types::{CoordinateMode, RunKind, RunSummary};
+use serde_json::json;
 use shakmaty::{Color, Square};
 
 use super::run::{self, RunClock};
@@ -76,8 +76,8 @@ pub struct KnightPaths {
     missed: u32,
     notice: Option<String>,
     clock: RunClock,
-    summary: Value,
-    saved: Value,
+    summary: Option<RunSummary>,
+    is_best: bool,
     level_select: Entity<SelectState<Vec<SharedString>>>,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
@@ -147,8 +147,8 @@ impl KnightPaths {
                 },
             ),
         ];
-        run::load_summary("knightPath", cx, |this, summary, cx| {
-            this.summary = summary;
+        run::load_summary(RunKind::KnightPath, cx, |this, summary, cx| {
+            this.summary = Some(summary);
             cx.notify();
         });
         let mut drill = KnightPaths {
@@ -164,8 +164,8 @@ impl KnightPaths {
             missed: 0,
             notice: None,
             clock: RunClock::default(),
-            summary: Value::Null,
-            saved: Value::Null,
+            summary: None,
+            is_best: false,
             level_select,
             board,
             layout: PlayLayout::default(),
@@ -214,7 +214,7 @@ impl KnightPaths {
         self.reached = 0;
         self.missed = 0;
         self.notice = None;
-        self.saved = Value::Null;
+        self.is_best = false;
         self.next_round(cx);
         self.stage = Stage::Running;
         self.clock.start(Self::length(cx));
@@ -336,15 +336,15 @@ impl KnightPaths {
         if self.clock.untimed {
             return;
         }
-        let run = json!({
-            "kind": "knightPath",
-            "variant": self.record_variant(cx),
-            "score": self.optimal,
-            "detail": { "reached": self.reached, "skipped": self.missed },
-        });
+        let run = run::input(
+            RunKind::KnightPath,
+            self.record_variant(cx),
+            f64::from(self.optimal),
+            json!({ "reached": self.reached, "skipped": self.missed }),
+        );
         run::save_run(run, cx, |this, saved, cx| {
-            this.summary = saved["summary"].clone();
-            this.saved = saved;
+            this.is_best = saved.is_best;
+            this.summary = Some(saved.summary);
             cx.notify();
         });
     }
@@ -509,9 +509,9 @@ impl Render for KnightPaths {
                         .on_click(cx.listener(|this, _, _, cx| this.finish(cx))),
                 );
         } else {
-            let best = run::best(&self.summary, &self.record_variant(cx));
+            let best = run::best(self.summary.as_ref(), &self.record_variant(cx));
             if self.stage == Stage::Over {
-                let is_best = !self.clock.untimed && self.saved["isBest"] == json!(true);
+                let is_best = !self.clock.untimed && self.is_best;
                 panel = panel.child(
                     widgets::StatusBanner::new(
                         if is_best { Tone::Win } else { Tone::Plain },

@@ -8,8 +8,8 @@
 
 use crate::game::tree::TreePgn as _;
 use kchess_contracts::calls;
-use kchess_contracts::check::Fen;
-use kchess_contracts::types::{LookupOptions, PositionLookupKind};
+use kchess_contracts::check::{Fen, MissCounts, Position, RepertoireKey, RepertoireLine};
+use kchess_contracts::types::{Keyed, LookupOptions, PositionLookupKind, StudyCommand};
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -386,8 +386,8 @@ impl Repertoire {
         cx.spawn(async move |this, cx| match library.await {
             Ok(library) => {
                 let _ = this.update(cx, |this, cx| {
-                    this.misses = library["repertoireMisses"].clone();
-                    this.schedule = library["repertoireSchedule"].clone();
+                    this.misses = library.repertoire_misses;
+                    this.schedule = library.repertoire_schedule;
                     // A due line comes first, also when the schedule arrived after the first line.
                     if this.target.is_none()
                         && this.correct + this.wrong == 0
@@ -916,9 +916,9 @@ impl Repertoire {
         }
         self.schedule = Value::Object(schedule);
         let saved = cx.global::<AppCore>().request(calls::ReviewRepertoireLine {
-            key: json!(key),
-            line: json!(line),
-            correct: json!(correct),
+            key: RepertoireKey(key),
+            line: RepertoireLine(line),
+            correct,
         });
         cx.spawn(async move |this, cx| match saved.await {
             Ok(schedule) => {
@@ -947,8 +947,8 @@ impl Repertoire {
         }
         table[&fen] = json!(table[&fen].as_f64().unwrap_or(0.) + 1.);
         let saved = cx.global::<AppCore>().request(calls::RecordRepertoireMiss {
-            key: json!(key),
-            fen: json!(fen),
+            key: RepertoireKey(key),
+            fen: Position(fen),
         });
         self.keep_misses(saved, "saving a repertoire miss", cx);
     }
@@ -967,10 +967,13 @@ impl Repertoire {
             .misses
             .as_object_mut()
             .and_then(|misses| misses.remove(&key))
-            .filter(|table| table.as_object().is_some_and(|table| !table.is_empty()));
+            .filter(|table| table.as_object().is_some_and(|table| !table.is_empty()))
+            .and_then(|table| serde_json::from_value::<Keyed<f64>>(table).ok());
         let saved = cx
             .global::<AppCore>()
-            .request(calls::ClearRepertoireMisses { key: json!(key) });
+            .request(calls::ClearRepertoireMisses {
+                key: RepertoireKey(key.clone()),
+            });
         self.keep_misses(saved, "clearing repertoire misses", cx);
         let Some(forgotten) = forgotten else {
             return;
@@ -987,8 +990,8 @@ impl Repertoire {
                         let saved =
                             cx.global::<AppCore>()
                                 .request(calls::RestoreRepertoireMisses {
-                                    key: json!(key),
-                                    misses: forgotten,
+                                    key: RepertoireKey(key),
+                                    misses: MissCounts(forgotten),
                                 });
                         page.keep_misses(saved, "restoring repertoire misses", cx);
                     });
@@ -1032,9 +1035,12 @@ impl Repertoire {
         let name = library.read(cx).fresh_name(&opening.name);
         self.saving = true;
         cx.notify();
-        let saved = library
-            .read(cx)
-            .command(json!({ "op": "save", "name": name, "pgn": tree.pgn_text() }));
+        let saved = library.read(cx).command(StudyCommand::Save {
+            name,
+            pgn: tree.pgn_text(),
+            id: None,
+            chapter_id: None,
+        });
         cx.spawn_in(window, async move |this, cx| {
             let saved = saved.await;
             let _ = this.update_in(cx, |this, window, cx| {

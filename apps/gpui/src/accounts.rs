@@ -8,6 +8,7 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, SharedString, Window};
 use kchess_contracts::Level;
 use kchess_contracts::calls;
+use kchess_contracts::types::UsageReport;
 use serde_json::{Value, json};
 
 use crate::core::{Answer, AppCore, Reads};
@@ -22,7 +23,7 @@ pub struct Accounts {
     /// `loadData`'s answer: the accounts and their sync state.
     pub data: Value,
     /// `usage`: bytes downloaded per account, and what each keeps (`UsageReport`).
-    pub usage: Value,
+    pub usage: UsageReport,
     /// `chesscomAccounts`: the Chess.com players synced, with when each last synced.
     pub chesscom: Value,
     /// An account action runs: connecting, following, importing, signing out or removing.
@@ -42,7 +43,7 @@ impl Global for AccountsHandle {}
 pub fn init(cx: &mut App) {
     let accounts = cx.new(|_| Accounts {
         data: Value::Null,
-        usage: Value::Null,
+        usage: UsageReport::default(),
         chesscom: Value::Null,
         busy: false,
         syncs: 0,
@@ -117,18 +118,23 @@ impl Accounts {
 
     /// `usageOf(username).total.bytesIn`.
     pub fn downloaded(&self, username: &str) -> f64 {
-        self.usage["accounts"][username.to_lowercase()]["total"]["bytesIn"]
-            .as_f64()
-            .unwrap_or_default()
+        self.usage
+            .accounts
+            .get(&username.to_lowercase())
+            .map_or(0.0, |account| account.total.bytes_in as f64)
     }
 
     /// `storageOf(username)`: games kept, and their bytes with the account's cache.
     pub fn stored(&self, username: &str) -> (f64, f64) {
-        let storage = &self.usage["storage"][username.to_lowercase()];
+        let storage = self
+            .usage
+            .storage
+            .get(&username.to_lowercase())
+            .copied()
+            .unwrap_or_default();
         (
-            storage["games"].as_f64().unwrap_or_default(),
-            storage["bytes"].as_f64().unwrap_or_default()
-                + storage["cacheBytes"].as_f64().unwrap_or_default(),
+            storage.games as f64,
+            (storage.bytes + storage.cache_bytes) as f64,
         )
     }
 
@@ -556,15 +562,11 @@ impl Accounts {
     }
 
     fn total_downloaded(&self) -> f64 {
-        self.usage["accounts"]
-            .as_object()
-            .map(|accounts| {
-                accounts
-                    .values()
-                    .filter_map(|account| account["total"]["bytesIn"].as_f64())
-                    .sum()
-            })
-            .unwrap_or_default()
+        self.usage
+            .accounts
+            .iter()
+            .map(|(_, account)| account.total.bytes_in as f64)
+            .sum()
     }
 
     /// `logout`: sign the online account out (every account when `all`).
@@ -663,7 +665,7 @@ mod tests {
     fn a_read_from_before_a_local_change_is_read_again() {
         let mut accounts = Accounts {
             data: json!({ "accounts": [] }),
-            usage: json!({}),
+            usage: Default::default(),
             chesscom: json!([]),
             busy: false,
             syncs: 0,

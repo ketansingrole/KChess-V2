@@ -92,9 +92,9 @@ impl DailyPuzzle {
         self.error = None;
         self.puzzle = None;
         cx.notify();
-        let puzzle = cx
-            .global::<AppCore>()
-            .request(calls::PuzzleById { id: id.into() });
+        let puzzle = cx.global::<AppCore>().request(calls::PuzzleById {
+            id: kchess_contracts::check::PuzzleId(id),
+        });
         self.fetch(puzzle, String::new(), cx);
     }
 
@@ -116,7 +116,9 @@ impl DailyPuzzle {
 
     fn fetch(
         &mut self,
-        request: impl std::future::Future<Output = Result<Value, kchess_contracts::CoreError>> + 'static,
+        request: impl std::future::Future<
+            Output = Result<kchess_contracts::types::Puzzle, kchess_contracts::CoreError>,
+        > + 'static,
         day: String,
         cx: &mut Context<Self>,
     ) {
@@ -132,6 +134,7 @@ impl DailyPuzzle {
                 this.loading = false;
                 match daily {
                     Ok(puzzle) => {
+                        let puzzle = serde_json::json!(puzzle);
                         this.board
                             .update(cx, |board, cx| board.start(&puzzle, None, cx));
                         this.puzzle = Some(puzzle);

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::game::tree::TreePgn as _;
+use kchess_contracts::types::{StudyCommand, StudyCommandResult};
 
 impl AnalysisPage {
     /// Write the board to its study when it changed there (`persistStudy`); the answer, for a
@@ -12,7 +13,10 @@ impl AnalysisPage {
             return None;
         }
         let library = cx.global::<StudyHandle>().0.clone();
-        let name = library.read(cx).study(&self.study)?["name"].clone();
+        let name = library.read(cx).study(&self.study)?["name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let text = self.root.pgn_text();
         if text == self.study_pgn {
             return None;
@@ -20,20 +24,19 @@ impl AnalysisPage {
         // Counted as saved while the core writes it; a failure makes it unsaved again.
         let previous = std::mem::replace(&mut self.study_pgn, text.clone());
         let (study, chapter) = (self.study.clone(), self.chapter.clone());
-        let command = library.read(cx).command(json!({
-            "op": "save",
-            "name": name,
-            "pgn": text,
-            "id": self.study,
-            "chapterId": self.chapter,
-        }));
+        let command = library.read(cx).command(StudyCommand::Save {
+            name,
+            pgn: text.clone(),
+            id: Some(self.study.clone()),
+            chapter_id: Some(self.chapter.clone()),
+        });
         let answer = (Box::pin(command) as std::pin::Pin<Box<dyn Future<Output = _>>>).shared();
         let outcome = answer.clone();
         self.study_writes += 1;
         let write = self.study_writes;
         self.study_writing = Some((write, answer.clone()));
         cx.spawn(async move |this, cx| {
-            let result: Result<Value, String> = outcome.await;
+            let result: Result<StudyCommandResult, String> = outcome.await;
             let _ = this.update(cx, |this, cx| {
                 if this
                     .study_writing
@@ -136,15 +139,15 @@ impl AnalysisPage {
         let navigation = self.navigation;
         let text = self.root.pgn_text();
         let library = cx.global::<StudyHandle>().0.clone();
-        let answer = library
-            .read(cx)
-            .command(json!({ "op": "save", "name": name, "pgn": text }));
+        let answer = library.read(cx).command(StudyCommand::Save {
+            name,
+            pgn: text.clone(),
+            id: None,
+            chapter_id: None,
+        });
         cx.spawn(async move |this, cx| {
             let result = answer.await?;
-            let id = result["id"]
-                .as_str()
-                .ok_or("The study could not be saved")?
-                .to_string();
+            let id = result.id.clone().ok_or("The study could not be saved")?;
             this.update(cx, |this, cx| {
                 library.update(cx, |library, cx| {
                     library.apply(&result);

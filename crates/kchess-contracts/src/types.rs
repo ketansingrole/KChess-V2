@@ -1570,7 +1570,7 @@ pub struct PuzzleDbProgress {
     pub message: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleDbStatus {
     pub installed: bool,

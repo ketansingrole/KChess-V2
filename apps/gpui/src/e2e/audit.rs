@@ -552,7 +552,9 @@ fn seed(app: &mut Harness) {
         "mode": "practice", "retry": false, "win": false, "revealed": false,
         "hinted": false, "found": 1, "wrong": 1, "total": 2, "day": day,
     });
-    app.request(kchess_contracts::calls::RecordPuzzleAttempt { attempt });
+    app.request(kchess_contracts::calls::RecordPuzzleAttempt {
+        attempt: serde_json::from_value(attempt).expect("an attempt"),
+    });
     let command = serde_json::json!({
         "op": "saveChapters",
         "name": "A study with a fairly long name to wrap",
@@ -562,7 +564,7 @@ fn seed(app: &mut Harness) {
         ],
     });
     app.request(kchess_contracts::calls::StudyCommand {
-        command,
+        command: serde_json::from_value(command).expect("a study command"),
         incremental: None,
         based_on: None,
     });

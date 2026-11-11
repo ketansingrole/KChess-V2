@@ -3,6 +3,7 @@
 //! and the best scores the core keeps for each drill (`runSummary`, `saveRun`).
 
 use kchess_contracts::calls;
+use kchess_contracts::types::{RunInput, RunKind, RunSaved, RunSummary};
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::h_flex;
@@ -10,7 +11,7 @@ use gpui_kit::component::v_flex;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -101,13 +102,11 @@ pub fn record_variant(base: &str, seconds: u32, default_seconds: u32) -> String 
 
 /// A drill's saved runs (`RunSummary`), read when it opens.
 pub fn load_summary<V: 'static>(
-    kind: &'static str,
+    kind: RunKind,
     cx: &mut Context<V>,
-    keep: fn(&mut V, Value, &mut Context<V>),
+    keep: fn(&mut V, RunSummary, &mut Context<V>),
 ) {
-    let summary = cx
-        .global::<AppCore>()
-        .request(calls::RunSummary { kind: json!(kind) });
+    let summary = cx.global::<AppCore>().request(calls::RunSummary { kind });
     cx.spawn(async move |this, cx| match summary.await {
         Ok(summary) => {
             let _ = this.update(cx, |view, cx| keep(view, summary, cx));
@@ -123,9 +122,9 @@ pub fn load_summary<V: 'static>(
 
 /// Save a finished run; `keep` gets the `RunSaved` (its summary, and whether it is a best).
 pub fn save_run<V: 'static>(
-    run: Value,
+    run: RunInput,
     cx: &mut Context<V>,
-    keep: fn(&mut V, Value, &mut Context<V>),
+    keep: fn(&mut V, RunSaved, &mut Context<V>),
 ) {
     let saved = cx.global::<AppCore>().request(calls::SaveRun { run });
     cx.spawn(async move |this, cx| match saved.await {
@@ -143,8 +142,21 @@ pub fn save_run<V: 'static>(
 }
 
 /// The best score of a variant in a summary.
-pub fn best(summary: &Value, variant: &str) -> Option<f64> {
-    summary["best"][variant]["score"].as_f64()
+pub fn best(summary: Option<&RunSummary>, variant: &str) -> Option<f64> {
+    Some(summary?.best.get(variant)?.score)
+}
+
+/// A finished run of `kind` to save; `detail` is an object of numbers, words and flags.
+pub fn input(kind: RunKind, variant: impl Into<String>, score: f64, detail: Value) -> RunInput {
+    RunInput {
+        kind,
+        variant: variant.into(),
+        score,
+        detail: match detail {
+            Value::Object(detail) => detail,
+            _ => serde_json::Map::new(),
+        },
+    }
 }
 
 /// `.field` with its label above the control.

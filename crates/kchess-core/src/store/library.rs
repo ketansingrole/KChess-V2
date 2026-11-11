@@ -746,8 +746,7 @@ mod tests {
         key: &str,
         misses: &Value,
     ) -> Result<Value> {
-        let misses = MissCounts::validate(J::from(misses))
-            .map_err(|refusal| CoreError::new(refusal.to_string()))?;
+        let misses = MissCounts::validate(J::from(misses)).map_err(CoreError::new)?;
         super::restore_repertoire_misses(host, db, key, &misses.0)
     }
 

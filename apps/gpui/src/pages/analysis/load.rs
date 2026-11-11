@@ -97,13 +97,13 @@ pub fn new_board(window: &mut Window, cx: &mut App) {
 /// Practise a reviewed game's positions on the analysis board; another game replaces the
 /// board's only after asking, when that would lose unsaved analysis.
 pub fn practise_game(
-    game: serde_json::Value,
+    game: kchess_contracts::types::MistakeGame,
     items: Vec<serde_json::Value>,
     window: &mut Window,
     cx: &mut App,
 ) {
     when_read(window, cx, move |analysis, window, cx| {
-        if analysis.read(cx).mainline_key() == game["key"].as_str().unwrap_or_default() {
+        if analysis.read(cx).mainline_key() == game.key {
             analysis.update(cx, |analysis, cx| analysis.practise_game(&game, items, cx));
             crate::shell::open(Page::Analysis, window, cx);
             return;

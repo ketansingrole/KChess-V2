@@ -10,6 +10,8 @@ use std::sync::Arc;
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui_kit::*;
+use kchess_contracts::check::VoiceId;
+use kchess_contracts::types::{VoiceAttemptInput, VoiceUpdate, VoiceWord};
 use kchess_contracts::voice as model;
 use serde_json::{Value, json};
 
@@ -639,25 +641,41 @@ pub fn log(attempt: &Attempt, retry: Option<Entry>, cx: &App) -> Option<Entry> {
         return None;
     }
     let heard = attempt.heard;
-    let mut record = json!({
-        "source": attempt.source,
-        "heard": heard.raw.chars().take(200).collect::<String>(),
-        "confidence": (heard.confidence.clamp(0., 1.) * 1000.).round() / 1000.,
-        "words": heard.words.iter().take(40).map(|word| json!({
-            "word": word.word.chars().take(40).collect::<String>(),
-            "conf": word.conf.clamp(0., 1.),
-        })).collect::<Vec<_>>(),
-        "outcome": attempt.outcome,
-    });
-    if let Some(parsed) = attempt.parsed {
-        record["parsed"] = json!(parsed.chars().take(120).collect::<String>());
-    }
-    if let Some(expected) = attempt.expected {
-        record["expected"] = json!(expected);
-    }
-    if let Some(fen) = attempt.fen.filter(|fen| !fen.is_empty()) {
-        record["fen"] = json!(fen);
-    }
+    let (Some(source), Some(outcome)) = (wire(attempt.source), wire(attempt.outcome)) else {
+        crate::log::write(
+            kchess_contracts::Level::Warn,
+            "voice-log",
+            &format!(
+                "a voice attempt has no such source or outcome: {} {}",
+                attempt.source, attempt.outcome
+            ),
+        );
+        return None;
+    };
+    let mut record = VoiceAttemptInput {
+        source,
+        heard: heard.raw.chars().take(200).collect(),
+        confidence: (heard.confidence.clamp(0., 1.) * 1000.).round() / 1000.,
+        words: heard
+            .words
+            .iter()
+            .take(40)
+            .map(|word| VoiceWord {
+                word: word.word.chars().take(40).collect(),
+                conf: word.conf.clamp(0., 1.),
+            })
+            .collect(),
+        outcome,
+        parsed: attempt
+            .parsed
+            .map(|parsed| parsed.chars().take(120).collect()),
+        expected: attempt.expected.map(str::to_string),
+        fen: attempt
+            .fen
+            .filter(|fen| !fen.is_empty())
+            .map(str::to_string),
+        retry_of: None,
+    };
     let core = cx.global::<AppCore>().clone();
     let entry = cx
         .foreground_executor()
@@ -665,14 +683,14 @@ pub fn log(attempt: &Attempt, retry: Option<Entry>, cx: &App) -> Option<Entry> {
             if let Some(retry) = retry
                 && let Some(id) = retry.await
             {
-                record["retryOf"] = json!(id);
+                record.retry_of = Some(id);
             }
             // The history is a study aid; a lost entry never disturbs play.
             match core
                 .request(calls::SaveVoiceAttempt { attempt: record })
                 .await
             {
-                Ok(id) => id.as_i64(),
+                Ok(id) => Some(id),
                 Err(cause) => {
                     crate::log::write(
                         kchess_contracts::Level::Warn,
@@ -691,15 +709,20 @@ pub fn log(attempt: &Attempt, retry: Option<Entry>, cx: &App) -> Option<Entry> {
     Some(entry)
 }
 
+/// A wire name as its contract type (`played` as `VoiceOutcome::Played`).
+pub fn wire<T: serde::de::DeserializeOwned>(name: &str) -> Option<T> {
+    serde_json::from_value(Value::String(name.to_string())).ok()
+}
+
 /// A saved phrase's new outcome or meant move (`updateVoice`).
-pub fn amend(entry: Entry, update: Value, cx: &App) {
+pub fn amend(entry: Entry, update: VoiceUpdate, cx: &App) {
     let core = cx.global::<AppCore>().clone();
     cx.foreground_executor()
         .spawn(async move {
             let Some(id) = entry.await else { return };
             if let Err(cause) = core
                 .request(calls::UpdateVoiceAttempt {
-                    id: json!(id),
+                    id: VoiceId(id),
                     update,
                 })
                 .await

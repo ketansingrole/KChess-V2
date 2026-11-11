@@ -53,13 +53,15 @@ fn fill(app: &mut Harness) {
             "timeControl": "-", "finished": false,
             "setup": { "variant": "standard", "fen": start }, "moves": moves,
         });
-        app.request(calls::SaveArchivedGame { game });
+        app.request(calls::SaveArchivedGame {
+            game: kchess_contracts::check::ArchivedGame(game),
+        });
     }
     for n in 0..50 {
         let (_, pgn) = random_game(&mut seed, 60);
         let command = json!({ "op": "save", "name": format!("Study {n}"), "pgn": pgn });
         app.request(calls::StudyCommand {
-            command,
+            command: serde_json::from_value(command).expect("a study command"),
             incremental: None,
             based_on: None,
         });

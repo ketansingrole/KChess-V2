@@ -7,8 +7,9 @@ use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_contracts::types::{RunKind, RunSummary};
 use kchess_domain::training::endgames::{self, Status};
-use serde_json::{Value, json};
+use serde_json::json;
 use shakmaty::Color;
 
 use super::endgames::{Drill, TrainerEvent, drills, finished};
@@ -57,7 +58,7 @@ pub struct EndgameDrills {
     moves: Vec<String>,
     hint: Option<String>,
     flipped: bool,
-    summary: Value,
+    summary: Option<RunSummary>,
     recorded: bool,
     engine: EngineMove,
     board: Entity<ChessBoard>,
@@ -115,7 +116,7 @@ impl EndgameDrills {
             moves: Vec::new(),
             hint: None,
             flipped: false,
-            summary: Value::Null,
+            summary: None,
             recorded: false,
             engine: EngineMove::default(),
             board,
@@ -123,8 +124,8 @@ impl EndgameDrills {
             layout: PlayLayout::default(),
             _subscriptions: subscriptions,
         };
-        run::load_summary("endgame", cx, |this, summary, cx| {
-            this.summary = summary;
+        run::load_summary(RunKind::Endgame, cx, |this, summary, cx| {
+            this.summary = Some(summary);
             cx.notify();
         });
         EngineMove::check(cx);
@@ -243,14 +244,14 @@ impl EndgameDrills {
         }
         self.recorded = true;
         let success = status.success == Some(true);
-        let run = json!({
-            "kind": "endgame",
-            "variant": self.drill.id,
-            "score": if success { 1 } else { 0 },
-            "detail": { "moves": self.moves.len().div_ceil(2), "success": success },
-        });
+        let run = run::input(
+            RunKind::Endgame,
+            self.drill.id.clone(),
+            if success { 1. } else { 0. },
+            json!({ "moves": self.moves.len().div_ceil(2), "success": success }),
+        );
         run::save_run(run, cx, |this, saved, cx| {
-            this.summary = saved["summary"].clone();
+            this.summary = Some(saved.summary);
             cx.notify();
         });
     }
@@ -426,7 +427,7 @@ impl Render for EndgameDrills {
                         .map(|drill| TrainingItem {
                             id: drill.id.clone(),
                             title: drill.title.clone(),
-                            done: finished(&self.summary, &drill.id),
+                            done: finished(self.summary.as_ref(), &drill.id),
                             aside: Some(drill.level.clone()),
                         })
                         .collect(),

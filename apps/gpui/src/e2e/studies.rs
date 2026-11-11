@@ -274,10 +274,12 @@ fn an_edited_study_is_summarized_again(cx: &mut gpui_kit::TestAppContext) {
             .global::<crate::studies::StudyHandle>()
             .0
             .read(cx)
-            .command(serde_json::json!({
-                "op": "save", "id": id, "name": "Alpha",
-                "pgn": "[Event \"New event\"]\n\n1. d4 d5 *",
-            }));
+            .command(kchess_contracts::types::StudyCommand::Save {
+                name: "Alpha".into(),
+                pgn: "[Event \"New event\"]\n\n1. d4 d5 *".into(),
+                id: Some(id.clone()),
+                chapter_id: None,
+            });
         let saved = saved.clone();
         cx.spawn(async move |_| {
             save.await.expect("the save");
@@ -309,9 +311,16 @@ fn only_the_studies_in_view_are_made(cx: &mut gpui_kit::TestAppContext) {
     let saved = std::rc::Rc::new(std::cell::Cell::new(0));
     app.cx.update(|cx| {
         for n in 0..50 {
-            let save = cx.global::<crate::studies::StudyHandle>().0.read(cx).command(
-                serde_json::json!({ "op": "save", "name": format!("Study {n:02}"), "pgn": "1. e4 *" }),
-            );
+            let save = cx
+                .global::<crate::studies::StudyHandle>()
+                .0
+                .read(cx)
+                .command(kchess_contracts::types::StudyCommand::Save {
+                    name: format!("Study {n:02}"),
+                    pgn: "1. e4 *".into(),
+                    id: None,
+                    chapter_id: None,
+                });
             let saved = saved.clone();
             cx.spawn(async move |_| {
                 save.await.expect("the save");
@@ -549,10 +558,12 @@ fn refused_save_then_another_chapter(cx: &mut gpui_kit::TestAppContext, autosavi
         let save =
             cx.global::<crate::core::AppCore>()
                 .request(kchess_contracts::calls::StudyCommand {
-                    command: serde_json::json!({
-                        "op": "save", "id": study, "chapterId": chapter,
-                        "name": "Pawn openings", "pgn": "1. c4 *",
-                    }),
+                    command: kchess_contracts::types::StudyCommand::Save {
+                        name: "Pawn openings".into(),
+                        pgn: "1. c4 *".into(),
+                        id: Some(study.clone()),
+                        chapter_id: Some(chapter.clone()),
+                    },
                     incremental: None,
                     based_on: None,
                 });

@@ -742,12 +742,10 @@ impl OnlineState {
             .unwrap_or_default();
         let core = cx.global::<AppCore>().clone();
         cx.spawn(async move |this, cx| {
-            let joined = joined.await.unwrap_or(json!([]));
+            let joined = joined.await.unwrap_or_default();
             let now = chrono::Utc::now().timestamp_millis() as f64;
             let current: Vec<&Value> = joined
-                .as_array()
-                .into_iter()
-                .flatten()
+                .iter()
                 .filter(|entry| entry["until"].as_f64().is_some_and(|until| until > now))
                 .collect();
             let participant = current

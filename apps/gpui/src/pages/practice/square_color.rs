@@ -7,7 +7,8 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use kchess_contracts::types::{RunKind, RunSummary};
+use serde_json::json;
 
 use super::coordinates::random_square;
 use super::run::{self, RunClock};
@@ -39,8 +40,8 @@ pub struct SquareColors {
     mistakes: u32,
     flash: Option<bool>,
     clock: RunClock,
-    summary: Value,
-    saved: Value,
+    summary: Option<RunSummary>,
+    is_best: bool,
     timers: Vec<Task<()>>,
     voice: Control,
     voice_log: DrillLog,
@@ -57,8 +58,8 @@ fn grammar() -> Vec<String> {
 
 impl SquareColors {
     pub fn new(cx: &mut Context<Self>) -> SquareColors {
-        run::load_summary("squareColor", cx, |this, summary, cx| {
-            this.summary = summary;
+        run::load_summary(RunKind::SquareColor, cx, |this, summary, cx| {
+            this.summary = Some(summary);
             cx.notify();
         });
         let voice = crate::voice::handle(cx);
@@ -80,8 +81,8 @@ impl SquareColors {
             mistakes: 0,
             flash: None,
             clock: RunClock::default(),
-            summary: Value::Null,
-            saved: Value::Null,
+            summary: None,
+            is_best: false,
             timers: Vec::new(),
             voice: Control::new(false, cx),
             voice_log: DrillLog::default(),
@@ -150,7 +151,7 @@ impl SquareColors {
         self.question += 1;
         self.score = 0;
         self.mistakes = 0;
-        self.saved = Value::Null;
+        self.is_best = false;
         self.square = random_square(None, None);
         self.stage = Stage::Running;
         self.clock.start(30);
@@ -222,15 +223,15 @@ impl SquareColors {
         self.stage = Stage::Over;
         self.sync_voice(cx);
         cx.notify();
-        let run = json!({
-            "kind": "squareColor",
-            "variant": "standard",
-            "score": self.score,
-            "detail": { "mistakes": self.mistakes, "accuracy": self.accuracy() },
-        });
+        let run = run::input(
+            RunKind::SquareColor,
+            "standard",
+            f64::from(self.score),
+            json!({ "mistakes": self.mistakes, "accuracy": self.accuracy() }),
+        );
         run::save_run(run, cx, |this, saved, cx| {
-            this.summary = saved["summary"].clone();
-            this.saved = saved;
+            this.is_best = saved.is_best;
+            this.summary = Some(saved.summary);
             cx.notify();
         });
     }
@@ -239,7 +240,7 @@ impl SquareColors {
 impl Render for SquareColors {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let best = run::best(&self.summary, "standard");
+        let best = run::best(self.summary.as_ref(), "standard");
         let muted = |text: String| div().text_color(palette.text_muted).child(text);
         let stage: Vec<AnyElement> = match self.stage {
             Stage::Running => vec![
@@ -275,7 +276,7 @@ impl Render for SquareColors {
                     .child(format!("{} correct", self.score))
                     .into_any_element(),
                 muted(format!("{}% accuracy", self.accuracy())).into_any_element(),
-                if self.saved["isBest"] == json!(true) {
+                if self.is_best {
                     div()
                         .text_color(palette.success)
                         .child("New personal best")

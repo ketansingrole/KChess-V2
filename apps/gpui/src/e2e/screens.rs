@@ -599,8 +599,8 @@ fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
         let saved = cx.update(|cx| {
             cx.global::<crate::core::AppCore>()
                 .request(kchess_contracts::calls::SaveSession {
-                    kind: serde_json::json!("computer"),
-                    session: snapshot,
+                    kind: kchess_contracts::types::SessionKind::Computer,
+                    session: kchess_contracts::check::SessionObject(snapshot),
                 })
         });
         cx.foreground_executor()

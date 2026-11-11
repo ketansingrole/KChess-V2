@@ -248,7 +248,7 @@ impl HomePage {
     /// played game) and the accounts again (the page was shown).
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let session = cx.global::<AppCore>().request(calls::Session {
-            kind: serde_json::json!(crate::game::computer::SESSION),
+            kind: kchess_contracts::types::SessionKind::Computer,
         });
         crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.refresh(cx));
         if let Some((account, activity)) = &self.activity {
@@ -260,8 +260,9 @@ impl HomePage {
             let _ = this.update(cx, |this, cx| {
                 match session {
                     Ok(session) => {
-                        this.continue_game =
-                            continue_line(&session).map(|line| (line, session.clone()));
+                        this.continue_game = session.and_then(|session| {
+                            continue_line(&session).map(|line| (line, session.clone()))
+                        });
                     }
                     // The card stays as it was; a failed read is not the game being over.
                     Err(cause) => crate::log::write(

@@ -18,9 +18,10 @@ use super::Page;
 use super::analysis::AnalysisPage;
 use crate::assets::icon;
 use crate::name_dialog::NameDialog;
-use crate::studies::{MAX_CHAPTERS, StudyHandle, chapter_items, now, time_ago};
+use crate::studies::{MAX_CHAPTERS, StudyHandle, chapter_items, now, study_id, time_ago};
 use crate::theme::Palette;
 use crate::widgets::Choice;
+use kchess_contracts::types::{ChapterEntry, StudyCommand};
 
 /// The bar's height and its gap to the board, which the board's size leaves room for.
 pub const STUDY_BAR: Pixels = px(48.);
@@ -247,9 +248,10 @@ impl StudyBar {
             return;
         }
         let library = Self::library(cx);
-        let answer = library
-            .read(cx)
-            .command(json!({ "op": "rename", "id": study["id"], "name": name }));
+        let answer = library.read(cx).command(StudyCommand::Rename {
+            id: study_id(&study),
+            name,
+        });
         cx.spawn_in(window, async move |this, cx| {
             let result = answer.await;
             let _ = this.update_in(cx, |this, window, cx| match result {
@@ -307,7 +309,7 @@ impl StudyBar {
     /// Run a chapter command once the board's edits are saved, then show the chapter it names.
     fn chapter_command(
         &mut self,
-        command: Value,
+        command: StudyCommand,
         dialog: Option<Entity<NameDialog>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -333,7 +335,7 @@ impl StudyBar {
                         library.apply(&result);
                         cx.notify();
                     });
-                    if let Some(id) = result["id"].as_str() {
+                    if let Some(id) = result.id.as_deref() {
                         this.chapter_error = analysis
                             .update(cx, |analysis, cx| analysis.open_study(&study, Some(id), cx))
                             .err();
@@ -367,7 +369,10 @@ impl StudyBar {
             window,
             cx,
             move |name, dialog, window, cx| {
-                let command = json!({ "op": "addChapter", "id": study["id"], "name": name });
+                let command = StudyCommand::AddChapter {
+                    id: study_id(&study),
+                    name,
+                };
                 let _ = bar.update(cx, |bar, cx| {
                     bar.chapter_command(command, Some(dialog), window, cx)
                 });
@@ -393,12 +398,11 @@ impl StudyBar {
             window,
             cx,
             move |name, dialog, window, cx| {
-                let answer = library.read(cx).command(json!({
-                    "op": "renameChapter",
-                    "id": study["id"],
-                    "chapterId": chapter,
-                    "name": name,
-                }));
+                let answer = library.read(cx).command(StudyCommand::RenameChapter {
+                    id: study_id(&study),
+                    chapter_id: chapter.clone(),
+                    name,
+                });
                 let library = library.clone();
                 window
                     .spawn(cx, async move |cx| {
@@ -423,7 +427,10 @@ impl StudyBar {
         let Some((study, chapter)) = self.open(cx) else {
             return;
         };
-        let command = json!({ "op": "duplicateChapter", "id": study["id"], "chapterId": chapter });
+        let command = StudyCommand::DuplicateChapter {
+            id: study_id(&study),
+            chapter_id: chapter,
+        };
         self.chapter_command(command, None, window, cx);
     }
 
@@ -442,8 +449,11 @@ impl StudyBar {
         let Some(to) = index.checked_add_signed(by).filter(|to| *to < ids.len()) else {
             return;
         };
-        let command =
-            json!({ "op": "moveChapter", "id": study["id"], "chapterId": chapter, "index": to });
+        let command = StudyCommand::MoveChapter {
+            id: study_id(&study),
+            chapter_id: chapter,
+            index: to as u32,
+        };
         self.chapter_command(command, None, window, cx);
     }
 
@@ -457,7 +467,7 @@ impl StudyBar {
         let Some((study, chapter)) = self.open(cx) else {
             return;
         };
-        let id = study["id"].as_str().unwrap_or_default().to_string();
+        let id = study_id(&study);
         let closed = analysis.update(cx, |analysis, cx| analysis.close_study(cx));
         let library = Self::library(cx);
         cx.spawn_in(window, async move |this, cx| {
@@ -476,13 +486,13 @@ impl StudyBar {
                     let index = chapters
                         .iter()
                         .position(|entry| entry["id"] == json!(chapter))?;
-                    Some((index, chapters[index].clone()))
+                    let removed = serde_json::from_value::<ChapterEntry>(chapters[index].clone());
+                    Some((index, removed.ok()?))
                 });
-                let answer = library.command(json!({
-                    "op": "removeChapter",
-                    "id": id,
-                    "chapterId": chapter,
-                }));
+                let answer = library.command(StudyCommand::RemoveChapter {
+                    id: id.clone(),
+                    chapter_id: chapter.clone(),
+                });
                 (answer, removed)
             }) else {
                 return;
@@ -504,7 +514,7 @@ impl StudyBar {
                                 cx,
                             );
                         }
-                        result["id"].as_str().map(str::to_string)
+                        result.id.clone()
                     }
                     Err(cause) => {
                         this.chapter_error = Some(cause.clone());
@@ -527,11 +537,11 @@ impl StudyBar {
     fn offer_undo_remove(
         (library, analysis): (&Entity<crate::studies::StudyLibrary>, &Entity<AnalysisPage>),
         id: String,
-        (index, chapter): (usize, Value),
+        (index, chapter): (usize, ChapterEntry),
         window: &mut Window,
         cx: &mut App,
     ) {
-        let name = chapter["name"].as_str().unwrap_or_default().to_string();
+        let name = chapter.name.clone();
         let cloud = library
             .read(cx)
             .study(&id)
@@ -549,12 +559,11 @@ impl StudyBar {
                 "undo-delete-chapter",
                 "Undo",
                 move |window, cx| {
-                    let answer = library.read(cx).command(json!({
-                        "op": "restoreChapter",
-                        "id": id,
-                        "chapter": chapter,
-                        "index": index,
-                    }));
+                    let answer = library.read(cx).command(StudyCommand::RestoreChapter {
+                        id: id.clone(),
+                        chapter: chapter.clone(),
+                        index: index as u32,
+                    });
                     let (library, analysis, id) = (library.clone(), analysis.clone(), id.clone());
                     window
                         .spawn(cx, async move |cx| {
@@ -565,7 +574,7 @@ impl StudyBar {
                                         library.apply(&result);
                                         cx.notify();
                                     });
-                                    let chapter = result["id"].as_str().map(str::to_string);
+                                    let chapter = result.id.clone();
                                     // The board saves the chapter it shows before it changes.
                                     let opened = analysis.update(cx, |analysis, cx| {
                                         analysis.open_study(&id, chapter.as_deref(), cx)
@@ -669,11 +678,11 @@ impl StudyBar {
             return;
         };
         let navigation = analysis.read(cx).navigation();
-        let id = study["id"].as_str().unwrap_or_default().to_string();
+        let id = study_id(&study);
         let library = Self::library(cx);
         let answer = library
             .read(cx)
-            .command(json!({ "op": "remove", "id": id }));
+            .command(StudyCommand::Remove { id: id.clone() });
         window
             .spawn(cx, async move |cx| {
                 let result = answer.await;
@@ -684,7 +693,7 @@ impl StudyBar {
                                 library.apply(&result);
                                 cx.notify();
                             });
-                            result["removed"].clone()
+                            result.removed.unwrap_or_default()
                         }
                         Err(cause) => {
                             window.push_notification(Notification::error(cause), cx);
@@ -747,7 +756,7 @@ fn restore(
 ) {
     let answer = library
         .read(cx)
-        .command(json!({ "op": "restore", "study": removed }));
+        .command(StudyCommand::Restore { study: removed });
     let (library, analysis) = (library.clone(), analysis.clone());
     window
         .spawn(cx, async move |cx| {

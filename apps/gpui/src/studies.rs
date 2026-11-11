@@ -10,6 +10,8 @@ use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
 use kchess_contracts::Level;
+use kchess_contracts::check::PgnText;
+use kchess_contracts::types::{Library, StudyCommand, StudyCommandResult};
 use serde_json::{Map, Value, json};
 
 use crate::core::{Answer, AppCore, Reads};
@@ -22,8 +24,8 @@ pub const MAX_CHAPTERS: usize = 64;
 
 enum Write {
     Command {
-        command: Value,
-        reply: Option<oneshot::Sender<Result<Value, String>>>,
+        command: StudyCommand,
+        reply: Option<oneshot::Sender<Result<StudyCommandResult, String>>>,
     },
     /// Done once every command before it was answered: with the chapters whose last content save
     /// failed, if any did.
@@ -61,9 +63,9 @@ pub struct StudyHandle(pub Entity<StudyLibrary>);
 impl Global for StudyHandle {}
 
 /// Start from the studies of the library read before the first page opens, and start the writer.
-pub fn init(library: &Value, cx: &mut App) {
-    let items = library["studies"].as_array().cloned().unwrap_or_default();
-    let error = library["studyError"].as_str().map(str::to_string);
+pub fn init(library: &Library, cx: &mut App) {
+    let items = library.studies.clone();
+    let error = library.study_error.clone();
     let (writes, queue) = mpsc::unbounded();
     let entity = cx.new(|_| StudyLibrary {
         items,
@@ -86,30 +88,59 @@ pub fn init(library: &Value, cx: &mut App) {
     cx.set_global(StudyHandle(entity));
 }
 
-/// The chapter a content save writes to an existing study.
-fn saved_chapter(command: &Value) -> Option<(String, String)> {
-    let text = |key: &str| command[key].as_str().filter(|text| !text.is_empty());
-    (command["op"] == "save").then_some(())?;
-    Some((text("id")?.to_string(), text("chapterId")?.to_string()))
+/// A stored study's id.
+pub fn study_id(study: &Value) -> String {
+    study["id"].as_str().unwrap_or_default().to_string()
 }
 
-/// After a content save: the chapter it wrote, whose moves are now the base.
-fn written_chapter(command: &Value, result: &Value) -> Option<(String, String)> {
-    if command["op"] != "save" {
+/// The chapter a content save writes to an existing study.
+fn saved_chapter(command: &StudyCommand) -> Option<(String, String)> {
+    let StudyCommand::Save {
+        id: Some(id),
+        chapter_id: Some(chapter),
+        ..
+    } = command
+    else {
         return None;
-    }
-    let id = result["id"].as_str().or(command["id"].as_str())?;
-    let chapter = command["chapterId"]
-        .as_str()
+    };
+    (!id.is_empty() && !chapter.is_empty()).then(|| (id.clone(), chapter.clone()))
+}
+
+/// After a content save: the chapter it wrote, whose moves are now the base, and those moves.
+fn written_chapter(
+    command: &StudyCommand,
+    result: &StudyCommandResult,
+) -> Option<((String, String), String)> {
+    let StudyCommand::Save {
+        id,
+        chapter_id,
+        pgn,
+        ..
+    } = command
+    else {
+        return None;
+    };
+    let id = result.id.as_deref().or(id.as_deref())?;
+    let chapter = chapter_id
+        .as_deref()
         .filter(|chapter| !chapter.is_empty())
         .or_else(|| {
-            result["studies"]
-                .as_array()?
+            result
+                .studies
                 .iter()
                 .find(|study| study["id"] == json!(id))?["chapters"][0]["id"]
                 .as_str()
         })?;
-    Some((id.to_string(), chapter.to_string()))
+    Some(((id.to_string(), chapter.to_string()), pgn.clone()))
+}
+
+/// The study, and the chapter when only one goes, a removal takes out of the library.
+fn removed_by(command: &StudyCommand) -> Option<(&str, Option<&str>)> {
+    match command {
+        StudyCommand::Remove { id } => Some((id, None)),
+        StudyCommand::RemoveChapter { id, chapter_id } => Some((id, Some(chapter_id))),
+        _ => None,
+    }
 }
 
 /// Forgets what is kept for a removed study (`chapter` absent) or one of its chapters.
@@ -124,7 +155,7 @@ fn write_in_order(
 ) {
     let core = cx.global::<AppCore>().clone();
     // Each answer, for the library to show.
-    let (answers, mut answered) = mpsc::unbounded::<Result<Value, String>>();
+    let (answers, mut answered) = mpsc::unbounded::<Result<StudyCommandResult, String>>();
     cx.background_executor()
         .spawn(async move {
             // Chapters whose last content save failed, until one succeeds: their moves are not
@@ -149,14 +180,17 @@ fn write_in_order(
                         continue;
                     }
                 };
-                let op = command["op"].as_str().unwrap_or_default().to_string();
                 let based_on = saved_chapter(&command).and_then(|key| bases.get(&key).cloned());
                 let call = calls::StudyCommand {
                     command: command.clone(),
-                    incremental: Some(json!(true)),
-                    based_on: based_on.map(Value::String),
+                    incremental: Some(true),
+                    based_on: based_on.map(PgnText),
                 };
                 let result = core.request(call).await.map_err(|cause| {
+                    let op = json!(command)["op"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
                     crate::log::write(
                         Level::Warn,
                         "studies",
@@ -175,17 +209,16 @@ fn write_in_order(
                     }
                 }
                 // A removed study or chapter has nothing left to save.
-                if result.is_ok() && (op == "remove" || op == "removeChapter") {
-                    let study = command["id"].as_str().unwrap_or_default();
-                    let chapter = command["chapterId"].as_str();
+                if result.is_ok()
+                    && let Some((study, chapter)) = removed_by(&command)
+                {
                     forget_removed(&mut unsaved, study, chapter);
                     forget_removed(&mut bases, study, chapter);
                 }
                 if let Ok(result) = &result
-                    && let Some(key) = written_chapter(&command, result)
-                    && let Some(pgn) = command["pgn"].as_str()
+                    && let Some((key, pgn)) = written_chapter(&command, result)
                 {
-                    bases.insert(key, pgn.to_string());
+                    bases.insert(key, pgn);
                 }
                 // The caller hears first, from here: the UI thread may not run while the app quits.
                 if let Some(reply) = reply {
@@ -324,8 +357,9 @@ impl StudyLibrary {
     /// Send a command; its answer (the changed studies, and an `id` where one was made).
     pub fn command(
         &self,
-        command: Value,
-    ) -> impl std::future::Future<Output = Result<Value, String>> + 'static + use<> {
+        command: StudyCommand,
+    ) -> impl std::future::Future<Output = Result<StudyCommandResult, String>> + 'static + use<>
+    {
         let (reply, answer) = oneshot::channel();
         let sent = self.writes.unbounded_send(Write::Command {
             command,
@@ -352,12 +386,10 @@ impl StudyLibrary {
     }
 
     /// Show the studies an answer names: all of them, or the changed ones in the library's order.
-    pub fn apply(&mut self, result: &Value) {
-        let studies = result["studies"].as_array().cloned().unwrap_or_default();
-        let Some(order) = result["order"].as_array() else {
-            if result.get("studies").is_some() {
-                self.items = studies;
-            }
+    pub fn apply(&mut self, result: &StudyCommandResult) {
+        let studies = result.studies.clone();
+        let Some(order) = &result.order else {
+            self.items = studies;
             return;
         };
         let mut by_id: Map<String, Value> = Map::new();
@@ -366,10 +398,7 @@ impl StudyLibrary {
                 by_id.insert(id.to_string(), study);
             }
         }
-        self.items = order
-            .iter()
-            .filter_map(|id| id.as_str().and_then(|id| by_id.remove(id)))
-            .collect();
+        self.items = order.iter().filter_map(|id| by_id.remove(id)).collect();
     }
 
     /// Show the studies the profile keeps (after a command failed, or another window changed
@@ -384,10 +413,8 @@ impl StudyLibrary {
             }) else {
                 return;
             };
-            if let Ok(library) = library.await
-                && let Some(items) = library["studies"].as_array()
-            {
-                let items = items.clone();
+            if let Ok(library) = library.await {
+                let items = library.studies;
                 let _ = this.update(cx, |this, cx| match this.reads.answer(read) {
                     Answer::Show => {
                         this.items = items;
@@ -409,7 +436,21 @@ mod tests {
         written_chapter,
     };
     use futures::channel::mpsc;
+    use kchess_contracts::types::{StudyCommand, StudyCommandResult};
     use serde_json::json;
+
+    fn answer(value: serde_json::Value) -> StudyCommandResult {
+        serde_json::from_value(value).expect("a study command answer")
+    }
+
+    fn chapter_save(id: Option<&str>, chapter: Option<&str>, pgn: &str) -> StudyCommand {
+        StudyCommand::Save {
+            name: "A".into(),
+            pgn: pgn.into(),
+            id: id.map(str::to_string),
+            chapter_id: chapter.map(str::to_string),
+        }
+    }
 
     #[test]
     fn answers_show_the_changed_studies_in_the_library_order() {
@@ -424,10 +465,10 @@ mod tests {
             reads: Default::default(),
         };
         // An incremental answer: the changed study, and every id in order.
-        library.apply(&json!({
+        library.apply(&answer(json!({
             "studies": [{ "id": "c", "name": "C" }, { "id": "a", "name": "A2" }],
             "order": ["c", "a", "b"],
-        }));
+        })));
         let names: Vec<_> = library
             .items
             .iter()
@@ -435,10 +476,10 @@ mod tests {
             .collect();
         assert_eq!(names, [json!("C"), json!("A2"), json!("B")]);
         // A removal leaves the id out of the order.
-        library.apply(&json!({ "studies": [], "order": ["a"] }));
+        library.apply(&answer(json!({ "studies": [], "order": ["a"] })));
         assert_eq!(library.items.len(), 1);
         // A whole answer replaces the list.
-        library.apply(&json!({ "studies": [{ "id": "z" }] }));
+        library.apply(&answer(json!({ "studies": [{ "id": "z" }] })));
         assert_eq!(library.items, [json!({ "id": "z" })]);
         assert_eq!(library.fresh_name("Z"), "Z");
     }
@@ -481,7 +522,7 @@ mod tests {
             writes,
             reads: Default::default(),
         };
-        let save = json!({ "op": "save", "id": "a", "chapterId": "c", "pgn": "1. e4 e5 *" });
+        let save = chapter_save(Some("a"), Some("c"), "1. e4 e5 *");
         drop(library.command(save.clone()));
         library.track("a", "c");
         let Ok(Write::Command { command, .. }) = queue.try_recv() else {
@@ -513,22 +554,26 @@ mod tests {
 
     #[test]
     fn chapter_saves_are_based_on_the_chapter_they_write() {
-        let save =
-            json!({ "op": "save", "id": "a", "chapterId": "c", "name": "A", "pgn": "1. e4 *" });
-        let key = Some(("a".to_string(), "c".to_string()));
-        assert_eq!(saved_chapter(&save), key);
-        assert_eq!(written_chapter(&save, &json!({ "id": "a" })), key);
+        let save = chapter_save(Some("a"), Some("c"), "1. e4 *");
+        let key = ("a".to_string(), "c".to_string());
+        assert_eq!(saved_chapter(&save), Some(key.clone()));
         assert_eq!(
-            saved_chapter(&json!({ "op": "rename", "id": "a", "name": "B" })),
-            None
+            written_chapter(&save, &answer(json!({ "id": "a", "studies": [] }))),
+            Some((key, "1. e4 *".to_string()))
         );
+        let rename = StudyCommand::Rename {
+            id: "a".into(),
+            name: "B".into(),
+        };
+        assert_eq!(saved_chapter(&rename), None);
         // A new study: its first chapter, once the core made it.
-        let new = json!({ "op": "save", "name": "N", "pgn": "1. d4 *" });
+        let new = chapter_save(None, None, "1. d4 *");
         assert_eq!(saved_chapter(&new), None);
-        let made = json!({ "id": "n", "studies": [{ "id": "n", "chapters": [{ "id": "n1" }] }] });
+        let made =
+            answer(json!({ "id": "n", "studies": [{ "id": "n", "chapters": [{ "id": "n1" }] }] }));
         assert_eq!(
             written_chapter(&new, &made),
-            Some(("n".to_string(), "n1".to_string()))
+            Some((("n".to_string(), "n1".to_string()), "1. d4 *".to_string()))
         );
     }
 }
