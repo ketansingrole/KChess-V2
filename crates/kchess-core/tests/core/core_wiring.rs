@@ -198,15 +198,18 @@ async fn analysis_and_review_events_carry_the_contract_payloads() {
     core.close().await;
 }
 
-/// A frontend reads the analysis and review events as their contract types: each recorded
-/// payload is read as its event and crosses again with the same bytes.
+/// A frontend reads events as their contract types: each recorded payload of an event's shape
+/// is read as its event and crosses again with the same bytes.
 #[test]
-fn typed_engine_events_cross_as_recorded() {
+fn typed_events_cross_as_recorded() {
     use kchess_contracts::CoreEvent;
     for (name, recording) in [
         ("engine:analysis", "engine-analysis.completed"),
         ("review:update", "review-update.complete"),
         ("review:status", "review-status.failed"),
+        ("challenges:update", "challenges.listed"),
+        ("settings:saved", "settings"),
+        ("settings:saved", "saveSettings"),
     ] {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/wire")
@@ -214,7 +217,6 @@ fn typed_engine_events_cross_as_recorded() {
         let recorded = std::fs::read_to_string(&path).expect("the recording");
         let payload: Value = serde_json::from_str(&recorded).expect("JSON");
         let event = CoreEvent::from_wire(name, payload).expect("the event's shape");
-        assert_eq!(event.payload(), None, "{name} is typed");
         support::wire::assert_wire(recording, &event.into_payload());
     }
 }

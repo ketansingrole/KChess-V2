@@ -5,7 +5,8 @@
 use std::path::Path;
 use std::time::Duration;
 
-use kchess_contracts::CoreEvent;
+use kchess_contracts::types::AlertOwner;
+use kchess_contracts::{CoreEvent, HostRequest};
 use kchess_core::Config;
 use kchess_service::protocol::{self, Frame, RefuseReason, read_frame, write_frame};
 use kchess_service::server::{ServeOptions, serve};
@@ -324,8 +325,8 @@ async fn a_host_request_reaches_only_the_window_that_answers_it() {
     let elsewhere = tokio::time::timeout(Duration::from_millis(500), async {
         loop {
             match second_events.recv().await {
-                Some(ClientEvent::Event(CoreEvent::HostRequest(payload)))
-                    if payload["kind"] == "openExternal" =>
+                Some(ClientEvent::Event(CoreEvent::HostRequest(ask)))
+                    if matches!(ask.request, HostRequest::OpenExternal(_)) =>
                 {
                     return;
                 }
@@ -460,9 +461,9 @@ async fn a_window_that_joins_learns_which_window_alerts() {
         .expect("open");
     assert_eq!(
         first,
-        ClientEvent::Event(CoreEvent::AlertsOwner(
-            json!({ "connection": gpui.connection() })
-        ))
+        ClientEvent::Event(CoreEvent::AlertsOwner(AlertOwner {
+            connection: Some(gpui.connection())
+        }))
     );
     drop((gpui, second));
     service.abort();

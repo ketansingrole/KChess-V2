@@ -164,9 +164,7 @@ fn install_model(
 /// The model's progress, when `event` reports it.
 fn progress_of(event: &crate::core::CoreEvent) -> Option<model::Progress> {
     match event {
-        crate::core::CoreEvent::VoiceModelProgress(progress) => {
-            serde_json::from_value(progress.clone()).ok()
-        }
+        crate::core::CoreEvent::VoiceModelProgress(progress) => Some(progress.clone()),
         _ => None,
     }
 }
@@ -790,20 +788,23 @@ mod tests {
     #[test]
     fn only_the_model_s_progress_reaches_its_listener() {
         use crate::core::CoreEvent;
-        let report = json!({ "phase": "downloading", "received": 3, "total": 9 });
+        let report = model::Progress {
+            phase: model::Phase::Downloading,
+            received: 3,
+            total: Some(9),
+        };
         assert_eq!(
             progress_of(&CoreEvent::VoiceModelProgress(report.clone())),
-            Some(model::Progress {
-                phase: model::Phase::Downloading,
-                received: 3,
-                total: Some(9),
-            })
+            Some(report)
         );
-        assert_eq!(progress_of(&CoreEvent::PuzzleDbProgress(report)), None);
-        assert_eq!(
-            progress_of(&CoreEvent::VoiceModelProgress(json!("noise"))),
-            None
-        );
+        let puzzles = kchess_contracts::types::PuzzleDbProgress {
+            phase: kchess_contracts::types::PuzzleDbPhase::Downloading,
+            received: 3,
+            kept: 0,
+            total: Some(9),
+            message: None,
+        };
+        assert_eq!(progress_of(&CoreEvent::PuzzleDbProgress(puzzles)), None);
     }
 
     fn utterance(value: serde_json::Value) -> model::Utterance {

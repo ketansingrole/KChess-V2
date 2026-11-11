@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use gpui_kit::{App, AppContext as _, Entity, EventEmitter, Global};
 use kchess_contracts::calls::CoreCall;
-use kchess_contracts::types::{self, ProfileArea, ProfileChange};
+use kchess_contracts::types::ProfileArea;
 use kchess_contracts::{Capability, CoreError, HostAsk, HostReply, HostRequest, Level};
 use kchess_core::TestSwitches;
 use kchess_service::{ConnectError, CoreHandle, Hello, Layout, Mode};
@@ -217,9 +217,6 @@ pub fn on_profile_change(
             ClientEvent::Event(CoreEvent::ProfileChanged(change)) => change,
             _ => return,
         };
-        let Ok(change) = serde_json::from_value::<ProfileChange>(change.clone()) else {
-            return;
-        };
         if change.origin == cx.global::<AppCore>().bridge.connection() {
             return;
         }
@@ -284,16 +281,12 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
     cx.set_global(core.clone());
     cx.spawn(async move |cx| {
         while let Some(event) = receiver.recv().await {
-            if let ClientEvent::Event(CoreEvent::HostRequest(payload)) = &event {
-                if let Ok(ask) = serde_json::from_value::<HostAsk>(payload.clone()) {
-                    cx.update(|cx| answer_host(ask, cx));
-                }
+            if let ClientEvent::Event(CoreEvent::HostRequest(ask)) = event {
+                cx.update(|cx| answer_host(ask, cx));
                 continue;
             }
             if let ClientEvent::Event(CoreEvent::AlertsOwner(owner)) = &event {
-                let owner = serde_json::from_value::<types::AlertOwner>(owner.clone())
-                    .ok()
-                    .and_then(|owner| owner.connection);
+                let owner = owner.connection;
                 cx.update(|cx| cx.set_global(AlertOwner(owner)));
             }
             core.events.update(cx, |_, cx| cx.emit(event));

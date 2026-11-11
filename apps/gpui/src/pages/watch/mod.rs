@@ -3,16 +3,16 @@
 //! page is shown: leaving it stops the stream.
 
 use crate::loading::Epoch;
+use kchess_contracts::ErrorKind;
 use kchess_contracts::calls;
 use kchess_contracts::check::{Bounded, LichessId, PresenceUsers};
-use kchess_contracts::types::{TvChannel, UserPresence, WatchTarget};
+use kchess_contracts::types::{TvChannel, UserPresence, WatchPhase, WatchPlayer, WatchTarget};
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
 use shakmaty::Color;
 
 use crate::assets::icon;
@@ -137,12 +137,34 @@ pub fn channel_icon(key: &str) -> gpui_kit::component::Icon {
 }
 
 /// "GM Name (2800)": a player as Lichess labels them.
-pub fn label(player: &Value) -> String {
-    player_label(
-        player["title"].as_str(),
-        player["name"].as_str().unwrap_or("?"),
-        player["rating"].as_f64(),
-    )
+pub fn label(player: &WatchPlayer) -> String {
+    player_label(player.title.as_deref(), &player.name, player.rating)
+}
+
+/// The player on `side` of a game.
+fn player_of<'a>(white: &'a WatchPlayer, black: &'a WatchPlayer, side: Color) -> &'a WatchPlayer {
+    match side {
+        Color::White => white,
+        Color::Black => black,
+    }
+}
+
+/// A watched game's players, as the analysis board names them.
+fn origin_of(white: &WatchPlayer, black: &WatchPlayer) -> crate::game::played::GameOrigin {
+    crate::game::played::GameOrigin {
+        white: Some(white.name.clone()),
+        black: Some(black.name.clone()),
+        ..Default::default()
+    }
+}
+
+/// The side to move in a FEN.
+fn turn_of(fen: &str) -> Color {
+    if fen.split(' ').nth(1) == Some("b") {
+        Color::Black
+    } else {
+        Color::White
+    }
 }
 
 /// "GM Carlsen (2850)": a player's title, name and rating.
@@ -164,14 +186,14 @@ pub struct WatchPage {
     channels: Vec<TvChannel>,
     target: Option<Target>,
     /// The connection to the feed (`WatchState`), once known.
-    phase: Option<String>,
-    /// The kind of failure (`ErrorKind`) the feed's last state reported.
-    failure: Option<String>,
+    phase: Option<WatchPhase>,
+    /// The kind of failure the feed's last state reported.
+    failure: Option<ErrorKind>,
     error: Option<SharedString>,
     /// Why TV's channel list did not load, shown on the TV tab only.
     channels_error: Option<SharedString>,
-    session: Option<f64>,
-    round_session: Option<f64>,
+    session: Option<u64>,
+    round_session: Option<u64>,
     pending: Option<Pending>,
     early: Vec<CoreEvent>,
     /// Each request; answers to an older one are dropped.
@@ -328,7 +350,7 @@ impl WatchPage {
     /// A tick redraws a live clock face only when it shows something else, and only that face;
     /// the page when a clock comes or goes.
     fn redraw_faces_if_ticked(&mut self, cx: &mut Context<Self>) {
-        let connected = self.phase.as_deref() == Some("connected");
+        let connected = self.phase == Some(WatchPhase::Connected);
         let shown = [Color::White, Color::Black].map(|color| self.live.clock(color, connected));
         let clocks = shown.each_ref().map(Option::is_some);
         let changed = self.live_faces_shown.each_changed(shown);
@@ -516,13 +538,13 @@ impl WatchPage {
                 if !this.epoch.is_current(epoch) {
                     // The page moved on while the core started it: that watch ends now.
                     if let Ok(session) = answer {
-                        stop_watching(Some(session as f64), cx);
+                        stop_watching(Some(session), cx);
                     }
                     return;
                 }
                 match answer {
                     Ok(session) => {
-                        this.session = Some(session as f64);
+                        this.session = Some(session);
                         this.replay_early(cx);
                     }
                     Err(cause) => {
@@ -591,28 +613,23 @@ impl WatchPage {
             }
             return;
         }
-        let session = event
-            .payload()
-            .and_then(|payload| payload["session"].as_f64());
         match event {
-            CoreEvent::WatchFrame(frame) if session.is_some() && session == self.session => {
-                self.phase = Some("connected".into());
-                self.live.set_frame(frame, cx);
+            CoreEvent::WatchFrame(frame) if Some(frame.session) == self.session => {
+                self.phase = Some(WatchPhase::Connected);
+                self.live.set_frame(*frame, cx);
             }
-            CoreEvent::WatchState(state) if session.is_some() && session == self.session => {
-                let phase = state["phase"].as_str().unwrap_or_default().to_string();
-                if phase != "connected" && self.phase.as_deref() == Some("connected") {
+            CoreEvent::WatchState(state) if Some(state.session) == self.session => {
+                let connected = Some(WatchPhase::Connected);
+                if Some(state.phase) != connected && self.phase == connected {
                     self.live.freeze_clock();
                 }
-                if let Some(message) = state["message"].as_str() {
-                    self.error = Some(message.to_string().into());
+                if let Some(message) = state.message {
+                    self.error = Some(message.into());
                 }
-                self.failure = state["kind"].as_str().map(str::to_string);
-                self.phase = Some(phase);
+                self.failure = state.kind;
+                self.phase = Some(state.phase);
             }
-            CoreEvent::WatchBroadcast(update)
-                if session.is_some() && session == self.round_session =>
-            {
+            CoreEvent::WatchBroadcast(update) if Some(update.session) == self.round_session => {
                 if let Some(error) = self.broadcasts.update(&update) {
                     self.error = Some(error.into());
                 }
@@ -919,18 +936,14 @@ impl WatchPage {
             );
         }
         // A finished game's feed ends with it: there is nothing to retry.
-        let over = self
-            .live
-            .frame
-            .as_ref()
-            .is_some_and(|frame| frame["finished"] == json!(true));
+        let over = self.live.frame.as_ref().is_some_and(|frame| frame.finished);
         // A retry helps a feed that dropped, not one Lichess refused or has no game for.
-        let failed = match self.phase.as_deref() {
-            Some("error") => !matches!(
-                self.failure.as_deref(),
-                Some("refused" | "notFound" | "login")
+        let failed = match self.phase {
+            Some(WatchPhase::Error) => !matches!(
+                self.failure,
+                Some(ErrorKind::Refused | ErrorKind::NotFound | ErrorKind::Login)
             ),
-            Some("ended") => !over,
+            Some(WatchPhase::Ended) => !over,
             _ => false,
         };
         if let (true, Some(target)) = (failed, self.target.clone()) {
@@ -1098,12 +1111,12 @@ fn live_badge(palette: &Palette) -> Div {
 /// Settles once the core has answered a feed's request.
 type FeedStarted = futures::future::Shared<futures::future::BoxFuture<'static, ()>>;
 
-pub(super) fn stop_watching(session: Option<f64>, cx: &mut App) {
+pub(super) fn stop_watching(session: Option<u64>, cx: &mut App) {
     let Some(session) = session else {
         return;
     };
     let stopping = cx.global::<AppCore>().request(calls::StopWatching {
-        session: Some(Bounded(session as u64)),
+        session: Some(Bounded(session)),
     });
     cx.background_spawn(async move {
         if let Err(cause) = stopping.await {

@@ -8,7 +8,7 @@
 
 use kchess_contracts::types::AlertOwner;
 use kchess_contracts::{CoreEvent, HostReply};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -304,9 +304,8 @@ impl Core {
         let owner = self.connections.alert_owner();
         let encoded = owner.unwrap_or(u64::MAX);
         if self.alert_owner.swap(encoded, Ordering::SeqCst) != encoded {
-            self.host.emit(CoreEvent::AlertsOwner(json!(AlertOwner {
-                connection: owner
-            })));
+            self.host
+                .emit(CoreEvent::AlertsOwner(AlertOwner { connection: owner }));
         }
     }
 
@@ -314,9 +313,9 @@ impl Core {
     /// a client that joins queues it before it receives any event, so it misses no change.
     pub fn with_alert_owner<T>(&self, join: impl FnOnce(CoreEvent) -> T) -> T {
         let _reporting = self.alert_reports.lock();
-        join(CoreEvent::AlertsOwner(json!(AlertOwner {
+        join(CoreEvent::AlertsOwner(AlertOwner {
             connection: self.connections.alert_owner(),
-        })))
+        }))
     }
 
     /// The clients connected now.

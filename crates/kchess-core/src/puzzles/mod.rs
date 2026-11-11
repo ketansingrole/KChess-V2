@@ -10,7 +10,6 @@ mod zst;
 use kchess_contracts::CoreEvent;
 use kchess_contracts::types::{PuzzleDbPhase as Phase, PuzzleDbProgress};
 use rusqlite::Connection;
-use serde_json::json;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -480,7 +479,7 @@ impl Progress {
             total: self.total,
             message: message.map(str::to_string),
         };
-        self.host.emit(CoreEvent::PuzzleDbProgress(json!(progress)));
+        self.host.emit(CoreEvent::PuzzleDbProgress(progress));
     }
 }
 
@@ -488,6 +487,7 @@ impl Progress {
 mod tests {
     use super::*;
     use crate::test_host::TestHost;
+    use serde_json::json;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

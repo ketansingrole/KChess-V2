@@ -111,7 +111,7 @@ impl Capabilities {
         let _forget = crate::tasks::on_drop(|| {
             lock(&self.pending).waiting.remove(&id);
         });
-        let event = CoreEvent::HostRequest(HostAsk { id, request }.to_value());
+        let event = CoreEvent::HostRequest(HostAsk { id, request });
         match target {
             Some(target) => self.host.emit_to(target, event),
             None => self.host.emit(event),

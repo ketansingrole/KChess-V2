@@ -19,7 +19,8 @@ use crate::lichess::client::{Auth, Lane};
 use crate::lichess::decode::{Loose, read};
 use crate::lichess::stream::STALLED;
 use kchess_contracts::error::{CoreError, Result as CoreResult};
-use kchess_contracts::types::{UsageKind, WatchPhase};
+use kchess_contracts::types::{UsageKind, WatchPhase, WatchSource};
+use kchess_domain::color::Color;
 
 /// A TV feed record, `{ t, d }`: a featured game or a move. Other kinds, and records whose
 /// `d` is not an object, are ignored; each field is read when it has the right type.
@@ -344,7 +345,7 @@ impl Inner {
                 session,
                 phase: WatchPhase::Error,
                 message: Some(message.to_string()),
-                kind: Some(kind.as_str()),
+                kind: Some(kind),
             });
         }
     }
@@ -449,15 +450,15 @@ impl Inner {
                 }
                 let frame = WatchFrame {
                     session,
-                    source: "tv",
+                    source: WatchSource::Tv,
                     channel: Some(channel.to_string()),
                     game_id: game_id.clone(),
                     white: player_of(white.as_ref()),
                     black: player_of(black.as_ref()),
                     orientation: if data.orientation.0.as_deref() == Some("black") {
-                        "black"
+                        Color::Black
                     } else {
-                        "white"
+                        Color::White
                     },
                     fen: fen.clone(),
                     last_move: None,
@@ -758,23 +759,23 @@ impl Inner {
                         // The description of the game: first, and again when it ends.
                         let status = record.status.0.and_then(|status| status.name.0);
                         let players = record.players.0.unwrap_or_default();
-                        let winner = match record.winner.0.as_deref() {
-                            Some("white") => Some("white"),
-                            Some("black") => Some("black"),
-                            _ => None,
-                        };
+                        let winner = record
+                            .winner
+                            .0
+                            .as_deref()
+                            .and_then(kchess_domain::color::from_name);
                         let finished = status
                             .as_deref()
                             .is_some_and(|status| status != "created" && status != "started");
                         let details = parse_game_details(&data);
                         current = Some(WatchFrame {
                             session,
-                            source: "game",
+                            source: WatchSource::Game,
                             channel: None,
                             game_id: kchess_domain::js::slice_utf16(id, 12).to_string(),
                             white: player_of(players.get("white")),
                             black: player_of(players.get("black")),
-                            orientation: current.as_ref().map_or("white", |c| c.orientation),
+                            orientation: current.as_ref().map_or(Color::White, |c| c.orientation),
                             fen,
                             last_move: uci_or_none(record.last_move.as_ref()),
                             white_clock: current.as_ref().and_then(|c| c.white_clock),

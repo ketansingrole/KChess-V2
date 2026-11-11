@@ -603,8 +603,14 @@ mod tests {
         let connected = |host: &ServiceHost| host.clients.lock().expect("clients").contains_key(&1);
         let (sender, _queue) = mpsc::channel(1);
         host.add(1, sender.clone(), Arc::new(Notify::new()));
-        host.send(1, &sender, CoreEvent::WatchFrame(json!({})));
-        host.send(1, &sender, CoreEvent::WatchFrame(json!({})));
+        let frame: Box<kchess_contracts::types::WatchFrame> = serde_json::from_value(json!({
+            "session": 1, "source": "tv", "gameId": "g", "white": { "name": "A" },
+            "black": { "name": "B" }, "orientation": "white", "fen": "8/8/8/8/8/8/8/8 w - - 0 1",
+            "variant": "standard", "finished": false,
+        }))
+        .expect("a watch frame");
+        host.send(1, &sender, CoreEvent::WatchFrame(frame.clone()));
+        host.send(1, &sender, CoreEvent::WatchFrame(frame));
         assert!(connected(&host), "a progress frame is dropped");
         let last = serde_json::from_value(json!({
             "id": 1, "fen": "8/8/8/8/8/8/8/8 w - - 0 1", "depth": 1.0, "lines": [],

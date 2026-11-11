@@ -8,6 +8,7 @@ use serde_json::Value;
 use super::{BroadcastGame, MAX_BROADCAST_PGN, WatchClock, WatchPlayer};
 use crate::lichess::decode::{Text, present, read};
 use crate::lichess::reviews::split_whitespace;
+use kchess_domain::color::Color;
 use kchess_domain::variant::{Setup, Variant};
 use kchess_domain::{js, position, rules};
 
@@ -222,7 +223,7 @@ pub struct TvGame {
     pub setup: Option<Setup>,
     pub san: Vec<String>,
     pub status: Option<String>,
-    pub winner: Option<&'static str>,
+    pub winner: Option<Color>,
 }
 
 #[derive(Deserialize)]
@@ -271,8 +272,8 @@ pub fn parse_tv_game(raw: &Value) -> TvGame {
         game.status.as_deref(),
     );
     let winner = game.winner.map(|winner| match winner {
-        Winner::White => "white",
-        Winner::Black => "black",
+        Winner::White => Color::White,
+        Winner::Black => Color::Black,
     });
     let setup = Variant::from_lichess(Some(variant.unwrap_or("standard"))).map(|variant| Setup {
         variant,
