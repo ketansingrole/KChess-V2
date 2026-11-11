@@ -434,12 +434,11 @@ fn line_review_key(fen: &str, moves: &[String]) -> Option<String> {
     if positions.len() < 2 {
         return None;
     }
-    let key = kchess_domain::api::call_value(
-        "reviewKey",
-        &[json!(start.fen), json!(moves[..positions.len() - 1])],
-    )
-    .ok()?;
-    key.as_str().map(str::to_string)
+    Some(kchess_domain::records::review::review_key(
+        &start.fen,
+        &moves[..positions.len() - 1],
+        None,
+    ))
 }
 
 /// `mistakeGames()`: each review with positions in practice, most recently played first, with
@@ -1195,11 +1194,7 @@ mod tests {
 
     /// A complete review of `BLUNDER`: level until Black's sixth move hands White mate in one.
     fn store_blunder_review(db: &Connection, source: &str, depth: u32) -> String {
-        let key: Value = serde_json::from_str(
-            &kchess_domain::api::call("reviewKey", &json!([START, BLUNDER]).to_string())
-                .expect("key"),
-        )
-        .expect("key json");
+        let key = json!(kchess_domain::records::review::review_key(START, &BLUNDER, None));
         let mut evals: Vec<Value> = (0..5)
             .map(|_| json!({ "cp": 30, "depth": depth, "best": "a2a3" }))
             .collect();
@@ -1303,11 +1298,11 @@ mod tests {
         let db = drills_db();
         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
         let moves = json!(["e2e4", "d7d5", "e4d5", "d8d5", "g1f3"]);
-        let key: Value = serde_json::from_str(
-            &kchess_domain::api::call("reviewKey", &json!([fen, moves, "crazyhouse"]).to_string())
-                .expect("key"),
-        )
-        .expect("key json");
+        let key = json!(kchess_domain::records::review::review_key(
+            fen,
+            &string_list(Some(&moves)),
+            Some("crazyhouse")
+        ));
         let mut evals: Vec<Value> = (0..4)
             .map(|_| json!({ "cp": 30, "depth": 20, "best": "a2a3" }))
             .collect();

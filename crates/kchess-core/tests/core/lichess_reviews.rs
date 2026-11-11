@@ -53,9 +53,7 @@ fn game() -> Value {
 #[test]
 fn maps_scores_the_better_move_and_the_labels_onto_the_positions() {
     let review = review_from_lichess(&game()).expect("analysed game");
-    let key = kchess_domain::records::call("reviewKey", &[json!(START), json!(MOVES)])
-        .unwrap()
-        .unwrap();
+    let key = kchess_domain::records::review::review_key(START, &MOVES, None);
     assert_eq!(review["key"], key);
     assert_eq!(review["moves"], json!(MOVES));
     assert_eq!(review["source"], "lichess");

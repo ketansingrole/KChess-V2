@@ -520,7 +520,7 @@ fn legacy_game(row: &[SqlValue]) -> Value {
 /// `runInsertGame`: a live game is kept as pending (only for a tracked account), any other replaces
 /// the stored game.
 fn insert_game(db: &Connection, game: &Value) -> Result<()> {
-    if in_progress(game)? {
+    if in_progress(game) {
         let account = to_sql(game.get("account"))?;
         db.execute(
             "INSERT OR IGNORE INTO pending_game_sync (account, id)

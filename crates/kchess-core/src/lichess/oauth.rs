@@ -95,15 +95,7 @@ pub fn authorize_url(
     Ok(url.into())
 }
 
-/// The OAuth look used until the app sends its own colours (`DEFAULT_OAUTH_LOOK`).
-pub fn default_look() -> Value {
-    match kchess_domain::records::call("oauthLookDefault", &[]) {
-        Some(Ok(look)) => look,
-        _ => Value::Null,
-    }
-}
-
-pub use kchess_domain::records::oauth::callback_page;
+pub use kchess_domain::records::oauth::{callback_page, default_look};
 
 /// A callback request's target, parsed: its path and first value of `state` and `code`.
 pub struct Callback {

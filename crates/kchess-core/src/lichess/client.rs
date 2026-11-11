@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use super::policy::{Admitted, Policy, is_stream};
@@ -193,29 +193,14 @@ impl LichessError {
     }
 }
 
-/// `lichessError(response, error, endpoint)`: the domain rule chooses the detail
+/// The error of a failed response: the domain rule chooses the detail
 /// (`kchess_domain::records::lichess`). `body` is the parsed JSON body, the raw text when the
 /// body is not JSON, or None when it is empty.
 pub fn lichess_error(status: u16, body: Option<Value>, endpoint: &str) -> LichessError {
-    let fields = kchess_domain::records::call(
-        "lichessError",
-        &[
-            json!({ "status": status }),
-            body.unwrap_or(Value::Null),
-            json!(endpoint),
-        ],
-    );
-    match fields {
-        Some(Ok(value)) => LichessError {
-            status,
-            endpoint: value["endpoint"].as_str().unwrap_or(endpoint).to_string(),
-            detail: value["detail"].as_str().unwrap_or("").to_string(),
-        },
-        _ => LichessError {
-            status,
-            endpoint: endpoint.to_string(),
-            detail: String::new(),
-        },
+    LichessError {
+        status,
+        endpoint: endpoint.to_string(),
+        detail: kchess_domain::records::lichess::error_detail(Some(f64::from(status)), body.as_ref()),
     }
 }
 

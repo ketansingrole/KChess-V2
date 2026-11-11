@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use kchess_core::engine::review::GameToReview;
 use kchess_core::{Config, Core};
-use kchess_domain::api;
 use rusqlite::Connection;
 use serde_json::{Value, json};
 use support::Recording;
@@ -136,12 +135,7 @@ fn review(game: Option<&str>, overrides: &[(&str, Value)]) -> Value {
 
 /// The position's review key, from the rules (`reviewKey`).
 fn review_key() -> String {
-    let answer = api::call(
-        "reviewKey",
-        &json!([INITIAL_FEN, ["e2e4", "e7e5"]]).to_string(),
-    )
-    .expect("the rule answers");
-    serde_json::from_str(&answer).expect("the key is a string")
+    kchess_domain::records::review::review_key(INITIAL_FEN, &["e2e4", "e7e5"], None)
 }
 
 fn moves() -> Value {

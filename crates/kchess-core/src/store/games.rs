@@ -1319,14 +1319,9 @@ fn clear_account_data(host: &dyn Host, db: &Connection, username: &str) -> Resul
     load_app_data(db)
 }
 
-/// Whether a game is still live, as `isGameInProgress` decides it.
-pub(super) fn in_progress(game: &Value) -> Result<bool> {
-    domain(
-        "isGameInProgress",
-        vec![game.get("status").cloned().unwrap_or(Value::Null)],
-    )?
-    .as_bool()
-    .ok_or_else(|| CoreError::new("isGameInProgress did not return a boolean."))
+/// Whether a game is still live, by its `status`.
+pub(super) fn in_progress(game: &Value) -> bool {
+    kchess_domain::records::games::is_game_in_progress(game.get("status"))
 }
 
 pub(super) fn upsert_sql() -> String {
@@ -1366,7 +1361,7 @@ fn upsert_games(
         }
         let mut upsert = db.prepare(&upsert_sql()).sql()?;
         for game in games {
-            if in_progress(game)? {
+            if in_progress(game) {
                 db.execute(
                     "INSERT OR IGNORE INTO pending_game_sync (account, id) VALUES (?, ?)",
                     params_from_iter([

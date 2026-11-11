@@ -22,7 +22,7 @@ use super::status::{
     EngineStatus, engine_identity, engine_status, fairy_variant, variant_engine_status,
 };
 use super::uci::{UciController, error_summary, lock, signal_aborted, truncate_for_log};
-use super::{EngineContext, after, clear_timer, domain, parse_info, replace_timer, validate};
+use super::{EngineContext, after, clear_timer, parse_info, replace_timer, validate};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
 
@@ -470,13 +470,7 @@ impl AnalysisEngine {
                 .clone()
                 .unwrap_or_else(|| request.fen.clone());
             let moves = request.moves.clone().unwrap_or_default();
-            let context = domain(
-                "analysisContext",
-                vec![Value::String(root.clone()), serde_json::json!(moves)],
-            )
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_string))
-            .unwrap_or_default();
+            let context = kchess_domain::records::context::analysis_context(&root, &moves);
             let session = Arc::new(Session {
                 id,
                 fen: request.fen.clone(),

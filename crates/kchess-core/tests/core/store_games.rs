@@ -286,15 +286,8 @@ fn stable_tie_ordering_and_aggregates_match_the_daily_rating_fallback() {
     );
     assert!(overview["versus"].get("alice").is_none());
 
-    // The rule the TypeScript test compared against (`ratingHistoryFromGames`, pure).
-    let expected: Value = serde_json::from_str(
-        &kchess_domain::api::call(
-            "ratingHistoryFromGames",
-            &json!([games[..3].to_vec()]).to_string(),
-        )
-        .expect("the rule answers"),
-    )
-    .expect("the history is JSON");
+    // The rule the store's history must match.
+    let expected = kchess_domain::records::ratings::rating_history_from_games(&games[..3]);
     assert_eq!(
         canonical(&store.ok("store.games.gameRatingHistory", vec![json!("alice")])),
         canonical(&expected)

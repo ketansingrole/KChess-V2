@@ -155,9 +155,8 @@ async fn a_crazyhouse_game_is_reviewed_with_its_drops() {
         "{:?}",
         done.engine
     );
-    let standard =
-        kchess_domain::api::call("reviewKey", &json!([fen, moves]).to_string()).expect("a key");
-    assert_ne!(json!(done.key).to_string(), standard);
+    let standard = kchess_domain::records::review::review_key(fen, &moves, None);
+    assert_ne!(done.key, standard);
     // The stored review is found again by its variant.
     let found = reviews
         .get_review(fen, &moves, Some("crazyhouse"))
