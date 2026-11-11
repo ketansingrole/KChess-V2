@@ -7,9 +7,8 @@ mod review;
 mod wait;
 
 use kchess_contracts::calls;
-use kchess_contracts::check::{Fen, GameId, LichessId, StudyId, check};
+use kchess_contracts::check::{Fen, GameId, LichessId, StudyId};
 use kchess_contracts::types::{AnalysisRequest, LookupOptions, PositionLookupKind, WatchTarget};
-use kchess_domain::misc::value::J;
 use kchess_domain::variant::Variant;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -335,13 +334,14 @@ async fn with_core(
             }
             Command::Analyze => {
                 let request = analysis_request("analyze", rest)?;
-                let request = check::<AnalysisRequest>(J::from(&request))?;
                 core.request(calls::ResumeOnline {}).await?;
                 core.request(calls::StartAnalysis { request }).await?;
                 let mut wait = Wait::new(&mut events);
                 loop {
                     match wait.next().await {
-                        Next::Event(CoreEvent::Analysis(update)) => print(&update),
+                        Next::Event(CoreEvent::Analysis(update)) => {
+                            print(serde_json::json!(update))
+                        }
                         Next::Event(_) | Next::Line(_) | Next::Tick => {}
                         Next::Interrupted | Next::Closed | Next::InputEnded => break,
                     }
@@ -559,7 +559,7 @@ async fn small_file(path: &str, too_large: &str) -> Result<String, String> {
 /// with its history so repetitions count. `--variant crazyhouse` (or a PGN's `Variant` header)
 /// reads them in that variant, which Fairy-Stockfish analyses. `command` names the command in its
 /// errors.
-fn analysis_request(command: &str, words: &[String]) -> Result<Value, String> {
+fn analysis_request(command: &str, words: &[String]) -> Result<AnalysisRequest, String> {
     let (variant, words) = match words {
         [flag, name, rest @ ..] if flag == "--variant" => {
             (play::local_variant(std::slice::from_ref(name))?, rest)
@@ -585,7 +585,11 @@ fn analysis_request(command: &str, words: &[String]) -> Result<Value, String> {
 }
 
 /// A position in another variant, or the one its moves reach, read by that variant's rules.
-fn variant_analysis_request(command: &str, variant: Variant, text: &str) -> Result<Value, String> {
+fn variant_analysis_request(
+    command: &str,
+    variant: Variant,
+    text: &str,
+) -> Result<AnalysisRequest, String> {
     use kchess_domain::rules;
     let text = text.trim();
     let fen = match text {
@@ -593,10 +597,14 @@ fn variant_analysis_request(command: &str, variant: Variant, text: &str) -> Resu
         "startpos" => Some(variant.default_fen()),
         text => rules::setup_start(variant, text).map(|position| rules::make_fen(&position)),
     };
-    let variant = variant.key();
+    let request = |fen: String| AnalysisRequest {
+        variant: Some(variant.key().to_string()),
+        ..three_lines(fen)
+    };
     if let Some(fen) = fen {
-        return Ok(json!({ "fen": fen, "lines": 3, "variant": variant }));
+        return Ok(request(fen));
     }
+    let variant = variant.key();
     let pgn = if text.starts_with('[') {
         text.to_string()
     } else {
@@ -610,19 +618,17 @@ fn variant_analysis_request(command: &str, variant: Variant, text: &str) -> Resu
         moves.push(next.uci.clone());
         node = next;
     }
-    Ok(json!({
-        "fen": node.fen,
-        "rootFen": tree.fen,
-        "moves": moves,
-        "lines": 3,
-        "variant": variant,
-    }))
+    Ok(AnalysisRequest {
+        root_fen: Some(tree.fen.clone()),
+        moves: Some(moves),
+        ..request(node.fen.clone())
+    })
 }
 
 /// A standard (or Chess960) position, or the one a game's moves reach.
-fn standard_analysis_request(command: &str, words: &[String]) -> Result<Value, String> {
+fn standard_analysis_request(command: &str, words: &[String]) -> Result<AnalysisRequest, String> {
     if let Ok(fen) = analysis_fen(words) {
-        return Ok(json!({ "fen": fen, "lines": 3 }));
+        return Ok(three_lines(fen));
     }
     let text = words.join(" ");
     let line = review::main_line(&text).map_err(|cause| match text.trim() {
@@ -634,7 +640,24 @@ fn standard_analysis_request(command: &str, words: &[String]) -> Result<Value, S
         .pop()
         .map(|position| position.fen)
         .ok_or("Not a legal position.")?;
-    Ok(json!({ "fen": fen, "rootFen": line.fen, "moves": line.moves, "lines": 3 }))
+    Ok(AnalysisRequest {
+        root_fen: Some(line.fen),
+        moves: Some(line.moves),
+        ..three_lines(fen)
+    })
+}
+
+/// The best three lines of a position, without its history.
+fn three_lines(fen: String) -> AnalysisRequest {
+    AnalysisRequest {
+        fen,
+        lines: 3,
+        infinite: None,
+        root_fen: None,
+        moves: None,
+        client_id: None,
+        variant: None,
+    }
 }
 
 /// The position `analyze` was given: a FEN, quoted or as separate words, or `startpos`.
@@ -655,32 +678,27 @@ fn analysis_fen(words: &[String]) -> Result<String, String> {
 /// Lichess does (the last named position on the way). Offline: no core is needed.
 fn opening_name(words: &[String]) -> Result<Value, String> {
     let request = analysis_request("opening", words)?;
-    if request.get("variant").is_some() {
+    if request.variant.is_some() {
         return Err("Opening names are for standard chess only.".into());
     }
-    let root = request
-        .get("rootFen")
-        .unwrap_or(&request["fen"])
-        .as_str()
-        .unwrap_or_default();
-    let moves: Vec<String> = match request.get("moves") {
-        Some(moves) => serde_json::from_value(moves.clone()).map_err(|e| format!("moves: {e}"))?,
-        None => Vec::new(),
-    };
+    let root = request.root_fen.as_deref().unwrap_or(&request.fen);
+    let moves = request.moves.as_deref().unwrap_or_default();
     let ply = moves.len() as f64;
-    let named = kchess_domain::training::openings::opening_at("standard", root, &moves, ply)
+    let named = kchess_domain::training::openings::opening_at("standard", root, moves, ply)
         .ok_or("No named opening there.")?;
-    Ok(json!({ "eco": named.eco, "name": named.name, "fen": request["fen"] }))
+    Ok(json!({ "eco": named.eco, "name": named.name, "fen": request.fen }))
 }
 
 /// The position a FEN or line reaches: whose turn, check and how the game stands, and every legal
 /// move in SAN.
 fn position_info(words: &[String]) -> Result<Value, String> {
     let request = analysis_request("position", words)?;
-    let variant = request["variant"].as_str().unwrap_or("standard");
-    let fen = request["fen"].as_str().ok_or("setup.fen")?;
-    let position = kchess_domain::variant::Variant::from_key(variant)
-        .and_then(|variant| kchess_domain::rules::setup_start(variant, fen));
+    let variant = match request.variant.as_deref() {
+        Some(key) => Variant::from_key(key),
+        None => Some(Variant::Standard),
+    };
+    let position =
+        variant.and_then(|variant| kchess_domain::rules::setup_start(variant, &request.fen));
     let info = position.as_ref().map(kchess_domain::position::info);
     let legal = position
         .as_ref()
@@ -710,8 +728,8 @@ fn explore_request(
         .filter(|kind| *kind != PositionLookupKind::Player);
     let words = if named.is_some() { &words[1..] } else { words };
     let request = analysis_request("explore", words)?;
-    let fen = request["fen"].as_str().unwrap_or_default().to_string();
-    if let Some(variant) = request["variant"].as_str().and_then(Variant::from_key) {
+    let fen = request.fen;
+    if let Some(variant) = request.variant.as_deref().and_then(Variant::from_key) {
         return match named {
             None | Some(PositionLookupKind::Opening) => {
                 Ok((PositionLookupKind::Opening, fen, Some(variant)))
@@ -1054,37 +1072,34 @@ mod tests {
             ]),
         )
         .unwrap();
-        assert_eq!(request["variant"], "crazyhouse");
+        assert_eq!(request.variant.as_deref(), Some("crazyhouse"));
         assert_eq!(
-            request["moves"],
-            json!(["e2e4", "d7d5", "e4d5", "d8d5", "P@e3"])
+            request.moves.unwrap(),
+            ["e2e4", "d7d5", "e4d5", "d8d5", "P@e3"]
         );
-        assert!(
-            request["fen"].as_str().unwrap().contains("[p]"),
-            "{request}"
-        );
+        assert!(request.fen.contains("[p]"), "{}", request.fen);
         // A PGN names its own variant: the Atomic capture explodes.
         let request = analysis_request(
             "analyze",
             &strings(&["[Variant \"Atomic\"]", "1.", "e4", "d5", "2.", "exd5"]),
         )
         .unwrap();
-        assert_eq!(request["variant"], "atomic");
+        assert_eq!(request.variant.as_deref(), Some("atomic"));
         assert_eq!(
-            request["fen"],
+            request.fen,
             "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
         );
         let start =
             analysis_request("analyze", &strings(&["--variant", "horde", "startpos"])).unwrap();
-        assert_eq!(start["variant"], "horde");
-        assert!(start["fen"].as_str().unwrap().contains("PPPPPPPP/PPPPPPPP"));
+        assert_eq!(start.variant.as_deref(), Some("horde"));
+        assert!(start.fen.contains("PPPPPPPP/PPPPPPPP"));
         assert!(
             analysis_request("analyze", &strings(&["--variant", "bughouse", "startpos"])).is_err()
         );
         // Standard chess and Chess960 stay with Stockfish.
         let request =
             analysis_request("analyze", &strings(&["--variant", "chess960", "e4"])).unwrap();
-        assert!(request.get("variant").is_none());
+        assert_eq!(request.variant, None);
     }
 
     #[test]
@@ -1092,13 +1107,13 @@ mod tests {
         let request =
             analysis_request("analyze", &strings(&["1.", "e4", "e5", "2.", "Nf3"])).unwrap();
         assert_eq!(
-            request["fen"],
+            request.fen,
             "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
         );
-        assert_eq!(request["moves"], json!(["e2e4", "e7e5", "g1f3"]));
+        assert_eq!(request.moves.unwrap(), ["e2e4", "e7e5", "g1f3"]);
         assert_eq!(
-            request["rootFen"],
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+            request.root_fen.as_deref(),
+            Some("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
         );
         assert_eq!(
             analysis_request("analyze", &strings(&["e4", "Ke7"])).unwrap_err(),
@@ -1110,7 +1125,7 @@ mod tests {
         );
         // A FEN still goes as it is, without a history.
         let start = analysis_request("analyze", &strings(&["startpos"])).unwrap();
-        assert!(start.get("moves").is_none());
+        assert_eq!(start.moves, None);
     }
 
     #[tokio::test]

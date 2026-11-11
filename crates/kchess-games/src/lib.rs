@@ -4,9 +4,7 @@
 //! history writes. The GPUI app and the CLI share them.
 
 pub mod broadcast;
-pub mod computer;
 pub mod history;
-pub mod local;
 pub mod puzzle;
 
 pub use kchess_domain::games::Outcome;

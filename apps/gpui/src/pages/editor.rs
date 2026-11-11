@@ -21,7 +21,7 @@ use crate::assets::icon;
 use crate::board::looks;
 use crate::board::{BoardEvent, BoardState, ChessBoard, EditTool, PieceGhost, SparePiece};
 use crate::game::surface::TakesKeys as _;
-use crate::game::{STANDARD_FEN, editor_setup, position_problem, standard_rules, variants};
+use crate::game::{STANDARD_FEN, editor_setup, position_problem};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii, tint};
@@ -29,6 +29,7 @@ use crate::voice::control::{BarSpec, Control};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill, Tone};
+use kchess_domain::variant::{Setup, Variant};
 use kchess_domain::voice::{self, EditorAction};
 
 const EMPTY_BOARD: &str = "8/8/8/8/8/8/8/8";
@@ -68,7 +69,7 @@ fn setup_fen(setup: &Value) -> String {
 /// The FEN of `fen` (the editor's standard one) in `variant`: Crazyhouse adds the pockets and
 /// Three-check the checks left, as pasted (empty pockets, three checks each, otherwise).
 fn variant_fen(
-    variant: &str,
+    variant: Variant,
     fen: &str,
     pockets: Option<ByColor<ByRole<u8>>>,
     checks: Option<ByColor<RemainingChecks>>,
@@ -77,8 +78,8 @@ fn variant_fen(
         return fen.to_string();
     };
     match variant {
-        "crazyhouse" => setup.pockets = Some(pockets.unwrap_or_default()),
-        "threeCheck" => setup.remaining_checks = Some(checks.unwrap_or_default()),
+        Variant::Crazyhouse => setup.pockets = Some(pockets.unwrap_or_default()),
+        Variant::ThreeCheck => setup.remaining_checks = Some(checks.unwrap_or_default()),
         _ => return fen.to_string(),
     }
     kchess_domain::rules::make_setup_fen(&setup)
@@ -152,8 +153,8 @@ pub(crate) enum Action {
 
 pub struct EditorPage {
     setup: Value,
-    /// The variant the position is played in (a Lichess key).
-    variant: String,
+    /// The variant the position is played in.
+    variant: Variant,
     variant_select: Entity<SelectState<Vec<SharedString>>>,
     /// A Crazyhouse position's pockets and a Three-check one's checks left, from its FEN.
     pockets: Option<ByColor<ByRole<u8>>>,
@@ -175,10 +176,10 @@ pub struct EditorPage {
     /// A piece said without a colour takes the colour said last.
     last_color: &'static str,
     /// Undo and redo: each position as `(variant, FEN)`, the one shown last of `undone`.
-    edits: Vec<(String, String)>,
-    undone: Vec<(String, String)>,
+    edits: Vec<(Variant, String)>,
+    undone: Vec<(Variant, String)>,
     /// The position as last recorded, which the next change is undone to.
-    shown: (String, String),
+    shown: (Variant, String),
     _subscriptions: Vec<Subscription>,
 }
 
@@ -206,9 +207,9 @@ impl EditorPage {
         let ep_select = cx.new(|cx| SelectState::new(Vec::<SharedString>::new(), None, window, cx));
         let variant_select = cx.new(|cx| {
             SelectState::new(
-                variants()
+                Variant::ALL
                     .iter()
-                    .map(|text| SharedString::from(text.label.clone()))
+                    .map(|variant| SharedString::from(variant.label()))
                     .collect(),
                 Some(IndexPath::new(0)),
                 window,
@@ -250,10 +251,10 @@ impl EditorPage {
                         .read(cx)
                         .selected_index(cx)
                         .map_or(0, |index| index.row);
-                    if let Some(text) = variants().get(row)
-                        && text.key != this.variant
+                    if let Some(&variant) = Variant::ALL.get(row)
+                        && variant != this.variant
                     {
-                        this.variant = text.key.clone();
+                        this.variant = variant;
                         this.changed(cx);
                     }
                 },
@@ -270,7 +271,7 @@ impl EditorPage {
         ];
         let mut page = EditorPage {
             setup: start_setup(),
-            variant: "standard".into(),
+            variant: Variant::Standard,
             variant_select,
             pockets: None,
             checks: None,
@@ -288,7 +289,7 @@ impl EditorPage {
             last_color: "white",
             edits: Vec::new(),
             undone: Vec::new(),
-            shown: (String::new(), String::new()),
+            shown: (Variant::Standard, String::new()),
             _subscriptions: subscriptions,
         };
         page.shown = page.snapshot();
@@ -300,7 +301,7 @@ impl EditorPage {
     /// the same way.
     pub fn set_position(
         &mut self,
-        variant: &str,
+        variant: Variant,
         fen: &str,
         orientation: Color,
         _: &mut Window,
@@ -309,9 +310,7 @@ impl EditorPage {
         if !self.read_fen(fen) {
             self.setup = start_setup();
         }
-        if crate::game::analysable(variant) {
-            self.variant = variant.to_string();
-        }
+        self.variant = variant;
         self.orientation = orientation;
         self.changed(cx);
     }
@@ -330,9 +329,9 @@ impl EditorPage {
         self.pockets = pockets;
         self.checks = checks;
         if pockets.is_some() {
-            self.variant = "crazyhouse".into();
+            self.variant = Variant::Crazyhouse;
         } else if checks.is_some() {
-            self.variant = "threeCheck".into();
+            self.variant = Variant::ThreeCheck;
         }
         true
     }
@@ -340,19 +339,22 @@ impl EditorPage {
     /// The position's FEN, in its variant.
     fn fen(&self) -> String {
         variant_fen(
-            &self.variant,
+            self.variant,
             &setup_fen(&self.setup),
             self.pockets,
             self.checks,
         )
     }
 
-    /// The position as a game starts from it (`{ variant, fen }`).
-    pub(crate) fn game_setup(&self) -> Value {
-        if standard_rules(&self.variant) {
+    /// The position as a game starts from it.
+    pub(crate) fn game_setup(&self) -> Setup {
+        if self.variant.standard_rules() {
             crate::game::setup_from_fen(&self.fen())
         } else {
-            json!({ "variant": self.variant, "fen": self.fen() })
+            Setup {
+                variant: self.variant,
+                fen: self.fen(),
+            }
         }
     }
 
@@ -360,17 +362,12 @@ impl EditorPage {
     /// rules refusing it.
     fn problem(&self) -> Option<String> {
         let fen = self.fen();
-        if standard_rules(&self.variant) {
+        if self.variant.standard_rules() {
             return position_problem(&fen).map(str::to_string);
         }
-        crate::game::setup_position(&self.variant, &fen)
+        kchess_domain::rules::setup_start(self.variant, &fen)
             .is_none()
-            .then(|| {
-                format!(
-                    "Not a legal {} position",
-                    crate::game::variant_label(&self.variant)
-                )
-            })
+            .then(|| format!("Not a legal {} position", self.variant.label()))
     }
 
     fn turn(&self) -> Color {
@@ -428,11 +425,11 @@ impl EditorPage {
     }
 
     /// The position as Undo keeps it: its variant and FEN.
-    fn snapshot(&self) -> (String, String) {
-        (self.variant.clone(), self.fen())
+    fn snapshot(&self) -> (Variant, String) {
+        (self.variant, self.fen())
     }
 
-    fn restore(&mut self, (variant, fen): (String, String), cx: &mut Context<Self>) {
+    fn restore(&mut self, (variant, fen): (Variant, String), cx: &mut Context<Self>) {
         if self.read_fen(&fen) {
             self.variant = variant;
         }
@@ -500,9 +497,9 @@ impl EditorPage {
         let items: Vec<SharedString> = std::iter::once(SharedString::from("None"))
             .chain(self.ep_squares.iter().map(|square| square.clone().into()))
             .collect();
-        let row = variants()
+        let row = Variant::ALL
             .iter()
-            .position(|text| text.key == self.variant)
+            .position(|variant| *variant == self.variant)
             .unwrap_or(0);
         self.variant_select.update(cx, |select, cx| {
             select.set_selected_index(Some(IndexPath::new(row)), window, cx)
@@ -573,10 +570,8 @@ impl EditorPage {
 
     /// The variant's usual start (Horde's, Racing Kings'), or standard chess's.
     fn start_position(&mut self, cx: &mut Context<Self>) {
-        let usual = (!standard_rules(&self.variant))
-            .then(|| crate::game::default_fen(&self.variant))
-            .flatten();
-        let variant = self.variant.clone();
+        let usual = (!self.variant.standard_rules()).then(|| self.variant.default_fen());
+        let variant = self.variant;
         if !usual.is_some_and(|fen| self.read_fen(&fen)) {
             self.setup = start_setup();
             self.pockets = None;
@@ -874,17 +869,24 @@ impl Render for EditorPage {
             .child(crate::board::cached(&self.board))
             .child(self.render_spares(bottom, &set, board_size, cx, &palette))
             // Voice sits at the end of its row.
-            .child(h_flex().justify_end().child(self.voice.bar(
-                cx.entity().downgrade(),
-                |this: &mut Self| &mut this.voice,
-                BarSpec {
-                    id: "editor-voice",
-                    hint: "Say “white knight F three”, “remove E four” or “clear board”",
-                    active: true,
-                    grammar: crate::voice::grammar(crate::voice::Grammar::Editor),
-                },
-                cx,
-            )));
+            .child(
+                h_flex().justify_end().child(
+                    self.voice.bar(
+                        cx.entity().downgrade(),
+                        |this: &mut Self| &mut this.voice,
+                        BarSpec {
+                            id: "editor-voice",
+                            hint: "Say “white knight F three”, “remove E four” or “clear board”",
+                            active: true,
+                            grammar: kchess_domain::voice::grammar(
+                                kchess_domain::voice::Grammar::Editor,
+                            )
+                            .to_vec(),
+                        },
+                        cx,
+                    ),
+                ),
+            );
         let label = |text: &'static str| {
             div()
                 .text_size(px(12.))
@@ -1213,18 +1215,16 @@ impl crate::pages::PageView for EditorPage {
     }
 }
 
-/// The board editor on a setup's position (`{ variant, fen }`).
+/// The board editor on a setup's position.
 pub fn edit_position(
-    setup: Value,
+    setup: Setup,
     orientation: shakmaty::Color,
     window: &mut Window,
     cx: &mut App,
 ) {
-    let variant = setup["variant"].as_str().unwrap_or("standard");
-    let fen = setup["fen"].as_str().unwrap_or_default();
     if let Some(editor) = crate::shell::made::<EditorPage>(window, cx) {
         editor.update(cx, |editor, cx| {
-            editor.set_position(variant, fen, orientation, window, cx)
+            editor.set_position(setup.variant, &setup.fen, orientation, window, cx)
         });
     }
     crate::shell::open(crate::pages::Page::Editor, window, cx);

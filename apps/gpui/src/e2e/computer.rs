@@ -294,7 +294,7 @@ fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::Test
         crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
             .map(|page| page.read(cx).setup_variant())
     });
-    assert_eq!(variant.as_deref(), Some("chess960"));
+    assert_eq!(variant, Some(kchess_domain::variant::Variant::Chess960));
 }
 
 /// Until the saved game is restored the board takes no move: on a slow profile (Windows CI) the
@@ -369,7 +369,10 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
             (page.setup_variant(), page.setup_fen())
         })
     });
-    assert_eq!(setup, Some(("crazyhouse".to_string(), fen.to_string())));
+    assert_eq!(
+        setup,
+        Some((kchess_domain::variant::Variant::Crazyhouse, fen.to_string()))
+    );
 
     // The dialog opens with that position; another variant, which refuses it, clears it.
     app.click("game-options");
@@ -417,7 +420,10 @@ fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
         })
     };
     // The first variant listed after standard chess and Chess960.
-    assert_eq!(variant(&mut app).as_deref(), Some("kingOfTheHill"));
+    assert_eq!(
+        variant(&mut app),
+        Some(kchess_domain::variant::Variant::KingOfTheHill)
+    );
     // The scripted engine answers e2e4, which King of the Hill's rules allow from its start.
     app.click("flip");
     app.wait_for_moves(&["e4"]);
@@ -429,10 +435,10 @@ fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
             crate::shell::view::<crate::pages::computer::ComputerPage>(cx).expect("the page");
         page.update(cx, |page, cx| {
             page.start_from(
-                serde_json::json!({
-                    "variant": "crazyhouse",
-                    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1",
-                }),
+                kchess_domain::variant::Setup {
+                    variant: kchess_domain::variant::Variant::Crazyhouse,
+                    fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1".into(),
+                },
                 shakmaty::Color::Black,
                 window,
                 cx,
@@ -442,12 +448,18 @@ fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
     // Starting over asks first.
     app.click("ok");
     app.wait_for_moves(&["e4"]);
-    assert_eq!(variant(&mut app).as_deref(), Some("crazyhouse"));
+    assert_eq!(
+        variant(&mut app),
+        Some(kchess_domain::variant::Variant::Crazyhouse)
+    );
     // The unfinished Crazyhouse game is kept (it once could not be saved).
     let mut app = app.restart();
     app.open("Play with computer");
     app.wait_for_moves(&["e4"]);
-    assert_eq!(variant(&mut app).as_deref(), Some("crazyhouse"));
+    assert_eq!(
+        variant(&mut app),
+        Some(kchess_domain::variant::Variant::Crazyhouse)
+    );
     // The dialog opens on the variant game being played.
     app.click("game-options");
     assert_eq!(app.find(("start", 2usize)).selected(), Some(true));

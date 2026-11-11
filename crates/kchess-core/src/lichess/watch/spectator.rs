@@ -13,12 +13,12 @@ use super::{
     WatchFrame, WatchSink, WatchState, WatchTarget, align_tv_moves, broadcast_game, display_fen,
     parse_game_details, parse_tv_game,
 };
-use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
 use crate::lichess::accounts::{Lichess, path_segment};
 use crate::lichess::client::{Auth, Lane};
 use crate::lichess::decode::{Loose, read};
 use crate::lichess::stream::STALLED;
+use kchess_contracts::error::{CoreError, Result as CoreResult};
 use kchess_contracts::types::{UsageKind, WatchPhase};
 
 /// A TV feed record, `{ t, d }`: a featured game or a move. Other kinds, and records whose
@@ -196,36 +196,25 @@ impl Spectator {
                     WatchTarget::Game(id) => inner.follow_game(id, session, &token).await,
                 }
             };
-            // A panic ends the feed as a failure, so the viewer is offered a retry.
-            let result = crate::tasks::caught(followed)
-                .await
-                .unwrap_or_else(|_| Err(CoreError::new(FEED_PANICKED)));
-            match result {
+            let label = match &target {
+                WatchTarget::Channel(channel) | WatchTarget::Game(channel) => channel,
+            };
+            let what = format!("Watch failed: {label}");
+            match inner.outcome(&token, &what, followed).await {
+                None => {}
                 // Lichess closes a game's stream once the game is over: nothing to reconnect to.
-                Ok(true) => inner.report(session, &token, WatchPhase::Ended, None),
-                Ok(false) => inner.report(
+                Some(Ok(true)) => inner.report(session, &token, WatchPhase::Ended, None),
+                Some(Ok(false)) => inner.report(
                     session,
                     &token,
                     WatchPhase::Ended,
                     Some("The feed ended. Retry to reconnect."),
                 ),
-                // Stopped, or replaced by another watch: nothing failed.
-                Err(_) if token.is_cancelled() => {}
-                Err(cause) => {
-                    let label = match &target {
-                        WatchTarget::Channel(channel) => channel.clone(),
-                        WatchTarget::Game(id) => id.clone(),
-                    };
-                    inner.host_log(
-                        Level::Warn,
-                        &format!("Watch failed: {label} {}", cause.message),
-                    );
-                    let kind = cause.kind.unwrap_or(crate::error::ErrorKind::Offline);
-                    let message = if cause.message.is_empty() {
-                        "The feed disconnected.".to_string()
-                    } else {
-                        cause.message
-                    };
+                Some(Err(cause)) => {
+                    let kind = cause
+                        .kind
+                        .unwrap_or(kchess_contracts::error::ErrorKind::Offline);
+                    let message = said_or(cause, "The feed disconnected.");
                     inner.report_failure(session, &token, &message, kind);
                 }
             }
@@ -240,49 +229,57 @@ impl Spectator {
         let round_id = round_id.to_string();
         tokio::spawn(async move {
             let followed = inner.follow_round(&round_id, session, &token);
-            let result = crate::tasks::caught(followed)
-                .await
-                .unwrap_or_else(|_| Err(CoreError::new(FEED_PANICKED)));
-            match result {
-                Ok(()) => {
-                    if inner.is_current(session) {
-                        inner.sink.broadcast(BroadcastUpdate {
-                            session,
-                            round_id: round_id.clone(),
-                            games: Vec::new(),
-                            ended: Some(true),
-                            error: None,
-                        });
-                    }
-                }
-                Err(_) if token.is_cancelled() => {}
-                Err(cause) => {
-                    inner.host_log(
-                        Level::Warn,
-                        &format!("Broadcast feed failed: {round_id} {}", cause.message),
-                    );
-                    if inner.is_current(session) && !token.is_cancelled() {
-                        let message = if cause.message.is_empty() {
-                            "The broadcast feed stopped.".to_string()
-                        } else {
-                            cause.message
-                        };
-                        inner.sink.broadcast(BroadcastUpdate {
-                            session,
-                            round_id: round_id.clone(),
-                            games: Vec::new(),
-                            ended: Some(true),
-                            error: Some(message),
-                        });
-                    }
-                }
+            let what = format!("Broadcast feed failed: {round_id}");
+            let Some(outcome) = inner.outcome(&token, &what, followed).await else {
+                return;
+            };
+            if inner.is_current(session) && !token.is_cancelled() {
+                inner.sink.broadcast(BroadcastUpdate {
+                    session,
+                    round_id: round_id.clone(),
+                    games: Vec::new(),
+                    ended: Some(true),
+                    error: outcome
+                        .err()
+                        .map(|cause| said_or(cause, "The broadcast feed stopped.")),
+                });
             }
         });
         session
     }
 }
 
+/// A failure's message, or `fallback` when it says nothing.
+fn said_or(cause: CoreError, fallback: &str) -> String {
+    if cause.message.is_empty() {
+        fallback.to_string()
+    } else {
+        cause.message
+    }
+}
+
 impl Inner {
+    /// How a feed ended: a panic as a failure, so the viewer is offered a retry; a stop or a
+    /// newer watch as `None`, since nothing failed; and a failure logged as `what`.
+    async fn outcome<T>(
+        &self,
+        token: &CancellationToken,
+        what: &str,
+        followed: impl std::future::Future<Output = CoreResult<T>>,
+    ) -> Option<CoreResult<T>> {
+        let result = crate::tasks::caught(followed)
+            .await
+            .unwrap_or_else(|_| Err(CoreError::new(FEED_PANICKED)));
+        match result {
+            Err(_) if token.is_cancelled() => None,
+            Err(cause) => {
+                self.host_log(Level::Warn, &format!("{what} {}", cause.message));
+                Some(Err(cause))
+            }
+            done => Some(done),
+        }
+    }
+
     /// Who the watch's requests are made as: nobody, counted as watching.
     fn watcher(&self) -> Auth {
         self.lichess.anonymous(UsageKind::Watch)
@@ -340,7 +337,7 @@ impl Inner {
         session: u64,
         token: &CancellationToken,
         message: &str,
-        kind: crate::error::ErrorKind,
+        kind: kchess_contracts::error::ErrorKind,
     ) {
         if !token.is_cancelled() && self.is_current(session) {
             self.sink.state(WatchState {

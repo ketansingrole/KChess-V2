@@ -10,14 +10,15 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::task::AbortHandle;
 
-use crate::error::Result;
 use crate::host::Host;
+use kchess_contracts::error::Result;
 use scheduler::{Priority, Scheduler};
 use status::{EngineLocations, EngineStatus, engine_command};
 use uci::{EngineHub, UciController};
 
 pub mod analysis;
 pub mod bridge;
+pub(crate) mod job;
 pub mod managed;
 pub mod review;
 pub mod scheduler;
@@ -75,6 +76,19 @@ impl EngineContext {
         self.hub.assert_available()?;
         UciController::start(&self.hub, (self.command)(status), uci::DEFAULT_DEADLINE)
     }
+}
+
+/// Stops every engine owner: the computer's search, the analysis and the running review, whose
+/// engine closes. With `close`, the search's and the analysis' engines close too.
+pub(crate) fn stop_engines(
+    search: &search::Search,
+    analysis: &analysis::Analysis,
+    reviews: &review::Reviews,
+    close: bool,
+) {
+    search.stop_engine(close);
+    analysis.stop_analysis(close);
+    reviews.restart_review_engine();
 }
 
 /// Runs `action` after `ms`, unless the returned handle is aborted first. Without

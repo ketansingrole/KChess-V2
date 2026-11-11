@@ -10,7 +10,7 @@ use kchess_contracts::Level;
 use kchess_contracts::calls;
 use kchess_contracts::check::{ArchivedGame, LibraryId, SessionObject};
 use kchess_contracts::types::SessionKind;
-use kchess_contracts::types::{Library, PlayedGame};
+use kchess_contracts::types::{Library, PlayedGame, ProfileArea};
 use serde_json::Value;
 
 use crate::core::{Answer, AppCore, Reads};
@@ -72,7 +72,7 @@ pub fn init(library: &Library, cx: &mut App) {
         move |cx| Some(entity.read(cx).flushed())
     });
     // Another window saved or removed a game: show the profile's.
-    crate::core::on_profile_change(cx, &["playedGames"], {
+    crate::core::on_profile_change(cx, &[ProfileArea::PlayedGames], {
         let entity = entity.downgrade();
         move |cx| {
             let _ = entity.update(cx, |games, cx| games.reload(cx));
@@ -150,7 +150,7 @@ async fn send(core: &AppCore, write: &Write) -> Result<(), kchess_contracts::Cor
             .await
         }
         Write::Session(key, value) => {
-            let kind = SessionKind::named(key).ok_or_else(|| {
+            let kind = SessionKind::from_key(key).ok_or_else(|| {
                 kchess_contracts::CoreError::new(format!("No session is kept as {key}."))
             })?;
             core.request(calls::SaveSession {

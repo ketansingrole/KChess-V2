@@ -5,6 +5,7 @@
 //! (`kchess_domain::training::guess`); the other side's moves are played for you.
 
 use kchess_contracts::calls;
+use kchess_contracts::types::{AnalysisUpdate, EngineLine};
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -13,6 +14,7 @@ use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_domain::training::guess::{self, Eval, Evals, Flaw, Grade, Judged};
+use kchess_domain::variant::{Setup, Variant};
 use serde_json::{Value, json};
 use shakmaty::{Color, Position as _};
 
@@ -42,7 +44,7 @@ const LINES: usize = 3;
 /// A game to guess through: its start, its moves and who played it.
 #[derive(Clone)]
 struct Game {
-    setup: Value,
+    setup: Setup,
     moves: Vec<String>,
     sans: Vec<String>,
     white: String,
@@ -54,7 +56,7 @@ struct Game {
 impl Game {
     /// The mainline of a standard game's PGN, or why it cannot be guessed.
     fn from_pgn(pgn: &str) -> Result<Game, &'static str> {
-        if crate::game::pgn_variant_key(pgn) != Some("standard") {
+        if crate::game::pgn_variant(pgn) != Some(Variant::Standard) {
             return Err("Only standard chess games can be guessed");
         }
         let root = TreeNode::from_pgn(pgn).ok_or("That PGN could not be read")?;
@@ -67,7 +69,7 @@ impl Game {
         if moves.is_empty() {
             return Err("That game has no moves");
         }
-        let setup = json!({ "variant": "standard", "fen": root.fen });
+        let setup = Setup::standard_at(root.fen.clone());
         let sans = view::sans(&setup, &moves);
         if sans.len() != moves.len() {
             return Err("That PGN could not be read");
@@ -123,11 +125,11 @@ enum Probe {
 }
 
 /// A line's score from the guessing side's point of view; lines are from White's.
-fn eval_of(line: &Value, side: Color) -> Option<Eval> {
-    let eval = if let Some(mate) = line["mate"].as_f64() {
+fn eval_of(line: &EngineLine, side: Color) -> Option<Eval> {
+    let eval = if let Some(mate) = line.mate {
         Eval::Mate(mate as i32)
     } else {
-        Eval::Cp(line["cp"].as_f64()? as i32)
+        Eval::Cp(line.cp? as i32)
     };
     Some(eval.for_side(side == Color::White))
 }
@@ -159,7 +161,7 @@ pub struct GuessMoves {
     pending: Option<String>,
     probe: Option<Probe>,
     /// The engine's best lines for the position at a ply.
-    best: Option<(usize, Vec<Value>)>,
+    best: Option<(usize, Vec<EngineLine>)>,
     /// The engine's evaluation after the move played at a ply (none when it found none).
     played_eval: Option<(usize, Option<Eval>)>,
     engine: PositionEngine,
@@ -186,7 +188,7 @@ impl GuessMoves {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> GuessMoves {
         let board = cx.new(|_| {
             ChessBoard::new(view::board_state(
-                &json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN }),
+                &Setup::standard(),
                 &[],
                 0,
                 Color::White,
@@ -451,8 +453,8 @@ impl GuessMoves {
         let listed = self.best.as_ref().and_then(|(ply, lines)| {
             (*ply == self.ply).then(|| {
                 lines.iter().find(|line| {
-                    line["pv"][0]
-                        .as_str()
+                    line.pv
+                        .first()
                         .is_some_and(|first| guess::same_move(first, uci))
                 })
             })?
@@ -570,10 +572,10 @@ impl GuessMoves {
             .best
             .as_ref()
             .and_then(|(_, lines)| lines.first())
-            .and_then(|line| line["pv"][0].as_str())
+            .and_then(|line| line.pv.first())
             .and_then(|best| {
                 let mut line = game.moves[..self.ply].to_vec();
-                line.push(best.to_string());
+                line.push(best.clone());
                 // Named only when it is a legal move there.
                 let mut sans = view::sans(&game.setup, &line);
                 (sans.len() == line.len()).then(|| sans.pop()).flatten()
@@ -604,7 +606,7 @@ impl GuessMoves {
         };
         let request = json!({
             "fen": kchess_domain::rules::make_fen(&position),
-            "rootFen": game.setup["fen"],
+            "rootFen": game.setup.fen,
             "moves": history,
             "lines": if matches!(probe, Probe::Best(_)) { LINES } else { 1 },
             "infinite": true,
@@ -618,12 +620,11 @@ impl GuessMoves {
         }));
     }
 
-    fn engine_update(&mut self, update: &Value, cx: &mut Context<Self>) {
+    fn engine_update(&mut self, update: &AnalysisUpdate, cx: &mut Context<Self>) {
         if self.probe.is_none() || !self.engine.receive(update) {
             return;
         }
-        let reached = update["depth"].as_f64().unwrap_or_default() >= PROBE_DEPTH
-            || update["done"] == json!(true);
+        let reached = update.depth >= PROBE_DEPTH || update.done;
         if reached || self.engine.error.is_some() {
             self.probe_done(cx);
         }
@@ -634,7 +635,7 @@ impl GuessMoves {
         let Some(probe) = self.probe.take() else {
             return;
         };
-        let lines = self.engine.lines();
+        let lines = self.engine.lines().to_vec();
         self.stop_engine(cx);
         match probe {
             Probe::Best(ply) => {
@@ -1119,15 +1120,14 @@ impl Render for GuessMoves {
 
 /// A PGN's moves and start as guessing would play them through, or why it cannot be guessed.
 #[cfg(test)]
-pub(super) fn loaded(pgn: &str) -> Result<(Vec<String>, Value), &'static str> {
+pub(super) fn loaded(pgn: &str) -> Result<(Vec<String>, Setup), &'static str> {
     Game::from_pgn(pgn).map(|game| (game.moves, game.setup))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Game, eval_of};
+    use super::{EngineLine, Game, eval_of};
     use kchess_domain::training::guess::Eval;
-    use serde_json::json;
     use shakmaty::Color;
 
     #[test]
@@ -1148,10 +1148,17 @@ mod tests {
 
     #[test]
     fn lines_are_read_for_the_guessing_side() {
-        let line = json!({ "cp": 31, "pv": ["e2e4"] });
-        assert_eq!(eval_of(&line, Color::White), Some(Eval::Cp(31)));
-        assert_eq!(eval_of(&line, Color::Black), Some(Eval::Cp(-31)));
-        let mate = json!({ "mate": -2, "pv": ["e2e4"] });
+        let line = |cp, mate| EngineLine {
+            rank: 1,
+            depth: 10.,
+            cp,
+            mate,
+            pv: vec!["e2e4".into()],
+        };
+        let ahead = line(Some(31.), None);
+        assert_eq!(eval_of(&ahead, Color::White), Some(Eval::Cp(31)));
+        assert_eq!(eval_of(&ahead, Color::Black), Some(Eval::Cp(-31)));
+        let mate = line(None, Some(-2.));
         assert_eq!(eval_of(&mate, Color::Black), Some(Eval::Mate(2)));
     }
 }

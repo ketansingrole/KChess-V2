@@ -37,8 +37,7 @@ fn a_timed_games_clock_runs_for_the_side_to_move(cx: &mut gpui_kit::TestAppConte
     app.with_window(|window, cx| {
         let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
-            let setup =
-                serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+            let setup = kchess_domain::variant::Setup::standard();
             let clock = serde_json::json!({
                 "white": { "minutes": 5, "increment": 0 },
                 "black": { "minutes": 5, "increment": 0 },
@@ -76,8 +75,7 @@ fn an_empty_move_list_mentions_the_clock_only_in_a_timed_game(cx: &mut gpui_kit:
     app.with_window(|window, cx| {
         let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
-            let setup =
-                serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+            let setup = kchess_domain::variant::Setup::standard();
             let clock = serde_json::json!({
                 "white": { "minutes": 5, "increment": 0 },
                 "black": { "minutes": 5, "increment": 0 },
@@ -492,7 +490,10 @@ fn a_crazyhouse_capture_can_be_dropped_back(cx: &mut gpui_kit::TestAppContext) {
         let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
             let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
-            let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
+            let setup = kchess_domain::variant::Setup {
+                variant: kchess_domain::variant::Variant::Crazyhouse,
+                fen: fen.into(),
+            };
             local.replace_game(setup, serde_json::Value::Null, window, cx);
         });
     });
@@ -569,7 +570,10 @@ fn a_chess960_game_can_be_taken_to_the_analysis_board(cx: &mut gpui_kit::TestApp
         let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
             let fen = "1rk4r/pppppppp/8/8/8/8/PPPPPPPP/1RK4R w HBhb - 0 1";
-            let setup = serde_json::json!({ "variant": "chess960", "fen": fen });
+            let setup = kchess_domain::variant::Setup {
+                variant: kchess_domain::variant::Variant::Chess960,
+                fen: fen.into(),
+            };
             local.replace_game(setup, serde_json::Value::Null, window, cx);
         });
     });
@@ -651,8 +655,7 @@ fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
     app.with_window(|window, cx| {
         let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
-            let setup =
-                serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+            let setup = kchess_domain::variant::Setup::standard();
             // Three seconds each: the warning comes under two.
             let clock = serde_json::json!({
                 "white": { "minutes": 0.05, "increment": 0 },

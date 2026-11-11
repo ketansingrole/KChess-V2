@@ -82,6 +82,128 @@ impl RunClock {
     }
 }
 
+/// Where a drill is: choosing, in a run, or showing the run that ended.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum Stage {
+    #[default]
+    Idle,
+    Running,
+    Over,
+}
+
+/// A timed drill: its run, and what it does when the run ends.
+pub trait Drill: Sized + 'static {
+    fn run(&mut self) -> &mut DrillRun;
+    fn finish(&mut self, cx: &mut Context<Self>);
+}
+
+/// What every timed drill keeps of its run: the stage, the clock and its ticks, and the saved
+/// runs with whether the last one is a best.
+#[derive(Default)]
+pub struct DrillRun {
+    pub stage: Stage,
+    pub clock: RunClock,
+    pub summary: Option<RunSummary>,
+    pub is_best: bool,
+    ticker: Option<Task<()>>,
+}
+
+impl DrillRun {
+    pub fn running(&self) -> bool {
+        self.stage == Stage::Running
+    }
+
+    /// Start a run of `seconds` (0 is untimed): the view redraws each tick and finishes when the
+    /// countdown ends.
+    pub fn begin<V: Drill>(&mut self, seconds: u32, cx: &mut Context<V>) {
+        self.stage = Stage::Running;
+        self.is_best = false;
+        self.clock.start(seconds);
+        self.ticker = Some(crate::timer::every(
+            crate::timer::TICK,
+            cx,
+            |view: &mut V, cx| {
+                let run = view.run();
+                if !run.running() {
+                    return false;
+                }
+                if run.clock.expired() {
+                    view.finish(cx);
+                    return false;
+                }
+                cx.notify();
+                true
+            },
+        ));
+    }
+
+    /// End the run; false when none was running.
+    pub fn end(&mut self) -> bool {
+        if !self.running() {
+            return false;
+        }
+        self.clock.stop();
+        self.stage = Stage::Over;
+        true
+    }
+
+    /// Read the drill's saved runs into its `summary`.
+    pub fn load<V: Drill>(kind: RunKind, cx: &mut Context<V>) {
+        load_summary(kind, cx, |view: &mut V, summary, cx| {
+            view.run().summary = Some(summary);
+            cx.notify();
+        });
+    }
+
+    /// Save a finished run, and keep whether it is a best.
+    pub fn save<V: Drill>(run: RunInput, cx: &mut Context<V>) {
+        save_run(run, cx, |view: &mut V, saved, cx| {
+            let run = view.run();
+            run.is_best = saved.is_best;
+            run.summary = Some(saved.summary);
+            cx.notify();
+        });
+    }
+
+    /// The best score of a variant in the saved runs.
+    pub fn best(&self, variant: &str) -> Option<f64> {
+        best(self.summary.as_ref(), variant)
+    }
+
+    /// Whether the clock is ticking.
+    #[cfg(test)]
+    pub fn ticking(&self) -> bool {
+        self.ticker.is_some()
+    }
+}
+
+/// Right answers and mistakes in a run.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct Tally {
+    pub score: u32,
+    pub mistakes: u32,
+}
+
+impl Tally {
+    pub fn record(&mut self, correct: bool) {
+        if correct {
+            self.score += 1;
+        } else {
+            self.mistakes += 1;
+        }
+    }
+
+    /// Right answers as a percentage of all answers, rounded.
+    pub fn accuracy(&self) -> u32 {
+        let total = self.score + self.mistakes;
+        if total == 0 {
+            0
+        } else {
+            (f64::from(self.score) / f64::from(total) * 100.).round() as u32
+        }
+    }
+}
+
 /// The label of a length (`30s`, `1 min`, `Untimed`).
 pub fn length_label(seconds: u32) -> String {
     LENGTHS
@@ -373,7 +495,26 @@ pub fn sparkline(scores: Vec<f64>, palette: &Palette) -> impl IntoElement {
 
 #[cfg(test)]
 mod tests {
-    use super::{Duration, RunClock, length_label, record_variant};
+    use super::{Duration, RunClock, Tally, length_label, record_variant};
+
+    #[test]
+    fn a_tally_counts_answers_and_rounds_its_accuracy() {
+        let mut tally = Tally::default();
+        assert_eq!(tally.accuracy(), 0);
+        tally.record(true);
+        tally.record(true);
+        tally.record(false);
+        assert_eq!(
+            tally,
+            Tally {
+                score: 2,
+                mistakes: 1
+            }
+        );
+        assert_eq!(tally.accuracy(), 67);
+        tally.record(true);
+        assert_eq!(tally.accuracy(), 75);
+    }
 
     #[test]
     fn records_keep_their_names_per_length() {

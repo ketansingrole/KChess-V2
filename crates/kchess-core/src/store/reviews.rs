@@ -6,9 +6,9 @@ use serde_json::{Map, Value, json};
 
 use super::library::js_json;
 use super::sql::{Sql as _, transaction};
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{Keyed, ReviewSummary};
 use kchess_domain::js::truthy;
 
@@ -227,13 +227,7 @@ pub fn write_reviews(host: &dyn Host, db: &Connection, reviews: &Value) -> Resul
 }
 
 /// A JSON number as a SQLite value (integers stay integers).
-fn sql_number(value: Option<&Value>) -> Sql {
-    match value.and_then(Value::as_f64) {
-        Some(n) if n.fract() == 0.0 && n.abs() < 9.0e15 => Sql::Integer(n as i64),
-        Some(n) => Sql::Real(n),
-        None => Sql::Null,
-    }
-}
+use super::sql::number as sql_number;
 
 /// The summaries of these Lichess games' reviews, by game id.
 pub fn review_summaries(

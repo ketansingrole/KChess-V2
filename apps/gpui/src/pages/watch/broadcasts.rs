@@ -2,10 +2,12 @@
 //! relays, searchable; a tournament's rounds and boards with their clocks; one board followed
 //! move by move, and Analyse.
 
+use crate::loading::Epoch;
 use kchess_contracts::calls;
 use kchess_contracts::check::{BroadcastQuery, LichessId};
 use kchess_contracts::types::{BroadcastSection, BroadcastSummary, BroadcastTourDetail};
 use kchess_domain::training::clock::format_clock;
+use kchess_domain::variant::Setup;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -116,8 +118,8 @@ fn result_text(game: &Value) -> String {
     }
 }
 
-pub(super) fn setup_of(game: &Value) -> Value {
-    json!({ "variant": "standard", "fen": game["startFen"] })
+pub(super) fn setup_of(game: &Value) -> Setup {
+    Setup::standard_at(game["startFen"].as_str().unwrap_or_default())
 }
 
 pub(super) fn moves_of(game: &Value) -> Vec<String> {
@@ -132,7 +134,7 @@ pub struct Broadcasts {
     results: Vec<BroadcastSummary>,
     searching: bool,
     search_error: Option<SharedString>,
-    search_epoch: u64,
+    search_epoch: Epoch,
     pub(super) tour: Option<BroadcastTourDetail>,
     round: String,
     round_select: Entity<SelectState<Vec<Choice>>>,
@@ -184,7 +186,7 @@ impl Broadcasts {
             results: Vec::new(),
             searching: false,
             search_error: None,
-            search_epoch: 0,
+            search_epoch: Epoch::default(),
             tour: None,
             round: String::new(),
             round_select,
@@ -198,7 +200,7 @@ impl Broadcasts {
             board: cx.new(|_| {
                 ChessBoard::new(BoardState::shown(
                     "8/8/8/8/8/8/8/8 w",
-                    "standard",
+                    kchess_domain::variant::Variant::Standard,
                     Color::White,
                     None,
                 ))
@@ -306,7 +308,7 @@ impl Broadcasts {
         } else {
             BoardState::shown(
                 game["fen"].as_str().unwrap_or_default(),
-                "standard",
+                kchess_domain::variant::Variant::Standard,
                 self.orientation,
                 game["lastMove"].as_str(),
             )
@@ -347,7 +349,7 @@ impl Broadcasts {
             .or_insert_with(|| {
                 let mut state = BoardState::shown(
                     game["fen"].as_str().unwrap_or_default(),
-                    "standard",
+                    kchess_domain::variant::Variant::Standard,
                     Color::White,
                     game["lastMove"].as_str(),
                 );
@@ -387,8 +389,7 @@ impl WatchPage {
     fn search(&mut self, cx: &mut Context<Self>) {
         let broadcasts = &mut self.broadcasts;
         let query = broadcasts.query.read(cx).value().trim().to_string();
-        broadcasts.search_epoch += 1;
-        let epoch = broadcasts.search_epoch;
+        let epoch = broadcasts.search_epoch.next();
         broadcasts.results.clear();
         broadcasts.search_error = None;
         broadcasts.searching = !query.is_empty();
@@ -407,7 +408,7 @@ impl WatchPage {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 let broadcasts = &mut this.broadcasts;
-                if broadcasts.search_epoch != epoch {
+                if !broadcasts.search_epoch.is_current(epoch) {
                     return;
                 }
                 broadcasts.searching = false;
@@ -442,14 +443,14 @@ impl WatchPage {
     ) {
         self.broadcasts.redo = None;
         self.stop(cx);
-        let epoch = self.epoch;
+        let epoch = self.epoch.current();
         let call = cx
             .global::<AppCore>()
             .request(calls::BroadcastTour { id: LichessId(id) });
         cx.spawn_in(window, async move |this, cx| {
             let answer = call.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
@@ -500,8 +501,7 @@ impl WatchPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.epoch += 1;
-        let epoch = self.epoch;
+        let epoch = self.epoch.next();
         self.early.clear();
         self.session = None;
         self.round_session = None;
@@ -538,7 +538,7 @@ impl WatchPage {
             let answer = call.await;
             drop(started);
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     // The page moved on while the core started it: that feed ends now.
                     if let Ok(session) = answer {
                         super::stop_watching(Some(session as f64), cx);
@@ -796,19 +796,7 @@ impl WatchPage {
                                         }
                                         (Some(line), _) => (
                                             format_eval(Some(line)),
-                                            format!(
-                                                "Stockfish · depth {}",
-                                                line["depth"]
-                                                    .as_f64()
-                                                    .or(self
-                                                        .broadcasts
-                                                        .engine
-                                                        .engine
-                                                        .update
-                                                        .as_ref()
-                                                        .and_then(|u| u["depth"].as_f64()))
-                                                    .unwrap_or_default()
-                                            ),
+                                            format!("Stockfish · depth {}", line.depth),
                                         ),
                                         (None, _) => (
                                             format_eval(None),
@@ -868,7 +856,7 @@ impl WatchPage {
             .collect()
         };
         let disabled = Self::playing_own_game(cx);
-        let now = chrono::Utc::now().timestamp_millis() as f64;
+        let now = kchess_games::now_ms();
         let status = if broadcasts.searching {
             Some("Searching…")
         } else if !searching && broadcasts.loading {

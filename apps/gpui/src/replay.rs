@@ -5,7 +5,7 @@
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::*;
-use serde_json::Value;
+use kchess_domain::variant::Setup;
 use shakmaty::{Color, Position as _};
 
 use crate::assets::icon;
@@ -19,7 +19,7 @@ use crate::theme::Palette;
 use crate::widgets::{self, Side};
 
 pub struct GameReplay {
-    setup: Value,
+    setup: Setup,
     moves: Vec<String>,
     sans: Vec<String>,
     ply: usize,
@@ -44,7 +44,7 @@ impl Focusable for GameReplay {
 
 impl GameReplay {
     pub fn new(
-        setup: Value,
+        setup: Setup,
         moves: Vec<String>,
         orientation: Color,
         player: impl Into<SharedString>,

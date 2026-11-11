@@ -16,7 +16,6 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::json;
 
 use crate::assets::icon;
 use crate::game_image::{self, ImageOptions};
@@ -109,8 +108,8 @@ fn game_pgn(game: &PlayedGame) -> Option<String> {
     let result = kchess_games::Outcome::tag(game.result);
     let date = chrono::Local::now().format("%Y.%m.%d").to_string();
     kchess_domain::pgn::setup_pgn(
-        kchess_domain::variant::Variant::from_key(&game.variant)?,
-        &game.fen,
+        game.setup.variant,
+        &game.setup.fen,
         &game.moves,
         &[
             ("Black", &game.black),
@@ -125,12 +124,11 @@ fn game_pgn(game: &PlayedGame) -> Option<String> {
 /// The FEN of the position shown: a variation's end when it is off the moves, else the move
 /// at `ply` (the last by default), with a Crazyhouse game's pockets.
 fn shown_fen(game: &PlayedGame) -> Option<String> {
-    let setup = json!({ "variant": game.variant, "fen": game.fen });
     let moves = match &game.shown {
         Some(shown) => shown.clone(),
         None => game.moves[..game.ply.unwrap_or(game.moves.len()).min(game.moves.len())].to_vec(),
     };
-    let position = crate::game::view::position_at(&setup, &moves, moves.len())?;
+    let position = crate::game::view::position_at(&game.setup, &moves, moves.len())?;
     Some(shakmaty::fen::Fen::from_position(&position, shakmaty::EnPassantMode::Legal).to_string())
 }
 
@@ -269,8 +267,7 @@ impl Exporter {
         );
         let frontend = &cx.global::<SettingsHandle>().0.read(cx).settings.frontend;
         let options = ImageOptions {
-            variant: game.variant.clone(),
-            fen: game.fen.clone(),
+            setup: game.setup.clone(),
             moves: game.moves.clone(),
             orientation: game.orientation,
             board_theme: frontend.board_theme.clone(),
@@ -444,6 +441,7 @@ pub fn export_menu(
 #[cfg(test)]
 mod tests {
     use super::{PlayedGame, game_file_name, game_pgn, shown_fen, with_extension};
+    use kchess_domain::variant::{Setup, Variant};
     use shakmaty::Color;
     use std::ffi::OsStr;
 
@@ -465,9 +463,12 @@ mod tests {
         assert_eq!(with_extension(typed.clone(), gif), typed);
     }
 
-    fn game(variant: &str, fen: &str, moves: &[&str], ply: Option<usize>) -> PlayedGame {
+    fn game(variant: Variant, fen: &str, moves: &[&str], ply: Option<usize>) -> PlayedGame {
         let mut game = PlayedGame::new(
-            &serde_json::json!({ "variant": variant, "fen": fen }),
+            Setup {
+                variant,
+                fen: fen.into(),
+            },
             moves.iter().map(|uci| uci.to_string()).collect(),
             Color::White,
             "White",
@@ -484,28 +485,28 @@ mod tests {
         let standard = crate::game::STANDARD_FEN;
         let moves = ["e2e4", "e7e5"];
         assert_eq!(
-            shown_fen(&game("standard", standard, &moves, None)).as_deref(),
+            shown_fen(&game(Variant::Standard, standard, &moves, None)).as_deref(),
             Some("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2")
         );
         assert_eq!(
-            shown_fen(&game("standard", standard, &moves, Some(0))).as_deref(),
+            shown_fen(&game(Variant::Standard, standard, &moves, Some(0))).as_deref(),
             Some(standard)
         );
-        let mut variation = game("standard", standard, &moves, None);
+        let mut variation = game(Variant::Standard, standard, &moves, None);
         variation.shown = Some(vec!["d2d4".into()]);
         assert_eq!(
             shown_fen(&variation).as_deref(),
             Some("rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1")
         );
         let pocket = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
-        let fen = shown_fen(&game("crazyhouse", pocket, &["P@e3"], None)).expect("a FEN");
+        let fen = shown_fen(&game(Variant::Crazyhouse, pocket, &["P@e3"], None)).expect("a FEN");
         assert!(fen.contains("[p]"), "{fen}");
     }
 
     #[test]
     fn a_pgn_names_its_players_and_result() {
         let mut played = game(
-            "standard",
+            Variant::Standard,
             crate::game::STANDARD_FEN,
             &["e2e4", "e7e5"],
             None,

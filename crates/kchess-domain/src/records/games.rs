@@ -134,3 +134,33 @@ pub fn setup_draw_reason(variant: Variant, fen: &str, moves: &[&str]) -> Option<
 pub fn is_game_in_progress(status: Option<&Value>) -> bool {
     js::falsy(status) || matches!(status.and_then(Value::as_str), Some("started" | "created"))
 }
+
+/// How a game ended, in words, from Lichess's status ("mate", "outoftime"); the status itself for
+/// one without a name.
+pub fn status_label(status: &str) -> &str {
+    match status {
+        "mate" => "Checkmate",
+        "resign" => "Resignation",
+        "outoftime" => "Time out",
+        "timeout" => "Left the game",
+        "draw" => "Draw",
+        "stalemate" => "Stalemate",
+        "aborted" => "Aborted",
+        "noStart" => "Did not start",
+        "cheat" => "Cheat detected",
+        "variantEnd" => "Variant win",
+        other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_status_is_named_or_shown_as_it_is() {
+        assert_eq!(status_label("outoftime"), "Time out");
+        assert_eq!(status_label("noStart"), "Did not start");
+        assert_eq!(status_label("unknownFinish"), "unknownFinish");
+    }
+}

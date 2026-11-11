@@ -6,17 +6,16 @@ use serde_json::{Value, json};
 
 use kchess_domain::js;
 use kchess_domain::online_game::model::{Call, Ctx, Left, Model, Op, Outcome, Pending, Reply, Run};
+use kchess_domain::online_game::server::ServerEvent;
 
 use super::Out;
 
 pub fn call(method: &str, args: &[Value]) -> Option<Out> {
     Some(match method {
         "onlineGameView" => read::<Model>(args, 0).and_then(|model| json_of(&model.view())),
-        "onlineGameEvent" => step(
-            args,
-            2,
-            |model, ctx| Ok(model.event(argument(args, 1), ctx)),
-        ),
+        "onlineGameEvent" => step(args, 2, |model, ctx| {
+            Ok(model.event(&ServerEvent::read(argument(args, 1)), ctx))
+        }),
         "onlineGameConnection" => step(args, 2, |model, ctx| {
             Ok(model.connection(argument(args, 1), ctx))
         }),

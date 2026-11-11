@@ -1128,3 +1128,15 @@ pub fn material_diff(fen: &str) -> MaterialDiff {
         score: balance_of(&white_counts, &black_counts),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Grammar, grammar};
+
+    #[test]
+    fn the_grammars_hold_their_words() {
+        let moves = grammar(Grammar::Move);
+        assert!(moves.contains(&"e four".to_string()) && moves.contains(&"knight".to_string()));
+        assert!(grammar(Grammar::Game).contains(&"take back".to_string()));
+    }
+}

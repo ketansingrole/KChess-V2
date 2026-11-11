@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use kchess_core::ids::hex;
+use kchess_delta::hex;
 
 /// The file in the profile that names the running core.
 pub const INFO_FILE: &str = "core.json";
@@ -94,7 +94,7 @@ pub fn socket_path(profile: &Path) -> std::io::Result<PathBuf> {
     let base = std::env::var_os("XDG_RUNTIME_DIR")
         .or_else(|| std::env::var_os("TMPDIR"))
         .map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
-    let dir = socket_dir(&base, uid, &name, kchess_core::app_store());
+    let dir = socket_dir(&base, uid, &name, kchess_host::app_store());
     private_dir(&dir)?;
     Ok(dir.join(name))
 }
@@ -190,7 +190,7 @@ pub fn same_token(given: &str, expected: &str) -> bool {
 /// any app and any profile (`docs/shared-core.md`, "Where the service runs from").
 pub fn runtime_dir() -> Option<PathBuf> {
     // Tests and development runs keep their copies elsewhere.
-    if let Some(dir) = kchess_core::dev_override("KCHESS_RUNTIME_DIR") {
+    if let Some(dir) = kchess_host::dev_override("KCHESS_RUNTIME_DIR") {
         return Some(PathBuf::from(dir).join("core"));
     }
     #[cfg(target_os = "macos")]

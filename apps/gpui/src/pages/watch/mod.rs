@@ -2,6 +2,7 @@
 //! players are playing, and tournament broadcasts. One feed streams at a time, and only while the
 //! page is shown: leaving it stops the stream.
 
+use crate::loading::Epoch;
 use kchess_contracts::calls;
 use kchess_contracts::check::{Bounded, LichessId, PresenceUsers};
 use kchess_contracts::types::{TvChannel, UserPresence, WatchTarget};
@@ -174,7 +175,7 @@ pub struct WatchPage {
     pending: Option<Pending>,
     early: Vec<CoreEvent>,
     /// Each request; answers to an older one are dropped.
-    epoch: u64,
+    epoch: Epoch,
     /// Settles once the core has answered the last feed asked of it (`next_feed`).
     feed_started: Option<FeedStarted>,
     live: Live,
@@ -261,7 +262,7 @@ impl WatchPage {
             round_session: None,
             pending: None,
             early: Vec::new(),
-            epoch: 0,
+            epoch: Epoch::default(),
             feed_started: None,
             live: Live::new(cx),
             broadcasts: Broadcasts::new(window, cx),
@@ -423,14 +424,14 @@ impl WatchPage {
         };
         self.stop(cx);
         self.error = None;
-        let epoch = self.epoch;
+        let epoch = self.epoch.current();
         let found = cx.global::<AppCore>().request(calls::BroadcastRound {
             id: LichessId(round.clone()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let answer = found.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
@@ -487,8 +488,7 @@ impl WatchPage {
 
     /// `watch`: stream a channel or a game; its updates carry the session the core answers.
     fn watch(&mut self, target: Target, cx: &mut Context<Self>) {
-        self.epoch += 1;
-        let epoch = self.epoch;
+        let epoch = self.epoch.next();
         self.early.clear();
         self.session = None;
         self.round_session = None;
@@ -513,7 +513,7 @@ impl WatchPage {
             let answer = call.await;
             drop(started);
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     // The page moved on while the core started it: that watch ends now.
                     if let Ok(session) = answer {
                         stop_watching(Some(session as f64), cx);
@@ -554,7 +554,7 @@ impl WatchPage {
 
     /// `stop`: no feed, no frame.
     fn stop(&mut self, cx: &mut Context<Self>) {
-        self.epoch += 1;
+        self.epoch.invalidate();
         self.early.clear();
         self.pending = None;
         // Only the watches this page knows: a bare stop handled after a newer watch began would
@@ -591,7 +591,9 @@ impl WatchPage {
             }
             return;
         }
-        let session = event.payload()["session"].as_f64();
+        let session = event
+            .payload()
+            .and_then(|payload| payload["session"].as_f64());
         match event {
             CoreEvent::WatchFrame(frame) if session.is_some() && session == self.session => {
                 self.phase = Some("connected".into());

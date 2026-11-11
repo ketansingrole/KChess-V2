@@ -19,13 +19,13 @@ use serde_json::{Value, json};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use crate::store::Database;
 use crate::store::StoreContext;
 use crate::store::chesscom as store;
 use crate::store::games::MAX_GAMES;
 use crate::tasks::lock;
+use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::ChesscomAccount;
 use kchess_domain::chesscom::{archive_month, game_row};
 

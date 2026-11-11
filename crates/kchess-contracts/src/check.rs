@@ -195,7 +195,9 @@ pub fn fen(text: &str, length: Msg, msg: Msg, path: &str) -> Result<(), Refusal>
 /// A position the engine can be given: Stockfish refuses more than 16 pieces for a side, and
 /// quits rather than search it.
 pub fn engine_position(text: &str) -> Result<(), Refusal> {
-    if kchess_domain::position::fen_problem(text) == Some("tooManyPieces") {
+    if kchess_domain::position::fen_problem(text)
+        == Some(kchess_domain::position::FenProblem::TooManyPieces)
+    {
         return Err("Each side can have at most 16 pieces.".into());
     }
     Ok(())

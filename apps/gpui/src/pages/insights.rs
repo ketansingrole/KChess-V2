@@ -2,6 +2,7 @@
 //! speed, opponent, length, clock, day, time of day, ending and opening, with time use from the
 //! games' clocks, filtered by speed, period and rated or casual.
 
+use crate::loading::Epoch;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
@@ -50,33 +51,11 @@ const WEEKDAYS: [&str; 7] = [
     "Saturday",
 ];
 
-/// How games ended, in words.
-fn ending(status: &str) -> &str {
-    match status {
-        "mate" => "Checkmate",
-        "resign" => "Resignation",
-        "outoftime" => "Time out",
-        "timeout" => "Left the game",
-        "draw" => "Draw",
-        "stalemate" => "Stalemate",
-        "aborted" => "Aborted",
-        "noStart" => "Never started",
-        "cheat" => "Cheat detected",
-        "variantEnd" => "Variant win",
-        other => other,
-    }
-}
-
-/// Lichess's speed keys, as titles.
+/// A Lichess speed key's name; the key itself for one that names no speed.
 fn speed_name(key: &str) -> String {
-    if key == "ultraBullet" {
-        return "UltraBullet".into();
-    }
-    let mut chars = key.chars();
-    chars
-        .next()
-        .map(|first| first.to_uppercase().chain(chars).collect())
-        .unwrap_or_default()
+    kchess_domain::perf::Speed::from_key(key)
+        .map_or(key, |speed| speed.label())
+        .to_string()
 }
 
 fn record(record: &GameRecord) -> (f64, f64, f64) {
@@ -246,7 +225,7 @@ pub struct InsightsPage {
     report: Option<InsightsReport>,
     error: Option<SharedString>,
     loading: bool,
-    epoch: u64,
+    epoch: Epoch,
     /// A game sync ran when the accounts last changed: its end brings new games.
     syncing: bool,
     focus: FocusHandle,
@@ -320,7 +299,7 @@ impl InsightsPage {
             report: None,
             error: None,
             loading: false,
-            epoch: 0,
+            epoch: Epoch::default(),
             syncing: accounts.read(cx).syncing(),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -402,7 +381,7 @@ impl InsightsPage {
     fn load(&mut self, cx: &mut Context<Self>) {
         // A new epoch either way: a report still on its way for the previous account must not
         // land once there is none.
-        self.epoch += 1;
+        self.epoch.invalidate();
         if self.account.is_empty() {
             self.report = None;
             self.loading = false;
@@ -410,7 +389,7 @@ impl InsightsPage {
             cx.notify();
             return;
         }
-        let epoch = self.epoch;
+        let epoch = self.epoch.current();
         self.loading = true;
         self.error = None;
         cx.notify();
@@ -420,7 +399,7 @@ impl InsightsPage {
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 this.loading = false;
@@ -472,8 +451,8 @@ impl InsightsPage {
 
     /// How many reports the page has asked for.
     #[cfg(test)]
-    pub(crate) fn requests(&self) -> u64 {
-        self.epoch
+    pub(crate) fn requests(&self) -> crate::loading::Turn {
+        self.epoch.current()
     }
 
     /// Why the last report failed, if it did.
@@ -680,7 +659,8 @@ impl Render for InsightsPage {
         let palette = *cx.global::<Palette>();
         let names = Self::names(cx);
         self.sync_variants(window, cx);
-        let variant_label = crate::game::variant_label(&Self::chosen(&self.variant, cx));
+        let variant_label =
+            crate::game::variant_label(&Self::chosen(&self.variant, cx)).to_string();
         let filters = h_flex()
             .gap(px(8.))
             .flex_wrap()
@@ -883,7 +863,12 @@ impl InsightsPage {
                 report
                     .endings
                     .iter()
-                    .map(|entry| (ending(&entry.status).to_string(), record(&entry.record)))
+                    .map(|entry| {
+                        (
+                            kchess_domain::records::games::status_label(&entry.status).to_string(),
+                            record(&entry.record),
+                        )
+                    })
                     .collect(),
             ),
         ];
@@ -993,10 +978,10 @@ mod tests {
             page.update(cx, |page, cx| {
                 page.account = "Alice".into();
                 page.load(cx);
-                let asked = page.epoch;
+                let asked = page.epoch.current();
                 page.account.clear();
                 page.load(cx);
-                (page.loading, page.epoch == asked)
+                (page.loading, page.epoch.is_current(asked))
             })
         });
         assert!(!loading && !stale);
@@ -1052,6 +1037,7 @@ mod tests {
         assert_eq!(best_and_weakest(&openings[..1]), None);
         assert_eq!(speed_name("ultraBullet"), "UltraBullet");
         assert_eq!(speed_name("blitz"), "Blitz");
+        assert_eq!(speed_name("correspondence"), "Correspondence");
     }
 
     #[test]

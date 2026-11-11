@@ -24,8 +24,8 @@ use reqwest::header::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{CoreError, ErrorKind, Result};
 use crate::usage::Meter;
+use kchess_contracts::error::{CoreError, ErrorKind, Result};
 
 pub use crate::tasks::ABORTED;
 

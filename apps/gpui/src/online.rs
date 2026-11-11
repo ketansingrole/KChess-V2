@@ -4,6 +4,7 @@
 //! Engine help stays off while a game is live or being looked for, and
 //! until the core has said whether one was left running.
 
+use crate::loading::Epoch;
 use kchess_contracts::calls;
 use kchess_contracts::check::OptionalAccount;
 use std::sync::OnceLock;
@@ -14,12 +15,15 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use kchess_contracts::check::{GameId, PresenceUsers, Uci, Username, Validate};
 use kchess_contracts::types::{
-    ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, OngoingGame, PresenceReport,
+    ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, NotificationKind, OngoingGame,
+    PresenceReport,
 };
 use kchess_contracts::{CoreError, Level};
 use kchess_domain::online_game::model::{Call, Ctx, Effect, Model, Op, Outcome, Reply, View};
+use kchess_domain::online_game::server::{ConnectionReport, ServerEvent};
 use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use kchess_domain::training::clock::{ClockState, SetData, format_clock};
+use kchess_domain::variant::{Setup, Variant};
 use serde_json::{Value, json};
 
 use crate::core::{AppCore, ClientEvent, CoreEvent};
@@ -50,7 +54,7 @@ pub struct Form {
     /// `random`, `white` or `black`.
     pub color: String,
     pub rated: bool,
-    pub variant: String,
+    pub variant: Variant,
     pub correspondence: bool,
     pub days: f64,
 }
@@ -63,7 +67,7 @@ impl Default for Form {
             target: String::new(),
             color: "random".into(),
             rated: false,
-            variant: "standard".into(),
+            variant: Variant::Standard,
             correspondence: false,
             days: 3.,
         }
@@ -101,7 +105,7 @@ pub struct OnlineState {
     pub presence: Option<PresenceReport>,
     pub latency: Vec<f64>,
     pub move_ack: Option<f64>,
-    presence_epoch: u64,
+    presence_epoch: Epoch,
     presence_pending: bool,
     /// Something the rules started is waiting for Lichess (`busy`).
     pub busy: bool,
@@ -165,8 +169,8 @@ impl OnlineState {
         self.model.online_moves.clone()
     }
 
-    pub fn setup(&self) -> Value {
-        json!(self.model.online_setup)
+    pub fn setup(&self) -> &Setup {
+        &self.model.online_setup
     }
 
     pub fn color(&self) -> shakmaty::Color {
@@ -285,7 +289,7 @@ impl OnlineState {
         if before == self.phase {
             return;
         }
-        self.presence_epoch += 1;
+        self.presence_epoch.invalidate();
         if self.phase == Phase::Playing {
             self.start_ticking(cx);
             self.poll_presence(cx);
@@ -306,7 +310,7 @@ impl OnlineState {
         match effect {
             Effect::Warn { message } => log(&format!("{message} {}", cause.unwrap_or_default())),
             Effect::Notify { kind, title, body } => {
-                crate::notifications::desktop(kind, title, body, cx);
+                crate::notifications::desktop(*kind, title, body, cx);
             }
             Effect::Moved { san } => {
                 crate::sound::move_sound(san.as_deref().unwrap_or_default(), cx)
@@ -316,7 +320,7 @@ impl OnlineState {
                 self.flipped = false;
                 self.presence = None;
             }
-            Effect::ConnectionChanged => self.presence_epoch += 1,
+            Effect::ConnectionChanged => self.presence_epoch.invalidate(),
             Effect::MoveAcknowledged { ms } => self.move_ack = Some(*ms),
             Effect::Failed => {
                 if let Some(cause) = cause {
@@ -454,7 +458,7 @@ impl OnlineState {
         if !account.is_empty() {
             wanted["account"] = json!(account);
         }
-        if form.variant != "standard" {
+        if form.variant != Variant::Standard {
             wanted["variant"] = json!(form.variant);
         }
         if correspondence && rematch.is_none() {
@@ -514,10 +518,7 @@ impl OnlineState {
             target: String::new(),
             color: "random".into(),
             rated: options["rated"] == json!(true),
-            variant: options["variant"]
-                .as_str()
-                .unwrap_or("standard")
-                .to_string(),
+            variant: Variant::from_lichess(options["variant"].as_str())?,
             correspondence: false,
             days: self.form.days,
         })
@@ -612,7 +613,7 @@ impl OnlineState {
                 let left = self.clock_text(&turn);
                 let opponent = &self.model.online_opponent;
                 crate::notifications::desktop(
-                    "lowTime",
+                    NotificationKind::LowTime,
                     "Low on time",
                     &format!("{left} left against {opponent}"),
                     cx,
@@ -660,7 +661,7 @@ impl OnlineState {
         } else {
             PresenceUsers(vec![me, opponent])
         };
-        let epoch = self.presence_epoch;
+        let epoch = self.presence_epoch.current();
         self.presence_pending = true;
         let call = cx
             .global::<AppCore>()
@@ -669,7 +670,7 @@ impl OnlineState {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
                 this.presence_pending = false;
-                if epoch != this.presence_epoch || this.phase != Phase::Playing {
+                if !this.presence_epoch.is_current(epoch) || this.phase != Phase::Playing {
                     return;
                 }
                 // A missed poll leaves the last reading; a later one recovers.
@@ -747,7 +748,7 @@ impl OnlineState {
         let core = cx.global::<AppCore>().clone();
         cx.spawn(async move |this, cx| {
             let joined = joined.await.unwrap_or_default();
-            let now = chrono::Utc::now().timestamp_millis() as f64;
+            let now = kchess_games::now_ms();
             let current: Vec<_> = joined.iter().filter(|entry| entry.until > now).collect();
             let participant = current
                 .iter()
@@ -865,28 +866,35 @@ impl OnlineState {
         let last = self.model.last_game.as_ref()?.id.as_str();
         self.challenges
             .iter()
-            .find(|c| c.direction == "in" && c.rematch_of.as_deref() == Some(last))
+            .find(|c| {
+                c.direction == kchess_contracts::types::ChallengeDirection::In
+                    && c.rematch_of.as_deref() == Some(last)
+            })
             .cloned()
     }
 
     fn receive(&mut self, event: &CoreEvent, cx: &mut Context<Self>) {
         match event {
             CoreEvent::OnlineEvent(payload) => {
-                // Not for a game the Board API cannot play, such as one started on another device.
-                let starts = payload["type"] == json!("gameStart")
-                    && payload["game"]["speed"] != json!("correspondence")
-                    && payload["game"]["compat"]["board"] != json!(false);
-                self.transition(|model, ctx| model.event(payload, ctx), None, cx);
+                let event = ServerEvent::read(payload);
+                let started = match &event {
+                    ServerEvent::GameStart { game } => Some(game.clone().unwrap_or_default()),
+                    _ => None,
+                };
+                self.transition(|model, ctx| model.event(&event, ctx), None, cx);
+                let Some(game) = started else {
+                    return;
+                };
                 // The event stream announces a game whose board stream already failed for good
                 // (on launch the two race): the failure stands, as the core opens no new stream.
-                if payload["type"] == json!("gameStart")
-                    && let Some(failed) = self.failed_state.clone()
-                    && failed["gameId"] == payload["game"]["gameId"]
+                if let Some(failed) = self.failed_state.clone()
+                    && ConnectionReport::read(&failed).game_id == game.game_id
                 {
                     self.transition(|model, ctx| model.connection(&failed, ctx), None, cx);
                 }
-                // A pairing or an accepted challenge takes you to the board, as Lichess does.
-                if starts {
+                // A pairing or an accepted challenge takes you to the board, as Lichess does; not
+                // for a game the Board API cannot play, such as one started on another device.
+                if !game.correspondence() && game.board_compatible() {
                     cx.defer(|cx| {
                         if let Some(window) =
                             cx.active_window().or_else(|| cx.windows().first().copied())
@@ -899,8 +907,9 @@ impl OnlineState {
                 }
             }
             CoreEvent::OnlineState(payload) => {
-                let kind = payload["kind"].as_str().map(str::to_string);
-                if payload["lane"] == json!("game") {
+                let report = ConnectionReport::read(payload);
+                let kind = report.kind;
+                if report.lane.as_deref() == Some("game") {
                     // Only a failure that ended the stream carries a kind.
                     self.failed_state = kind.is_some().then(|| payload.clone());
                     self.failure = kind;
@@ -929,7 +938,7 @@ impl OnlineState {
                 let Ok(challenge) = serde_json::from_value::<ChallengeInfo>(payload.clone()) else {
                     return;
                 };
-                if challenge.direction != "in" {
+                if challenge.direction != kchess_contracts::types::ChallengeDirection::In {
                     return;
                 }
                 let (title, body) = challenge_alert(&challenge);
@@ -1003,7 +1012,7 @@ pub fn init(cx: &mut App) {
             presence: None,
             latency: Vec::new(),
             move_ack: None,
-            presence_epoch: 0,
+            presence_epoch: Epoch::default(),
             presence_pending: false,
             busy: false,
             challenges: Vec::new(),
@@ -1121,7 +1130,7 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
                 Err(cause) => {
                     log(&format!("resuming online game failed: {}", cause.message));
                     if let Some(connection) = state.model.online_connection.as_mut()
-                        && connection["phase"] == json!("checking")
+                        && ConnectionReport::read(connection).phase.as_deref() == Some("checking")
                     {
                         connection["phase"] = json!("disconnected");
                     }

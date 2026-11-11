@@ -122,8 +122,7 @@ impl AnalysisPage {
         kchess_domain::records::review::review_key(
             &self.root.fen,
             &self.mainline(),
-            self.fairy_variant()
-                .and_then(kchess_domain::variant::Variant::from_key),
+            self.fairy_variant(),
         )
     }
 
@@ -152,7 +151,9 @@ impl AnalysisPage {
                 let found = cx.global::<AppCore>().request(calls::ReviewGet {
                     fen: Fen(self.root.fen.clone()),
                     moves: Moves(moves),
-                    variant: self.fairy_variant().map(str::to_string),
+                    variant: self
+                        .fairy_variant()
+                        .map(|variant| variant.key().to_string()),
                 });
                 let store = store.clone();
                 cx.spawn(async move |this, cx| match found.await {
@@ -325,7 +326,9 @@ impl AnalysisPage {
             fen: self.root.fen.clone(),
             moves,
             // Fairy-Stockfish reviews the other variants.
-            variant: self.fairy_variant().map(str::to_string),
+            variant: self
+                .fairy_variant()
+                .map(|variant| variant.key().to_string()),
             account: origin.game_id.as_ref().and(origin.account.clone()),
             game_id: origin.game_id,
         };
@@ -575,7 +578,7 @@ impl AnalysisPage {
     pub fn open_puzzle(
         &mut self,
         puzzle: &Value,
-        wrong_moves: &[Value],
+        wrong_moves: &[kchess_contracts::types::PuzzleWrongMove],
         cx: &mut Context<Self>,
     ) -> bool {
         let solution: Vec<String> =
@@ -598,10 +601,7 @@ impl AnalysisPage {
         self.tried_done.clear();
         let mut tried = Vec::new();
         for wrong in wrong_moves {
-            let index = wrong["index"].as_u64().unwrap_or_default() as usize;
-            let Some(uci) = wrong["uci"].as_str() else {
-                continue;
-            };
+            let (index, uci) = (wrong.index as usize, wrong.uci.as_str());
             if index > solution.len() || solution.get(index).map(String::as_str) == Some(uci) {
                 continue;
             }
@@ -737,7 +737,7 @@ impl AnalysisPage {
                 }
             }
             let pgn = crate::game::setup_pgn(
-                &json!({ "variant": "standard", "fen": game.fen }),
+                &kchess_domain::variant::Setup::standard_at(game.fen.clone()),
                 &game.moves,
                 &Value::Object(headers),
             );

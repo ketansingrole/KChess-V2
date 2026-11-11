@@ -8,7 +8,7 @@ use kchess_contracts::types::{
 };
 
 use crate::core::Core;
-use crate::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, Result};
 
 impl Core {
     /// The open challenge `id`, or the error it is no longer open.
@@ -72,7 +72,9 @@ impl OnlineApi for Core {
 
     async fn accept_challenge(&self, id: GameId) -> Result<()> {
         let challenge = self.known_challenge(&id.0)?;
-        if challenge.direction != "in" || !challenge.playable {
+        if challenge.direction != kchess_contracts::types::ChallengeDirection::In
+            || !challenge.playable
+        {
             let problem = challenge
                 .problem
                 .as_deref()
@@ -86,7 +88,7 @@ impl OnlineApi for Core {
 
     async fn decline_challenge(&self, id: GameId, reason: DeclineReason) -> Result<()> {
         let challenge = self.known_challenge(&id.0)?;
-        if challenge.direction != "in" {
+        if challenge.direction != kchess_contracts::types::ChallengeDirection::In {
             return Err(CoreError::new("Withdraw your own challenge instead."));
         }
         let online = self.services.online();
@@ -99,7 +101,7 @@ impl OnlineApi for Core {
 
     async fn cancel_challenge(&self, id: GameId) -> Result<()> {
         let challenge = self.known_challenge(&id.0)?;
-        if challenge.direction != "out" {
+        if challenge.direction != kchess_contracts::types::ChallengeDirection::Out {
             return Err(CoreError::new("Decline a challenge sent to you instead."));
         }
         self.services

@@ -1,7 +1,7 @@
 //! The library snapshot (`library`), its readers, and the studies-table migration.
 //! Named `library_import` because `store::import` already owns the JSON-backup/legacy-database profile migration.
 
-use kchess_contracts::types::{Drill, JoinedTournament, Library, PlayedGame};
+use kchess_contracts::types::{Drill, JoinedTournament, Library, PlayedGame, SessionKind};
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
@@ -11,11 +11,11 @@ use super::documents::{
     read_document_text, stored_studies, write_document,
 };
 use super::json_codec::js_json;
-use super::library::{JOINED, MISSES, MISTAKES, SCHEDULE, SESSION_KINDS, STUDIES};
+use super::library::{JOINED, MISSES, MISTAKES, SCHEDULE, STUDIES};
 use super::sql::{Sql as _, transaction};
 use super::studies::id_of;
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_contracts::error::{CoreError, Result};
 use kchess_domain::js::{truthy, utf16_len};
 use kchess_domain::library::MAX_STUDIES;
 use kchess_domain::misc::value::J;
@@ -199,7 +199,8 @@ pub fn cached_library(ctx: &StoreContext, now: f64) -> Result<Library> {
 /// `library(now)`: the whole snapshot.
 pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Library> {
     let mut sessions = Map::new();
-    for &kind in SESSION_KINDS {
+    for kind in SessionKind::ALL {
+        let kind = kind.as_str();
         let value = read_session(host, db, kind)?;
         if truthy(Some(&value)) {
             sessions.insert(kind.to_string(), value);

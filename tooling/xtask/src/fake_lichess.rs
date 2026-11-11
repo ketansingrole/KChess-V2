@@ -5,13 +5,12 @@
 //! Paths it does not know are answered 404 and listed by `unknown`.
 
 use std::collections::BTreeSet;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use kchess_testkit::{Request, Server, json as json_reply, ndjson};
 use serde_json::{Value, json};
 
 use crate::util::Result;
@@ -70,9 +69,10 @@ enum Script {
 
 pub struct FakeLichess {
     pub base: String,
+    /// Ends the streams; the server stops when it is dropped.
     stop: Arc<AtomicBool>,
     unknown: Arc<Mutex<BTreeSet<String>>>,
-    accept: Option<thread::JoinHandle<()>>,
+    _server: Server,
 }
 
 impl FakeLichess {
@@ -84,36 +84,19 @@ impl FakeLichess {
             "lichess-tv" => Script::Tv,
             _ => return Ok(None),
         };
-        let listener =
-            TcpListener::bind("127.0.0.1:0").map_err(|e| format!("No port for Lichess: {e}"))?;
-        let base = format!(
-            "http://{}",
-            listener.local_addr().map_err(|e| e.to_string())?
-        );
         let stop = Arc::new(AtomicBool::new(false));
         let unknown = Arc::new(Mutex::new(BTreeSet::new()));
-        let accept = {
+        let server = {
             let stop = Arc::clone(&stop);
             let unknown = Arc::clone(&unknown);
-            thread::spawn(move || {
-                for socket in listener.incoming() {
-                    if stop.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    let Ok(socket) = socket else { continue };
-                    let stop = Arc::clone(&stop);
-                    let unknown = Arc::clone(&unknown);
-                    thread::spawn(move || {
-                        let _ = serve(socket, script, &stop, &unknown);
-                    });
-                }
-            })
+            Server::start(move |request, out| serve(request, out, script, &stop, &unknown))
+                .map_err(|e| format!("No port for Lichess: {e}"))?
         };
         Ok(Some(FakeLichess {
-            base,
+            base: server.base().to_string(),
             stop,
             unknown,
-            accept: Some(accept),
+            _server: server,
         }))
     }
 
@@ -126,155 +109,89 @@ impl FakeLichess {
 impl Drop for FakeLichess {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        // Wake the accepting thread so it sees the stop.
-        let _ = TcpStream::connect(self.base.trim_start_matches("http://"));
-        if let Some(accept) = self.accept.take() {
-            let _ = accept.join();
-        }
     }
-}
-
-struct Request {
-    method: String,
-    path: String,
-}
-
-fn read_request(socket: &mut BufReader<TcpStream>) -> Option<Request> {
-    let mut line = String::new();
-    socket.read_line(&mut line).ok()?;
-    let mut parts = line.split_whitespace();
-    let method = parts.next()?.to_string();
-    let target = parts.next()?.to_string();
-    let mut length = 0usize;
-    loop {
-        let mut header = String::new();
-        socket.read_line(&mut header).ok()?;
-        let header = header.trim_end();
-        if header.is_empty() {
-            break;
-        }
-        if let Some((name, value)) = header.split_once(':')
-            && name.eq_ignore_ascii_case("content-length")
-        {
-            length = value.trim().parse().unwrap_or(0);
-        }
-    }
-    let mut body = vec![0; length];
-    socket.read_exact(&mut body).ok()?;
-    let path = target.split('?').next().unwrap_or("").to_string();
-    Some(Request { method, path })
 }
 
 fn serve(
-    socket: TcpStream,
+    request: Request,
+    out: &mut TcpStream,
     script: Script,
     stop: &AtomicBool,
     unknown: &Mutex<BTreeSet<String>>,
 ) -> std::io::Result<()> {
-    let mut reader = BufReader::new(socket.try_clone()?);
-    let Some(request) = read_request(&mut reader) else {
-        return Ok(());
-    };
-    let mut out = socket;
-    let path = request.path.as_str();
+    let path = request.path();
     if std::env::var_os("KCHESS_FAKE_LICHESS_TRACE").is_some() {
-        eprintln!("[lichess] {} {}", request.method, request.path);
+        eprintln!("[lichess] {} {path}", request.method);
     }
     match (request.method.as_str(), path) {
         ("POST", "/api/token") => json_reply(
-            &mut out,
+            out,
             200,
             &json!({ "token_type": "Bearer", "access_token": "lip_bench", "expires_in": 31_536_000 }),
         ),
-        ("GET", "/api/account") => json_reply(&mut out, 200, &account()),
+        ("GET", "/api/account") => json_reply(out, 200, &account()),
         ("GET", "/api/account/playing") => {
             let playing = if script == Script::Game {
                 json!([game_summary()])
             } else {
                 json!([])
             };
-            json_reply(&mut out, 200, &json!({ "nowPlaying": playing }))
+            json_reply(out, 200, &json!({ "nowPlaying": playing }))
         }
-        ("GET", "/api/tv/channels") => json_reply(&mut out, 200, &tv_channels()),
+        ("GET", "/api/tv/channels") => json_reply(out, 200, &tv_channels()),
         ("GET", "/api/stream/event") => {
             let start = (script == Script::Game)
                 .then(|| json!({ "type": "gameStart", "game": game_summary() }));
-            stream(&mut out, stop, |_| None, start.into_iter().collect())
+            stream(out, stop, start.into_iter().collect(), |_| None)
         }
         ("GET", p) if p == format!("/api/board/game/stream/{GAME}") => {
             let since = Instant::now();
-            stream(
-                &mut out,
-                stop,
-                move |sent| game_state(sent, since),
-                vec![game_full()],
-            )
+            stream(out, stop, vec![game_full()], move |sent| {
+                game_state(sent, since)
+            })
         }
         ("GET", p) if p.starts_with("/api/tv/") && p.ends_with("/feed") => {
             let since = Instant::now();
-            stream(
-                &mut out,
-                stop,
-                move |sent| tv_move(sent, since),
-                vec![tv_featured()],
-            )
+            stream(out, stop, vec![tv_featured()], move |sent| {
+                tv_move(sent, since)
+            })
         }
-        ("GET", p) if p.starts_with("/api/games/user/") => ndjson_reply(&mut out, ""),
-        ("POST", "/api/games/export/_ids") => ndjson_reply(&mut out, ""),
-        ("GET", "/api/user/Bench") => json_reply(&mut out, 200, &account()),
-        ("GET", "/api/user/Bench/rating-history") => json_reply(&mut out, 200, &json!([])),
-        ("GET", "/api/users/status") => json_reply(&mut out, 200, &json!([])),
-        ("GET", "/api/challenge") => json_reply(&mut out, 200, &json!({ "in": [], "out": [] })),
+        ("GET", p) if p.starts_with("/api/games/user/") => ndjson(out, &[]),
+        ("POST", "/api/games/export/_ids") => ndjson(out, &[]),
+        ("GET", "/api/user/Bench") => json_reply(out, 200, &account()),
+        ("GET", "/api/user/Bench/rating-history") => json_reply(out, 200, &json!([])),
+        ("GET", "/api/users/status") => json_reply(out, 200, &json!([])),
+        ("GET", "/api/challenge") => json_reply(out, 200, &json!({ "in": [], "out": [] })),
         ("GET", "/api/broadcast/top") => json_reply(
-            &mut out,
+            out,
             200,
             &json!({ "active": [], "upcoming": [], "past": { "currentPage": 1, "maxPerPage": 20, "currentPageResults": [], "nbResults": 0, "nbPages": 1 } }),
         ),
         ("GET", p) if p.starts_with("/api/player/top/") => {
-            json_reply(&mut out, 200, &json!({ "users": [] }))
+            json_reply(out, 200, &json!({ "users": [] }))
         }
         ("GET", p) if p.starts_with("/api/puzzle/batch/") => {
-            json_reply(&mut out, 200, &json!({ "puzzles": [] }))
+            json_reply(out, 200, &json!({ "puzzles": [] }))
         }
         ("GET", p) if p.ends_with("/chat") || p.starts_with("/api/team/of/") => {
-            json_reply(&mut out, 200, &json!([]))
+            json_reply(out, 200, &json!([]))
         }
         ("GET", "/api/tournament") => json_reply(
-            &mut out,
+            out,
             200,
             &json!({ "created": [], "started": [], "finished": [] }),
         ),
         ("GET", p) if p.starts_with("/api/crosstable/") => {
-            json_reply(&mut out, 200, &json!({ "users": {}, "nbGames": 0 }))
+            json_reply(out, 200, &json!({ "users": {}, "nbGames": 0 }))
         }
         _ => {
             unknown
                 .lock()
                 .unwrap()
-                .insert(format!("{} {}", request.method, request.path));
-            json_reply(&mut out, 404, &json!({ "error": "Not found" }))
+                .insert(format!("{} {path}", request.method));
+            json_reply(out, 404, &json!({ "error": "Not found" }))
         }
     }
-}
-
-fn json_reply(out: &mut TcpStream, status: u16, body: &Value) -> std::io::Result<()> {
-    let body = body.to_string();
-    let reason = if status == 200 { "OK" } else { "Not Found" };
-    write!(
-        out,
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )?;
-    out.flush()
-}
-
-fn ndjson_reply(out: &mut TcpStream, body: &str) -> std::io::Result<()> {
-    write!(
-        out,
-        "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )?;
-    out.flush()
 }
 
 /// An ndjson stream: `first`'s lines at once, then `next(sent)`'s whenever it has one (`sent`
@@ -282,37 +199,16 @@ fn ndjson_reply(out: &mut TcpStream, body: &str) -> std::io::Result<()> {
 fn stream(
     out: &mut TcpStream,
     stop: &AtomicBool,
-    mut next: impl FnMut(usize) -> Option<Value>,
     first: Vec<Value>,
+    next: impl FnMut(usize) -> Option<Value>,
 ) -> std::io::Result<()> {
-    write!(
+    kchess_testkit::ndjson_stream(
         out,
-        "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
-    )?;
-    let mut sent = 0;
-    for line in first {
-        chunk(out, &format!("{line}\n"))?;
-        sent += 1;
-    }
-    let mut quiet = Instant::now();
-    while !stop.load(Ordering::SeqCst) {
-        if let Some(line) = next(sent) {
-            chunk(out, &format!("{line}\n"))?;
-            sent += 1;
-            quiet = Instant::now();
-        } else if quiet.elapsed() >= KEEP_ALIVE {
-            chunk(out, "\n")?;
-            quiet = Instant::now();
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    let _ = out.shutdown(Shutdown::Both);
-    Ok(())
-}
-
-fn chunk(out: &mut TcpStream, text: &str) -> std::io::Result<()> {
-    write!(out, "{:x}\r\n{text}\r\n", text.len())?;
-    out.flush()
+        first,
+        KEEP_ALIVE,
+        || !stop.load(Ordering::SeqCst),
+        next,
+    )
 }
 
 fn now_ms() -> u64 {
@@ -444,6 +340,7 @@ fn tv_move(sent: usize, since: Instant) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, BufReader, Read, Write};
 
     /// One HTTP request to `lichess`: the status line and the body, read until it hangs up.
     fn request(lichess: &FakeLichess, method: &str, path: &str, body: &str) -> (String, String) {
@@ -454,10 +351,22 @@ mod tests {
             body.len()
         )
         .unwrap();
-        let mut reply = String::new();
-        socket.read_to_string(&mut reply).unwrap();
-        let (head, body) = reply.split_once("\r\n\r\n").unwrap();
-        (head.lines().next().unwrap().to_string(), body.to_string())
+        // The head, then the body its length gives; the stand-in waits for us to hang up.
+        let mut reader = BufReader::new(socket);
+        let mut head = String::new();
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+            head.push_str(&line);
+        }
+        let reply = Request::from_head(&format!("GET / HTTP/1.1\r\n{head}")).unwrap();
+        let mut body = vec![0; reply.content_length()];
+        reader.read_exact(&mut body).unwrap();
+        let status = head.lines().next().unwrap().to_string();
+        (status, String::from_utf8(body).unwrap())
     }
 
     fn get_json(lichess: &FakeLichess, path: &str) -> Value {
@@ -608,45 +517,14 @@ mod tests {
         // No game, and no keep-alive before KEEP_ALIVE has passed.
         let mut more = [0u8; 16];
         assert!(reader.read(&mut more).is_err());
-        // Stopping the stand-in ends its streams.
+        // Stopping the stand-in ends its streams: the last, empty chunk.
         drop(lichess);
         socket
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
-        let mut rest = Vec::new();
-        assert!(reader.read_to_end(&mut rest).is_ok());
-    }
-
-    #[test]
-    fn a_stream_counts_its_lines_until_stopped() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (mut server, _) = listener.accept().unwrap();
-        // Stopped after the fifth ask, not after a time: a loaded runner asked only twice in
-        // 300 ms, and the test indexed past what it had.
-        let stop = AtomicBool::new(false);
-        let mut asked = Vec::new();
-        stream(
-            &mut server,
-            &stop,
-            |sent| {
-                asked.push(sent);
-                if asked.len() == 5 {
-                    stop.store(true, Ordering::SeqCst);
-                }
-                (asked.len() <= 2).then(|| json!({ "n": sent }))
-            },
-            vec![json!({ "first": 1 }), json!({ "first": 2 })],
-        )
-        .unwrap();
-        assert_eq!(asked, [2, 3, 4, 4, 4]);
-        let mut text = String::new();
-        BufReader::new(client).read_to_string(&mut text).unwrap();
-        assert!(text.contains("c\r\n{\"first\":1}\n\r\n"), "{text}");
-        assert!(
-            text.contains("{\"n\":2}\n") && text.contains("{\"n\":3}\n"),
-            "{text}"
-        );
+        let mut last = String::new();
+        reader.read_line(&mut last).unwrap();
+        assert_eq!(last, "0\r\n");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! A game as a page hands it on: to its Export menu, and to the analysis board to open or
 //! review it. One value says both, so the two never disagree about its players or result.
 
+use kchess_domain::variant::Setup;
 use kchess_games::Outcome;
 use serde_json::Value;
 use shakmaty::Color;
@@ -50,8 +51,7 @@ impl GameOrigin {
 /// the move shown.
 #[derive(Clone)]
 pub struct PlayedGame {
-    pub variant: String,
-    pub fen: String,
+    pub setup: Setup,
     pub moves: Vec<String>,
     pub orientation: Color,
     pub white: String,
@@ -74,17 +74,16 @@ pub struct PlayedGame {
 }
 
 impl PlayedGame {
-    /// A game from `setup` (`{ variant, fen }`) and its moves, between `white` and `black`.
+    /// A game from `setup` and its moves, between `white` and `black`.
     pub fn new(
-        setup: &Value,
+        setup: Setup,
         moves: Vec<String>,
         orientation: Color,
         white: impl Into<String>,
         black: impl Into<String>,
     ) -> PlayedGame {
         PlayedGame {
-            variant: setup["variant"].as_str().unwrap_or("standard").to_string(),
-            fen: setup["fen"].as_str().unwrap_or_default().to_string(),
+            setup,
             moves,
             orientation,
             white: white.into(),
@@ -116,8 +115,8 @@ impl PlayedGame {
         match &self.pgn {
             Some(pgn) => Some(pgn.clone()),
             None => {
-                let variant = kchess_domain::variant::Variant::from_key(&self.variant)?;
-                kchess_domain::pgn::setup_pgn(variant, &self.fen, &self.moves, &[]).ok()
+                kchess_domain::pgn::setup_pgn(self.setup.variant, &self.setup.fen, &self.moves, &[])
+                    .ok()
             }
         }
     }

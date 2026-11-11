@@ -24,16 +24,17 @@ use tokio::sync::watch;
 use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 
+use super::job;
 use super::scheduler::Priority;
 use super::slot::{EngineSlot, OpenEngine};
 use super::status::fairy_variant;
 use super::uci::search_cancelled;
 use super::{EngineContext, after, clear_timer, replace_timer};
-use crate::error::{CoreError, Result};
 use crate::host::Level;
 use crate::store::{Database, StoreContext, reviews};
 use crate::tasks::{aborted as signal_aborted, lock};
 use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result};
 use kchess_domain::training::uci_info::parse_info;
 
 /// Depth of the quick first pass, and of the review that is kept.
@@ -1103,7 +1104,6 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
         review.evals = vec![None; total];
     }
     target.uci.write("ucinewgame")?;
-    target.uci.write("setoption name Hash value 64")?;
     let passes: Vec<(u32, u64)> = if job.background.load(Ordering::SeqCst) {
         vec![(FULL_DEPTH, FULL_MS)]
     } else {
@@ -1228,9 +1228,9 @@ async fn search_once(
             }
             // Threads follows the job: 1 in the background, the budget once someone asks for it
             // (a promoted job speeds up mid-review). `ensure_options` sends it only when it
-            // changes, so there is no round-trip per position. Chess960 is always on, as for
-            // analysis: castling is king-takes-rook in the moves, and an engine in standard mode
-            // reads that as an illegal move (the bundled engine then never answers `go`).
+            // changes, so there is no round-trip per position. The rules are as for analysis
+            // (`job::rules_option`): a standard-mode engine never answers `go` after a
+            // king-takes-rook castling.
             let threads = if job.background.load(Ordering::SeqCst) {
                 1
             } else {
@@ -1238,13 +1238,10 @@ async fn search_once(
             };
             let threads_text = threads.to_string();
             // A variant game tells Fairy-Stockfish its variant instead.
-            let rules = match fairy_variant(&job.variant) {
-                Some(name) => ("UCI_Variant", name),
-                None => ("UCI_Chess960", "true"),
-            };
+            let rules = job::rules_option(fairy_variant(&job.variant));
             target
                 .uci
-                .ensure_options(&[("Threads", threads_text.as_str()), rules])
+                .ensure_options(&[("Threads", threads_text.as_str()), ("Hash", "64"), rules])
                 .await?;
             if token.is_cancelled() {
                 return Err(signal_aborted());

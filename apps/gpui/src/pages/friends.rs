@@ -3,6 +3,7 @@
 //! connected accounts have fared against them, and their synced games — with follow, import
 //! from Lichess, sync, clear and remove.
 
+use crate::loading::Epoch;
 use kchess_contracts::calls;
 use kchess_contracts::check::{FriendList, PresenceUsers, Username};
 use kchess_contracts::types::{
@@ -74,7 +75,7 @@ pub struct FriendsPage {
     /// What the players on the list did lately (`TimelineEntry`s), once read.
     timeline: Option<Vec<TimelineEntry>>,
     timeline_error: Option<SharedString>,
-    timeline_epoch: u64,
+    timeline_epoch: Epoch,
     /// How many of its lines the timeline shows.
     timeline_shown: usize,
     focus: FocusHandle,
@@ -104,9 +105,9 @@ fn key(name: &str) -> String {
     name.to_lowercase()
 }
 
-/// "5 minutes ago", for last seen and last synced.
+/// "5 min ago", for last seen and last synced.
 fn ago(millis: f64) -> String {
-    crate::studies::time_ago(millis, crate::studies::now())
+    crate::widgets::time_ago(millis, kchess_games::now_ms())
 }
 
 impl FriendsPage {
@@ -151,7 +152,7 @@ impl FriendsPage {
             importer: None,
             timeline: None,
             timeline_error: None,
-            timeline_epoch: 0,
+            timeline_epoch: Epoch::default(),
             timeline_shown: TIMELINE_FIRST,
             focus: cx.focus_handle(),
             _poll: poll,
@@ -176,8 +177,7 @@ impl FriendsPage {
 
     /// What the players on the list did lately, from their Lichess activity.
     fn load_timeline(&mut self, cx: &mut Context<Self>) {
-        self.timeline_epoch += 1;
-        let epoch = self.timeline_epoch;
+        let epoch = self.timeline_epoch.next();
         self.timeline_error = None;
         if Self::friends(cx).is_empty() || !crate::network::online(cx) {
             self.timeline = None;
@@ -187,7 +187,7 @@ impl FriendsPage {
         cx.spawn(async move |this, cx| {
             let answer = timeline.await;
             let _ = this.update(cx, |this, cx| {
-                if this.timeline_epoch != epoch {
+                if !this.timeline_epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
@@ -240,7 +240,7 @@ impl FriendsPage {
                 {
                     let recent = saved
                         .profile_fetched_at
-                        .is_some_and(|at| crate::studies::now() - (at as f64) < PROFILE_FRESH_MS);
+                        .is_some_and(|at| kchess_games::now_ms() - (at as f64) < PROFILE_FRESH_MS);
                     if recent && !everyone {
                         fresh.insert(key(name));
                     }

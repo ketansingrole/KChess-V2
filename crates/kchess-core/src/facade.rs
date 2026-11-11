@@ -8,14 +8,14 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use kchess_contracts::core_api::CoreApi;
-use kchess_contracts::types::{AppData, ProfileArea, Settings};
+use kchess_contracts::types::{AppData, ProfileArea, ProfileChange, Settings};
 use serde_json::json;
 use std::sync::Arc;
 
 use crate::core::Core;
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use crate::store::{self, import};
+use kchess_contracts::error::{CoreError, Result};
 
 mod accounts;
 mod ai;
@@ -91,9 +91,11 @@ impl CoreApi for Core {
         {
             self.reviews.reviews_changed();
         }
-        self.host.emit(CoreEvent::ProfileChanged(
-            json!({ "areas": areas, "origin": crate::connection::current_or_app() }),
-        ));
+        self.host
+            .emit(CoreEvent::ProfileChanged(json!(ProfileChange {
+                areas: areas.to_vec(),
+                origin: crate::connection::current_or_app(),
+            })));
     }
 }
 
@@ -277,9 +279,7 @@ impl Core {
             .write_async(move |ctx| store::games::save_settings(ctx.db, &settings))
             .await?;
         if previous.core.engine_path != saved.core.engine_path {
-            self.search.stop_engine(true);
-            self.analysis.stop_analysis(true);
-            self.reviews.restart_review_engine();
+            crate::engine::stop_engines(&self.search, &self.analysis, &self.reviews, true);
         }
         let core = serde_json::to_value(&saved.core)
             .map_err(|cause| CoreError::wrap("core settings", cause))?;
@@ -325,8 +325,8 @@ impl Core {
         self.ai.lifetime().cancel();
         self.services.spectator().stop();
         self.services.online().close();
-        self.search.stop_engine(true);
         self.analysis.stop_analysis(true);
+        // Stops and closes the computer's engine too.
         self.search.reset_engine();
         self.reviews.stop_reviews().await;
         self.voice.stop().await;

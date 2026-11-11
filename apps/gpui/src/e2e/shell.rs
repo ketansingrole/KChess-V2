@@ -503,7 +503,7 @@ fn a_tests_alerts_never_reach_the_desktop(cx: &mut gpui_kit::TestAppContext) {
     gpui_kit::VisualTestContext::from_window(app.window, &app.cx).deactivate_window();
     let outcome = app.cx.update(|cx| {
         crate::notifications::desktop(
-            "gameEvents",
+            kchess_contracts::types::NotificationKind::GameEvents,
             "Game started",
             "You are playing Opponent as white.",
             cx,
@@ -535,7 +535,7 @@ fn a_clicked_notification_opens_its_game(cx: &mut gpui_kit::TestAppContext) {
     );
     app.with_window(|_, cx| {
         crate::notifications::post(
-            "computerMove",
+            kchess_contracts::types::NotificationKind::ComputerMove,
             "Stockfish moved",
             "e5. Your move.",
             false,
@@ -564,7 +564,15 @@ fn a_clicked_notification_opens_its_game(cx: &mut gpui_kit::TestAppContext) {
     let shown = app.cx.update(|cx| crate::shell::current_page(cx));
     assert_eq!(shown, Some(crate::pages::Page::Computer));
     // A notification about no game has nothing to go to.
-    app.with_window(|_, cx| crate::notifications::post("test", "KChess", "Hello", false, cx));
+    app.with_window(|_, cx| {
+        crate::notifications::post(
+            kchess_contracts::types::NotificationKind::Test,
+            "KChess",
+            "Hello",
+            false,
+            cx,
+        )
+    });
     let shown = app.cx.shown_system_notifications();
     assert!(shown.last().expect("a notification").actions.is_empty());
 }

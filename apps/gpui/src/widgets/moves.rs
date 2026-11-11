@@ -346,10 +346,9 @@ mod tests {
     /// where the scoresheet reads "30. … Nf6".
     #[test]
     fn moves_are_numbered_from_the_game_s_first_move() {
-        let setup = serde_json::json!({
-            "variant": "standard",
-            "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 3 30",
-        });
+        let setup = kchess_domain::variant::Setup::standard_at(
+            "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 3 30",
+        );
         let first = crate::game::view::first_move(&setup);
         assert_eq!(
             first,
@@ -376,7 +375,7 @@ mod tests {
                 },
             ]
         );
-        let usual = serde_json::json!({ "fen": crate::game::STANDARD_FEN });
+        let usual = kchess_domain::variant::Setup::standard();
         assert_eq!(crate::game::view::first_move(&usual), FirstMove::default());
         assert_eq!(
             move_at(2, FirstMove::default()),

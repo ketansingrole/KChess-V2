@@ -342,36 +342,78 @@ pub fn fen_setup(fen: &str) -> Option<BoardSetup> {
     })
 }
 
-/// Why `Chess.fromSetup(parseFen(fen))` refuses a FEN, in its order of checks:
-/// `fen` (unreadable), `empty`, `kings`, `oppositeCheck`, `pawnsOnBackrank` or `illegal`.
-pub fn fen_problem(fen: &str) -> Option<&'static str> {
+/// Why a FEN is not a standard chess position Stockfish can analyse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FenProblem {
+    /// Not readable as a FEN.
+    Fen,
+    Empty,
+    Kings,
+    OppositeCheck,
+    PawnsOnBackrank,
+    TooManyPieces,
+    /// Refused for a reason none of the others names.
+    Illegal,
+}
+
+impl FenProblem {
+    /// Its code, as the rules corpus records it.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            FenProblem::Fen => "fen",
+            FenProblem::Empty => "empty",
+            FenProblem::Kings => "kings",
+            FenProblem::OppositeCheck => "oppositeCheck",
+            FenProblem::PawnsOnBackrank => "pawnsOnBackrank",
+            FenProblem::TooManyPieces => "tooManyPieces",
+            FenProblem::Illegal => "illegal",
+        }
+    }
+
+    /// What the app tells a player about it.
+    pub const fn message(self) -> &'static str {
+        match self {
+            FenProblem::Fen => "That is not a valid FEN",
+            FenProblem::Empty => "The board is empty",
+            FenProblem::Kings => "Each side needs exactly one king",
+            FenProblem::PawnsOnBackrank => "Pawns can’t stand on the first or last rank",
+            FenProblem::TooManyPieces => "Each side can have at most 16 pieces",
+            FenProblem::OppositeCheck => "The side not to move is in check",
+            FenProblem::Illegal => "This position is not legal",
+        }
+    }
+}
+
+/// Why `Chess.fromSetup(parseFen(fen))` refuses a FEN, in its order of checks; a standard
+/// position with more than 16 pieces a side is refused too.
+pub fn fen_problem(fen: &str) -> Option<FenProblem> {
     let Some(setup) = rules::parse_fen(fen) else {
-        return Some("fen");
+        return Some(FenProblem::Fen);
     };
     if rules::standard_from_fen(fen).is_some() {
         // Stockfish refuses more than 16 pieces for a side, and quits rather than analyse them.
         let crowded = setup.board.white().count() > 16 || setup.board.black().count() > 16;
-        return crowded.then_some("tooManyPieces");
+        return crowded.then_some(FenProblem::TooManyPieces);
     }
     let board = &setup.board;
     let turn = setup.turn;
     if board.occupied().is_empty() {
-        return Some("empty");
+        return Some(FenProblem::Empty);
     }
     if board.kings().count() != 2 || board.king_of(turn).is_none() {
-        return Some("kings");
+        return Some(FenProblem::Kings);
     }
     let Some(other) = board.king_of(!turn) else {
-        return Some("kings");
+        return Some(FenProblem::Kings);
     };
     if board.attacks_to(other, turn, board.occupied()).any() {
-        return Some("oppositeCheck");
+        return Some(FenProblem::OppositeCheck);
     }
     let backranks = Bitboard::from_rank(Rank::First) | Bitboard::from_rank(Rank::Eighth);
     if board.pawns().intersects(backranks) {
-        return Some("pawnsOnBackrank");
+        return Some(FenProblem::PawnsOnBackrank);
     }
-    Some("illegal")
+    Some(FenProblem::Illegal)
 }
 
 /* ── PGN games ── */
@@ -509,12 +551,7 @@ pub fn pgn_mainline(text: &str, limit: usize) -> Option<Mainline> {
         .unwrap_or_else(|| rules::default_position(shakmaty::variant::Variant::Chess));
     let start_check = pos.is_check();
     let mut moves = Vec::new();
-    let mut node = 0;
-    while let Some(child) = game.children(node).next() {
-        if moves.len() >= limit {
-            break;
-        }
-        node = child;
+    for child in game.main_line().take(limit) {
         let data = &game.nodes[child];
         let Some(m) = rules::parse_san(&pos, data.san.as_str()) else {
             break;
@@ -650,32 +687,45 @@ mod tests {
 
     #[test]
     fn explains_unplayable_fens() {
-        assert_eq!(fen_problem(START), None);
-        assert_eq!(fen_problem("nonsense"), Some("fen"));
-        assert_eq!(fen_problem("8/8/8/8/8/8/8/8 w - - 0 1"), Some("empty"));
-        assert_eq!(fen_problem("8/8/8/8/8/8/8/4K3 w - - 0 1"), Some("kings"));
-        assert_eq!(fen_problem("k7/8/8/8/8/8/8/K6K w - - 0 1"), Some("kings"));
-        assert_eq!(fen_problem("K7/8/8/8/8/8/8/8 b - - 0 1"), Some("kings"));
+        assert_eq!(fen_problem(START).map(FenProblem::as_str), None);
+        assert_eq!(fen_problem("nonsense").map(FenProblem::as_str), Some("fen"));
+        assert_eq!(
+            fen_problem("8/8/8/8/8/8/8/8 w - - 0 1").map(FenProblem::as_str),
+            Some("empty")
+        );
+        assert_eq!(
+            fen_problem("8/8/8/8/8/8/8/4K3 w - - 0 1").map(FenProblem::as_str),
+            Some("kings")
+        );
+        assert_eq!(
+            fen_problem("k7/8/8/8/8/8/8/K6K w - - 0 1").map(FenProblem::as_str),
+            Some("kings")
+        );
+        assert_eq!(
+            fen_problem("K7/8/8/8/8/8/8/8 b - - 0 1").map(FenProblem::as_str),
+            Some("kings")
+        );
         // Black's seventeenth piece counts as much as White's.
         assert_eq!(
-            fen_problem("K7/8/8/8/8/1q6/pppppppp/qqqqqqqk b - - 0 1"),
+            fen_problem("K7/8/8/8/8/1q6/pppppppp/qqqqqqqk b - - 0 1").map(FenProblem::as_str),
             Some("tooManyPieces")
         );
         assert_eq!(
-            fen_problem("4k3/4Q3/8/8/8/8/8/4K3 w - - 0 1"),
+            fen_problem("4k3/4Q3/8/8/8/8/8/4K3 w - - 0 1").map(FenProblem::as_str),
             Some("oppositeCheck")
         );
         assert_eq!(
-            fen_problem("P3k3/8/8/8/8/8/8/4K3 w - - 0 1"),
+            fen_problem("P3k3/8/8/8/8/8/8/4K3 w - - 0 1").map(FenProblem::as_str),
             Some("pawnsOnBackrank")
         );
         // A queen added to a full set: Stockfish quit on it ("More than 32 pieces").
         assert_eq!(
-            fen_problem("rnbqkbnr/pppppppp/8/8/3q3N/4K3/1PPPPPPP/RNBQ1BNR w kq - 0 1"),
+            fen_problem("rnbqkbnr/pppppppp/8/8/3q3N/4K3/1PPPPPPP/RNBQ1BNR w kq - 0 1")
+                .map(FenProblem::as_str),
             Some("tooManyPieces")
         );
         assert_eq!(
-            fen_problem("4k3/8/8/8/8/PPPPPPPP/PPPPPPPP/RNBQKBNR w - - 0 1"),
+            fen_problem("4k3/8/8/8/8/PPPPPPPP/PPPPPPPP/RNBQKBNR w - - 0 1").map(FenProblem::as_str),
             Some("tooManyPieces")
         );
     }

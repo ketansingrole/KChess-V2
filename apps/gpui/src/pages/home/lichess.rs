@@ -4,6 +4,7 @@
 //! A Chess.com player's card is the same, built from the games synced here: Chess.com keeps no
 //! profile KChess asks for.
 
+use crate::loading::Epoch;
 use crate::widgets::KeyboardFocus as _;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
@@ -83,7 +84,7 @@ pub struct LichessActivity {
     recent: Vec<LichessGame>,
     /// The saved games have been read once for this account, so an empty list means none.
     loaded: bool,
-    epoch: u64,
+    epoch: Epoch,
     /// A sync ran when the accounts last changed: its end brings the new games.
     syncing: bool,
     _accounts: Subscription,
@@ -109,7 +110,7 @@ impl LichessActivity {
             overview: None,
             recent: Vec::new(),
             loaded: false,
-            epoch: 0,
+            epoch: Epoch::default(),
             syncing: accounts.read(cx).working(),
             _accounts,
         }
@@ -134,8 +135,7 @@ impl LichessActivity {
             self.recent.clear();
             self.loaded = false;
         }
-        self.epoch += 1;
-        let epoch = self.epoch;
+        let epoch = self.epoch.next();
         let core = cx.global::<AppCore>().clone();
         let overview = core.request(calls::GameLibraryOverview {});
         let recent = core.request(calls::GamePage {
@@ -164,7 +164,7 @@ impl LichessActivity {
                 let (overview, recent, fallback, speeds) =
                     (overview.await, recent.await, fallback.await, speeds.await);
                 let _ = this.update(cx, |this, cx| {
-                    if this.epoch != epoch {
+                    if !this.epoch.is_current(epoch) {
                         return;
                     }
                     if let Ok(fallback) = &fallback {
@@ -188,7 +188,7 @@ impl LichessActivity {
             // What was saved last time paints first.
             let saved = saved.await;
             let local = (overview.await, recent.await, fallback.await);
-            let current = |this: &mut Self| this.epoch == epoch;
+            let current = |this: &mut Self| this.epoch.is_current(epoch);
             let _ = this.update(cx, |this, cx| {
                 if !current(this) {
                     return;

@@ -23,6 +23,7 @@ use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 use kchess_contracts::types::DeclineReason;
 use kchess_domain::online_game::model::Model;
+use kchess_domain::online_game::server::ConnectionReport;
 
 /// The player may touch pieces: the game is on, at its last move.
 pub fn can_play(online: &OnlineState) -> bool {
@@ -65,9 +66,7 @@ pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
                     actions.push(LiveAction::NewOpponent);
                 }
             }
-            if crate::game::analysable(online.setup()["variant"].as_str().unwrap_or("standard")) {
-                actions.push(LiveAction::Analyse);
-            }
+            actions.push(LiveAction::Analyse);
             actions.extend([LiveAction::NewGame, LiveAction::Flip]);
             actions
         }
@@ -78,7 +77,7 @@ pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
 fn playing_actions(online: &OnlineState) -> Vec<LiveAction> {
     let model = online.model();
     // Before each side has moved the game is aborted, not resigned.
-    let started = view::sans(&online.setup(), &online.moves()).len() >= 2;
+    let started = view::sans(online.setup(), &online.moves()).len() >= 2;
     let berserk = !model.online_tournament.is_empty()
         && model.online_clock_config.is_some()
         && !model.berserked
@@ -496,8 +495,8 @@ impl OnlinePage {
         let playing = online.phase == Phase::Playing;
         let correspondence = online.correspondence();
         let has_clock = model.online_clock_config.is_some() || correspondence;
-        let position = view::position_at(&setup, &moves, ply);
-        let live_turn = view::turn(view::position_at(&setup, &moves, moves.len()).as_ref());
+        let position = view::position_at(setup, &moves, ply);
+        let live_turn = view::turn(view::position_at(setup, &moves, moves.len()).as_ref());
         let fen = position
             .as_ref()
             .map(kchess_domain::rules::make_fen)
@@ -704,11 +703,10 @@ impl OnlinePage {
         let moves = online.moves();
         let setup = online.setup();
         let ply = online.ply();
-        let sans = view::sans(&setup, &moves);
+        let sans = view::sans(setup, &moves);
         let opponent = model.online_opponent.clone();
         let reviewing = playing && !can_play(online);
-        let variant = setup["variant"].as_str().unwrap_or("standard");
-        let variant_name = (variant != "standard").then(|| crate::game::variant_label(variant));
+        let variant_name = (!setup.variant.is_standard()).then(|| setup.variant.label());
         let rated = model.online_game_rated;
         let status = model.online_status.clone();
         let banner: Option<(&'static str, String, String)> = if reviewing {
@@ -748,7 +746,7 @@ impl OnlinePage {
         if let Some(pending) = self.pending() {
             let mut shown = moves.clone();
             shown.push(pending.uci.clone());
-            let san = view::sans(&setup, &shown).pop().unwrap_or_default();
+            let san = view::sans(setup, &shown).pop().unwrap_or_default();
             let (confirm, cancel) = (page.clone(), page);
             notices.push(
                 offer(
@@ -1106,7 +1104,7 @@ impl OnlinePage {
                 widgets::MoveSheet {
                     sans: &sans,
                     shown: ply,
-                    first: view::first_move(&setup),
+                    first: view::first_move(setup),
                 },
                 "No moves yet".into(),
                 select,
@@ -1144,7 +1142,13 @@ impl OnlinePage {
             player: Some(online.color()),
             lichess_id: Some(online.id().to_string()).filter(|id| !id.is_empty()),
             account: Some(model.online_account.clone()),
-            ..PlayedGame::new(&setup, online.moves(), online.orientation(), white, black)
+            ..PlayedGame::new(
+                setup.clone(),
+                online.moves(),
+                online.orientation(),
+                white,
+                black,
+            )
         }
     }
 }
@@ -1165,7 +1169,7 @@ fn analyse(window: &mut Window, cx: &mut App) {
         player: Some(color),
         lichess_id: Some(model.online_id.clone()),
         account: Some(model.online_account.clone()),
-        ..PlayedGame::new(&online.setup(), online.moves(), color, white, black)
+        ..PlayedGame::new(online.setup().clone(), online.moves(), color, white, black)
     };
     crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
         analysis.open_played(&game, true, cx)
@@ -1220,9 +1224,9 @@ fn connection_failure(online: &OnlineState) -> Failure {
         .model()
         .online_connection
         .as_ref()
-        .and_then(|connection| connection["phase"].as_str())
+        .and_then(|connection| ConnectionReport::read(connection).phase)
         .unwrap_or_default();
-    match (phase, online.failure.as_deref()) {
+    match (phase.as_str(), online.failure.as_deref()) {
         ("checking", _) => Failure::Checking,
         ("auth-required", _) | (_, Some("login")) => Failure::Login,
         (_, Some("refused" | "notFound")) => Failure::Refused,

@@ -3,6 +3,7 @@
 //! page, each opened to go through
 //! move by move, exported as PGN or deleted.
 
+use crate::loading::Epoch;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -11,10 +12,10 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::Variant;
 use kchess_contracts::calls;
 use kchess_contracts::check::Username;
 use kchess_contracts::types::{LichessGame, PlayedGame, Reply};
+use kchess_domain::variant::Variant;
 use serde_json::json;
 use shakmaty::Color;
 
@@ -83,7 +84,7 @@ pub(crate) fn opening_name(game: &PlayedGame) -> Option<String> {
     if game.setup.variant != Variant::Standard {
         return None;
     }
-    let opening = crate::game::opening_at(&json!(game.setup), &game.moves, game.moves.len())?;
+    let opening = crate::game::opening_at(&game.setup, &game.moves, game.moves.len())?;
     Some(format!("{} {}", opening.eco, opening.name))
 }
 
@@ -200,7 +201,7 @@ fn pgn(game: &PlayedGame) -> Option<String> {
         headers["WhiteTimeControl"] = json!(clocks[0]);
         headers["BlackTimeControl"] = json!(clocks[1]);
     }
-    crate::game::setup_pgn(&json!(game.setup), &game.moves, &headers)
+    crate::game::setup_pgn(&game.setup, &game.moves, &headers)
 }
 
 /// PGN's `Date`: the UTC day the game started, "2026.10.22".
@@ -225,11 +226,6 @@ pub(crate) enum Action {
     Review,
     Sync,
     ClearFilters,
-}
-
-/// Whether the analysis board plays the saved game.
-fn analysable(game: &PlayedGame) -> bool {
-    crate::game::analysable(game.setup.variant.key())
 }
 
 /// Open the saved game on the analysis board.
@@ -264,7 +260,7 @@ pub struct HistoryPage {
     bookmarks: Option<Vec<LichessGame>>,
     bookmarks_error: Option<SharedString>,
     bookmarks_reconnect: bool,
-    bookmarks_epoch: u64,
+    bookmarks_epoch: Epoch,
     area: Measured,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -326,7 +322,7 @@ impl HistoryPage {
             bookmarks: None,
             bookmarks_error: None,
             bookmarks_reconnect: false,
-            bookmarks_epoch: 0,
+            bookmarks_epoch: Epoch::default(),
             area: Measured::default(),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -525,8 +521,7 @@ impl HistoryPage {
     }
 
     fn load_bookmarks(&mut self, cx: &mut Context<Self>) {
-        self.bookmarks_epoch += 1;
-        let epoch = self.bookmarks_epoch;
+        let epoch = self.bookmarks_epoch.next();
         self.bookmarks = None;
         self.bookmarks_error = None;
         self.bookmarks_reconnect = false;
@@ -542,7 +537,7 @@ impl HistoryPage {
         cx.spawn(async move |this, cx| {
             let answer = games.await;
             let _ = this.update(cx, |this, cx| {
-                if this.bookmarks_epoch != epoch {
+                if !this.bookmarks_epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
@@ -643,7 +638,7 @@ impl HistoryPage {
     fn open_game(&mut self, game: PlayedGame, window: &mut Window, cx: &mut Context<Self>) {
         let replay = cx.new(|cx| {
             GameReplay::new(
-                json!(game.setup),
+                game.setup.clone(),
                 game.moves.clone(),
                 Color::White,
                 game.white.clone(),
@@ -685,12 +680,8 @@ impl HistoryPage {
 
     /// What the page's buttons can do now: the open game's, or the synced games'.
     pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
-        if let Some((game, _)) = &self.open {
-            let mut actions = vec![Action::AllGames, Action::Export];
-            if analysable(game) {
-                actions.push(Action::Analyse);
-            }
-            return actions;
+        if self.open.is_some() {
+            return vec![Action::AllGames, Action::Export, Action::Analyse];
         }
         if self.source != Source::Lichess {
             return Vec::new();
@@ -1023,7 +1014,6 @@ impl HistoryPage {
                             .primary()
                             .icon(icon("chart-line"))
                             .label("Open analysis")
-                            .disabled(!analysable(game))
                             .on_click(move |_, window, cx| analyse(&opened, window, cx))
                     })
                     .children(self.message.clone().map(|message| {
@@ -1175,7 +1165,8 @@ impl HistoryPage {
                 // Why it ended, and the opening it reached, as a Lichess game's line has; in a
                 // narrow list, which leaves the game's column out, its variant first.
                 let details = [
-                    (narrow && variant != "standard").then(|| crate::game::variant_label(variant)),
+                    (narrow && variant != "standard")
+                        .then(|| crate::game::variant_label(variant).to_string()),
                     Some(details(game)),
                     self.opening(game).filter(|_| opening_names_shown(cx)),
                 ]

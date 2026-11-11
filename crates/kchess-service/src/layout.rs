@@ -28,7 +28,7 @@ pub struct Layout {
     programs: Option<PathBuf>,
     /// This repository's build folder, where a development run finds what `cargo xtask` built.
     target: PathBuf,
-    /// Whether the development overrides are honoured (`kchess_core::dev_overrides`).
+    /// Whether the development overrides are honoured (`kchess_host::dev_overrides`).
     dev: bool,
 }
 
@@ -36,12 +36,12 @@ impl Layout {
     /// This process's layout.
     pub fn current() -> Layout {
         Layout {
-            var: Box::new(kchess_core::env::var_os),
+            var: Box::new(kchess_host::env::var_os),
             programs: std::env::current_exe()
                 .ok()
                 .and_then(|exe| exe.parent().map(Path::to_path_buf)),
             target: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target"),
-            dev: kchess_core::dev_overrides(),
+            dev: kchess_host::dev_overrides(),
         }
     }
 
@@ -50,7 +50,7 @@ impl Layout {
         (self.var)(name).filter(|value| !value.is_empty())
     }
 
-    /// A development override (`kchess_core::dev_override`).
+    /// A development override (`kchess_host::dev_override`).
     fn dev_path(&self, name: &str) -> Option<PathBuf> {
         self.dev
             .then(|| self.var(name))

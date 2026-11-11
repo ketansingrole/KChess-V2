@@ -340,9 +340,7 @@ impl PuzzlesPage {
                         let step = this.session.played(*index, *correct, Some(uci.as_str()));
                         this.follow(step, Settle::Load, cx);
                     }
-                    PuzzleBoardEvent::Outcome { win, detail } => {
-                        this.report(*win, detail.clone(), cx)
-                    }
+                    PuzzleBoardEvent::Outcome { win, detail } => this.report(*win, *detail, cx),
                     PuzzleBoardEvent::Done => this.done(cx),
                 },
             ),
@@ -636,9 +634,10 @@ impl PuzzlesPage {
         .detach();
     }
 
-    fn report(&mut self, win: bool, detail: Value, cx: &mut Context<Self>) {
-        let detail: Option<Detail> = serde_json::from_value(detail).ok();
-        let step = self.session.report_begin(win, detail, &self.selection(cx));
+    fn report(&mut self, win: bool, detail: Detail, cx: &mut Context<Self>) {
+        let step = self
+            .session
+            .report_begin(win, Some(detail), &self.selection(cx));
         self.follow(step, Settle::Report, cx);
     }
 
@@ -1436,12 +1435,7 @@ impl PuzzlesPage {
                     );
                     let (puzzle, wrong) = (
                         json!(attempt.puzzle),
-                        attempt
-                            .wrong_moves
-                            .iter()
-                            .flatten()
-                            .map(|wrong| json!(wrong))
-                            .collect::<Vec<Value>>(),
+                        attempt.wrong_moves.clone().unwrap_or_default(),
                     );
                     let page = cx.entity().downgrade();
                     // Try it again, or study it on the board.

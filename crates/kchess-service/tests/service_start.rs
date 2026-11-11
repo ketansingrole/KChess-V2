@@ -2,7 +2,7 @@
 //! release's copy in the runtime folder, the second reuses it, and it stops when both are gone.
 //!
 //! It points the runtime folder at a test folder for the whole process and the service it starts
-//! (`kchess_core::env`), so it is the only test in this binary.
+//! (`kchess_host::env`), so it is the only test in this binary.
 
 use std::path::Path;
 use std::time::Duration;
@@ -20,7 +20,7 @@ fn window(kind: &str) -> Hello {
 async fn the_first_app_starts_the_service_and_the_second_reuses_it() {
     let profile = tempfile::tempdir().expect("profile");
     let runtime = tempfile::tempdir().expect("runtime");
-    kchess_core::env::set("KCHESS_RUNTIME_DIR", runtime.path());
+    kchess_host::env::set("KCHESS_RUNTIME_DIR", runtime.path());
     // An earlier release's copy, which the started service removes.
     let earlier = runtime.path().join("core").join("1999.1.0");
     std::fs::create_dir_all(&earlier).expect("earlier release");

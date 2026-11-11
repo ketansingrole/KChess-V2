@@ -211,7 +211,7 @@ fn compile() -> Command {
     for package in crate::members::shipped() {
         cargo.args(["-p", package]);
     }
-    // A shipped build ignores the development overrides (`kchess_core::dev_overrides`).
+    // A shipped build ignores the development overrides (`kchess_host::dev_overrides`).
     cargo.args(["--features", "kchess-core/packaged"]);
     cargo
 }

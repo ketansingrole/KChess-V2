@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use super::accounts::{Lichess, Reply, no_such_user, path_segment};
 use super::client::Lane;
 use super::decode::{Loose, present, read};
-use crate::error::{CoreError, ErrorKind, Result as CoreResult};
+use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
 use kchess_domain::training;
 
 #[derive(Deserialize)]

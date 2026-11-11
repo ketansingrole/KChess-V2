@@ -10,6 +10,7 @@ use kchess_contracts::Level;
 use kchess_contracts::calls;
 use kchess_contracts::check::LibraryId;
 use kchess_contracts::types::Drill;
+use kchess_domain::variant::Variant;
 use shakmaty::{Color, Square};
 
 use super::AnalysisPage;
@@ -54,9 +55,9 @@ pub struct Practice {
     orientation: Color,
 }
 
-/// A move's SAN from a FEN, by the rules of `variant` (the game's, a Lichess key).
-fn san(variant: &str, fen: &str, uci: &str) -> Option<String> {
-    let position = crate::game::setup_position(variant, fen)?;
+/// A move's SAN from a FEN, by the rules of `variant` (the game's).
+fn san(variant: Variant, fen: &str, uci: &str) -> Option<String> {
+    let position = kchess_domain::rules::setup_start(variant, fen)?;
     kchess_domain::position::play_uci(&position, uci).map(|played| played.san)
 }
 
@@ -149,7 +150,7 @@ impl AnalysisPage {
         let label = format!(
             "{number}{} {}",
             if color == Color::Black { "…" } else { "." },
-            san(self.root.variant().key(), fen, &uci)?
+            san(self.root.variant(), fen, &uci)?
         );
         Some((uci, label, item.judgment.clone(), color))
     }
@@ -218,7 +219,7 @@ impl AnalysisPage {
         if !self.at_position() || !self.practice.as_ref().is_some_and(Practice::hides_engine) {
             return None;
         }
-        let variant = self.root.variant().key().to_string();
+        let variant = self.root.variant();
         let practice = self.practice.as_mut()?;
         let (_, item) = practice.current()?.clone();
         if Some(uci.to_string()) == practice.answer() {
@@ -232,7 +233,7 @@ impl AnalysisPage {
             self.answer_mistake(&item, clean, cx);
             return Some(self.play_move(uci, cx));
         }
-        practice.tried = san(&variant, &item.fen, uci).unwrap_or_else(|| uci.to_string());
+        practice.tried = san(variant, &item.fen, uci).unwrap_or_else(|| uci.to_string());
         practice.helped = true;
         practice.status = Status::Wrong;
         self.redraw(cx);
@@ -381,7 +382,7 @@ impl AnalysisPage {
         };
         let answer_san = practice
             .current()
-            .and_then(|(_, item)| san(self.root.variant().key(), &item.fen, &practice.answer()?))
+            .and_then(|(_, item)| san(self.root.variant(), &item.fen, &practice.answer()?))
             .unwrap_or_default();
         let body: Vec<AnyElement> = if practice.status == Status::Done {
             let found = practice.found.iter().filter(|found| **found).count();

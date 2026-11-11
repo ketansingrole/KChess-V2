@@ -6,7 +6,6 @@ use std::fs;
 use std::io::{self, Read, Seek};
 use std::path::{Component, Path, PathBuf};
 
-use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 /// Where and how much an archive may unpack.
@@ -192,21 +191,6 @@ fn write_member(
     }
     *budget -= copied;
     Ok(Member::Written)
-}
-
-/// The lowercase SHA-256 of a file, read in chunks.
-pub fn sha256_file(path: &Path) -> io::Result<String> {
-    let mut file = fs::File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(crate::ids::hex(&hasher.finalize()))
 }
 
 #[cfg(test)]

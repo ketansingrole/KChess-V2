@@ -13,9 +13,9 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 
-use crate::error::Result;
 use crate::host::{Host, Level};
 use crate::store::{self, Database, usage::UsageRow};
+use kchess_contracts::error::Result;
 use kchess_contracts::types::UsageReport;
 
 pub const FLUSH_EVERY: Duration = Duration::from_secs(5);
@@ -155,7 +155,9 @@ impl UsageBatch {
         let dir = self.data_dir.clone();
         report.db_bytes = tokio::task::spawn_blocking(move || database_bytes(&dir))
             .await
-            .map_err(|cause| crate::error::CoreError::wrap("Database size check failed", cause))?;
+            .map_err(|cause| {
+                kchess_contracts::error::CoreError::wrap("Database size check failed", cause)
+            })?;
         Ok(report)
     }
 

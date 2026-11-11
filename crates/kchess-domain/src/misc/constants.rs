@@ -1,88 +1,64 @@
-//! Tables the validators check against: the contract types, settings, variants and library
-//! documents.
+//! The string unions domain rules read, and the tables the validators check against: the
+//! contract types, settings, variants and library documents. The contracts re-export the unions.
 
-pub const APPEARANCES: &[&str] = &["system", "light", "dark"];
-pub const COORDINATE_MODES: &[&str] = &["none", "inside", "outside"];
-pub const ENGINE_LEVELS: &[&str] = &[
-    "beginner",
-    "novice",
-    "casual",
-    "club",
-    "strong-club",
-    "expert",
-    "cm",
-    "fm",
-    "im",
-    "gm",
-    "super-gm",
-    "max",
-];
-pub const PROMOTION_MODES: &[&str] = &["ask", "queen", "premove"];
-pub const PIECE_ANIMATIONS: &[&str] = &["none", "fast", "normal", "slow"];
-pub const ONLINE_ACTIONS: &[&str] = &[
-    "resign",
-    "abort",
-    "takeback",
-    "declineTakeback",
-    "offerDraw",
-    "acceptDraw",
-    "declineDraw",
-    "claimVictory",
-    "claimDraw",
-    "berserk",
-];
+crate::wire_enum!(
+    /// Which color scheme the app uses.
+    Appearance, APPEARANCES {
+        System = "system",
+        Light = "light",
+        Dark = "dark",
+    }
+);
+crate::wire_enum!(
+    /// Built-in engine strength, from beginner to max.
+    EngineLevel, ENGINE_LEVELS {
+        Beginner = "beginner",
+        Novice = "novice",
+        Casual = "casual",
+        Club = "club",
+        StrongClub = "strong-club",
+        Expert = "expert",
+        Cm = "cm",
+        Fm = "fm",
+        Im = "im",
+        Gm = "gm",
+        SuperGm = "super-gm",
+        Max = "max",
+    }
+);
+crate::wire_enum!(
+    /// The unfinished game or analysis a page keeps to resume, and the played game a board shows.
+    SessionKind, SESSION_KINDS {
+        Analysis = "analysis",
+        Local = "local",
+        Computer = "computer",
+        ArchiveComputer = "archive:computer",
+        ArchiveBoard = "archive:board",
+        ArchiveClock = "archive:clock",
+    }
+);
+crate::union!(
+    /// What a desktop notification is about; each kind (except `test`) has its own switch in
+    /// Settings.
+    NotificationKind {
+        OpponentMove = "opponentMove",
+        LowTime = "lowTime",
+        GameEvents = "gameEvents",
+        ComputerMove = "computerMove",
+        Challenge = "challenge",
+        Test = "test",
+    }
+);
+crate::union!(
+    /// Tournament pairing system.
+    TournamentSystem {
+        Arena = "arena",
+        Swiss = "swiss",
+    }
+);
+
 /// The days per move a correspondence game may give.
 pub const CORRESPONDENCE_DAYS: [f64; 7] = [1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 14.0];
-pub const DECLINE_REASONS: &[&str] = &[
-    "generic",
-    "later",
-    "tooFast",
-    "tooSlow",
-    "timeControl",
-    "rated",
-    "casual",
-    "standard",
-    "variant",
-];
-pub const CHAT_ROOMS: &[&str] = &["player", "spectator"];
-pub const RELATION_ACTIONS: &[&str] = &["follow", "unfollow", "block", "unblock"];
-pub const CHALLENGE_COLORS: &[&str] = &["random", "white", "black"];
-pub const PUZZLE_DIFFICULTIES: &[&str] = &["easiest", "easier", "normal", "harder", "hardest"];
-pub const RUN_KINDS: &[&str] = &[
-    "storm",
-    "streak",
-    "rush",
-    "coordinates",
-    "squareColor",
-    "knightPath",
-    "endgame",
-    "lesson",
-];
-pub const PUZZLE_TRAIN_MODES: &[&str] = &["practice", "offline", "rated"];
-pub const VOICE_SOURCES: &[&str] = &[
-    "computer",
-    "coordinates",
-    "squareColor",
-    "knightPath",
-    "analysis",
-    "editor",
-    "local",
-    "puzzles",
-];
-pub const VOICE_OUTCOMES: &[&str] = &[
-    "played",
-    "pending",
-    "confirmed",
-    "picked",
-    "cancelled",
-    "replaced",
-    "abandoned",
-    "invalid",
-    "unclear",
-    "command",
-    "correct",
-    "wrong",
-];
 pub const ARENA_CLOCK_MINUTES: &[f64] = &[
     0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 15.0, 20.0, 25.0,
     30.0, 40.0, 50.0, 60.0,
@@ -96,21 +72,10 @@ pub const ARENA_DURATIONS: &[f64] = &[
 ];
 pub const ARENA_WAIT_MINUTES: &[f64] = &[1.0, 2.0, 3.0, 5.0, 10.0, 15.0, 20.0, 30.0, 45.0, 60.0];
 pub const PERF_TYPES: &[&str] = &crate::perf::PERF_KEYS;
-pub const REVIEW_AUTO: &[&str] = &["off", "recent", "all"];
-pub const EXPLORER_SPEEDS: &[&str] = &crate::perf::SPEED_KEYS;
 /// The rating groups of the Lichess opening explorer, in order.
 pub const EXPLORER_RATINGS: [f64; 9] = [
     400.0, 1000.0, 1200.0, 1400.0, 1600.0, 1800.0, 2000.0, 2200.0, 2500.0,
 ];
-pub const SESSION_KINDS: &[&str] = &[
-    "analysis",
-    "local",
-    "computer",
-    "archive:computer",
-    "archive:board",
-    "archive:clock",
-];
-pub const TOURNAMENT_SYSTEMS: &[&str] = &["arena", "swiss"];
 /// The Lichess TV channels: key (as their links and the API name them) and label, in display
 /// order.
 pub const TV_CHANNELS: [(&str, &str); 16] = [
@@ -136,5 +101,3 @@ pub const TV_CHANNELS: [(&str, &str); 16] = [
 pub const MAX_DOCUMENT: usize = 2_000_000;
 pub const MAX_CHAPTERS: usize = 64;
 pub const MAX_MOVES: usize = 1024;
-/// The largest integer a JSON number holds exactly.
-pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;

@@ -4,8 +4,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::js;
-use crate::records;
+use crate::misc::constants::NotificationKind;
 use crate::replay::replay_setup;
 use crate::rules::INITIAL_FEN;
 pub use crate::variant::Setup;
@@ -70,11 +69,27 @@ pub struct Model {
     pub takeback_offer: String,
     pub first_move_by: Option<f64>,
     pub berserked: bool,
-    pub chat: Vec<Value>,
+    pub chat: Vec<ChatEntry>,
     pub last_game: Option<FinishedGame>,
     pub state_epoch: f64,
     pub shown_game: String,
     pub generation: f64,
+}
+
+/// A line of a game's chat: who said it, what, and in which room (`player` or `spectator`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChatEntry {
+    pub user: Option<String>,
+    pub text: Option<String>,
+    #[serde(default)]
+    pub room: String,
+}
+
+impl ChatEntry {
+    /// Said by the players, not the spectators.
+    pub fn players(&self) -> bool {
+        self.room == "player"
+    }
 }
 
 /// What the host read at the moment of a transition.
@@ -94,7 +109,7 @@ pub enum Effect {
         message: &'static str,
     },
     Notify {
-        kind: &'static str,
+        kind: NotificationKind,
         title: String,
         body: String,
     },
@@ -273,7 +288,7 @@ impl<'a> Run<'a> {
         self.fx.push(Effect::Warn { message });
     }
 
-    pub fn notify(&mut self, kind: &'static str, title: &str, body: String) {
+    pub fn notify(&mut self, kind: NotificationKind, title: &str, body: String) {
         self.fx.push(Effect::Notify {
             kind,
             title: title.to_string(),
@@ -457,33 +472,4 @@ pub fn turn_of(fen: &str) -> &'static str {
     } else {
         "white"
     }
-}
-
-/// The entry when there is an object holding it.
-pub fn at<'a>(v: Option<&'a Value>, key: &str) -> Option<&'a Value> {
-    v.and_then(|v| v.get(key))
-}
-
-/// The value unless it is absent or null.
-pub fn nullish(v: Option<&Value>) -> Option<&Value> {
-    v.filter(|v| !v.is_null())
-}
-
-/// Any value as text, `fallback` when absent or null.
-pub fn string_or(v: Option<&Value>, fallback: &str) -> String {
-    match nullish(v) {
-        Some(v) => js::to_string(Some(v)),
-        None => fallback.to_string(),
-    }
-}
-
-pub fn number_or_zero(v: Option<&Value>) -> f64 {
-    match nullish(v) {
-        Some(v) => js::to_number(Some(v)),
-        None => 0.0,
-    }
-}
-
-pub fn is_running(status: Option<&Value>) -> bool {
-    records::games::is_game_in_progress(nullish(status))
 }

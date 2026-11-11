@@ -7,9 +7,9 @@ use serde_json::Value;
 use super::json_codec::js_json;
 use super::sql::Sql as _;
 use super::studies::id_of;
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result};
 use kchess_domain::js::utf16_len;
 use kchess_domain::misc::MAX_DOCUMENT;
 

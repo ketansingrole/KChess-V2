@@ -12,8 +12,8 @@ use rusqlite::Connection;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::task::TaskTracker;
 
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_contracts::error::{CoreError, Result};
 
 /// Carries SQLite's failures as the core's errors with `?`.
 pub trait Sql<T> {
@@ -23,6 +23,17 @@ pub trait Sql<T> {
 impl<T> Sql<T> for rusqlite::Result<T> {
     fn sql(self) -> Result<T> {
         self.map_err(|cause| CoreError::new(cause.to_string()))
+    }
+}
+
+/// A JSON number bound as SQL: a whole number as an integer, any other as a real, and anything
+/// that is no number as NULL.
+pub fn number(value: Option<&serde_json::Value>) -> rusqlite::types::Value {
+    use rusqlite::types::Value as Sql;
+    match value.and_then(serde_json::Value::as_f64) {
+        Some(n) if n.fract() == 0.0 && n.abs() < 9.0e15 => Sql::Integer(n as i64),
+        Some(n) => Sql::Real(n),
+        None => Sql::Null,
     }
 }
 

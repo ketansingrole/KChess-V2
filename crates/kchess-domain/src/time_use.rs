@@ -110,8 +110,7 @@ pub fn time_use(pgn: &str) -> Option<TimeUse> {
 /// The main line's moves and the clock after each.
 fn main_line(game: &Game) -> (Vec<String>, Vec<Option<f64>>) {
     let (mut sans, mut clocks) = (Vec::new(), Vec::new());
-    let mut node = 0;
-    while let Some(next) = game.children(node).next() {
+    for next in game.main_line() {
         let played = game.node(next);
         sans.push(played.san.as_str().to_string());
         clocks.push(
@@ -122,7 +121,6 @@ fn main_line(game: &Game) -> (Vec<String>, Vec<Option<f64>>) {
                 .filter_map(|comment| comment_clock(comment))
                 .next_back(),
         );
-        node = next;
     }
     (sans, clocks)
 }

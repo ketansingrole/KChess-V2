@@ -12,7 +12,6 @@ use kchess_contracts::types::OngoingGame;
 use std::collections::HashMap;
 
 use gpui_kit::{App, Global};
-use serde_json::json;
 use shakmaty::Square;
 
 use crate::core::AppCore;
@@ -67,10 +66,9 @@ pub fn position(game: &OngoingGame) -> Option<String> {
 /// `text` as a legal move of `game` on your move: SAN or UCI, as the move box takes it.
 pub fn read(game: &OngoingGame, text: &str) -> Option<Reply> {
     let fen = position(game)?;
-    let variant = game.variant.as_str();
-    let start = crate::game::setup_position(variant, &fen)?;
-    let text = text.trim();
-    let uci = crate::game::view::typed_uci(&json!({ "variant": variant }), &start, text)?;
+    let variant = kchess_domain::variant::Variant::from_key(&game.variant)?;
+    let start = kchess_domain::rules::setup_start(variant, &fen)?;
+    let uci = kchess_games::typed_uci(variant, &fen, text.trim())?;
     let played = kchess_domain::position::play_uci(&start, &uci)?;
     Some(Reply {
         account: game.account.clone(),

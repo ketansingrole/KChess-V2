@@ -3,15 +3,14 @@
 use kchess_contracts::CoreEvent;
 use std::sync::Arc;
 
-use kchess_contracts::types::OnlinePhase;
+use kchess_contracts::types::{LobbyState, OnlinePhase};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use crate::error::CoreError;
 use crate::host::Level;
 use crate::lichess::client::Auth;
+use kchess_contracts::error::CoreError;
 
-use crate::lichess::online::events::is_challenge_event;
 use crate::lichess::online::requests::{Emitter, Listen, Quiet};
 use crate::lichess::online::state::{Lane, OnlineSession};
 
@@ -81,11 +80,11 @@ impl OnlineSession {
     }
 
     fn lobby_state(&self, account: &str, phase: OnlinePhase, message: Option<&str>) {
-        let mut payload = json!({ "account": account, "phase": phase });
-        if let Some(message) = message {
-            payload["message"] = json!(message);
-        }
-        self.emit(CoreEvent::OnlineLobby(payload));
+        self.emit(CoreEvent::OnlineLobby(json!(LobbyState {
+            account: account.to_string(),
+            phase,
+            message: message.map(str::to_string),
+        })));
     }
 
     async fn run_lobby(&self, account: String, auth: Auth, cancel: CancellationToken) {
@@ -114,7 +113,7 @@ impl OnlineSession {
             if kind == "gameStart" {
                 this.challenge_became_game(event["game"]["gameId"].as_str().unwrap_or(""));
             }
-            if is_challenge_event(&kind) {
+            if crate::lichess::online::state::CHALLENGE_TYPES.contains(&kind.as_str()) {
                 this.on_challenge(&for_account, &event);
             } else if kind == "gameStart"
                 && event["game"]["speed"].as_str() != Some("correspondence")

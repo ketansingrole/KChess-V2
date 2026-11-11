@@ -2,12 +2,16 @@
 //! opponent's replies. It reports what happened and leaves everything else (scores, Lichess, the
 //! next puzzle) to its page: Puzzles' Train tab and Practice's mistakes.
 
+use crate::loading::Epoch;
 use std::time::Duration;
 
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
-use serde_json::{Value, json};
+use kchess_contracts::types::PuzzleWrongMove;
+use kchess_domain::trainer::puzzle_session::Detail;
+use kchess_domain::variant::Setup;
+use serde_json::Value;
 use shakmaty::Color;
 
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
@@ -34,7 +38,7 @@ pub enum PuzzleBoardEvent {
         uci: String,
     },
     /// The first verdict on the puzzle: solved cleanly or not, and how far it got. Sent once.
-    Outcome { win: bool, detail: Value },
+    Outcome { win: bool, detail: Detail },
     /// The puzzle is over: solved, or its solution played out.
     Done,
 }
@@ -61,9 +65,8 @@ pub struct PuzzleBoard {
     /// The player's last wrong move here (UCI), until the next try.
     last_wrong: Option<String>,
     /// The first wrong try at each of the player's moves, as the attempt log keeps them
-    /// (`{index, uci}`, `index` along the solution), so the finished puzzle opens on the
-    /// analysis board with them.
-    tried: Vec<Value>,
+    /// (`index` along the solution), so the finished puzzle opens on the analysis board with them.
+    tried: Vec<PuzzleWrongMove>,
     /// Explanations of this board's puzzle.
     explainer: Entity<crate::ai::Explainer>,
     /// A hint was shown at some point: `hinted` itself clears after each move.
@@ -87,7 +90,7 @@ pub struct PuzzleBoard {
     seen: Vec<(String, Option<(shakmaty::Square, shakmaty::Square)>)>,
     viewing: Option<usize>,
     /// Bumped when the puzzle changes, so a late timer from the old one does nothing.
-    generation: u64,
+    generation: Epoch,
     timers: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -168,7 +171,7 @@ impl PuzzleBoard {
             frozen: false,
             reply_delay: REPLY_DELAY,
             voice: VoiceMoves::new("puzzles", cx),
-            generation: 0,
+            generation: Epoch::default(),
             timers: Vec::new(),
             seen: Vec::new(),
             viewing: None,
@@ -178,7 +181,7 @@ impl PuzzleBoard {
 
     /// A puzzle, from its start; `outcome` is a verdict its page kept from before.
     pub fn start(&mut self, puzzle: &Value, outcome: Option<bool>, cx: &mut Context<Self>) {
-        self.generation += 1;
+        self.generation.invalidate();
         self.timers.clear();
         self.on_board = Some(OnBoard::start(puzzle));
         self.seen.clear();
@@ -200,7 +203,7 @@ impl PuzzleBoard {
 
     /// No puzzle on the board.
     pub fn clear(&mut self, cx: &mut Context<Self>) {
-        self.generation += 1;
+        self.generation.invalidate();
         self.timers.clear();
         self.on_board = None;
         cx.notify();
@@ -248,8 +251,8 @@ impl PuzzleBoard {
         self.last_wrong.as_deref()
     }
 
-    /// The first wrong try at each of the player's moves (`{index, uci}`).
-    pub fn wrong_moves(&self) -> &[Value] {
+    /// The first wrong try at each of the player's moves.
+    pub fn wrong_moves(&self) -> &[PuzzleWrongMove] {
         &self.tried
     }
 
@@ -379,11 +382,11 @@ impl PuzzleBoard {
             return;
         }
         self.outcome = Some(win);
-        let detail = json!({
-            "revealed": self.revealed,
-            "hinted": self.hint_used,
-            "total": self.on_board.as_ref().map_or(0, OnBoard::player_moves),
-        });
+        let detail = Detail {
+            revealed: self.revealed,
+            hinted: self.hint_used,
+            total: self.on_board.as_ref().map_or(0, OnBoard::player_moves) as u32,
+        };
         cx.emit(PuzzleBoardEvent::Outcome { win, detail });
     }
 
@@ -399,20 +402,23 @@ impl PuzzleBoard {
         let (correct, reply) = board.player_move(uci);
         self.last_wrong = (!correct).then(|| uci.to_string());
         // The player moves first, so their move `index` is the solution's `2 × index`.
-        let ply = 2 * index;
-        if !correct && !self.tried.iter().any(|tried| tried["index"] == ply) {
-            self.tried.push(json!({ "index": ply, "uci": uci }));
+        let ply = 2 * index as u32;
+        if !correct && !self.tried.iter().any(|tried| tried.index == ply) {
+            self.tried.push(PuzzleWrongMove {
+                index: ply,
+                uci: uci.to_string(),
+            });
         }
         if !correct {
             self.mistakes += 1;
             self.feedback = Feedback::Wrong;
             self.flash = true;
             self.hinted = false;
-            let generation = self.generation;
+            let generation = self.generation.current();
             self.timers.push(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(FLASH).await;
                 let _ = this.update(cx, |this, cx| {
-                    if this.generation == generation {
+                    if this.generation.is_current(generation) {
                         this.flash = false;
                         cx.notify();
                     }
@@ -456,11 +462,11 @@ impl PuzzleBoard {
     fn reply(&mut self, uci: String, cx: &mut Context<Self>) {
         self.waiting = true;
         let delay = self.reply_delay;
-        let generation = self.generation;
+        let generation = self.generation.current();
         self.timers.push(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
             let _ = this.update(cx, |this, cx| {
-                if this.generation != generation {
+                if !this.generation.is_current(generation) {
                     return;
                 }
                 if let Some(board) = &mut this.on_board {
@@ -493,13 +499,13 @@ impl PuzzleBoard {
         self.revealed = true;
         self.decide(false, cx);
         self.redraw(cx);
-        let generation = self.generation;
+        let generation = self.generation.current();
         self.timers.push(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(SOLUTION_STEP).await;
                 let reply = this
                     .update(cx, |this, cx| {
-                        if this.generation != generation {
+                        if !this.generation.is_current(generation) {
                             return Err(());
                         }
                         let Some(board) = &mut this.on_board else {
@@ -525,7 +531,7 @@ impl PuzzleBoard {
                 if let Some(reply) = reply {
                     cx.background_executor().timer(SOLUTION_REPLY).await;
                     let _ = this.update(cx, |this, cx| {
-                        if this.generation != generation {
+                        if !this.generation.is_current(generation) {
                             return;
                         }
                         if let Some(board) = &mut this.on_board {
@@ -537,7 +543,7 @@ impl PuzzleBoard {
                 }
             }
             let _ = this.update(cx, |this, cx| {
-                if this.generation == generation {
+                if this.generation.is_current(generation) {
                     cx.emit(PuzzleBoardEvent::Done);
                     this.redraw(cx);
                 }
@@ -548,12 +554,12 @@ impl PuzzleBoard {
     /// A spoken move belongs to this puzzle at this point of it; another drops a choice waiting.
     fn sync_voice(&mut self, cx: &mut Context<Self>) {
         let index = self.on_board.as_ref().map_or(0, OnBoard::index);
-        let context = format!("{}:{index}", self.generation);
+        let context = format!("{}:{index}", self.generation.current());
         let playing = self.playing();
         self.voice.sync(
             &context,
             None,
-            crate::voice::grammar(crate::voice::Grammar::Move),
+            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Move).to_vec(),
             playing,
             cx,
         );
@@ -563,11 +569,15 @@ impl PuzzleBoard {
         if !self.voice.owns(event) {
             return;
         }
-        let (fen, variant) = self
+        let setup = self
             .on_board
             .as_ref()
-            .map(|board| (board.fen().to_string(), board.variant().key().to_string()))
-            .unwrap_or_default();
+            .map(|board| Setup {
+                variant: board.variant(),
+                fen: board.fen().to_string(),
+            })
+            .unwrap_or_else(|| Setup::standard_at(""));
+        let fen = setup.fen.clone();
         let heard = match event {
             crate::voice::VoiceEvent::Missed { heard, .. } => {
                 self.voice.missed(heard, &fen, self.playing(), cx);
@@ -575,7 +585,6 @@ impl PuzzleBoard {
             }
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
         };
-        let setup = json!({ "variant": variant, "fen": fen });
         let turn = Turn {
             taking: self.playing(),
             idle: None,
@@ -593,7 +602,10 @@ impl PuzzleBoard {
         if text.is_empty() || !self.playing() {
             return;
         }
-        let setup = json!({ "variant": board.variant(), "fen": board.fen() });
+        let setup = Setup {
+            variant: board.variant(),
+            fen: board.fen().to_string(),
+        };
         let typed = kchess_domain::rules::setup_start(board.variant(), board.fen())
             .and_then(|position| view::typed_uci(&setup, &position, &text));
         match typed {
@@ -642,7 +654,8 @@ impl Render for PuzzleBoard {
                 hint: "Say “E four” or “Knight F three”",
                 active: playing,
                 listening: playing,
-                grammar: crate::voice::grammar(crate::voice::Grammar::Move),
+                grammar: kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Move)
+                    .to_vec(),
             },
             cx,
         );

@@ -9,13 +9,15 @@ use std::collections::HashMap;
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
-use kchess_contracts::Level;
 use kchess_contracts::check::PgnText;
-use kchess_contracts::types::{Library, StudyCommand, StudyCommandResult};
+use kchess_contracts::types::{Library, ProfileArea, StudyCommand, StudyCommandResult};
+use kchess_contracts::{CoreError, ErrorKind, Level};
 use serde_json::{Map, Value, json};
 
 use crate::core::{Answer, AppCore, Reads};
 use crate::quit::BoxedSave;
+
+const CLOSED: &str = "The study library is closed";
 
 /// Studies a library may hold.
 pub const MAX_STUDIES: usize = 50;
@@ -25,7 +27,7 @@ pub const MAX_CHAPTERS: usize = 64;
 enum Write {
     Command {
         command: StudyCommand,
-        reply: Option<oneshot::Sender<Result<StudyCommandResult, String>>>,
+        reply: Option<oneshot::Sender<Result<StudyCommandResult, CoreError>>>,
     },
     /// Done once every command before it was answered: with the chapters whose last content save
     /// failed, if any did.
@@ -44,8 +46,8 @@ enum Write {
 type Bases = HashMap<(String, String), String>;
 
 /// The core refused a chapter save: another window changed the chapter since this one read it.
-pub fn is_stale(cause: &str) -> bool {
-    cause.contains("This study was changed in another KChess window")
+pub fn is_stale(cause: &CoreError) -> bool {
+    cause.kind == Some(ErrorKind::Conflict)
 }
 
 pub struct StudyLibrary {
@@ -79,7 +81,7 @@ pub fn init(library: &Library, cx: &mut App) {
         move |cx| Some(entity.read(cx).flushed())
     });
     // Another window saved a study: show the profile's.
-    crate::core::on_profile_change(cx, &["studies"], {
+    crate::core::on_profile_change(cx, &[ProfileArea::Studies], {
         let entity = entity.downgrade();
         move |cx| {
             let _ = entity.update(cx, |library, cx| library.reload(cx));
@@ -155,7 +157,7 @@ fn write_in_order(
 ) {
     let core = cx.global::<AppCore>().clone();
     // Each answer, for the library to show.
-    let (answers, mut answered) = mpsc::unbounded::<Result<StudyCommandResult, String>>();
+    let (answers, mut answered) = mpsc::unbounded::<Result<StudyCommandResult, CoreError>>();
     cx.background_executor()
         .spawn(async move {
             // Chapters whose last content save failed, until one succeeds: their moves are not
@@ -186,7 +188,7 @@ fn write_in_order(
                     incremental: Some(true),
                     based_on: based_on.map(PgnText),
                 };
-                let result = core.request(call).await.map_err(|cause| {
+                let result = core.request(call).await.inspect_err(|cause| {
                     let op = json!(command)["op"]
                         .as_str()
                         .unwrap_or_default()
@@ -196,12 +198,11 @@ fn write_in_order(
                         "studies",
                         &format!("saving the study library failed: {op} {}", cause.message),
                     );
-                    cause.message
                 });
                 if let Some(key) = saved_chapter(&command) {
                     match &result {
                         Err(cause) if !is_stale(cause) => {
-                            unsaved.insert(key, cause.clone());
+                            unsaved.insert(key, cause.message.clone());
                         }
                         _ => {
                             unsaved.remove(&key);
@@ -238,7 +239,7 @@ fn write_in_order(
                         this.error = None;
                     }
                     Err(cause) => {
-                        this.error = Some(cause);
+                        this.error = Some(cause.message);
                         this.reload(cx);
                     }
                 }
@@ -247,43 +248,6 @@ fn write_in_order(
         }
     })
     .detach();
-}
-
-/// "just now", "5 min ago", "3 h ago", "2 days ago", else the date.
-pub fn time_ago(timestamp: f64, now: f64) -> String {
-    if timestamp <= 0. {
-        return "never".into();
-    }
-    let seconds = ((now - timestamp) / 1000.).round().max(0.);
-    if seconds < 45. {
-        return "just now".into();
-    }
-    let minutes = (seconds / 60.).round();
-    if minutes < 60. {
-        return format!("{minutes} min ago");
-    }
-    let hours = (minutes / 60.).round();
-    if hours < 24. {
-        return format!("{hours} h ago");
-    }
-    let days = (hours / 24.).round();
-    if days < 31. {
-        return format!("{days} day{} ago", if days == 1. { "" } else { "s" });
-    }
-    // The numeric date, 12/30/2025.
-    use chrono::TimeZone as _;
-    chrono::Local
-        .timestamp_millis_opt(timestamp as i64)
-        .single()
-        .map(|date| date.format("%-m/%-d/%Y").to_string())
-        .unwrap_or_default()
-}
-
-/// Milliseconds since the epoch.
-pub fn now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0., |since| since.as_millis() as f64)
 }
 
 /// A study's chapters as select items: their ids, and their names numbered as the study orders them.
@@ -354,11 +318,22 @@ impl StudyLibrary {
             .unwrap_or_else(|| base.to_string())
     }
 
-    /// Send a command; its answer (the changed studies, and an `id` where one was made).
+    /// Send a command; its answer (the changed studies, and an `id` where one was made), or why
+    /// the core refused it.
     pub fn command(
         &self,
         command: StudyCommand,
     ) -> impl std::future::Future<Output = Result<StudyCommandResult, String>> + 'static + use<>
+    {
+        let answer = self.command_answer(command);
+        async move { answer.await.map_err(|cause| cause.message) }
+    }
+
+    /// `command`, with the core's error as it came: a stale chapter save is `ErrorKind::Conflict`.
+    pub fn command_answer(
+        &self,
+        command: StudyCommand,
+    ) -> impl std::future::Future<Output = Result<StudyCommandResult, CoreError>> + 'static + use<>
     {
         let (reply, answer) = oneshot::channel();
         let sent = self.writes.unbounded_send(Write::Command {
@@ -367,11 +342,9 @@ impl StudyLibrary {
         });
         async move {
             if sent.is_err() {
-                return Err("The study library is closed".to_string());
+                return Err(CoreError::new(CLOSED));
             }
-            answer
-                .await
-                .unwrap_or_else(|_| Err("The study library is closed".to_string()))
+            answer.await.unwrap_or_else(|_| Err(CoreError::new(CLOSED)))
         }
     }
 
@@ -379,10 +352,7 @@ impl StudyLibrary {
     pub fn flushed(&self) -> BoxedSave {
         let (done, wait) = oneshot::channel();
         let _ = self.writes.unbounded_send(Write::Flushed(done));
-        Box::pin(async move {
-            wait.await
-                .unwrap_or_else(|_| Err("The study library is closed".to_string()))
-        })
+        Box::pin(async move { wait.await.unwrap_or_else(|_| Err(CLOSED.to_string())) })
     }
 
     /// Show the studies an answer names: all of them, or the changed ones in the library's order.
@@ -432,8 +402,7 @@ impl StudyLibrary {
 #[cfg(test)]
 mod tests {
     use super::{
-        Bases, StudyLibrary, Write, chapter_items, forget_removed, saved_chapter, time_ago,
-        written_chapter,
+        Bases, StudyLibrary, Write, chapter_items, forget_removed, saved_chapter, written_chapter,
     };
     use futures::channel::mpsc;
     use kchess_contracts::types::{StudyCommand, StudyCommandResult};
@@ -482,19 +451,6 @@ mod tests {
         library.apply(&answer(json!({ "studies": [{ "id": "z" }] })));
         assert_eq!(library.items, [json!({ "id": "z" })]);
         assert_eq!(library.fresh_name("Z"), "Z");
-    }
-
-    #[test]
-    fn edits_read_as_how_long_ago() {
-        let now = 1_000_000_000_000.;
-        assert_eq!(time_ago(now - 10_000., now), "just now");
-        assert_eq!(time_ago(now - 5. * 60_000., now), "5 min ago");
-        assert_eq!(time_ago(now - 3. * 3_600_000., now), "3 h ago");
-        assert_eq!(time_ago(now - 86_400_000., now), "1 day ago");
-        assert_eq!(time_ago(0., now), "never");
-        // Older than a month: the numeric date.
-        let old = time_ago(now - 90. * 86_400_000., now);
-        assert_eq!(old.matches('/').count(), 2, "{old}");
     }
 
     #[test]

@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use gpui_kit::{App, AppContext as _, Entity, EventEmitter, Global};
 use kchess_contracts::calls::CoreCall;
+use kchess_contracts::types::{self, ProfileArea, ProfileChange};
 use kchess_contracts::{Capability, CoreError, HostAsk, HostReply, HostRequest, Level};
 use kchess_core::TestSwitches;
 use kchess_service::{ConnectError, CoreHandle, Hello, Layout, Mode};
@@ -206,7 +207,7 @@ impl Reads {
 /// meanwhile; this app's own writes are ignored.
 pub fn on_profile_change(
     cx: &mut App,
-    areas: &'static [&'static str],
+    areas: &'static [ProfileArea],
     reload: impl Fn(&mut App) + 'static,
 ) {
     let events = cx.global::<AppCore>().events.clone();
@@ -216,16 +217,13 @@ pub fn on_profile_change(
             ClientEvent::Event(CoreEvent::ProfileChanged(change)) => change,
             _ => return,
         };
-        let own = cx.global::<AppCore>().bridge.connection();
-        if change["origin"].as_u64() == Some(own) {
+        let Ok(change) = serde_json::from_value::<ProfileChange>(change.clone()) else {
+            return;
+        };
+        if change.origin == cx.global::<AppCore>().bridge.connection() {
             return;
         }
-        let changed = change["areas"].as_array().is_some_and(|changed| {
-            changed
-                .iter()
-                .any(|area| area.as_str().is_some_and(|area| areas.contains(&area)))
-        });
-        if changed {
+        if change.areas.iter().any(|area| areas.contains(area)) {
             reload(cx);
         }
     })
@@ -293,7 +291,9 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
                 continue;
             }
             if let ClientEvent::Event(CoreEvent::AlertsOwner(owner)) = &event {
-                let owner = owner["connection"].as_u64();
+                let owner = serde_json::from_value::<types::AlertOwner>(owner.clone())
+                    .ok()
+                    .and_then(|owner| owner.connection);
                 cx.update(|cx| cx.set_global(AlertOwner(owner)));
             }
             core.events.update(cx, |_, cx| cx.emit(event));
@@ -328,13 +328,11 @@ fn answer_host(ask: HostAsk, cx: &mut App) {
                 Err(cause) => HostReply::Error(cause.to_string()),
             }
         }
-        HostRequest::OpenExternal(url) if kchess_core::capabilities::opens_in_browser(&url) => {
+        HostRequest::OpenExternal(url) if kchess_host::opens_in_browser(&url) => {
             cx.open_url(&url);
             HostReply::done()
         }
-        HostRequest::OpenExternal(_) => {
-            HostReply::Error("Only web addresses open in the browser".into())
-        }
+        HostRequest::OpenExternal(_) => HostReply::Error(kchess_host::NOT_A_WEB_PAGE.into()),
         HostRequest::Focus => {
             cx.activate(true);
             HostReply::done()

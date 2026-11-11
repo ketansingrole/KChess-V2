@@ -18,9 +18,11 @@ use serde_json::{Value, json};
 use super::{CARD_GAP, CARD_MIN, StudiesPage, summary};
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::studies::{StudyHandle, now, time_ago};
+use crate::studies::StudyHandle;
 use crate::theme::Palette;
+use crate::widgets::time_ago;
 use crate::widgets::{self, Choice};
+use kchess_games::now_ms;
 
 /// A list fetched this recently is shown without asking again; a failure waits this long.
 const FRESH_FOR: f64 = 5. * 60_000.;
@@ -102,7 +104,7 @@ impl StudiesPage {
         }
         let key = account.to_lowercase();
         let entry = self.lichess.entries.entry(key.clone()).or_default();
-        let at = now();
+        let at = now_ms();
         if entry.loading
             || (!force
                 && (entry.needs_reconnect
@@ -129,7 +131,7 @@ impl StudiesPage {
                     Ok(Reply::NeedsReconnect) => entry.needs_reconnect = true,
                     Ok(Reply::Done(studies)) => {
                         entry.items = Some(studies);
-                        entry.fetched_at = now();
+                        entry.fetched_at = now_ms();
                         entry.needs_reconnect = false;
                     }
                     Err(cause) => entry.error = cause.message,
@@ -481,7 +483,7 @@ impl StudiesPage {
             );
         let items = entry.items.unwrap_or_default();
         let (count, card_width) = widgets::columns(width, CARD_MIN, CARD_GAP);
-        let at = now();
+        let at = now_ms();
         let busy = self.lichess.busy;
         let cards: Vec<AnyElement> = items
             .iter()

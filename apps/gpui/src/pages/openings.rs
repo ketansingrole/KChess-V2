@@ -17,8 +17,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_domain::training::openings::{OpeningNode, opening_tree};
+use kchess_domain::variant::Variant;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use shakmaty::{Color, Position as _};
 
 use crate::assets::icon;
@@ -308,7 +308,8 @@ impl OpeningsPage {
                 None,
             ))
         });
-        let explorer = cx.new(|cx| PositionExplorer::new(true, window, cx));
+        let explorer =
+            cx.new(|cx| PositionExplorer::new(crate::explorer::Layout::Grid, window, cx));
         let subscriptions = vec![
             cx.subscribe(&explorer, |this, _, event: &ExplorerEvent, cx| {
                 let ExplorerEvent::Play(uci) = event;
@@ -482,7 +483,7 @@ impl OpeningsPage {
             .map_or_else(|| STANDARD_FEN.to_string(), |(_, _, fen)| fen.clone());
         let shown = line.clone();
         self.explorer.update(cx, |explorer, cx| {
-            explorer.show(None, &fen, Some(shown), false, cx)
+            explorer.show(Variant::Standard, &fen, Some(shown), false, cx)
         });
         self.line = Some(line);
         self.redraw(cx);
@@ -547,7 +548,7 @@ impl OpeningsPage {
         let fen = line_of(&line)
             .last()
             .map_or_else(|| STANDARD_FEN.to_string(), |(_, _, fen)| fen.clone());
-        let setup = json!({ "variant": "standard", "fen": fen });
+        let setup = kchess_domain::variant::Setup::standard_at(fen.clone());
         let typed =
             kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &fen)
                 .and_then(|position| view::typed_uci(&setup, &position, &text));

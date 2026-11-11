@@ -451,7 +451,7 @@ impl SettingsPage {
         ));
         // The App Store's KChess runs only the Stockfish it comes with: the store forbids
         // downloading programs, and the sandbox cannot keep a chosen executable across launches.
-        if !kchess_core::app_store() {
+        if !kchess_host::app_store() {
             rows.rows.push(self.engine_option(
                 "Downloaded Stockfish",
                 downloaded,

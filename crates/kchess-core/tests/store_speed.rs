@@ -6,9 +6,10 @@
 use kchess_contracts::types::GamePageQuery;
 use std::time::{Duration, Instant};
 
+use kchess_contracts::CoreError;
+use kchess_core::Config;
 use kchess_core::store::{self, StoreCache, StoreContext, games, library};
 use kchess_core::test_host::QUIET;
-use kchess_core::{Config, CoreError};
 use rusqlite::{Connection, params};
 use serde_json::json;
 use shakmaty::uci::UciMove;

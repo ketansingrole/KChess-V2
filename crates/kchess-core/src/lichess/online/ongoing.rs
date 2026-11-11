@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use super::super::challenges::PlayerRef;
 use super::state::{OngoingGame, State};
-use crate::error::CoreError;
+use kchess_contracts::error::CoreError;
 
 /// `checking` of a resume: the account being checked, whether it lacked a login, and the failure
 /// to report if no account has a game.

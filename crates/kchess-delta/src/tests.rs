@@ -345,6 +345,11 @@ fn a_tree_reads_a_folder_as_installed() {
 }
 
 #[test]
+fn hex_is_lowercase_and_two_digits_a_byte() {
+    assert_eq!(crate::hex(&[0, 15, 255]), "000fff");
+}
+
+#[test]
 fn a_delta_is_named_after_its_package_and_base() {
     assert_eq!(
         name("KChess-2026.11.5-linux-amd64.deb", "2026.11.4").as_deref(),

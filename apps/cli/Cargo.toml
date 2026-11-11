@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 kchess-core = { path = "../../crates/kchess-core" }
+kchess-host = { path = "../../crates/kchess-host" }
 kchess-contracts = { path = "../../crates/kchess-contracts" }
 kchess-domain = { path = "../../crates/kchess-domain" }
 kchess-games = { path = "../../crates/kchess-games" }

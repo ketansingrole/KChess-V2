@@ -11,11 +11,11 @@ use kchess_contracts::types::{
 };
 
 use crate::core::Core;
-use crate::error::Result;
 use crate::host::Level;
 use crate::lichess::tournaments;
 use crate::store::library;
 use crate::time::now_ms;
+use kchess_contracts::error::Result;
 
 impl Core {
     /// Forgets one account's membership of a tournament, or every account's without one.
@@ -36,7 +36,7 @@ impl Core {
 }
 
 /// A call's `Reply<()>` as the facade answers it: `true` once done.
-fn done<E: Into<crate::error::CoreError>>(
+fn done<E: Into<kchess_contracts::error::CoreError>>(
     reply: std::result::Result<Reply<()>, E>,
 ) -> Result<Reply<bool>> {
     Ok(match reply.map_err(Into::into)? {

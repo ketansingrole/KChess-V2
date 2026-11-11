@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use super::StoreContext;
 use super::documents::{read_document, read_document_text, write_document};
-use crate::error::Result;
+use kchess_contracts::error::Result;
 
 const CONNECTION: &str = "ai:connection";
 const EXPLANATIONS: &str = "ai:explanations";

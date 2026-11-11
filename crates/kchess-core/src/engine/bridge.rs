@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use super::analysis::Analysis;
@@ -27,9 +27,9 @@ use super::scheduler::Power;
 use super::search::Search;
 use super::uci::EngineHub;
 use crate::capabilities::Capabilities;
-use crate::error::Result;
 use crate::host::{Host, Level};
 use crate::store::{Database, chesscom, games};
+use kchess_contracts::error::Result;
 
 /// How often the battery reading is refreshed while the core runs.
 const REFRESH_EVERY: Duration = Duration::from_secs(15);
@@ -232,11 +232,11 @@ impl ReviewHost for ReviewBridge {
     }
 
     fn update(&self, update: ReviewUpdate) {
-        self.emit(CoreEvent::ReviewUpdate(json!(update)));
+        self.emit(CoreEvent::ReviewUpdate(Box::new(update)));
     }
 
     fn status(&self, status: ReviewStatus) {
-        self.emit(CoreEvent::ReviewStatus(json!(status)));
+        self.emit(CoreEvent::ReviewStatus(status));
     }
 }
 
@@ -264,11 +264,7 @@ impl EngineHandoff for EngineOwners {
         Box::pin(async move {
             let hold = self
                 .hub
-                .suspend(|| {
-                    self.search.stop_engine(true);
-                    self.analysis.stop_analysis(true);
-                    self.reviews.restart_review_engine();
-                })
+                .suspend(|| super::stop_engines(&self.search, &self.analysis, &self.reviews, true))
                 .await?;
             // The engines have exited; the stopped analysis also ends (its final `interrupted`
             // update sent, no longer running) before the executable changes. Waiting only for

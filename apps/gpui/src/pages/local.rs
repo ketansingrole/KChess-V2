@@ -2,8 +2,32 @@
 //! board, any variant, with or without a clock; or a chess clock for a real board. Both keep their
 //! place in Game history, and the board game resumes in either app.
 
+use crate::shortcuts::{PageKey, page_key};
 use kchess_domain::training::clock::format_clock;
 use std::time::Instant;
+
+/// What the chess clock's keys do.
+#[derive(Clone, Copy)]
+pub(crate) enum ClockKey {
+    Press,
+    Pause,
+}
+
+/// The chess clock's keys, which the shortcuts list shows.
+pub(crate) const CLOCK_KEYS: &[PageKey<ClockKey>] = &[
+    PageKey {
+        action: ClockKey::Press,
+        keys: &["space"],
+        shown: "Space",
+        does: "Press the clock",
+    },
+    PageKey {
+        action: ClockKey::Pause,
+        keys: &["p"],
+        shown: "P",
+        does: "Pause",
+    },
+];
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -18,7 +42,6 @@ use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_domain::games::archive::Snapshot;
 use kchess_domain::games::otb_clock::{Config, OtbClock, Side};
-use kchess_domain::variant::Setup;
 use kchess_games::Outcome;
 use kchess_games::history::session_kind;
 use serde_json::{Value, json};
@@ -28,17 +51,17 @@ use crate::assets::icon;
 use crate::board::{BoardEvent, ChessBoard};
 use crate::export::Exporter;
 use crate::game::history::HistoryPlace;
-use crate::game::local::{self, LocalGame};
 use crate::game::played::PlayedGame;
 use crate::game::session::{Resumes, SessionSaver, Sessions};
 use crate::game::surface::{self, Faces, MoveBox, Steps};
-use crate::game::{STANDARD_FEN, chess960, position_problem, view};
+use crate::game::{chess960, view};
 use crate::part::Part;
 use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout, panel_style};
 use crate::played::PlayedHandle;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Side as PieceSide, Tone};
+use kchess_domain::games::local::{self, LocalGame};
 
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -54,7 +77,7 @@ enum ClockLayout {
     Vertical,
 }
 
-use crate::game::variants;
+use kchess_domain::variant::{Setup, Variant};
 
 /// What the panel's buttons do, for Quick Pick to offer the same.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -211,15 +234,8 @@ impl LocalPage {
             Ok(game) => game,
             Err(cause) => panic!("a new local game always starts: {cause}"),
         };
-        let board = cx.new(|_| {
-            ChessBoard::new(view::board_state(
-                &json!(game.setup()),
-                &[],
-                0,
-                Color::White,
-                None,
-            ))
-        });
+        let board = cx
+            .new(|_| ChessBoard::new(view::board_state(game.setup(), &[], 0, Color::White, None)));
         let (moves, typed) = MoveBox::new(Self::typed_move, window, cx);
         let clock = OtbClock::default();
         let number_input = |value: f64, window: &mut Window, cx: &mut Context<Self>| {
@@ -369,8 +385,8 @@ impl LocalPage {
         self.game.moves().to_vec()
     }
 
-    fn setup(&self) -> Value {
-        json!(self.game.setup())
+    fn setup(&self) -> &Setup {
+        self.game.setup()
     }
 
     fn shown_ply(&self) -> usize {
@@ -396,7 +412,7 @@ impl LocalPage {
 
     /// Who is to move at the latest position.
     fn turn(&self) -> Color {
-        view::turn(view::position_at(&self.setup(), &self.moves(), self.moves().len()).as_ref())
+        view::turn(view::position_at(self.setup(), &self.moves(), self.moves().len()).as_ref())
     }
 
     /// The board faces whoever is to move while automatic turning is on.
@@ -440,24 +456,25 @@ impl LocalPage {
     }
 
     /// The live position as the rules read a spoken move in it.
-    fn voice_setup(&self) -> Value {
+    fn voice_setup(&self) -> Setup {
         let moves = self.moves();
-        view::position_at(&self.setup(), &moves, moves.len()).map_or(Value::Null, |position| {
-            json!({
-                "variant": self.setup()["variant"],
-                "fen": kchess_domain::rules::make_fen(&position),
-            })
-        })
+        view::position_at(self.setup(), &moves, moves.len()).map_or_else(
+            || Setup::standard_at(""),
+            |position| Setup {
+                variant: self.setup().variant,
+                fen: kchess_domain::rules::make_fen(&position),
+            },
+        )
     }
 
     fn sync_voice(&mut self, cx: &mut Context<Self>) {
         let context = format!("{}:{}", self.moves().len(), self.shown_ply());
         let taking = self.voice_taking();
-        let line = view::sans(&self.setup(), &self.moves());
+        let line = view::sans(self.setup(), &self.moves());
         self.voice.sync(
             &context,
             Some(line),
-            crate::voice::grammar(crate::voice::Grammar::Move),
+            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Move).to_vec(),
             taking,
             cx,
         );
@@ -475,8 +492,8 @@ impl LocalPage {
         let setup = self.voice_setup();
         let heard = match event {
             crate::voice::VoiceEvent::Missed { heard, .. } => {
-                let fen = setup["fen"].as_str().unwrap_or_default().to_string();
-                self.voice.missed(heard, &fen, self.voice_taking(), cx);
+                self.voice
+                    .missed(heard, &setup.fen, self.voice_taking(), cx);
                 return;
             }
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
@@ -498,12 +515,9 @@ impl LocalPage {
         if !self.interactive() {
             return;
         }
-        let position = view::position_at(&self.setup(), &self.moves(), self.moves().len());
-        let variant = self.setup()["variant"]
-            .as_str()
-            .unwrap_or("standard")
-            .to_string();
-        match self.moves.take(&variant, position.as_ref(), window, cx) {
+        let position = view::position_at(self.setup(), &self.moves(), self.moves().len());
+        let variant = self.setup().variant;
+        match self.moves.take(variant, position.as_ref(), window, cx) {
             Some(uci) => self.play(&uci, cx),
             None => cx.notify(),
         }
@@ -571,7 +585,7 @@ impl LocalPage {
         let shown = self.shown_ply();
         let turn = self.turn();
         let mut state = view::board_state(
-            &self.setup(),
+            self.setup(),
             &moves,
             shown,
             self.orientation(cx),
@@ -615,7 +629,7 @@ impl LocalPage {
 
     /// A new game starts: the one before keeps its place in history and this one gets its own.
     /// After a saved game that could not be read, this one is the players' to keep.
-    fn start(&mut self, setup: Value, clock: Value, cx: &mut Context<Self>) {
+    fn start(&mut self, setup: Setup, clock: Value, cx: &mut Context<Self>) {
         self.saver.open();
         let (source, has_play) = (self.game.archive_snapshot(), self.has_play());
         match &mut self.history {
@@ -631,10 +645,9 @@ impl LocalPage {
                 ))
             }
         }
-        let started = serde_json::from_value(setup)
-            .and_then(|setup| Ok((setup, serde_json::from_value(clock)?)))
+        let started = serde_json::from_value(clock)
             .map_err(|error| format!("the chosen game: {error}"))
-            .and_then(|(setup, clock)| self.game.start(setup, clock, self.now()));
+            .and_then(|clock| self.game.start(setup, clock, self.now()));
         if let Err(cause) = started {
             crate::log::write(Level::Warn, "local", &cause);
         }
@@ -691,7 +704,7 @@ impl LocalPage {
 
     fn open_new_game(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let page = cx.entity().downgrade();
-        let current = self.setup();
+        let current = self.setup().clone();
         let form = cx.new(|cx| {
             NewGame::new(
                 &current,
@@ -711,7 +724,7 @@ impl LocalPage {
     }
 
     /// A game over the board from a position (the board editor's, the analysis board's), untimed.
-    pub fn start_from(&mut self, setup: Value, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn start_from(&mut self, setup: Setup, window: &mut Window, cx: &mut Context<Self>) {
         crate::prefs::set(cx, MODE_KEY, Mode::Board);
         self.replace_game(setup, Value::Null, window, cx);
     }
@@ -720,7 +733,7 @@ impl LocalPage {
     /// game is read, so that it is the one asked about.
     pub(crate) fn replace_game(
         &mut self,
-        setup: Value,
+        setup: Setup,
         clock: Value,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -735,7 +748,7 @@ impl LocalPage {
 
     fn confirm_new_game(
         &mut self,
-        setup: Value,
+        setup: Setup,
         clock: Value,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -767,7 +780,7 @@ impl LocalPage {
         PlayedGame {
             result: self.game.outcome(),
             ..PlayedGame::new(
-                &self.setup(),
+                self.setup().clone(),
                 self.moves(),
                 self.orientation(cx),
                 "White",
@@ -796,7 +809,7 @@ impl LocalPage {
             "Black": "Black",
             "Result": Outcome::tag(self.game.outcome()),
         });
-        match crate::game::setup_pgn(&self.setup(), &self.moves(), &headers) {
+        match crate::game::setup_pgn(self.setup(), &self.moves(), &headers) {
             Some(pgn) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(pgn));
                 window.push_notification("PGN copied", cx);
@@ -910,26 +923,27 @@ impl LocalPage {
         cx.notify();
     }
 
-    /// The chess clock's keys when the page itself has focus (not a text field): Space presses
-    /// the running clock and P pauses.
+    /// The chess clock's keys (`CLOCK_KEYS`) when the page itself has focus (not a text field).
     fn clock_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !crate::board::page_has_keys(&self.focus, window, cx)
             || event.keystroke.modifiers.modified()
         {
             return;
         }
-        match event.keystroke.key.as_str() {
-            "space" => {
+        let Some(action) = page_key(CLOCK_KEYS, &event.keystroke.key) else {
+            return;
+        };
+        match action {
+            ClockKey::Press => {
                 let side = self.clock.running.unwrap_or(Side::Top);
                 self.press(side, cx);
             }
-            "p" => {
+            ClockKey::Pause => {
                 if self.clock.pause(self.now()) {
                     self.clock_flagged(cx);
                 }
                 self.clock_changed(cx);
             }
-            _ => return,
         }
         cx.stop_propagation();
     }
@@ -1270,7 +1284,7 @@ impl Render for LocalPage {
         let shown = self.shown_ply();
         let live = self.game.result().is_none();
         let orientation = self.orientation(cx);
-        let display = view::position_at(&self.setup(), &moves, shown);
+        let display = view::position_at(self.setup(), &moves, shown);
         let display_turn = view::turn(display.as_ref());
         let frontend = cx
             .global::<SettingsHandle>()
@@ -1340,7 +1354,8 @@ impl Render for LocalPage {
                 hint: "Either player can say “E four” or “Knight F three”",
                 active: self.voice_taking(),
                 listening: self.voice_taking(),
-                grammar: crate::voice::grammar(crate::voice::Grammar::Move),
+                grammar: kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Move)
+                    .to_vec(),
             },
             cx,
         );
@@ -1402,11 +1417,11 @@ impl LocalPage {
         let board_size = self.board_size(window);
         let narrow = widgets::is_narrow(self.panel_area.size().width);
         let moves = self.moves();
-        let sans = view::sans(&self.setup(), &moves);
+        let sans = view::sans(self.setup(), &moves);
         let shown = self.shown_ply();
         let over = self.game.over();
         let result = self.game.result();
-        let display = view::position_at(&self.setup(), &moves, shown);
+        let display = view::position_at(self.setup(), &moves, shown);
         let frontend = cx
             .global::<SettingsHandle>()
             .0
@@ -1415,7 +1430,7 @@ impl LocalPage {
             .frontend
             .clone();
         let (timed, paused) = (self.game.timed(), self.game.paused());
-        let variant_label = crate::game::setup_label(&self.setup());
+        let variant_label = crate::game::setup_label(self.setup());
         let clock_label = self.game.clock().map(|clock| {
             let mut label = widgets::time_control(clock.white.minutes, clock.white.increment);
             if clock.black.minutes != clock.white.minutes {
@@ -1481,9 +1496,9 @@ impl LocalPage {
                 .when_some(detail, |banner, value| banner.detail(value))
             }
         };
-        let opening =
-            (frontend.show_opening_name && self.setup()["variant"] == "standard").then(|| {
-                let opening = crate::game::opening_at(&self.setup(), &moves, shown)?;
+        let opening = (frontend.show_opening_name && self.setup().variant == Variant::Standard)
+            .then(|| {
+                let opening = crate::game::opening_at(self.setup(), &moves, shown)?;
                 Some((opening.eco, opening.name))
             });
         let page = cx.entity().downgrade();
@@ -1545,7 +1560,7 @@ impl LocalPage {
                 widgets::MoveSheet {
                     sans: &sans,
                     shown,
-                    first: view::first_move(&self.setup()),
+                    first: view::first_move(self.setup()),
                 },
                 if !timed {
                     "No moves yet".into()
@@ -1629,8 +1644,6 @@ impl LocalPage {
                     ),
             )
             .when(!frontend.zen_mode, |panel| {
-                let analysable =
-                    crate::game::analysable(self.setup()["variant"].as_str().unwrap_or("standard"));
                 // Copy PGN, Export and Analyse share the row.
                 panel.child(widgets::panel_actions(
                     narrow,
@@ -1657,18 +1670,16 @@ impl LocalPage {
                         .into(),
                     ]
                     .into_iter()
-                    .chain(analysable.then(|| {
-                        Button::new("local-analyse")
-                            .ghost()
-                            .small()
-                            .w_full()
-                            .icon(icon("microscope"))
-                            .label("Analyse")
-                            .disabled(moves.is_empty())
-                            .on_click(cx.listener(|this, _, window, cx| this.analyse(window, cx)))
-                            .into_any_element()
-                            .into()
-                    })),
+                    .chain([Button::new("local-analyse")
+                        .ghost()
+                        .small()
+                        .w_full()
+                        .icon(icon("microscope"))
+                        .label("Analyse")
+                        .disabled(moves.is_empty())
+                        .on_click(cx.listener(|this, _, window, cx| this.analyse(window, cx)))
+                        .into_any_element()
+                        .into()]),
                 ))
             })
             .into_any_element()
@@ -1719,9 +1730,7 @@ impl LocalPage {
         actions.extend([Action::NewGame, Action::Flip]);
         if played {
             actions.push(Action::CopyPgn);
-            if crate::game::analysable(self.setup()["variant"].as_str().unwrap_or("standard")) {
-                actions.push(Action::Analyse);
-            }
+            actions.push(Action::Analyse);
         }
         actions
     }
@@ -1753,7 +1762,7 @@ impl LocalPage {
 }
 
 /// Starts the game the form chose, from its setup and clock.
-type StartGame = Box<dyn Fn(Value, Value, &mut Window, &mut App)>;
+type StartGame = Box<dyn Fn(Setup, Value, &mut Window, &mut App)>;
 
 /// The new-game form (`New game over the board`): the variant, its start, the clock and odds.
 struct NewGame {
@@ -1768,52 +1777,47 @@ struct NewGame {
 
 impl NewGame {
     fn new(
-        current: &Value,
-        on_start: impl Fn(Value, Value, &mut Window, &mut App) + 'static,
+        current: &Setup,
+        on_start: impl Fn(Setup, Value, &mut Window, &mut App) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> NewGame {
-        let texts = variants();
         // The form opens on the game being played: its variant, its Chess960 number, or the
         // position it started from.
-        let current_variant = current["variant"].as_str().unwrap_or("standard");
-        let current_fen = current["fen"].as_str().unwrap_or(STANDARD_FEN).to_string();
-        let row = texts
+        let current_variant = current.variant;
+        let current_fen = current.fen.clone();
+        let row = Variant::ALL
             .iter()
-            .position(|text| text.key == current_variant)
+            .position(|variant| *variant == current_variant)
             .unwrap_or(0);
         let variant = cx.new(|cx| {
             SelectState::new(
-                texts
+                Variant::ALL
                     .iter()
-                    .map(|text| SharedString::from(text.label.clone()))
+                    .map(|variant| SharedString::from(variant.label()))
                     .collect(),
                 Some(IndexPath::new(row)),
                 window,
                 cx,
             )
         });
-        let current_number = (current_variant == "chess960")
+        let current_number = (current_variant == Variant::Chess960)
             .then(|| (0..960).find(|&n| chess960(n) == current_fen))
             .flatten();
         let number = cx.new(|cx| {
             let mut input = InputState::new(window, cx);
             let n = current_number
-                .or_else(|| crate::game::drawn(crate::game::random_chess960()))
+                .or_else(|| crate::game::drawn(kchess_games::random_chess960()))
                 .unwrap_or(518);
             input.set_value(n.to_string(), window, cx);
             input
         });
         let usual = match current_variant {
-            "standard" => Some(STANDARD_FEN.to_string()),
-            "chess960" => None,
-            variant => crate::game::default_fen(variant),
+            Variant::Chess960 => None,
+            variant => Some(variant.default_fen()),
         };
         let fen = cx.new(|cx| {
-            let label = format!(
-                "{} start",
-                crate::game::variant_label(texts.get(row).map_or("standard", |text| &text.key))
-            );
+            let label = format!("{} start", current_variant.label());
             let mut input = InputState::new(window, cx).placeholder(label);
             if usual.as_ref().is_some_and(|usual| *usual != current_fen) {
                 input.set_value(current_fen.clone(), window, cx);
@@ -1845,10 +1849,7 @@ impl NewGame {
                 &variant,
                 window,
                 |this, _, _: &SelectEvent<Vec<SharedString>>, window, cx| {
-                    let label = format!(
-                        "{} start",
-                        crate::game::variant_label(&this.variant_key(cx))
-                    );
+                    let label = format!("{} start", this.chosen_variant(cx).label());
                     this.fen
                         .update(cx, |input, cx| input.set_placeholder(label, window, cx));
                     cx.notify()
@@ -1869,15 +1870,13 @@ impl NewGame {
         }
     }
 
-    fn variant_key(&self, cx: &App) -> String {
+    fn chosen_variant(&self, cx: &App) -> Variant {
         let row = self
             .variant
             .read(cx)
             .selected_index(cx)
             .map_or(0, |index| index.row);
-        variants()
-            .get(row)
-            .map_or_else(|| "standard".into(), |text| text.key.clone())
+        Variant::ALL.get(row).copied().unwrap_or_default()
     }
 
     fn number960(&self, cx: &App) -> Option<i64> {
@@ -1892,32 +1891,24 @@ impl NewGame {
 
     fn fen_problem(&self, cx: &App) -> Option<SharedString> {
         let text = self.fen.read(cx).value().trim().to_string();
-        let variant = self.variant_key(cx);
-        if variant == "chess960" || text.is_empty() {
+        let variant = self.chosen_variant(cx);
+        if variant == Variant::Chess960 || text.is_empty() {
             return None;
         }
-        if variant != "standard" {
-            return crate::game::setup_position(&variant, &text)
-                .is_none()
-                .then(|| "Not a legal position".into());
-        }
-        position_problem(&text).map(SharedString::from).or_else(|| {
-            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &text)
-                .is_none()
-                .then(|| "Not a legal position".into())
-        })
+        crate::game::setup_problem(variant, &text).map(SharedString::from)
     }
 
     /// The chosen start, or `None` while the form has a problem.
-    fn setup(&self, cx: &App) -> Option<Value> {
-        let variant = self.variant_key(cx);
-        if variant == "chess960" {
-            return self
-                .number960(cx)
-                .map(|n| json!({ "variant": "chess960", "fen": chess960(n) }));
+    fn setup(&self, cx: &App) -> Option<Setup> {
+        let variant = self.chosen_variant(cx);
+        if variant == Variant::Chess960 {
+            return self.number960(cx).map(|n| Setup {
+                variant,
+                fen: chess960(n),
+            });
         }
         let text = self.fen.read(cx).value().trim().to_string();
-        if variant == "standard" && !text.is_empty() {
+        if variant == Variant::Standard && !text.is_empty() {
             return self
                 .fen_problem(cx)
                 .is_none()
@@ -1927,10 +1918,9 @@ impl NewGame {
             return self
                 .fen_problem(cx)
                 .is_none()
-                .then(|| json!({ "variant": variant, "fen": text }));
+                .then_some(Setup { variant, fen: text });
         }
-        let fen = crate::game::default_fen(&variant)?;
-        Some(json!({ "variant": variant, "fen": fen }))
+        Some(Setup::of(variant))
     }
 
     /// The chosen clock: equal times unless Black's minutes give odds.
@@ -1962,11 +1952,8 @@ impl NewGame {
 impl Render for NewGame {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let variant = self.variant_key(cx);
-        let hint = variants()
-            .iter()
-            .find(|text| text.key == variant)
-            .map(|text| text.hint.clone());
+        let variant = self.chosen_variant(cx);
+        let hint = Some(variant.hint().to_string());
         let setup = self.setup(cx);
         let no_clock = self
             .clock
@@ -1989,7 +1976,7 @@ impl Render for NewGame {
                         .child(hint)
                 })),
             )
-            .when(variant == "chess960", |form| {
+            .when(variant == Variant::Chess960, |form| {
                 form.child(
                     h_flex()
                         .items_end()
@@ -2012,7 +1999,7 @@ impl Render for NewGame {
                                 .label("Random")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     let Some(n) =
-                                        crate::game::drawn(crate::game::random_chess960())
+                                        crate::game::drawn(kchess_games::random_chess960())
                                     else {
                                         return;
                                     };
@@ -2024,7 +2011,7 @@ impl Render for NewGame {
                         ),
                 )
             })
-            .when(variant != "chess960", |form| {
+            .when(variant != Variant::Chess960, |form| {
                 form.child(widgets::field(
                     "Start from a FEN (optional)",
                     Input::new(&self.fen).aria_label("Start from a FEN (optional)"),
@@ -2160,7 +2147,7 @@ impl crate::pages::PageView for LocalPage {
 
 /// A game over the board from a setup's position. A position that cannot be played only opens
 /// the page.
-pub fn play_from(setup: Value, window: &mut Window, cx: &mut App) {
+pub fn play_from(setup: Setup, window: &mut Window, cx: &mut App) {
     if !crate::pages::computer::playable(&setup) {
         crate::shell::open(crate::pages::Page::Local, window, cx);
         return;

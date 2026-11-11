@@ -9,13 +9,13 @@ use gpui_kit::*;
 use kchess_contracts::Variant;
 use kchess_contracts::calls;
 use kchess_contracts::types::PlayedGame;
-use serde_json::{Value, json};
+use kchess_domain::variant::Setup;
+use serde_json::Value;
 use shakmaty::{Color, Position as _};
 
 use crate::assets::icon;
 use crate::board::ChessBoard;
 use crate::core::AppCore;
-use crate::game::computer::{ComputerGame, Host};
 use crate::game::view;
 use crate::pages::Page;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
@@ -24,13 +24,15 @@ use crate::theme::{Palette, radii};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
+use kchess_domain::games::Host;
+use kchess_domain::games::computer::ComputerGame;
 
 mod lichess;
 
 /// A game's variant by name, when it is not standard chess.
 fn variant_of(game: &PlayedGame) -> Option<String> {
     (game.setup.variant != Variant::Standard)
-        .then(|| crate::game::variant_label(game.setup.variant.key()))
+        .then(|| crate::game::variant_label(game.setup.variant.key()).to_string())
 }
 
 /// Recent games on Home.
@@ -100,14 +102,13 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
     // Whose move it is and the move number, from the position reached: a game started from a
     // position (Black to move, or at move 30) does not count from the usual start. White moves
     // on even plies when the position cannot be replayed.
-    let (to_move, number) = view::position_at(&serde_json::json!(game.setup()), moves, moves.len())
-        .map_or_else(
-            || {
-                let even = moves.len().is_multiple_of(2);
-                (Color::from_white(even), moves.len() / 2 + 1)
-            },
-            |reached| (reached.turn(), reached.fullmoves().get() as usize),
-        );
+    let (to_move, number) = view::position_at(game.setup(), moves, moves.len()).map_or_else(
+        || {
+            let even = moves.len().is_multiple_of(2);
+            (Color::from_white(even), moves.len() / 2 + 1)
+        },
+        |reached| (reached.turn(), reached.fullmoves().get() as usize),
+    );
     let level = crate::game::engine_level(game.level());
     let name = level.map_or("", |level| level.label.as_str());
     let strength = level.map(|level| match level.elo {
@@ -117,7 +118,7 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
     // A variant is named first, as the game page names it.
     let variant = Some(game.setup().variant)
         .filter(|variant| *variant != kchess_domain::variant::Variant::Standard)
-        .map(|variant| crate::game::variant_label(variant.key()));
+        .map(|variant| variant.label().to_string());
     Some(Unfinished {
         opponent: (format!("Stockfish · {name}"), strength),
         state: variant
@@ -283,9 +284,14 @@ fn orientation(game: &Value) -> Color {
 }
 
 /// `game`'s setup and moves, as the board shows them.
-fn line(game: &Value) -> (Value, Vec<String>) {
+fn line(game: &Value) -> (Setup, Vec<String>) {
     let moves = serde_json::from_value(game["moves"].clone()).unwrap_or_default();
-    (game["setup"].clone(), moves)
+    (setup_of(game), moves)
+}
+
+/// A game's setup; one that cannot be read shows no position.
+fn setup_of(game: &Value) -> Setup {
+    crate::game::setup_of(&game["setup"]).unwrap_or_else(|| Setup::standard_at(""))
 }
 
 /// Whether the board goes over the rest for a page `width` wide, and how many tiles share a
@@ -438,11 +444,11 @@ impl Render for HomePage {
                 } else {
                     Color::White
                 };
-                (json!(game.setup), game.moves.clone(), side)
+                (game.setup.clone(), game.moves.clone(), side)
             }
-            (None, None) => (Value::Null, Vec::new(), Color::White),
+            (None, None) => (Setup::standard_at(""), Vec::new(), Color::White),
         };
-        let drawn = format!("{setup}{moves:?}{side:?}");
+        let drawn = format!("{setup:?}{moves:?}{side:?}");
         if self.board.as_ref().is_none_or(|(shown, _)| *shown != drawn) {
             let mut state = view::board_state(&setup, &moves, moves.len(), side, None);
             state.preview = true;

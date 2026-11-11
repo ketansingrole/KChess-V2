@@ -217,7 +217,7 @@ impl RatingSpeeds {
         if days == 0. {
             0.
         } else {
-            chrono::Utc::now().timestamp_millis() as f64 - days * DAY_MS
+            kchess_games::now_ms() - days * DAY_MS
         }
     }
 

@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 pub use super::policy::Lane;
 use super::policy::{Admitted, Policy, Usage};
 use super::stream::{LineOptions, read_chunks, read_lines};
-use crate::error::{CoreError, ErrorKind, Result};
+use kchess_contracts::error::{CoreError, ErrorKind, Result};
 
 /// The Lichess website and API.
 pub const BASE_URL: &str = "https://lichess.org";

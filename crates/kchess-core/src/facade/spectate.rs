@@ -7,8 +7,8 @@ use kchess_contracts::types::{
 };
 
 use crate::core::Core;
-use crate::error::{CoreError, Result};
 use crate::lichess::watch;
+use kchess_contracts::error::{CoreError, Result};
 
 impl Core {
     fn refuse_watch_while_playing(&self) -> Result<()> {

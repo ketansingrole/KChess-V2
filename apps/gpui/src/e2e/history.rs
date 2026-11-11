@@ -341,7 +341,10 @@ fn a_crazyhouse_game_shows_its_pockets(cx: &mut gpui_kit::TestAppContext) {
         let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
             let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
-            let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
+            let setup = kchess_domain::variant::Setup {
+                variant: kchess_domain::variant::Variant::Crazyhouse,
+                fen: fen.into(),
+            };
             local.replace_game(setup, serde_json::Value::Null, window, cx);
         });
     });

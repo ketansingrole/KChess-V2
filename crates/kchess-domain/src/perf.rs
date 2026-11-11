@@ -37,6 +37,11 @@ impl Speed {
         }
     }
 
+    /// The speed of a Lichess key; none for one that names no speed.
+    pub fn from_key(key: &str) -> Option<Speed> {
+        Speed::ALL.into_iter().find(|speed| speed.key() == key)
+    }
+
     pub const fn label(self) -> &'static str {
         match self {
             Speed::UltraBullet => "UltraBullet",
@@ -137,5 +142,9 @@ mod tests {
         keys.dedup();
         assert_eq!(keys.len(), PERF_KEYS.len());
         assert_eq!(&PERF_KEYS[..6], &SPEED_KEYS);
+        for speed in Speed::ALL {
+            assert_eq!(Speed::from_key(speed.key()), Some(speed));
+        }
+        assert_eq!(Speed::from_key("chess960"), None);
     }
 }

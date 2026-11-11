@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fixtures::{Recording, Reply, http_client, serve};
+use kchess_contracts::ErrorKind;
 use kchess_contracts::types::UsageKind;
-use kchess_core::ErrorKind;
 use kchess_core::lichess::client::{Auth, Lane, LichessClient, LichessError, urlencoded};
 use kchess_core::lichess::policy::Policy;
 use serde_json::Value;
@@ -59,7 +59,7 @@ async fn an_api_error_is_plain_for_people_and_technical_for_the_log() {
     );
 }
 
-async fn failure_for(status: u16, body: &str) -> kchess_core::CoreError {
+async fn failure_for(status: u16, body: &str) -> kchess_contracts::CoreError {
     let body = body.to_string();
     let fixture = serve(move |_| Reply::Json(status, body.clone())).await;
     let client = client_for(&fixture.base, Arc::new(Recording::default()));
@@ -84,7 +84,6 @@ async fn a_board_api_refusal_is_lichess_s_own_sentence() {
         "This game cannot be played with the Board API."
     );
     assert_eq!(error.kind, Some(ErrorKind::Refused));
-    assert!(!ErrorKind::Refused.retryable());
 }
 
 /// A 403 that is not about the login (a game Lichess will not let this account play) is a

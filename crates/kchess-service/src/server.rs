@@ -127,7 +127,7 @@ impl Host for ServiceHost {
             && let Some(file) = log.as_mut()
         {
             let at = kchess_core::time::now_ms();
-            let message = kchess_core::redact::redact(message);
+            let message = kchess_host::redact(message);
             // One write per line: `writeln!` on an unbuffered file writes each piece separately.
             let line = format!("{at} {} [{scope}] {message}\n", level.name());
             let _ = file.write_all(line.as_bytes());
@@ -606,7 +606,12 @@ mod tests {
         host.send(1, &sender, CoreEvent::WatchFrame(json!({})));
         host.send(1, &sender, CoreEvent::WatchFrame(json!({})));
         assert!(connected(&host), "a progress frame is dropped");
-        host.send(1, &sender, CoreEvent::Analysis(json!({ "done": true })));
+        let last = serde_json::from_value(json!({
+            "id": 1, "fen": "8/8/8/8/8/8/8/8 w - - 0 1", "depth": 1.0, "lines": [],
+            "done": true, "context": "", "engine": "stockfish",
+        }))
+        .expect("an analysis update");
+        host.send(1, &sender, CoreEvent::Analysis(last));
         assert!(!connected(&host), "a terminal update is never dropped");
     }
 

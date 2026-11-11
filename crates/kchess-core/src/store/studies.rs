@@ -9,8 +9,8 @@ use super::json_codec::{clean_name, js_json};
 use super::library::{STUDIES, STUDY_LIBRARY_MAX_TEXT, object};
 use super::library_import::{StudyBodies, migrate_studies, read_studies, read_study_rows};
 use super::sql::{Sql as _, transaction};
-use crate::error::{CoreError, Result};
 use crate::ids::random_uuid;
+use kchess_contracts::error::{CoreError, ErrorKind, Result};
 use kchess_domain::js;
 use kchess_domain::js::{number_to_json as num, truthy, utf16_len};
 use kchess_domain::library::{MAX_CHAPTERS, MAX_STUDIES};
@@ -227,7 +227,7 @@ pub(crate) fn check_based_on(
             .and_then(|study| study.get("name"))
             .and_then(Value::as_str)
             .map(str::to_string)),
-        _ => Err(CoreError::new(STALE_STUDY)),
+        _ => Err(CoreError::new(STALE_STUDY).with_kind(ErrorKind::Conflict)),
     }
 }
 

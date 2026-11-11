@@ -6,6 +6,7 @@
 //! analysis and game review. They share the one database (`store::Database`) and the battery
 //! reading the scheduler consults.
 
+use kchess_contracts::types::AlertOwner;
 use kchess_contracts::{CoreEvent, HostReply};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -30,7 +31,6 @@ use crate::engine::scheduler::Scheduler;
 use crate::engine::search::Search;
 use crate::engine::status::EngineLocations;
 use crate::engine::uci::EngineHub;
-use crate::error::{CoreError, Result};
 use crate::facade::GatedHost;
 use crate::host::{Config, Host};
 use crate::lichess::services::{LiveGame, Services};
@@ -40,6 +40,7 @@ use crate::secrets::Credentials;
 use crate::store::Database;
 use crate::usage::UsageBatch;
 use crate::voice::recognizer::VoiceRecognizer;
+use kchess_contracts::error::{CoreError, Result};
 
 /// A managed engine change that replaces or removes the downloaded executable.
 #[derive(Clone, Copy)]
@@ -165,11 +166,7 @@ impl Core {
         // A live game stops the computer, the analysis and the review engine before it is reported.
         let game_stops: Arc<dyn Fn() + Send + Sync> = {
             let (search, analysis, reviews) = (search.clone(), analysis.clone(), reviews.clone());
-            Arc::new(move || {
-                search.stop_engine(false);
-                analysis.stop_analysis(false);
-                reviews.restart_review_engine();
-            })
+            Arc::new(move || crate::engine::stop_engines(&search, &analysis, &reviews, false))
         };
         let usage = UsageBatch::new(
             Arc::clone(&database),
@@ -307,8 +304,9 @@ impl Core {
         let owner = self.connections.alert_owner();
         let encoded = owner.unwrap_or(u64::MAX);
         if self.alert_owner.swap(encoded, Ordering::SeqCst) != encoded {
-            self.host
-                .emit(CoreEvent::AlertsOwner(json!({ "connection": owner })));
+            self.host.emit(CoreEvent::AlertsOwner(json!(AlertOwner {
+                connection: owner
+            })));
         }
     }
 
@@ -316,9 +314,9 @@ impl Core {
     /// a client that joins queues it before it receives any event, so it misses no change.
     pub fn with_alert_owner<T>(&self, join: impl FnOnce(CoreEvent) -> T) -> T {
         let _reporting = self.alert_reports.lock();
-        join(CoreEvent::AlertsOwner(
-            json!({ "connection": self.connections.alert_owner() }),
-        ))
+        join(CoreEvent::AlertsOwner(json!(AlertOwner {
+            connection: self.connections.alert_owner(),
+        })))
     }
 
     /// The clients connected now.

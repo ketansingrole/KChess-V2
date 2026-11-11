@@ -12,8 +12,8 @@ use kchess_contracts::types::{LocalLadderQuery, LocalPuzzleQuery, Puzzle, Puzzle
 use rusqlite::{Connection, OptionalExtension, Statement, ToSql, params};
 use serde::{Deserialize, Serialize};
 
-use crate::error::{CoreError, Result};
 use crate::store::sql::{Sql as _, transaction};
+use kchess_contracts::error::{CoreError, Result};
 use kchess_domain::{position, rules};
 
 /// A row of the puzzle table as the importer hands it over.

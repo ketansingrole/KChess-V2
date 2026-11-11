@@ -4,15 +4,14 @@
 //! unchanged. Each monthly archive's validators (`ETag`, `Last-Modified`) are kept so an unchanged
 //! month is not downloaded again, and a month that ended and was read in full is not asked again.
 
-use rusqlite::types::Value as SqlValue;
-use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::games::{GAME_KEYS, MAX_GAMES, as_json, purge_account_data, to_sql, upsert_sql};
+use super::games::{GameRows, as_json, purge_account_data, trim_games};
 use super::sql::{Sql as _, transaction};
-use crate::error::{CoreError, Result};
 use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::ChesscomAccount;
 use kchess_domain::chesscom::account_of;
 
@@ -117,17 +116,10 @@ pub fn save_archive(db: &Connection, archive: &Value) -> Result<()> {
         .map_or(&[][..], Vec::as_slice);
     transaction(db, || {
         let account = account_of(&stored(db, username)?);
-        let mut upsert = db.prepare(&upsert_sql()).sql()?;
+        let mut rows = GameRows::new(db)?;
         for game in games {
             // The row's account is the stored player's, whatever case the archive spelled it in.
-            let params = GAME_KEYS
-                .iter()
-                .map(|key| match *key {
-                    "account" => Ok(SqlValue::Text(account.clone())),
-                    key => to_sql(game.get(key)),
-                })
-                .collect::<Result<Vec<_>>>()?;
-            upsert.execute(params_from_iter(params)).sql()?;
+            rows.write(game, Some(&account))?;
         }
         db.execute(
             "INSERT INTO chesscom_archives (username, month, etag, lastModified, complete) VALUES (?, ?, ?, ?, ?)
@@ -150,13 +142,7 @@ pub fn save_archive(db: &Connection, archive: &Value) -> Result<()> {
 pub fn finish_sync(db: &Connection, username: &str, synced_at: i64) -> Result<()> {
     transaction(db, || {
         let account = account_of(&stored(db, username)?);
-        db.execute(
-            &format!(
-                "DELETE FROM games WHERE account = ? COLLATE NOCASE AND rowid NOT IN (SELECT rowid FROM games WHERE account = ? COLLATE NOCASE ORDER BY createdAt DESC LIMIT {MAX_GAMES})"
-            ),
-            [&account, &account],
-        )
-        .sql()?;
+        trim_games(db, &account)?;
         db.execute(
             "UPDATE chesscom_accounts SET lastSyncedAt = ? WHERE username = ? COLLATE NOCASE",
             params![synced_at, username],
@@ -169,6 +155,7 @@ pub fn finish_sync(db: &Connection, username: &str, synced_at: i64) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::games::MAX_GAMES;
     use serde_json::json;
 
     fn database() -> Connection {

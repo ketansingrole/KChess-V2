@@ -126,7 +126,7 @@ pub fn open_line(moves: Vec<String>, window: &mut Window, cx: &mut App) {
 /// analysis.
 pub fn analyse_puzzle(
     puzzle: serde_json::Value,
-    wrong_moves: Vec<serde_json::Value>,
+    wrong_moves: Vec<kchess_contracts::types::PuzzleWrongMove>,
     window: &mut Window,
     cx: &mut App,
 ) {

@@ -8,13 +8,13 @@ use kchess_contracts::check::{ArchivedGame, LibraryId, Moves, SessionObject};
 use kchess_contracts::types::{EngineLevel, PlayedGame, SessionKind};
 use std::time::{Duration, Instant};
 
-use kchess_domain::games::Setup;
 use kchess_domain::games::archive::Snapshot;
+use kchess_domain::games::computer::{self, ComputerGame, SearchRequest};
+use kchess_domain::games::local::{self, LocalGame};
+use kchess_domain::games::{Host, Setup};
 use kchess_domain::variant::Variant;
 use kchess_games::Outcome;
-use kchess_games::computer::{self, ComputerGame, SearchRequest};
 use kchess_games::history::{self, HistoryPlace, Write};
-use kchess_games::local::{self, LocalGame};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -41,8 +41,8 @@ impl Session<'_> {
         self.started.elapsed().as_secs_f64() * 1000.0
     }
 
-    fn host(&self) -> computer::Host {
-        computer::Host {
+    fn host(&self) -> Host {
+        Host {
             now: self.now(),
             allowed: true,
             ready: true,
@@ -139,7 +139,7 @@ impl Session<'_> {
     }
 
     async fn save_session(&mut self, kind: &str, session: Value) {
-        let Some(kind) = SessionKind::named(kind) else {
+        let Some(kind) = SessionKind::from_key(kind) else {
             eprintln!("[cli] Saving failed: no session is kept as {kind}");
             self.failed = true;
             return;
@@ -540,7 +540,7 @@ async fn computer_game(
     if !fairy && !engine.ready {
         return Err("Stockfish is unavailable. Install an engine or pass --engine.".into());
     }
-    let host = computer::Host {
+    let host = Host {
         now: 0.0,
         allowed: true,
         ready: true,

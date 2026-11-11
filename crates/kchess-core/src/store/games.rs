@@ -3,23 +3,21 @@
 //! credential store.
 
 use crate::time::now_ms;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 use serde::Serialize;
-use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::StoreContext;
 use super::sql::{Sql as _, transaction};
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_contracts::check::{Username, check};
+use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
-    Account, AppData, Appearance, CoordinateMode, CoreSettings, FrontendPreferences,
-    GameLibraryOverview, GamePage, GamePageQuery, GameRecord, LichessGame, PieceAnimation,
-    PromotionMode, RatingSeries, ReviewAuto, Settings,
+    Account, AppData, GameLibraryOverview, GamePage, GamePageQuery, GameRecord, LichessGame,
+    RatingSeries, Settings,
 };
 use kchess_domain::calendar::civil_from_days;
 use kchess_domain::color::Color;
@@ -31,53 +29,6 @@ pub const MAX_GAMES: i64 = 5000;
 /// Must match the indexed expression in `migrations.rs` verbatim, or SQLite falls back to a scan.
 pub const RESULT_SQL: &str =
     "CASE WHEN winner IS NULL THEN 'draw' WHEN winner = color THEN 'win' ELSE 'loss' END";
-
-/// Every persisted setting, in column order (`SETTINGS_KEYS`).
-const SETTINGS_KEYS: [&str; 43] = [
-    "appearance",
-    "boardTheme",
-    "lightTheme",
-    "darkTheme",
-    "pieceSet",
-    "pieceAnimation",
-    "coordinates",
-    "soundEnabled",
-    "soundVolume",
-    "enginePath",
-    "premove",
-    "promotion",
-    "showLegalMoves",
-    "notificationsEnabled",
-    "notifyActive",
-    "notifyBackground",
-    "notifyOpponentMove",
-    "notifyLowTime",
-    "notifyGameEvents",
-    "notifyComputerMove",
-    "notifySound",
-    "voicePushToTalk",
-    "voiceConfirmMoves",
-    "voiceHistory",
-    "updateAutoCheck",
-    "updateAutoDownload",
-    "updateInstallOnQuit",
-    "engineLevels",
-    "reviewAuto",
-    "reviewOnBattery",
-    "receiveChallenges",
-    "notifyChallenges",
-    "onlineChat",
-    "correspondencePoll",
-    "zenMode",
-    "blindfold",
-    "cloudEval",
-    "showOpeningName",
-    "swipeNavigation",
-    "swipeIndicator",
-    "puzzleAutoNext",
-    "confirmCorrespondence",
-    "figurineNotation",
-];
 
 /// Every persisted game field, in column order (`GAME_KEYS`).
 pub(super) const GAME_KEYS: [&str; 17] = [
@@ -101,7 +52,14 @@ pub(super) const GAME_KEYS: [&str; 17] = [
 ];
 
 /// The list view never shows the PGN; it is fetched per game when reviewed.
-const LIST_COLUMNS: &str = "account, id, createdAt, lastMoveAt, rated, speed, perf, status, winner, color, opponent, opponentRating, playerRating, ratingDiff, opening, moves";
+fn list_columns() -> String {
+    GAME_KEYS
+        .iter()
+        .filter(|key| **key != "pgn")
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// `DEFAULT_SETTINGS`.
 /// The default settings, as the contracts define them.
@@ -170,174 +128,139 @@ pub(super) fn to_sql(value: Option<&Value>) -> Result<SqlValue> {
     })
 }
 
-/// A stored value as text (`null` gives an empty string where the caller defaults it).
-fn text_of(value: &SqlValue) -> String {
-    match value {
-        SqlValue::Text(text) => text.clone(),
-        SqlValue::Integer(number) => number.to_string(),
-        SqlValue::Real(number) if number.fract() == 0.0 && number.abs() < 1e21 => {
-            format!("{number:.0}")
-        }
-        SqlValue::Real(number) => number.to_string(),
-        SqlValue::Null | SqlValue::Blob(_) => String::new(),
+// ---- Settings -------------------------------------------------------------------------------
+
+/// The settings as `default_settings` serializes them: the one list of stored settings, each a
+/// `settings` column of the same name, with its default value.
+fn default_object() -> Map<String, Value> {
+    match serde_json::to_value(default_settings()) {
+        Ok(Value::Object(object)) => object,
+        _ => unreachable!("the settings serialize as an object"),
     }
 }
 
-/// A stored value that is not null as a number: blank text is 0, other text that is no number
-/// and a blob are NaN.
-fn number_of(value: &SqlValue) -> Option<f64> {
+/// A stored number: a number, or text that reads as one (blank text is 0).
+fn stored_number(value: &Value) -> Option<f64> {
     match value {
-        SqlValue::Integer(number) => Some(*number as f64),
-        SqlValue::Real(number) => Some(*number),
-        SqlValue::Text(text) => {
-            let trimmed = text.trim();
-            Some(if trimmed.is_empty() {
-                0.0
-            } else {
-                trimmed.parse::<f64>().unwrap_or(f64::NAN)
-            })
-        }
-        SqlValue::Null => None,
-        SqlValue::Blob(_) => Some(f64::NAN),
-    }
-}
-
-/// A stored number, and only a number (text never matches).
-fn strict_number(value: &SqlValue) -> Option<f64> {
-    match value {
-        SqlValue::Integer(number) => Some(*number as f64),
-        SqlValue::Real(number) => Some(*number),
+        Value::Number(number) => number.as_f64(),
+        Value::String(text) if text.trim().is_empty() => Some(0.0),
+        Value::String(text) => Some(text.trim().parse::<f64>().unwrap_or(f64::NAN)),
         _ => None,
     }
 }
 
-fn is_one(value: &SqlValue) -> bool {
-    strict_number(value) == Some(1.0)
-}
-
-fn is_not_zero(value: &SqlValue) -> bool {
-    strict_number(value) != Some(0.0)
-}
-
-// ---- Settings -------------------------------------------------------------------------------
-
-fn settings_select() -> String {
-    format!(
-        "SELECT {} FROM settings WHERE id = 1",
-        SETTINGS_KEYS.join(", ")
-    )
-}
-
-/// A stored choice as its wire enum; one no longer offered (or never valid) is `fallback`.
-fn choice<T: DeserializeOwned>(text: String, fallback: T) -> T {
-    serde_json::from_value(Value::String(text)).unwrap_or(fallback)
-}
-
-/// The stored settings, with values out of range or no longer offered replaced.
-fn settings_from_values(values: &[SqlValue]) -> Result<Settings> {
-    let by_key: HashMap<&str, &SqlValue> =
-        SETTINGS_KEYS.iter().copied().zip(values.iter()).collect();
-    let column = |key: &str| by_key.get(key).copied().cloned().unwrap_or(SqlValue::Null);
-    let text = |key: &str| text_of(&column(key));
-    let poll = match column("correspondencePoll") {
-        SqlValue::Null => 5.0,
-        value => number_of(&value).unwrap_or(f64::NAN),
-    };
-    // NaN becomes 0, then the value is clamped to 0..=120.
-    let poll = if poll.is_nan() { 0.0 } else { poll };
-    let levels: Vec<String> = text("engineLevels").split(',').map(str::to_owned).collect();
-    let engine_levels = kchess_domain::training::engine_levels::normalize(&levels)
-        .into_iter()
-        .filter_map(|level| serde_json::from_value(Value::String(level)).ok())
-        .collect();
-    let mut sound_volume = number_of(&column("soundVolume")).unwrap_or(f64::NAN);
-    if sound_volume > 1.0 {
-        sound_volume = (sound_volume / 100.0).min(1.0);
+/// One stored setting as its wire value, converted from how it is stored: flags as 1 or 0, the
+/// computer levels as comma-separated text, a volume as a percentage. `None` keeps the default.
+fn stored_setting(key: &str, default: &Value, value: &Value) -> Option<Value> {
+    match (key, default) {
+        ("engineLevels", _) => {
+            let levels: Vec<String> = match value {
+                Value::String(text) => text.split(',').map(str::to_owned).collect(),
+                other => serde_json::from_value(other.clone()).ok()?,
+            };
+            Some(json!(kchess_domain::training::engine_levels::normalize(
+                &levels
+            )))
+        }
+        ("soundVolume", _) => {
+            let volume = stored_number(value).filter(|volume| !volume.is_nan())?;
+            let volume = if volume > 1.0 {
+                (volume / 100.0).min(1.0)
+            } else {
+                volume
+            };
+            serde_json::Number::from_f64(volume).map(Value::Number)
+        }
+        ("correspondencePoll", _) => {
+            let minutes = stored_number(value)?;
+            let minutes = if minutes.is_nan() { 0.0 } else { minutes };
+            serde_json::Number::from_f64(minutes.clamp(0.0, 120.0)).map(Value::Number)
+        }
+        (_, Value::Bool(_)) => match value {
+            Value::Bool(flag) => Some(Value::Bool(*flag)),
+            Value::Number(number) if number.as_f64() == Some(1.0) => Some(Value::Bool(true)),
+            Value::Number(number) if number.as_f64() == Some(0.0) => Some(Value::Bool(false)),
+            _ => None,
+        },
+        (_, Value::String(_)) => value.is_string().then(|| value.clone()),
+        (_, Value::Number(_)) => stored_number(value)
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number),
+        _ => None,
     }
-    Ok(Settings {
-        core: CoreSettings {
-            engine_path: text("enginePath"),
-            voice_history: is_not_zero(&column("voiceHistory")),
-            engine_levels,
-            review_auto: choice(text("reviewAuto"), ReviewAuto::Recent),
-            review_on_battery: is_one(&column("reviewOnBattery")),
-            receive_challenges: is_not_zero(&column("receiveChallenges")),
-            online_chat: is_not_zero(&column("onlineChat")),
-            correspondence_poll: poll.clamp(0.0, 120.0),
-            cloud_eval: is_one(&column("cloudEval")),
-        },
-        frontend: FrontendPreferences {
-            appearance: choice(text("appearance"), Appearance::System),
-            board_theme: text("boardTheme"),
-            light_theme: text("lightTheme"),
-            dark_theme: text("darkTheme"),
-            piece_set: text("pieceSet"),
-            piece_animation: choice(text("pieceAnimation"), PieceAnimation::Normal),
-            coordinates: choice(text("coordinates"), CoordinateMode::Inside),
-            sound_enabled: is_one(&column("soundEnabled")),
-            sound_volume,
-            premove: is_one(&column("premove")),
-            promotion: choice(text("promotion"), PromotionMode::Ask),
-            show_legal_moves: is_one(&column("showLegalMoves")),
-            notifications_enabled: is_one(&column("notificationsEnabled")),
-            notify_active: is_one(&column("notifyActive")),
-            notify_background: is_one(&column("notifyBackground")),
-            notify_opponent_move: is_one(&column("notifyOpponentMove")),
-            notify_low_time: is_one(&column("notifyLowTime")),
-            notify_game_events: is_one(&column("notifyGameEvents")),
-            notify_computer_move: is_one(&column("notifyComputerMove")),
-            notify_sound: is_one(&column("notifySound")),
-            voice_push_to_talk: is_one(&column("voicePushToTalk")),
-            voice_confirm_moves: is_not_zero(&column("voiceConfirmMoves")),
-            update_auto_check: is_not_zero(&column("updateAutoCheck")),
-            update_auto_download: is_not_zero(&column("updateAutoDownload")),
-            update_install_on_quit: is_not_zero(&column("updateInstallOnQuit")),
-            notify_challenges: is_not_zero(&column("notifyChallenges")),
-            zen_mode: is_one(&column("zenMode")),
-            blindfold: is_one(&column("blindfold")),
-            show_opening_name: is_not_zero(&column("showOpeningName")),
-            swipe_navigation: is_not_zero(&column("swipeNavigation")),
-            swipe_indicator: is_not_zero(&column("swipeIndicator")),
-            puzzle_auto_next: is_not_zero(&column("puzzleAutoNext")),
-            confirm_correspondence: is_not_zero(&column("confirmCorrespondence")),
-            figurine_notation: is_one(&column("figurineNotation")),
-        },
-    })
+}
+
+/// Settings from what was stored, by key (the `settings` row, or a backup's settings object):
+/// a setting missing, of the wrong kind or no longer offered keeps its default.
+pub(super) fn settings_from_stored(stored: &Map<String, Value>) -> Settings {
+    let defaults = default_object();
+    let mut settings = defaults.clone();
+    for (key, default) in &defaults {
+        let Some(value) = stored
+            .get(key)
+            .filter(|value| !value.is_null())
+            .and_then(|value| stored_setting(key, default, value))
+        else {
+            continue;
+        };
+        settings.insert(key.clone(), value);
+        if serde_json::from_value::<Settings>(Value::Object(settings.clone())).is_err() {
+            settings.insert(key.clone(), default.clone());
+        }
+    }
+    serde_json::from_value(Value::Object(settings)).unwrap_or_else(|_| default_settings())
+}
+
+/// A SQLite value as JSON; a blob is null, and so is a number JSON cannot hold.
+pub(super) fn sql_json(value: SqlValue) -> Value {
+    match value {
+        SqlValue::Null | SqlValue::Blob(_) => Value::Null,
+        SqlValue::Integer(number) => json!(number),
+        SqlValue::Real(number) => {
+            serde_json::Number::from_f64(number).map_or(Value::Null, Value::Number)
+        }
+        SqlValue::Text(text) => Value::String(text),
+    }
 }
 
 fn read_settings(db: &Connection) -> Result<Option<Settings>> {
-    let values: Option<Vec<SqlValue>> = db
-        .query_row(&settings_select(), [], |row| {
-            (0..SETTINGS_KEYS.len())
-                .map(|index| row.get::<_, SqlValue>(index))
-                .collect::<rusqlite::Result<Vec<_>>>()
-        })
+    let keys: Vec<String> = default_object().into_iter().map(|(key, _)| key).collect();
+    let stored: Option<Map<String, Value>> = db
+        .query_row(
+            &format!("SELECT {} FROM settings WHERE id = 1", keys.join(", ")),
+            [],
+            |row| {
+                keys.iter()
+                    .enumerate()
+                    .map(|(index, key)| Ok((key.clone(), sql_json(row.get(index)?))))
+                    .collect::<rusqlite::Result<Map<_, _>>>()
+            },
+        )
         .optional()
         .sql()?;
-    values
-        .map(|values| settings_from_values(&values))
-        .transpose()
+    Ok(stored.map(|stored| settings_from_stored(&stored)))
 }
 
-/// Stores every setting; the settings as stored.
+/// Stores every setting, each bound as `to_sql` binds it; the settings as stored.
 pub fn save_settings(db: &Connection, settings: &Settings) -> Result<Settings> {
-    write_settings_json(db, &as_json(settings)?)?;
-    Ok(settings.clone())
-}
-
-/// Every persisted setting of a settings object, bound as `to_sql` binds it.
-pub(super) fn write_settings_json(db: &Connection, object: &Value) -> Result<()> {
-    let params = SETTINGS_KEYS
-        .iter()
-        .map(|key| to_sql(object.get(*key)))
+    let Value::Object(object) = as_json(settings)? else {
+        return Err(CoreError::new("The settings are not an object."));
+    };
+    let keys: Vec<&String> = object.keys().collect();
+    let params = object
+        .values()
+        .map(|value| to_sql(Some(value)))
         .collect::<Result<Vec<_>>>()?;
-    let placeholders = vec!["?"; SETTINGS_KEYS.len()].join(", ");
     let sql = format!(
-        "INSERT OR REPLACE INTO settings (id, {}) VALUES (1, {placeholders})",
-        SETTINGS_KEYS.join(", ")
+        "INSERT OR REPLACE INTO settings (id, {}) VALUES (1, {})",
+        keys.iter()
+            .map(|key| key.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+        vec!["?"; keys.len()].join(", ")
     );
     db.execute(&sql, params_from_iter(params)).sql()?;
-    Ok(())
+    Ok(settings.clone())
 }
 
 pub fn get_settings(db: &Connection) -> Result<Settings> {
@@ -520,7 +443,8 @@ pub fn game_page(ctx: &StoreContext, query: &GamePageQuery) -> Result<GamePage> 
     page_params.push(SqlValue::Integer(query.offset as i64));
     let mut statement = db
         .prepare(&format!(
-            "SELECT {LIST_COLUMNS} FROM games {filter} ORDER BY createdAt DESC, account, id LIMIT ? OFFSET ?"
+            "SELECT {} FROM games {filter} ORDER BY createdAt DESC, account, id LIMIT ? OFFSET ?",
+            list_columns()
         ))
         .sql()?;
     let games = statement
@@ -955,18 +879,65 @@ pub(super) fn in_progress(game: &Value) -> bool {
     kchess_domain::records::games::is_game_in_progress(game.get("status"))
 }
 
-pub(super) fn upsert_sql() -> String {
-    let updates = GAME_KEYS
-        .iter()
-        .filter(|key| **key != "account" && **key != "id")
-        .map(|key| format!("{key} = excluded.{key}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "INSERT INTO games ({}) VALUES ({}) ON CONFLICT(account, id) DO UPDATE SET {updates}",
-        GAME_KEYS.join(", "),
-        vec!["?"; GAME_KEYS.len()].join(", ")
+/// The one writer of `games` rows: every `GAME_KEYS` column of a game, replacing the stored game
+/// with the same account and id.
+pub(super) struct GameRows<'db> {
+    upsert: rusqlite::Statement<'db>,
+}
+
+impl<'db> GameRows<'db> {
+    pub(super) fn new(db: &'db Connection) -> Result<Self> {
+        let updates = GAME_KEYS
+            .iter()
+            .filter(|key| **key != "account" && **key != "id")
+            .map(|key| format!("{key} = excluded.{key}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "INSERT INTO games ({}) VALUES ({}) ON CONFLICT(account, id) DO UPDATE SET {updates}",
+            GAME_KEYS.join(", "),
+            vec!["?"; GAME_KEYS.len()].join(", ")
+        );
+        Ok(GameRows {
+            upsert: db.prepare(&sql).sql()?,
+        })
+    }
+
+    /// Writes `game`, under `account` when given, else under the game's own `account`.
+    pub(super) fn write(&mut self, game: &Value, account: Option<&str>) -> Result<()> {
+        let params = GAME_KEYS
+            .iter()
+            .map(|key| match (*key, account) {
+                ("account", Some(account)) => Ok(SqlValue::Text(account.to_owned())),
+                (key, _) => to_sql(game.get(key)),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.upsert.execute(params_from_iter(params)).sql()?;
+        Ok(())
+    }
+}
+
+/// A live game waits to be stored until it ends; only a tracked Lichess account's games wait.
+pub(super) fn keep_pending(db: &Connection, account: &str, id: &Value) -> Result<()> {
+    db.execute(
+        "INSERT OR IGNORE INTO pending_game_sync (account, id)
+         SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM accounts WHERE username = ?1 COLLATE NOCASE)",
+        params_from_iter([SqlValue::Text(account.to_owned()), to_sql(Some(id))?]),
     )
+    .sql()?;
+    Ok(())
+}
+
+/// The account keeps its newest `MAX_GAMES` games.
+pub(super) fn trim_games(db: &Connection, account: &str) -> Result<()> {
+    db.execute(
+        &format!(
+            "DELETE FROM games WHERE account = ?1 COLLATE NOCASE AND rowid NOT IN (SELECT rowid FROM games WHERE account = ?1 COLLATE NOCASE ORDER BY createdAt DESC LIMIT {MAX_GAMES})"
+        ),
+        [account],
+    )
+    .sql()?;
+    Ok(())
 }
 
 /// One batch of games, and the account's sync marker, in a single transaction.
@@ -990,29 +961,16 @@ fn upsert_games(
         if exists.is_none() {
             return Err(CoreError::new("This account was removed during sync."));
         }
-        let mut upsert = db.prepare(&upsert_sql()).sql()?;
+        let mut rows = GameRows::new(db)?;
         for game in games {
+            let id = game.get("id").unwrap_or(&Value::Null);
             if in_progress(game) {
-                db.execute(
-                    "INSERT OR IGNORE INTO pending_game_sync (account, id) VALUES (?, ?)",
-                    params_from_iter([
-                        SqlValue::Text(username.to_owned()),
-                        to_sql(game.get("id"))?,
-                    ]),
-                )
-                .sql()?;
+                keep_pending(db, username, id)?;
             } else {
-                let params = GAME_KEYS
-                    .iter()
-                    .map(|key| to_sql(game.get(*key)))
-                    .collect::<Result<Vec<_>>>()?;
-                upsert.execute(params_from_iter(params)).sql()?;
+                rows.write(game, None)?;
                 db.execute(
                     "DELETE FROM pending_game_sync WHERE account = ? COLLATE NOCASE AND id = ?",
-                    params_from_iter([
-                        SqlValue::Text(username.to_owned()),
-                        to_sql(game.get("id"))?,
-                    ]),
+                    params_from_iter([SqlValue::Text(username.to_owned()), to_sql(Some(id))?]),
                 )
                 .sql()?;
             }
@@ -1022,13 +980,7 @@ fn upsert_games(
         }
         // Trim once per completed sync rather than after every page.
         if let Some(synced_at) = synced_at {
-            db.execute(
-                &format!(
-                    "DELETE FROM games WHERE account = ? AND rowid NOT IN (SELECT rowid FROM games WHERE account = ? ORDER BY createdAt DESC LIMIT {MAX_GAMES})"
-                ),
-                [username, username],
-            )
-            .sql()?;
+            trim_games(db, username)?;
             db.execute(
                 "UPDATE accounts SET lastSyncedAt = ? WHERE username = ? COLLATE NOCASE",
                 params![synced_at, username],
@@ -1082,7 +1034,9 @@ pub fn save_synced_play_time(db: &Connection, username: &str, play_time: i64) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kchess_contracts::types::EngineLevel;
+    use kchess_contracts::types::{
+        CoordinateMode, EngineLevel, PieceAnimation, PromotionMode, ReviewAuto,
+    };
 
     fn database() -> Connection {
         let db = Connection::open_in_memory().unwrap();
@@ -1198,5 +1152,56 @@ mod tests {
         assert_eq!(settings.frontend.sound_volume, 0.8);
         assert_eq!(settings.core.correspondence_poll, 120.0);
         assert_eq!(settings.core.engine_levels, [EngineLevel::Club]);
+    }
+
+    /// A stored row and a backup's object go through the same rules: flags stored as 1/0 or
+    /// sent as booleans, levels as text or a list, and anything else keeps the default.
+    #[test]
+    fn stored_settings_of_either_form_read_the_same() {
+        let defaults = default_settings();
+        let from_row = settings_from_stored(&Map::from_iter([
+            ("zenMode".to_owned(), json!(1)),
+            ("premove".to_owned(), json!(0)),
+            ("blindfold".to_owned(), json!(7)),
+            ("notifyLowTime".to_owned(), json!("yes")),
+            ("engineLevels".to_owned(), json!("gm,club")),
+            ("soundVolume".to_owned(), json!("50")),
+            ("correspondencePoll".to_owned(), json!("soon")),
+            ("appearance".to_owned(), json!(3)),
+        ]));
+        let from_backup = settings_from_stored(&Map::from_iter([
+            ("zenMode".to_owned(), json!(true)),
+            ("premove".to_owned(), json!(false)),
+            ("blindfold".to_owned(), json!(null)),
+            ("engineLevels".to_owned(), json!(["gm", "club"])),
+            ("soundVolume".to_owned(), json!(0.5)),
+            ("correspondencePoll".to_owned(), json!(0)),
+        ]));
+        assert_eq!(from_row, from_backup);
+        assert!(from_row.frontend.zen_mode);
+        assert!(!from_row.frontend.premove);
+        assert_eq!(from_row.frontend.blindfold, defaults.frontend.blindfold);
+        assert_eq!(
+            from_row.frontend.notify_low_time,
+            defaults.frontend.notify_low_time
+        );
+        assert_eq!(
+            from_row.core.engine_levels,
+            [EngineLevel::Club, EngineLevel::Gm]
+        );
+        assert_eq!(from_row.frontend.sound_volume, 0.5);
+        assert_eq!(from_row.core.correspondence_poll, 0.0);
+        assert_eq!(from_row.frontend.appearance, defaults.frontend.appearance);
+    }
+
+    #[test]
+    fn saved_settings_read_back_unchanged() {
+        let db = database();
+        let mut settings = default_settings();
+        settings.frontend.figurine_notation = true;
+        settings.frontend.sound_volume = 0.25;
+        settings.core.engine_levels = vec![EngineLevel::Gm];
+        save_settings(&db, &settings).unwrap();
+        assert_eq!(get_settings(&db).unwrap(), settings);
     }
 }

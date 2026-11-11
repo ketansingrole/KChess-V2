@@ -182,18 +182,10 @@ pub fn replay_positions_in<S: AsRef<str>>(
     positions
 }
 
-/// Side to move and game end of each position `review.replay` returns, without their FENs. The
-/// end-of-game check is skipped (`with_end` false) when the caller has scores for every position
-/// and only needs whose turn it is: it generates every legal move at every ply.
-pub fn replay_turns_with_end<S: AsRef<str>>(
-    fen: &str,
-    moves: &[S],
-    with_end: bool,
-) -> Vec<(bool, Option<&'static str>)> {
-    replay_turns_in(Variant::Standard, fen, moves, with_end)
-}
-
-/// `replay_turns_with_end` by a variant's rules.
+/// Side to move and game end of each position `review.replay` returns, by a variant's rules,
+/// without their FENs. The end-of-game check is skipped (`with_end` false) when the caller has
+/// scores for every position and only needs whose turn it is: it generates every legal move at
+/// every ply.
 pub fn replay_turns_in<S: AsRef<str>>(
     variant: Variant,
     fen: &str,
@@ -340,7 +332,7 @@ mod tests {
     #[test]
     fn turns_follow_the_replay() {
         let mate = ["f2f3", "e7e5", "g2g4", "d8h4"];
-        let turns = replay_turns_with_end(START, &mate, true);
+        let turns = replay_turns_in(Variant::Standard, START, &mate, true);
         assert_eq!(
             turns,
             [
@@ -351,10 +343,10 @@ mod tests {
                 (true, Some("checkmate")),
             ]
         );
-        let unchecked = replay_turns_with_end(START, &mate, false);
+        let unchecked = replay_turns_in(Variant::Standard, START, &mate, false);
         assert_eq!(unchecked.last(), Some(&(true, None)));
         assert_eq!(
-            replay_turns_with_end(START, &["e2e4", "e2e4"], true).len(),
+            replay_turns_in(Variant::Standard, START, &["e2e4", "e2e4"], true).len(),
             2
         );
     }

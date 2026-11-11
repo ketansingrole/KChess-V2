@@ -18,7 +18,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, Result};
 
 /// What every sealed credential starts with.
 pub const SEALED: &str = "kcs1:";
@@ -137,7 +137,7 @@ impl Credentials {
             None => {
                 let mut bytes = [0u8; 32];
                 getrandom::fill(&mut bytes).map_err(|e| CoreError::wrap("credential key", e))?;
-                let created = crate::ids::hex(&bytes);
+                let created = kchess_delta::hex(&bytes);
                 self.keys.write(&created)?;
                 // A store that dropped the key silently would leave the token unreadable.
                 if self.keys.read()?.as_deref() != Some(created.as_str()) {
@@ -210,7 +210,7 @@ impl SystemKeys {
             None => {
                 let mut bytes = [0u8; 16];
                 getrandom::fill(&mut bytes).map_err(|e| CoreError::wrap("credential id", e))?;
-                let id = crate::ids::hex(&bytes);
+                let id = kchess_delta::hex(&bytes);
                 write_private(&path, &id)?;
                 id
             }

@@ -7,9 +7,9 @@ use serde_json::{Value, json};
 
 use super::library::js_json;
 use super::sql::Sql as _;
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result};
 
 /// Oldest entries beyond this are dropped; enough to study, small enough to never matter on disk.
 const MAX_ENTRIES: i64 = 5000;

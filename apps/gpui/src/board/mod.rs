@@ -255,7 +255,12 @@ impl BoardState {
 impl BoardState {
     /// A position only looked at (a live game, a broadcast board): its FEN, which may be just the
     /// placement and the side to move, and the last move in UCI.
-    pub fn shown(fen: &str, variant: &str, orientation: Color, last: Option<&str>) -> BoardState {
+    pub fn shown(
+        fen: &str,
+        variant: kchess_domain::variant::Variant,
+        orientation: Color,
+        last: Option<&str>,
+    ) -> BoardState {
         let fields = fen.split_whitespace().count();
         let full = if fields >= 4 {
             fen.to_string()
@@ -266,7 +271,7 @@ impl BoardState {
             )
         };
         let last = last.and_then(last_squares);
-        match crate::game::setup_position(variant, &full).or_else(|| {
+        match kchess_domain::rules::setup_start(variant, &full).or_else(|| {
             kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &full)
         }) {
             Some(position) => BoardState::of(&position, orientation, None, last),
@@ -2349,14 +2354,14 @@ mod description_tests {
     fn the_board_says_the_last_move_and_whose_turn_it_is() {
         let start = BoardState::shown(
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-            "standard",
+            kchess_domain::variant::Variant::Standard,
             Color::White,
             None,
         );
         assert_eq!(describe(&start), "White to move");
         let after = BoardState::shown(
             "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
-            "standard",
+            kchess_domain::variant::Variant::Standard,
             Color::White,
             Some("e2e4"),
         );
@@ -2391,10 +2396,11 @@ mod fen_tests {
 #[cfg(test)]
 mod keyboard_tests {
     use super::{BoardState, ChessBoard, Press, keyboard};
+    use kchess_domain::variant::Variant;
     use shakmaty::{Color, Role, Square};
 
-    fn board(fen: &str, variant: &str, orientation: Color) -> ChessBoard {
-        let position = crate::game::setup_position(variant, fen).expect("a position");
+    fn board(fen: &str, variant: Variant, orientation: Color) -> ChessBoard {
+        let position = kchess_domain::rules::setup_start(variant, fen).expect("a position");
         let turn = if fen.split_whitespace().nth(1) == Some("b") {
             Color::Black
         } else {
@@ -2414,7 +2420,7 @@ mod keyboard_tests {
     #[test]
     fn enter_picks_a_piece_and_plays_it_where_the_cursor_is() {
         let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-        let mut board = board(start, "standard", Color::White);
+        let mut board = board(start, Variant::Standard, Color::White);
         let cursor = board.cursor();
         assert_eq!(cursor, Square::E2);
         assert!(matches!(
@@ -2445,7 +2451,7 @@ mod keyboard_tests {
     #[test]
     fn a_turned_board_plays_from_the_keyboard_too() {
         let after = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
-        let mut board = board(after, "standard", Color::Black);
+        let mut board = board(after, Variant::Standard, Color::Black);
         assert_eq!(board.cursor(), Square::E7);
         // Right, from Black's side, is toward the a-file.
         let d7 = walk(board.cursor(), Color::Black, &["right"]);
@@ -2460,7 +2466,11 @@ mod keyboard_tests {
     /// which the keyboard answers (`keyboard::promotion_key`).
     #[test]
     fn a_promotion_is_played_from_the_keyboard() {
-        let mut board = board("4k3/P7/8/8/8/8/8/4K3 w - - 0 1", "standard", Color::White);
+        let mut board = board(
+            "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+            Variant::Standard,
+            Color::White,
+        );
         board.press_key(Square::A7);
         assert!(board.targets().contains(&Square::A8));
         assert_eq!(board.press_key(Square::A8), Press::Play(Square::A7));
@@ -2482,10 +2492,18 @@ mod keyboard_tests {
     ) {
         use gpui_kit::AppContext as _;
         let fen = "4k3/P7/8/8/8/8/8/4K3 w - - 0 1";
-        let board = cx.new(|_| board(fen, "standard", Color::White));
+        let board = cx.new(|_| board(fen, Variant::Standard, Color::White));
         let open = board.update(cx, |board, cx| {
             board.promotion = Some((Square::A7, Square::A8));
-            board.set_state(BoardState::shown(fen, "standard", Color::White, None), cx);
+            board.set_state(
+                BoardState::shown(
+                    fen,
+                    kchess_domain::variant::Variant::Standard,
+                    Color::White,
+                    None,
+                ),
+                cx,
+            );
             board.promotion
         });
         assert_eq!(open, None);
@@ -2495,7 +2513,7 @@ mod keyboard_tests {
     #[test]
     fn enter_drops_a_picked_pocket_piece() {
         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[N] w KQkq - 0 1";
-        let mut board = board(fen, "crazyhouse", Color::White);
+        let mut board = board(fen, Variant::Crazyhouse, Color::White);
         board.selected_drop = Some(Role::Knight);
         assert!(board.targets().contains(&Square::E4));
         assert_eq!(board.press_key(Square::E4), Press::Drop(Role::Knight));
@@ -2511,7 +2529,7 @@ mod keyboard_tests {
     fn a_shown_board_takes_no_moves() {
         let mut board = ChessBoard::new(BoardState::shown(
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-            "standard",
+            kchess_domain::variant::Variant::Standard,
             Color::White,
             None,
         ));

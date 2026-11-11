@@ -1,34 +1,25 @@
 //! What the game pages show of a game: the position at a move, the moves in SAN, the last move,
-//! a typed move and the board's state, from a setup (`{ variant, fen }`) and its UCI moves.
+//! a typed move and the board's state, from a setup and its UCI moves.
 
-use kchess_domain::variant::Variant;
-use serde_json::Value;
+use kchess_domain::variant::Setup;
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Chess, Color, Position as _, Square};
 
 use crate::board::BoardState;
 
-/// The setup's variant (none for one KChess does not play) and FEN.
-fn setup_parts(setup: &Value) -> (Option<Variant>, &str) {
-    (
-        Variant::from_key(setup["variant"].as_str().unwrap_or("standard")),
-        setup["fen"].as_str().unwrap_or_default(),
-    )
-}
-
 /// The position after the first `ply` moves.
-pub fn position_at(setup: &Value, moves: &[String], ply: usize) -> Option<VariantPosition> {
-    let (variant, fen) = setup_parts(setup);
-    let variant = variant?;
-    let replay = kchess_domain::replay::replay_setup(variant, fen, &moves[..ply.min(moves.len())])?;
-    kchess_domain::rules::setup_start(variant, &replay.fen)
+pub fn position_at(setup: &Setup, moves: &[String], ply: usize) -> Option<VariantPosition> {
+    let replay = kchess_domain::replay::replay_setup(
+        setup.variant,
+        &setup.fen,
+        &moves[..ply.min(moves.len())],
+    )?;
+    kchess_domain::rules::setup_start(setup.variant, &replay.fen)
 }
 
 /// Each move in SAN.
-pub fn sans(setup: &Value, moves: &[String]) -> Vec<String> {
-    let (variant, fen) = setup_parts(setup);
-    variant
-        .and_then(|variant| kchess_domain::replay::replay_setup(variant, fen, moves))
+pub fn sans(setup: &Setup, moves: &[String]) -> Vec<String> {
+    kchess_domain::replay::replay_setup(setup.variant, &setup.fen, moves)
         .map(|replay| replay.played.into_iter().map(|played| played.san).collect())
         .unwrap_or_default()
 }
@@ -40,8 +31,8 @@ pub fn last_move(moves: &[String], ply: usize) -> Option<(Square, Square)> {
 
 /// The game's first move: its number and whether Black plays it (the move list then starts
 /// with "30. …" for a game set up at Black's 30th move).
-pub fn first_move(setup: &Value) -> crate::widgets::FirstMove {
-    let fields: Vec<&str> = setup_parts(setup).1.split(' ').collect();
+pub fn first_move(setup: &Setup) -> crate::widgets::FirstMove {
+    let fields: Vec<&str> = setup.fen.split(' ').collect();
     crate::widgets::FirstMove {
         number: fields
             .get(5)
@@ -53,14 +44,17 @@ pub fn first_move(setup: &Value) -> crate::widgets::FirstMove {
 }
 
 /// A move typed as SAN or UCI, as UCI when it is legal in `position` (`kchess_games::typed_uci`).
-pub fn typed_uci(setup: &Value, position: &VariantPosition, text: &str) -> Option<String> {
-    let (variant, _) = setup_parts(setup);
-    kchess_games::typed_uci(variant?, &kchess_domain::rules::make_fen(position), text)
+pub fn typed_uci(setup: &Setup, position: &VariantPosition, text: &str) -> Option<String> {
+    kchess_games::typed_uci(
+        setup.variant,
+        &kchess_domain::rules::make_fen(position),
+        text,
+    )
 }
 
 /// The board for the game at `ply`, with `movable` the side that may move now.
 pub fn board_state(
-    setup: &Value,
+    setup: &Setup,
     moves: &[String],
     ply: usize,
     orientation: Color,

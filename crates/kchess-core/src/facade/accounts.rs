@@ -5,8 +5,8 @@ use kchess_contracts::core_api::AccountsApi;
 use kchess_contracts::types::AppData;
 
 use crate::core::Core;
-use crate::error::Result;
 use crate::store::games;
+use kchess_contracts::error::Result;
 
 impl AccountsApi for Core {
     async fn add_account(&self, username: Username) -> Result<AppData> {

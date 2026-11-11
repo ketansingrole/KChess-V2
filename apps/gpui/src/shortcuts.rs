@@ -6,6 +6,28 @@ use gpui_kit::*;
 
 use crate::theme::Palette;
 
+/// A key a page takes while no text field has the keys: the key names it matches, how the
+/// shortcuts list shows them, and what it does there.
+pub(crate) struct PageKey<A> {
+    pub action: A,
+    pub keys: &'static [&'static str],
+    pub shown: &'static str,
+    pub does: &'static str,
+}
+
+/// The action of `key` among a page's `keys`.
+pub(crate) fn page_key<A: Copy>(keys: &[PageKey<A>], key: &str) -> Option<A> {
+    keys.iter()
+        .find(|entry| entry.keys.contains(&key))
+        .map(|entry| entry.action)
+}
+
+/// A page's keys as the list's rows.
+fn rows<A>(keys: &[PageKey<A>]) -> impl Iterator<Item = (&'static str, String)> + '_ {
+    keys.iter()
+        .map(|entry| (entry.does, entry.shown.to_string()))
+}
+
 /// Each group's heading and its rows: what a key does, and the keys (space-separated chips). The
 /// app's keys read from their bindings; the boards' own keys are their pages'.
 pub(crate) fn groups(cx: &App) -> Vec<(&'static str, Vec<(&'static str, String)>)> {
@@ -66,15 +88,9 @@ pub(crate) fn groups(cx: &App) -> Vec<(&'static str, Vec<(&'static str, String)>
         ),
         (
             "Analysis board",
-            vec![
-                ("Into / out of a variation", "⇧ → ⇧ ←".to_string()),
-                ("Engine on or off", "L".to_string()),
-                ("Show threat", "X".to_string()),
-                ("Play the best move", "Space".to_string()),
-                ("Comment", "C".to_string()),
-                ("Explorer", "E".to_string()),
-                ("Delete from the move shown", "Delete".to_string()),
-            ],
+            std::iter::once(("Into / out of a variation", "⇧ → ⇧ ←".to_string()))
+                .chain(rows(crate::pages::analysis::KEYS))
+                .collect(),
         ),
         (
             "Lichess games",
@@ -97,10 +113,7 @@ pub(crate) fn groups(cx: &App) -> Vec<(&'static str, Vec<(&'static str, String)>
         ),
         (
             "Chess clock",
-            vec![
-                ("Press the clock", "Space".to_string()),
-                ("Pause", "P".to_string()),
-            ],
+            rows(crate::pages::local::CLOCK_KEYS).collect(),
         ),
     ]
 }

@@ -188,6 +188,7 @@ async fn a_new_search_supersedes_the_running_one_and_stops_its_engine() {
         .expect("the task finishes")
         .expect_err("superseded");
     assert_eq!(superseded.message, SUPERSEDED);
+    assert!(superseded.aborted, "a superseded search is a cancellation");
     assert!(
         received(&log).iter().any(|line| line == "stop"),
         "the engine was told to stop the superseded search"
@@ -245,6 +246,7 @@ async fn windows_play_their_own_computer_games_side_by_side() {
     );
     let stopped = second.await.expect("joined").expect_err("stopped");
     assert_eq!(stopped.message, SUPERSEDED);
+    assert!(stopped.aborted);
     assert_eq!(
         in_window(3, 50)
             .await

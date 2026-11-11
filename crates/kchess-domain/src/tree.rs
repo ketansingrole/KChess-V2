@@ -215,12 +215,10 @@ pub fn summarize_pgn(text: &str) -> Option<PgnSummary> {
     // The main line, played from the start as the tree's moves are.
     let mut position = start.clone();
     let mut plies = 0u32;
-    let mut node = 0;
-    while let Some(next) = game.children(node).next() {
+    for next in game.main_line() {
         let m = rules::parse_san(&position, game.nodes[next].san.as_str())?;
         position.play_unchecked(m);
         plies += 1;
-        node = next;
     }
     let fen = if plies == 0 {
         rules::make_fen(&root_position(&start))

@@ -4,7 +4,7 @@
 use rusqlite::Connection;
 
 use super::sql::{Sql as _, transaction};
-use crate::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, Result};
 
 /// Ordered schema migrations. Append only: an earlier entry is never edited.
 pub const MIGRATIONS: &[&str] = &[
