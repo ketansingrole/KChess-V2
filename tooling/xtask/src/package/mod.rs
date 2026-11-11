@@ -149,7 +149,6 @@ pub fn copy_licenses(built: &Built, dir: &Path) -> Result {
         .map_err(|cause| cause.to_string())
 }
 
-/// Copy `from` to `to`, executable on Unix.
 pub fn copy_program(from: &Path, to: &Path) -> Result {
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent).map_err(|cause| cause.to_string())?;

@@ -19,7 +19,6 @@ pub enum Source {
     Commit { branch: &'static str },
 }
 
-/// One pinned download.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pin {
     pub name: &'static str,
@@ -108,7 +107,6 @@ pub const VOSK_WINDOWS_X64: Pin = Pin {
     source: Source::Release,
 };
 
-/// The tag of the Stockfish release KChess ships.
 pub fn stockfish_tag() -> &'static str {
     shipped::SHIPPED.tag
 }

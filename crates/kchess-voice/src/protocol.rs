@@ -28,7 +28,6 @@ pub const MAX_LINE: u64 = 1 << 20;
 pub const MAX_PHRASES: usize = 4096;
 pub const MAX_PHRASE_CHARS: usize = 200;
 
-/// A request's tag byte.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Tag {
@@ -158,7 +157,6 @@ impl Answer {
         text
     }
 
-    /// An answer line as the helper wrote it.
     pub fn read(line: &[u8]) -> serde_json::Result<Answer> {
         serde_json::from_slice(line)
     }

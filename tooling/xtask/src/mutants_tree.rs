@@ -12,10 +12,8 @@ use std::path::{Path, PathBuf};
 
 use crate::util::{Result, git, say};
 
-/// The tree, from the checkout.
 const TREE: &str = ".data/mutants-tree";
 
-/// The lock held while the tree is in use, from the checkout.
 const LOCK: &str = ".data/mutants-tree.lock";
 
 /// A checkout's mutants tree, set to one commit and locked until this is dropped.
@@ -25,7 +23,6 @@ pub struct Tree {
 }
 
 impl Tree {
-    /// Its build folder.
     pub fn target(&self) -> PathBuf {
         self.path.join("target")
     }

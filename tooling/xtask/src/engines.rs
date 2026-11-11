@@ -52,7 +52,6 @@ pub fn stockfish(dir: &Path, release: bool) -> Result<PathBuf> {
     Ok(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()))
 }
 
-/// The variables that hand the engines to the tests and to a development run.
 fn variables(stockfish: &Path, fairy: &Path) -> String {
     format!(
         "KCHESS_ENGINE_PATH={}\nKCHESS_VARIANT_ENGINE_PATH={}\n",

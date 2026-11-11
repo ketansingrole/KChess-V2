@@ -143,7 +143,6 @@ fn command(word: &str) -> Option<Command> {
 /// The most argument text `call` reads.
 const MAX_ARGUMENTS: u64 = 2_000_000;
 
-// Compared and printed only by the tests.
 #[cfg_attr(test, derive(Debug, PartialEq))]
 struct Cli {
     options: Options,

@@ -86,7 +86,6 @@ impl Section<'_> {
                 && line.starts_with(' ')
                 && let Some(item) = items.last_mut()
             {
-                // A wrapped item carries on, indented.
                 item.text.push(' ');
                 item.text.push_str(&plain(trimmed));
             }

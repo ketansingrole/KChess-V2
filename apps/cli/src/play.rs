@@ -137,7 +137,6 @@ impl Session<'_> {
         }
     }
 
-    /// Keep `session` as the session `kind`.
     async fn save_session(&mut self, kind: &str, session: Value) {
         let Some(kind) = SessionKind::named(kind) else {
             eprintln!("[cli] Saving failed: no session is kept as {kind}");
@@ -258,7 +257,6 @@ impl Session<'_> {
                 let clock = game.clock();
                 game.start(setup, clock, now)?;
             }
-            // Fairy-Stockfish plays the other variants.
             Game::Computer(game) => {
                 game.start(Some(setup), None, &host)?;
             }
