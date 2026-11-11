@@ -4,7 +4,7 @@
 use super::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::{Bounded, Position};
-use kchess_contracts::types::AnalysisRequest;
+use kchess_contracts::types::{AnalysisReason, AnalysisRequest, EngineLine};
 
 impl AnalysisPage {
     pub(crate) fn engine_on(cx: &App) -> bool {
@@ -101,9 +101,9 @@ impl AnalysisPage {
         let known = self.evaluations.get(&context);
         if !infinite
             && known.is_some_and(|known| {
-                known["reason"] == "completed"
-                    && known["engine"].as_str() == self.engine_identity.as_deref()
-                    && known["lines"].as_array().map_or(0, Vec::len) >= lines
+                known.reason == Some(AnalysisReason::Completed)
+                    && Some(known.engine.as_str()) == self.engine_identity.as_deref()
+                    && known.lines.len() >= lines
             })
         {
             self.wanted = fen;
@@ -142,7 +142,7 @@ impl AnalysisPage {
                 let current = this.wanted == fen && this.client_id == request;
                 match started {
                     Ok(id) if current => {
-                        this.latest_id = this.latest_id.max(id as f64);
+                        this.latest_id = this.latest_id.max(id);
                     }
                     Err(cause) if current => {
                         crate::log::write(
@@ -163,21 +163,20 @@ impl AnalysisPage {
     }
 
     /// An engine update: kept when it is for the search running now.
-    pub(super) fn receive(&mut self, update: Value, cx: &mut Context<Self>) {
-        let id = update["id"].as_f64().unwrap_or_default();
-        if update["fen"].as_str() != Some(self.wanted.as_str())
-            || update["clientId"].as_f64() != Some(self.client_id as f64)
-            || update["context"].as_str() != Some(self.engine_context().as_str())
-            || id < self.latest_id
+    pub(super) fn receive(&mut self, update: AnalysisUpdate, cx: &mut Context<Self>) {
+        if update.fen != self.wanted
+            || update.client_id != i64::try_from(self.client_id).ok()
+            || update.context != self.engine_context()
+            || update.id < self.latest_id
         {
             return;
         }
-        self.latest_id = id;
+        self.latest_id = update.id;
         self.remember(&update);
-        if let Some(error) = update["error"].as_str() {
-            self.engine_error = Some(error.to_string());
+        if let Some(error) = &update.error {
+            self.engine_error = Some(error.clone());
             self.engine_busy = false;
-        } else if update["done"] == json!(true) {
+        } else if update.done {
             self.engine_busy = false;
         }
         self.live = Some(update);
@@ -186,26 +185,21 @@ impl AnalysisPage {
 
     /// `remember`: keep the deepest evaluation of each position, a completed one over an
     /// interrupted one, and never a failed search.
-    pub(super) fn remember(&mut self, update: &Value) {
-        let key = update["context"]
-            .as_str()
-            .or(update["fen"].as_str())
-            .unwrap_or_default()
-            .to_string();
-        let lines = update["lines"].as_array().map_or(0, Vec::len);
-        if lines == 0 || !update["error"].is_null() || update["reason"] == "failed" {
+    pub(super) fn remember(&mut self, update: &AnalysisUpdate) {
+        let key = update.context.clone();
+        let lines = update.lines.len();
+        if lines == 0 || update.error.is_some() || update.reason == Some(AnalysisReason::Failed) {
             return;
         }
         if let Some(known) = self.evaluations.get(&key) {
-            if known["reason"] == "completed" && update["reason"] != "completed" {
-                let (old, new) = (known["engine"].as_str(), update["engine"].as_str());
-                if old.is_none() || new.is_none() || old == new {
-                    return;
-                }
-            }
-            if known["depth"].as_f64() > update["depth"].as_f64()
-                && known["lines"].as_array().map_or(0, Vec::len) >= lines
+            let completed = Some(AnalysisReason::Completed);
+            if known.reason == completed
+                && update.reason != completed
+                && known.engine == update.engine
             {
+                return;
+            }
+            if known.depth > update.depth && known.lines.len() >= lines {
                 return;
             }
         }
@@ -220,14 +214,14 @@ impl AnalysisPage {
     }
 
     /// The deepest evaluation known for the position shown.
-    pub(super) fn evaluation(&self, cx: &App) -> Option<&Value> {
+    pub(super) fn evaluation(&self, cx: &App) -> Option<&AnalysisUpdate> {
         if !Self::assistance_allowed(cx) {
             return None;
         }
         let context = self.engine_context();
         if let Some(live) = &self.live
-            && live["fen"].as_str() == Some(self.engine_fen().as_str())
-            && live["context"].as_str() == Some(context.as_str())
+            && live.fen == self.engine_fen()
+            && live.context == context
         {
             return Some(live);
         }
@@ -298,12 +292,18 @@ impl AnalysisPage {
     }
 
     /// Lichess's lines for the position shown, when it has some.
-    pub(super) fn cloud_lines(&self, cx: &App) -> Vec<Value> {
+    pub(super) fn cloud_lines(&self, cx: &App) -> Vec<EngineLine> {
         match &self.cloud {
             Some(cloud) if Self::assistance_allowed(cx) && cloud.fen == self.node().fen => cloud
                 .lines
                 .iter()
-                .filter_map(|line| serde_json::to_value(line).ok())
+                .map(|line| EngineLine {
+                    rank: line.rank,
+                    depth: line.depth as f64,
+                    cp: line.cp.map(|cp| cp as f64),
+                    mate: line.mate.map(|mate| mate as f64),
+                    pv: line.pv.clone(),
+                })
                 .collect(),
             _ => Vec::new(),
         }
@@ -317,22 +317,24 @@ impl AnalysisPage {
     }
 
     /// The evaluation bar's line: the position's own, also while its threat is shown.
-    pub(super) fn bar_line(&self, cx: &App) -> Option<Value> {
+    pub(super) fn bar_line(&self, cx: &App) -> Option<EngineLine> {
         if self.threat_position().is_some() {
-            return self.evaluations.get(&self.context())?["lines"]
-                .as_array()?
+            return self
+                .evaluations
+                .get(&self.context())?
+                .lines
                 .first()
                 .cloned();
         }
         self.lines(cx).first().cloned()
     }
 
-    pub(super) fn lines(&self, cx: &App) -> Vec<Value> {
+    pub(super) fn lines(&self, cx: &App) -> Vec<EngineLine> {
         if self.using_cloud(cx) {
             self.cloud_lines(cx)
         } else {
             self.evaluation(cx)
-                .and_then(|update| update["lines"].as_array().cloned())
+                .map(|update| update.lines.clone())
                 .unwrap_or_default()
         }
     }
@@ -354,7 +356,7 @@ impl AnalysisPage {
         let best = self
             .lines(cx)
             .first()
-            .and_then(|line| line["pv"][0].as_str().map(str::to_string));
+            .and_then(|line| line.pv.first().cloned());
         if let Some(uci) = best {
             self.play(&uci, cx);
         }
@@ -401,10 +403,10 @@ impl AnalysisPage {
         let infinite = crate::prefs::get(cx, INFINITE, false);
         let depth = format!(
             "Depth {}{}",
-            update["depth"].as_f64().unwrap_or_default(),
+            update.depth,
             if infinite { "" } else { "/26" }
         );
-        let nps = update["nps"].as_f64().unwrap_or_default();
+        let nps = update.nps.unwrap_or_default();
         let speed = if nps >= 1e6 {
             format!(" · {:.1}M nodes/s", nps / 1e6)
         } else if nps > 0. {
@@ -412,9 +414,9 @@ impl AnalysisPage {
         } else {
             String::new()
         };
-        let tail = if update["reason"] == "interrupted" {
+        let tail = if update.reason == Some(AnalysisReason::Interrupted) {
             " · Interrupted — retry or change position"
-        } else if update["done"] == json!(true) {
+        } else if update.done {
             ""
         } else {
             "…"
@@ -638,8 +640,7 @@ impl AnalysisPage {
             let cloud_lines = self.cloud_lines(cx);
             let text: AnyElement = match cloud_lines.first() {
                 Some(best) => {
-                    let pv: Vec<String> =
-                        serde_json::from_value(best["pv"].clone()).unwrap_or_default();
+                    let pv = best.pv.clone();
                     let first = pv_san(&self.node().fen, &pv, 1, self.root.variant().key())
                         .first()
                         .map(|played| played.san.clone())

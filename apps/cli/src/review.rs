@@ -3,7 +3,7 @@
 
 use kchess_contracts::calls;
 use kchess_contracts::check::ReviewKey;
-use kchess_contracts::types::{ReviewRequest, ReviewStatus, ReviewUpdate, StoredReview};
+use kchess_contracts::types::{ReviewRequest, StoredReview};
 use kchess_domain::pgn::parse_pgn;
 use kchess_domain::review::{analyse_review, san_to_uci};
 use kchess_domain::variant::Variant;
@@ -163,17 +163,12 @@ pub async fn run(
             }
             Next::Closed => return Err("The core closed.".into()),
             Next::Event(CoreEvent::ReviewUpdate(update)) => {
-                if let Ok(update) = serde_json::from_value::<ReviewUpdate>(update)
-                    && ours(&update.review)
-                {
+                if ours(&update.review) {
                     stored = Some(update.review);
                 }
             }
             Next::Event(CoreEvent::ReviewStatus(status)) => {
-                let failed = serde_json::from_value::<ReviewStatus>(status)
-                    .ok()
-                    .and_then(|status| status.failed)
-                    .filter(|failed| failed.key == key);
+                let failed = status.failed.filter(|failed| failed.key == key);
                 if let Some(failed) = failed {
                     return Err(format!("The review failed: {}", failed.message));
                 }

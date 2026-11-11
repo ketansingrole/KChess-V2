@@ -606,7 +606,12 @@ mod tests {
         host.send(1, &sender, CoreEvent::WatchFrame(json!({})));
         host.send(1, &sender, CoreEvent::WatchFrame(json!({})));
         assert!(connected(&host), "a progress frame is dropped");
-        host.send(1, &sender, CoreEvent::Analysis(json!({ "done": true })));
+        let last = serde_json::from_value(json!({
+            "id": 1, "fen": "8/8/8/8/8/8/8/8 w - - 0 1", "depth": 1.0, "lines": [],
+            "done": true, "context": "", "engine": "stockfish",
+        }))
+        .expect("an analysis update");
+        host.send(1, &sender, CoreEvent::Analysis(last));
         assert!(!connected(&host), "a terminal update is never dropped");
     }
 

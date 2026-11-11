@@ -796,19 +796,7 @@ impl WatchPage {
                                         }
                                         (Some(line), _) => (
                                             format_eval(Some(line)),
-                                            format!(
-                                                "Stockfish · depth {}",
-                                                line["depth"]
-                                                    .as_f64()
-                                                    .or(self
-                                                        .broadcasts
-                                                        .engine
-                                                        .engine
-                                                        .update
-                                                        .as_ref()
-                                                        .and_then(|u| u["depth"].as_f64()))
-                                                    .unwrap_or_default()
-                                            ),
+                                            format!("Stockfish · depth {}", line.depth),
                                         ),
                                         (None, _) => (
                                             format_eval(None),

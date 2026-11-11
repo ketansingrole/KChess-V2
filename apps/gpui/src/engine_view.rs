@@ -6,7 +6,7 @@ use std::rc::Rc;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::Value;
+use kchess_contracts::types::EngineLine;
 use shakmaty::Color;
 
 use crate::game::tree::{format_eval, pv_san, winning_chances};
@@ -24,7 +24,7 @@ pub type PlayLine = Rc<dyn Fn(&[String], usize, &mut Window, &mut App)>;
 
 /// The evaluation bar: White's share fills from White's side of the board; stripes until there is
 /// something to show.
-pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) -> Canvas<()> {
+pub fn eval_bar(line: Option<&EngineLine>, orientation: Color, result: Option<&str>) -> Canvas<()> {
     let known = line.is_some() || result.is_some();
     let white = match result {
         Some("1-0") => 1.,
@@ -108,7 +108,7 @@ pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) 
 pub struct EngineLines<'a> {
     pub fen: &'a str,
     pub variant: &'a str,
-    pub lines: &'a [Value],
+    pub lines: &'a [EngineLine],
     pub pending: usize,
     pub ended: Option<&'static str>,
 }
@@ -139,7 +139,7 @@ pub fn engine_lines(
         );
     } else {
         for (index, line) in lines.iter().enumerate() {
-            let pv: Vec<String> = serde_json::from_value(line["pv"].clone()).unwrap_or_default();
+            let pv = line.pv.clone();
             let moves = pv_san(fen, &pv, 12, variant);
             let eval_pv = pv.clone();
             rows.push(

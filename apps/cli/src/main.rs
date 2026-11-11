@@ -341,7 +341,9 @@ async fn with_core(
                 let mut wait = Wait::new(&mut events);
                 loop {
                     match wait.next().await {
-                        Next::Event(CoreEvent::Analysis(update)) => print(&update),
+                        Next::Event(CoreEvent::Analysis(update)) => {
+                            print(serde_json::json!(update))
+                        }
                         Next::Event(_) | Next::Line(_) | Next::Tick => {}
                         Next::Interrupted | Next::Closed | Next::InputEnded => break,
                     }

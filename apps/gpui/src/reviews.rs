@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Subscription};
 use kchess_contracts::Level;
 use kchess_contracts::check::{Fen, Moves};
-use kchess_contracts::types::{ReviewCurrent, ReviewStatus, ReviewUpdate, StoredReview};
+use kchess_contracts::types::{ReviewCurrent, ReviewStatus, StoredReview};
 use serde_json::Value;
 
 use crate::core::{AppCore, ClientEvent, CoreEvent};
@@ -69,17 +69,13 @@ pub fn init(cx: &mut App) {
         _events: cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
             match event {
                 ClientEvent::Event(CoreEvent::ReviewUpdate(update)) => {
-                    if let Some(update) = read::<ReviewUpdate>(update) {
-                        this.cache.remember(update.review);
-                        cx.notify();
-                    }
+                    this.cache.remember(update.review.clone());
+                    cx.notify();
                 }
                 ClientEvent::Event(CoreEvent::ReviewStatus(status)) => {
                     this.status_events += 1;
-                    if let Some(status) = read(status) {
-                        this.status = status;
-                        cx.notify();
-                    }
+                    this.status = status.clone();
+                    cx.notify();
                 }
                 // The events missed meanwhile are not sent again.
                 ClientEvent::Reconnected => this.resynchronize(cx),
@@ -89,19 +85,6 @@ pub fn init(cx: &mut App) {
     });
     store.update(cx, |store, cx| store.read_status(cx));
     cx.set_global(ReviewHandle(store));
-}
-
-/// An event's payload; one this release cannot read is logged and left out.
-fn read<T: serde::de::DeserializeOwned>(payload: &Value) -> Option<T> {
-    serde_json::from_value(payload.clone())
-        .inspect_err(|cause| {
-            crate::log::write(
-                Level::Warn,
-                "review",
-                &format!("unreadable review event: {cause}"),
-            )
-        })
-        .ok()
 }
 
 impl ReviewStore {

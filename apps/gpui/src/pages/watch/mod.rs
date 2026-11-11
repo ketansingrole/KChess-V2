@@ -591,7 +591,9 @@ impl WatchPage {
             }
             return;
         }
-        let session = event.payload()["session"].as_f64();
+        let session = event
+            .payload()
+            .and_then(|payload| payload["session"].as_f64());
         match event {
             CoreEvent::WatchFrame(frame) if session.is_some() && session == self.session => {
                 self.phase = Some("connected".into());

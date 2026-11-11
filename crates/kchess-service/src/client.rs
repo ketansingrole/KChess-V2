@@ -227,7 +227,8 @@ impl Client {
                                 });
                             }
                         }
-                        // The handshake matched the protocol, so every name is known.
+                        // The handshake matched the protocol, so every name is known and every
+                        // payload has its event's shape.
                         Frame::Event { name, payload } => {
                             if let Some(event) = CoreEvent::from_wire(&name, payload) {
                                 let _ = events.send(ClientEvent::Event(event));
