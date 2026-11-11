@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use super::super::accounts::Lichess;
 use super::super::challenges::ChallengeInbox;
 use crate::host::Host;
+use crate::lichess::stream::Backoff;
 
 /// How many times a dropped game or event stream is re-opened without progress.
 pub(crate) const MAX_RECONNECTS: u32 = 6;
@@ -24,6 +25,8 @@ pub(crate) const ANNOUNCED_MAX: usize = 200;
 pub(crate) const SEEK_REJECTED: &str = "Lichess rejected this public seek. The Board API allows Rapid and slower for matchmaking (Blitz and faster need a direct challenge). Pick a longer control or add a username.";
 pub(crate) const LOST_CONNECTION: &str =
     "Lost connection to Lichess. Check your network and reopen the game.";
+/// A game stream's state once it is gone for good.
+pub(crate) const LOST_STREAM: &str = "Lost connection to Lichess. Reconnect to recover the game.";
 
 /// The session's streams (`lane`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -197,6 +200,8 @@ pub(crate) struct Inner {
     pub(crate) host: Arc<dyn Host>,
     pub(crate) challenges: ChallengeInbox,
     pub(crate) state: Mutex<State>,
+    /// How long a dropped stream waits before it reconnects.
+    pub(crate) backoff: Backoff,
     /// Run before each state is reported: a live game stops the engines and the watch, and the
     /// engines' busy state is refreshed.
     pub(crate) state_hook: Mutex<Option<StateHook>>,
