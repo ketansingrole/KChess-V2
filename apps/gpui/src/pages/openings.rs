@@ -4,6 +4,8 @@
 //! the ways to train it. The names and the tree are the shared rules' (`openingTree`).
 
 use kchess_contracts::calls;
+use kchess_contracts::check::Moves;
+use kchess_contracts::types::{DescriptionBlock, OpeningDescription, PopularityMonth};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -16,7 +18,7 @@ use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_domain::training::openings::{OpeningNode, opening_tree};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use shakmaty::{Color, Position as _};
 
 use crate::assets::icon;
@@ -264,7 +266,7 @@ pub struct OpeningsPage {
     layout: PlayLayout,
     orientation: Color,
     move_input: Entity<InputState>,
-    description: Option<Value>,
+    description: Option<OpeningDescription>,
     full_description: bool,
     description_task: Option<Task<()>>,
     /// Month by month, how often the line's last move was chosen; shown once there is a year of it.
@@ -439,13 +441,13 @@ impl OpeningsPage {
             Self::remember(&name, &line, cx);
         }
         if !line.is_empty() {
-            let description = cx
-                .global::<AppCore>()
-                .request(calls::OpeningDescription { moves: json!(line) });
+            let description = cx.global::<AppCore>().request(calls::OpeningDescription {
+                moves: Moves(line.clone()),
+            });
             self.description_task = Some(cx.spawn(async move |this, cx| match description.await {
                 Ok(page) => {
                     let _ = this.update(cx, |this, cx| {
-                        this.description = (!page.is_null()).then_some(page);
+                        this.description = page;
                         cx.notify();
                     });
                 }
@@ -457,9 +459,9 @@ impl OpeningsPage {
             }));
         }
         if !line.is_empty() {
-            let months = cx
-                .global::<AppCore>()
-                .request(calls::OpeningPopularity { moves: json!(line) });
+            let months = cx.global::<AppCore>().request(calls::OpeningPopularity {
+                moves: Moves(line.clone()),
+            });
             let san = steps
                 .last()
                 .map(|(_, san, _)| san.clone())
@@ -487,17 +489,15 @@ impl OpeningsPage {
     }
 
     /// `popularityPoints`: each month's share of games, once there is a year of them.
-    fn show_popularity(&mut self, months: &Value, san: &str, cx: &mut Context<Self>) {
+    fn show_popularity(&mut self, months: &[PopularityMonth], san: &str, cx: &mut Context<Self>) {
         let points: Vec<ChartPoint> = months
-            .as_array()
-            .into_iter()
-            .flatten()
+            .iter()
             .filter_map(|month| {
-                let key = month["month"].as_str()?;
+                let key = &month.month;
                 let date =
                     chrono::NaiveDate::parse_from_str(&format!("{key}-01"), "%Y-%m-%d").ok()?;
                 Some(ChartPoint {
-                    value: (month["share"].as_f64()? * 1000.).round() / 10.,
+                    value: (month.share * 1000.).round() / 10.,
                     short: date.format("%b %y").to_string().into(),
                     long: date.format("%b %-d, %Y").to_string().into(),
                 })
@@ -510,10 +510,8 @@ impl OpeningsPage {
         }
         let top = points.iter().map(|point| point.value).fold(1., f64::max);
         let (first, last) = (&points[0], &points[points.len() - 1]);
-        let first_month = months[0]["month"].as_str().unwrap_or_default();
-        let last_month = months[points.len() - 1]["month"]
-            .as_str()
-            .unwrap_or_default();
+        let first_month = &months[0].month;
+        let last_month = &months[points.len() - 1].month;
         let summary = format!(
             "{san} was chosen in {} of games in {first_month} and {} in {last_month}",
             percent(first.value),
@@ -1044,28 +1042,26 @@ impl OpeningsPage {
         let analyse_line = line.clone();
         let puzzles = opening.clone();
         let description = self.description.clone().map(|page| {
-            let blocks: Vec<Value> = page["blocks"].as_array().cloned().unwrap_or_default();
-            let shown: Vec<Value> = if self.full_description {
+            let blocks = page.blocks;
+            let shown: Vec<DescriptionBlock> = if self.full_description {
                 blocks.clone()
             } else {
                 blocks
                     .iter()
-                    .find(|block| block["heading"] != json!(true))
+                    .find(|block| !block.heading)
                     .cloned()
                     .into_iter()
                     .collect()
             };
             let more = blocks.len() > shown.len() || self.full_description;
-            let url = page["url"].as_str().unwrap_or_default().to_string();
+            let url = page.url;
             v_flex()
                 .gap(px(8.))
                 .children(shown.into_iter().map(|block| {
                     div()
                         .text_size(px(14.))
-                        .when(block["heading"] == json!(true), |text| {
-                            text.font_weight(FontWeight::MEDIUM)
-                        })
-                        .child(block["text"].as_str().unwrap_or_default().to_string())
+                        .when(block.heading, |text| text.font_weight(FontWeight::MEDIUM))
+                        .child(block.text)
                 }))
                 .when(more, |section| {
                     section.child(

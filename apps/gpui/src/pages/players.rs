@@ -3,6 +3,7 @@
 //! recent games — and follow, challenge, message or watch them.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::{GameId, LichessId, StudyId};
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -1740,9 +1741,9 @@ fn open_exported_at(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let export = cx
-        .global::<AppCore>()
-        .request(calls::ExportGame { id: json!(id) });
+    let export = cx.global::<AppCore>().request(calls::ExportGame {
+        id: GameId(id.to_string()),
+    });
     let opening = Opening {
         ply,
         orientation: Some(orientation),
@@ -1754,8 +1755,7 @@ fn open_exported_at(
     };
     let pgn = async move {
         match export.await {
-            Ok(Value::String(pgn)) => Ok(pgn),
-            Ok(_) => Err("That game could not be read".to_string()),
+            Ok(pgn) => Ok(pgn),
             Err(cause) => Err(format!("Could not open the game: {}", cause.message)),
         }
     };
@@ -1766,13 +1766,13 @@ fn open_exported_at(
 /// shows it.
 pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App) {
     let fetch = cx.global::<AppCore>().request(calls::LichessStudyChapter {
-        id: json!(study),
-        chapter: json!(chapter),
+        id: LichessId(study.to_string()),
+        chapter: StudyId(chapter.to_string()),
     });
     window
         .spawn(cx, async move |cx| {
             let pgn = match fetch.await {
-                Ok(found) => found["pgn"].as_str().map(str::to_string),
+                Ok(found) => Some(found.pgn),
                 Err(cause) => {
                     let message = format!("Could not open the study: {}", cause.message);
                     let _ = cx.update(|window, cx| window.push_notification(message, cx));

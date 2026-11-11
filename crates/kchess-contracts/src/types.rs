@@ -2010,21 +2010,46 @@ pub struct LichessStudyChapter {
     pub pgn: String,
 }
 
-/// A cloud evaluation: lines from White's point of view, like the local engine's.
+/// Where `exportToLichessStudy` added the game: the study's id.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct StudyExport {
+    pub id: String,
+}
+
+/// A cloud evaluation: lines from White's point of view, like the local engine's. Lichess's
+/// figures are whole numbers.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudEval {
     pub fen: String,
-    pub depth: f64,
-    pub knodes: f64,
-    pub lines: Vec<EngineLine>,
+    pub depth: u64,
+    pub knodes: u64,
+    pub lines: Vec<CloudLine>,
+}
+
+/// One line of a cloud evaluation, at the evaluation's depth.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudLine {
+    /// 1 for the best line, 2 for the next best…
+    pub rank: u32,
+    pub depth: u64,
+    /// Centipawns, when there is no forced mate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cp: Option<i64>,
+    /// Moves to mate: positive when White mates, negative when Black does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mate: Option<i64>,
+    /// Principal variation as UCI moves.
+    pub pv: Vec<String>,
 }
 
 /// A paragraph, or a section heading, of an opening description.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DescriptionBlock {
-    pub heading: Option<bool>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub heading: bool,
     pub text: String,
 }
 
@@ -2036,7 +2061,7 @@ pub struct OpeningDescription {
     pub title: String,
     pub url: String,
     pub blocks: Vec<DescriptionBlock>,
-    pub fetched_at: f64,
+    pub fetched_at: i64,
 }
 
 /// One month of a line's popularity: of the Lichess games at the position before its last move,
@@ -2046,7 +2071,7 @@ pub struct PopularityMonth {
     /// `YYYY-MM`.
     pub month: String,
     pub share: f64,
-    pub games: f64,
+    pub games: i64,
 }
 
 #[cfg(test)]

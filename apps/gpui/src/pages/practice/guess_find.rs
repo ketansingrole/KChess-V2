@@ -6,6 +6,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::*;
 use kchess_contracts::calls;
+use kchess_contracts::check::GameId;
 use serde_json::{Value, json};
 use shakmaty::Color;
 
@@ -188,7 +189,7 @@ impl GameFinder {
         cx.notify();
         let export = cx
             .global::<AppCore>()
-            .request(calls::ExportGame { id: json!(id) });
+            .request(calls::ExportGame { id: GameId(id) });
         cx.spawn(async move |this, cx| {
             let answer = export.await;
             let _ = this.update(cx, |this, cx| {
@@ -197,8 +198,7 @@ impl GameFinder {
                 }
                 this.opening = None;
                 match answer {
-                    Ok(Value::String(pgn)) => cx.emit(Found::Game { pgn, side }),
-                    Ok(_) => this.error = Some("That game could not be read".into()),
+                    Ok(pgn) => cx.emit(Found::Game { pgn, side }),
                     Err(cause) => this.error = Some(cause.message.into()),
                 }
                 cx.notify();

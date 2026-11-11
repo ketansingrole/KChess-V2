@@ -5,6 +5,7 @@ use super::Opening;
 use super::*;
 use crate::game::played::GameOrigin;
 use kchess_contracts::calls;
+use kchess_contracts::check::{GameId, LichessId, StudyId};
 
 impl AnalysisPage {
     pub(crate) fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -183,13 +184,12 @@ impl AnalysisPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let export = cx
-            .global::<AppCore>()
-            .request(calls::ExportGame { id: json!(link.id) });
+        let export = cx.global::<AppCore>().request(calls::ExportGame {
+            id: GameId(link.id.clone()),
+        });
         let pgn = async move {
             match export.await {
-                Ok(Value::String(pgn)) => Ok(Some(pgn)),
-                Ok(_) => Ok(None),
+                Ok(pgn) => Ok(Some(pgn)),
                 Err(cause) => Err(format!("Could not fetch that game: {}", cause.message)),
             }
         };
@@ -212,12 +212,12 @@ impl AnalysisPage {
         cx: &mut Context<Self>,
     ) {
         let fetch = cx.global::<AppCore>().request(calls::LichessStudyChapter {
-            id: json!(study),
-            chapter: json!(chapter),
+            id: LichessId(study),
+            chapter: StudyId(chapter),
         });
         let pgn = async move {
             match fetch.await {
-                Ok(found) => Ok(found["pgn"].as_str().map(str::to_string)),
+                Ok(found) => Ok(Some(found.pgn)),
                 Err(cause) => Err(format!("Could not fetch that study: {}", cause.message)),
             }
         };

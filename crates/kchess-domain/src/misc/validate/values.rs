@@ -323,13 +323,6 @@ pub(super) fn assert_broadcast_query(value: J) -> Checked<Option<String>> {
     .transpose()
 }
 
-/// `CORE_CONTRACTS` `lines` (`cloudEval`): an integer from 1 to 5.
-pub(super) fn assert_lines(value: J) -> Checked<u64> {
-    let n: u64 = decode(value, plain)?;
-    within(n, 1, 5, None, "")?;
-    Ok(n)
-}
-
 /// `CORE_CONTRACTS` `optionalPage` (`tournament`): nothing, or a page from 1 to 200.
 pub(super) fn assert_optional_page(value: J) -> Checked<Option<u64>> {
     let page: Option<u64> = decode(value, plain)?;
@@ -351,15 +344,6 @@ pub(super) fn assert_boolean(value: J) -> Checked<bool> {
     decode(value, plain)
 }
 
-/// `CORE_CONTRACTS` `chapterName`: a trimmed name of 1 to 100 characters.
-pub(super) fn assert_chapter_name(value: J) -> Checked<String> {
-    let text: String = decode(value, plain)?;
-    let text = js::trim(&text);
-    min_chars(text, 1, None, "")?;
-    max_chars(text, 100, None, "")?;
-    Ok(text.to_owned())
-}
-
 /// `CORE_CONTRACTS` `pgn` (`exportToLichessStudy`): 1 to 500,000 characters with some content.
 pub(super) fn assert_pgn_text(value: J) -> Checked<String> {
     let text: String = decode(value, plain)?;
@@ -373,12 +357,4 @@ pub(super) fn assert_pgn_text(value: J) -> Checked<String> {
 pub(super) fn assert_session_object(value: J) -> Checked<Value> {
     ensure(value.is_object(), None, "", || "an object".into())?;
     Ok(Value::Object(serde_json::Map::new()))
-}
-
-/// `CORE_CONTRACTS` `studyId` (`exportToLichessStudy`): nothing (a new study) or a Lichess id.
-pub(super) fn assert_study_id(value: J) -> Checked<String> {
-    if matches!(&value, J::Str(text) if text.is_empty()) {
-        return Ok(String::new());
-    }
-    assert_lichess_id(value)
 }

@@ -251,7 +251,7 @@ pub struct AnalysisPage {
     wanted: String,
     client_id: u64,
     latest_id: f64,
-    cloud: Option<Value>,
+    cloud: Option<kchess_contracts::types::CloudEval>,
     cloud_busy: bool,
     cloud_error: Option<String>,
     cloud_request: u64,

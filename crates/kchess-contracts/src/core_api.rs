@@ -37,48 +37,50 @@ core_api! {
         LichessStudies = "lichessStudies" fn lichess_studies(
             account: Username
         ) -> Reply<Vec<LichessStudy>>;
+        /// Every chapter of a study the account can read.
         LichessStudyChapters = "lichessStudyChapters" fn lichess_study_chapters(
-            account: Value = Raw(c::username),
-            id: Value = Raw(c::lichess_id)
-        ) -> Value;
-        /// One chapter of a public study ({ name, pgn }), its first when chapter is empty.
+            account: Username,
+            id: LichessId
+        ) -> Reply<Vec<crate::types::LichessStudyChapter>>;
+        /// One chapter of a public study, its first when chapter is empty.
         LichessStudyChapter = "lichessStudyChapter" fn lichess_study_chapter(
-            id: Value = c::lichess_id,
-            chapter: Value = c::study_id
-        ) -> Value;
-        /// Add a PGN as a chapter of a Lichess study (a new private one when `studyId` is empty).
+            id: LichessId,
+            chapter: StudyId
+        ) -> crate::types::LichessStudyChapter;
+        /// Upload a linked study's edits to Lichess; answers its chapters as Lichess holds them.
         SyncLichessStudy = "syncLichessStudy" fn sync_lichess_study(
-            request: Value = c::study_sync_request
-        ) -> Value;
+            request: StudySyncRequest
+        ) -> Reply<Vec<crate::types::LichessStudyChapter>>;
+        /// Add a PGN as a chapter of a Lichess study (a new private one when `studyId` is empty).
         ExportToLichessStudy = "exportToLichessStudy" fn export_to_lichess_study(
-            account: Value = Raw(c::username),
-            study_id: Value = Raw(c::study_id),
-            name: Value = Raw(c::chapter_name),
-            pgn: Value = Raw(c::pgn_text)
-        ) -> Value;
+            account: Username,
+            study_id: StudyId,
+            name: ChapterName,
+            pgn: PgnText
+        ) -> Reply<StudyExport>;
         /// A finished Lichess game's PGN, for the analysis board.
-        ExportGame = "exportGame" fn export_game(id: Value = Raw(c::game_id)) -> Value;
+        ExportGame = "exportGame" fn export_game(id: GameId) -> String;
         /// A master game's PGN from the masters database, for the analysis board.
         #[assist(Lookups)]
-        MastersGame = "mastersGame" fn masters_game(id: Value = Raw(c::game_id)) -> Value;
-        /// The Wikibooks description of a line of UCI moves from the starting position, or null
+        MastersGame = "mastersGame" fn masters_game(id: GameId) -> String;
+        /// The Wikibooks description of a line of UCI moves from the starting position, or none
         /// when it has no page.
         #[assist(Lookups)]
         OpeningDescription = "openingDescription" fn opening_description(
-            moves: Value = Raw(c::moves)
-        ) -> Value;
+            moves: Moves
+        ) -> Option<crate::types::OpeningDescription>;
         /// Month by month, the share of the Lichess games at the position before the line's last
         /// move that went on with it.
         #[assist(Lookups)]
         OpeningPopularity = "openingPopularity" fn opening_popularity(
-            moves: Value = Raw(c::moves)
-        ) -> Value;
-        /// Lichess's cached cloud evaluation of a position, or null when it has none.
+            moves: Moves
+        ) -> Vec<PopularityMonth>;
+        /// Lichess's cached cloud evaluation of a position, or none when it has none.
         #[assist(Analysis)]
         CloudEval = "cloudEval" fn cloud_eval(
-            fen: Value = Raw(c::position),
-            lines: Value = Raw(c::lines)
-        ) -> Value;
+            fen: Position,
+            lines: Bounded<1, 5>
+        ) -> Option<crate::types::CloudEval>;
     }
 
     /// The settings and the stored data.

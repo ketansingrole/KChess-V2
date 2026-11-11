@@ -7,7 +7,7 @@ mod review;
 mod wait;
 
 use kchess_contracts::calls;
-use kchess_contracts::check::Fen;
+use kchess_contracts::check::{Fen, GameId, LichessId, StudyId};
 use kchess_contracts::types::{LookupOptions, PositionLookupKind};
 use kchess_domain::variant::Variant;
 use std::path::PathBuf;
@@ -431,22 +431,23 @@ async fn with_core(
 /// study's own link).
 async fn linked_pgn(core: &CoreClient, link: &str) -> Result<String, String> {
     use kchess_domain::links::{game_link, study_link};
-    let pgn = if let Some(game) = game_link(link) {
-        core.request(calls::ExportGame { id: json!(game.id) })
-            .await?
+    if let Some(game) = game_link(link) {
+        Ok(core
+            .request(calls::ExportGame {
+                id: GameId(game.id),
+            })
+            .await?)
     } else if let Some((study, chapter)) = study_link(link) {
-        core.request(calls::LichessStudyChapter {
-            id: json!(study),
-            chapter: json!(chapter),
-        })
-        .await?["pgn"]
-            .take()
+        let chapter = core
+            .request(calls::LichessStudyChapter {
+                id: LichessId(study),
+                chapter: StudyId(chapter),
+            })
+            .await?;
+        Ok(chapter.pgn)
     } else {
-        return Err("pgn takes a lichess.org game or study link.".into());
-    };
-    pgn.as_str()
-        .map(str::to_string)
-        .ok_or_else(|| "Lichess sent no PGN.".into())
+        Err("pgn takes a lichess.org game or study link.".into())
+    }
 }
 
 /// What `watch` follows.

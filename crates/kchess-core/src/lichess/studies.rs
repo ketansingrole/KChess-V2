@@ -5,13 +5,12 @@
 //! Every cloud call runs through `Lichess::as_account`, so a missing or refused login answers
 //! `Reply::NeedsReconnect` instead of failing. A failed mutation is never retried.
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::accounts::{Lichess, Reply, path_segment};
 use super::client::TextLimit;
 use crate::error::{CoreError, Result as CoreResult};
-use kchess_contracts::types::{LichessStudy, UsageKind};
+use kchess_contracts::types::{LichessStudy, LichessStudyChapter, StudySyncRequest, UsageKind};
 use kchess_domain::{js, position};
 
 /// The most of a study export that is read, in UTF-16 units.
@@ -23,23 +22,6 @@ const STUDY_PGN_LIMIT: TextLimit<'static> = TextLimit {
 const MAX_CHAPTERS: usize = 64;
 /// Most studies listed for an account.
 const MAX_STUDIES: usize = 300;
-
-/// A chapter of a study, with its PGN (`LichessStudyChapter`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LichessStudyChapter {
-    pub name: String,
-    pub pgn: String,
-}
-
-/// The upload a user makes of their edits to a linked study (`StudySyncRequest`).
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StudySyncRequest {
-    pub account: String,
-    pub study_id: String,
-    pub baseline: String,
-    pub pgn: String,
-}
 
 /// `lichessStudies(account)`: the studies the account owns or belongs to (private ones too, with
 /// `study:read`), most recently updated first.

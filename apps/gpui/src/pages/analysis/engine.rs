@@ -3,6 +3,7 @@
 
 use super::*;
 use kchess_contracts::calls;
+use kchess_contracts::check::{Bounded, Position};
 
 impl AnalysisPage {
     pub(crate) fn engine_on(cx: &App) -> bool {
@@ -233,7 +234,7 @@ impl AnalysisPage {
         self.cloud_request += 1;
         let request = self.cloud_request;
         let fen = self.node().fen.clone();
-        if self.cloud.as_ref().and_then(|cloud| cloud["fen"].as_str()) != Some(fen.as_str()) {
+        if self.cloud.as_ref().map(|cloud| cloud.fen.as_str()) != Some(fen.as_str()) {
             self.cloud = None;
         }
         self.cloud_error = None;
@@ -264,8 +265,8 @@ impl AnalysisPage {
             });
             let answer = core
                 .request(calls::CloudEval {
-                    fen: json!(fen),
-                    lines: json!(lines),
+                    fen: Position(fen),
+                    lines: Bounded(lines as u64),
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
@@ -274,7 +275,7 @@ impl AnalysisPage {
                 }
                 this.cloud_busy = false;
                 match answer {
-                    Ok(cloud) => this.cloud = (!cloud.is_null()).then_some(cloud),
+                    Ok(cloud) => this.cloud = cloud,
                     Err(cause) => {
                         crate::log::write(
                             Level::Warn,
@@ -292,12 +293,11 @@ impl AnalysisPage {
     /// Lichess's lines for the position shown, when it has some.
     pub(super) fn cloud_lines(&self, cx: &App) -> Vec<Value> {
         match &self.cloud {
-            Some(cloud)
-                if Self::assistance_allowed(cx)
-                    && cloud["fen"].as_str() == Some(self.node().fen.as_str()) =>
-            {
-                cloud["lines"].as_array().cloned().unwrap_or_default()
-            }
+            Some(cloud) if Self::assistance_allowed(cx) && cloud.fen == self.node().fen => cloud
+                .lines
+                .iter()
+                .filter_map(|line| serde_json::to_value(line).ok())
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -359,8 +359,8 @@ impl AnalysisPage {
         {
             return format!(
                 "Lichess cloud · depth {} · {}M nodes",
-                cloud["depth"].as_f64().unwrap_or_default(),
-                (cloud["knodes"].as_f64().unwrap_or_default() / 1000.).round()
+                cloud.depth,
+                (cloud.knodes as f64 / 1000.).round()
             );
         }
         if !self.engine_ready {
@@ -644,7 +644,7 @@ impl AnalysisPage {
                             format_eval(Some(best)),
                             self.cloud
                                 .as_ref()
-                                .and_then(|cloud| cloud["depth"].as_f64())
+                                .map(|cloud| cloud.depth)
                                 .unwrap_or_default()
                         ))
                         .child(

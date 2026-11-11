@@ -5,10 +5,10 @@ use crate::fixtures;
 use std::sync::{Arc, Mutex};
 
 use fixtures::{MemoryStore, MemoryTokens, Recording, Reply, form_field, lichess_service, serve};
+use kchess_contracts::types::StudySyncRequest;
 use kchess_core::lichess::accounts::Reply as Outcome;
 use kchess_core::lichess::studies::{
-    StudySyncRequest, export_to_lichess_study, lichess_studies, lichess_study_chapters, split_pgn,
-    sync_lichess_study,
+    export_to_lichess_study, lichess_studies, lichess_study_chapters, split_pgn, sync_lichess_study,
 };
 
 const BASELINE: &str = "[Site \"https://lichess.org/study/Study001/Chapter1\"]\n[Event \"Example\"]\n[Result \"*\"]\n\n1. e4 {Keep} e5 (1... c5 $1) *";

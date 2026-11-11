@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 use super::{CONNECT_EXPLORER, PositionLookups};
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
+use kchess_contracts::types::{DescriptionBlock, OpeningDescription, PopularityMonth};
 use kchess_domain::training::openings::{line_fens, wikibooks_title};
 
 /// Saved descriptions (and pages that do not exist) are fresh for a week; so is popularity.
@@ -32,34 +33,6 @@ const STOP_HEADINGS: &[&str] = &[
 /// Wikibooks' editing notes, which are not about the opening.
 const BOILERPLATE: &[&str] = &["When contributing to this Wikibook", "This page is a stub"];
 
-/// One paragraph or section heading of a description (`DescriptionBlock`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DescriptionBlock {
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub heading: bool,
-    pub text: String,
-}
-
-/// A line's Wikibooks page as plain text (`OpeningDescription`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OpeningDescription {
-    pub title: String,
-    pub url: String,
-    pub blocks: Vec<DescriptionBlock>,
-    pub fetched_at: i64,
-}
-
-/// One month of a line's popularity (`PopularityMonth`): of the games at the position before its
-/// last move, the share that continued with that move.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PopularityMonth {
-    pub month: String,
-    pub share: f64,
-    pub games: i64,
-}
-
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SavedDescription {
@@ -83,16 +56,9 @@ struct SavedHistory {
     history: Value,
 }
 
-/// The UCI moves of a line, as the methods receive them.
-fn line_of(raw: &Value) -> CoreResult<Vec<String>> {
-    let moves: Vec<String> = raw
-        .as_array()
-        .ok_or_else(|| CoreError::new("moves must be a list."))?
-        .iter()
-        .map(|entry| entry.as_str().map(str::to_string))
-        .collect::<Option<_>>()
-        .ok_or_else(|| CoreError::new("moves must be UCI moves."))?;
-    if moves.len() > 200 || line_fens(&moves).is_none() {
+/// A line the opening pages know: at most 200 moves, legal from the start.
+fn legal_line(moves: &[String]) -> CoreResult<&[String]> {
+    if moves.len() > 200 || line_fens(moves).is_none() {
         return Err(CoreError::new("That line is not legal."));
     }
     Ok(moves)
@@ -189,20 +155,23 @@ pub fn popularity(parent: &Value, child: &Value) -> Vec<PopularityMonth> {
 
 impl PositionLookups {
     /// `openingDescription(moves)`: the line's Wikibooks page, or None when it has none.
-    pub async fn opening_description(&self, raw: &Value) -> CoreResult<Option<OpeningDescription>> {
+    pub async fn opening_description(
+        &self,
+        moves: &[String],
+    ) -> CoreResult<Option<OpeningDescription>> {
         tokio::select! {
             biased;
             _ = self.lifetime.cancelled() => Err(CoreError::aborted("Position lookup was cancelled.")),
-            result = self.opening_description_inner(raw) => result,
+            result = self.opening_description_inner(moves) => result,
         }
     }
 
     async fn opening_description_inner(
         &self,
-        raw: &Value,
+        moves: &[String],
     ) -> CoreResult<Option<OpeningDescription>> {
-        let moves = line_of(raw)?;
-        let Some(title) = wikibooks_title(&moves) else {
+        let moves = legal_line(moves)?;
+        let Some(title) = wikibooks_title(moves) else {
             return Ok(None);
         };
         let key = format!("wikibooks:{title}");
@@ -276,17 +245,17 @@ impl PositionLookups {
 
     /// `openingPopularity(moves)`: the monthly share of the Lichess games (blitz, rapid and
     /// classical) at the position before the line's last move that went on with it.
-    pub async fn opening_popularity(&self, raw: &Value) -> CoreResult<Vec<PopularityMonth>> {
+    pub async fn opening_popularity(&self, moves: &[String]) -> CoreResult<Vec<PopularityMonth>> {
         tokio::select! {
             biased;
             _ = self.lifetime.cancelled() => Err(CoreError::aborted("Position lookup was cancelled.")),
-            result = self.opening_popularity_inner(raw) => result,
+            result = self.opening_popularity_inner(moves) => result,
         }
     }
 
-    async fn opening_popularity_inner(&self, raw: &Value) -> CoreResult<Vec<PopularityMonth>> {
-        let moves = line_of(raw)?;
-        let fens = line_fens(&moves).unwrap_or_default();
+    async fn opening_popularity_inner(&self, moves: &[String]) -> CoreResult<Vec<PopularityMonth>> {
+        let moves = legal_line(moves)?;
+        let fens = line_fens(moves).unwrap_or_default();
         let (Some(parent), Some(child)) = (fens.iter().rev().nth(1), fens.last()) else {
             return Ok(Vec::new());
         };

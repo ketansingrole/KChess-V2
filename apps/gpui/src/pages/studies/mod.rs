@@ -3,6 +3,8 @@
 //! them. Lichess's own studies are a tab of their own when an account is connected.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::{ChapterName, LichessId, PgnText, StudyId, Username};
+use kchess_contracts::types::{Reply, StudyExport, StudySyncRequest};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -609,16 +611,27 @@ impl StudiesPage {
                     && cloud["account"]
                         .as_str()
                         .is_some_and(|owner| owner.eq_ignore_ascii_case(&account));
-                let result = if linked {
-                    core.request(calls::SyncLichessStudy {
-                        request: json!({
-                            "account": account,
-                            "studyId": cloud["id"],
-                            "baseline": cloud["downloadedPgn"],
-                            "pgn": pgn,
-                        }),
-                    })
-                    .await
+                let reconnect = || format!("Connect @{account} again to allow study access.");
+                let (remote, synced) = if linked {
+                    let remote = cloud["id"].as_str().unwrap_or_default().to_string();
+                    let synced = core
+                        .request(calls::SyncLichessStudy {
+                            request: StudySyncRequest {
+                                account: account.clone(),
+                                study_id: remote.clone(),
+                                baseline: cloud["downloadedPgn"]
+                                    .as_str()
+                                    .unwrap_or_default()
+                                    .to_string(),
+                                pgn,
+                            },
+                        })
+                        .await
+                        .map_err(|cause| cause.message)?;
+                    match synced {
+                        Reply::Done(chapters) => (remote, Some(chapters)),
+                        Reply::NeedsReconnect => return Err(reconnect()),
+                    }
                 } else {
                     let name: String = study["name"]
                         .as_str()
@@ -626,41 +639,39 @@ impl StudiesPage {
                         .chars()
                         .take(100)
                         .collect();
-                    core.request(calls::ExportToLichessStudy {
-                        account: json!(account),
-                        study_id: json!(""),
-                        name: json!(name),
-                        pgn: json!(pgn),
-                    })
-                    .await
-                }
-                .map_err(|cause| cause.message)?;
-                if result.get("needsReconnect").is_some() {
-                    return Err(format!("Connect @{account} again to allow study access."));
-                }
-                let remote = if linked {
-                    cloud["id"].as_str().unwrap_or_default().to_string()
-                } else {
-                    result["id"].as_str().unwrap_or_default().to_string()
+                    let exported = core
+                        .request(calls::ExportToLichessStudy {
+                            account: Username(account.clone()),
+                            study_id: StudyId::default(),
+                            name: ChapterName(name),
+                            pgn: PgnText(pgn),
+                        })
+                        .await
+                        .map_err(|cause| cause.message)?;
+                    match exported {
+                        Reply::Done(StudyExport { id }) => (id, None),
+                        Reply::NeedsReconnect => return Err(reconnect()),
+                    }
                 };
-                let chapters = if result.is_array() {
-                    result
-                } else {
-                    core.request(calls::LichessStudyChapters {
-                        account: json!(account),
-                        id: json!(remote),
-                    })
-                    .await
-                    .map_err(|cause| cause.message)?
+                let chapters = match synced {
+                    Some(chapters) => chapters,
+                    None => match core
+                        .request(calls::LichessStudyChapters {
+                            account: Username(account.clone()),
+                            id: LichessId(remote.clone()),
+                        })
+                        .await
+                        .map_err(|cause| cause.message)?
+                    {
+                        Reply::Done(chapters) => chapters,
+                        Reply::NeedsReconnect => {
+                            return Err("Uploaded, but study access needs reconnection".into());
+                        }
+                    },
                 };
-                if chapters.get("needsReconnect").is_some() {
-                    return Err("Uploaded, but study access needs reconnection".into());
-                }
                 let baseline = chapters
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|chapter| chapter["pgn"].as_str())
+                    .iter()
+                    .map(|chapter| chapter.pgn.as_str())
                     .collect::<Vec<_>>()
                     .join("\n\n");
                 let marked = this

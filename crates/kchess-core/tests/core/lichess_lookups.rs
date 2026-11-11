@@ -85,6 +85,11 @@ fn options(sent: Value) -> LookupOptions {
     serde_json::from_value(sent).expect("filters")
 }
 
+/// A line of UCI moves, as the opening pages ask for it.
+fn line(moves: &[&str]) -> Vec<String> {
+    moves.iter().map(|uci| (*uci).to_string()).collect()
+}
+
 fn opening_body() -> Value {
     json!({ "moves": [{ "uci": "e2e4", "white": 100, "draws": 20, "black": 50 }] })
 }
@@ -279,7 +284,7 @@ async fn a_429_pauses_every_explorer_request_until_its_retry_after_ends() {
     assert!(
         lookups
             .service
-            .opening_popularity(&json!(["e2e4"]))
+            .opening_popularity(&line(&["e2e4"]))
             .await
             .is_err()
     );
@@ -303,7 +308,7 @@ async fn sibling_openings_reuse_their_shared_positions_history() {
     let lookups = lookups(&fixture.base, 1_000);
     let king = lookups
         .service
-        .opening_popularity(&json!(["e2e4", "e7e5", "f2f4"]))
+        .opening_popularity(&line(&["e2e4", "e7e5", "f2f4"]))
         .await
         .unwrap();
     assert_eq!(king.len(), 1);
@@ -311,7 +316,7 @@ async fn sibling_openings_reuse_their_shared_positions_history() {
     // The Vienna shares 1. e4 e5 with the King's Gambit: only its own position is asked.
     lookups
         .service
-        .opening_popularity(&json!(["e2e4", "e7e5", "b1c3"]))
+        .opening_popularity(&line(&["e2e4", "e7e5", "b1c3"]))
         .await
         .unwrap();
     assert_eq!(fixture.to("/lichess/history").len(), 3);
@@ -834,7 +839,7 @@ async fn a_failed_lookup_shows_no_status() {
     }
     let error = lookups
         .service
-        .opening_popularity(&json!(["e2e4"]))
+        .opening_popularity(&line(&["e2e4"]))
         .await
         .unwrap_err();
     assert!(!error.message.contains("500"), "{}", error.message);
@@ -863,7 +868,7 @@ async fn a_wikibooks_refusal_does_not_ask_to_connect_lichess() {
     let lookups = lookups(&fixture.base, 1_000);
     let error = lookups
         .service
-        .opening_description(&json!(["e2e4"]))
+        .opening_description(&line(&["e2e4"]))
         .await
         .unwrap_err();
     assert_eq!(
@@ -890,7 +895,7 @@ async fn an_opening_description_is_read_from_wikibooks() {
     let lookups = lookups(&fixture.base, 1_000);
     let page = lookups
         .service
-        .opening_description(&json!(["e2e4"]))
+        .opening_description(&line(&["e2e4"]))
         .await
         .unwrap()
         .expect("a description");

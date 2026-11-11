@@ -12,12 +12,12 @@ use std::time::{Duration, Instant};
 
 use kchess_contracts::check::EXPLORER_RATINGS;
 use kchess_contracts::types::{
-    ExplorerGame, ExplorerSpeed, LookupMove, LookupOptions, PositionLookup,
+    CloudEval, CloudLine, ExplorerGame, ExplorerSpeed, LookupMove, LookupOptions, PositionLookup,
     PositionLookupKind as Kind, SavedLookup as Cached, UsageKind,
 };
 
 use futures_util::future::BoxFuture;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -32,7 +32,6 @@ use kchess_domain::color::{self, Color};
 use kchess_domain::{js, position, replay};
 
 mod opening_info;
-pub use opening_info::{DescriptionBlock, OpeningDescription, PopularityMonth};
 
 const CLOUD_TTL: Duration = Duration::from_secs(10 * 60);
 const CLOUD_MAX: usize = 500;
@@ -47,28 +46,6 @@ const PLAYER_TIMEOUT: Duration = Duration::from_secs(60);
 const CONNECT_EXPLORER: &str = "Connect a Lichess account in Settings to use the opening explorer.";
 
 /* ── Cloud evaluation ── */
-
-/// A cloud evaluation: lines from White's point of view (`CloudEval`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloudEval {
-    pub fen: String,
-    pub depth: Value,
-    pub knodes: Value,
-    pub lines: Vec<CloudLine>,
-}
-
-/// One line of a cloud evaluation (`EngineLine`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct CloudLine {
-    pub rank: usize,
-    pub depth: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cp: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mate: Option<Value>,
-    pub pv: Vec<String>,
-}
 
 /// The cloud evaluation cache: ten minutes per entry, the 500 most recently used kept. A position
 /// Lichess has no evaluation for is remembered as `None`, so it is not asked again soon.
@@ -168,23 +145,18 @@ pub async fn cloud_eval(
             continue;
         }
         result_lines.push(CloudLine {
-            rank: index + 1,
-            depth: Value::Number(data.depth.clone()),
+            rank: index as u32 + 1,
+            depth: data.depth,
             // `cp` wins when both are sent.
-            cp: pv.cp.0.clone().map(Value::Number),
-            mate: pv
-                .cp
-                .0
-                .is_none()
-                .then(|| pv.mate.0.clone().map(Value::Number))
-                .flatten(),
+            cp: pv.cp.0,
+            mate: pv.cp.0.is_none().then_some(pv.mate.0).flatten(),
             pv: moves[..legal].iter().map(|m| m.to_string()).collect(),
         });
     }
     let result = CloudEval {
         fen: fen.to_string(),
-        depth: Value::Number(data.depth),
-        knodes: Value::Number(data.knodes),
+        depth: data.depth,
+        knodes: data.knodes,
         lines: result_lines,
     };
     cache.set(key, Some(result.clone()));
@@ -194,28 +166,25 @@ pub async fn cloud_eval(
 #[derive(Deserialize)]
 struct CloudPv {
     #[serde(default)]
-    cp: Loose<serde_json::Number>,
+    cp: Loose<i64>,
     #[serde(default)]
-    mate: Loose<serde_json::Number>,
+    mate: Loose<i64>,
     moves: String,
 }
 
 #[derive(Deserialize)]
 struct CloudData {
-    depth: serde_json::Number,
-    knodes: serde_json::Number,
+    depth: u64,
+    knodes: u64,
     pvs: Vec<CloudPv>,
 }
 
-/// The cloud evaluation's shape: non-negative depth and nodes, at most five lines, each with a
-/// score (`cp` or `mate`) and at most 2000 characters of moves.
+/// The cloud evaluation's shape: whole non-negative depth and nodes, at most five lines, each
+/// with a whole score (`cp` or `mate`) and at most 2000 characters of moves.
 fn decode_cloud(raw: &Value) -> CoreResult<CloudData> {
-    let non_negative = |n: &serde_json::Number| n.as_f64().is_some_and(|n| n >= 0.0);
     read::<CloudData>(raw)
         .filter(|data| {
-            non_negative(&data.depth)
-                && non_negative(&data.knodes)
-                && data.pvs.len() <= 5
+            data.pvs.len() <= 5
                 && data
                     .pvs
                     .iter()

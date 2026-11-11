@@ -3,7 +3,7 @@
 //! to one of them or to a new private study.
 
 use kchess_contracts::calls;
-use kchess_contracts::check::Username;
+use kchess_contracts::check::{ChapterName, LichessId, PgnText, StudyId, Username};
 use kchess_contracts::types::{LichessStudy, Reply};
 use std::collections::HashMap;
 
@@ -46,10 +46,6 @@ pub struct LichessTab {
     message: String,
     target: Entity<SelectState<Vec<Choice>>>,
     account_select: Entity<SelectState<Vec<Choice>>>,
-}
-
-fn needs_reconnect(result: &Value) -> bool {
-    result.get("needsReconnect").is_some()
 }
 
 pub fn new_tab(
@@ -213,36 +209,30 @@ impl StudiesPage {
     ) {
         let id = item.id.clone();
         let chapters = cx.global::<AppCore>().request(calls::LichessStudyChapters {
-            account: json!(account),
-            id: json!(id),
+            account: Username(account.clone()),
+            id: LichessId(id.clone()),
         });
         let library = cx.global::<StudyHandle>().0.clone();
         window
             .spawn(cx, async move |cx| {
                 let chapters = match chapters.await {
-                    Ok(chapters) if needs_reconnect(&chapters) => {
+                    Ok(Reply::NeedsReconnect) => {
                         let note = format!(
                             "Lichess needs the study permission: connect @{account} again in Settings → My accounts."
                         );
                         let _ = cx.update(|window, cx| fail(note, window, cx));
                         return;
                     }
-                    Ok(chapters) => chapters,
+                    Ok(Reply::Done(chapters)) => chapters,
                     Err(cause) => {
                         let _ = cx.update(|window, cx| fail(cause.message, window, cx));
                         return;
                     }
                 };
-                let chapters: Vec<Value> = chapters
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|chapter| json!({ "name": chapter["name"], "pgn": chapter["pgn"] }))
-                    .collect();
                 // A chapter in a variant KChess does not play cannot be replayed.
                 if chapters
                     .iter()
-                    .any(|chapter| !crate::game::pgn_analysable(chapter["pgn"].as_str().unwrap_or_default()))
+                    .any(|chapter| !crate::game::pgn_analysable(&chapter.pgn))
                 {
                     let note = super::VARIANT_IMPORT.to_string();
                     let _ = cx.update(|window, cx| fail(note, window, cx));
@@ -406,22 +396,22 @@ impl StudiesPage {
         self.lichess.message.clear();
         cx.notify();
         let sent = cx.global::<AppCore>().request(calls::ExportToLichessStudy {
-            account: json!(account),
-            study_id: json!(target),
-            name: json!(chapter_name),
-            pgn: json!(pgn),
+            account: Username(account.clone()),
+            study_id: StudyId(target.clone()),
+            name: ChapterName(chapter_name.clone()),
+            pgn: PgnText(pgn),
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = sent.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.lichess.busy = false;
                 match result {
-                    Ok(result) if needs_reconnect(&result) => {
+                    Ok(Reply::NeedsReconnect) => {
                         this.lichess.message = format!(
                             "Lichess needs the study permission: connect @{account} again in Settings → My accounts."
                         );
                     }
-                    Ok(_) => {
+                    Ok(Reply::Done(_)) => {
                         this.lichess.message = if target.is_empty() {
                             format!("Created a private study with “{chapter_name}”")
                         } else {

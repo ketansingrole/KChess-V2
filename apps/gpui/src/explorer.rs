@@ -5,7 +5,7 @@
 
 use futures::FutureExt as _;
 use kchess_contracts::calls;
-use kchess_contracts::check::Fen;
+use kchess_contracts::check::{Fen, GameId};
 use kchess_contracts::types::{
     ExplorerGame, LookupMove, LookupOptions, PositionLookup, PositionLookupKind,
 };
@@ -534,17 +534,21 @@ impl PositionExplorer {
         let id = game.id.clone();
         let core = cx.global::<AppCore>();
         let call = if masters {
-            core.request(calls::MastersGame { id: json!(id) })
-                .boxed_local()
+            core.request(calls::MastersGame {
+                id: GameId(id.clone()),
+            })
+            .boxed_local()
         } else {
-            core.request(calls::ExportGame { id: json!(id) })
-                .boxed_local()
+            core.request(calls::ExportGame {
+                id: GameId(id.clone()),
+            })
+            .boxed_local()
         };
         cx.spawn_in(window, async move |_, cx| {
             let outcome = call.await;
             let _ = cx.update(|window, cx| {
                 let pgn = match outcome {
-                    Ok(pgn) => pgn.as_str().unwrap_or_default().to_string(),
+                    Ok(pgn) => pgn,
                     Err(cause) => {
                         window.push_notification(
                             Notification::error(cause.message).title("Could not open the game"),
@@ -584,7 +588,7 @@ impl PositionExplorer {
         let id = game.id.clone();
         let call = cx
             .global::<AppCore>()
-            .request(calls::MastersGame { id: json!(id) });
+            .request(calls::MastersGame { id: GameId(id) });
         let side = if game.winner == Some(Color::Black) {
             Color::Black
         } else {
@@ -593,12 +597,7 @@ impl PositionExplorer {
         cx.spawn_in(window, async move |_, cx| {
             let outcome = call.await;
             let _ = cx.update(|window, cx| match outcome {
-                Ok(pgn) => crate::pages::practice::guess_moves(
-                    pgn.as_str().unwrap_or_default(),
-                    Some(side),
-                    window,
-                    cx,
-                ),
+                Ok(pgn) => crate::pages::practice::guess_moves(&pgn, Some(side), window, cx),
                 Err(cause) => window.push_notification(
                     Notification::error(cause.message).title("Could not open the game"),
                     cx,
