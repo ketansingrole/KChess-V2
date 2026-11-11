@@ -210,7 +210,8 @@ impl CoreClient {
     /// A typed core call (`kchess_contracts::calls`): its method with its arguments, and its
     /// answer read in its shape.
     pub async fn request<C: CoreCall>(&self, call: C) -> Result<C::Answer, String> {
-        let answer = self.call(C::METHOD, call.args()).await?;
+        let args = call.args().map_err(|cause| cause.message)?;
+        let answer = self.call(C::METHOD, args).await?;
         kchess_contracts::calls::decode::<C>(answer).map_err(|cause| cause.message)
     }
 

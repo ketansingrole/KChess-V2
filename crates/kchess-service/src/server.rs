@@ -421,7 +421,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         let connection = state.core.connect(ClientInfo {
             kind,
             release,
-            capabilities: capabilities.into_iter().map(Into::into).collect(),
+            capabilities,
         });
         // Counted before the lock is let go, so an idle check that follows sees this client.
         state.active.fetch_add(1, Ordering::SeqCst);

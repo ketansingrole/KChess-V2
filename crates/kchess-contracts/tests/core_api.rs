@@ -157,13 +157,19 @@ fn speech_recognition_takes_a_bounded_grammar_a_sample_rate_and_base64_audio() {
 
 #[test]
 fn a_call_sends_its_arguments_in_order_without_trailing_ones_left_out() {
-    assert!(calls::DesktopSettings {}.args().is_empty());
-    assert!(calls::StopAnalysis { kill: None }.args().is_empty());
+    assert!(calls::DesktopSettings {}.args().expect("args").is_empty());
+    assert!(
+        calls::StopAnalysis { kill: None }
+            .args()
+            .expect("args")
+            .is_empty()
+    );
     assert_eq!(
         calls::StopAnalysis {
             kill: Some(json!(true))
         }
-        .args(),
+        .args()
+        .expect("args"),
         [json!(true)]
     );
     // One left out between two given is sent as `null`, which the check reads alike.
@@ -173,10 +179,26 @@ fn a_call_sends_its_arguments_in_order_without_trailing_ones_left_out() {
         based_on: Some(json!("abc")),
     };
     assert_eq!(
-        command.args(),
+        command.args().expect("args"),
         [json!({ "op": "rename" }), Value::Null, json!("abc")]
     );
     assert_eq!(calls::ReviewGet::METHOD, "reviewGet");
+}
+
+/// An argument that cannot be written as JSON fails the call with its cause; it was sent as
+/// `null`, and the core refused it with a check's message that named another problem.
+#[test]
+fn an_argument_that_cannot_be_written_is_an_error_naming_its_method() {
+    let keyed_by_pairs: std::collections::HashMap<(u8, u8), u8> = [((1, 2), 3)].into();
+    let refused = calls::arg("saveSettings", keyed_by_pairs)
+        .expect_err("a map keyed by pairs is not JSON");
+    assert!(
+        refused
+            .message
+            .starts_with("An argument of saveSettings could not be written"),
+        "{}",
+        refused.message
+    );
 }
 
 #[test]

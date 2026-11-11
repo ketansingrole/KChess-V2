@@ -81,8 +81,8 @@ core_events! {
     ProfileChanged = "profile:changed" (ProfileChange),
     /// Which window raises system notifications now; the others stay quiet.
     AlertsOwner = "alerts:owner" (AlertOwner),
-    /// The core asks its host for a capability (`capabilities.rs`); answered with `host.reply`.
-    HostRequest = "host:request" (Value),
+    /// The core asks its host for a capability (`crate::host`); answered with `host.reply`.
+    HostRequest = "host:request" (crate::host::HostAsk),
 }
 
 impl CoreEvent {

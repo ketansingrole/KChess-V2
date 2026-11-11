@@ -16,8 +16,8 @@ pub trait CoreCall {
     const METHOD: &'static str;
     /// What the method answers.
     type Answer: DeserializeOwned;
-    /// The arguments, in the method's order.
-    fn args(self) -> Vec<Value>;
+    /// The arguments, in the method's order; an error when one cannot be written as JSON.
+    fn args(self) -> Result<Vec<Value>, CoreError>;
 }
 
 /// The core's answer to `C` in its shape, or an error that names the method.
@@ -39,9 +39,11 @@ pub fn without_trailing_nulls(mut args: Vec<Value>) -> Vec<Value> {
     args
 }
 
-/// An argument as JSON. The contract types always serialize; `null` stands in if one did not.
-pub fn arg(value: impl Serialize) -> Value {
-    serde_json::to_value(value).unwrap_or(Value::Null)
+/// An argument of `method` as JSON.
+pub fn arg(method: &str, value: impl Serialize) -> Result<Value, CoreError> {
+    serde_json::to_value(value).map_err(|cause| {
+        CoreError::new(format!("An argument of {method} could not be written: {cause}"))
+    })
 }
 
 /// One argument of a method.
@@ -225,7 +227,7 @@ macro_rules! core_api {
             #[allow(unused_imports)]
             use crate::types::*;
 
-            pub use crate::api::{CoreCall, decode};
+            pub use crate::api::{CoreCall, arg, decode};
 
             $($(
                 $(#[doc = $doc])*
@@ -238,11 +240,11 @@ macro_rules! core_api {
                 impl CoreCall for $call {
                     const METHOD: &'static str = $method;
                     type Answer = $answer;
-                    fn args(self) -> Vec<Value> {
-                        crate::api::without_trailing_nulls(vec![
-                            $(crate::api::arg(self.$arg),)*
-                            $($(crate::api::arg(self.$opt),)+)?
-                        ])
+                    fn args(self) -> Result<Vec<Value>, crate::error::CoreError> {
+                        Ok(crate::api::without_trailing_nulls(vec![
+                            $(crate::api::arg($method, self.$arg)?,)*
+                            $($(crate::api::arg($method, self.$opt)?,)+)?
+                        ]))
                     }
                 }
             )*)*

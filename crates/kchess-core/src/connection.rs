@@ -13,16 +13,7 @@ use crate::tasks::lock;
 /// The connection of an app that embeds the core, and of calls made outside any connection.
 pub const APP: u64 = 0;
 
-/// Something a client can do for the core when it asks (`host:request`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Capability {
-    /// Open a web page in the browser (`openExternal`).
-    Browser,
-    /// Bring its window to the front (`focus`).
-    Focus,
-    /// Seal and open logins itself (`secrets.*`), for a core without the profile's credentials.
-    Secrets,
-}
+pub use kchess_contracts::Capability;
 
 /// Who a client is, as it says when it connects.
 #[derive(Clone, Debug)]

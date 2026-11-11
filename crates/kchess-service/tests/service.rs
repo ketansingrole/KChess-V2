@@ -184,7 +184,7 @@ async fn a_client_reaches_only_the_core_api() {
     answered(gpui.call("library", vec![]))
         .await
         .expect("a CoreApi method");
-    answered(gpui.call("host.reply", vec![json!(0), Value::Null]))
+    answered(gpui.call("host.reply", vec![json!(0), json!({ "value": null })]))
         .await
         .expect("host replies still arrive");
 

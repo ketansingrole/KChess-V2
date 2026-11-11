@@ -4,7 +4,7 @@
 //! the process environment.
 #![allow(dead_code)]
 
-use kchess_contracts::CoreEvent;
+use kchess_contracts::{CoreEvent, HostAsk, HostReply, HostRequest};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use kchess_core::store::games;
@@ -41,14 +41,15 @@ impl Host for SignedIn {
         let Some(core) = self.core.get().and_then(Weak::upgrade) else {
             return;
         };
-        let answer = match payload["kind"].as_str() {
-            Some("secrets.decrypt") => json!({ "value": payload["payload"] }),
-            _ => json!({ "error": "Not in this test." }),
+        let Ok(ask) = serde_json::from_value::<HostAsk>(payload) else {
+            return;
+        };
+        let answer = match ask.request {
+            HostRequest::SecretsDecrypt(sealed) => HostReply::Value(json!(sealed)),
+            _ => HostReply::Error("Not in this test.".into()),
         };
         tokio::spawn(async move {
-            core.call("host.reply", vec![payload["id"].clone(), answer])
-                .await
-                .unwrap();
+            core.host_reply(ask.id, answer).unwrap();
         });
     }
 }

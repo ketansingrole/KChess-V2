@@ -14,22 +14,7 @@ pub const MAX_FRAME: usize = 16 * 1024 * 1024;
 /// Raised when the framing itself changes; part of the protocol fingerprint.
 const FRAMING: &str = "kchess-frames-1";
 
-/// What a client can do for the core when it asks (`host:request`), by name.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum Capability {
-    Browser,
-    Focus,
-}
-
-impl From<Capability> for kchess_core::connection::Capability {
-    fn from(capability: Capability) -> Self {
-        match capability {
-            Capability::Browser => kchess_core::connection::Capability::Browser,
-            Capability::Focus => kchess_core::connection::Capability::Focus,
-        }
-    }
-}
+pub use kchess_contracts::Capability;
 
 /// An app connected to a core, as `refuse` describes it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

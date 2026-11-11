@@ -6,7 +6,7 @@
 //! analysis and game review. They share the one database (`store::Database`) and the battery
 //! reading the scheduler consults.
 
-use kchess_contracts::CoreEvent;
+use kchess_contracts::{CoreEvent, HostReply};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -40,6 +40,9 @@ use crate::store::Database;
 use crate::store::debug;
 use crate::usage::UsageBatch;
 use crate::voice::recognizer::VoiceRecognizer;
+
+/// The method name a host reply crosses the service socket under (`Core::host_reply`).
+pub const HOST_REPLY: &str = "host.reply";
 
 /// A managed engine change that replaces or removes the downloaded executable.
 #[derive(Clone, Copy)]
@@ -276,7 +279,7 @@ impl Core {
         self.data_dir.clone()
     }
 
-    /// Run one method of `CoreApi`, or `host.reply` (a host's answer to a capability request).
+    /// Run one method of `CoreApi`, or `HOST_REPLY` (a host's answer to a capability request).
     /// Unknown methods and malformed arguments are errors.
     pub async fn call(&self, method: &str, args: Vec<Value>) -> Result<Value> {
         self.call_as(APP, method, args).await
@@ -357,19 +360,26 @@ impl Core {
         self.release_voice(connection);
     }
 
+    /// A frontend's answer to the host request `id` (`host:request`).
+    pub fn host_reply(&self, id: u64, reply: HostReply) -> Result<()> {
+        // The services were stopped and the profile released: a late reply must not restart
+        // them.
+        self.refuse_closed()?;
+        self.start();
+        self.capabilities.reply(id, reply);
+        Ok(())
+    }
+
     async fn call_unscoped(&self, method: &str, args: Vec<Value>) -> Result<Value> {
-        if method == "host.reply" {
-            // The services were stopped and the profile released: a late reply must not
-            // restart them.
-            self.refuse_closed()?;
-            self.start();
+        // How a socket client's `host_reply` crosses (`kchess-service`).
+        if method == HOST_REPLY {
             let id = args
                 .first()
                 .and_then(Value::as_u64)
                 .ok_or_else(|| CoreError::new("Invalid id."))?;
-            self.capabilities
-                .reply(id, args.get(1).unwrap_or(&Value::Null));
-            return Ok(Value::Null);
+            let reply = serde_json::from_value(args.get(1).cloned().unwrap_or_default())
+                .map_err(|_| CoreError::new("Invalid host reply."))?;
+            return self.host_reply(id, reply).map(|()| Value::Null);
         }
         if !self.closed.load(Ordering::SeqCst) {
             self.start();

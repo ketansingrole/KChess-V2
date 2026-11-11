@@ -278,7 +278,7 @@ impl CoreBridge {
 
     /// A typed core call (`AppCore::request`), waited for as `call_now` waits.
     pub fn request_now<C: CoreCall>(&self, call: C) -> Result<C::Answer, CoreError> {
-        kchess_contracts::calls::decode::<C>(self.call_now(C::METHOD, call.args())?)
+        kchess_contracts::calls::decode::<C>(self.call_now(C::METHOD, call.args()?)?)
     }
 
     /// Cancel the core's work and release the profile, waiting at most a few seconds.
@@ -651,8 +651,8 @@ impl AppCore {
         &self,
         call: C,
     ) -> impl Future<Output = Result<C::Answer, CoreError>> + 'static + use<C> {
-        let answer = self.call(C::METHOD, call.args());
-        async move { kchess_contracts::calls::decode::<C>(answer.await?) }
+        let answer = call.args().map(|args| self.call(C::METHOD, args));
+        async move { kchess_contracts::calls::decode::<C>(answer?.await?) }
     }
 }
 

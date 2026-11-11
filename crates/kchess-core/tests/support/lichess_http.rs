@@ -4,7 +4,7 @@
 //! that records logs and events, and the in-memory store and token source the account code uses.
 #![allow(dead_code)]
 
-use kchess_contracts::CoreEvent;
+use kchess_contracts::{CoreEvent, HostAsk, HostReply, HostRequest};
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -395,29 +395,27 @@ impl Host for Recording {
         if event != "host:request" {
             return;
         }
-        let id = payload["id"].as_u64().unwrap_or(0);
-        let kind = payload["kind"].as_str().unwrap_or("").to_string();
-        let argument = payload["payload"].clone();
+        let Ok(ask) = serde_json::from_value::<HostAsk>(payload) else {
+            return;
+        };
         let capabilities = self.capabilities.lock().unwrap().clone();
-        let answer = if kind == "openExternal" {
-            let url = argument.as_str().unwrap_or("").to_string();
-            self.opened.lock().unwrap().push(url.clone());
-            if let Some(browser) = self.browser.lock().unwrap().as_ref() {
-                browser(url);
+        let answer = match ask.request {
+            HostRequest::OpenExternal(url) => {
+                self.opened.lock().unwrap().push(url.clone());
+                if let Some(browser) = self.browser.lock().unwrap().as_ref() {
+                    browser(url);
+                }
+                HostReply::done()
             }
-            serde_json::json!({ "value": null })
-        } else if kind == "secrets.encrypt" {
-            let plain = argument.as_str().unwrap_or("");
-            serde_json::json!({ "value": format!("enc:{plain}") })
-        } else {
-            match self.answers.lock().unwrap().get(&kind) {
-                Some(value) => serde_json::json!({ "value": value }),
-                None => serde_json::json!({ "error": format!("No answer for {kind}.") }),
-            }
+            HostRequest::SecretsEncrypt(plain) => HostReply::Value(Value::from(format!("enc:{plain}"))),
+            request => match self.answers.lock().unwrap().get(request.kind()) {
+                Some(value) => HostReply::Value(value.clone()),
+                None => HostReply::Error(format!("No answer for {}.", request.kind())),
+            },
         };
         if let Some(capabilities) = capabilities {
             tokio::spawn(async move {
-                capabilities.reply(id, &answer);
+                capabilities.reply(ask.id, answer);
             });
         }
     }
