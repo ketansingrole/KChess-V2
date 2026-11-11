@@ -96,8 +96,8 @@ async fn a_live_games_calls_reach_lichess_until_it_is_left() {
         profile
             .events()
             .into_iter()
-            .filter(|(name, _)| name == "online:state")
-            .last()
+            .rev()
+            .find(|(name, _)| name == "online:state")
             .map(|(_, state)| state["phase"].clone())
     };
     assert_ne!(last_phase(), Some(json!("disconnected")));
