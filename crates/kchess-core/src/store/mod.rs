@@ -443,4 +443,48 @@ mod tests {
         );
         database.close_async().await;
     }
+
+    /// `close` lets the file go and forgets the caches: the next call opens what is on disk now
+    /// (here, nothing). `close_async` refuses every later call.
+    #[tokio::test]
+    async fn closing_lets_the_file_go_and_forgets_the_caches() {
+        let (dir, database) = database();
+        database
+            .write(|ctx| games::add_account(ctx.db, "Alice", false))
+            .expect("write");
+        database
+            .read(|ctx| {
+                ctx.cache.remember_count("all".into(), 3);
+                Ok(())
+            })
+            .expect("read");
+        database.close();
+        assert_eq!(database.cache.count("all"), None);
+        for suffix in ["", "-wal", "-shm"] {
+            let file = dir.path().join(format!("kchess.db{suffix}"));
+            if file.exists() {
+                std::fs::remove_file(file).expect("the released file goes");
+            }
+        }
+        let data = database
+            .read(|ctx| games::load_app_data(ctx.db))
+            .expect("a fresh file");
+        assert!(data.accounts.is_empty(), "{:?}", data.accounts);
+
+        database
+            .read(|ctx| {
+                ctx.cache.remember_count("all".into(), 3);
+                Ok(())
+            })
+            .expect("read");
+        database.close_async().await;
+        assert_eq!(database.cache.count("all"), None);
+        let refused = database
+            .read_async(|ctx| games::load_app_data(ctx.db))
+            .await;
+        assert_eq!(
+            refused.map(drop).map_err(|cause| cause.message),
+            Err("The database is closed.".to_string())
+        );
+    }
 }

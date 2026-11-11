@@ -53,7 +53,15 @@ impl Host for SignedIn {
 
 pub struct Profile {
     pub core: Arc<Core>,
+    pub host: Arc<SignedIn>,
     _dir: tempfile::TempDir,
+}
+
+impl Profile {
+    /// Every event so far but the host requests, with its payload, in order.
+    pub fn events(&self) -> Vec<(String, Value)> {
+        self.host.events.lock().unwrap().clone()
+    }
 }
 
 /// Opens the core against the Lichess at `base` with `Alice` connected.
@@ -88,5 +96,9 @@ fn open_switched(switches: TestSwitches) -> Profile {
             games::import_token_ciphertext(c.db, Some("Alice"), "lip_alice")
         })
         .unwrap();
-    Profile { core, _dir: dir }
+    Profile {
+        core,
+        host,
+        _dir: dir,
+    }
 }

@@ -329,3 +329,32 @@ async fn account_calls_use_the_username_as_validated() {
     assert_eq!(data["accounts"], json!([]));
     core.close().await;
 }
+
+/// The embedding frontend says who it is: a command line has no window, so no connection alerts
+/// until a window connects, and each change of owner is reported once as `alerts:owner`.
+#[tokio::test]
+async fn the_embedding_frontend_and_each_window_move_the_alert_owner() {
+    use kchess_core::connection::{APP, Capability, ClientInfo};
+    let host = TestHost::new();
+    let dir = profile();
+    let core = core(&host, dir.path());
+    let client = |kind: &str, capabilities: Vec<Capability>| ClientInfo {
+        kind: kind.into(),
+        release: String::new(),
+        capabilities,
+    };
+    core.embedded_by(client("cli", vec![]));
+    assert_eq!(core.connections().info(APP).expect("the app").kind, "cli");
+    let window = core.connect(client("gpui", vec![Capability::Focus]));
+    core.focus(window, true);
+    core.disconnect(window);
+    assert_eq!(
+        host.named("alerts:owner"),
+        vec![
+            json!({ "connection": null }),
+            json!({ "connection": window }),
+            json!({ "connection": null }),
+        ]
+    );
+    core.close().await;
+}
