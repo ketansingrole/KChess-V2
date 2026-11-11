@@ -19,7 +19,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
-use kchess_contracts::types::{ChapterInput, StudyCommand, StudyCommandResult};
+use kchess_contracts::types::{ChapterInput, Study, StudyCommand, StudyCommandResult};
 use kchess_domain::records::studies::StudySummary;
 use serde_json::{Value, json};
 use shakmaty::Color;
@@ -462,12 +462,12 @@ impl StudiesPage {
             .detach();
     }
 
-    fn rename(study: &Value, window: &mut Window, cx: &mut App) {
-        let id = crate::studies::study_id(study);
+    fn rename(study: &Study, window: &mut Window, cx: &mut App) {
+        let id = study.id.clone();
         let library = Self::library(cx);
         NameDialog::open(
             "Rename study",
-            study["name"].as_str().unwrap_or_default(),
+            &study.name,
             "Rename",
             window,
             cx,
@@ -503,10 +503,10 @@ impl StudiesPage {
             window,
             cx,
             |result, window, cx| {
-                let Some(removed) = result.removed.filter(|removed| !removed.is_null()) else {
+                let Some(removed) = result.removed else {
                     return;
                 };
-                let name = removed["name"].as_str().unwrap_or_default().to_string();
+                let name = removed.name.clone();
                 window.push_notification(
                     widgets::action_notification(
                         Notification::new().title(format!("Deleted “{name}”")),
@@ -515,7 +515,7 @@ impl StudiesPage {
                         move |window, cx| {
                             Self::run(
                                 StudyCommand::Restore {
-                                    study: removed.clone(),
+                                    study: json!(removed),
                                 },
                                 window,
                                 cx,
@@ -529,16 +529,15 @@ impl StudiesPage {
         );
     }
 
-    fn copy_pgn(study: &Value, window: &mut Window, cx: &mut App) {
+    fn copy_pgn(study: &Study, window: &mut Window, cx: &mut App) {
         cx.write_to_clipboard(ClipboardItem::new_string(document_pgn(study)));
         window.push_notification("PGN copied", cx);
     }
 
     /// Save a study's PGN, every chapter, as a file where the player picks.
-    fn save_pgn(study: &Value, window: &mut Window, cx: &mut App) {
-        let name: String = study["name"]
-            .as_str()
-            .unwrap_or("study")
+    fn save_pgn(study: &Study, window: &mut Window, cx: &mut App) {
+        let name: String = study
+            .name
             .chars()
             .filter(|c| c.is_alphanumeric() || " _.()+-".contains(*c))
             .take(80)
@@ -579,9 +578,12 @@ impl StudiesPage {
         let Some(study) = library.read(cx).study(&id).cloned() else {
             return;
         };
-        let cloud = study["cloud"].clone();
-        let cloud_account = cloud["account"].as_str().unwrap_or_default();
-        if !copy && !cloud.is_null() && !cloud_account.eq_ignore_ascii_case(&account) {
+        if let Some(cloud) = study
+            .cloud
+            .as_ref()
+            .filter(|cloud| !copy && !cloud.account.eq_ignore_ascii_case(&account))
+        {
+            let cloud_account = &cloud.account;
             window.push_notification(
                 Notification::warning(format!(
                     "Switch to @{cloud_account} to upload changes to this study"
@@ -607,25 +609,20 @@ impl StudiesPage {
                     .flatten()
                     .ok_or("The study is gone")?;
                 let pgn = document_pgn(&study);
-                let cloud = study["cloud"].clone();
-                let linked = !copy
-                    && !cloud.is_null()
-                    && cloud["structureChanged"] != json!(true)
-                    && cloud["account"]
-                        .as_str()
-                        .is_some_and(|owner| owner.eq_ignore_ascii_case(&account));
+                let linked = study.cloud.as_ref().filter(|cloud| {
+                    !copy
+                        && !cloud.structure_changed
+                        && cloud.account.eq_ignore_ascii_case(&account)
+                });
                 let reconnect = || format!("Connect @{account} again to allow study access.");
-                let (remote, synced) = if linked {
-                    let remote = cloud["id"].as_str().unwrap_or_default().to_string();
+                let (remote, synced) = if let Some(cloud) = linked {
+                    let remote = cloud.id.clone();
                     let synced = core
                         .request(calls::SyncLichessStudy {
                             request: StudySyncRequest {
                                 account: account.clone(),
                                 study_id: remote.clone(),
-                                baseline: cloud["downloadedPgn"]
-                                    .as_str()
-                                    .unwrap_or_default()
-                                    .to_string(),
+                                baseline: cloud.downloaded_pgn.clone(),
                                 pgn,
                             },
                         })
@@ -636,12 +633,7 @@ impl StudiesPage {
                         Reply::NeedsReconnect => return Err(reconnect()),
                     }
                 } else {
-                    let name: String = study["name"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .chars()
-                        .take(100)
-                        .collect();
+                    let name: String = study.name.chars().take(100).collect();
                     let exported = core
                         .request(calls::ExportToLichessStudy {
                             account: Username(account.clone()),
@@ -761,11 +753,14 @@ impl StudiesPage {
             )
     }
 
-    fn menu(&self, study: &Value) -> impl IntoElement {
-        let id = study["id"].as_str().unwrap_or_default().to_string();
-        let name = study["name"].as_str().unwrap_or_default().to_string();
-        let cloud = !study["cloud"].is_null();
-        let can_copy = cloud && study["cloud"]["structureChanged"] != json!(true);
+    fn menu(&self, study: &Study) -> impl IntoElement {
+        let id = study.id.clone();
+        let name = study.name.clone();
+        let cloud = study.cloud.is_some();
+        let can_copy = study
+            .cloud
+            .as_ref()
+            .is_some_and(|cloud| !cloud.structure_changed);
         let busy = self.uploading.is_some();
         let study = study.clone();
         Button::new(SharedString::from(format!("study-menu-{id}")))
@@ -888,7 +883,7 @@ impl StudiesPage {
 
     fn render_cards(
         &mut self,
-        studies: Vec<Value>,
+        studies: Vec<Study>,
         width: Pixels,
         window: &Window,
         cx: &mut Context<Self>,
@@ -899,10 +894,7 @@ impl StudiesPage {
         // of listed studies scrolled out of view are kept for when they come back.
         let listed: std::collections::HashSet<String> = studies
             .iter()
-            .filter_map(|study| {
-                self.summary(study["pgn"].as_str().unwrap_or_default())
-                    .map(|summary| summary.fen)
-            })
+            .filter_map(|study| self.summary(&study.pgn).map(|summary| summary.fen))
             .collect();
         self.previews.retain(|fen, _| listed.contains(fen));
         let rows = studies.len().div_ceil(count);
@@ -924,9 +916,8 @@ impl StudiesPage {
                 .skip(row * count)
                 .take(count)
                 .map(|study| {
-                    let id = study["id"].as_str().unwrap_or_default().to_string();
-                    let name = study["name"].as_str().unwrap_or_default().to_string();
-                    let summary = self.summary(study["pgn"].as_str().unwrap_or_default());
+                    let (id, name) = (study.id.clone(), study.name.clone());
+                    let summary = self.summary(&study.pgn);
                     let board = summary
                         .as_ref()
                         .map(|summary| self.preview(&summary.fen, cx).into());
@@ -941,11 +932,11 @@ impl StudiesPage {
                         .filter(|part| !part.is_empty())
                         .collect::<Vec<_>>()
                         .join(" · ");
-                    let chapters = study["chapters"].as_array().map_or(0, Vec::len);
-                    let cloud = &study["cloud"];
+                    let chapters = study.chapters.len();
+                    let cloud = study.cloud.as_ref();
                     let location = format!(
                         "{}{}",
-                        if cloud.is_null() {
+                        if cloud.is_none() {
                             "On this device"
                         } else {
                             "Offline · Lichess"
@@ -959,9 +950,9 @@ impl StudiesPage {
                             String::new()
                         }
                     );
-                    let upload_label = if cloud["structureChanged"] == json!(true) {
+                    let upload_label = if cloud.is_some_and(|cloud| cloud.structure_changed) {
                         "Upload as new cloud study"
-                    } else if cloud.is_null() {
+                    } else if cloud.is_none() {
                         "Upload to Lichess"
                     } else {
                         "Upload changes"
@@ -976,8 +967,7 @@ impl StudiesPage {
                         board,
                         location,
                         description: (!description.is_empty()).then_some(description),
-                        edited: study["updatedAt"]
-                            .as_f64()
+                        edited: Some(study.updated_at_ms())
                             .filter(|at| *at > 0.)
                             .map(|at| format!("Edited {}", time_ago(at, now))),
                         rows: 3,
@@ -1102,20 +1092,18 @@ impl StudiesPage {
         let words: Vec<&str> = query.split_whitespace().collect();
         let by_name = crate::prefs::get::<String>(cx, SORT, "recent".into()) == "name";
         // Summaries of studies no longer in the library (edited, removed) are let go.
-        let listed: std::collections::HashSet<&str> = items
-            .iter()
-            .filter_map(|study| study["pgn"].as_str())
-            .collect();
+        let listed: std::collections::HashSet<&str> =
+            items.iter().map(|study| study.pgn.as_str()).collect();
         self.summaries
             .borrow_mut()
             .retain(|pgn, _| listed.contains(pgn.as_str()));
-        let mut studies: Vec<Value> = items
+        let mut studies: Vec<Study> = items
             .iter()
             .filter(|study| {
-                let summary = self.summary(study["pgn"].as_str().unwrap_or_default());
+                let summary = self.summary(&study.pgn);
                 let text = format!(
                     "{} {} {}",
-                    study["name"].as_str().unwrap_or_default(),
+                    study.name,
                     summary
                         .as_ref()
                         .map_or("", |summary| summary.players.as_str()),
@@ -1129,19 +1117,9 @@ impl StudiesPage {
             .cloned()
             .collect();
         if by_name {
-            studies.sort_by(|a, b| {
-                natural_cmp(
-                    a["name"].as_str().unwrap_or_default(),
-                    b["name"].as_str().unwrap_or_default(),
-                )
-            });
+            studies.sort_by(|a, b| natural_cmp(&a.name, &b.name));
         } else {
-            studies.sort_by(|a, b| {
-                b["updatedAt"]
-                    .as_f64()
-                    .unwrap_or(0.)
-                    .total_cmp(&a["updatedAt"].as_f64().unwrap_or(0.))
-            });
+            studies.sort_by(|a, b| b.updated_at_ms().total_cmp(&a.updated_at_ms()));
         }
         let toolbar = h_flex()
             .flex_wrap()

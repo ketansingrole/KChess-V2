@@ -9,7 +9,10 @@
 use crate::game::tree::TreePgn as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{Fen, MissCounts, Position, RepertoireKey, RepertoireLine};
-use kchess_contracts::types::{Keyed, LookupOptions, PositionLookupKind, StudyCommand};
+use kchess_contracts::types::{
+    Keyed, LookupOptions, PositionLookupKind, RepertoireMisses, RepertoireSchedule, Study,
+    StudyChapter as Chapter, StudyCommand,
+};
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -24,7 +27,6 @@ use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_domain::training::openings::{self, ExplorerMove};
 use kchess_domain::training::repetition;
-use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use shakmaty::Color;
 
@@ -57,20 +59,6 @@ const LOOKUP_BUDGET: usize = 16;
 const REPLY: Duration = Duration::from_millis(450);
 const FIRST_REPLY: Duration = Duration::from_millis(400);
 const NEXT_LINE: Duration = Duration::from_millis(1400);
-
-#[derive(Clone, Deserialize)]
-struct Chapter {
-    id: String,
-    name: String,
-    pgn: String,
-}
-
-#[derive(Clone, Deserialize)]
-struct Study {
-    id: String,
-    name: String,
-    chapters: Vec<Chapter>,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -119,18 +107,25 @@ fn merge(into: &mut TreeNode, mut from: TreeNode) {
 }
 
 /// How often the moves at and below a node were missed: the trainer steers towards weak lines.
-fn weakness(start: &TreeNode, table: &Value) -> f64 {
+fn weakness(start: &TreeNode, table: Option<&Keyed<serde_json::Number>>) -> f64 {
     let mut total = 0.;
     let mut stack = vec![start];
     while let Some(next) = stack.pop() {
-        total += table[&next.fen].as_f64().unwrap_or(0.);
+        total += table
+            .and_then(|table| table.get(&next.fen))
+            .and_then(serde_json::Number::as_f64)
+            .unwrap_or(0.);
         stack.extend(next.children.iter());
     }
     total
 }
 
 /// One of the nodes, more often those with weak lines below them; `draw` is in [0, 1).
-fn pick_weak(nodes: &[&TreeNode], table: &Value, draw: f64) -> Option<usize> {
+fn pick_weak(
+    nodes: &[&TreeNode],
+    table: Option<&Keyed<serde_json::Number>>,
+    draw: f64,
+) -> Option<usize> {
     let weights: Vec<f64> = nodes
         .iter()
         .map(|node| 1. + 2. * weakness(node, table))
@@ -240,9 +235,9 @@ pub(crate) enum RepertoireAction {
 
 pub struct Repertoire {
     studies: Vec<Study>,
-    misses: Value,
+    misses: RepertoireMisses,
     /// Every repertoire's spaced-repetition schedule: key → line → card.
-    schedule: Value,
+    schedule: RepertoireSchedule,
     /// The line being drilled, when one was chosen (a due line): the opponent's moves follow it.
     target: Option<String>,
     /// Whether this line had a wrong move or a shown one: it is then answered wrong.
@@ -342,8 +337,8 @@ impl Repertoire {
         ];
         let mut drill = Repertoire {
             studies: Self::studies_of(cx),
-            misses: Value::Null,
-            schedule: Value::Null,
+            misses: Keyed::default(),
+            schedule: Keyed::default(),
             target: None,
             line_missed: false,
             reviewing: false,
@@ -404,8 +399,7 @@ impl Repertoire {
 
     /// The saved studies, as the library has them.
     fn studies_of(cx: &App) -> Vec<Study> {
-        serde_json::from_value(json!(cx.global::<StudyHandle>().0.read(cx).items()))
-            .unwrap_or_default()
+        cx.global::<StudyHandle>().0.read(cx).items().to_vec()
     }
 
     /* ── What is drilled ──────────────────────────────────────────────── */
@@ -462,7 +456,7 @@ impl Repertoire {
             .0
             .read(cx)
             .study(&Self::study_id(cx))
-            .map(|study| study["updatedAt"].clone());
+            .map(|study| study.updated_at.clone());
         json!([
             edited,
             Self::study_id(cx),
@@ -626,7 +620,7 @@ impl Repertoire {
     /// How this repertoire's lines stand in the schedule now.
     fn summary(&self, cx: &App) -> repetition::Summary {
         let lines = self.lines();
-        let table = &self.schedule[self.miss_key(cx)];
+        let table = self.schedule.get(&self.miss_key(cx));
         repetition::summary(
             lines.iter().map(|(_, _, id)| id.as_str()),
             table,
@@ -638,7 +632,7 @@ impl Repertoire {
     fn due_line(&self, cx: &App) -> Option<(usize, String)> {
         let lines = self.lines();
         let ids: Vec<&str> = lines.iter().map(|(_, _, id)| id.as_str()).collect();
-        let table = &self.schedule[self.miss_key(cx)];
+        let table = self.schedule.get(&self.miss_key(cx));
         let index = repetition::most_overdue(&ids, table, kchess_games::now_ms())?;
         let (root, path, _) = lines.into_iter().nth(index)?;
         Some((root, path))
@@ -672,10 +666,10 @@ impl Repertoire {
                 Some((root, String::new()))
             }
             None => {
-                let table = self.misses[self.miss_key(cx)].clone();
+                let table = self.misses.get(&self.miss_key(cx));
                 let roots: Vec<&TreeNode> = self.roots.iter().collect();
                 crate::game::drawn(random_unit())
-                    .and_then(|draw| pick_weak(&roots, &table, draw))
+                    .and_then(|draw| pick_weak(&roots, table, draw))
                     .map(|index| (index, String::new()))
             }
         };
@@ -700,7 +694,7 @@ impl Repertoire {
         let Some((root, path)) = self.at.clone() else {
             return;
         };
-        let table = self.misses[self.miss_key(cx)].clone();
+        let table = self.misses.get(&self.miss_key(cx)).cloned();
         let node = self.roots[root].node_at(&path);
         let children: Vec<&TreeNode> = node.children.iter().collect();
         // The line chosen for review, while the moves are on it; otherwise the weak lines.
@@ -712,7 +706,7 @@ impl Repertoire {
         let Some(next) = on_target
             .or_else(|| {
                 crate::game::drawn(random_unit())
-                    .and_then(|draw| pick_weak(&children, &table, draw))
+                    .and_then(|draw| pick_weak(&children, table.as_ref(), draw))
             })
             .map(|index| children[index])
         else {
@@ -904,7 +898,7 @@ impl Repertoire {
         }
         let (key, line, correct) = (self.miss_key(cx), line_id(tree, &path), !self.line_missed);
         // At once here, so the next line is chosen by it; the core's answer replaces it.
-        let mut schedule = self.schedule.as_object().cloned().unwrap_or_default();
+        let mut schedule = self.schedule.clone();
         if let Err(cause) =
             repetition::record(&mut schedule, &key, &line, correct, kchess_games::now_ms())
         {
@@ -915,7 +909,7 @@ impl Repertoire {
             );
             return;
         }
-        self.schedule = Value::Object(schedule);
+        self.schedule = schedule;
         let saved = cx.global::<AppCore>().request(calls::ReviewRepertoireLine {
             key: RepertoireKey(key),
             line: RepertoireLine(line),
@@ -939,14 +933,13 @@ impl Repertoire {
 
     fn record_miss(&mut self, fen: String, cx: &mut Context<Self>) {
         let key = self.miss_key(cx);
-        if !self.misses.is_object() {
-            self.misses = json!({});
-        }
-        let table = &mut self.misses[&key];
-        if !table.is_object() {
-            *table = json!({});
-        }
-        table[&fen] = json!(table[&fen].as_f64().unwrap_or(0.) + 1.);
+        let table = self.misses.entry(&key);
+        let count = table
+            .get(&fen)
+            .and_then(serde_json::Number::as_f64)
+            .unwrap_or(0.)
+            + 1.;
+        table.insert(fen.clone(), serde_json::Number::from(count as u64));
         let saved = cx.global::<AppCore>().request(calls::RecordRepertoireMiss {
             key: RepertoireKey(key),
             fen: Position(fen),
@@ -956,20 +949,27 @@ impl Repertoire {
 
     /// Whether this repertoire and side has misses to forget.
     fn has_misses(&self, cx: &App) -> bool {
-        self.misses[&self.miss_key(cx)]
-            .as_object()
+        self.misses
+            .get(&self.miss_key(cx))
             .is_some_and(|table| !table.is_empty())
     }
 
     /// Forget this repertoire's misses at once; Undo puts them back.
     fn clear_misses(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let key = self.miss_key(cx);
-        let forgotten = self
-            .misses
-            .as_object_mut()
-            .and_then(|misses| misses.remove(&key))
-            .filter(|table| table.as_object().is_some_and(|table| !table.is_empty()))
-            .and_then(|table| serde_json::from_value::<Keyed<f64>>(table).ok());
+        let at = self.misses.0.iter().position(|(table, _)| *table == key);
+        let forgotten = at
+            .map(|at| self.misses.0.remove(at).1)
+            .filter(|table| !table.is_empty())
+            .map(|table| {
+                Keyed(
+                    table
+                        .0
+                        .into_iter()
+                        .map(|(fen, count)| (fen, count.as_f64().unwrap_or(0.)))
+                        .collect(),
+                )
+            });
         let saved = cx
             .global::<AppCore>()
             .request(calls::ClearRepertoireMisses {
@@ -1004,7 +1004,8 @@ impl Repertoire {
 
     fn keep_misses(
         &mut self,
-        saved: impl std::future::Future<Output = Result<Value, kchess_contracts::CoreError>> + 'static,
+        saved: impl std::future::Future<Output = Result<RepertoireMisses, kchess_contracts::CoreError>>
+        + 'static,
         what: &'static str,
         cx: &mut Context<Self>,
     ) {
@@ -1483,11 +1484,10 @@ pub(crate) fn train_opening(
 #[cfg(test)]
 mod tests {
     use super::{
-        Chapter, TreeNode, due_in, leads_to, leaves, merge, pick_weak, same_castle, schedule_text,
-        study_roots, to_play, weakness,
+        Chapter, Keyed, TreeNode, due_in, leads_to, leaves, merge, pick_weak, same_castle,
+        schedule_text, study_roots, to_play, weakness,
     };
     use kchess_domain::training::repetition::Summary;
-    use serde_json::json;
     use shakmaty::Color;
 
     fn chapter(pgn: &str) -> Chapter {
@@ -1543,13 +1543,13 @@ mod tests {
         let e4 = tree.add_move("", "e2e4").unwrap();
         tree.add_move("", "d2d4").unwrap();
         let fen = tree.node_at(&e4).fen.clone();
-        let table = json!({ fen: 3 });
+        let table = Keyed(vec![(fen, serde_json::Number::from(3))]);
         let children: Vec<&TreeNode> = tree.children.iter().collect();
-        assert_eq!(weakness(children[0], &table), 3.);
+        assert_eq!(weakness(children[0], Some(&table)), 3.);
         // Weights 7 and 1: draws below 7/8 pick the weak line.
-        assert_eq!(pick_weak(&children, &table, 0.8), Some(0));
-        assert_eq!(pick_weak(&children, &table, 0.9), Some(1));
-        assert_eq!(pick_weak(&[], &table, 0.5), None);
+        assert_eq!(pick_weak(&children, Some(&table), 0.8), Some(0));
+        assert_eq!(pick_weak(&children, Some(&table), 0.9), Some(1));
+        assert_eq!(pick_weak(&[], Some(&table), 0.5), None);
         let mut other = TreeNode::new(None);
         other.add_move("", "c2c4").unwrap();
         merge(&mut tree, other);

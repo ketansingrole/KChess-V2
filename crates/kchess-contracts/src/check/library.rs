@@ -13,7 +13,7 @@ use kchess_domain::training::repetition;
 
 use super::*;
 use crate::types::{
-    ChapterEntry, ChapterInput, Keyed, RemoteStudy, SESSION_KINDS, SessionKind, StudyCommand,
+    ChapterInput, Keyed, RemoteStudy, SESSION_KINDS, SessionKind, StudyChapter, StudyCommand,
 };
 
 /* ── Single values ── */
@@ -241,7 +241,7 @@ struct SentChapter {
 #[serde(expecting = "an object")]
 struct SentRestoreChapter {
     id: String,
-    chapter: ChapterEntry,
+    chapter: StudyChapter,
     index: u32,
 }
 

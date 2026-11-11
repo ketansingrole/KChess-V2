@@ -3,8 +3,8 @@
 //! document in `kchess.db`. The decoders and semantic validation are `kchess_domain`'s.
 
 use kchess_contracts::types::{
-    Drill, JoinedTournament, Keyed, MistakeGame, MistakesAdded, PlayedGame, SessionKind,
-    StudyCommand, StudyCommandResult, TournamentSystem,
+    Drill, JoinedTournament, Keyed, MistakeGame, MistakesAdded, PlayedGame, RepertoireMisses,
+    RepertoireSchedule, SessionKind, StudyCommand, StudyCommandResult, TournamentSystem,
 };
 use kchess_domain::color::Color;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -77,19 +77,11 @@ pub fn save_session(db: &Connection, kind: SessionKind, value: Value) -> Result<
 }
 
 /// A JSON number: whole numbers without a fraction.
-pub fn num(n: f64) -> Value {
-    if n.fract() == 0.0 && n.abs() < 9.0e15 {
-        json!(n as i64)
-    } else {
-        serde_json::Number::from_f64(n).map_or(Value::Null, Value::Number)
-    }
-}
-
-/// `num(n)` as a number: whole numbers without a fraction.
 fn whole(n: f64) -> serde_json::Number {
-    match num(n) {
-        Value::Number(n) => n,
-        _ => 0.into(),
+    if n.fract() == 0.0 && n.abs() < 9.0e15 {
+        (n as i64).into()
+    } else {
+        serde_json::Number::from_f64(n).unwrap_or_else(|| 0.into())
     }
 }
 
@@ -116,13 +108,6 @@ pub fn string_list(value: Option<&Value>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// A JSON object, or an error naming what was expected.
-pub fn object<'a>(value: &'a Value, name: &str) -> Result<&'a Map<String, Value>> {
-    value
-        .as_object()
-        .ok_or_else(|| CoreError::new(format!("{name} must be an object")))
 }
 
 /// A session of `kind` as stored, with its kind's version.
@@ -511,9 +496,22 @@ pub fn forget_tournaments_of(host: &dyn Host, db: &Connection, accounts: &[Strin
 
 /* ── Repertoire training ── */
 
-fn write_misses(db: &Connection, misses: &Value) -> Result<()> {
+fn write_misses(db: &Connection, misses: &RepertoireMisses) -> Result<()> {
     assert_replaceable(db, MISSES, None, Value::is_object)?;
-    write_document(db, MISSES, misses, "Too many repertoire notes are saved.").map(|_| ())
+    let document =
+        serde_json::to_value(misses).map_err(|cause| CoreError::new(cause.to_string()))?;
+    write_document(
+        db,
+        MISSES,
+        &document,
+        "Too many repertoire notes are saved.",
+    )
+    .map(|_| ())
+}
+
+/// A count added to the one a position has: `now` is none for a position never missed.
+fn add_count(now: Option<&serde_json::Number>, count: f64) -> serde_json::Number {
+    whole(now.and_then(serde_json::Number::as_f64).unwrap_or(0.0) + count)
 }
 
 pub fn record_repertoire_miss(
@@ -521,24 +519,21 @@ pub fn record_repertoire_miss(
     db: &Connection,
     key: &str,
     fen: &str,
-) -> Result<Value> {
-    let mut misses = object(&read_misses(host, db)?, "repertoire misses")?.clone();
-    let table = misses
-        .entry(key.to_string())
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or_else(|| CoreError::new("repertoire table must be an object"))?;
-    let count = table.get(fen).and_then(Value::as_f64).unwrap_or(0.0) + 1.0;
-    table.insert(fen.to_string(), num(count));
-    let misses = Value::Object(misses);
+) -> Result<RepertoireMisses> {
+    let mut misses = read_misses(host, db)?;
+    let table = misses.entry(key);
+    table.insert(fen.to_string(), add_count(table.get(fen), 1.0));
     write_misses(db, &misses)?;
     Ok(misses)
 }
 
-pub fn clear_repertoire_misses(host: &dyn Host, db: &Connection, key: &str) -> Result<Value> {
-    let mut misses = object(&read_misses(host, db)?, "repertoire misses")?.clone();
-    misses.shift_remove(key);
-    let misses = Value::Object(misses);
+pub fn clear_repertoire_misses(
+    host: &dyn Host,
+    db: &Connection,
+    key: &str,
+) -> Result<RepertoireMisses> {
+    let mut misses = read_misses(host, db)?;
+    misses.0.retain(|(table, _)| table != key);
     write_misses(db, &misses)?;
     Ok(misses)
 }
@@ -549,18 +544,12 @@ pub fn restore_repertoire_misses(
     db: &Connection,
     key: &str,
     restored: &Keyed<f64>,
-) -> Result<Value> {
-    let mut misses = object(&read_misses(host, db)?, "repertoire misses")?.clone();
-    let table = misses
-        .entry(key.to_string())
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or_else(|| CoreError::new("repertoire table must be an object"))?;
+) -> Result<RepertoireMisses> {
+    let mut misses = read_misses(host, db)?;
+    let table = misses.entry(key);
     for (fen, count) in restored.iter() {
-        let now = table.get(fen).and_then(Value::as_f64).unwrap_or(0.0);
-        table.insert(fen.to_string(), num(now + count));
+        table.insert(fen.to_string(), add_count(table.get(fen), *count));
     }
-    let misses = Value::Object(misses);
     write_misses(db, &misses)?;
     Ok(misses)
 }
@@ -573,7 +562,7 @@ pub fn review_repertoire_line(
     line: &str,
     correct: bool,
     now: f64,
-) -> Result<Value> {
+) -> Result<RepertoireSchedule> {
     let mut lines = read_schedule_lines(host, db)?;
     repetition::record(&mut lines, key, line, correct, now).map_err(CoreError::new)?;
     // An unversioned schedule (a development format) is replaced; a newer one is kept.
@@ -581,10 +570,10 @@ pub fn review_repertoire_line(
     write_document(
         db,
         SCHEDULE,
-        &repetition::encode_schedule(lines.clone()),
+        &repetition::encode_schedule(&lines),
         "Too many repertoire lines are scheduled.",
     )?;
-    Ok(Value::Object(lines))
+    Ok(lines)
 }
 
 #[cfg(test)]
@@ -673,6 +662,30 @@ mod tests {
         super::save_session(db, kind(name), value)
     }
 
+    fn record_repertoire_miss(
+        host: &dyn Host,
+        db: &Connection,
+        key: &str,
+        fen: &str,
+    ) -> Result<Value> {
+        super::record_repertoire_miss(host, db, key, fen).map(json_of)
+    }
+
+    fn clear_repertoire_misses(host: &dyn Host, db: &Connection, key: &str) -> Result<Value> {
+        super::clear_repertoire_misses(host, db, key).map(json_of)
+    }
+
+    fn review_repertoire_line(
+        host: &dyn Host,
+        db: &Connection,
+        key: &str,
+        line: &str,
+        correct: bool,
+        now: f64,
+    ) -> Result<Value> {
+        super::review_repertoire_line(host, db, key, line, correct, now).map(json_of)
+    }
+
     fn restore_repertoire_misses(
         host: &dyn Host,
         db: &Connection,
@@ -680,7 +693,7 @@ mod tests {
         misses: &Value,
     ) -> Result<Value> {
         let misses = MissCounts::validate(J::from(misses)).map_err(CoreError::new)?;
-        super::restore_repertoire_misses(host, db, key, &misses.0)
+        super::restore_repertoire_misses(host, db, key, &misses.0).map(json_of)
     }
 
     /// An arena that has ended is dropped when the next one is remembered, and
@@ -808,12 +821,7 @@ mod tests {
         assert_eq!(read_document_text(&db, STUDIES).expect("read"), Some(body));
         db.execute_batch("DROP TRIGGER refuse_study").expect("drop");
         let studies = read_studies(&db).expect("migrate");
-        assert!(
-            studies[0]["chapters"][0]["pgn"]
-                .as_str()
-                .expect("pgn")
-                .contains("c5 $1")
-        );
+        assert!(studies[0].chapters[0].pgn.contains("c5 $1"));
         assert_eq!(read_studies(&db).expect("repeat"), studies);
     }
 
@@ -892,8 +900,8 @@ mod tests {
         };
         save("1. e4 e5 *", "1. e4 *").expect("autosave");
         let studies = read_studies(&db).unwrap();
-        assert_eq!(studies[0]["name"], "Remote rename");
-        assert_eq!(studies[0]["chapters"][0]["pgn"], "1. e4 e5 *");
+        assert_eq!(studies[0].name, "Remote rename");
+        assert_eq!(studies[0].chapters[0].pgn, "1. e4 e5 *");
         call(json!({"op":"remove", "id":id}), 4.0, None).unwrap();
         let removed = save("1. e4 e5 2. Nf3 *", "1. e4 e5 *").expect_err("removed");
         assert_eq!(removed.message, super::super::studies::STALE_STUDY);
@@ -961,23 +969,6 @@ mod tests {
             .is_err()
         );
         assert_eq!(read_studies(&db).expect("snapshot"), before);
-    }
-
-    #[test]
-    fn spreads_keep_key_order_and_add_new_keys_last() {
-        let base = json!({ "id": "s", "name": "old", "pgn": "p" });
-        let merged = crate::store::studies::spread(
-            base.as_object().expect("object"),
-            vec![
-                ("pgn", json!("q")),
-                ("updatedAt", json!(1)),
-                ("name", json!("new")),
-            ],
-        );
-        assert_eq!(
-            js_json(&Value::Object(merged)),
-            r#"{"id":"s","name":"new","pgn":"q","updatedAt":1}"#
-        );
     }
 
     const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";

@@ -4,7 +4,7 @@
 
 use kchess_contracts::calls;
 use kchess_contracts::check::{ChapterName, LichessId, PgnText, StudyId, Username};
-use kchess_contracts::types::{LichessStudy, RemoteStudy, Reply, StudyCommand};
+use kchess_contracts::types::{LichessStudy, RemoteStudy, Reply, Study, StudyCommand};
 use std::collections::HashMap;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -13,7 +13,6 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
 
 use super::{CARD_GAP, CARD_MIN, StudiesPage, summary};
 use crate::assets::icon;
@@ -183,7 +182,7 @@ impl StudiesPage {
     }
 
     /// The offline copy of a cloud study on this account.
-    fn offline_copy(&self, id: &str, cx: &App) -> Option<Value> {
+    fn offline_copy(&self, id: &str, cx: &App) -> Option<Study> {
         let account = self.lichess.account.to_lowercase();
         cx.global::<StudyHandle>()
             .0
@@ -191,10 +190,10 @@ impl StudiesPage {
             .items()
             .iter()
             .find(|study| {
-                study["cloud"]["id"] == json!(id)
-                    && study["cloud"]["account"]
-                        .as_str()
-                        .is_some_and(|owner| owner.to_lowercase() == account)
+                study
+                    .cloud
+                    .as_ref()
+                    .is_some_and(|cloud| cloud.id == id && cloud.account.to_lowercase() == account)
             })
             .cloned()
     }
@@ -277,8 +276,7 @@ impl StudiesPage {
     fn open_remote(&mut self, item: LichessStudy, window: &mut Window, cx: &mut Context<Self>) {
         let id = item.id.clone();
         if let Some(saved) = self.offline_copy(&id, cx) {
-            let saved = saved["id"].as_str().unwrap_or_default().to_string();
-            Self::open(saved, window, cx);
+            Self::open(saved.id, window, cx);
             return;
         }
         self.lichess.busy = true;
@@ -381,7 +379,7 @@ impl StudiesPage {
                 .0
                 .read(cx)
                 .study(board.study_id())
-                .and_then(|study| study["name"].as_str().map(str::to_string));
+                .map(|study| study.name.clone());
             let name = study
                 .or_else(|| Some(board.header("Event")).filter(|event| !event.is_empty()))
                 .unwrap_or_else(|| "KChess analysis".into());
@@ -492,13 +490,11 @@ impl StudiesPage {
                 let copy = self.offline_copy(&id, cx);
                 let board = copy
                     .as_ref()
-                    .and_then(|copy| {
-                        summary(copy["pgn"].as_str().unwrap_or_default()).map(|summary| summary.fen)
-                    })
+                    .and_then(|copy| summary(&copy.pgn).map(|summary| summary.fen))
                     .map(|fen| self.preview(&fen, cx).into());
                 let chapters = copy
                     .as_ref()
-                    .and_then(|copy| copy["chapters"].as_array().map(Vec::len))
+                    .map(|copy| copy.chapters.len())
                     .filter(|count| *count > 0);
                 let location = format!(
                     "{}{}",

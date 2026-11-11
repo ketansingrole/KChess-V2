@@ -6,8 +6,8 @@ use kchess_contracts::check::{
 };
 use kchess_contracts::core_api::LibraryApi;
 use kchess_contracts::types::{
-    Drill, JoinedTournament, Library, MistakeGame, MistakesAdded, SessionKind, StudyCommand,
-    StudyCommandResult,
+    Drill, JoinedTournament, Library, MistakeGame, MistakesAdded, RepertoireMisses,
+    RepertoireSchedule, SessionKind, StudyCommand, StudyCommandResult,
 };
 use kchess_domain::misc::documents;
 use kchess_domain::misc::value::J;
@@ -28,15 +28,10 @@ impl LibraryApi for Core {
 
     async fn study_command(
         &self,
-        mut command: StudyCommand,
+        command: StudyCommand,
         incremental: Option<bool>,
         based_on: Option<PgnText>,
     ) -> Result<StudyCommandResult> {
-        // A restored study is read as the rules read a stored one.
-        if let StudyCommand::Restore { study } = &mut command {
-            *study = kchess_domain::library::decode_study(study)
-                .ok_or_else(|| CoreError::new("That study cannot be restored."))?;
-        }
         let (incremental, now) = (incremental == Some(true), now_ms() as f64);
         self.database
             .write_async(move |ctx| {
@@ -114,7 +109,11 @@ impl LibraryApi for Core {
             .await
     }
 
-    async fn record_repertoire_miss(&self, key: RepertoireKey, fen: Position) -> Result<Value> {
+    async fn record_repertoire_miss(
+        &self,
+        key: RepertoireKey,
+        fen: Position,
+    ) -> Result<RepertoireMisses> {
         self.database
             .write_async(move |ctx| {
                 library::record_repertoire_miss(ctx.host, ctx.db, &key.0, &fen.0)
@@ -122,7 +121,7 @@ impl LibraryApi for Core {
             .await
     }
 
-    async fn clear_repertoire_misses(&self, key: RepertoireKey) -> Result<Value> {
+    async fn clear_repertoire_misses(&self, key: RepertoireKey) -> Result<RepertoireMisses> {
         self.database
             .write_async(move |ctx| library::clear_repertoire_misses(ctx.host, ctx.db, &key.0))
             .await
@@ -132,7 +131,7 @@ impl LibraryApi for Core {
         &self,
         key: RepertoireKey,
         misses: MissCounts,
-    ) -> Result<Value> {
+    ) -> Result<RepertoireMisses> {
         self.database
             .write_async(move |ctx| {
                 library::restore_repertoire_misses(ctx.host, ctx.db, &key.0, &misses.0)
@@ -145,7 +144,7 @@ impl LibraryApi for Core {
         key: RepertoireKey,
         line: RepertoireLine,
         correct: bool,
-    ) -> Result<Value> {
+    ) -> Result<RepertoireSchedule> {
         let now = now_ms() as f64;
         self.database
             .write_async(move |ctx| {

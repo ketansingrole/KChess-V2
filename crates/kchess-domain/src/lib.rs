@@ -8,6 +8,7 @@ pub mod color;
 pub mod embedded;
 pub mod games;
 pub mod js;
+pub mod keyed;
 pub mod library;
 pub mod links;
 pub mod misc;

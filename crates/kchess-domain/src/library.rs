@@ -2,7 +2,7 @@
 //! board. Each returns the document normalized.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use crate::js::{self, finite, integer, string, text};
 use crate::replay;
@@ -25,23 +25,61 @@ fn object(v: Option<&Value>) -> Option<&Map<String, Value>> {
     }
 }
 
-fn number(n: f64) -> Value {
-    serde_json::Number::from_f64(n).map_or(Value::Null, Value::Number)
-}
-
 /* ── Studies ── */
 
-fn decode_chapters(raw: Option<&Value>, fallback: Value) -> Option<Vec<Value>> {
-    let owned;
+/// A study's chapter: its id, name and PGN.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(expecting = "an object")]
+pub struct StudyChapter {
+    pub id: String,
+    pub name: String,
+    pub pgn: String,
+}
+
+/// The Lichess study a local one is a copy of, and the PGN as it was downloaded.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StudyCloud {
+    pub account: String,
+    pub id: String,
+    pub downloaded_pgn: String,
+    /// Chapters were added, removed or moved since the download.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub structure_changed: bool,
+}
+
+/// A study as the library keeps it. Its `pgn` is its first chapter's.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Study {
+    pub id: String,
+    pub name: String,
+    pub pgn: String,
+    pub chapters: Vec<StudyChapter>,
+    /// In milliseconds since the epoch, in the form it was written: whole when a command wrote
+    /// it, fractional when read back from the profile.
+    pub updated_at: serde_json::Number,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<StudyCloud>,
+}
+
+impl Study {
+    pub fn chapter(&self, id: &str) -> Option<&StudyChapter> {
+        self.chapters.iter().find(|chapter| chapter.id == id)
+    }
+
+    pub fn updated_at_ms(&self) -> f64 {
+        self.updated_at.as_f64().unwrap_or_default()
+    }
+}
+
+fn decode_chapters(raw: Option<&Value>, fallback: StudyChapter) -> Option<Vec<StudyChapter>> {
     let chapters = match raw {
         None | Some(Value::Null) => {
-            owned = Value::Array(vec![fallback]);
-            &owned
+            return tree::valid_pgn(&fallback.pgn).then(|| vec![fallback]);
         }
-        Some(value) => value,
-    };
-    let Value::Array(chapters) = chapters else {
-        return None;
+        Some(Value::Array(chapters)) => chapters,
+        Some(_) => return None,
     };
     if chapters.is_empty() || chapters.len() > MAX_CHAPTERS {
         return None;
@@ -55,7 +93,11 @@ fn decode_chapters(raw: Option<&Value>, fallback: Value) -> Option<Vec<Value>> {
                 string(c.get("name"))?,
                 string(c.get("pgn"))?,
             );
-            tree::valid_pgn(pgn).then(|| json!({ "id": id, "name": name, "pgn": pgn }))
+            tree::valid_pgn(pgn).then(|| StudyChapter {
+                id: id.into(),
+                name: name.into(),
+                pgn: pgn.into(),
+            })
         })
         .collect()
 }
@@ -64,7 +106,9 @@ fn cloud_id(s: &str) -> bool {
     s.len() == 8 && s.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
-pub fn decode_study(raw: &Value) -> Option<Value> {
+/// A stored or sent study, checked: every chapter's PGN valid. A study from before chapters is
+/// its one chapter, and a broken cloud link is dropped.
+pub fn decode_study(raw: &Value) -> Option<Study> {
     let item = object(Some(raw))?;
     let id = string(item.get("id"))?;
     let name = string(item.get("name"))?;
@@ -72,37 +116,37 @@ pub fn decode_study(raw: &Value) -> Option<Value> {
     let updated_at = finite(item.get("updatedAt"))?;
     let chapters = decode_chapters(
         item.get("chapters"),
-        json!({ "id": id, "name": name, "pgn": pgn }),
+        StudyChapter {
+            id: id.into(),
+            name: name.into(),
+            pgn: pgn.into(),
+        },
     )?;
-    let mut study = Map::new();
-    study.insert("id".into(), id.into());
-    study.insert("name".into(), name.into());
-    study.insert("pgn".into(), chapters[0]["pgn"].clone());
-    study.insert("chapters".into(), Value::Array(chapters));
-    study.insert("updatedAt".into(), number(updated_at));
-    if !js::falsy(item.get("cloud"))
-        && let Some(cloud) = object(item.get("cloud"))
-        && let (Some(account), Some(cid), Some(downloaded)) = (
-            string(cloud.get("account")),
-            string(cloud.get("id")),
-            string(cloud.get("downloadedPgn")),
-        )
-        && cloud_id(cid)
-    {
-        let mut value = Map::new();
-        value.insert("account".into(), account.into());
-        value.insert("id".into(), cid.into());
-        value.insert("downloadedPgn".into(), downloaded.into());
-        if cloud.get("structureChanged") == Some(&Value::Bool(true)) {
-            value.insert("structureChanged".into(), true.into());
-        }
-        study.insert("cloud".into(), Value::Object(value));
-    }
-    Some(Value::Object(study))
+    let cloud = object(item.get("cloud")).and_then(|cloud| {
+        let (account, cid, downloaded) = (
+            string(cloud.get("account"))?,
+            string(cloud.get("id"))?,
+            string(cloud.get("downloadedPgn"))?,
+        );
+        cloud_id(cid).then(|| StudyCloud {
+            account: account.into(),
+            id: cid.into(),
+            downloaded_pgn: downloaded.into(),
+            structure_changed: cloud.get("structureChanged") == Some(&Value::Bool(true)),
+        })
+    });
+    Some(Study {
+        id: id.into(),
+        name: name.into(),
+        pgn: chapters[0].pgn.clone(),
+        chapters,
+        updated_at: float(updated_at),
+        cloud,
+    })
 }
 
 /// Invalid studies are left out rather than failing the whole library.
-pub fn decode_studies(raw: &Value) -> Option<Vec<Value>> {
+pub fn decode_studies(raw: &Value) -> Option<Vec<Study>> {
     let doc = object(Some(raw))?;
     let version = js::to_number(doc.get("version"));
     if !doc.contains_key("version")
@@ -354,6 +398,7 @@ pub fn decode_mistakes(raw: &Value) -> Option<Vec<Drill>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -411,8 +456,23 @@ mod tests {
         ]});
         let studies = decode_studies(&doc).unwrap();
         assert_eq!(studies.len(), 1);
-        assert_eq!(studies[0]["cloud"]["structureChanged"], json!(true));
-        assert_eq!(studies[0]["chapters"][0]["id"], json!("s"));
+        assert!(studies[0].cloud.as_ref().unwrap().structure_changed);
+        assert_eq!(studies[0].chapters[0].id, "s");
+    }
+
+    /// A study from before chapters is its one chapter, read back in the library's key order with
+    /// its time fractional and a link without `structureChanged` written without it; a broken
+    /// link is dropped and the study kept.
+    #[test]
+    fn a_stored_study_reads_back_as_the_library_writes_it() {
+        let stored = json!({ "updatedAt": 7, "pgn": "1. e4 *", "name": "S", "id": "s",
+            "cloud": { "account": "a", "id": "abcdEFGH", "downloadedPgn": "1. e4 *", "structureChanged": false } });
+        assert_eq!(
+            serde_json::to_string(&decode_study(&stored).unwrap()).unwrap(),
+            r#"{"id":"s","name":"S","pgn":"1. e4 *","chapters":[{"id":"s","name":"S","pgn":"1. e4 *"}],"updatedAt":7.0,"cloud":{"account":"a","id":"abcdEFGH","downloadedPgn":"1. e4 *"}}"#
+        );
+        let broken = json!({ "id": "s", "name": "S", "pgn": "*", "updatedAt": 1, "cloud": { "id": "short" } });
+        assert_eq!(decode_study(&broken).unwrap().cloud, None);
     }
 
     #[test]
