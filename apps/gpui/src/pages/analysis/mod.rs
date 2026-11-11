@@ -13,6 +13,7 @@ mod review;
 mod study;
 mod tree_view;
 
+use crate::game::surface::TakesKeys as _;
 use crate::game::tree::TreePgn as _;
 use engine::{prefs_lines, stop_analysis};
 use kchess_contracts::calls;
@@ -56,10 +57,12 @@ use crate::explorer::{ExplorerEvent, PositionExplorer};
 use crate::export::Exporter;
 use crate::game::played::PlayedGame;
 use crate::game::session::{Resumes, SAVE_DELAY, SessionSaver, Sessions};
+use crate::game::surface::Steps;
 use crate::game::tree::{
     TreeNode, analysis_context, child_path, comment_text, format_eval, move_glyph, move_number,
     moves_of, path_of, pv_san,
 };
+use crate::game::view::Way;
 use crate::game::{STANDARD_FEN, view};
 use crate::online::OnlineHandle;
 use crate::pages::study_bar::{STUDY_BAR, StudyBar};
@@ -269,6 +272,27 @@ pub struct AnalysisPage {
 impl Focusable for AnalysisPage {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
+    }
+}
+
+/// The mouse wheel over the board steps along the line shown, as the arrows do; the moves are a
+/// tree, so the page steps by `step_by` alone.
+impl Steps for AnalysisPage {
+    fn steps(&self, _: &App) -> Option<(usize, usize)> {
+        None
+    }
+
+    fn step_to(&mut self, _: usize, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn wheel(&mut self) -> &mut crate::game::view::Wheel {
+        &mut self.wheel
+    }
+
+    fn step_by(&mut self, way: Way, _: &mut Window, cx: &mut Context<Self>) {
+        match way {
+            Way::On => self.forward(cx),
+            Way::Back => self.back(cx),
+        }
     }
 }
 
@@ -1195,19 +1219,6 @@ impl AnalysisPage {
         self.engine_changed(cx);
     }
 
-    /// Lichess steps through moves with the mouse wheel over the board.
-    fn scroll(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
-        match self
-            .wheel
-            .turn(event.delta.pixel_delta(window.line_height()))
-        {
-            Some("right") => self.forward(cx),
-            Some(_) => self.back(cx),
-            None => return,
-        }
-        cx.stop_propagation();
-    }
-
     /// The game an Export saves: the document with its variations and comments, its main line
     /// for the GIF, and the position shown (in a variation too) for the PNG.
     fn game_export(&self) -> PlayedGame {
@@ -1769,11 +1780,7 @@ impl AnalysisPage {
             // A short window scrolls the panel rather than let the move list cover the controls.
             .id("analysis-panel")
             .overflow_y_scroll()
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
+            .takes_keys(&self.focus)
             .h(self.layout.fixed(self.panel_height(board_size)))
             .flex_1()
             .min_w(PANEL_MIN)
@@ -1869,10 +1876,8 @@ impl Render for AnalysisPage {
                     })
                     .when(!show_bar, |row| row.pl(EVAL_BAR))
                     .child(
-                        div()
-                            .id("analysis-board")
+                        crate::game::surface::wheel(div().id("analysis-board"), cx)
                             .w(board_size)
-                            .on_scroll(cx.listener(Self::scroll))
                             // The board takes the keys back from the move box, as a click
                             // outside a text field does in the browser.
                             .on_mouse_down(

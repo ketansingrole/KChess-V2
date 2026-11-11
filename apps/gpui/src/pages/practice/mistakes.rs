@@ -92,6 +92,7 @@ fn judgment_counts(items: &[&Value]) -> Vec<(&'static str, String)> {
 /// The mistakes trainer's actions, as its buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum MistakeAction {
+    Flip,
     Hint,
     Solution,
     /// The next due position, from a drill.
@@ -140,19 +141,10 @@ impl Mistakes {
                     PuzzleBoardEvent::Move { .. } => {}
                 },
             )];
-        let clock = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(CLOCK).await;
-                if this
-                    .update(cx, |this, cx| {
-                        this.now = now();
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
+        let clock = crate::timer::every(CLOCK, cx, |this, cx| {
+            this.now = now();
+            cx.notify();
+            true
         });
         let mut trainer = Mistakes {
             items: Vec::new(),
@@ -251,6 +243,7 @@ impl Mistakes {
             if !self.done {
                 actions.extend([MistakeAction::Hint, MistakeAction::Solution]);
             }
+            actions.push(MistakeAction::Flip);
             if due {
                 actions.push(MistakeAction::Next);
             }
@@ -269,6 +262,7 @@ impl Mistakes {
             return;
         }
         match action {
+            MistakeAction::Flip => self.puzzle.update(cx, |board, cx| board.flip(cx)),
             MistakeAction::Hint => self.puzzle.update(cx, |board, cx| board.hint(cx)),
             MistakeAction::Solution => self.puzzle.update(cx, |board, cx| board.show_solution(cx)),
             MistakeAction::Next | MistakeAction::Due => self.next(false, cx),
@@ -331,8 +325,8 @@ impl Mistakes {
         .detach();
     }
 
-    /// A key for the drill on the board: F turns it, once it is over Return or Space goes on to the
-    /// next due position (as on Puzzles), and the arrows, Home and End step through its moves.
+    /// A key for the drill on the board: once it is over Return or Space goes on to the next due
+    /// position (as on Puzzles), and the arrows, Home and End step through its moves.
     /// Whether the key was taken.
     pub fn key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
         if self.current.is_none() {
@@ -343,10 +337,6 @@ impl Mistakes {
             && self.actions().contains(&MistakeAction::Next)
         {
             self.next(false, cx);
-            return true;
-        }
-        if key == "f" {
-            self.puzzle.update(cx, |board, cx| board.flip(cx));
             return true;
         }
         self.puzzle.update(cx, |board, cx| board.step(key, cx))

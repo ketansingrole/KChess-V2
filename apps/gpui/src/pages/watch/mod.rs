@@ -14,10 +14,10 @@ use shakmaty::Color;
 
 use crate::assets::icon;
 use crate::core::{AppCore, ClientEvent, CoreEvent};
+use crate::game::surface::{Faces, Steps};
 use crate::online::OnlineHandle;
 use crate::pages::{
-    ActionInfo, ActionRole, NavGroup, Page, PageAction, PageCommand, PageInfo, PageTab, PageView,
-    TabInfo,
+    ActionInfo, NavGroup, Page, PageAction, PageCommand, PageInfo, PageTab, PageView, TabInfo,
 };
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::{Palette, radii};
@@ -33,7 +33,8 @@ use live::Live;
 
 pub(crate) const TAB_KEY: &str = "kchess:watch-tab";
 pub(crate) const CHANNEL_KEY: &str = "kchess:watch-channel";
-/// Clocks are redrawn this often while something is being watched.
+/// Clocks are looked at this often while something is being watched: slower than
+/// `timer::TICK`, as a broadcast's tick redraws every board of the round.
 const TICK: Duration = Duration::from_millis(500);
 /// The tabs' row and the gap under it, above the board.
 const HEADER: Pixels = px(48.);
@@ -175,8 +176,9 @@ pub struct WatchPage {
     live_list: Entity<crate::part::Part<WatchPage>>,
     /// White's and Black's clock faces (`render_live_face`): a tick redraws only these.
     live_faces: [Entity<crate::part::Part<WatchPage>>; 2],
-    /// What the clock faces showed at the last tick.
-    live_faces_shown: [Option<(String, bool)>; 2],
+    /// What the clock faces showed at the last tick, and whether each had a clock.
+    live_faces_shown: Faces<[Option<(String, bool)>; 2]>,
+    live_clocks: Faces<[bool; 2]>,
     layout: PlayLayout,
     shown: bool,
     focus: FocusHandle,
@@ -263,7 +265,8 @@ impl WatchPage {
                 crate::part::Part::new(|this, _, cx| this.render_live_face(Color::White, cx), cx),
                 crate::part::Part::new(|this, _, cx| this.render_live_face(Color::Black, cx), cx),
             ],
-            live_faces_shown: [None, None],
+            live_faces_shown: Faces::default(),
+            live_clocks: Faces::default(),
             layout: PlayLayout::default(),
             shown: false,
             focus: cx.focus_handle(),
@@ -297,22 +300,13 @@ impl WatchPage {
     }
 
     fn start_ticking(&mut self, cx: &mut Context<Self>) {
-        self._tick = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(TICK).await;
-                let live = this
-                    .update(cx, |this, cx| {
-                        if this.broadcasts.ticking() {
-                            cx.notify();
-                        } else if this.live.frame.is_some() {
-                            this.redraw_faces_if_ticked(cx);
-                        }
-                    })
-                    .is_ok();
-                if !live {
-                    return;
-                }
+        self._tick = Some(crate::timer::every(TICK, cx, |this, cx| {
+            if this.broadcasts.ticking() {
+                cx.notify();
+            } else if this.live.frame.is_some() {
+                this.redraw_faces_if_ticked(cx);
             }
+            true
         }));
     }
 
@@ -320,17 +314,16 @@ impl WatchPage {
     /// the page when a clock comes or goes.
     fn redraw_faces_if_ticked(&mut self, cx: &mut Context<Self>) {
         let connected = self.phase.as_deref() == Some("connected");
-        for (ix, color) in [Color::White, Color::Black].into_iter().enumerate() {
-            let shown = self.live.clock(color, connected);
-            if shown == self.live_faces_shown[ix] {
-                continue;
-            }
-            let came_or_went = shown.is_some() != self.live_faces_shown[ix].is_some();
-            self.live_faces_shown[ix] = shown;
-            if came_or_went {
-                cx.notify();
-            } else {
-                self.live_faces[ix].update(cx, |_, cx| cx.notify());
+        let shown = [Color::White, Color::Black].map(|color| self.live.clock(color, connected));
+        let clocks = shown.each_ref().map(Option::is_some);
+        let changed = self.live_faces_shown.each_changed(shown);
+        if self.live_clocks.changed(clocks) {
+            cx.notify();
+            return;
+        }
+        for (face, changed) in self.live_faces.iter().zip(changed) {
+            if changed {
+                face.update(cx, |_, cx| cx.notify());
             }
         }
     }
@@ -975,15 +968,8 @@ impl Render for WatchPage {
             Tab::Tv | Tab::Friends => self.live_layout(window, cx, &palette),
             Tab::Broadcasts => self.broadcasts_body(window, cx, &palette),
         };
-        div()
-            .id("watch-page")
-            .track_focus(&self.focus)
+        crate::game::surface::keys(div().id("watch-page"), &self.focus, cx)
             .on_key_down(cx.listener(Self::key))
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
             .size_full()
             .relative()
             .overflow_y_scroll()
@@ -1042,7 +1028,8 @@ impl WatchPage {
         self.layout.probe(cx)
     }
 
-    /// ←/→ and ↑/↓ step through the shown game; F turns the board.
+    /// Escape steps back out of a broadcast, and L turns its engine on or off; the arrows step
+    /// through the shown game (`surface::keys`).
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if event.keystroke.modifiers.modified() {
             return;
@@ -1064,18 +1051,7 @@ impl WatchPage {
             cx.notify();
             return;
         }
-        let handled = match self.tab {
-            Tab::Broadcasts if key == "l" => self.toggle_broadcast_engine(cx),
-            Tab::Broadcasts => {
-                let handled = self.broadcasts.key(key, cx);
-                if handled {
-                    self.engine_changed(cx);
-                }
-                handled
-            }
-            _ => self.live.key(key, cx),
-        };
-        if handled {
+        if self.tab == Tab::Broadcasts && key == "l" && self.toggle_broadcast_engine(cx) {
             cx.stop_propagation();
             cx.notify();
         }
@@ -1127,19 +1103,14 @@ impl PageAction for Action {
         match self {
             Action::Live(action) => {
                 let (id, label, glyph, keywords) = match action {
-                    live::Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+                    live::Action::Flip => return ActionInfo::flip("watch:flip"),
                     live::Action::AllBoards => {
                         ("all-boards", "All boards", "layout-grid", "round broadcast")
                     }
                     live::Action::Analyse => ("analyse", "Analyse", "microscope", "analysis"),
                     live::Action::Stop => ("stop", "Stop watching", "square", "close end"),
                 };
-                let info = ActionInfo::new(format!("watch:{id}"), label, glyph, keywords);
-                if *action == live::Action::Flip {
-                    info.role(ActionRole::Flip)
-                } else {
-                    info
-                }
+                ActionInfo::new(format!("watch:{id}"), label, glyph, keywords)
             }
             Action::Channel(key, name) => ActionInfo::new(
                 format!("watch:channel:{key}"),
@@ -1148,6 +1119,30 @@ impl PageAction for Action {
                 "tv channel",
             ),
         }
+    }
+}
+
+impl Steps for WatchPage {
+    fn steps(&self, _: &App) -> Option<(usize, usize)> {
+        match self.tab {
+            Tab::Broadcasts => self.broadcasts.steps(),
+            Tab::Tv | Tab::Friends => self.live.steps(),
+        }
+    }
+
+    fn step_to(&mut self, ply: usize, _: &mut Window, cx: &mut Context<Self>) {
+        match self.tab {
+            Tab::Broadcasts => {
+                self.broadcasts.go_to(ply, cx);
+                self.engine_changed(cx);
+            }
+            Tab::Tv | Tab::Friends => self.live.go_to(ply, cx),
+        }
+        cx.notify();
+    }
+
+    fn wheel(&mut self) -> &mut crate::game::view::Wheel {
+        &mut self.wheel
     }
 }
 

@@ -130,13 +130,9 @@ impl FriendsPage {
                 }),
             ];
         // Cheap (one small request for everyone), and stops with the page.
-        let poll = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(PRESENCE_EVERY).await;
-                if this.update(cx, |this, cx| this.refresh_status(cx)).is_err() {
-                    return;
-                }
-            }
+        let poll = crate::timer::every(PRESENCE_EVERY, cx, |this, cx| {
+            this.refresh_status(cx);
+            true
         });
         let mut page = FriendsPage {
             input,

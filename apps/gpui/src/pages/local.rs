@@ -561,7 +561,7 @@ impl LocalPage {
             .update(cx, |board, cx| board.set_state(state, cx));
         let running = self.game.timed() && !over;
         if running && self.ticker.is_none() {
-            self.ticker = Some(surface::every(surface::TICK, cx, Self::tick));
+            self.ticker = Some(crate::timer::every(crate::timer::TICK, cx, Self::tick));
         } else if !running {
             self.ticker = None;
         }
@@ -802,7 +802,7 @@ impl LocalPage {
 
     fn clock_changed(&mut self, cx: &mut Context<Self>) {
         if self.clock.running.is_some() && self.clock_ticker.is_none() {
-            self.clock_ticker = Some(surface::every(surface::TICK, cx, |this, cx| {
+            self.clock_ticker = Some(crate::timer::every(crate::timer::TICK, cx, |this, cx| {
                 let now = this.now();
                 if this.clock.expire(now) {
                     crate::sound::play(crate::sound::Sound::LowTime, cx);
@@ -1546,11 +1546,8 @@ impl LocalPage {
                 shown,
                 moves.len(),
                 select,
-                (
-                    "Flip board".into(),
-                    crate::menu::keys(&crate::menu::FlipBoard, cx),
-                    flip,
-                ),
+                widgets::TurnButton::Flip(flip),
+                cx,
             ))
             .child(
                 h_flex()
@@ -2098,13 +2095,7 @@ impl crate::pages::PageAction for Action {
             Action::Resign => ActionInfo::new("local:resign", "Resign", "flag", "give up"),
             Action::NewGame => ActionInfo::new("local:new-game", "New game", "plus", "restart")
                 .role(ActionRole::New),
-            Action::Flip => ActionInfo::new(
-                "local:flip",
-                "Flip board",
-                "refresh-cw",
-                "turn rotate orientation",
-            )
-            .role(ActionRole::Flip),
+            Action::Flip => ActionInfo::flip("local:flip"),
             Action::CopyPgn => {
                 ActionInfo::new("local:copy-pgn", "Copy PGN", "copy", "game moves clipboard")
                     .role(ActionRole::Copy)

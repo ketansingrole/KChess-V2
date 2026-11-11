@@ -1,11 +1,10 @@
 //! The board surface every game page shares (Play with computer, Over the board, the Lichess
-//! game, Watch, Broadcasts and a game gone through in Game history): the keys and the mouse
-//! wheel that step through the moves, a click giving the keys back to the page, the move box,
+//! game, Watch, Broadcasts and a game gone through in Game history; the analysis board steps its
+//! tree with the same wheel): the keys and the mouse wheel that step through the moves, a click
+//! giving the keys back to the page (every board page's), the move box,
 //! the running clock that redraws only when a face changes, the low-time warning, and the
 //! board's blindfold and premove. F turns the board through the app's keymap
 //! (`menu::FlipBoard`), so every page that turns its board answers it.
-
-use std::time::Duration;
 
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::*;
@@ -13,96 +12,86 @@ use shakmaty::Color;
 use shakmaty::variant::VariantPosition;
 
 use crate::board::BoardState;
+use crate::game::view::{Way, Wheel};
 use crate::theme::Palette;
-
-/// How often a running clock is looked at: a face shows tenths in its last ten seconds.
-pub const TICK: Duration = Duration::from_millis(100);
 
 /// A page whose board steps through the moves of a game.
 pub trait Steps: Sized + 'static {
     /// The move shown and how many there are; `None` while the page shows no moves to step
-    /// through (the chess clock).
+    /// through (the chess clock), or when its moves are a tree it steps through by `turn`.
     fn steps(&self, cx: &App) -> Option<(usize, usize)>;
 
     /// Show the position after `ply` moves.
     fn step_to(&mut self, ply: usize, window: &mut Window, cx: &mut Context<Self>);
 
     /// The mouse wheel's turn so far.
-    fn wheel(&mut self) -> &mut crate::game::view::Wheel;
+    fn wheel(&mut self) -> &mut Wheel;
+
+    /// One move back or on, as the mouse wheel steps.
+    fn step_by(&mut self, way: Way, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((ply, count)) = self.steps(cx) {
+            self.step_to(way.from(ply, count), window, cx);
+        }
+    }
 }
 
-/// The page's root as a board surface: it keeps the keys (a click anywhere gives them back,
-/// before a text field such as the move box takes them for itself), and the arrows, Home and End
-/// step through the moves when no text field has them.
+/// A click anywhere in the element gives the keys back to the page (`focus`), before a text
+/// field such as the move box takes them for itself, as a click outside a text field does in the
+/// browser.
+pub trait TakesKeys: InteractiveElement + Sized {
+    fn takes_keys(self, focus: &FocusHandle) -> Self {
+        let page = focus.clone();
+        self.capture_any_mouse_down(move |event: &MouseDownEvent, window, cx| {
+            if event.button == MouseButton::Left {
+                window.focus(&page, cx);
+            }
+        })
+    }
+}
+
+impl<E: InteractiveElement> TakesKeys for E {}
+
+/// The page's root as a board surface: it keeps the keys (`takes_keys`), and the arrows, Home
+/// and End step through the moves when no text field has them.
 pub fn keys<V: Steps, E: InteractiveElement>(
     element: E,
     focus: &FocusHandle,
     cx: &mut Context<V>,
 ) -> E {
-    let page = focus.clone();
-    element
-        .track_focus(focus)
-        .capture_any_mouse_down(cx.listener(move |_, event: &MouseDownEvent, window, cx| {
-            if event.button == MouseButton::Left {
-                window.focus(&page, cx);
+    element.track_focus(focus).takes_keys(focus).on_key_down({
+        let page = focus.clone();
+        cx.listener(move |this: &mut V, event: &KeyDownEvent, window, cx| {
+            if !crate::board::page_has_keys(&page, window, cx)
+                || event.keystroke.modifiers.modified()
+            {
+                return;
             }
-        }))
-        .on_key_down({
-            let page = focus.clone();
-            cx.listener(move |this: &mut V, event: &KeyDownEvent, window, cx| {
-                if !crate::board::page_has_keys(&page, window, cx)
-                    || event.keystroke.modifiers.modified()
-                {
-                    return;
-                }
-                let Some((ply, count)) = this.steps(cx) else {
-                    return;
-                };
-                if let Some(next) =
-                    crate::game::view::navigate(event.keystroke.key.as_str(), ply, count)
-                {
-                    this.step_to(next, window, cx);
-                    cx.stop_propagation();
-                }
-            })
+            let Some((ply, count)) = this.steps(cx) else {
+                return;
+            };
+            if let Some(next) =
+                crate::game::view::navigate(event.keystroke.key.as_str(), ply, count)
+            {
+                this.step_to(next, window, cx);
+                cx.stop_propagation();
+            }
         })
+    })
 }
 
 /// The board's column, where the mouse wheel steps through the moves, as on Lichess.
-pub fn wheel<V: Steps>(column: Div, cx: &mut Context<V>) -> Div {
+pub fn wheel<V: Steps, E: InteractiveElement>(column: E, cx: &mut Context<V>) -> E {
     column.on_scroll(
         cx.listener(|this: &mut V, event: &ScrollEvent, window, cx| {
-            let Some(key) = this
+            if let Some(way) = this
                 .wheel()
                 .turn(event.delta.pixel_delta(window.line_height()))
-            else {
-                return;
-            };
-            if let Some((ply, count)) = this.steps(cx)
-                && let Some(next) = crate::game::view::navigate(key, ply, count)
             {
-                this.step_to(next, window, cx);
+                this.step_by(way, window, cx);
             }
             cx.stop_propagation();
         }),
     )
-}
-
-/// Run `tick` every `period` while the page lives and `tick` says to go on.
-pub fn every<V: 'static>(
-    period: Duration,
-    cx: &mut Context<V>,
-    mut tick: impl FnMut(&mut V, &mut Context<V>) -> bool + 'static,
-) -> Task<()> {
-    cx.spawn(async move |this, cx| {
-        loop {
-            cx.background_executor().timer(period).await;
-            match this.update(cx, |this, cx| tick(this, cx)) {
-                Ok(true) => {}
-                Ok(false) | Err(_) => break,
-            }
-        }
-    })
 }
 
 /// What the clock faces showed at the last tick: a tick redraws only when one changes.

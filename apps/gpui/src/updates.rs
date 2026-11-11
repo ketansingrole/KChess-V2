@@ -1665,13 +1665,10 @@ impl Updates {
         if self._timer.is_some() {
             return;
         }
-        self._timer = Some(cx.spawn(async move |this, cx| {
-            loop {
-                if this.update(cx, |this, cx| this.check(true, cx)).is_err() {
-                    return;
-                }
-                cx.background_executor().timer(CHECK_EVERY).await;
-            }
+        self.check(true, cx);
+        self._timer = Some(crate::timer::every(CHECK_EVERY, cx, |this, cx| {
+            this.check(true, cx);
+            true
         }));
     }
 

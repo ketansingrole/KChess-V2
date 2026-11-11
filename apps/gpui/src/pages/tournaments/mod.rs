@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::core::AppCore;
+use crate::game::surface::TakesKeys as _;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::theme::Palette;
 use crate::widgets::{self, Pill};
@@ -133,20 +134,11 @@ impl TournamentsPage {
                 },
             ),
         ];
-        let refresh = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(REFRESH_EVERY).await;
-                let alive = this
-                    .update(cx, |this, cx| {
-                        if this.refresh_due() {
-                            this.load_event(cx);
-                        }
-                    })
-                    .is_ok();
-                if !alive {
-                    return;
-                }
+        let refresh = crate::timer::every(REFRESH_EVERY, cx, |this, cx| {
+            if this.refresh_due() {
+                this.load_event(cx);
             }
+            true
         });
         // Between refreshes the top game's side to move keeps losing time.
         let clock = cx.spawn(async move |this, cx| {
@@ -711,11 +703,7 @@ impl Render for TournamentsPage {
                     cx.stop_propagation();
                 }
             }))
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
+            .takes_keys(&self.focus)
             .size_full()
             .overflow_y_scroll()
             .child(

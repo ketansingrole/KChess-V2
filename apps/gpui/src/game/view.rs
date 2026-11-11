@@ -73,12 +73,29 @@ pub fn turn(position: Option<&VariantPosition>) -> Color {
     position.map_or(Color::White, |position| position.turn())
 }
 
+/// One step through a game's moves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Way {
+    Back,
+    On,
+}
+
+impl Way {
+    /// The ply this step reaches from `ply`, of `max`.
+    pub fn from(self, ply: usize, max: usize) -> usize {
+        match self {
+            Way::Back => ply.saturating_sub(1),
+            Way::On => (ply + 1).min(max),
+        }
+    }
+}
+
 /// Where an arrow key moves a move list's position (←/→ one ply, ↑/↓ or Home/End first/last);
 /// `None` for other keys.
 pub fn navigate(key: &str, ply: usize, max: usize) -> Option<usize> {
     match key {
-        "left" => Some(ply.saturating_sub(1)),
-        "right" => Some((ply + 1).min(max)),
+        "left" => Some(Way::Back.from(ply, max)),
+        "right" => Some(Way::On.from(ply, max)),
         "up" | "home" => Some(0),
         "down" | "end" => Some(max),
         _ => None,
@@ -94,9 +111,9 @@ impl Wheel {
     /// How far the wheel turns for one move, in pixels.
     const STEP: f32 = 40.;
 
-    /// The key the turn so far stands for: "right" a move on (the wheel towards the user, as
-    /// `deltaY > 0` in the browser), "left" a move back. Sideways scrolls are left alone.
-    pub fn turn(&mut self, delta: gpui_kit::Point<gpui_kit::Pixels>) -> Option<&'static str> {
+    /// The step the turn so far stands for: a move on with the wheel towards the user (as
+    /// `deltaY > 0` in the browser), a move back away from them. Sideways scrolls are left alone.
+    pub fn turn(&mut self, delta: gpui_kit::Point<gpui_kit::Pixels>) -> Option<Way> {
         if delta.x.abs() > delta.y.abs() {
             return None;
         }
@@ -104,15 +121,15 @@ impl Wheel {
         if self.0.abs() < Self::STEP {
             return None;
         }
-        let key = if self.0 > 0. { "right" } else { "left" };
+        let way = if self.0 > 0. { Way::On } else { Way::Back };
         self.0 = 0.;
-        Some(key)
+        Some(way)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Wheel, navigate};
+    use super::{Way, Wheel, navigate};
     use gpui_kit::{point, px};
 
     /// A wheel's small turns add up to one move; down goes on, up goes back, sideways neither.
@@ -120,9 +137,9 @@ mod tests {
     fn the_wheel_steps_one_move_at_a_time() {
         let mut wheel = Wheel::default();
         assert_eq!(wheel.turn(point(px(0.), px(-25.))), None);
-        assert_eq!(wheel.turn(point(px(0.), px(-25.))), Some("right"));
+        assert_eq!(wheel.turn(point(px(0.), px(-25.))), Some(Way::On));
         assert_eq!(wheel.turn(point(px(0.), px(-30.))), None);
-        assert_eq!(wheel.turn(point(px(0.), px(80.))), Some("left"));
+        assert_eq!(wheel.turn(point(px(0.), px(80.))), Some(Way::Back));
         assert_eq!(wheel.turn(point(px(-100.), px(10.))), None);
     }
 

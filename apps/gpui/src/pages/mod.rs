@@ -165,6 +165,12 @@ impl ActionInfo {
         }
     }
 
+    /// Every board's Flip board (`id`, kept in Quick Pick's recent entries), which F runs.
+    pub fn flip(id: &'static str) -> ActionInfo {
+        ActionInfo::new(id, "Flip board", "arrow-up-down", "turn rotate orientation")
+            .role(ActionRole::Flip)
+    }
+
     pub fn role(mut self, role: ActionRole) -> ActionInfo {
         self.role = Some(role);
         self

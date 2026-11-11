@@ -18,13 +18,14 @@ mod square_color;
 use gpui_kit::component::v_flex;
 use gpui_kit::*;
 
+use crate::game::surface::TakesKeys as _;
 use crate::pages::{
-    ActionInfo, ActionRole, NavGroup, Page, PageAction, PageCommand, PageInfo, PageTab, PageView,
-    TabInfo,
+    ActionInfo, NavGroup, Page, PageAction, PageCommand, PageInfo, PageTab, PageView, TabInfo,
 };
 use crate::play_layout::{PAGE_TOP, side_padding};
 use crate::theme::Palette;
 use crate::widgets;
+use gpui_kit::prelude::FluentBuilder as _;
 
 /// Practice's tabs, in order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -407,15 +408,11 @@ impl Render for PracticePage {
                     }
                 }),
             )
-            // On an endgame's or a mistake's board a click gives the keys back to the page,
-            // before a text field takes them.
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left
-                    && matches!(Tab::stored(cx), Tab::Endgames | Tab::Mistakes)
-                {
-                    window.focus(&this.focus, cx);
-                }
-            }))
+            // On an endgame's or a mistake's board a click gives the keys back to the page.
+            .when(
+                matches!(Tab::stored(cx), Tab::Endgames | Tab::Mistakes),
+                |page| page.takes_keys(&self.focus),
+            )
             .child(
                 div()
                     .flex_none()
@@ -436,9 +433,7 @@ impl PageAction for Action {
         let (id, label, glyph, keywords) = match *self {
             Action::Drill(DrillAction::Hint) => ("hint", "Hint", "lightbulb", "help best move"),
             Action::Drill(DrillAction::TakeBack) => ("takeback", "Take back", "undo-2", "undo"),
-            Action::Drill(DrillAction::Flip) => {
-                ("flip", "Flip board", "arrow-up-down", "turn rotate")
-            }
+            Action::Drill(DrillAction::Flip) => return ActionInfo::flip("practice:flip"),
             Action::Drill(DrillAction::Restart) => ("restart", "Restart", "rotate-ccw", "again"),
             Action::Lesson(LessonAction::Back) => {
                 ("courses", "All courses", "chevron-left", "back lessons")
@@ -447,9 +442,7 @@ impl PageAction for Action {
             Action::Lesson(LessonAction::TakeBack) => {
                 ("lesson-takeback", "Take back", "undo-2", "undo")
             }
-            Action::Lesson(LessonAction::Flip) => {
-                ("lesson-flip", "Flip board", "arrow-up-down", "turn rotate")
-            }
+            Action::Lesson(LessonAction::Flip) => return ActionInfo::flip("practice:lesson-flip"),
             Action::Lesson(LessonAction::Retry) => ("retry", "Retry", "rotate-ccw", "again"),
             Action::Lesson(LessonAction::Previous) => {
                 ("previous", "Previous step", "chevron-left", "back")
@@ -479,6 +472,9 @@ impl PageAction for Action {
             Action::Repertoire(RepertoireAction::Save) => {
                 ("save", "Save as study", "save", "keep opening")
             }
+            Action::Mistakes(MistakeAction::Flip) => {
+                return ActionInfo::flip("practice:mistake-flip");
+            }
             Action::Mistakes(MistakeAction::Hint) => {
                 ("mistake-hint", "Hint: piece to move", "lightbulb", "help")
             }
@@ -495,13 +491,7 @@ impl PageAction for Action {
                 ("early", "Review early", "fast-forward", "mistakes ahead")
             }
         };
-        let info = ActionInfo::new(format!("practice:{id}"), label, glyph, keywords);
-        match *self {
-            Action::Drill(DrillAction::Flip) | Action::Lesson(LessonAction::Flip) => {
-                info.role(ActionRole::Flip)
-            }
-            _ => info,
-        }
+        ActionInfo::new(format!("practice:{id}"), label, glyph, keywords)
     }
 }
 

@@ -388,20 +388,17 @@ impl Live {
             .update(cx, |board, cx| board.set_state(state, cx));
     }
 
-    /// ←/→ and ↑/↓ step through the moves once they are known.
-    pub fn key(&mut self, key: &str, cx: &mut App) -> bool {
-        if self.frame.is_none() {
-            return false;
-        }
-        if self.setup().is_none() {
-            return false;
-        }
-        let Some(ply) = view::navigate(key, self.shown_ply(), self.moves().len()) else {
-            return false;
-        };
+    /// The move shown and how many there are, once the moves are known.
+    pub fn steps(&self) -> Option<(usize, usize)> {
+        self.frame.as_ref()?;
+        self.setup()?;
+        Some((self.shown_ply(), self.moves().len()))
+    }
+
+    /// Show the position after `ply` moves.
+    pub fn go_to(&mut self, ply: usize, cx: &mut App) {
         self.select(ply);
         self.redraw(cx);
-        true
     }
 
     /// One side's clock, the side to move's running while connected (`clockOf`).
@@ -736,11 +733,8 @@ impl WatchPage {
                 self.live.shown_ply(),
                 moves.len(),
                 select,
-                (
-                    "Flip board".into(),
-                    crate::menu::keys(&crate::menu::FlipBoard, cx),
-                    flip,
-                ),
+                widgets::TurnButton::Flip(flip),
+                cx,
             ))
             .when(frame["source"] == json!("game"), |panel| {
                 panel.child(widgets::hint(
@@ -808,8 +802,6 @@ impl WatchPage {
         let palette = *cx.global::<Palette>();
         let connected = self.phase.as_deref() == Some("connected");
         let shown = self.live.clock(color, connected);
-        let ix = usize::from(color == Color::Black);
-        self.live_faces_shown[ix] = shown.clone();
         match shown {
             Some((text, running)) => {
                 widgets::clock(text.into(), running, &palette).into_any_element()
@@ -920,20 +912,8 @@ impl WatchPage {
             .gap(widgets::STACK_GAP)
             .child(line(!orientation, 0))
             .child(crate::board::cached(&self.live.board))
-            // The mouse wheel over the board steps through the moves.
-            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
-                let Some(key) = this
-                    .wheel
-                    .turn(event.delta.pixel_delta(window.line_height()))
-                else {
-                    return;
-                };
-                if this.live.key(key, cx) {
-                    cx.notify();
-                }
-                cx.stop_propagation();
-            }))
             .child(line(orientation, 1));
+        let board_column = crate::game::surface::wheel(board_column, cx);
 
         // Beside the board the panel is its own cached view; under it, part of the page.
         let panel = if self.layout.is_stacked() {

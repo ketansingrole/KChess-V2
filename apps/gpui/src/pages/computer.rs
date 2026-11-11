@@ -625,7 +625,7 @@ impl ComputerPage {
         self.sync_voice(cx);
         let running = self.game.timed() && !self.game.over();
         if running && self.ticker.is_none() {
-            self.ticker = Some(surface::every(surface::TICK, cx, |this, cx| {
+            self.ticker = Some(crate::timer::every(crate::timer::TICK, cx, |this, cx| {
                 let host = this.host();
                 let effects = this.game.expire(&host);
                 let acted = !effects.is_empty();
@@ -1466,7 +1466,8 @@ impl Render for ComputerPage {
                 ply,
                 moves.len(),
                 select,
-                (format!("Switch sides (play {other})").into(), None, flip),
+                widgets::TurnButton::Named(format!("Switch sides (play {other})").into(), flip),
+                cx,
             ))
             .child(
                 h_flex()
@@ -1552,13 +1553,7 @@ impl crate::pages::PageAction for Action {
                 "repeat",
                 "colour color",
             ),
-            Action::Flip => ActionInfo::new(
-                "computer:flip",
-                "Flip board",
-                "refresh-cw",
-                "turn rotate orientation",
-            )
-            .role(ActionRole::Flip),
+            Action::Flip => ActionInfo::flip("computer:flip"),
             Action::CopyPgn => ActionInfo::new(
                 "computer:copy-pgn",
                 "Copy PGN",
