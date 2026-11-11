@@ -446,7 +446,9 @@ fn quitting_during_a_live_game_asks_first(cx: &mut gpui_kit::TestAppContext) {
     // The phase is set where the key is pressed: a later snapshot of the core's replaces it.
     app.with_window(|window, cx| {
         use gpui_kit::test::TestWindowExt as _;
-        crate::online::handle(cx).update(cx, |online, cx| online.set_phase("playing", cx));
+        crate::online::handle(cx).update(cx, |online, cx| {
+            online.set_phase(kchess_domain::online_game::model::GamePhase::Playing, cx)
+        });
         assert!(crate::online::handle(cx).read(cx).live_game_on(), "on");
         window.press("secondary-q", cx);
     });

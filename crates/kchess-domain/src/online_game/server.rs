@@ -1,10 +1,10 @@
-//! What Lichess's board streams send about a game, and the core's reports on its connection, as
-//! the online game reads them. A field of an unexpected type reads as absent, so one odd field
-//! never loses the rest of the event.
+//! What Lichess's board streams send about a game, as the online game reads it. A field of an
+//! unexpected type reads as absent, so one odd field never loses the rest of the event.
 
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
+use super::model::ChatRoom;
 use crate::js;
 
 /// A field read as `T`, absent when it is missing, null, or of another type.
@@ -111,7 +111,7 @@ pub struct ChatLine {
     #[serde(default, deserialize_with = "lenient")]
     pub id: Option<String>,
     #[serde(default, deserialize_with = "lenient")]
-    pub room: Option<String>,
+    pub room: Option<ChatRoom>,
     #[serde(default, deserialize_with = "lenient")]
     pub username: Option<String>,
     #[serde(default, deserialize_with = "lenient")]
@@ -248,38 +248,6 @@ impl Player {
             }
             _ => "Opponent".into(),
         }
-    }
-}
-
-/// The core's report on a game connection (`online:state`).
-#[derive(Deserialize, Debug, Clone, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectionReport {
-    #[serde(default, deserialize_with = "lenient")]
-    pub session: Option<f64>,
-    #[serde(default, deserialize_with = "lenient")]
-    pub account: Option<String>,
-    #[serde(default, deserialize_with = "lenient")]
-    pub game_id: Option<String>,
-    #[serde(default, deserialize_with = "lenient")]
-    pub lane: Option<String>,
-    #[serde(default, deserialize_with = "lenient")]
-    pub phase: Option<String>,
-    #[serde(default, deserialize_with = "lenient")]
-    pub message: Option<String>,
-    /// The kind of failure that ended the stream for good.
-    #[serde(default, deserialize_with = "lenient")]
-    pub kind: Option<String>,
-}
-
-impl ConnectionReport {
-    pub fn read(report: &Value) -> ConnectionReport {
-        ConnectionReport::deserialize(report).unwrap_or_default()
-    }
-
-    /// The report `checking` leaves: Lichess is asked for a game in progress.
-    pub fn checking(&self) -> bool {
-        self.lane.as_deref() == Some("game") && self.phase.as_deref() == Some("checking")
     }
 }
 

@@ -237,7 +237,7 @@ mod tests {
             r#"{"phase":"failed","received":10,"kept":2,"total":99,"message":"No"}"#
         );
         let state = OnlineConnection {
-            session: 4,
+            session: 4.into(),
             account: "me".into(),
             game_id: "abcdefgh".into(),
             lane: crate::types::Lane::Game,

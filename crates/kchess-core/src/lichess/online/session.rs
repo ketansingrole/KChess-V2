@@ -116,7 +116,7 @@ impl OnlineSession {
             kind,
         } = update;
         let payload = json!(OnlineConnection {
-            session,
+            session: session.into(),
             account: account.to_string(),
             game_id: game_id.to_string(),
             lane,

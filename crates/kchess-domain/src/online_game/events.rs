@@ -1,12 +1,14 @@
 //! The reads of an online game: server events, connection reports, and the game-state
 //! transitions they share with `finish` and `reset_game`.
 
-use serde_json::{Value, json};
+use serde_json::Number;
 
-use super::model::{ChatEntry, ClockConfig, Effect, FinishedGame, Run, Setup, turn_of};
-use super::server::{
-    ChatLine, ConnectionReport, GameFull, GameRef, GameState, OpponentGone, Player, ServerEvent,
+use super::connection::{Lane, OnlineConnection, OnlinePhase};
+use super::model::{
+    ChatEntry, ChatRoom, ClockConfig, Effect, FinishedGame, GamePhase, Offer, Run, Setup, turn_of,
 };
+use super::server::{ChatLine, GameFull, GameRef, GameState, OpponentGone, Player, ServerEvent};
+use crate::color::{self, Color};
 use crate::js;
 use crate::misc::constants::NotificationKind;
 use crate::variant::Variant;
@@ -15,8 +17,6 @@ use crate::variant::Variant;
 const CORRESPONDENCE: [f64; 7] = [1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 14.0];
 /// The chat a game keeps: the latest lines.
 const CHAT_KEPT: usize = 300;
-/// The connection phases that mean the game is not reachable right now.
-const UNREACHABLE: [&str; 4] = ["checking", "reconnecting", "disconnected", "auth-required"];
 
 /// The moves of a game state, split on whitespace.
 fn moves_of(text: Option<&str>) -> Vec<String> {
@@ -44,9 +44,8 @@ impl Run<'_> {
     }
 
     /// A connection report, which the epoch makes authoritative. The report is kept as it came.
-    pub fn read_connection(&mut self, connection: &Value) {
-        let report = ConnectionReport::read(connection);
-        let session = report.session.unwrap_or(f64::NAN);
+    pub fn read_connection(&mut self, report: &OnlineConnection) {
+        let session = report.epoch();
         if session < self.m.state_epoch {
             return;
         }
@@ -54,30 +53,25 @@ impl Run<'_> {
             self.m.state_epoch = session;
             self.effect(Effect::ConnectionChanged);
         }
-        self.m.online_connection = Some(connection.clone());
-        if let Some(account) = report.account.filter(|account| !account.is_empty()) {
-            self.m.online_account = account;
+        self.m.online_connection = Some(report.clone());
+        if !report.account.is_empty() {
+            self.m.online_account = report.account.clone();
         }
-        if let Some(id) = report.game_id.filter(|id| !id.is_empty()) {
-            self.m.online_id = id;
+        if !report.game_id.is_empty() {
+            self.m.online_id = report.game_id.clone();
         }
-        let lane = report.lane.as_deref();
-        if lane == Some("events") && !self.m.online_id.is_empty() {
+        if report.lane == Lane::Events && !self.m.online_id.is_empty() {
             return;
         }
-        if lane == Some("game") && report.phase.as_deref() == Some("idle") {
-            self.m.online_phase = "idle".into();
+        if report.lane == Lane::Game && report.phase == OnlinePhase::Idle {
+            self.m.online_phase = GamePhase::Idle;
             self.m.online_id.clear();
             self.m.online_status = "No game in progress.".into();
             self.clock_pause();
         }
-        if report
-            .phase
-            .as_deref()
-            .is_some_and(|phase| UNREACHABLE.contains(&phase))
-        {
-            self.m.online_phase = "disconnected".into();
-            self.m.online_status = report.message.unwrap_or_else(|| {
+        if report.unreachable() {
+            self.m.online_phase = GamePhase::Disconnected;
+            self.m.online_status = report.message.clone().unwrap_or_else(|| {
                 "Connection interrupted. Reconnect to recover your game.".into()
             });
             self.clock_pause();
@@ -86,16 +80,18 @@ impl Run<'_> {
 
     /// The game is unreachable while Lichess is asked about it.
     pub fn checking(&mut self) {
-        self.m.online_phase = "disconnected".into();
+        self.m.online_phase = GamePhase::Disconnected;
         self.m.online_status = "Checking Lichess for an ongoing game…".into();
-        self.m.online_connection = Some(json!({
-            "session": self.m.state_epoch,
-            "account": self.m.online_account,
-            "gameId": self.m.online_id,
-            "lane": "game",
-            "phase": "checking",
-            "message": self.m.online_status,
-        }));
+        self.m.online_connection = Some(OnlineConnection {
+            // An epoch is always a number: it starts at -1 and takes each report's session.
+            session: Number::from_f64(self.m.state_epoch).unwrap_or_else(|| Number::from(-1)),
+            account: self.m.online_account.clone(),
+            game_id: self.m.online_id.clone(),
+            lane: Lane::Game,
+            phase: OnlinePhase::Checking,
+            message: Some(self.m.online_status.clone()),
+            kind: None,
+        });
         self.clock_pause();
     }
 
@@ -107,8 +103,8 @@ impl Run<'_> {
         m.online_result = String::new();
         m.opponent_gone = false;
         m.claim_at = None;
-        m.draw_offer = "none".into();
-        m.takeback_offer = "none".into();
+        m.draw_offer = Offer::None;
+        m.takeback_offer = Offer::None;
         m.first_move_by = None;
         m.berserked = false;
         m.chat = Vec::new();
@@ -126,9 +122,9 @@ impl Run<'_> {
     /// The game is over. A rated or casual finish is remembered for a rematch, and a
     /// game that was being played announces its result.
     pub fn finish(&mut self, winner: Option<&str>, reason: &str, notify: bool) {
-        let previous = self.m.online_phase.clone();
-        self.m.online_phase = "finished".into();
-        self.m.online_status = outcome_line(winner, reason, &self.m.online_color);
+        let previous = self.m.online_phase;
+        self.m.online_phase = GamePhase::Finished;
+        self.m.online_status = outcome_line(winner, reason, self.m.online_color);
         self.m.online_result = match winner {
             Some("white") => "1-0",
             Some("black") => "0-1",
@@ -137,8 +133,8 @@ impl Run<'_> {
             _ => "1/2-1/2",
         }
         .into();
-        self.m.draw_offer = "none".into();
-        self.m.takeback_offer = "none".into();
+        self.m.draw_offer = Offer::None;
+        self.m.takeback_offer = Offer::None;
         self.m.claim_at = None;
         self.m.first_move_by = None;
         self.clock_pause();
@@ -154,7 +150,7 @@ impl Run<'_> {
                 id: self.m.online_id.clone(),
                 account,
                 opponent: self.m.opponent_id.clone(),
-                color: self.m.online_color.clone(),
+                color: self.m.online_color,
                 rated: self.m.online_game_rated,
                 setup: self.m.online_setup.clone(),
                 minutes: config
@@ -167,12 +163,12 @@ impl Run<'_> {
                     .filter(|_| CORRESPONDENCE.contains(&days)),
             });
         }
-        if notify && previous == "playing" {
+        if notify && previous == GamePhase::Playing {
             let outcome = if reason == "aborted" {
                 "Game aborted"
             } else if winner.is_none() {
                 "Draw"
-            } else if winner == Some(self.m.online_color.as_str()) {
+            } else if winner == Some(color::name(self.m.online_color)) {
                 "You won"
             } else {
                 "You lost"
@@ -193,17 +189,22 @@ impl Run<'_> {
         }
         self.m.shown_game = id.clone();
         self.m.online_id = id;
-        self.m.online_color = game.color.clone().unwrap_or_else(|| "white".into());
+        self.m.online_color = game
+            .color
+            .as_deref()
+            .and_then(color::from_name)
+            .unwrap_or(Color::White);
         let opponent = game.opponent.clone().unwrap_or_default();
         self.m.online_opponent = opponent.username.unwrap_or_else(|| "Opponent".into());
         self.m.online_game_rated = game.rated.unwrap_or(false);
         self.m.opponent_id = opponent.id.unwrap_or_default();
-        self.m.online_phase = "playing".into();
+        self.m.online_phase = GamePhase::Playing;
         self.m.online_status = "Game in progress".into();
         if !game.correspondence() {
             let body = format!(
                 "You are playing {} as {}.",
-                self.m.online_opponent, self.m.online_color
+                self.m.online_opponent,
+                color::name(self.m.online_color)
             );
             self.notify(NotificationKind::GameEvents, "Game started", body);
         }
@@ -230,7 +231,7 @@ impl Run<'_> {
         if self.other_game(event.id.as_deref()) {
             return;
         }
-        if self.m.online_phase != "playing" {
+        if self.m.online_phase != GamePhase::Playing {
             return;
         }
         let gone = event.gone.unwrap_or(false);
@@ -254,15 +255,10 @@ impl Run<'_> {
         if !self.ctx.chat_enabled {
             return;
         }
-        let room = if event.room.as_deref() == Some("spectator") {
-            "spectator"
-        } else {
-            "player"
-        };
         self.m.chat.push(ChatEntry {
             user: event.username.clone(),
             text: event.text.clone(),
-            room: room.into(),
+            room: event.room.unwrap_or(ChatRoom::Player),
         });
         let excess = self.m.chat.len().saturating_sub(CHAT_KEPT);
         self.m.chat.drain(..excess);
@@ -301,32 +297,30 @@ impl Run<'_> {
                 let title = format!("{} moved", self.m.online_opponent);
                 self.notify(NotificationKind::OpponentMove, &title, body);
                 // A new move answers any takeback request.
-                self.m.takeback_offer = "none".into();
+                self.m.takeback_offer = Offer::None;
             }
         }
-        let white = self.m.online_color == "white";
+        let white = self.m.online_color == Color::White;
         let their_draw = state.draw(!white);
         let my_draw = state.draw(white);
-        if their_draw && self.m.draw_offer != "theirs" && !full {
+        if their_draw && self.m.draw_offer != Offer::Theirs && !full {
             let body = format!("{} offers a draw.", self.m.online_opponent);
             self.notify(NotificationKind::GameEvents, "Draw offered", body);
         }
         self.m.draw_offer = if their_draw {
-            "theirs"
+            Offer::Theirs
         } else if my_draw {
-            "mine"
+            Offer::Mine
         } else {
-            "none"
-        }
-        .into();
+            Offer::None
+        };
         self.m.takeback_offer = if state.takeback(!white) {
-            "theirs"
+            Offer::Theirs
         } else if state.takeback(white) {
-            "mine"
+            Offer::Mine
         } else {
-            "none"
-        }
-        .into();
+            Offer::None
+        };
         self.m.first_move_by = state.expiration.as_ref().map(|expiration| {
             let wait = expiration.millis_to_move.unwrap_or(f64::NAN)
                 - expiration.idle_millis.unwrap_or(f64::NAN);
@@ -353,7 +347,8 @@ impl Run<'_> {
         }
         // Lichess starts a clock only once both sides have moved; until then each side has a
         // first-move timer instead, and the clocks hold at their starting time.
-        let ticking = (running && self.m.online_moves.len() >= 2).then(|| self.m.turn());
+        let ticking =
+            (running && self.m.online_moves.len() >= 2).then(|| color::name(self.m.turn()));
         let initial = self.m.online_initial;
         self.effect(Effect::ClockSet {
             white: white_left,
@@ -362,7 +357,7 @@ impl Run<'_> {
             initial_seconds: (initial != 0.0 && !initial.is_nan()).then_some(initial),
         });
         if running {
-            self.m.online_phase = "playing".into();
+            self.m.online_phase = GamePhase::Playing;
             if !self.m.opponent_gone {
                 self.m.online_status = "Game in progress".into();
             }
@@ -426,11 +421,11 @@ impl Run<'_> {
                 .is_some_and(|id| id.to_lowercase() == ours)
         };
         if is_ours(&white) {
-            self.m.online_color = "white".into();
+            self.m.online_color = Color::White;
         } else if is_ours(&black) {
-            self.m.online_color = "black".into();
+            self.m.online_color = Color::Black;
         }
-        let (own, opponent) = if self.m.online_color == "white" {
+        let (own, opponent) = if self.m.online_color == Color::White {
             (white, black)
         } else {
             (black, white)
@@ -445,7 +440,7 @@ impl Run<'_> {
 /// One line for a finished game: who won and how, from Lichess's status name (`mate`,
 /// `resign`, `outoftime`, ...). The "how" is kept only when it fits the result, so a status that
 /// contradicts the winner (or an unfamiliar one) still says who won and nothing false.
-pub(crate) fn outcome_line(winner: Option<&str>, reason: &str, ours: &str) -> String {
+pub(crate) fn outcome_line(winner: Option<&str>, reason: &str, ours: Color) -> String {
     if matches!(reason, "aborted" | "noStart") {
         return "Game aborted".into();
     }
@@ -462,7 +457,7 @@ pub(crate) fn outcome_line(winner: Option<&str>, reason: &str, ours: &str) -> St
         _ => "",
     };
     let result = match winner {
-        Some(side) if side == ours => "You won",
+        Some(side) if side == color::name(ours) => "You won",
         Some(_) => "You lost",
         None if how.is_empty() => return "Game over".into(),
         None => "Draw",

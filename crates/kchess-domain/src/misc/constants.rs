@@ -50,6 +50,30 @@ crate::union!(
     }
 );
 crate::union!(
+    /// What kind of failure an error is, so a frontend offers the action that can help (a retry,
+    /// a reconnect, a copy, nothing) without reading its message.
+    ErrorKind {
+        /// Lichess could not be reached.
+        Offline = "offline",
+        /// Lichess did not answer in time.
+        TimedOut = "timedOut",
+        /// Lichess asked for fewer requests for a while.
+        RateLimited = "rateLimited",
+        /// The account's login no longer works or lacks a permission: reconnect it.
+        Login = "login",
+        /// Lichess refused the request for a reason it gave; trying again changes nothing.
+        Refused = "refused",
+        /// What was asked for does not exist (any more).
+        NotFound = "notFound",
+        /// Lichess failed or answered something unexpected.
+        Unavailable = "unavailable",
+        /// No engine can run here: choose or install one.
+        NoEngine = "noEngine",
+        /// Another window changed what this write was based on; reload before writing again.
+        Conflict = "conflict",
+    }
+);
+crate::union!(
     /// Tournament pairing system.
     TournamentSystem {
         Arena = "arena",

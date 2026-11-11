@@ -5,7 +5,9 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use kchess_domain::js;
-use kchess_domain::online_game::model::{Call, Ctx, Left, Model, Op, Outcome, Pending, Reply, Run};
+use kchess_domain::online_game::model::{
+    Call, Ctx, GamePhase, Left, Model, Op, Outcome, Pending, Reply, Run,
+};
 use kchess_domain::online_game::server::ServerEvent;
 
 use super::Out;
@@ -17,7 +19,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
             Ok(model.event(&ServerEvent::read(argument(args, 1)), ctx))
         }),
         "onlineGameConnection" => step(args, 2, |model, ctx| {
-            Ok(model.connection(argument(args, 1), ctx))
+            Ok(model.connection(&read(args, 1)?, ctx))
         }),
         "onlineGameChecking" => step(args, 1, |model, ctx| Ok(model.checking(ctx))),
         "onlineGameReset" => step(args, 1, |model, ctx| {
@@ -137,7 +139,8 @@ fn pending(token: &Value) -> Result<Pending, String> {
                 .get("correspondence")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
-            previous: text(token.get("previous")),
+            // The suites' tokens without a previous phase settle as one from idle.
+            previous: GamePhase::from_key(&text(token.get("previous"))).unwrap_or(GamePhase::Idle),
             left: token
                 .get("left")
                 .filter(|left| left.is_object())

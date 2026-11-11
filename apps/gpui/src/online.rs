@@ -18,9 +18,12 @@ use kchess_contracts::types::{
     ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, NotificationKind, OngoingGame,
     PresenceReport,
 };
-use kchess_contracts::{CoreError, Level};
-use kchess_domain::online_game::model::{Call, Ctx, Effect, Model, Op, Outcome, Reply, View};
-use kchess_domain::online_game::server::{ConnectionReport, ServerEvent};
+use kchess_contracts::types::{Lane, OnlineConnection, OnlinePhase};
+use kchess_contracts::{CoreError, ErrorKind, Level};
+use kchess_domain::online_game::model::{
+    Call, Ctx, Effect, GamePhase, Model, Op, Outcome, Reply, View,
+};
+use kchess_domain::online_game::server::ServerEvent;
 use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use kchess_domain::training::clock::{ClockState, SetData, format_clock};
 use kchess_domain::variant::{Setup, Variant};
@@ -116,10 +119,10 @@ pub struct OnlineState {
     pub ongoing_error: Option<String>,
     /// Each games-in-progress request; an answer to an earlier one is dropped.
     ongoing_request: u64,
-    /// The kind of failure that ended the game's connection (`ErrorKind`), until it recovers.
-    pub failure: Option<String>,
+    /// The kind of failure that ended the game's connection, until it recovers.
+    pub failure: Option<ErrorKind>,
     /// The game connection's state that ended it for good, kept until the game connects again.
-    failed_state: Option<Value>,
+    failed_state: Option<OnlineConnection>,
     pub busy_challenge: String,
     /// Turn flags seen at the last check, to say only when it becomes your turn.
     turns: std::collections::HashMap<String, bool>,
@@ -174,11 +177,7 @@ impl OnlineState {
     }
 
     pub fn color(&self) -> shakmaty::Color {
-        if self.model.online_color == "black" {
-            shakmaty::Color::Black
-        } else {
-            shakmaty::Color::White
-        }
+        self.model.online_color
     }
 
     pub fn orientation(&self) -> shakmaty::Color {
@@ -270,21 +269,21 @@ impl OnlineState {
     /// Put the state in a phase as the rules would (tests): the model too, which the phase is
     /// derived from again whenever a late answer lands.
     #[cfg(test)]
-    pub(crate) fn set_phase(&mut self, phase: &str, cx: &mut Context<Self>) {
-        self.model.online_phase = phase.into();
+    pub(crate) fn set_phase(&mut self, phase: GamePhase, cx: &mut Context<Self>) {
+        self.model.online_phase = phase;
         self.sync_phase(cx);
         cx.notify();
     }
 
     fn sync_phase(&mut self, cx: &mut Context<Self>) {
         let before = self.phase;
-        self.phase = match self.model.online_phase.as_str() {
-            "seeking" => Phase::Seeking,
-            "playing" => Phase::Playing,
-            "finished" => Phase::Finished,
-            "disconnected" => Phase::Disconnected,
-            _ if self.phase == Phase::Checking => Phase::Checking,
-            _ => Phase::Idle,
+        self.phase = match self.model.online_phase {
+            GamePhase::Seeking => Phase::Seeking,
+            GamePhase::Playing => Phase::Playing,
+            GamePhase::Finished => Phase::Finished,
+            GamePhase::Disconnected => Phase::Disconnected,
+            GamePhase::Idle if self.phase == Phase::Checking => Phase::Checking,
+            GamePhase::Idle => Phase::Idle,
         };
         if before == self.phase {
             return;
@@ -608,7 +607,7 @@ impl OnlineState {
             && self.clock.low_time_alert(&turn, now())
         {
             crate::sound::play(crate::sound::Sound::LowTime, cx);
-            let mine = self.model.online_color == turn;
+            let mine = kchess_domain::color::name(self.model.online_color) == turn;
             if mine {
                 let left = self.clock_text(&turn);
                 let opponent = &self.model.online_opponent;
@@ -888,7 +887,7 @@ impl OnlineState {
                 // The event stream announces a game whose board stream already failed for good
                 // (on launch the two race): the failure stands, as the core opens no new stream.
                 if let Some(failed) = self.failed_state.clone()
-                    && ConnectionReport::read(&failed).game_id == game.game_id
+                    && game.game_id.as_ref() == Some(&failed.game_id)
                 {
                     self.transition(|model, ctx| model.connection(&failed, ctx), None, cx);
                 }
@@ -907,17 +906,20 @@ impl OnlineState {
                 }
             }
             CoreEvent::OnlineState(payload) => {
-                let report = ConnectionReport::read(payload);
+                let Ok(report) = serde_json::from_value::<OnlineConnection>(payload.clone()) else {
+                    log(&format!("an online state not of its shape: {payload}"));
+                    return;
+                };
                 let kind = report.kind;
-                if report.lane.as_deref() == Some("game") {
+                if report.lane == Lane::Game {
                     // Only a failure that ended the stream carries a kind.
-                    self.failed_state = kind.is_some().then(|| payload.clone());
+                    self.failed_state = kind.is_some().then(|| report.clone());
                     self.failure = kind;
                 } else if kind.is_some() {
                     // The event stream's own states never clear the game's failure.
                     self.failure = kind;
                 }
-                self.transition(|model, ctx| model.connection(payload, ctx), None, cx);
+                self.transition(|model, ctx| model.connection(&report, ctx), None, cx);
             }
             CoreEvent::OnlineError(payload) => {
                 if let Some(message) = payload.as_str() {
@@ -1057,8 +1059,10 @@ pub fn init(cx: &mut App) {
                 // The new core counts its sessions from the start: the old core's epoch would
                 // drop every report it sends. The old connection's events all came before this.
                 state.model.state_epoch = 0.0;
-                let phase = state.model.online_phase.as_str();
-                if matches!(phase, "playing" | "seeking" | "disconnected") {
+                if matches!(
+                    state.model.online_phase,
+                    GamePhase::Playing | GamePhase::Seeking | GamePhase::Disconnected
+                ) {
                     state.phase = Phase::Checking;
                     state.transition(Model::checking, None, cx);
                 }
@@ -1074,8 +1078,8 @@ pub fn init(cx: &mut App) {
 /// stays; the connection follows it.
 pub fn account_connected(cx: &mut App) {
     let state = handle(cx);
-    let phase = state.read(cx).model.online_phase.as_str();
-    if !matches!(phase, "playing" | "seeking") {
+    let phase = state.read(cx).model.online_phase;
+    if !matches!(phase, GamePhase::Playing | GamePhase::Seeking) {
         // Checking from now, not from the core's first report: a seek begun before that report
         // cut the check short, and the check's end put the page back to its form while Lichess
         // still held the seek.
@@ -1122,20 +1126,20 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
                     set_active_account(&game.account, cx);
                     state.model.online_account = game.account;
                     state.model.online_id = game.id;
-                    if state.model.online_phase != "playing" {
-                        state.model.online_phase = "disconnected".into();
+                    if state.model.online_phase != GamePhase::Playing {
+                        state.model.online_phase = GamePhase::Disconnected;
                     }
                 }
-                Ok(_) => state.model.online_phase = "idle".into(),
+                Ok(_) => state.model.online_phase = GamePhase::Idle,
                 Err(cause) => {
                     log(&format!("resuming online game failed: {}", cause.message));
                     if let Some(connection) = state.model.online_connection.as_mut()
-                        && ConnectionReport::read(connection).phase.as_deref() == Some("checking")
+                        && connection.phase == OnlinePhase::Checking
                     {
-                        connection["phase"] = json!("disconnected");
+                        connection.phase = OnlinePhase::Disconnected;
                     }
-                    if state.model.online_phase != "playing" {
-                        state.model.online_phase = "idle".into();
+                    if state.model.online_phase != GamePhase::Playing {
+                        state.model.online_phase = GamePhase::Idle;
                     }
                 }
             }

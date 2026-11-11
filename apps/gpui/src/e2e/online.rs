@@ -508,7 +508,7 @@ fn a_restarted_core_is_followed_from_its_first_session(cx: &mut gpui_kit::TestAp
         app.cx
             .update(|cx| crate::online::handle(cx).read(cx).state_epoch())
     };
-    let report = |session: u64| json!({ "session": session, "account": "", "lane": "events", "phase": "connected" });
+    let report = |session: u64| json!({ "session": session, "account": "", "gameId": "", "lane": "events", "phase": "connected" });
     let state = |session| ClientEvent::Event(CoreEvent::OnlineState(report(session)));
     send(&mut app, state(40));
     assert_eq!(epoch(&mut app), 40.);
