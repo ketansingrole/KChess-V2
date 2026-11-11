@@ -85,7 +85,6 @@ impl ReviewDb {
         self.database
             .read(|ctx| reviews::read_review(ctx.host, ctx.db, key))
             .expect("review read")
-            .map(|value| serde_json::from_value(value).expect("a stored review"))
     }
 
     /// Whether a game is linked to a review with this key.
@@ -108,9 +107,8 @@ impl ReviewDb {
 
     /// Stores `review` directly, as an earlier session would have.
     pub fn put(&self, review: StoredReview) {
-        let value = serde_json::to_value(review).expect("review");
         self.database
-            .write(|ctx| reviews::write_review(ctx.host, ctx.db, &value).map(drop))
+            .write(|ctx| reviews::write_review(ctx.host, ctx.db, review).map(drop))
             .expect("review write");
     }
 

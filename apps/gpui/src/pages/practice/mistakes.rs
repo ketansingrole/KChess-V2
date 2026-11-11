@@ -11,7 +11,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::check::LibraryId;
-use kchess_contracts::types::{Drill, MistakeGame};
+use kchess_contracts::types::{Drill, MistakeGame, ReviewSide};
 use serde_json::{Value, json};
 
 use crate::assets::icon;
@@ -67,13 +67,14 @@ fn judgment_counts(items: &[&Drill]) -> Vec<(&'static str, String)> {
         items
             .iter()
             .filter(|item| item.judgment == judgment)
-            .count()
+            .count() as u32
     };
-    crate::reviews::judgment_counts(&json!({
-        "blunder": count("blunder"),
-        "mistake": count("mistake"),
-        "inaccuracy": count("inaccuracy"),
-    }))
+    crate::reviews::judgment_counts(&ReviewSide {
+        blunder: count("blunder"),
+        mistake: count("mistake"),
+        inaccuracy: count("inaccuracy"),
+        ..ReviewSide::default()
+    })
 }
 
 /// The mistakes trainer's actions, as its buttons offer them.

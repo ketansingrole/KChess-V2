@@ -8,8 +8,7 @@ use std::collections::VecDeque;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Subscription};
 use kchess_contracts::Level;
 use kchess_contracts::check::{Fen, Moves};
-use kchess_contracts::types::{ReviewCurrent, ReviewStatus, StoredReview};
-use serde_json::Value;
+use kchess_contracts::types::{ReviewCurrent, ReviewSide, ReviewStatus, StoredReview};
 
 use crate::core::{AppCore, ClientEvent, CoreEvent};
 
@@ -174,22 +173,20 @@ impl ReviewStore {
 }
 
 /// "2 blunders", worst first, leaving out the kinds that did not happen, from a
-/// side's counts (`ReviewSide`: `blunder`, `mistake`, `inaccuracy`).
-pub fn judgment_counts(side: &Value) -> Vec<(&'static str, String)> {
+/// side's counts.
+pub fn judgment_counts(side: &ReviewSide) -> Vec<(&'static str, String)> {
     [
-        ("blunder", "blunders"),
-        ("mistake", "mistakes"),
-        ("inaccuracy", "inaccuracies"),
+        ("blunder", "blunders", side.blunder),
+        ("mistake", "mistakes", side.mistake),
+        ("inaccuracy", "inaccuracies", side.inaccuracy),
     ]
     .into_iter()
-    .filter_map(|(judgment, plural)| {
-        let count = side[judgment].as_u64().unwrap_or_default();
-        (count > 0).then(|| {
-            (
-                judgment,
-                format!("{count} {}", if count == 1 { judgment } else { plural }),
-            )
-        })
+    .filter(|(_, _, count)| *count > 0)
+    .map(|(judgment, plural, count)| {
+        (
+            judgment,
+            format!("{count} {}", if count == 1 { judgment } else { plural }),
+        )
     })
     .collect()
 }
@@ -200,7 +197,11 @@ mod tests {
 
     #[test]
     fn judgments_are_counted_worst_first() {
-        let counts = judgment_counts(&json!({ "blunder": 1, "mistake": 0, "inaccuracy": 3 }));
+        let counts = judgment_counts(&ReviewSide {
+            blunder: 1,
+            inaccuracy: 3,
+            ..ReviewSide::default()
+        });
         assert_eq!(
             counts,
             vec![
@@ -209,8 +210,7 @@ mod tests {
             ]
         );
     }
-    use kchess_contracts::types::{ReviewSource, StoredReview};
-    use serde_json::json;
+    use kchess_contracts::types::{ReviewSide, ReviewSource, StoredReview};
 
     fn review(key: &str, complete: bool) -> StoredReview {
         StoredReview {

@@ -12,9 +12,11 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::{GameAccount, GameId, GameIds};
-use kchess_contracts::types::{GamePageQuery, GameResultFilter, Keyed, LichessGame, ReviewSummary};
+use kchess_contracts::types::{
+    GamePageQuery, GameResultFilter, Keyed, LichessGame, ReviewSide, ReviewSummary,
+};
 use kchess_domain::variant::Setup;
-use serde_json::Value;
+use serde_json::Number;
 use shakmaty::Color;
 
 use super::HistoryPage;
@@ -388,13 +390,12 @@ impl HistoryPage {
     }
 
     /// The review of a game, from its account's side (`ReviewSide`).
-    fn side_of(&self, game: &LichessGame) -> Option<Value> {
+    fn side_of(&self, game: &LichessGame) -> Option<ReviewSide> {
         let summary = self.lichess.summaries.get(&game.id)?;
-        let side = match game.color {
-            Color::White => &summary.white,
-            Color::Black => &summary.black,
-        };
-        serde_json::to_value(side).ok()
+        Some(match game.color {
+            Color::White => summary.white.clone(),
+            Color::Black => summary.black.clone(),
+        })
     }
 
     /// The accounts the filter offers, kept up to date with the account store.
@@ -440,7 +441,7 @@ impl HistoryPage {
         let side = self.side_of(game);
         let review_line = side.map(|side| {
             let mut parts = Vec::new();
-            if let Some(accuracy) = side["accuracy"].as_f64() {
+            if let Some(accuracy) = side.accuracy.as_ref().and_then(Number::as_f64) {
                 parts.push(format!("{accuracy}% accuracy"));
             }
             parts.extend(
@@ -850,7 +851,7 @@ pub enum RowDetail {
 pub fn game_row(
     id: impl Into<ElementId>,
     game: &LichessGame,
-    side: Option<Value>,
+    side: Option<ReviewSide>,
     detail: RowDetail,
     select: impl Fn(&mut Window, &mut App) + 'static,
     palette: &Palette,
@@ -871,8 +872,10 @@ pub fn game_row(
     };
     let diff = game.rating_diff.filter(|diff| *diff != 0);
     let accuracy = match &side {
-        Some(side) => side["accuracy"]
-            .as_f64()
+        Some(side) => side
+            .accuracy
+            .as_ref()
+            .and_then(Number::as_f64)
             .map_or_else(|| "Reviewed".to_string(), |accuracy| format!("{accuracy}%")),
         None => "—".into(),
     };

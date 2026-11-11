@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Position, Role};
 
+use crate::records::review::{ReviewEval, StoredReview};
 use crate::rules;
 use crate::tactics::{self, LineFacts, MoveFacts, Tactic};
 
@@ -266,33 +267,30 @@ pub fn move_brief<S: AsRef<str>, T: AsRef<str>>(
 }
 
 /// The move `index` of a stored review: its free reason, and the request that explains it.
-pub fn review_moment(review: &Value, index: usize) -> Option<Value> {
-    let moves = review["moves"].as_array()?;
-    let mut start = rules::standard_from_fen(review["fen"].as_str()?)?;
-    for played in moves.get(..index)? {
-        let chosen =
-            rules::parse_uci(played.as_str()?).and_then(|uci| rules::legal_move(&start, uci))?;
+pub fn review_moment(review: &StoredReview, index: usize) -> Option<Value> {
+    let mut start = rules::standard_from_fen(&review.fen)?;
+    for played in review.moves.get(..index)? {
+        let chosen = rules::parse_uci(played).and_then(|uci| rules::legal_move(&start, uci))?;
         start.play_unchecked(chosen);
     }
-    let played = moves.get(index)?.as_str()?;
+    let played = review.moves.get(index)?;
     let fen = rules::make_fen(&start);
-    let before = &review["evals"][index];
-    let after = &review["evals"][index + 1];
-    let line = |eval: &Value| -> Vec<String> {
-        let pv = eval["pv"].as_array().map(|pv| {
-            pv.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        });
-        pv.filter(|pv| !pv.is_empty())
-            .or_else(|| eval["best"].as_str().map(|best| vec![best.to_string()]))
+    let eval = |i: usize| review.evals.get(i).and_then(Option::as_ref);
+    let (before, after) = (eval(index), eval(index + 1));
+    let line = |eval: Option<&ReviewEval>| -> Vec<String> {
+        let Some(eval) = eval else {
+            return Vec::new();
+        };
+        eval.pv
+            .clone()
+            .filter(|pv| !pv.is_empty())
+            .or_else(|| eval.best.clone().map(|best| vec![best]))
             .unwrap_or_default()
     };
     let (best, refutation) = (line(before), line(after));
     let mates = tactics::Mates {
-        before: before["mate"].as_f64().map(|mate| mate as i32),
-        after: after["mate"].as_f64().map(|mate| mate as i32),
+        before: before.and_then(|eval| eval.mate).map(|mate| mate as i32),
+        after: after.and_then(|eval| eval.mate).map(|mate| mate as i32),
     };
     let facts = tactics::move_facts(&fen, played, &best, &refutation, mates)?;
     let mut request = json!({
@@ -411,6 +409,20 @@ mod tests {
     use super::*;
     use crate::tactics::Mates;
 
+    /// A review from its fen, moves and evals.
+    fn stored(mut fields: Value) -> StoredReview {
+        let defaults =
+            json!({ "key": "k", "source": "local", "depth": 18, "complete": true, "updatedAt": 0 });
+        for (key, value) in defaults.as_object().unwrap() {
+            fields
+                .as_object_mut()
+                .unwrap()
+                .entry(key)
+                .or_insert(value.clone());
+        }
+        serde_json::from_value(fields).unwrap()
+    }
+
     const FORK: &str = "r3k3/pp3ppp/8/1N6/8/8/PPP2PPP/4K3 w - - 0 1";
 
     fn fork_brief() -> Brief {
@@ -523,6 +535,7 @@ mod tests {
                 { "cp": 0, "pv": ["e7d7"] },
             ],
         });
+        let review = stored(review);
         let moment = review_moment(&review, 2).unwrap();
         assert_eq!(moment["request"]["played"], "e1e2");
         assert_eq!(moment["request"]["best"][0], "b5c7");
@@ -536,7 +549,7 @@ mod tests {
 
     #[test]
     fn a_review_without_lines_still_has_a_moment() {
-        let review = json!({ "fen": FORK, "moves": ["e1e2"], "evals": [null, null] });
+        let review = stored(json!({ "fen": FORK, "moves": ["e1e2"], "evals": [null, null] }));
         let moment = review_moment(&review, 0).unwrap();
         assert_eq!(moment["reason"], Value::Null);
         assert_eq!(moment["request"]["kind"], "move");
@@ -591,6 +604,7 @@ mod tests {
             "moves": ["e1e2"],
             "evals": [{ "cp": 0, "mate": null }, { "mate": -7 }],
         });
+        let review = stored(review);
         let request = &review_moment(&review, 0).unwrap()["request"];
         assert!(request.get("mateBefore").is_none(), "{request}");
         assert_eq!(request["mateAfter"], -7);
@@ -608,6 +622,7 @@ mod tests {
                 { "cp": 0, "pv": ["e7d7"] },
             ],
         });
+        let review = stored(review);
         assert!(review_moment(&review, 2).is_some());
         assert_eq!(review_moment(&review, 9), None);
         assert_eq!(

@@ -125,9 +125,7 @@ impl AnalysisPage {
         let Some(key) = self.practice.as_ref().map(|practice| practice.key.clone()) else {
             return;
         };
-        let shown = self
-            .review(cx)
-            .and_then(|review| review["key"].as_str().map(str::to_string));
+        let shown = self.review(cx).map(|review| review.key);
         if (self.mainline_key() != key && shown.as_deref() != Some(key.as_str()))
             || !Self::assistance_allowed(cx)
         {

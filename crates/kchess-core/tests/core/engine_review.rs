@@ -119,8 +119,8 @@ async fn a_quick_pass_shows_first_then_the_deep_pass_completes_and_finds_the_blu
         })
     );
     let analysis =
-        kchess_domain::review::analyse_review(&serde_json::to_value(&full).expect("json"))
-            .expect("an analysis");
+        serde_json::to_value(kchess_domain::review::analyse(&full).expect("an analysis"))
+            .expect("json");
     assert_eq!(analysis["black"]["blunder"], json!(1), "Nf6 is the blunder");
     assert_eq!(
         full.evals[5]

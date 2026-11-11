@@ -65,18 +65,10 @@ fn a_crazyhouse_game_is_reviewed_in_its_variant(cx: &mut gpui_kit::TestAppContex
     let (review, analysis) = app
         .with_window(|_, cx| page(cx).and_then(|page| page.read(cx).finished_review(cx)))
         .expect("the finished review");
-    assert_eq!(review["variant"], "crazyhouse", "{review}");
-    assert_eq!(
-        review["moves"].as_array().map(Vec::len),
-        Some(5),
-        "{review}"
-    );
+    assert_eq!(review.variant.as_deref(), Some("crazyhouse"), "{review:?}");
+    assert_eq!(review.moves.len(), 5, "{review:?}");
     // Every move, the drop too, is judged.
-    assert_eq!(
-        analysis["moves"].as_array().map(Vec::len),
-        Some(5),
-        "{analysis}"
-    );
+    assert_eq!(analysis.moves.len(), 5, "{analysis:?}");
     // Its mistakes may be practised, in Crazyhouse (`store::library` and `e2e::practice` play
     // them; the scripted engine's lines are not legal here, so it makes no drill).
     assert!(app.shows("practice-review-mistakes"));

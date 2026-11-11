@@ -15,13 +15,12 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 
-use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use super::analysis::Analysis;
 use super::managed::{EngineGuard, EngineHandoff};
 use super::review::{
-    Pause, ReviewHost, ReviewSettings, ReviewStatus, ReviewUpdate, Reviews, StoredReview, parse,
+    Pause, ReviewHost, ReviewSettings, ReviewStatus, ReviewUpdate, Reviews, StoredReview,
 };
 use super::scheduler::Power;
 use super::search::Search;
@@ -224,10 +223,7 @@ impl ReviewHost for ReviewBridge {
         let account = account.to_string();
         let ids = ids.to_vec();
         Box::pin(async move {
-            let reviews =
-                crate::lichess::reviews::fetch_lichess_reviews(&self.lichess, &account, &ids)
-                    .await?;
-            parse(Value::Array(reviews))
+            crate::lichess::reviews::fetch_lichess_reviews(&self.lichess, &account, &ids).await
         })
     }
 

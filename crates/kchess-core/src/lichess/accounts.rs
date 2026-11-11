@@ -29,7 +29,8 @@ use crate::store::games::EXPORTED_GAME_CACHE;
 use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
 use kchess_contracts::types::{
     CachedProfile, Crosstable, CrosstableMatchup, FollowedRatings, FollowedUser, FollowingProblem,
-    FollowingReport, LichessGame, PerfMark, PerfResult, PerfStats, PerfStreak, PerfType, UsageKind,
+    FollowingReport, LichessGame, PerfMark, PerfResult, PerfStats, PerfStreak, PerfType,
+    StoredReview, UsageKind,
 };
 use kchess_domain::color::Color;
 
@@ -89,7 +90,7 @@ pub trait LichessStore: Send + Sync {
         &'a self,
         account: &'a str,
         games: &'a [LichessGame],
-        reviews: &'a [Value],
+        reviews: &'a [StoredReview],
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
     /// Moves the sync cursor of `account` to `synced_at`.
@@ -121,9 +122,9 @@ pub trait LichessStore: Send + Sync {
     fn save_reviews<'a>(
         &'a self,
         account: &'a str,
-        reviews: &'a [Value],
+        reviews: &'a [StoredReview],
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<Value>>>;
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<StoredReview>>>;
     /// The player's Lichess play time when their games were synced.
     fn save_synced_play_time<'a>(
         &'a self,
@@ -1292,7 +1293,7 @@ impl Lichess {
         account: &str,
         since: Option<i64>,
         until: Option<i64>,
-    ) -> CoreResult<(Vec<LichessGame>, Vec<Value>, Vec<String>, bool)> {
+    ) -> CoreResult<(Vec<LichessGame>, Vec<StoredReview>, Vec<String>, bool)> {
         let mut query = vec![
             ("max", SYNC_PAGE.to_string()),
             ("ongoing", "true".to_string()),

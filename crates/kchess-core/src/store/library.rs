@@ -4,8 +4,8 @@
 
 use kchess_contracts::types::{
     Drill, JoinedTournament, Keyed, MistakeGame, MistakesAdded, PlayedGame, RepertoireMisses,
-    RepertoireSchedule, SessionDocument, SessionKind, StudyCommand, StudyCommandResult,
-    TournamentSystem,
+    RepertoireSchedule, ReviewSource, SessionDocument, SessionKind, StudyCommand,
+    StudyCommandResult, TournamentSystem,
 };
 use kchess_domain::color::Color;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -192,76 +192,45 @@ pub fn add_mistakes(
 ) -> Result<MistakesAdded> {
     let mut items = read_mistakes(db)?;
     let review = match super::reviews::read_review(host, db, review_key)? {
-        Some(review) if truthy(review.get("complete")) => review,
+        Some(review) if review.complete => review,
         _ => return Ok(MistakesAdded { added: 0, items }),
     };
-    let color = color.map(kchess_domain::color::name);
     // A variant game's drills are played by its rules (Fairy-Stockfish reviewed it).
     let variant = review
-        .get("variant")
-        .and_then(Value::as_str)
+        .variant
+        .as_deref()
         .and_then(kchess_domain::variant::Variant::from_key);
     let replay = |fen: &str, moves: &[String]| match variant {
         Some(variant) => kchess_domain::replay::replay_positions_in(variant, fen, moves),
         None => kchess_domain::replay::replay_positions(fen, moves),
     };
-    let fen = review
-        .get("fen")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let moves = string_list(review.get("moves"));
-    let positions = replay(&fen, &moves);
+    let positions = replay(&review.fen, &review.moves);
     let analysis = super::reviews::analyse_stored(&review)?;
-    let source = review
-        .get("source")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let stored_key = review
-        .get("key")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let evals = review.get("evals").and_then(Value::as_array);
     let mut added = 0;
-    let judged = analysis
-        .get("moves")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    for (index, mv) in judged.iter().enumerate() {
-        let Some(judgment) = mv
-            .get("judgment")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-        else {
+    for (index, verdict) in analysis.moves.iter().enumerate() {
+        let Some(judgment) = verdict.judgment else {
             continue;
         };
-        if color.is_some_and(|wanted| mv.get("color").and_then(Value::as_str) != Some(wanted)) {
+        if color.is_some_and(|wanted| verdict.color != wanted) {
             continue;
         }
-        let evaluation = evals
-            .and_then(|list| list.get(index))
-            .filter(|e| e.is_object());
+        let evaluation = review.evals.get(index).and_then(Option::as_ref);
         let best = evaluation
-            .and_then(|e| e.get("best"))
-            .and_then(Value::as_str)
+            .and_then(|e| e.best.as_deref())
             .filter(|s| !s.is_empty());
         let position = positions.get(index).map(|p| p.fen.clone());
         let (Some(best), Some(evaluation), Some(position)) = (best, evaluation, position) else {
             continue;
         };
-        let depth = match evaluation.get("depth") {
-            None | Some(Value::Null) => 0.0,
-            other => js::to_number(other),
-        };
-        if moves.get(index).map(String::as_str) == Some(best) || (source == "local" && depth < 10.0)
+        let depth = evaluation.depth.unwrap_or(0.0);
+        if review.moves.get(index).map(String::as_str) == Some(best)
+            || (review.source == ReviewSource::Local && depth < 10.0)
         {
             continue;
         }
-        let pv = evaluation.get("pv").and_then(Value::as_array);
-        let mut solution: Vec<String> = match pv {
-            Some(pv) if pv.first().and_then(Value::as_str) == Some(best) => {
-                string_list(Some(&Value::Array(pv.iter().take(7).cloned().collect())))
+        let mut solution: Vec<String> = match &evaluation.pv {
+            Some(pv) if pv.first().map(String::as_str) == Some(best) => {
+                pv.iter().take(7).cloned().collect()
             }
             _ => vec![best.to_string()],
         };
@@ -273,7 +242,7 @@ pub fn add_mistakes(
         if solution.is_empty() {
             continue;
         }
-        let id = format!("{stored_key}:{index}");
+        let id = format!("{}:{index}", review.key);
         if items.iter().any(|item| item.id == id) {
             continue;
         }
@@ -281,7 +250,7 @@ pub fn add_mistakes(
             id,
             fen: position,
             solution,
-            judgment: judgment.to_string(),
+            judgment: judgment.as_str().to_string(),
             due_at: whole(now),
             streak: 0.into(),
             attempts: 0.into(),
@@ -347,12 +316,8 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Vec<MistakeGame
             continue;
         };
         let mut entry = MistakeGame {
-            fen: review
-                .get("fen")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            moves: string_list(review.get("moves")),
+            fen: review.fen,
+            moves: review.moves,
             key,
             white: None,
             black: None,
@@ -361,7 +326,8 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Vec<MistakeGame
             account: None,
             played_at: 0.0,
         };
-        let mut at = js::to_number(review.get("updatedAt"));
+        #[allow(clippy::cast_precision_loss)]
+        let mut at = review.updated_at as f64;
         let synced = lichess
             .query_row(params![entry.key], |row| {
                 Ok((
@@ -995,10 +961,11 @@ mod tests {
         crate::store::reviews::write_review(
             &QUIET,
             db,
-            &json!({
+            serde_json::from_value(json!({
                 "key": key, "fen": START, "moves": BLUNDER, "source": source,
                 "complete": true, "depth": depth, "updatedAt": 7, "evals": evals,
-            }),
+            }))
+            .expect("a stored review"),
         )
         .expect("write review");
         key.as_str().expect("key").to_string()
@@ -1065,10 +1032,11 @@ mod tests {
         crate::store::reviews::write_review(
             &QUIET,
             &db,
-            &json!({
+            serde_json::from_value(json!({
                 "key": key, "fen": fen, "moves": moves, "source": "local", "variant": "crazyhouse",
                 "complete": true, "depth": 20, "updatedAt": 7, "evals": evals,
-            }),
+            }))
+            .expect("a stored review"),
         )
         .expect("write review");
         let added =

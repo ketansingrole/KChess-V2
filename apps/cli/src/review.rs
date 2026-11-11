@@ -5,7 +5,7 @@ use kchess_contracts::calls;
 use kchess_contracts::check::ReviewKey;
 use kchess_contracts::types::{ReviewRequest, StoredReview};
 use kchess_domain::pgn::parse_pgn;
-use kchess_domain::review::{analyse_review, san_to_uci};
+use kchess_domain::review::{analyse, san_to_uci};
 use kchess_domain::variant::Variant;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -86,28 +86,27 @@ pub fn main_line(pgn: &str) -> Result<Line, String> {
 }
 
 /// Each side's figures and the faulted moves, numbered as in the game.
-pub fn report(line: &Line, review: &Value) -> Result<Value, String> {
-    let analysis = analyse_review(review)
-        .map_err(|reason| format!("The review could not be read: {reason}."))?;
-    let faults: Vec<Value> = analysis["moves"]
-        .as_array()
-        .into_iter()
-        .flatten()
+pub fn report(line: &Line, review: &StoredReview) -> Result<Value, String> {
+    let analysis =
+        analyse(review).map_err(|reason| format!("The review could not be read: {reason}."))?;
+    let faults: Vec<Value> = analysis
+        .moves
+        .iter()
         .zip(&line.sans)
         .enumerate()
-        .filter_map(|(ply, (entry, san))| {
-            let judgment = entry["judgment"].as_str()?;
+        .filter_map(|(ply, (verdict, san))| {
+            let judgment = verdict.judgment?;
             Some(json!({
                 "move": move_number(&line.fen, ply),
-                "color": entry["color"],
+                "color": kchess_domain::color::name(verdict.color),
                 "san": san,
                 "judgment": judgment,
             }))
         })
         .collect();
     Ok(json!({
-        "white": analysis["white"],
-        "black": analysis["black"],
+        "white": analysis.white,
+        "black": analysis.black,
         "faults": faults,
     }))
 }
@@ -171,7 +170,7 @@ pub async fn run(
             Next::Event(_) | Next::Line(_) | Next::Tick => {}
         }
     }
-    let stored = serde_json::to_value(&stored).map_err(|cause| cause.to_string())?;
+    let stored = stored.ok_or("The review did not arrive.")?;
     report(&line, &stored)
 }
 
@@ -232,11 +231,12 @@ mod tests {
             "[FEN \"rnb1kbnr/pppp1ppp/8/4p1q1/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 10\"]\n\n10... Qg4 11. Qxg4 *",
         )
         .expect("a game");
-        let review = json!({
-            "fen": line.fen, "moves": line.moves, "source": "local", "depth": 18,
-            "complete": true,
+        let review = serde_json::from_value(json!({
+            "key": "k", "fen": line.fen, "moves": line.moves, "source": "local", "depth": 18,
+            "complete": true, "updatedAt": 0,
             "evals": [{"cp": 0, "depth": 18}, {"cp": 900, "depth": 18}, {"cp": 900, "depth": 18}],
-        });
+        }))
+        .expect("a stored review");
         let report = report(&line, &review).expect("a report");
         assert_eq!(
             report["faults"],

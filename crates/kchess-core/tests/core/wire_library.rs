@@ -291,8 +291,9 @@ fn store_review(core: &Core) -> String {
         "key": key, "fen": START, "moves": BLUNDER, "source": "local",
         "complete": true, "depth": 20, "updatedAt": 7, "evals": evals,
     });
+    let review = serde_json::from_value(review).expect("a stored review");
     core.database_for_tests()
-        .write(|ctx| kchess_core::store::reviews::write_review(ctx.host, ctx.db, &review))
+        .write(|ctx| kchess_core::store::reviews::write_review(ctx.host, ctx.db, review))
         .expect("review");
     key
 }

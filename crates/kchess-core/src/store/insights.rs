@@ -11,11 +11,12 @@ use crate::host::{Host, Level};
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
     AccuracyReport, BandRecord, Blunders, BlundersByTime, ByColor, ClockAt, EndingRecord,
-    GameRecord, InsightsQuery, InsightsReport, MistakeRates, OpeningRecord, PhaseTime, SpeedRecord,
-    Streaks, TimeUseReport,
+    GameRecord, InsightsQuery, InsightsReport, Judgment, MistakeRates, OpeningRecord, PhaseTime,
+    SpeedRecord, StoredReview, Streaks, TimeUseReport,
 };
 use kchess_domain::js;
 use kchess_domain::js::truthy;
+use kchess_domain::review::MoveVerdict;
 use kchess_domain::time_use::{PHASES, TimeUse, time_use};
 use kchess_domain::variant::{VARIANTS, Variant};
 
@@ -452,7 +453,7 @@ struct Clocks {
 
 impl Clocks {
     /// One game: the player's side, its result, its clock and its review's move labels.
-    fn add(&mut self, white: bool, result: &str, time: &TimeUse, judgments: Option<&[Value]>) {
+    fn add(&mut self, white: bool, result: &str, time: &TimeUse, verdicts: Option<&[MoveVerdict]>) {
         self.games += 1;
         let mine = |ply: usize| time.white(ply) == white;
         let plies = time.clocks.len();
@@ -482,9 +483,9 @@ impl Clocks {
                 slot.2 += 100.0 * other / time.initial;
             }
         }
-        if let Some(judgments) = judgments {
+        if let Some(verdicts) = verdicts {
             self.reviewed += 1;
-            for ply in (0..plies.min(judgments.len())).filter(|&ply| mine(ply)) {
+            for ply in (0..plies.min(verdicts.len())).filter(|&ply| mine(ply)) {
                 let Some(short) = time.short_before(ply) else {
                     continue;
                 };
@@ -494,7 +495,7 @@ impl Clocks {
                     &mut self.blunders_spare
                 };
                 bucket.moves += 1;
-                if judgments[ply].get("judgment").and_then(Value::as_str) == Some("blunder") {
+                if verdicts[ply].judgment == Some(Judgment::Blunder) {
                     bucket.blunders += 1;
                 }
             }
@@ -579,7 +580,7 @@ fn time_use_report(
         };
         // A review that cannot be read or analysed leaves the game's moves unlabelled.
         let analysed = review
-            .and_then(|data| serde_json::from_str::<Value>(&data).ok())
+            .and_then(|data| serde_json::from_str::<StoredReview>(&data).ok())
             .and_then(|data| match super::reviews::analyse_stored(&data) {
                 Ok(analysis) => Some(analysis),
                 Err(cause) => {
@@ -591,11 +592,8 @@ fn time_use_report(
                     None
                 }
             });
-        let judgments = analysed
-            .as_ref()
-            .and_then(|analysis| analysis["moves"].as_array())
-            .map(Vec::as_slice);
-        clocks.add(color == "white", &result, &time, judgments);
+        let verdicts = analysed.as_ref().map(|analysis| analysis.moves.as_slice());
+        clocks.add(color == "white", &result, &time, verdicts);
     }
     Ok((clocks.games > 0).then(|| clocks.report()))
 }

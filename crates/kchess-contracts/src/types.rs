@@ -124,11 +124,6 @@ wire_enum!(#[doc = "What became of a spoken phrase. Moves: `played` at once, `pe
     Correct = "correct",
     Wrong = "wrong",
 });
-union!(#[doc = "Severity of a move mistake in review."] Judgment {
-    Inaccuracy = "inaccuracy",
-    Mistake = "mistake",
-    Blunder = "blunder",
-});
 wire_enum!(#[doc = "Which games are reviewed automatically."] ReviewAuto, REVIEW_AUTO {
     Off = "off",
     Recent = "recent",
@@ -215,7 +210,6 @@ union!(#[doc = "Which app area a metered action belongs to."] UsageKind {
     Study = "study",
     Other = "other",
 });
-union!(#[doc = "Where a game review came from."] ReviewSource { Lichess = "lichess", Local = "local" });
 union!(#[doc = "Connection state while watching a game."] WatchPhase { Connecting = "connecting", Connected = "connected", Ended = "ended", Error = "error" });
 union!(#[doc = "Whether watching Lichess TV or a specific game."] WatchSource { Tv = "tv", Game = "game" });
 union!(#[doc = "Time section of a broadcast list."] BroadcastSection { Active = "active", Upcoming = "upcoming", Past = "past" });
@@ -1803,96 +1797,9 @@ pub enum AiExplanation {
 
 /* ── Game review ───────────────────────────────────────────────────── */
 
-/// One position of a reviewed game: its score from White's side and the engine's choice there.
-/// A checkmated position is `mate: 0` (the side to move has lost).
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewEval {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cp: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mate: Option<f64>,
-    /// The engine's move in this position (UCI), and the line it expects after it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub best: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pv: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub depth: Option<f64>,
-}
-
-/// Lichess's accuracy figures, as Lichess sent them (`87`, `64.5`).
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewAccuracy {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub white: Option<serde_json::Number>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub black: Option<serde_json::Number>,
-}
-
-/// A game's review as stored: the raw scores; labels and accuracy are worked out from them.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct StoredReview {
-    /// The same moves from the same start share one review.
-    pub key: String,
-    pub fen: String,
-    /// UCI, from `fen`.
-    pub moves: Vec<String>,
-    pub source: ReviewSource,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub engine: Option<String>,
-    /// Index 0 is the starting position, index i the position after move i; null until analysed.
-    pub evals: Vec<Option<ReviewEval>>,
-    /// Depth the local analysis aims for; 0 for Lichess's analysis.
-    pub depth: u32,
-    pub complete: bool,
-    pub updated_at: i64,
-    /// The Lichess game it belongs to, if any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub game_id: Option<String>,
-    /// Lichess's own label for each move (index i is move i+1), when Lichess did the analysis.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub judgments: Option<Vec<Option<Judgment>>>,
-    /// Lichess's own accuracy figures, when Lichess did the analysis.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub accuracy: Option<ReviewAccuracy>,
-    /// The Lichess key of a variant game's variant, which Fairy-Stockfish reviews.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
-    /// What another release stored beside these, kept as it was.
-    #[serde(flatten)]
-    pub rest: serde_json::Map<String, Value>,
-}
-
-/// One player's side of a review. Figures keep the form they were stored in (`100` when read
-/// back, `100.0` when just worked out).
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewSide {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub accuracy: Option<serde_json::Number>,
-    /// Average centipawn loss.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acpl: Option<serde_json::Number>,
-    pub inaccuracy: u32,
-    pub mistake: u32,
-    pub blunder: u32,
-}
-
-/// What the game list shows for a reviewed game.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewSummary {
-    pub key: String,
-    pub source: ReviewSource,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub engine: Option<String>,
-    pub complete: bool,
-    pub white: ReviewSide,
-    pub black: ReviewSide,
-}
+pub use kchess_domain::records::review::{
+    Judgment, ReviewAccuracy, ReviewEval, ReviewSide, ReviewSource, ReviewSummary, StoredReview,
+};
 
 /// Review a game: its moves from its position, and the Lichess game it is when it is one.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

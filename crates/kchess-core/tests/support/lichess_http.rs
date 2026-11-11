@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use kchess_contracts::error::Result as CoreResult;
-use kchess_contracts::types::LichessGame;
+use kchess_contracts::types::{LichessGame, StoredReview};
 use kchess_core::capabilities::Capabilities;
 use kchess_core::host::{Host, Level};
 use kchess_core::lichess::accounts::{AccountRow, CachedValue, LichessStore};
@@ -402,7 +402,7 @@ pub struct MemoryStore {
     pub logins: Mutex<Vec<(String, String)>>,
     pub dismissed: Mutex<Vec<String>>,
     /// Reviews saved with their pages of games, or on their own (`save_reviews`).
-    pub reviews: Mutex<Vec<Value>>,
+    pub reviews: Mutex<Vec<StoredReview>>,
     /// Games Lichess was asked about (`mark_checked`).
     pub checked: Mutex<Vec<String>>,
 }
@@ -452,7 +452,7 @@ impl LichessStore for MemoryStore {
         &'a self,
         account: &'a str,
         games: &'a [LichessGame],
-        reviews: &'a [Value],
+        reviews: &'a [StoredReview],
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
@@ -478,9 +478,9 @@ impl LichessStore for MemoryStore {
     fn save_reviews<'a>(
         &'a self,
         _account: &'a str,
-        reviews: &'a [Value],
+        reviews: &'a [StoredReview],
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<Value>>> {
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<StoredReview>>> {
         Box::pin(async move {
             if !current() {
                 return Err(kchess_contracts::error::CoreError::new(
