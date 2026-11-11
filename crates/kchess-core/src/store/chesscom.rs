@@ -11,8 +11,8 @@ use serde_json::Value;
 
 use super::games::{GAME_KEYS, MAX_GAMES, as_json, purge_account_data, to_sql, upsert_sql};
 use super::sql::{Sql as _, transaction};
-use crate::error::{CoreError, Result};
 use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::ChesscomAccount;
 use kchess_domain::chesscom::account_of;
 

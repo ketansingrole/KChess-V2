@@ -13,12 +13,12 @@ use super::{
     WatchFrame, WatchSink, WatchState, WatchTarget, align_tv_moves, broadcast_game, display_fen,
     parse_game_details, parse_tv_game,
 };
-use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
 use crate::lichess::accounts::{Lichess, path_segment};
 use crate::lichess::client::{Auth, Lane};
 use crate::lichess::decode::{Loose, read};
 use crate::lichess::stream::STALLED;
+use kchess_contracts::error::{CoreError, Result as CoreResult};
 use kchess_contracts::types::{UsageKind, WatchPhase};
 
 /// A TV feed record, `{ t, d }`: a featured game or a move. Other kinds, and records whose
@@ -220,7 +220,9 @@ impl Spectator {
                         Level::Warn,
                         &format!("Watch failed: {label} {}", cause.message),
                     );
-                    let kind = cause.kind.unwrap_or(crate::error::ErrorKind::Offline);
+                    let kind = cause
+                        .kind
+                        .unwrap_or(kchess_contracts::error::ErrorKind::Offline);
                     let message = if cause.message.is_empty() {
                         "The feed disconnected.".to_string()
                     } else {
@@ -340,7 +342,7 @@ impl Inner {
         session: u64,
         token: &CancellationToken,
         message: &str,
-        kind: crate::error::ErrorKind,
+        kind: kchess_contracts::error::ErrorKind,
     ) {
         if !token.is_cancelled() && self.is_current(session) {
             self.sink.state(WatchState {

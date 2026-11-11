@@ -15,13 +15,13 @@ use shakmaty::{Color, Square};
 use super::run::{self, Drill, DrillRun, Stage};
 use crate::assets::icon;
 use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
-use crate::game::random_unit;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets::{self, Tone};
+use kchess_games::random_unit;
 
 const DEFAULT_SECONDS: u32 = 60;
 const LENGTH: &str = "kchess:knight-length";
@@ -293,7 +293,7 @@ impl KnightPaths {
     fn redraw(&mut self, cx: &mut Context<Self>) {
         let running = self.run.running();
         self.voice.sync(
-            crate::voice::grammar(crate::voice::Grammar::Coordinate),
+            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Coordinate).to_vec(),
             running,
             cx,
         );
@@ -411,17 +411,22 @@ impl Render for KnightPaths {
                 move |seconds, _, cx| crate::prefs::set(cx, LENGTH, seconds),
                 &palette,
             ))
-            .child(self.voice.bar(
-                cx.entity().downgrade(),
-                |this: &mut Self| &mut this.voice,
-                BarSpec {
-                    id: "knight-voice",
-                    hint: "Say the square to jump to, such as “F three”",
-                    active: running,
-                    grammar: crate::voice::grammar(crate::voice::Grammar::Coordinate),
-                },
-                cx,
-            ))
+            .child(
+                self.voice.bar(
+                    cx.entity().downgrade(),
+                    |this: &mut Self| &mut this.voice,
+                    BarSpec {
+                        id: "knight-voice",
+                        hint: "Say the square to jump to, such as “F three”",
+                        active: running,
+                        grammar: kchess_domain::voice::grammar(
+                            kchess_domain::voice::Grammar::Coordinate,
+                        )
+                        .to_vec(),
+                    },
+                    cx,
+                ),
+            )
             .child(div().h(px(1.)).bg(palette.border));
         if running {
             panel = panel

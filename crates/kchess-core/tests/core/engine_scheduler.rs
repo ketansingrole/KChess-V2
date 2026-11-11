@@ -5,9 +5,9 @@ use std::task::Poll;
 use std::time::Duration;
 
 use futures_util::poll;
+use kchess_contracts::error::CoreError;
 use kchess_core::engine::scheduler::{Priority, Scheduler};
 use kchess_core::engine::uci::search_cancelled;
-use kchess_core::error::CoreError;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]

@@ -14,8 +14,8 @@ use super::accounts::{Lichess, Reply, path_segment};
 use super::client::Auth;
 use super::decode::{Millis, Text, present, read};
 use super::online::js_number;
-use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Level;
+use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
 pub use kchess_contracts::types::{
     NewArena, TournamentClock, TournamentClocks, TournamentCondition, TournamentDetail,
     TournamentExtras, TournamentFeatured, TournamentGame, TournamentList, TournamentMe,

@@ -15,13 +15,14 @@ use shakmaty::{Color, Square};
 use super::run::{self, Drill, DrillRun, Stage, Tally};
 use crate::assets::icon;
 use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
-use crate::game::{STANDARD_FEN, random_unit};
+use crate::game::STANDARD_FEN;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets::{self, Pill, Tone};
+use kchess_games::random_unit;
 
 const FILES: [&str; 8] = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const RANKS: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
@@ -253,7 +254,7 @@ impl Coordinates {
         self.run_epoch += 1;
         self.question = 0;
         self.voice.feedback = None;
-        if let Some(orientation) = crate::game::drawn(crate::game::draw_color(self.side)) {
+        if let Some(orientation) = crate::game::drawn(kchess_games::draw_color(self.side)) {
             self.orientation = orientation;
         }
         self.tally = Tally::default();
@@ -372,7 +373,7 @@ impl Coordinates {
     fn redraw(&mut self, cx: &mut Context<Self>) {
         let running = self.run.running();
         self.voice.sync(
-            crate::voice::grammar(crate::voice::Grammar::Coordinate),
+            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Coordinate).to_vec(),
             running && self.mode == Mode::Voice,
             cx,
         );
@@ -780,17 +781,22 @@ impl Render for Coordinates {
                 cx,
             ))
             .when(self.mode == Mode::Voice, |panel| {
-                panel.child(self.voice.bar(
-                    page.clone(),
-                    |this: &mut Self| &mut this.voice,
-                    BarSpec {
-                        id: "coordinates-voice",
-                        hint: "Say “E four” or “Echo four”",
-                        active: running,
-                        grammar: crate::voice::grammar(crate::voice::Grammar::Coordinate),
-                    },
-                    cx,
-                ))
+                panel.child(
+                    self.voice.bar(
+                        page.clone(),
+                        |this: &mut Self| &mut this.voice,
+                        BarSpec {
+                            id: "coordinates-voice",
+                            hint: "Say “E four” or “Echo four”",
+                            active: running,
+                            grammar: kchess_domain::voice::grammar(
+                                kchess_domain::voice::Grammar::Coordinate,
+                            )
+                            .to_vec(),
+                        },
+                        cx,
+                    ),
+                )
             })
             .when(!running, |panel| {
                 panel.child(div().h(px(1.)).bg(palette.border))

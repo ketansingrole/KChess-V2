@@ -13,9 +13,9 @@ use serde_json::json;
 use std::sync::Arc;
 
 use crate::core::Core;
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use crate::store::{self, import};
+use kchess_contracts::error::{CoreError, Result};
 
 mod accounts;
 mod ai;

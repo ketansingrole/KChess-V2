@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::library::js_json;
 use super::sql::Sql as _;
-use crate::error::Result;
+use kchess_contracts::error::Result;
 use kchess_domain::js::utf16_len;
 
 /// Stored entries beyond this size are not read back (`row.data.length > 512_000`).

@@ -22,8 +22,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_contracts::error::{CoreError, Result};
 
 /// Loading the model reads about 40 MB; a slow disk gets a generous bound. Taking a grammar
 /// (compiling it into the recognizer's graph) is part of starting and shares this bound.

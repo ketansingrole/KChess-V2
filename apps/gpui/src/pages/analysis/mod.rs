@@ -1142,7 +1142,7 @@ impl AnalysisPage {
         self.voice.sync(
             &context,
             Some(line),
-            crate::voice::grammar(crate::voice::Grammar::Analysis),
+            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Analysis).to_vec(),
             true,
             cx,
         );
@@ -1846,7 +1846,8 @@ impl Render for AnalysisPage {
                 hint: "Say a move like “Knight F three”, or “back”, “next”, “best move”",
                 active: true,
                 listening: true,
-                grammar: crate::voice::grammar(crate::voice::Grammar::Analysis),
+                grammar: kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Analysis)
+                    .to_vec(),
             },
             cx,
         );

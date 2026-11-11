@@ -16,11 +16,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{CoreError, Result};
 use crate::host::{Config, Host, Level};
 use crate::store::sql::{Lane, LaneMessages, Sql as _, transaction};
 use crate::tasks::lock;
 use crate::usage::Meter;
+use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
     LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleAttemptInput, PuzzleDbStatus, PuzzleProgress,
     PuzzleProgressQuery,

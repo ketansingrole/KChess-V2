@@ -5,11 +5,11 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use futures_util::future::BoxFuture;
+use kchess_contracts::error::Result;
 use kchess_core::Config;
 use kchess_core::engine::review::{
     Pause, ReviewHost, ReviewSettings, ReviewStatus, ReviewUpdate, StoredReview,
 };
-use kchess_core::error::Result;
 use kchess_core::store::{Database, games, reviews};
 use rusqlite::OptionalExtension;
 use serde_json::json;

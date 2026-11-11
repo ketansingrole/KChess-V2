@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use kchess_core::engine::uci::{UciController, search_cancelled};
 #[cfg(unix)]
-use kchess_core::error::CoreError;
+use kchess_contracts::error::CoreError;
+use kchess_core::engine::uci::{UciController, search_cancelled};
 #[cfg(unix)]
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;

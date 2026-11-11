@@ -10,8 +10,8 @@ use kchess_contracts::types::{
 };
 
 use crate::core::Core;
-use crate::error::{CoreError, Result};
 use crate::lichess::{lookups, studies};
+use kchess_contracts::error::{CoreError, Result};
 
 impl StudiesApi for Core {
     async fn position_lookup(

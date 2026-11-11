@@ -38,7 +38,6 @@ pub mod core;
 pub mod download;
 pub mod engine;
 pub mod env;
-pub mod error;
 pub mod facade;
 pub mod host;
 pub mod ids;
@@ -60,5 +59,4 @@ pub mod usage;
 pub mod voice;
 
 pub use crate::core::Core;
-pub use error::{CoreError, ErrorKind, Result};
 pub use host::{Config, Host, Level, TestSwitches, TestVoiceModel};

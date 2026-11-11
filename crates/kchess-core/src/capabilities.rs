@@ -15,10 +15,10 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 
 use crate::connection::Connections;
-use crate::error::{CoreError, Result};
 use crate::host::Host;
 use crate::secrets::{self, Credentials};
 use crate::tasks::lock;
+use kchess_contracts::error::{CoreError, Result};
 
 const DEADLINE: Duration = Duration::from_secs(30);
 const HOST_CLOSED: &str = "The host closed before answering.";

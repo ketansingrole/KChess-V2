@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use kchess_contracts::CoreEvent;
-use kchess_core::{Config, CoreError, ErrorKind};
+use kchess_contracts::{CoreError, ErrorKind};
+use kchess_core::Config;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 

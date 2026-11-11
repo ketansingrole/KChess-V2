@@ -16,8 +16,8 @@ use super::games::{
     GAME_KEYS, MAX_GAMES, default_settings, in_progress, to_sql, write_settings_json,
 };
 use super::sql::{Sql as _, transaction};
-use crate::error::{CoreError, Result};
 use crate::host::Level;
+use kchess_contracts::error::{CoreError, Result};
 use kchess_domain::js;
 
 const PIECE_ANIMATIONS: [&str; 4] = ["none", "fast", "normal", "slow"];

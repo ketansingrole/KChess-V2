@@ -26,9 +26,9 @@ pub mod recognizer;
 
 use crate::archive::{self, Refusal};
 use crate::download;
-use crate::error::{CoreError, ErrorKind, Result};
 use crate::host::{Host, Level};
 use crate::usage::Meter;
+use kchess_contracts::error::{CoreError, ErrorKind, Result};
 
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(120);

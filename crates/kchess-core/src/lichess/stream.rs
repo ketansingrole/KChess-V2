@@ -11,7 +11,7 @@ use std::time::Duration;
 use futures_util::{Stream, StreamExt};
 use tokio_util::sync::CancellationToken;
 
-use crate::error::CoreError;
+use kchess_contracts::error::CoreError;
 
 /// The default limit for one line, in bytes.
 pub const MAX_LINE_BYTES: usize = 2_000_000;
@@ -41,7 +41,8 @@ pub(crate) const STALLED: &str = "Lichess stream stalled. Reconnecting…";
 
 /// The error of a connection that broke while Lichess was sending.
 fn dropped() -> CoreError {
-    CoreError::new("The connection to Lichess dropped.").with_kind(crate::error::ErrorKind::Offline)
+    CoreError::new("The connection to Lichess dropped.")
+        .with_kind(kchess_contracts::error::ErrorKind::Offline)
 }
 
 /// Read `body` to its end, calling `on_line` for every non-empty trimmed line as it arrives.

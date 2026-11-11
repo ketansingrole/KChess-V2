@@ -18,7 +18,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, Result};
 
 /// What every sealed credential starts with.
 pub const SEALED: &str = "kcs1:";

@@ -201,7 +201,9 @@ async fn a_rate_limited_month_is_asked_again_after_the_wait() {
 /// without waiting for Chess.com to answer (`open` is never sent).
 async fn removed_during_add(
     profile: &Profile,
-    adding: tokio::task::JoinHandle<Result<Vec<ChesscomAccount>, kchess_core::error::CoreError>>,
+    adding: tokio::task::JoinHandle<
+        Result<Vec<ChesscomAccount>, kchess_contracts::error::CoreError>,
+    >,
 ) {
     let left = profile.chesscom.remove("alice").await.expect("removed");
     assert!(left.is_empty());

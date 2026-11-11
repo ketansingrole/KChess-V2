@@ -7,9 +7,9 @@ use serde_json::{Map, Value};
 
 use super::library::js_json;
 use super::sql::Sql as _;
-use crate::error::Result;
 use crate::host::{Host, Level};
 use crate::time::now_ms;
+use kchess_contracts::error::Result;
 
 /// The most recent runs a summary lists.
 const RECENT: i64 = 20;

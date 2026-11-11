@@ -35,7 +35,6 @@ pub use kchess_domain::links::{
     BroadcastLink, GameLink, broadcast_link, game_link, is_username, pgn_orientation, profile_link,
     study_link,
 };
-pub use kchess_games::{computer, draw_color, local, random_chess960, random_unit};
 
 /// A random draw, or none when the system had no randomness to give, which is logged: the
 /// caller then leaves things as they are.

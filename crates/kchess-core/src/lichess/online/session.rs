@@ -11,12 +11,11 @@ use tokio_util::sync::CancellationToken;
 use super::super::accounts::Lichess;
 use super::super::challenges::ChallengeInbox;
 use super::super::client::{Auth, Lane as RequestLane};
-use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Level;
 use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
 use kchess_contracts::types::UsageKind;
 
-use super::events::{is_challenge_event, validate_online_event};
 use super::requests::{Emitter, Listen, Quiet, StreamRequest};
 use super::state::{
     ANNOUNCED_MAX, Handle, Inner, LOST_CONNECTION, Lane, MAX_RECONNECTS, ONGOING_DEBOUNCE,
@@ -286,7 +285,7 @@ impl OnlineSession {
                 }
                 received = true;
                 let parsed = match serde_json::from_str::<Value>(line) {
-                    Ok(raw) => validate_online_event(&raw),
+                    Ok(raw) => kchess_domain::records::online::validate(&raw),
                     Err(cause) => Err(cause.to_string()),
                 };
                 match parsed {
@@ -455,7 +454,7 @@ impl OnlineSession {
             return;
         }
         let kind = event["type"].as_str().unwrap_or("").to_string();
-        if is_challenge_event(&kind) {
+        if super::state::CHALLENGE_TYPES.contains(&kind.as_str()) {
             self.on_challenge(account, &event);
             return;
         }

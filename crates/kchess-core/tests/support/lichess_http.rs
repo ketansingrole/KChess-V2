@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
+use kchess_contracts::error::Result as CoreResult;
 use kchess_contracts::types::LichessGame;
 use kchess_core::capabilities::Capabilities;
-use kchess_core::error::Result as CoreResult;
 use kchess_core::host::{Host, Level};
 use kchess_core::lichess::accounts::{AccountRow, CachedValue, LichessStore};
 use kchess_core::lichess::client::TokenSource;
@@ -516,7 +516,9 @@ impl LichessStore for MemoryStore {
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
             if !current() {
-                return Err(kchess_core::error::CoreError::new("Sync was cancelled."));
+                return Err(kchess_contracts::error::CoreError::new(
+                    "Sync was cancelled.",
+                ));
             }
             let mut stored = self.games.lock().unwrap();
             for game in games {
@@ -540,7 +542,9 @@ impl LichessStore for MemoryStore {
     ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<Value>>> {
         Box::pin(async move {
             if !current() {
-                return Err(kchess_core::error::CoreError::new("Sync was cancelled."));
+                return Err(kchess_contracts::error::CoreError::new(
+                    "Sync was cancelled.",
+                ));
             }
             self.reviews.lock().unwrap().extend(reviews.iter().cloned());
             Ok(reviews.to_vec())
@@ -554,7 +558,7 @@ impl LichessStore for MemoryStore {
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
             if !current() {
-                return Err(kchess_core::error::CoreError::aborted(
+                return Err(kchess_contracts::error::CoreError::aborted(
                     "Sync was cancelled.",
                 ));
             }
@@ -571,7 +575,9 @@ impl LichessStore for MemoryStore {
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
             if !current() {
-                return Err(kchess_core::error::CoreError::new("Sync was cancelled."));
+                return Err(kchess_contracts::error::CoreError::new(
+                    "Sync was cancelled.",
+                ));
             }
             self.cursors
                 .lock()
@@ -611,7 +617,7 @@ impl LichessStore for MemoryStore {
             }
 
             if !current() {
-                return Err(kchess_core::error::CoreError::new(
+                return Err(kchess_contracts::error::CoreError::new(
                     "Account was logged out.",
                 ));
             }
@@ -634,7 +640,7 @@ impl LichessStore for MemoryStore {
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
             if !current() {
-                return Err(kchess_core::error::CoreError::aborted(
+                return Err(kchess_contracts::error::CoreError::aborted(
                     "Login was cancelled by logout.",
                 ));
             }

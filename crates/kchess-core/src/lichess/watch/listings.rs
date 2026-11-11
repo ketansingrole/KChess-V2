@@ -7,9 +7,9 @@ use super::{
     BroadcastRoundPlace, BroadcastRoundRef, BroadcastSummary, BroadcastTourDetail, TV_CHANNELS,
     TvChannel, WatchPlayer,
 };
-use crate::error::{CoreError, Result as CoreResult};
 use crate::lichess::accounts::{Lichess, path_segment};
 use crate::lichess::decode::{Loose, Millis, Text, read};
+use kchess_contracts::error::{CoreError, Result as CoreResult};
 use kchess_contracts::types::{BroadcastSection, UsageKind};
 use kchess_domain::js;
 

@@ -553,7 +553,7 @@ impl PuzzleBoard {
         self.voice.sync(
             &context,
             None,
-            crate::voice::grammar(crate::voice::Grammar::Move),
+            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Move).to_vec(),
             playing,
             cx,
         );
@@ -642,7 +642,8 @@ impl Render for PuzzleBoard {
                 hint: "Say “E four” or “Knight F three”",
                 active: playing,
                 listening: playing,
-                grammar: crate::voice::grammar(crate::voice::Grammar::Move),
+                grammar: kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Move)
+                    .to_vec(),
             },
             cx,
         );

@@ -13,9 +13,9 @@ use serde_json::{Value, json};
 
 use super::StoreContext;
 use super::sql::{Sql as _, transaction};
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_contracts::check::{Username, check};
+use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
     Account, AppData, Appearance, CoordinateMode, CoreSettings, FrontendPreferences,
     GameLibraryOverview, GamePage, GamePageQuery, GameRecord, LichessGame, PieceAnimation,

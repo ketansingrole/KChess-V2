@@ -8,7 +8,7 @@ use std::panic::AssertUnwindSafe;
 
 use futures_util::FutureExt;
 
-use crate::error::CoreError;
+use kchess_contracts::error::CoreError;
 
 /// The message of work stopped because its caller cancelled it.
 pub const ABORTED: &str = "This operation was aborted";

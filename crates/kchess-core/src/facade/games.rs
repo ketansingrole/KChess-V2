@@ -11,10 +11,10 @@ use kchess_contracts::types::{
 use serde_json::Value;
 
 use crate::core::Core;
-use crate::error::Result;
 use crate::store::games;
 use crate::store::insights;
 use crate::time::now_ms;
+use kchess_contracts::error::Result;
 
 impl GamesApi for Core {
     async fn sync_games(&self, username: Option<Username>) -> Result<AppData> {

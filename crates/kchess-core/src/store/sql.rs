@@ -12,8 +12,8 @@ use rusqlite::Connection;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::task::TaskTracker;
 
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_contracts::error::{CoreError, Result};
 
 /// Carries SQLite's failures as the core's errors with `?`.
 pub trait Sql<T> {

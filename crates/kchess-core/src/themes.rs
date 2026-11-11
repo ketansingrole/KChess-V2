@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_contracts::error::{CoreError, Result};
 
 const MAX_FILES: usize = 100;
 const MAX_BYTES: u64 = 64 * 1024;

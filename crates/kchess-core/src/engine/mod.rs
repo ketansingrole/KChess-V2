@@ -10,8 +10,8 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::task::AbortHandle;
 
-use crate::error::Result;
 use crate::host::Host;
+use kchess_contracts::error::Result;
 use scheduler::{Priority, Scheduler};
 use status::{EngineLocations, EngineStatus, engine_command};
 use uci::{EngineHub, UciController};

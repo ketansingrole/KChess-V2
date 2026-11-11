@@ -591,7 +591,8 @@ fn home_sizes() -> Vec<(f32, f32)> {
 
 /// A few finished games played here, and an unfinished one against the computer if `unfinished`.
 fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
-    use crate::game::computer::{ComputerGame, Host};
+    use kchess_domain::games::Host;
+    use kchess_domain::games::computer::ComputerGame;
     let host = Host {
         now: 0.,
         allowed: true,

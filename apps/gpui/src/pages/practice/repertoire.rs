@@ -33,7 +33,7 @@ use crate::assets::icon;
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::tree::{TreeNode, child_path, comment_text};
-use crate::game::{STANDARD_FEN, random_unit, view};
+use crate::game::{STANDARD_FEN, view};
 use crate::pages::Page;
 use crate::pages::openings::OpeningChoice;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
@@ -41,6 +41,7 @@ use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::studies::StudyHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice, Pill, Tone};
+use kchess_games::random_unit;
 
 const STUDY: &str = "kchess:repertoire-study";
 const OPENING_CHOICE: &str = "kchess:repertoire-opening";

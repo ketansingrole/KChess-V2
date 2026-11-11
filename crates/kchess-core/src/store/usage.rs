@@ -7,8 +7,8 @@ use rusqlite::{Connection, params};
 
 use super::StoreContext;
 use super::sql::{Sql as _, transaction};
-use crate::error::Result;
 use crate::time::now_ms;
+use kchess_contracts::error::Result;
 
 /// The traffic of one account and kind, not yet written.
 #[derive(Clone, Debug, PartialEq)]

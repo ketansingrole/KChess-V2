@@ -21,8 +21,8 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_contracts::error::{CoreError, Result};
 
 /// The constructor's default deadline for the handshake and `isready`.
 pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(10);

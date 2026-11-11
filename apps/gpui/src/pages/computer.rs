@@ -26,7 +26,6 @@ use crate::assets::icon;
 use crate::board::{BoardEvent, ChessBoard};
 use crate::core::AppCore;
 use crate::export::Exporter;
-use crate::game::computer::{self, ComputerGame, Effect, Host, SearchRequest};
 use crate::game::history::HistoryPlace;
 use crate::game::played::PlayedGame;
 use crate::game::session::{Resumes, SessionSaver, Sessions};
@@ -38,6 +37,8 @@ use crate::played::PlayedHandle;
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Side, Tone};
+use kchess_domain::games::Host;
+use kchess_domain::games::computer::{self, ComputerGame, Effect, SearchRequest};
 
 /// The engine as last checked.
 #[derive(Clone, Copy, PartialEq)]
@@ -733,7 +734,7 @@ impl ComputerPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let color = match crate::game::draw_color(color) {
+        let color = match kchess_games::draw_color(color) {
             Ok(color) => color,
             Err(cause) => return self.log_warn(&cause),
         };
@@ -966,7 +967,7 @@ impl ComputerPage {
         self.voice.sync(
             &context,
             Some(self.sans()),
-            crate::voice::grammar(crate::voice::Grammar::Game),
+            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Game).to_vec(),
             listening,
             cx,
         );
@@ -1338,7 +1339,8 @@ impl Render for ComputerPage {
                 hint: "Say “E four”, “Knight F three”, or “take back”",
                 active: self.voice_taking(),
                 listening: self.voice_listening(),
-                grammar: crate::voice::grammar(crate::voice::Grammar::Game),
+                grammar: kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Game)
+                    .to_vec(),
             },
             cx,
         );

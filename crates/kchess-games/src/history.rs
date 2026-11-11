@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn the_identity_is_written_only_when_it_changes() {
         let mut games = Vec::new();
-        let mut game = crate::local::LocalGame::resume(None, 0.).unwrap();
+        let mut game = kchess_domain::games::local::LocalGame::resume(None, 0.).unwrap();
         let (mut place, writes) = HistoryPlace::new(
             "board",
             Value::Null,
@@ -253,9 +253,9 @@ mod tests {
     fn every_place_is_kept_as_a_known_session() {
         use kchess_domain::misc::constants::SESSION_KINDS;
         for kind in [
-            crate::computer::HISTORY,
-            crate::local::HISTORY,
-            crate::local::CLOCK_HISTORY,
+            kchess_domain::games::computer::HISTORY,
+            kchess_domain::games::local::HISTORY,
+            kchess_domain::games::local::CLOCK_HISTORY,
         ] {
             assert!(
                 SESSION_KINDS.contains(&session_kind(kind).as_str()),

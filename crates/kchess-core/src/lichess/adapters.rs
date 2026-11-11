@@ -10,8 +10,8 @@ use super::accounts::{AccountRow, CachedValue, LichessStore};
 use super::client::TokenSource;
 use super::lookups::{ExplorerLogin, LookupCache};
 use crate::capabilities::Capabilities;
-use crate::error::{CoreError, Result as CoreResult};
 use crate::store::{Database, games, lookups, reviews};
+use kchess_contracts::error::{CoreError, Result as CoreResult};
 use kchess_contracts::types::LichessGame;
 
 /// `LichessStore` over `kchess.db`.

@@ -1,6 +1,6 @@
 //! Random ids and their text.
 
-use crate::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, Result};
 
 /// A version 4 UUID over `bytes` (16 random bytes).
 fn uuid_of(bytes: [u8; 16]) -> String {

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{CONNECT_EXPLORER, PositionLookups};
-use crate::error::{CoreError, ErrorKind, Result as CoreResult};
+use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
 use kchess_contracts::types::{DescriptionBlock, OpeningDescription, PopularityMonth};
 use kchess_domain::training::openings::{line_fens, wikibooks_title};
 

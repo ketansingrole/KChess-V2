@@ -31,7 +31,7 @@ impl LookupCache for MemoryCache {
     fn read<'a>(
         &'a self,
         key: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Option<Value>>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Option<Value>>> {
         Box::pin(async move { Ok(self.values.lock().unwrap().get(key).cloned()) })
     }
 
@@ -39,7 +39,7 @@ impl LookupCache for MemoryCache {
         &'a self,
         key: &'a str,
         value: &'a Value,
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<()>> {
         Box::pin(async move {
             self.values
                 .lock()
@@ -433,7 +433,7 @@ async fn loads_a_master_game_and_refuses_a_refused_failed_or_non_pgn_answer() {
     let error = lookups.service.masters_game("abcdefgh").await.unwrap_err();
     // A server error says what failed, never Lichess's status.
     assert_eq!(error.message, "The master game could not be loaded.");
-    assert_eq!(error.kind, Some(kchess_core::ErrorKind::Unavailable));
+    assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::Unavailable));
     assert!(lookups.service.masters_game("not an id").await.is_err());
 }
 
@@ -760,7 +760,7 @@ struct FixedLogin(Option<String>);
 impl kchess_core::lichess::lookups::ExplorerLogin for FixedLogin {
     fn token(
         &self,
-    ) -> futures_util::future::BoxFuture<'_, kchess_core::error::Result<Option<String>>> {
+    ) -> futures_util::future::BoxFuture<'_, kchess_contracts::error::Result<Option<String>>> {
         Box::pin(async move { Ok(self.0.clone()) })
     }
 }
@@ -835,7 +835,7 @@ async fn a_failed_lookup_shows_no_status() {
             .await
             .unwrap_err();
         assert!(!error.message.contains("500"), "{}", error.message);
-        assert_eq!(error.kind, Some(kchess_core::ErrorKind::Unavailable));
+        assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::Unavailable));
     }
     let error = lookups
         .service
@@ -857,7 +857,7 @@ async fn a_lookup_that_never_answers_times_out_as_a_timeout() {
         .lookup(Kind::Opening, INITIAL, None)
         .await
         .unwrap_err();
-    assert_eq!(error.kind, Some(kchess_core::ErrorKind::TimedOut));
+    assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::TimedOut));
     assert!(!error.message.contains("aborted"), "{}", error.message);
 }
 
