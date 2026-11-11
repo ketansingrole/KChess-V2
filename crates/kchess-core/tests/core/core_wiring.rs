@@ -3,7 +3,7 @@
 //! battery reading (never waiting on the host), the managed engine handoff, the exact event
 //! payloads, the busy state of automatic reviews, and closing the core.
 
-mod support;
+use crate::support;
 
 use kchess_contracts::CoreEvent;
 use std::net::TcpListener;

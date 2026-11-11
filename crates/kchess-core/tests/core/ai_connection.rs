@@ -208,9 +208,12 @@ async fn a_plan_connects_explains_and_disconnects() {
     let (release, held) = tokio::sync::oneshot::channel();
     *hold.lock().unwrap() = Some(held);
     let (signed, chosen) = tokio::join!(core.call("aiConnect", vec![]), async {
-        while hold.lock().unwrap().is_some() {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
+        crate::support::wait_until(
+            std::time::Duration::from_secs(10),
+            "the sign-in to wait",
+            || hold.lock().unwrap().is_none().then_some(()),
+        )
+        .await;
         let chosen = core
             .call("aiSetOptions", vec![json!("gpt-a"), json!("high")])
             .await;

@@ -1,9 +1,8 @@
 //! Closing the core (`Core::close`, the facade's close sequence): an engine search, a Lichess
 //! request and a puzzle download that are running when the core closes end, `close` returns, and
-//! later calls fail with the TypeScript message `The KChess core is closed.`. The Lichess case
-//! sets the test origin, so it runs in a binary of its own (`core_close_lichess.rs`).
+//! later calls fail with `The KChess core is closed.`. The Lichess case is `core_close_lichess.rs`.
 
-mod support;
+use crate::support;
 
 use kchess_contracts::CoreEvent;
 use std::net::TcpListener;
@@ -46,7 +45,7 @@ fn configure_engine(core: &Core, path: &str) {
     support::save_engine_path(core, path);
 }
 
-/// Waits until the spawned call has started its work.
+/// Gives the spawned search time to reach the engine (the fake engine reports nothing on the way).
 async fn let_work_start() {
     tokio::time::sleep(Duration::from_millis(300)).await;
 }
@@ -107,7 +106,7 @@ async fn closing_ends_a_puzzle_download_in_flight() {
         let core = Arc::clone(&core);
         tokio::spawn(async move { core.install_puzzles_for_tests(&url).await })
     };
-    let_work_start().await;
+    let _download = support::accepted(&silent).await;
 
     tokio::time::timeout(LIMIT, core.close())
         .await

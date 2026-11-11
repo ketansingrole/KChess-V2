@@ -174,6 +174,18 @@ pub async fn wait_until<T>(
     }
 }
 
+/// The first connection to `listener`, once the code under test has made it: the work that
+/// connects has started. The stream is returned to keep it open.
+pub async fn accepted(listener: &std::net::TcpListener) -> std::net::TcpStream {
+    listener
+        .set_nonblocking(true)
+        .expect("a nonblocking listener");
+    wait_until(Duration::from_secs(20), "a connection", || {
+        listener.accept().ok().map(|(stream, _)| stream)
+    })
+    .await
+}
+
 /// The engine at `variable`'s path: Stockfish (`KCHESS_ENGINE_PATH`, which CI fetches with `cargo
 /// run -p kchess-core --example fetch_stockfish`) or Fairy-Stockfish
 /// (`KCHESS_VARIANT_ENGINE_PATH`). The tests that call it are ignored unless the variable was set

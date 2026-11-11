@@ -656,11 +656,10 @@ async fn a_pass_with_no_engine_open_leaves_no_idle_countdown() {
     })
     .await;
     // The pass ends just after its status: then only the later recheck's timer is left.
-    let started = std::time::Instant::now();
-    while alive() > 1 && started.elapsed() < Duration::from_secs(2) {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert_eq!(alive(), 1, "the later recheck alone, no idle countdown");
+    wait_until(WAIT, "the later recheck alone, no idle countdown", || {
+        (alive() == 1).then_some(())
+    })
+    .await;
     rig.reviews.stop_reviews().await;
 }
 
