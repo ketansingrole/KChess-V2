@@ -138,12 +138,10 @@ impl Services {
         self.lifetime.cancel();
     }
 
-    /// The position explorer.
     pub fn lookups(&self) -> &PositionLookups {
         &self.lookups
     }
 
-    /// The cloud evaluations already fetched.
     pub fn cloud(&self) -> &CloudCache {
         &self.cloud
     }
@@ -154,7 +152,7 @@ impl Services {
         self.lichess.reset();
     }
 
-    /// Forgets the usage of accounts that were signed out (`forgetUsage`): traffic still in flight
+    /// Forgets the usage of accounts that were signed out: traffic still in flight
     /// for them is no longer counted, and what is pending is dropped.
     pub fn forget_usage(&self, accounts: &[String]) {
         self.lichess.client().policy().forget_usage(accounts);

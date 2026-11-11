@@ -27,7 +27,7 @@ fn profile() -> Profile {
     let dir = tempfile::tempdir().expect("temporary profile");
     let path = dir.path().to_path_buf();
     let mut config = Config::new(path.clone());
-    config.bundled_engine_path = Some(path.join("no-engine.js"));
+    config.bundled_engine_path = Some(path.join("no-engine"));
     let core = Core::open(config, Arc::new(Recording::default())).expect("the profile opens");
     core.database_for_tests()
         .read(|_| Ok(()))
@@ -97,7 +97,7 @@ impl Profile {
             .expect("the review request answers")
     }
 
-    /// Inserts a game the way the TypeScript test did: a resigned game of 1 ms, as White.
+    /// Inserts a resigned game of 1 ms, as White.
     fn game(&self, id: &str, account: &str) {
         self.exec(&format!(
             "INSERT INTO games (account,id,createdAt,lastMoveAt,rated,speed,perf,status,color,opponent,moves) VALUES ('{account}', '{id}', 1,1,0,'blitz','blitz','resign','white','Bob','e4 e5')"
@@ -147,7 +147,7 @@ fn review(game: Option<&str>, overrides: &[(&str, Value)]) -> Value {
     review
 }
 
-/// The position's review key, from the rules (`reviewKey`).
+/// The position's review key, from the rules.
 fn review_key() -> String {
     kchess_domain::records::review::review_key(INITIAL_FEN, &["e2e4", "e7e5"], None)
 }

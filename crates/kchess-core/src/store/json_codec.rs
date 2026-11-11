@@ -1,12 +1,11 @@
-//! `JSON.stringify`-compatible text, UTF-16 lengths and slicing, and study-name cleanup.
-//! Split from the library store; the other storage modules share this codec so stored
-//! documents keep matching the TypeScript bytes.
+//! Compact JSON text, UTF-16 lengths and slicing, and study-name cleanup. The storage modules
+//! share this codec so stored documents keep the bytes earlier releases wrote.
 
 use serde_json::Value;
 
 use kchess_domain::js;
 
-/// `JSON.stringify(value)`: the same text for the values the core stores (keys in order, whole
+/// Compact JSON text for the values the core stores (keys in order, whole
 /// numbers without `.0`, no spaces).
 pub fn js_json(value: &Value) -> String {
     let mut out = String::new();
@@ -49,7 +48,7 @@ fn write_js_json(value: &Value, out: &mut String) {
     }
 }
 
-/// `name.trim().slice(0, 120)`
+/// At most 120 UTF-16 units of the trimmed name.
 pub fn clean_name(name: &str) -> String {
     js::slice_utf16(js::trim(name), 120).to_string()
 }

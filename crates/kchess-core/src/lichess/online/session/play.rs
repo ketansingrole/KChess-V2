@@ -44,7 +44,7 @@ impl Drop for MoveInFlight<'_> {
 }
 
 impl OnlineSession {
-    /// Start the board's stream of game `id` (`openGame`). The state is set before this returns,
+    /// Start the board's stream of game `id`. The state is set before this returns,
     /// so the game counts as played at once; the stream itself runs on a task.
     pub(super) fn begin_game(&self, id: &str, auth: &Auth) {
         let (handle, account, session) = {
@@ -86,7 +86,7 @@ impl OnlineSession {
         let handle_id = handle.id;
         tokio::spawn(async move {
             this.listen(request, cancel, emit, options).await;
-            // `.finally`: the live game ends when its stream ended for a finished game, and this
+            // The live game ends when its stream ended for a finished game, and this
             // stream is still the game's controller.
             this.st()
                 .stream_ended(&game_id, handle_id, finished.load(Ordering::SeqCst));

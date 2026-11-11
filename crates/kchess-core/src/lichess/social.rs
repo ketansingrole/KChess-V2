@@ -28,7 +28,7 @@ const TIMELINE_PLAYERS: usize = 15;
 const BOOKMARKS_MAX: usize = 100;
 
 impl Lichess {
-    /// `relation`: whether `account` follows or blocks `username` (the profile as `account` sees
+    /// Whether `account` follows or blocks `username` (the profile as `account` sees
     /// it carries both).
     pub async fn relation(
         &self,
@@ -50,7 +50,7 @@ impl Lichess {
         .await
     }
 
-    /// `setRelation`: follow, unfollow, block or unblock `username` as `account`. Needs
+    /// Follow, unfollow, block or unblock `username` as `account`. Needs
     /// `follow:write`; a login made before it was requested answers "reconnect".
     pub async fn set_relation(
         &self,
@@ -73,7 +73,7 @@ impl Lichess {
         .await
     }
 
-    /// `profiles`: many players at once (`POST /api/users`), in requests of 300; Lichess leaves
+    /// Many players at once (`POST /api/users`), in requests of 300; Lichess leaves
     /// out names it does not know.
     pub async fn profiles(&self, usernames: &[String]) -> CoreResult<Vec<Value>> {
         let mut users = Vec::new();
@@ -89,7 +89,7 @@ impl Lichess {
         Ok(users)
     }
 
-    /// `leaderboard`: the top players of `perf`.
+    /// The top players of `perf`.
     pub async fn leaderboard(&self, perf: PerfType) -> CoreResult<Vec<LeaderboardEntry>> {
         let perf = perf.as_str();
         if perf == "correspondence" {
@@ -109,7 +109,7 @@ impl Lichess {
         Ok(read_leaderboard(&body, perf))
     }
 
-    /// `searchPlayers`: players whose names start with `term`.
+    /// Players whose names start with `term`.
     pub async fn search_players(&self, term: &str) -> CoreResult<Vec<PlayerSuggestion>> {
         if term.chars().count() < SEARCH_MIN {
             return Ok(Vec::new());
@@ -126,7 +126,7 @@ impl Lichess {
         Ok(read_suggestions(&body))
     }
 
-    /// `activity`: what `username` did lately, by day. Cached for a few minutes like a profile,
+    /// What `username` did lately, by day. Cached for a few minutes like a profile,
     /// so the timeline and the player's page share one read.
     pub async fn activity(&self, username: &str) -> CoreResult<Vec<ActivityDay>> {
         let body = self
@@ -144,7 +144,7 @@ impl Lichess {
         Ok(read_activity(&body))
     }
 
-    /// `timeline`: what the players on the Following list did lately, newest first. Lichess's
+    /// What the players on the Following list did lately, newest first. Lichess's
     /// own timeline answers only its mobile app's login, so this reads each player's public
     /// activity. A player whose activity cannot be read is left out; when none can be, the first
     /// failure is the answer.
@@ -187,7 +187,7 @@ impl Lichess {
         Ok(entries)
     }
 
-    /// `importGame`: upload `pgn` to Lichess as `account`, or anonymously when it is empty or its
+    /// Upload `pgn` to Lichess as `account`, or anonymously when it is empty or its
     /// login is unavailable.
     pub async fn import_game(&self, account: &str, pgn: &str) -> CoreResult<ImportedGame> {
         let auth = self.optional_login(account, UsageKind::Profile).await;
@@ -212,7 +212,7 @@ impl Lichess {
         }
     }
 
-    /// `bookmarkedGames`: the games `account` bookmarked, newest first, from its side.
+    /// The games `account` bookmarked, newest first, from its side.
     pub async fn bookmarked_games(&self, account: &str) -> CoreResult<Reply<Vec<LichessGame>>> {
         let reply = self
             .as_account(account, UsageKind::Profile, |auth| async move {

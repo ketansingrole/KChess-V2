@@ -1,5 +1,4 @@
 //! Studies: the `Studies` working set, `studyCommand` and its storage (`studies` table).
-//! Split from the library store; bodies are unchanged.
 
 use kchess_contracts::types::{ChapterInput, RemoteStudy, StudyCommand, StudyCommandResult};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -88,7 +87,7 @@ impl Studies {
         Ok(id)
     }
 
-    /// `saveChapters(rawName, chapters, id?)`: a study from named PGN chapters.
+    /// A study from named PGN chapters.
     fn save_chapters(
         &mut self,
         raw_name: &str,
@@ -159,7 +158,7 @@ impl Studies {
     }
 }
 
-/// A string that JavaScript would treat as true (non-empty).
+/// A non-empty string.
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.filter(|s| !s.is_empty())
 }
@@ -178,7 +177,7 @@ fn read_command_studies(db: &Connection, command: &StudyCommand) -> Result<Vec<V
     read_study_rows(db, StudyBodies::Only(target))
 }
 
-/// `studyCommand(command, now)`: one change to the study library, stored on success.
+/// One change to the study library, stored on success.
 /// Another window saved the study after this one read it (`docs/shared-core.md`).
 pub const STALE_STUDY: &str =
     "This study was changed in another KChess window. Reload it to see the latest version.";
@@ -232,7 +231,6 @@ pub(crate) fn check_based_on(
     }
 }
 
-/// Chapters as `saveChapters` reads them.
 fn chapter_list(chapters: &[ChapterInput]) -> Result<Value> {
     serde_json::to_value(chapters).map_err(|cause| CoreError::new(cause.to_string()))
 }
@@ -593,7 +591,7 @@ pub(crate) fn study_command(
     finish_studies(db, studies, result, &original, incremental)
 }
 
-/// `offline`: a cloud copy of a study, kept beside a changed local one.
+/// A cloud copy of a study, kept beside a changed local one.
 fn offline(
     studies: &mut Studies,
     account: &str,
@@ -660,7 +658,7 @@ fn offline(
     Ok(())
 }
 
-/// `studyMatchesCloud` for a stored study; a chapter that holds no game is an error.
+/// Whether a stored study's chapters match the downloaded PGN; a chapter that holds no game is an error.
 fn study_matches(study: &Value, downloaded: &str) -> Result<bool> {
     let pairs: Vec<(String, String)> = study
         .get("chapters")

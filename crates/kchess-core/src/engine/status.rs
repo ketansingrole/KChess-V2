@@ -1,6 +1,6 @@
 //! Engine status, identity and trust: which engine would run, the command that starts it, a key that changes when the executable
 //! does, the engine paths the frontends may persist, and whether the computer is playing.
-//! Search orchestration (`bestMove`, `stopEngine`) belongs to the UCI controller port.
+//! Searches run in `search.rs`.
 
 use std::collections::HashSet;
 use std::ffi::OsString;

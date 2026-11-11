@@ -114,7 +114,6 @@ impl ServiceHost {
     }
 }
 
-/// The frame an event crosses in.
 fn frame(event: CoreEvent) -> Frame {
     Frame::Event {
         name: event.name().to_string(),
@@ -163,14 +162,12 @@ impl Host for ServiceHost {
     }
 }
 
-/// What every connection shares.
 struct State {
     core: Arc<Core>,
     host: Arc<ServiceHost>,
     token: String,
     release: String,
     protocol: String,
-    /// Connected clients.
     active: AtomicUsize,
     /// Room for connections still in their handshake (`HANDSHAKES`).
     handshakes: Semaphore,

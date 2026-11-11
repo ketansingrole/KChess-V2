@@ -146,9 +146,9 @@ pub fn import_token_ciphertext(
     Ok(())
 }
 
-// ---- Values: SQLite and JavaScript semantics ------------------------------------------------
+// ---- Stored values --------------------------------------------------------------------------
 
-/// A JSON value bound as SQL, as `toSql` binds it: null and undefined as NULL, booleans as 1/0,
+/// A JSON value bound as SQL: null and absent as NULL, booleans as 1/0,
 /// lists joined with commas, numbers as doubles.
 pub(super) fn to_sql(value: Option<&Value>) -> Result<SqlValue> {
     Ok(match value {
@@ -170,7 +170,7 @@ pub(super) fn to_sql(value: Option<&Value>) -> Result<SqlValue> {
     })
 }
 
-/// `String(v)` for a stored value (`null` gives an empty string where the caller defaults it).
+/// A stored value as text (`null` gives an empty string where the caller defaults it).
 fn text_of(value: &SqlValue) -> String {
     match value {
         SqlValue::Text(text) => text.clone(),
@@ -183,7 +183,8 @@ fn text_of(value: &SqlValue) -> String {
     }
 }
 
-/// `Number(v)` for a stored value that is not null; NaN where JavaScript gives NaN.
+/// A stored value that is not null as a number: blank text is 0, other text that is no number
+/// and a blob are NaN.
 fn number_of(value: &SqlValue) -> Option<f64> {
     match value {
         SqlValue::Integer(number) => Some(*number as f64),
@@ -201,7 +202,7 @@ fn number_of(value: &SqlValue) -> Option<f64> {
     }
 }
 
-/// A stored number, and only a number (JavaScript's strict equality never matches text).
+/// A stored number, and only a number (text never matches).
 fn strict_number(value: &SqlValue) -> Option<f64> {
     match value {
         SqlValue::Integer(number) => Some(*number as f64),
@@ -210,12 +211,10 @@ fn strict_number(value: &SqlValue) -> Option<f64> {
     }
 }
 
-/// `row.x === 1`.
 fn is_one(value: &SqlValue) -> bool {
     strict_number(value) == Some(1.0)
 }
 
-/// `row.x !== 0`.
 fn is_not_zero(value: &SqlValue) -> bool {
     strict_number(value) != Some(0.0)
 }
@@ -229,13 +228,12 @@ fn settings_select() -> String {
     )
 }
 
-/// `rowToSettings` followed by `normalizeSettings`.
 /// A stored choice as its wire enum; one no longer offered (or never valid) is `fallback`.
 fn choice<T: DeserializeOwned>(text: String, fallback: T) -> T {
     serde_json::from_value(Value::String(text)).unwrap_or(fallback)
 }
 
-/// `rowToSettings` followed by `normalizeSettings`.
+/// The stored settings, with values out of range or no longer offered replaced.
 fn settings_from_values(values: &[SqlValue]) -> Result<Settings> {
     let by_key: HashMap<&str, &SqlValue> =
         SETTINGS_KEYS.iter().copied().zip(values.iter()).collect();
@@ -245,7 +243,7 @@ fn settings_from_values(values: &[SqlValue]) -> Result<Settings> {
         SqlValue::Null => 5.0,
         value => number_of(&value).unwrap_or(f64::NAN),
     };
-    // `Number(x) || 0` turns NaN into 0, then the value is clamped to 0..=120.
+    // NaN becomes 0, then the value is clamped to 0..=120.
     let poll = if poll.is_nan() { 0.0 } else { poll };
     let levels: Vec<String> = text("engineLevels").split(',').map(str::to_owned).collect();
     let engine_levels = kchess_domain::training::engine_levels::normalize(&levels)
@@ -327,7 +325,7 @@ pub fn save_settings(db: &Connection, settings: &Settings) -> Result<Settings> {
     Ok(settings.clone())
 }
 
-/// `writeSettings`: every persisted setting of a settings object, as `toSql` binds it.
+/// Every persisted setting of a settings object, bound as `to_sql` binds it.
 pub(super) fn write_settings_json(db: &Connection, object: &Value) -> Result<()> {
     let params = SETTINGS_KEYS
         .iter()
@@ -374,7 +372,7 @@ pub fn load_app_data(db: &Connection) -> Result<AppData> {
     })
 }
 
-/// `saveLogin`'s write: the stored login and its connected account, in one transaction. The token
+/// The stored login and its connected account, in one transaction. The token
 /// arrives already encrypted; the caller encrypts it with the operating system's credential store.
 pub fn save_login(db: &Connection, username: &str, encrypted: &str) -> Result<AppData> {
     transaction(db, || {
@@ -448,7 +446,7 @@ fn game_from_row(row: &Row<'_>) -> rusqlite::Result<LichessGame> {
     })
 }
 
-/// `gamePage`: a bounded page of list rows, with the total for the same filters.
+/// A bounded page of list rows, with the total for the same filters.
 pub fn game_page(ctx: &StoreContext, query: &GamePageQuery) -> Result<GamePage> {
     let db = ctx.db;
     let mut clauses: Vec<String> = Vec::new();
@@ -589,7 +587,7 @@ pub fn game_library_overview(ctx: &StoreContext) -> Result<GameLibraryOverview> 
     Ok(overview)
 }
 
-/// `gameRatingHistory`: the last rated rating each day, per variant. A Chess.com game records the
+/// The last rated rating each day, per variant. A Chess.com game records the
 /// player's rating after it and no change, so its rating stands as it is.
 pub fn rating_history(db: &Connection, account: &str) -> Result<Vec<RatingSeries>> {
     let after_game = kchess_domain::chesscom::username_of(account).is_some();
@@ -832,7 +830,6 @@ pub(super) fn purge_account_data(
         "DELETE FROM pending_game_sync WHERE account = ? COLLATE NOCASE",
         [account],
     )?;
-    // `length` is JavaScript's UTF-16 length, as the TypeScript passes it.
     let prefix_length = i64::try_from(account.encode_utf16().count() + 1).unwrap_or(i64::MAX);
     db.execute(
         "DELETE FROM api_cache WHERE substr(key, 1, ?) = ? COLLATE NOCASE",
@@ -972,7 +969,7 @@ pub(super) fn upsert_sql() -> String {
     )
 }
 
-/// `upsertGames`: one batch of games, and the account's sync marker, in a single transaction.
+/// One batch of games, and the account's sync marker, in a single transaction.
 fn upsert_games(
     host: &dyn Host,
     db: &Connection,

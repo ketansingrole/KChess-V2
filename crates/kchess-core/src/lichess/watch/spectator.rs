@@ -1,5 +1,4 @@
-//! The spectator: one watch at a time, its streams and what it reports (moved from `watch.rs`
-//! without changes).
+//! The spectator: one watch at a time, its streams and what it reports.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -823,7 +822,7 @@ impl Inner {
         Ok(current.is_some_and(|frame| frame.finished))
     }
 
-    /// `watchRound`'s feed (`readPgnStream`): the PGN text is read as it arrives and split at the
+    /// `watchRound`'s feed: the PGN text is read as it arrives and split at the
     /// two blank lines Lichess ends every game with. Each read hands over the games that parsed,
     /// so the sink gets one batch per chunk; the last part of the feed is taken at its end.
     async fn follow_round(
@@ -871,7 +870,7 @@ impl Inner {
     }
 }
 
-/// The games of a PGN buffer (`flush` in `readPgnStream`): every part before the last two-blank-line
+/// The games of a PGN buffer: every part before the last two-blank-line
 /// separator parses into a game; the last part stays in the buffer until more text arrives, unless
 /// the feed has ended, when it is parsed too.
 fn take_pgn_games(buffer: &mut String, finished: bool) -> Vec<BroadcastGame> {

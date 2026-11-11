@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-/// `redactDiagnostics`: the home folder, bearer tokens, Lichess tokens, credential fields and
+/// The home folder, bearer tokens, Lichess tokens, credential fields and
 /// email addresses.
 pub fn redact(text: &str) -> String {
     static RULES: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();

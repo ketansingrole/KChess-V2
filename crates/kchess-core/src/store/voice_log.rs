@@ -14,7 +14,7 @@ use crate::time::now_ms;
 /// Oldest entries beyond this are dropped; enough to study, small enough to never matter on disk.
 const MAX_ENTRIES: i64 = 5000;
 
-/// `saveVoiceAttempt(attempt)`: the new entry's id.
+/// The new entry's id.
 pub fn save_voice_attempt(db: &Connection, attempt: &VoiceAttemptInput) -> Result<i64> {
     let words =
         serde_json::to_value(&attempt.words).map_err(|cause| CoreError::new(cause.to_string()))?;
@@ -44,7 +44,7 @@ pub fn save_voice_attempt(db: &Connection, attempt: &VoiceAttemptInput) -> Resul
     Ok(id)
 }
 
-/// `updateVoiceAttempt(id, update)`: a new outcome and expected move, when given.
+/// A new outcome and expected move, when given.
 pub fn update_voice_attempt(db: &Connection, id: i64, update: &VoiceUpdate) -> Result<()> {
     if let Some(outcome) = update.outcome {
         db.execute(
@@ -63,7 +63,7 @@ pub fn update_voice_attempt(db: &Connection, id: i64, update: &VoiceUpdate) -> R
     Ok(())
 }
 
-/// `voiceHistory(limit)`: the newest entries first.
+/// The newest entries first.
 pub fn voice_history(host: &dyn Host, db: &Connection, limit: u32) -> Result<Vec<VoiceAttempt>> {
     let mut statement = db
         .prepare("SELECT * FROM voice_log ORDER BY id DESC LIMIT ?1")
@@ -134,7 +134,7 @@ pub fn voice_history(host: &dyn Host, db: &Connection, limit: u32) -> Result<Vec
     Ok(entries)
 }
 
-/// `voiceHistoryDocument()`: the whole log as an indented JSON document for export.
+/// The whole log as an indented JSON document for export.
 pub fn clear_voice_history(db: &Connection) -> Result<()> {
     db.execute("DELETE FROM voice_log", []).sql()?;
     Ok(())
@@ -158,7 +158,7 @@ pub fn voice_history_document(host: &dyn Host, db: &Connection) -> Result<String
     Ok(out)
 }
 
-/// `JSON.stringify(value, null, 2)`.
+/// JSON indented by two spaces.
 fn write_pretty(value: &Value, depth: usize, out: &mut String) {
     let indent = |out: &mut String, level: usize| out.push_str(&"  ".repeat(level));
     match value {

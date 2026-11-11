@@ -154,7 +154,7 @@ pub fn popularity(parent: &Value, child: &Value) -> Vec<PopularityMonth> {
 }
 
 impl PositionLookups {
-    /// `openingDescription(moves)`: the line's Wikibooks page, or None when it has none.
+    /// The line's Wikibooks page, or None when it has none.
     pub async fn opening_description(
         &self,
         moves: &[String],
@@ -243,7 +243,7 @@ impl PositionLookups {
         }))
     }
 
-    /// `openingPopularity(moves)`: the monthly share of the Lichess games (blitz, rapid and
+    /// The monthly share of the Lichess games (blitz, rapid and
     /// classical) at the position before the line's last move that went on with it.
     pub async fn opening_popularity(&self, moves: &[String]) -> CoreResult<Vec<PopularityMonth>> {
         tokio::select! {

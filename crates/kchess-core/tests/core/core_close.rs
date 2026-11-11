@@ -13,7 +13,7 @@ use std::time::Duration;
 use kchess_core::{Config, Core, Host, Level};
 use serde_json::{Value, json};
 
-/// What a closed core answers (`createKChessCore`'s closed check).
+/// What a closed core answers.
 const CLOSED: &str = "The KChess core is closed.";
 /// How long closing may take before the test calls it stuck.
 const LIMIT: Duration = Duration::from_secs(20);

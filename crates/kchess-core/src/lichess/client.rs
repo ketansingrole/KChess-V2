@@ -296,7 +296,6 @@ impl<'c> Request<'c> {
         self
     }
 
-    /// The method and path, for the log.
     fn endpoint(&self) -> String {
         format!("{} {}", self.method, self.path)
     }
@@ -537,7 +536,7 @@ impl LichessClient {
         &self.policy
     }
 
-    /// The origin requests go to (no trailing slash).
+    /// No trailing slash.
     pub fn base(&self) -> &str {
         &self.base
     }

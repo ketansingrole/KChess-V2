@@ -1,6 +1,6 @@
 //! Network accounting batches: what the Lichess policy and the downloads count (`Meter`)
 //! accumulates in memory per account and kind, and reaches `kchess.db` at most every five
-//! seconds (`flushUsage`), or on demand before a report. Traffic of an account whose epoch moved
+//! seconds, or on demand before a report. Traffic of an account whose epoch moved
 //! on is dropped by the policy before it is counted; `forget` drops what is still pending for
 //! those accounts.
 
@@ -18,7 +18,6 @@ use crate::host::{Host, Level};
 use crate::store::{self, Database, usage::UsageRow};
 use kchess_contracts::types::UsageReport;
 
-/// How long counters wait in memory before they are written.
 pub const FLUSH_EVERY: Duration = Duration::from_secs(5);
 
 /// The counters of one account and kind, not yet written.
@@ -58,7 +57,7 @@ impl UsageBatch {
         })
     }
 
-    /// Counts `requests` and `bytes` for `account` and `kind` (`recordUsage`'s batching). The first
+    /// Counts `requests` and `bytes` for `account` and `kind`. The first
     /// count starts the flush timer; without a runtime the counters are written at once.
     pub fn record(&self, account: &str, kind: &str, requests: i64, bytes: i64) {
         let immediate = {
@@ -90,7 +89,6 @@ impl UsageBatch {
         }
     }
 
-    /// Writes every pending counter (`flushUsage`). A failed write drops the batch and logs it.
     fn take_rows(&self) -> Vec<UsageRow> {
         std::mem::take(&mut lock(&self.pending).cells)
             .into_iter()
@@ -116,6 +114,7 @@ impl UsageBatch {
         );
     }
 
+    /// Writes every pending counter. A failed write drops the batch and logs it.
     pub async fn flush(&self) {
         let rows = self.take_rows();
         if rows.is_empty() {
@@ -140,7 +139,7 @@ impl UsageBatch {
         }
     }
 
-    /// Drops the pending counters of `accounts` (`forgetUsage`).
+    /// Drops the pending counters of `accounts`.
     pub fn forget(&self, accounts: &[String]) {
         let mut pending = lock(&self.pending);
         pending
@@ -148,7 +147,7 @@ impl UsageBatch {
             .retain(|(account, _), _| !accounts.iter().any(|name| name.to_lowercase() == *account));
     }
 
-    /// `usageReport`: the pending counters are written first, then the stored report with the
+    /// The pending counters are written first, then the stored report with the
     /// size of the databases on disk.
     pub async fn report(&self) -> Result<UsageReport> {
         self.flush().await;
@@ -160,7 +159,7 @@ impl UsageBatch {
         Ok(report)
     }
 
-    /// `resetUsage`: the pending counters and the stored ones are cleared.
+    /// The pending counters and the stored ones are cleared.
     pub async fn reset(&self) -> Result<()> {
         lock(&self.pending).cells.clear();
         self.database
@@ -168,7 +167,7 @@ impl UsageBatch {
             .await
     }
 
-    /// `closeUsage`: stops the timer and drops what is pending.
+    /// Stops the timer and drops what is pending.
     pub fn close(&self) {
         let mut pending = lock(&self.pending);
         if let Some(timer) = pending.timer.take() {
@@ -178,7 +177,7 @@ impl UsageBatch {
     }
 }
 
-/// The size of KChess's databases on disk (`usageReport`'s `dbBytes`): the main and puzzle
+/// The size of KChess's databases on disk (the report's `dbBytes`): the main and puzzle
 /// databases with their write-ahead logs. A missing file counts as zero.
 fn database_bytes(data_dir: &Path) -> u64 {
     ["kchess.db", "kchess.db-wal", "puzzles.db", "puzzles.db-wal"]
@@ -257,8 +256,8 @@ mod tests {
         UsageBatch::new(database, host, dir.to_path_buf())
     }
 
-    /// The counters of one batch read back as `usageReport` reports them: the same rows the
-    /// TypeScript batch wrote, summed per account (case-insensitively) and kind.
+    /// The counters of one batch read back in the report, summed per account (case-insensitively)
+    /// and kind.
     #[tokio::test]
     async fn counts_are_written_as_the_same_rows_per_account_and_kind() {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -285,7 +284,7 @@ mod tests {
         assert!(report["dbBytes"].as_u64().is_some());
     }
 
-    /// `forgetUsage` drops what is still pending for the account, and nothing else.
+    /// Forgetting an account drops what is still pending for the account, and nothing else.
     #[tokio::test]
     async fn forgetting_an_account_drops_its_pending_counts() {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -298,7 +297,7 @@ mod tests {
         assert_eq!(report["accounts"]["bob"]["total"]["bytesIn"], json!(20));
     }
 
-    /// `resetUsage` clears the pending and the stored counters.
+    /// A reset clears the pending and the stored counters.
     #[tokio::test]
     async fn a_reset_clears_pending_and_stored_counts() {
         let dir = tempfile::tempdir().expect("temp dir");

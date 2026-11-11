@@ -9,7 +9,7 @@ use std::sync::Arc;
 use kchess_core::profile_lock::ProfileClaim;
 use kchess_core::{Config, Core, Host, Level};
 
-/// The lock file the claim holds (`PROFILE_LOCK`, `crates/kchess-core/src/facade.rs`).
+/// The lock file the claim holds (`PROFILE_LOCK`, `src/profile_lock.rs`).
 const LOCK: &str = "profile.lock";
 /// The refusal a second core sees while the profile is claimed.
 const RUNNING: &str = "A KChess core is already running for this profile.";

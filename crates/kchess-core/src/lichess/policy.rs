@@ -344,12 +344,10 @@ impl Policy {
         })
     }
 
-    /// The request deadline of this policy.
     pub fn timeout(&self) -> Duration {
         self.timeout
     }
 
-    /// The HTTP client every request of this policy is built with and sent by.
     pub fn http(&self) -> &reqwest::Client {
         &self.http
     }

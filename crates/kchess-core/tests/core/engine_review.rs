@@ -70,7 +70,7 @@ fn request(list: &[&str]) -> ReviewRequest {
     }
 }
 
-/// `reviewKey(fen, moves)`, as the store and the queue key a review.
+/// The key the store and the queue give a review of these moves.
 fn key_of(fen: &str, list: &[&str]) -> String {
     kchess_domain::records::review::review_key(fen, list, None)
 }
@@ -395,7 +395,7 @@ async fn the_most_recent_request_is_reviewed_first() {
     rig.reviews.stop_reviews().await;
 }
 
-/// Regression: the TypeScript queue yielded to *any* queued request, so a running review and a
+/// Regression: the queue once yielded to *any* queued request, so a running review and a
 /// queued one gave way to each other forever and neither finished. A review now yields only to
 /// a request made after it.
 #[tokio::test]

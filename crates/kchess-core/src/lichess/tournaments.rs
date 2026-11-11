@@ -28,7 +28,7 @@ use kchess_domain::js;
 
 /* ── Lichess's shapes (see `decode` for the key rules) ─────────────────── */
 
-/// `variantField`: a key string, or `{ key, name? }`.
+/// A key string, or `{ key, name? }`.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum RawVariant {
@@ -193,7 +193,7 @@ struct RawStanding {
     sheet: Option<RawSheet>,
 }
 
-/// `rankedPlayer`: `{ name, rating?, rank? }`.
+/// `{ name, rating?, rank? }`.
 #[derive(Deserialize)]
 struct RawRankedPlayer {
     name: Text<40>,
@@ -319,7 +319,7 @@ pub fn parse_date(text: &str) -> i64 {
 
 /* ── Readers of the Lichess answers ───────────────────────────────────── */
 
-/// `arenaSummary(raw)` of an entry of the arena list, or None when it is not readable.
+/// The summary of an entry of the arena list, or None when it is not readable.
 fn arena_summary(raw: &Value) -> Option<TournamentSummary> {
     let arena: RawArena = read(raw)?;
     let (variant_key, variant_name) = arena.variant.into_parts();
@@ -366,7 +366,7 @@ struct SwissExtras {
     next_round: Option<RawNextRound>,
 }
 
-/// `swissSummary(raw, team)` and the Swiss extras, or None when the entry is not readable.
+/// The summary and the Swiss extras of an entry, or None when the entry is not readable.
 fn swiss_read(
     raw: &Value,
     team: Option<TournamentTeam>,
@@ -425,12 +425,12 @@ fn swiss_read(
     ))
 }
 
-/// `swissSummary(raw, team)`, or None when the entry is not readable.
+/// The summary of a Swiss entry, or None when it is not readable.
 fn swiss_summary(raw: &Value, team: Option<TournamentTeam>) -> Option<TournamentSummary> {
     swiss_read(raw, team).map(|(summary, _)| summary)
 }
 
-/// `standingOf(raw)`: a leaderboard row, or None when it is not readable.
+/// A leaderboard row, or None when it is not readable.
 fn standing_of(raw: &Value) -> Option<TournamentStanding> {
     let row: RawStanding = read(raw)?;
     let (scores, fire) = row.sheet.map_or((None, None), |sheet| {
@@ -450,7 +450,7 @@ fn standing_of(raw: &Value) -> Option<TournamentStanding> {
     })
 }
 
-/// `arenaExtras(raw)`: the featured game, the games in progress, the podium and the totals of an
+/// The featured game, the games in progress, the podium and the totals of an
 /// arena. The schema is checked as one: when any part is unreadable, none of them is kept.
 pub fn arena_extras(raw: &Value) -> TournamentExtras {
     let Some(extras) = read::<RawExtras>(raw) else {
@@ -593,7 +593,7 @@ async fn swiss_of_teams(
         };
         let path = format!("/api/team/{}/swiss", path_segment(&team.id));
         let mut lines: Vec<Value> = Vec::new();
-        // A malformed line fails the team's read as it arrives (`JSON.parse` in `readLines`).
+        // A malformed line fails the team's read as it arrives.
         let outcome = lichess
             .client()
             .get(
@@ -760,7 +760,7 @@ fn arena_detail_summary(id: &str, raw: &Value) -> Option<TournamentSummary> {
         status,
         variant: variant_key.clone(),
         variant_name: variant_key,
-        // `raw.rated !== false`.
+        // Rated unless Lichess says it is not.
         rated: object.get("rated") != Some(&Value::Bool(false)),
         clock,
         minutes: num_at(raw, "minutes"),
@@ -824,7 +824,7 @@ async fn swiss_detail(lichess: &Lichess, id: &str, auth: &Auth) -> CoreResult<To
     })
 }
 
-/// Joins a tournament as `account` (`joinTournament`). An arena is joined with pairing as soon as
+/// Joins a tournament as `account`. An arena is joined with pairing as soon as
 /// possible; the password is sent only when given. `NeedsReconnect` when the login is missing or
 /// lacks the tournament permission.
 pub async fn join_tournament(
@@ -867,7 +867,7 @@ pub async fn join_tournament(
         .await
 }
 
-/// Withdraws `account` from a tournament (`leaveTournament`).
+/// Withdraws `account` from a tournament.
 pub async fn leave_tournament(
     lichess: &Lichess,
     system: TournamentSystem,
@@ -896,7 +896,7 @@ pub async fn leave_tournament(
         .await
 }
 
-/// The form fields of an arena to create (`createTournament`'s body). An unset field is left out,
+/// The form fields of an arena to create. An unset field is left out,
 /// and a start date replaces the wait.
 pub fn arena_form(arena: &NewArena) -> Vec<(&'static str, String)> {
     let mut form: Vec<(&'static str, String)> = Vec::new();
@@ -906,7 +906,7 @@ pub fn arena_form(arena: &NewArena) -> Vec<(&'static str, String)> {
     form.push(("clockTime", js_number(arena.clock_time)));
     form.push(("clockIncrement", js_number(arena.clock_increment)));
     form.push(("minutes", js_number(arena.minutes)));
-    // `waitMinutes: startDate ? undefined : waitMinutes`: a non-zero start date is truthy.
+    // A start date (other than 0) replaces the wait.
     let has_start = arena.start_date.is_some_and(|date| date != 0);
     if let Some(wait) = arena.wait_minutes.filter(|_| !has_start) {
         form.push(("waitMinutes", js_number(wait)));
@@ -929,7 +929,7 @@ pub fn arena_form(arena: &NewArena) -> Vec<(&'static str, String)> {
     form
 }
 
-/// Creates an arena run by `account` (`createTournament`). A login made before tournaments were
+/// Creates an arena run by `account`. A login made before tournaments were
 /// requested must reconnect (`NeedsReconnect`).
 pub async fn create_tournament(
     lichess: &Lichess,

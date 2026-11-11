@@ -24,7 +24,7 @@ fn service(base: &str) -> Arc<kchess_core::lichess::accounts::Lichess> {
     )
 }
 
-/// A puzzle the TypeScript `puzzleFromApi` reads: a solution and a start ply.
+/// A puzzle as Lichess sends it: a solution and a start ply.
 fn readable_puzzle(id: &str) -> Value {
     json!({
         "game": {},

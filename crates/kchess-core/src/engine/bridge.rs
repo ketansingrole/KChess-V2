@@ -139,7 +139,7 @@ impl Power for Arc<Battery> {
     }
 }
 
-/// The review queue's host in the Rust core: settings and accounts from the store, the busy
+/// The review queue's host: settings and accounts from the store, the busy
 /// state from the engines and online play, Lichess through the host, and updates and status as
 /// `review:update` and `review:status` events.
 pub struct ReviewBridge {

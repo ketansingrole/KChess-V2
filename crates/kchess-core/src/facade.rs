@@ -142,7 +142,7 @@ impl Core {
             if let Err(cause) = stored {
                 // The accounts row was already committed as connected: disconnect it
                 // so a per-account encrypt failure does not leave a silent logged-out
-                // state that `legacyImportPending` (now false) would never retry. Its
+                // state that the import (no longer pending) would never retry. Its
                 // imported games stay: a logout would delete them (and with no account
                 // name, every account's).
                 let name = account.clone().unwrap_or_else(|| "?".into());
@@ -255,7 +255,7 @@ impl Core {
             .await
     }
 
-    /// Settings changed: store them, and stop what the new settings change (`persistSettings`).
+    /// Settings changed: store them, and stop what the new settings change.
     pub(crate) async fn persist_settings(&self, settings: Settings) -> Result<Settings> {
         let previous = self.get_settings().await?;
         // Only a path the user picked (`trustEnginePath`, sent when they choose one in a file
@@ -288,7 +288,7 @@ impl Core {
         Ok(saved)
     }
 
-    /// An engine, review or explorer call while a live game is in progress (`assistanceAllowed`).
+    /// An engine, review or explorer call while a live game is in progress.
     pub(crate) fn assistance_allowed(&self, message: &str) -> Result<()> {
         if self.services.online().assistance_blocked() {
             return Err(CoreError::new(message));
@@ -301,7 +301,7 @@ impl Core {
         Ok(!self.connected_accounts(Some(name)).await?.is_empty())
     }
 
-    /// Logs a user's logout result after the sessions have ended (`logoutAccounts`).
+    /// Signs `username` (or every account) out in the store, once its sessions have ended.
     pub(crate) async fn logout_accounts(&self, username: Option<&str>) -> Result<AppData> {
         let username = username.map(str::to_string);
         self.database
@@ -314,8 +314,8 @@ impl Core {
         self.requests.fetch_add(1, Ordering::SeqCst) + 1
     }
 
-    /// Closes the core: cancels its work, waits for its calls and releases its files
-    /// (`createCore`'s `close`). Later calls fail with `The KChess core is closed.`.
+    /// Closes the core: cancels its work, waits for its calls and releases its files.
+    /// Later calls fail with `The KChess core is closed.`.
     pub async fn close(&self) {
         self.closing.get_or_init(|| self.shutdown()).await;
     }

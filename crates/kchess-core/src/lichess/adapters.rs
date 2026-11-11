@@ -300,7 +300,7 @@ impl TokenSource for DbTokens {
     }
 }
 
-/// The explorer's login: the account `setupPositionLookup` is set to use, and its token.
+/// The explorer's login: the account the position lookups are set to use, and its token.
 pub struct DbExplorerLogin {
     database: Arc<Database>,
     tokens: Arc<dyn TokenSource>,
@@ -327,7 +327,7 @@ impl ExplorerLogin for DbExplorerLogin {
     }
 }
 
-/// `LookupCache` over the saved position lookups (`setupPositionLookup`).
+/// `LookupCache` over the saved position lookups.
 pub struct DbLookups {
     database: Arc<Database>,
 }

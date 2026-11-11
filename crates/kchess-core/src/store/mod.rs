@@ -70,7 +70,7 @@ impl StoreCache {
         *lock(&self.overview) = Some(overview.clone());
     }
 
-    /// Each account's games and the bytes they take (`usageReport`'s storage).
+    /// Each account's games and the bytes they take.
     pub fn storage(&self) -> Option<Vec<(String, i64, i64)>> {
         lock(&self.storage).clone()
     }

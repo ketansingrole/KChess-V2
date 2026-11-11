@@ -10,7 +10,7 @@ pub use kchess_contracts::error::Level;
 
 /// Host callbacks. They must not block: the core calls them from its worker threads.
 pub trait Host: Send + Sync + 'static {
-    /// One log line under a `[scope]`, as `logDebug/logInfo/logWarn/logError` write it.
+    /// One log line under a `[scope]`.
     fn log(&self, level: Level, scope: &str, message: &str);
     /// An event for the host to deliver.
     fn emit(&self, event: CoreEvent);

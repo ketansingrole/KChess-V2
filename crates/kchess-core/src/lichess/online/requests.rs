@@ -51,7 +51,7 @@ pub(crate) struct Listen {
     pub(crate) refused: Option<&'static str>,
 }
 
-/// `gameBody(options)`: the form fields of a seek or challenge.
+/// The form fields of a seek or challenge.
 pub(crate) fn game_body(options: &OnlineOptions) -> Vec<(&'static str, String)> {
     let has_fen = options.fen.as_deref().is_some_and(|fen| !fen.is_empty());
     let variant = if has_fen && options.variant != Some(Variant::Chess960) {

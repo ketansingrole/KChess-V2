@@ -1,4 +1,4 @@
-//! Panics reach the host's log. A panic is caught at the N-API boundary (`catch_unwind`) or by
+//! Panics reach the host's log. A panic is caught around each core call (`tasks::caught`) or by
 //! tokio when a task panics, so the process survives; without this hook its message would go
 //! only to stderr, which a packaged app does not keep.
 

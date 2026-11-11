@@ -426,7 +426,7 @@ impl OnlineSession {
         StreamRequest::get("/api/stream/event", auth)
     }
 
-    /// The event stream of the account being played (`eventStream`): challenges go to the inbox,
+    /// The event stream of the account being played: challenges go to the inbox,
     /// a real-time game starting opens it on the board, and the rest is passed on.
     fn start_event_stream(&self, auth: Auth, handle: Handle) {
         let account = self.st().current_account.clone();
@@ -519,7 +519,7 @@ impl OnlineSession {
         }
     }
 
-    /// `announce`: a game's start reaches the window once, however often the stream reconnects.
+    /// A game's start reaches the window once, however often the stream reconnects.
     fn announce(&self, game_id: &str, event: Value) {
         {
             let mut st = self.st();
@@ -534,7 +534,7 @@ impl OnlineSession {
         self.emit(CoreEvent::OnlineEvent(event));
     }
 
-    /// `ongoingChanged`: report the change once the burst of stream events has passed.
+    /// Report the change once the burst of stream events has passed.
     fn ongoing_changed(&self) {
         let this = self.clone();
         let mut st = self.st();

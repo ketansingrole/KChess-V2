@@ -2,7 +2,7 @@
 //! challenge event from an account's event stream, and the inbox of pending challenges that
 //! emits `challenges:update` whenever it changes.
 //!
-//! The reader keeps the TypeScript schema's rules (valibot): unknown keys pass, an optional key
+//! The reader's rules: unknown keys pass, an optional key
 //! may be absent but not null, lengths count UTF-16 units, and a malformed event is not a
 //! challenge at all. The variant mapping comes from `kchess_domain`.
 
@@ -16,11 +16,11 @@ pub use kchess_domain::records::challenge::{
     ChallengeEvent, ChallengeInfo, PlayerRef, TimeControl, read_challenge_event,
 };
 
-/// `LIVE_TTL_MS`: a real-time challenge Lichess stops reporting is forgotten after this long.
+/// A real-time challenge Lichess stops reporting is forgotten after this long.
 const LIVE_TTL_MS: i64 = 30 * 60_000;
 /// `CORRESPONDENCE_TTL_MS`.
 const CORRESPONDENCE_TTL_MS: i64 = 14 * 86_400_000;
-/// `MAX_CHALLENGES`: the inbox keeps this many; the oldest sighting goes first.
+/// The inbox keeps this many; the oldest sighting goes first.
 pub const MAX_CHALLENGES: usize = 50;
 
 /// A Lichess game id: `^[a-zA-Z0-9]{8,12}$`.
@@ -39,7 +39,7 @@ pub struct ChallengeInbox {
 use crate::tasks::lock;
 
 impl ChallengeInbox {
-    /// `now` is the clock (`Date.now()` in TypeScript); tests pass their own.
+    /// `now` is the clock; tests pass their own.
     pub fn new(host: Arc<dyn Host>, now: Arc<dyn Fn() -> i64 + Send + Sync>) -> ChallengeInbox {
         ChallengeInbox {
             entries: Mutex::new(Vec::new()),
@@ -182,7 +182,7 @@ impl ChallengeInbox {
     }
 }
 
-/// Newest first; a stable sort keeps the insertion order of equal times, as JavaScript does.
+/// Newest first; a stable sort keeps the insertion order of equal times.
 fn sorted(entries: &[ChallengeInfo]) -> Vec<ChallengeInfo> {
     let mut list = entries.to_vec();
     list.sort_by_key(|a| std::cmp::Reverse(a.received_at));

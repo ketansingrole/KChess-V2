@@ -67,7 +67,6 @@ pub struct PuzzleService {
     inner: Arc<Inner>,
 }
 
-/// What `report` sends: `PuzzleDbProgress`.
 #[derive(Clone, Copy)]
 enum Phase {
     Downloading,
@@ -159,7 +158,7 @@ fn restrict(path: &Path, host: &dyn Host) {
     crate::store::restrict_database(path, host, "puzzles");
 }
 
-/// A random sampler seed, as `randomInt(2 ** 32)` gave one.
+/// A random sampler seed.
 fn seed() -> u32 {
     use std::hash::{BuildHasher, Hasher};
     let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
@@ -171,7 +170,7 @@ fn seed() -> u32 {
     hasher.finish() as u32
 }
 
-/// `Math.random()` for the queries' shuffles.
+/// Uniform numbers in [0, 1) for the queries' shuffles.
 fn random() -> impl FnMut() -> f64 {
     let mut generator = Random::new(seed());
     move || generator.next_f64()

@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use support::store::{Secrets, Store, encrypt, game_page};
 
 /// An earlier release's database: the current schema, with the legacy tables and rows written
-/// on top, as the test's `earlierDatabase` created it. Returns the store that owns the file and
+/// on top. Returns the store that owns the file and
 /// the file's path.
 fn earlier_database(sql: &str) -> (Store, PathBuf) {
     let earlier = Store::new(None, Secrets::OFF);

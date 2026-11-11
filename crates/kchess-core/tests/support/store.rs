@@ -152,8 +152,7 @@ impl Store {
         }
     }
 
-    /// Stores a login with its token and connected account, unless a logout ran since
-    /// (`saveLogin` in the fixture).
+    /// Stores a login with its token and connected account, unless a logout ran since.
     pub fn save_login(
         &self,
         username: &str,
@@ -175,7 +174,7 @@ impl Store {
     }
 
     /// The stored token of an account, decrypted; `None` when none is stored, encryption is off,
-    /// or the ciphertext cannot be read (`getToken` in the fixture).
+    /// or the ciphertext cannot be read.
     pub fn token(&self, username: &str) -> Option<String> {
         self.migrate();
         let encrypted = self
@@ -189,7 +188,7 @@ impl Store {
     }
 
     /// Runs a query on the profile's database file with no parameters: each row is an object
-    /// keyed by column name, as the TypeScript tests read `db.prepare(sql).all()`.
+    /// keyed by column name.
     pub fn rows(&self, sql: &str) -> Vec<Value> {
         self.rows_with(sql, &[])
     }
@@ -257,7 +256,7 @@ pub fn encrypt(plain: &str) -> String {
     format!("{ENCRYPTED_PREFIX}{plain}")
 }
 
-/// The facade's username check (`assertUsername`).
+/// The facade's username check.
 pub fn check_username(name: &str) -> Result<(), String> {
     check::<Username>(J::Str(name.into())).map(|_| ())
 }
@@ -278,8 +277,8 @@ pub fn game_page(c: &StoreContext, query: &Value) -> Result<Value, CoreError> {
     Ok(serde_json::to_value(games::game_page(c, &query)?).expect("a page"))
 }
 
-/// A played game as the TypeScript tests built it: an ordinary blitz win as White against Bob.
-/// `overrides` replace fields; a `null` removes the field (JavaScript's `undefined`).
+/// A played game: an ordinary blitz win as White against Bob. `overrides` replace fields; a
+/// `null` removes the field.
 pub fn game(id: &str, overrides: &[(&str, Value)]) -> Value {
     let mut game = json!({
         "id": id,
@@ -309,7 +308,7 @@ pub fn game(id: &str, overrides: &[(&str, Value)]) -> Value {
     game
 }
 
-/// A game as the library tests built it: `Date.UTC(2026, 9, 1)` dates, a `pgn`, and no
+/// A game dated 2026-10-01 (UTC), with a `pgn` and no
 /// opponent rating. `overrides` behave as in `game`.
 pub fn library_game(id: &str, overrides: &[(&str, Value)]) -> Value {
     let mut game = game(id, &[]);
@@ -336,7 +335,7 @@ pub fn library_game(id: &str, overrides: &[(&str, Value)]) -> Value {
     game
 }
 
-/// `value` with whole-number floats written as integers, as JavaScript sees them: `1508.0` and
+/// `value` with whole-number floats written as integers: `1508.0` and
 /// `1508` are the same number, which `serde_json::Value` equality would tell apart.
 pub fn canonical(value: &Value) -> Value {
     match value {

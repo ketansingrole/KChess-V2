@@ -251,7 +251,7 @@ impl Session {
     }
 }
 
-/// Runs when an analysis ends (`finally`): forgets it as current and starts the idle countdown.
+/// Runs when an analysis ends, however it ends: forgets it as current and starts the idle countdown.
 struct Finish {
     shared: Arc<Shared>,
     id: u64,
@@ -288,7 +288,7 @@ impl AnalysisEngine {
         }
     }
 
-    /// `startAnalysis(request, configured, send)`: validates the request, supersedes the analysis
+    /// Validates the request, supersedes the analysis
     /// running, and starts this one on its own task. Returns the request's id.
     pub fn start_analysis(&self, raw: Value, configured: &str, send: AnalysisSink) -> Result<u64> {
         let request = check::<AnalysisRequest>(J::from(&raw)).map_err(CoreError::new)?;

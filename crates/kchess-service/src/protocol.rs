@@ -154,7 +154,6 @@ pub async fn read_frame_within<R: AsyncRead + Unpin>(
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
 }
 
-/// Writes one frame.
 pub async fn write_frame<W: AsyncWrite + Unpin>(
     writer: &mut W,
     frame: &Frame,

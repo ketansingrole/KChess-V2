@@ -409,7 +409,7 @@ fn splits_a_study_into_chapters() {
 }
 
 /// A malformed study record fails the listing as it arrives: the stream stays open, yet the
-/// listing ends with the record's error (`JSON.parse` in the TypeScript line callback).
+/// listing ends with the record's error.
 #[tokio::test]
 async fn a_malformed_study_record_fails_the_listing_as_it_arrives() {
     let (lines_tx, lines_rx) = tokio::sync::mpsc::unbounded_channel::<String>();

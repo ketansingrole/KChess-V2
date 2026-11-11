@@ -14,7 +14,7 @@ use crate::time::now_ms;
 /// The most recent runs a summary lists.
 const RECENT: i64 = 20;
 
-/// `runSummary(kind)`: the best score per variant, the recent runs and the total.
+/// The best score per variant, the recent runs and the total.
 pub fn run_summary(host: &dyn Host, db: &Connection, kind: RunKind) -> Result<RunSummary> {
     let mut best = Keyed::default();
     let mut statement = db
@@ -93,7 +93,7 @@ pub fn run_summary(host: &dyn Host, db: &Connection, kind: RunKind) -> Result<Ru
     })
 }
 
-/// `saveRun(run)`: record a run; `isBest` when it beats every earlier score of its variant.
+/// Record a run; `isBest` when it beats every earlier score of its variant.
 pub fn save_run(host: &dyn Host, db: &Connection, run: &RunInput) -> Result<RunSaved> {
     let (kind, variant, score) = (run.kind.as_str(), run.variant.as_str(), run.score);
     let detail = js_json(&Value::Object(run.detail.clone()));
@@ -116,7 +116,7 @@ pub fn save_run(host: &dyn Host, db: &Connection, run: &RunInput) -> Result<RunS
     })
 }
 
-/// `clearRuns(kind?)`: forget the local scores of one kind, or of all of them.
+/// Forget the local scores of one kind, or of all of them.
 pub fn clear_runs(db: &Connection, kind: Option<RunKind>) -> Result<()> {
     match kind {
         Some(kind) => db.execute("DELETE FROM runs WHERE kind = ?1", params![kind.as_str()]),

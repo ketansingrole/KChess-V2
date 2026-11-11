@@ -240,7 +240,7 @@ async fn requests_name_the_app() {
     );
 }
 
-/// A puzzle `puzzleFromApi` reads, as an entry of a Lichess batch.
+/// A puzzle as an entry of a Lichess batch.
 fn batch_entry(id: &str) -> Value {
     json!({
         "game": {},

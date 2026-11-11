@@ -1,4 +1,4 @@
-//! Broadcast listings and the TV and broadcast requests (moved from `watch.rs` without changes).
+//! Broadcast listings and the TV and broadcast requests.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -15,7 +15,7 @@ use kchess_domain::js;
 
 /* ── Broadcast listings (pure) ── */
 
-/// `broadcastSummaries(entries, section)`: the listing's entries that have a readable tournament;
+/// The listing's entries that have a readable tournament;
 /// only Lichess's own images are kept. A round's section follows its state.
 pub fn broadcast_summaries(entries: &[Value], section: BroadcastSection) -> Vec<BroadcastSummary> {
     entries
@@ -126,7 +126,7 @@ struct ChannelRaw {
 
 /* ── Requests ── */
 
-/// `tvChannels()`: the TV channels with who is playing on each right now.
+/// The TV channels with who is playing on each right now.
 pub async fn tv_channels(lichess: &Lichess) -> CoreResult<Vec<TvChannel>> {
     let raw: Value = lichess
         .client()
@@ -208,7 +208,7 @@ pub async fn broadcasts(
     Ok(all)
 }
 
-/// `broadcastRound(id)`: the tournament a broadcast round is in, as a round's link names only
+/// The tournament a broadcast round is in, as a round's link names only
 /// the round.
 pub async fn broadcast_round(lichess: &Lichess, id: &str) -> CoreResult<BroadcastRoundPlace> {
     let path = format!("/api/broadcast/-/-/{}", path_segment(id));
@@ -227,7 +227,7 @@ pub async fn broadcast_round(lichess: &Lichess, id: &str) -> CoreResult<Broadcas
     })
 }
 
-/// `broadcastTour(id)`: a broadcast tournament and its rounds (at most 100).
+/// A broadcast tournament and its rounds (at most 100).
 pub async fn broadcast_tour(lichess: &Lichess, id: &str) -> CoreResult<BroadcastTourDetail> {
     let path = format!("/api/broadcast/{}", path_segment(id));
     let raw: Value = lichess

@@ -77,7 +77,7 @@ impl EngineContext {
     }
 }
 
-/// Runs `action` after `ms`, unless the returned handle is aborted first (`setTimeout`). Without
+/// Runs `action` after `ms`, unless the returned handle is aborted first. Without
 /// a Tokio runtime nothing is scheduled.
 pub(crate) fn after(ms: u64, action: impl FnOnce() + Send + 'static) -> Option<AbortHandle> {
     let runtime = tokio::runtime::Handle::try_current().ok()?;
@@ -88,7 +88,7 @@ pub(crate) fn after(ms: u64, action: impl FnOnce() + Send + 'static) -> Option<A
     Some(task.abort_handle())
 }
 
-/// Replaces a timer, aborting the previous one (`clearTimeout` then `setTimeout`).
+/// Replaces a timer, aborting the previous one.
 pub(crate) fn replace_timer(slot: &mut Option<AbortHandle>, next: Option<AbortHandle>) {
     if let Some(old) = slot.take() {
         old.abort();
@@ -96,12 +96,12 @@ pub(crate) fn replace_timer(slot: &mut Option<AbortHandle>, next: Option<AbortHa
     *slot = next;
 }
 
-/// Clears a timer (`clearTimeout`).
+/// Clears a timer.
 pub(crate) fn clear_timer(slot: &mut Option<AbortHandle>) {
     replace_timer(slot, None);
 }
 
-/// A uniform number in [0, 1), the source of `Math.random()`.
+/// A uniform number in [0, 1).
 pub(crate) fn random_unit() -> f64 {
     let mut bytes = [0u8; 8];
     let filled = getrandom::fill(&mut bytes).is_ok();

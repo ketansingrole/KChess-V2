@@ -1,10 +1,6 @@
 //! The local library: studies, played games, mistake drills,
 //! unfinished sessions, joined tournaments and repertoire notes, each a bounded, versioned
 //! document in `kchess.db`. The decoders and semantic validation are `kchess_domain`'s.
-//!
-//! The codec, document primitives, studies and the legacy import live in the sibling
-//! `json_codec`, `documents`, `studies` and `library_import` modules; this module keeps the
-//! helpers the other storage modules share and the games/mistakes/tournaments writers.
 
 use kchess_contracts::types::{
     Keyed, MistakeGame, MistakesAdded, SessionKind, StudyCommand, StudyCommandResult,
@@ -81,9 +77,7 @@ pub fn save_session(db: &Connection, kind: SessionKind, value: Value) -> Result<
     .map(|_| ())
 }
 
-/* ── Shared helpers (also used by the other storage modules) ── */
-
-/// A JSON number: whole numbers without a fraction, as `JSON.stringify` writes them.
+/// A JSON number: whole numbers without a fraction.
 pub fn num(n: f64) -> Value {
     if n.fract() == 0.0 && n.abs() < 9.0e15 {
         json!(n as i64)
@@ -92,12 +86,11 @@ pub fn num(n: f64) -> Value {
     }
 }
 
-/// `Boolean(v)` for an optional JSON value; absent is false.
+/// Whether an optional JSON value is set and not false, 0, NaN, an empty string or null.
 pub fn truthy(value: Option<&Value>) -> bool {
     !js::falsy(value)
 }
 
-/// `array.slice(-n)`: the last `n` items.
 pub fn keep_last<T>(mut items: Vec<T>, n: usize) -> Vec<T> {
     if items.len() > n {
         items.drain(..items.len() - n);
@@ -125,16 +118,10 @@ pub fn object<'a>(value: &'a Value, name: &str) -> Result<&'a Map<String, Value>
         .ok_or_else(|| CoreError::new(format!("{name} must be an object")))
 }
 
-/// A `kchess_domain` document decoder or encoder by name. Values are JSON, so the lossless
-/// sidecar is empty.
 /// A session of `kind` as stored, with its kind's version.
 pub(crate) fn encode_session(kind: &str, session: &Value) -> Value {
     kchess_domain::misc::documents::encode_session(kind, &J::from(session)).into_value()
 }
-
-/* ── Split modules: the codec, documents, studies and the legacy import live beside this
-module now; their bodies moved unchanged. The re-exports keep every
-`crate::store::library::X` path working. ── */
 
 pub use super::documents::read_document;
 pub(crate) use super::documents::{assert_replaceable, write_document};
@@ -330,7 +317,7 @@ fn line_review_key(fen: &str, moves: &[String]) -> Option<String> {
     ))
 }
 
-/// `mistakeGames()`: each review with positions in practice, most recently played first, with
+/// Each review with positions in practice, most recently played first, with
 /// its game when that is known: a synced Lichess game through its review link, or a game played
 /// here whose line it reviews (your side there is the one named "You").
 pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Vec<MistakeGame>> {

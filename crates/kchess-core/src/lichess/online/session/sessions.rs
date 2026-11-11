@@ -95,7 +95,7 @@ impl OnlineSession {
         self.schedule_lobby();
     }
 
-    /// `queueMicrotask(startLobby)`: start the lobby once the current call has finished.
+    /// Start the lobby once the current call has finished.
     pub(super) fn schedule_lobby(&self) {
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {

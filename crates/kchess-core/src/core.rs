@@ -85,7 +85,7 @@ pub struct Core {
     pub(crate) closed: Arc<AtomicBool>,
     /// The facade calls in flight; closing waits for them.
     pub(crate) tracker: TaskTracker,
-    /// The one-time import of an earlier release (`ensureMigrated`).
+    /// The one-time import of an earlier release.
     pub(crate) migrated: OnceCell<()>,
     /// The close in progress, shared by every `close` call.
     pub(crate) closing: OnceCell<()>,
@@ -242,7 +242,6 @@ impl Core {
         })
     }
 
-    /// The profile directory this core owns.
     pub(crate) fn data_dir(&self) -> PathBuf {
         self.data_dir.clone()
     }
@@ -439,8 +438,6 @@ impl Core {
         &self.database
     }
 
-    /// Starts the background work once, on the first call (which is always in a runtime): the
-    /// battery refresh, and the review queue, which looks for work as soon as it starts.
     /// `The KChess core is closed.` once `close` has begun.
     fn refuse_closed(&self) -> Result<()> {
         if self.closed.load(Ordering::SeqCst) {
@@ -449,6 +446,8 @@ impl Core {
         Ok(())
     }
 
+    /// Starts the background work once, on the first call (which is always in a runtime): the
+    /// battery refresh, and the review queue, which looks for work as soon as it starts.
     fn start(&self) {
         if !self.battery_started.swap(true, Ordering::SeqCst) {
             self.battery.refresh();
@@ -457,7 +456,6 @@ impl Core {
         }
     }
 
-    /// The review queue's host for this core.
     fn review_bridge(&self) -> ReviewBridge {
         ReviewBridge {
             database: Arc::clone(&self.database),
@@ -473,7 +471,6 @@ impl Core {
         }
     }
 
-    /// The managed engine's directory: the core's, or a test's.
     fn managed_dir(&self, overridden: &LocationOverride) -> PathBuf {
         overridden
             .dir
@@ -517,12 +514,11 @@ impl Core {
         }
     }
 
-    /// The host capabilities, for services that need them.
+    /// Tests only: the host capabilities.
     pub fn capabilities(&self) -> Arc<Capabilities> {
         Arc::clone(&self.capabilities)
     }
 
-    /// Cancels the managed engine installs in progress.
     pub(crate) fn cancel_installs(&self) {
         for cancel in crate::tasks::lock(&self.installs).values() {
             cancel.cancel();

@@ -1,6 +1,4 @@
-//! The one-time imports an empty profile takes from earlier releases (`ensureMigrated`,
-//! `runMigration`, `migrateFromJson` and `migrateLegacy`): the JSON
-//! backup `kchess-data.json` with its `lichess-tokens.json`, or else the earlier main database.
+//! The one-time imports an empty profile takes from earlier releases: the JSON backup `kchess-data.json` with its `lichess-tokens.json`, or else the earlier main database.
 //!
 //! Tokens: the JSON backup already holds encrypted tokens, which are stored as they are. The earlier
 //! database holds plaintext tokens; they are returned to the caller, which encrypts them with the
@@ -38,7 +36,7 @@ fn log(ctx: &StoreContext, level: Level, message: &str) {
 
 /// Whether `migrate` could import an earlier database's tokens: the profile is empty and that
 /// database exists. Only then does the caller ask the OS secret store whether encryption is
-/// available (asking can show a keychain prompt), as `ensureMigrated` did.
+/// available (asking can show a keychain prompt).
 pub fn legacy_import_pending(ctx: &StoreContext) -> Result<bool> {
     let exists = ctx
         .config
@@ -75,7 +73,7 @@ pub fn migrate(ctx: &StoreContext, encryption_available: bool) -> Result<Vec<Pla
     Ok(from_legacy(ctx, encryption_available))
 }
 
-/// `migrateFromJson`: true when the JSON backup was imported (and archived).
+/// True when the JSON backup was imported (and archived).
 fn from_json(ctx: &StoreContext) -> Result<bool> {
     let data_path = ctx.config.data_dir.join("kchess-data.json");
     let token_path = ctx.config.data_dir.join("lichess-tokens.json");
@@ -103,7 +101,7 @@ fn from_json(ctx: &StoreContext) -> Result<bool> {
     };
     let settings = normalize_settings(&stored_settings)?;
     let accounts = field("accounts").unwrap_or_else(|| json!([]));
-    // `[...(raw.games ?? [])]` throws for a non-iterable, outside the import's own error handling.
+    // Games that are not a list fail the whole import, not one game.
     let mut games: Vec<Value> = match field("games") {
         None => Vec::new(),
         Some(Value::Array(items)) => items,
@@ -249,7 +247,7 @@ fn with_bak(path: &Path) -> std::path::PathBuf {
     name.into()
 }
 
-/// `migrateLegacy`: the earlier main database, read only; returns the tokens to store.
+/// The earlier main database, read only; returns the tokens to store.
 fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken> {
     let Some(legacy_path) = ctx.config.legacy_database_path.as_deref() else {
         return Vec::new();
@@ -333,12 +331,11 @@ fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken
             .map(|row| row[1].clone())
             .unwrap_or(SqlValue::Null)
     };
-    // `get(key) ?? fallback`: a missing or NULL value takes the fallback.
     let or_default = |value: SqlValue, fallback: Value| match value {
         SqlValue::Null => fallback,
         other => sql_json(other),
     };
-    // A missing setting is `undefined` in the TypeScript: it never equals a string and is falsy.
+    // A missing setting never equals a string and is false.
     let text = |value: SqlValue| match value {
         SqlValue::Null => String::new(),
         other => js::to_string(Some(&sql_json(other))),
@@ -374,7 +371,7 @@ fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken
         }),
     );
     stored.insert("soundEnabled".into(), json!(sound_enabled));
-    // `Math.min(1, x)`: NaN stays NaN (Rust's `min` would drop it).
+    // At most 1, and NaN stays NaN (Rust's `min` would drop it).
     let volume = volume / 100.0;
     stored.insert(
         "soundVolume".into(),
@@ -457,7 +454,7 @@ fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken
     }
 }
 
-/// One legacy game row as the TypeScript mapping built it (`String`, `Number`, `Boolean` coercions).
+/// One legacy game row as a stored game, its columns converted to text, numbers and flags.
 fn legacy_game(row: &[SqlValue]) -> Value {
     let value = |index: usize| sql_json(row[index].clone());
     let optional_number = |index: usize| match &row[index] {
@@ -493,7 +490,7 @@ fn legacy_game(row: &[SqlValue]) -> Value {
     })
 }
 
-/// `runInsertGame`: a live game is kept as pending (only for a tracked account), any other replaces
+/// A live game is kept as pending (only for a tracked account), any other replaces
 /// the stored game.
 fn insert_game(db: &Connection, game: &Value) -> Result<()> {
     if in_progress(game) {
@@ -552,7 +549,7 @@ fn importable(game: &Value) -> bool {
         && game.get("winner").is_none_or(|v| v.is_null() || side(v))
 }
 
-/// `normalizeSettings`: the stored settings over the defaults, with the older forms converted.
+/// The stored settings over the defaults, with the older forms converted.
 pub fn normalize_settings(stored: &Map<String, Value>) -> Result<Map<String, Value>> {
     let Ok(Value::Object(defaults)) = serde_json::to_value(default_settings()) else {
         return Err(CoreError::new("The default settings are not an object."));
@@ -625,7 +622,7 @@ pub fn normalize_settings(stored: &Map<String, Value>) -> Result<Map<String, Val
     Ok(settings)
 }
 
-/// A SQLite value as the JSON the TypeScript mapping saw.
+/// A SQLite value as JSON; a blob is null.
 fn sql_json(value: SqlValue) -> Value {
     match value {
         SqlValue::Null => Value::Null,
@@ -636,7 +633,7 @@ fn sql_json(value: SqlValue) -> Value {
     }
 }
 
-/// A number as JSON; NaN and infinities become null, as `JSON.stringify` writes them.
+/// A number as JSON; NaN and infinities become null.
 fn number_json(number: f64) -> Value {
     serde_json::Number::from_f64(number).map_or(Value::Null, Value::Number)
 }

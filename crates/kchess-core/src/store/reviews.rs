@@ -53,7 +53,7 @@ fn read_stored(host: &dyn Host, db: &Connection, key: &str) -> Result<Option<Sto
     Ok(Some(Stored { review, summary }))
 }
 
-/// `readReview(key)`: the stored review, or None.
+/// The stored review, or None.
 pub fn read_review(host: &dyn Host, db: &Connection, key: &str) -> Result<Option<Value>> {
     Ok(read_stored(host, db, key)?.map(|stored| stored.review))
 }
@@ -65,7 +65,7 @@ fn rank(review: &Value) -> i64 {
     complete + lichess
 }
 
-/// `a ?? b` for an optional JSON value: null and absent fall through to `b`.
+/// `a`, unless it is null or absent: then `b`.
 fn coalesce(a: Option<&Value>, b: Option<&Value>) -> Option<Value> {
     match a {
         Some(value) if !value.is_null() => Some(value.clone()),
@@ -73,7 +73,7 @@ fn coalesce(a: Option<&Value>, b: Option<&Value>) -> Option<Value> {
     }
 }
 
-/// `{ ...review, gameId }`: an absent game id is left out, as `JSON.stringify` leaves out undefined.
+/// The review with its game id; an absent game id is left out.
 fn with_game_id(review: &Value, game_id: Option<Value>) -> Result<Map<String, Value>> {
     let mut merged = review
         .as_object()
@@ -97,7 +97,7 @@ pub fn summarize_stored(review: &Value) -> Result<Value> {
     kchess_domain::review::summarize(&input).map_err(cannot_analyse)
 }
 
-/// `analyseReview`: labels, accuracy and chances for every move of a stored review.
+/// Labels, accuracy and chances for every move of a stored review.
 pub fn analyse_stored(review: &Value) -> Result<Value> {
     let input = review_input(review)?;
     kchess_domain::review::analyse_review(&input).map_err(cannot_analyse)
@@ -107,7 +107,7 @@ fn cannot_analyse(reason: String) -> CoreError {
     CoreError::new(format!("This review cannot be analysed: {reason}."))
 }
 
-/// `reviewInput`: the fields the review analysis reads (scores without engine lines).
+/// The fields the review analysis reads (scores without engine lines).
 fn review_input(review: &Value) -> Result<Value> {
     let mut out = Map::new();
     // `variant`: a variant game's moves replay by its own rules.
@@ -145,7 +145,7 @@ fn review_input(review: &Value) -> Result<Value> {
     Ok(Value::Object(out))
 }
 
-/// `writeReview(review)`: save `review` unless a better one is stored; returns what is stored.
+/// Save `review` unless a better one is stored; returns what is stored.
 pub fn write_review(host: &dyn Host, db: &Connection, input: &Value) -> Result<Value> {
     let key = input
         .get("key")
@@ -213,9 +213,7 @@ pub fn write_review(host: &dyn Host, db: &Connection, input: &Value) -> Result<V
     Ok(json!({ "review": merged, "summary": summary }))
 }
 
-/// `writeReviews(reviews)`: save a batch atomically; a failure or cancellation
-/// keeps the previous batch. Callers that need per-review cancellability keep
-/// using `writeReview`.
+/// Save a batch atomically; a failure or cancellation keeps the previous batch.
 pub fn write_reviews(host: &dyn Host, db: &Connection, reviews: &Value) -> Result<Value> {
     let list = reviews.as_array().cloned().unwrap_or_default();
     transaction(db, || {
@@ -237,7 +235,7 @@ fn sql_number(value: Option<&Value>) -> Sql {
     }
 }
 
-/// `reviewSummaries(ids)`: the summaries of these Lichess games' reviews, by game id.
+/// The summaries of these Lichess games' reviews, by game id.
 pub fn review_summaries(
     host: &dyn Host,
     db: &Connection,

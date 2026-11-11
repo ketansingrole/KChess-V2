@@ -25,7 +25,7 @@ use serde_json::{Number, Value, json};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-/// One scripted answer of the token source (`getToken`).
+/// One scripted answer of the token source.
 #[derive(Clone)]
 enum Script {
     /// The token, or none when the account has no login.
@@ -156,7 +156,7 @@ fn has_state(host: &Recording, phase: &str, game: &str) -> bool {
 }
 
 /// The default answer of the account and game routes: a game of Alice's, and every stream
-/// refused (`401`), as the TypeScript suite's mocks answer.
+/// refused (`401`).
 fn refuse(seen: &Seen) -> Reply {
     Reply::Json(
         401,
@@ -1292,7 +1292,7 @@ async fn refuses_a_rated_or_public_game_from_a_set_up_position() {
     online.close();
 }
 
-/* ── Scenarios the brief names beyond the TypeScript suites ─────────── */
+/* ── Recovery, ownership and duplicate scenarios ─────────── */
 
 #[tokio::test]
 async fn a_move_is_sent_once_and_a_failure_is_not_retried() {

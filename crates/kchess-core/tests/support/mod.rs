@@ -1,4 +1,4 @@
-//! Helpers shared by the engine integration tests.
+//! Helpers shared by the integration tests.
 #![allow(dead_code)]
 
 use kchess_contracts::CoreEvent;

@@ -94,7 +94,7 @@ pub struct Search {
     shared: Arc<Shared>,
 }
 
-/// Runs when a search ends (`finally`), before the next search in line may start.
+/// Runs when a search ends, however it ends, before the next search in line may start.
 struct Finish {
     shared: Arc<Shared>,
     connection: u64,
@@ -144,17 +144,16 @@ impl Search {
         }
     }
 
-    /// `engineThreads`: the engine budget the scheduler grants searches.
+    /// The engine budget the scheduler grants searches.
     pub fn engine_threads(&self) -> usize {
         self.shared.ctx.scheduler.search_threads()
     }
 
-    /// `trustEnginePath`: an engine path the frontends may persist.
+    /// An engine path the frontends may persist.
     pub fn trust_engine_path(&self, path: &Path) {
         self.shared.trust.trust(path);
     }
 
-    /// `isTrustedEnginePath`.
     pub fn is_trusted_engine_path(&self, path: &Path) -> bool {
         self.shared
             .trust
@@ -182,14 +181,14 @@ impl Search {
         }
     }
 
-    /// `resetEngine`: stops and closes the engine, forgets trusted paths and the last move.
+    /// Stops and closes the engine, forgets trusted paths and the last move.
     pub fn reset_engine(&self) {
         self.stop_engine(true);
         self.shared.trust.clear();
         lock(&self.shared.state).last_move_at = 0;
     }
 
-    /// `computerPlaying(withinMs)`: a search runs, or a move was computed within `within_ms`.
+    /// A search runs, or a move was computed within `within_ms`.
     pub fn computer_playing(&self, within_ms: i64) -> bool {
         let state = lock(&self.shared.state);
         computer_playing(
@@ -200,7 +199,7 @@ impl Search {
         )
     }
 
-    /// `bestMove(moves, level, configured, options)`: the engine's move from the position the
+    /// The engine's move from the position the
     /// moves reach, at the level's strength. Invalid input is refused at once; otherwise the
     /// search supersedes the one the same connection asked for, and waits its turn in line
     /// behind other connections' searches.
@@ -357,7 +356,7 @@ fn prepare(
     })
 }
 
-/// The level's search profile (`engineLevelInfo`).
+/// The level's search profile.
 fn level_profile(level: &str) -> Result<LevelProfile> {
     let info = kchess_domain::training::engine_levels::info(level)
         .ok_or_else(|| CoreError::new(format!("Unknown engine level {level}.")))?;
@@ -395,9 +394,8 @@ async fn attempt(
     shared
         .ctx
         .lease(Priority::Computer, token, async {
-            // Re-check supersede after queue wait: a `stop_engine` during admission
-            // only surfaces via token-cancel otherwise, which future generations
-            // without token cancel would bypass.
+            // Re-check supersede after the queue wait: a `stop_engine` during admission
+            // moved the generation, and this search must not start.
             if epoch_at_lease != lock(&shared.state).generation {
                 return Err(search_cancelled());
             }
@@ -494,7 +492,7 @@ async fn search_under_lease(
     }
 }
 
-/// A `go perft 1` line `e2e4: 1` names one legal move (`/^([a-h][1-8][a-h][1-8][nbrq]?): \d+$/`).
+/// A `go perft 1` line `e2e4: 1` names one legal move.
 fn perft_move(line: &str) -> Option<String> {
     let (mv, count) = line.split_once(": ")?;
     let bytes = mv.as_bytes();
