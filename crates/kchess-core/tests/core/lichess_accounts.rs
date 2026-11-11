@@ -29,6 +29,7 @@ fn service(
 ) -> Arc<Lichess> {
     let policy = Policy::with_timeout(
         Arc::clone(host) as Arc<dyn kchess_core::host::Host>,
+        Arc::clone(host) as Arc<dyn kchess_core::usage::Meter>,
         http_client(),
         CancellationToken::new(),
         Duration::from_secs(5),
@@ -753,6 +754,7 @@ async fn a_synced_page_saves_its_reviews_with_its_games() {
         &fixture.base,
         Policy::with_timeout(
             Arc::clone(&host) as Arc<dyn kchess_core::host::Host>,
+            Arc::clone(&host) as Arc<dyn kchess_core::usage::Meter>,
             http_client(),
             CancellationToken::new(),
             Duration::from_secs(5),

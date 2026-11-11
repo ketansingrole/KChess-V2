@@ -28,6 +28,7 @@ use tokio_util::sync::CancellationToken;
 use super::uci::{EngineHub, UciController};
 use crate::archive::{self, Refusal, hex};
 use crate::download;
+use crate::usage::{Meter, Unmetered};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 
@@ -151,6 +152,8 @@ pub struct ManagedLocation {
     pub exit_deadline: Duration,
     /// A release fixed in source (`SHIPPED`): only its tag and its digests are accepted.
     pub pinned: Option<&'static PinnedRelease>,
+    /// Where the download's traffic is counted.
+    pub meter: Arc<dyn Meter>,
 }
 
 impl ManagedLocation {
@@ -164,6 +167,7 @@ impl ManagedLocation {
             cancel: CancellationToken::new(),
             exit_deadline: DEFAULT_EXIT_DEADLINE,
             pinned: None,
+            meter: Arc::new(Unmetered),
         }
     }
 
@@ -362,7 +366,7 @@ async fn install(
         .map_err(|_| CoreError::new("Could not start the Stockfish download."))?;
 
     let release = fetch_release(
-        host,
+        &*location.meter,
         &client,
         &location.release_url,
         location.github_token.as_deref(),
@@ -433,7 +437,7 @@ async fn install(
         .tempdir()
         .map_err(|cause| CoreError::new(format!("Could not create a staging folder: {cause}")))?;
     let archive = staging.path().join(&asset.name);
-    let (digest, received) = download_archive(host, &client, &url, &archive, cancel).await?;
+    let (digest, received) = download_archive(&*location.meter, &client, &url, &archive, cancel).await?;
     if received as f64 != size {
         return Err(CoreError::new("Stockfish download was incomplete."));
     }
@@ -554,15 +558,15 @@ const DOWNLOAD_WORDING: download::Wording = download::Wording {
 /// The most the release metadata may take.
 const MAX_RELEASE_BYTES: u64 = 10 * 1024 * 1024;
 
-fn usage(host: &dyn Host) -> download::Usage<'_> {
+fn usage(meter: &dyn Meter) -> download::Usage<'_> {
     download::Usage {
-        host,
+        meter,
         kind: kchess_contracts::types::UsageKind::Other,
     }
 }
 
 async fn fetch_release(
-    host: &dyn Host,
+    meter: &dyn Meter,
     client: &reqwest::Client,
     url: &str,
     token: Option<&str>,
@@ -586,7 +590,7 @@ async fn fetch_release(
         request,
         limits,
         cancel,
-        usage(host),
+        usage(meter),
         &RELEASE_WORDING,
     )
     .await?
@@ -611,7 +615,7 @@ async fn fetch_release(
 
 /// Streams the download into `archive`, hashing as it goes: its digest and the bytes kept.
 async fn download_archive(
-    host: &dyn Host,
+    meter: &dyn Meter,
     client: &reqwest::Client,
     url: &str,
     archive: &Path,
@@ -626,7 +630,7 @@ async fn download_archive(
         || client.get(url),
         limits,
         cancel,
-        usage(host),
+        usage(meter),
         &DOWNLOAD_WORDING,
     )
     .await?;

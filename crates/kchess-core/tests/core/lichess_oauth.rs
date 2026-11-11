@@ -34,6 +34,7 @@ fn query_of(url: &str) -> HashMap<String, String> {
 fn service(base: &str, host: &Arc<Recording>, store: Arc<MemoryStore>) -> Arc<Lichess> {
     let policy = Policy::with_timeout(
         Arc::clone(host) as Arc<dyn kchess_core::host::Host>,
+        Arc::clone(host) as Arc<dyn kchess_core::usage::Meter>,
         http_client(),
         CancellationToken::new(),
         Duration::from_secs(5),

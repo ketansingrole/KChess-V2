@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
+use crate::usage::Meter;
 use crate::error::{CoreError, Result};
 use crate::host::{Config, Host, Level};
 use crate::store::sql::{Lane, LaneMessages, Sql as _, transaction};
@@ -54,6 +55,7 @@ impl Drop for Installing<'_> {
 
 struct Inner {
     host: Arc<dyn Host>,
+    meter: Arc<dyn Meter>,
     lane: Arc<Lane>,
     running: Mutex<Option<Arc<Download>>>,
 }
@@ -197,7 +199,7 @@ impl Inner {
 }
 
 impl PuzzleService {
-    pub fn new(config: Config, host: Arc<dyn Host>) -> PuzzleService {
+    pub fn new(config: Config, host: Arc<dyn Host>, meter: Arc<dyn Meter>) -> PuzzleService {
         let lane = Lane::new(
             "puzzles",
             LaneMessages {
@@ -210,6 +212,7 @@ impl PuzzleService {
         PuzzleService {
             inner: Arc::new(Inner {
                 host,
+                meter,
                 lane: Arc::new(lane),
                 running: Mutex::new(None),
             }),
@@ -374,7 +377,7 @@ impl PuzzleService {
             deadline: None,
         };
         let usage = crate::download::Usage {
-            host: &*self.inner.host,
+            meter: &*self.inner.meter,
             kind: kchess_contracts::types::UsageKind::Database,
         };
         let mut body = crate::download::open(
@@ -511,7 +514,11 @@ mod tests {
     const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
     #[derive(Default)]
-    struct Events(Mutex<Vec<(String, Value)>>, Mutex<Vec<String>>);
+    struct Events(
+        Mutex<Vec<(String, Value)>>,
+        Mutex<Vec<String>>,
+        Arc<crate::usage::UsageLog>,
+    );
     impl Host for Events {
         fn log(&self, _: Level, scope: &str, message: &str) {
             self.1.lock().unwrap().push(format!("{scope}: {message}"));
@@ -642,7 +649,7 @@ mod tests {
         // Each byte arrived once: the resumed request asked only for the rest.
         assert_eq!(done["received"], json!(length));
         // The request and the one that resumed it, with every byte counted once.
-        let usage = host.of("host:usage");
+        let usage = host.2.counted();
         assert_eq!(usage.len(), 1);
         assert_eq!(usage[0]["requests"], json!(2));
         assert_eq!(usage[0]["bytes"], json!(length));
@@ -652,7 +659,11 @@ mod tests {
         let host = Arc::new(Events::default());
         let config = Config::new(dir.to_path_buf());
         (
-            PuzzleService::new(config, Arc::clone(&host) as Arc<dyn Host>),
+            PuzzleService::new(
+                config,
+                Arc::clone(&host) as Arc<dyn Host>,
+                Arc::clone(&host.2) as Arc<dyn Meter>,
+            ),
             host,
         )
     }
@@ -683,7 +694,7 @@ mod tests {
         assert_eq!(done["kept"], json!(3));
         assert!(done["total"].as_u64().is_some_and(|total| total > 0));
         // One request and the bytes it brought.
-        let usage = host.of("host:usage");
+        let usage = host.2.counted();
         assert_eq!(usage.len(), 1);
         assert_eq!(usage[0]["requests"], json!(1));
         assert_eq!(usage[0]["bytes"], done["received"]);

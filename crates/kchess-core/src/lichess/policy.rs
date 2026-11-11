@@ -9,7 +9,7 @@
 //! never replayed. The caller says which [`Lane`] a request belongs to.
 //!
 //! Accounting: each request and the bytes of its body are counted against the account and kind
-//! of its [`Usage`], through [`crate::usage::report`]. Traffic from an account whose epoch moved
+//! of its [`Usage`], through its [`Meter`]. Traffic from an account whose epoch moved
 //! on (logout, removal, clearing) is not counted.
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -25,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::{CoreError, ErrorKind, Result};
 use crate::host::{Host, Level};
+use crate::usage::{Meter, Unmetered};
 
 /// A request may take this long to answer (its headers, and its body unless it is a stream).
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -205,6 +206,7 @@ struct Accounting {
 /// The shared admission state of one Lichess client. One per process; every client shares its cooldown and lanes.
 pub struct Policy {
     host: Arc<dyn Host>,
+    meter: Arc<dyn Meter>,
     http: reqwest::Client,
     lifetime: CancellationToken,
     timeout: Duration,
@@ -266,24 +268,26 @@ impl Policy {
         self.host.log(Level::Warn, "lichess", message);
     }
 
-    /// `host` receives the `host:usage` events and the warnings; `lifetime` ends the accounting
-    /// when the core closes.
+    /// `host` receives the warnings and `meter` the traffic; `lifetime` ends the accounting when
+    /// the core closes.
     pub fn new(
         host: Arc<dyn Host>,
+        meter: Arc<dyn Meter>,
         http: reqwest::Client,
         lifetime: CancellationToken,
     ) -> Arc<Policy> {
-        Policy::with_timeout(host, http, lifetime, REQUEST_TIMEOUT)
+        Policy::with_timeout(host, meter, http, lifetime, REQUEST_TIMEOUT)
     }
 
     /// As `new`, with another request deadline (tests use a short one).
     pub fn with_timeout(
         host: Arc<dyn Host>,
+        meter: Arc<dyn Meter>,
         http: reqwest::Client,
         lifetime: CancellationToken,
         timeout: Duration,
     ) -> Arc<Policy> {
-        Policy::build(host, http, lifetime, timeout, false, Arc::new(monotonic_ms))
+        Policy::build(host, meter, http, lifetime, timeout, false, Arc::new(monotonic_ms))
     }
 
     /// The policy of one lookup origin (the explorer, the tablebase): a request during a
@@ -295,11 +299,13 @@ impl Policy {
         timeout: Duration,
         now: Clock,
     ) -> Arc<Policy> {
-        Policy::build(host, http, lifetime, timeout, true, now)
+        // A lookup counts no traffic (`record`).
+        Policy::build(host, Arc::new(Unmetered), http, lifetime, timeout, true, now)
     }
 
     fn build(
         host: Arc<dyn Host>,
+        meter: Arc<dyn Meter>,
         http: reqwest::Client,
         lifetime: CancellationToken,
         timeout: Duration,
@@ -308,6 +314,7 @@ impl Policy {
     ) -> Arc<Policy> {
         Arc::new(Policy {
             host,
+            meter,
             http,
             lifetime,
             timeout,
@@ -364,7 +371,8 @@ impl Policy {
         if usage.epoch != self.epoch(&usage.account) {
             return;
         }
-        crate::usage::report(&*self.host, &usage.account, usage.kind, requests, bytes);
+        self.meter
+            .count(&usage.account, usage.kind, requests, bytes);
     }
 
     /// Traffic still arriving for these accounts is no longer counted.
@@ -732,6 +740,7 @@ mod tests {
     fn quiet_policy() -> Arc<Policy> {
         Policy::new(
             Arc::new(Quiet),
+            Arc::new(Unmetered),
             reqwest::Client::new(),
             CancellationToken::new(),
         )

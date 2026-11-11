@@ -21,7 +21,13 @@ fn client_for(base: &str, host: Arc<Recording>) -> LichessClient {
 }
 
 fn client_with_timeout(base: &str, host: Arc<Recording>, timeout: Duration) -> LichessClient {
-    let policy = Policy::with_timeout(host, http_client(), CancellationToken::new(), timeout);
+    let policy = Policy::with_timeout(
+        host.clone(),
+        host,
+        http_client(),
+        CancellationToken::new(),
+        timeout,
+    );
     LichessClient::with_base(base, policy)
 }
 

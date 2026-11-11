@@ -182,6 +182,7 @@ fn cache_in(directory: &Path, base: &str, zip: &[u8]) -> (VoiceModelCache, Arc<L
     let logs = Arc::new(Logs::default());
     let cache = VoiceModelCache::new(
         logs.clone(),
+        Arc::new(kchess_core::usage::Unmetered),
         directory.to_path_buf(),
         Archive::Url(format!("{base}/model.zip")),
         model_for(base, zip),

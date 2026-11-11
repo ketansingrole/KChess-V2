@@ -24,6 +24,7 @@ use tokio_util::sync::CancellationToken;
 fn lichess(base: &str, host: &Arc<Recording>, tokens: Arc<MemoryTokens>) -> Lichess {
     let policy = Policy::with_timeout(
         Arc::clone(host) as Arc<dyn Host>,
+        Arc::clone(host) as Arc<dyn kchess_core::usage::Meter>,
         http_client(),
         CancellationToken::new(),
         Duration::from_secs(5),

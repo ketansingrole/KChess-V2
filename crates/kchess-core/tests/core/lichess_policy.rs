@@ -13,7 +13,13 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 fn policy_with(host: Arc<Recording>, timeout: Duration) -> Arc<Policy> {
-    Policy::with_timeout(host, http_client(), CancellationToken::new(), timeout)
+    Policy::with_timeout(
+        host.clone(),
+        host,
+        http_client(),
+        CancellationToken::new(),
+        timeout,
+    )
 }
 
 /// Traffic counted against nobody.

@@ -26,6 +26,7 @@ pub mod recognizer;
 
 use crate::archive::{self, Refusal};
 use crate::download;
+use crate::usage::Meter;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 
@@ -169,6 +170,7 @@ struct State {
 
 struct Inner {
     host: Arc<dyn Host>,
+    meter: Arc<dyn Meter>,
     directory: PathBuf,
     archive: Archive,
     model: VoiceModel,
@@ -184,6 +186,7 @@ pub struct VoiceModelCache {
 impl VoiceModelCache {
     pub fn new(
         host: Arc<dyn Host>,
+        meter: Arc<dyn Meter>,
         directory: PathBuf,
         archive: Archive,
         model: VoiceModel,
@@ -191,6 +194,7 @@ impl VoiceModelCache {
         VoiceModelCache {
             inner: Arc::new(Inner {
                 host,
+                meter,
                 directory,
                 archive,
                 model,
@@ -520,7 +524,7 @@ impl VoiceModelCache {
         };
         let never = CancellationToken::new();
         let usage = download::Usage {
-            host: &*self.inner.host,
+            meter: &*self.inner.meter,
             kind: UsageKind::Other,
         };
         let mut body =
@@ -801,6 +805,7 @@ mod tests {
         ));
         let cache = VoiceModelCache::new(
             Arc::new(Silent),
+            Arc::new(crate::usage::Unmetered),
             directory.clone(),
             Archive::Url(url),
             VoiceModel::official(),

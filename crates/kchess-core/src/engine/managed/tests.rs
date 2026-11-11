@@ -44,19 +44,6 @@ impl Host for RecordingHost {
     }
 }
 
-impl RecordingHost {
-    #[cfg(unix)]
-    fn usage_events(&self) -> Vec<Value> {
-        self.events
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(event, _)| event == "host:usage")
-            .map(|(_, payload)| payload.clone())
-            .collect()
-    }
-}
-
 type Hits = Arc<Mutex<Vec<String>>>;
 
 /// A route: path, status and body.
@@ -430,9 +417,10 @@ async fn installs_the_verified_release_and_records_its_version() {
     let host = RecordingHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
-    let result = install_managed_engine(&host, &location(&engine, &base))
-        .await
-        .unwrap();
+    let meter = Arc::new(crate::usage::UsageLog::default());
+    let mut at = location(&engine, &base);
+    at.meter = meter.clone();
+    let result = install_managed_engine(&host, &at).await.unwrap();
     assert_eq!(result.version, "sf_18");
     assert!(result.updated && result.installed);
     assert_eq!(
@@ -446,7 +434,7 @@ async fn installs_the_verified_release_and_records_its_version() {
     assert!(!engine.join(format!("{EXE}.pending")).exists());
     assert_eq!(*hits.lock().unwrap(), ["/release", "/asset"]);
     // The release check, then the download: one request and its bytes each.
-    let usage = host.usage_events();
+    let usage = meter.counted();
     assert_eq!(usage.len(), 2);
     assert!(usage.iter().all(|u| u["requests"] == 1));
     assert!(usage[0]["bytes"].as_u64().unwrap() > 0);

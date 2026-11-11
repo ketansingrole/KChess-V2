@@ -1,12 +1,12 @@
-//! Network accounting batches: the `host:usage` events the Lichess
-//! policy and the puzzle download emit accumulate in memory per account and kind, and reach
-//! `kchess.db` at most every five seconds (`flushUsage`), or on demand before a report. Traffic of
-//! an account whose epoch moved on is dropped by the policy before it is emitted; `forget` drops
-//! what is still pending for those accounts.
+//! Network accounting batches: what the Lichess policy and the downloads count (`Meter`)
+//! accumulates in memory per account and kind, and reaches `kchess.db` at most every five
+//! seconds (`flushUsage`), or on demand before a report. Traffic of an account whose epoch moved
+//! on is dropped by the policy before it is counted; `forget` drops what is still pending for
+//! those accounts.
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
@@ -33,6 +33,8 @@ struct Pending {
 }
 
 pub struct UsageBatch {
+    /// This batch, for the flush timer it starts.
+    me: Weak<UsageBatch>,
     database: Arc<Database>,
     host: Arc<dyn Host>,
     data_dir: std::path::PathBuf,
@@ -45,7 +47,8 @@ impl UsageBatch {
         host: Arc<dyn Host>,
         data_dir: std::path::PathBuf,
     ) -> Arc<UsageBatch> {
-        Arc::new(UsageBatch {
+        Arc::new_cyclic(|me| UsageBatch {
+            me: me.clone(),
             database,
             host,
             data_dir,
@@ -55,7 +58,7 @@ impl UsageBatch {
 
     /// Counts `requests` and `bytes` for `account` and `kind` (`recordUsage`'s batching). The first
     /// count starts the flush timer; without a runtime the counters are written at once.
-    pub fn record(self: &Arc<Self>, account: &str, kind: &str, requests: i64, bytes: i64) {
+    pub fn record(&self, account: &str, kind: &str, requests: i64, bytes: i64) {
         let immediate = {
             let mut pending = lock(&self.pending);
             let cell = pending
@@ -66,8 +69,9 @@ impl UsageBatch {
             cell.bytes_in += bytes;
             match tokio::runtime::Handle::try_current() {
                 Ok(handle) => {
-                    if pending.timer.is_none() {
-                        let this = Arc::clone(self);
+                    if pending.timer.is_none()
+                        && let Some(this) = self.me.upgrade()
+                    {
                         pending.timer = Some(handle.spawn(async move {
                             tokio::time::sleep(FLUSH_EVERY).await;
                             lock(&this.pending).timer = None;
@@ -194,48 +198,45 @@ fn database_bytes(data_dir: &Path) -> u64 {
 use crate::tasks::lock;
 use kchess_contracts::types::UsageKind;
 
-/// Counts metered network traffic: every service reports its requests and bytes here, and the
-/// [`UsageHost`] adds them to the batch.
-pub fn report(host: &dyn Host, account: &str, kind: UsageKind, requests: u64, bytes: u64) {
-    host.emit(
-        "host:usage",
-        json!({ "account": account, "category": kind, "requests": requests, "bytes": bytes }),
-    );
+/// Where metered network traffic is counted: every service that downloads reports its requests
+/// and bytes here.
+pub trait Meter: Send + Sync {
+    fn count(&self, account: &str, kind: UsageKind, requests: u64, bytes: u64);
 }
 
-/// The host the core's services use: `host:usage` events go to the batch, everything else to the
-/// platform host unchanged.
-pub struct UsageHost {
-    pub inner: Arc<dyn Host>,
-    pub batch: Arc<UsageBatch>,
+/// Traffic that is not counted.
+pub struct Unmetered;
+
+impl Meter for Unmetered {
+    fn count(&self, _: &str, _: UsageKind, _: u64, _: u64) {}
 }
 
-impl Host for UsageHost {
-    fn log(&self, level: Level, scope: &str, message: &str) {
-        self.inner.log(level, scope, message);
-    }
+/// Tests: every count, as `{ account, category, requests, bytes }`.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct UsageLog(Mutex<Vec<Value>>);
 
-    fn emit(&self, event: &str, payload: Value) {
-        if event != "host:usage" {
-            self.inner.emit(event, payload);
-            return;
-        }
-        let account = payload.get("account").and_then(Value::as_str).unwrap_or("");
-        let kind = payload
-            .get("category")
-            .and_then(Value::as_str)
-            .unwrap_or("other");
-        let requests = payload.get("requests").and_then(Value::as_i64).unwrap_or(0);
-        let bytes = payload.get("bytes").and_then(Value::as_i64).unwrap_or(0);
-        self.batch.record(account, kind, requests, bytes);
+#[cfg(test)]
+impl UsageLog {
+    pub(crate) fn counted(&self) -> Vec<Value> {
+        lock(&self.0).clone()
     }
+}
 
-    fn emit_to(&self, connection: u64, event: &str, payload: Value) {
-        if event == "host:usage" {
-            self.emit(event, payload);
-        } else {
-            self.inner.emit_to(connection, event, payload);
-        }
+#[cfg(test)]
+impl Meter for UsageLog {
+    fn count(&self, account: &str, kind: UsageKind, requests: u64, bytes: u64) {
+        lock(&self.0).push(
+            json!({ "account": account, "category": kind, "requests": requests, "bytes": bytes }),
+        );
+    }
+}
+
+impl Meter for UsageBatch {
+    fn count(&self, account: &str, kind: UsageKind, requests: u64, bytes: u64) {
+        let kind = serde_json::to_value(kind).unwrap_or_default();
+        let kind = kind.as_str().unwrap_or("other");
+        self.record(account, kind, requests as i64, bytes as i64);
     }
 }
 

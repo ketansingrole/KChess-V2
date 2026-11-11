@@ -99,6 +99,7 @@ impl TokenSource for ScriptedTokens {
 fn policy(host: &Arc<Recording>) -> Arc<Policy> {
     Policy::with_timeout(
         Arc::clone(host) as Arc<dyn Host>,
+        Arc::clone(host) as Arc<dyn kchess_core::usage::Meter>,
         http_client(),
         CancellationToken::new(),
         Duration::from_secs(5),

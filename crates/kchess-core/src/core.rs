@@ -37,7 +37,7 @@ use crate::puzzles::PuzzleService;
 use crate::secrets::Credentials;
 use crate::store::Database;
 use crate::store::debug;
-use crate::usage::{UsageBatch, UsageHost};
+use crate::usage::UsageBatch;
 use crate::voice::recognizer::VoiceRecognizer;
 
 /// A managed engine change that replaces or removes the downloaded executable.
@@ -199,18 +199,13 @@ impl Core {
                 reviews.restart_review_engine();
             })
         };
-        // Usage events are counted in batches before the services' host sees them.
         let usage = UsageBatch::new(
             Arc::clone(&database),
             Arc::clone(&host),
             config.data_dir.clone(),
         );
-        let services_host: Arc<dyn Host> = Arc::new(UsageHost {
-            inner: Arc::clone(&host),
-            batch: Arc::clone(&usage),
-        });
         let services = Services::new(
-            Arc::clone(&services_host),
+            Arc::clone(&host),
             Arc::clone(&database),
             Arc::clone(&capabilities),
             Arc::clone(&usage),
@@ -229,13 +224,14 @@ impl Core {
         let (voice_archive, voice_model) = crate::voice::active_model();
         let voice_model = crate::voice::VoiceModelCache::new(
             Arc::clone(&host),
+            usage.clone(),
             crate::voice::cache_dir(&config.data_dir),
             voice_archive,
             voice_model,
         );
         let chesscom = crate::chesscom::Chesscom::new(
             Arc::clone(&database),
-            Arc::clone(&services_host),
+            Arc::clone(&host),
             test_chesscom_origin(),
             CancellationToken::new(),
         );
@@ -246,7 +242,7 @@ impl Core {
             alert_owner: AtomicU64::new(APP),
             alert_reports: Mutex::new(()),
             settings_writes: AsyncMutex::new(()),
-            puzzles: PuzzleService::new(config, services_host),
+            puzzles: PuzzleService::new(config, Arc::clone(&host), usage.clone()),
             voice,
             voice_owner: Arc::new(AsyncMutex::new(None)),
             voice_model,
@@ -520,6 +516,7 @@ impl Core {
             reviews: self.reviews.clone(),
         }));
         location.cancel = cancel;
+        location.meter = self.usage.clone();
         match mutation {
             Mutation::Install => install_managed_engine(self.host.as_ref(), &location)
                 .await

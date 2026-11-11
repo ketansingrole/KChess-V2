@@ -24,8 +24,8 @@ use reqwest::header::{
 };
 use tokio_util::sync::CancellationToken;
 
+use crate::usage::Meter;
 use crate::error::{CoreError, Result};
-use crate::host::Host;
 
 /// The message of a download stopped by its caller.
 pub const ABORTED: &str = "This operation was aborted";
@@ -69,7 +69,7 @@ pub struct Wording {
 /// Where a download's traffic is counted.
 #[derive(Clone, Copy)]
 pub struct Usage<'a> {
-    pub host: &'a dyn Host,
+    pub meter: &'a dyn Meter,
     pub kind: UsageKind,
 }
 
@@ -103,7 +103,7 @@ pub async fn open<'a>(
             sent.map_err(|cause| CoreError::new((wording.network)(&cause)))
         }
     };
-    let counted = |requests| crate::usage::report(usage.host, "", usage.kind, requests, 0);
+    let counted = |requests| usage.meter.count("", usage.kind, requests, 0);
     let response = match sent {
         Ok(response) => response,
         Err(error) => {
@@ -173,8 +173,7 @@ impl Body<'_> {
 
 impl Drop for Body<'_> {
     fn drop(&mut self) {
-        crate::usage::report(
-            self.usage.host,
+        self.usage.meter.count(
             "",
             self.usage.kind,
             self.requests + self.body.resumed() as u64,
@@ -686,14 +685,12 @@ mod tests {
     #[derive(Default)]
     struct Metered(Mutex<(u64, u64)>);
 
-    impl Host for Metered {
-        fn log(&self, _: crate::host::Level, _: &str, _: &str) {}
-        fn emit(&self, event: &str, payload: serde_json::Value) {
-            assert_eq!(event, "host:usage");
-            assert_eq!(payload["category"], "database");
+    impl Meter for Metered {
+        fn count(&self, account: &str, kind: UsageKind, requests: u64, bytes: u64) {
+            assert_eq!((account, kind), ("", UsageKind::Database));
             let mut total = self.0.lock().unwrap();
-            total.0 += payload["requests"].as_u64().unwrap();
-            total.1 += payload["bytes"].as_u64().unwrap();
+            total.0 += requests;
+            total.1 += bytes;
         }
     }
 
@@ -716,7 +713,7 @@ mod tests {
     ) -> Result<Vec<u8>> {
         let client = client();
         let usage = Usage {
-            host,
+            meter: host,
             kind: UsageKind::Database,
         };
         open(&client, || client.get(url), limits, cancel, usage, &WORDING)

@@ -331,6 +331,8 @@ pub type BrowserFn = Box<dyn Fn(String) + Send + Sync>;
 pub struct Recording {
     pub logs: Mutex<Vec<(Level, String, String)>>,
     pub events: Mutex<Vec<(String, Value)>>,
+    /// The traffic counted, as `{ account, category, requests, bytes }`.
+    pub usage: Mutex<Vec<Value>>,
     /// Set once the capabilities exist, so the host can answer them.
     pub capabilities: Mutex<Option<Arc<Capabilities>>>,
     /// Replies to host requests by kind; anything missing gets an error.
@@ -354,13 +356,24 @@ impl Recording {
     }
 
     pub fn usage_events(&self) -> Vec<Value> {
-        self.events
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(event, _)| event == "host:usage")
-            .map(|(_, payload)| payload.clone())
-            .collect()
+        self.usage.lock().unwrap().clone()
+    }
+}
+
+impl kchess_core::usage::Meter for Recording {
+    fn count(
+        &self,
+        account: &str,
+        kind: kchess_contracts::types::UsageKind,
+        requests: u64,
+        bytes: u64,
+    ) {
+        self.usage.lock().unwrap().push(serde_json::json!({
+            "account": account,
+            "category": kind,
+            "requests": requests,
+            "bytes": bytes,
+        }));
     }
 }
 
@@ -724,6 +737,7 @@ pub fn lichess_service_with_idle(
     use kchess_core::lichess::policy::Policy;
     let policy = Policy::with_timeout(
         Arc::clone(host) as Arc<dyn Host>,
+        Arc::clone(host) as Arc<dyn kchess_core::usage::Meter>,
         http_client(),
         tokio_util::sync::CancellationToken::new(),
         Duration::from_secs(5),
