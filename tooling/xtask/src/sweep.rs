@@ -38,15 +38,22 @@ const LONGEST_PATH: usize = 4096;
 
 /// Sweeps the build folder: the units no current build uses (`superseded.rs`) on every platform,
 /// then on macOS the objects no program uses, saying what went; then the build folder of the
-/// checkout's mutants tree, unless a push is testing in it. With `dry_run`, deletes nothing and
-/// says what would go.
-pub fn build_folder(dry_run: bool) {
+/// checkout's mutants tree, unless a push is testing in it; then the build folders of the other
+/// worktrees nobody is building in (`worktrees.rs`). With `dry_run`, deletes nothing and says
+/// what would go. Refuses a build afterwards when the disk is still too full for one.
+pub fn build_folder(dry_run: bool) -> crate::util::Result {
     let target = target_folder(std::env::var_os("CARGO_TARGET_DIR"));
     let root = crate::util::root();
     let mut messages = sweep_all(&target, &root, dry_run, cfg!(target_os = "macos"));
     messages.extend(idle_mutants_tree(&root, dry_run));
+    messages.extend(crate::worktrees::sweep(&root, dry_run));
     for message in messages {
         say(&message);
+    }
+    if dry_run {
+        Ok(())
+    } else {
+        crate::worktrees::enough_space(&root)
     }
 }
 
@@ -151,7 +158,7 @@ fn target_folder(cargo_target_dir: Option<std::ffi::OsString>) -> PathBuf {
 }
 
 /// `target/<profile>/deps` and `target/<triple or tool>/<profile>/deps`.
-fn deps_folders(target: &Path) -> Vec<PathBuf> {
+pub(crate) fn deps_folders(target: &Path) -> Vec<PathBuf> {
     let mut folders = Vec::new();
     for first in subfolders(target) {
         if first.join("deps").is_dir() {
@@ -223,11 +230,14 @@ fn sweep(deps: &Path, dry_run: bool) -> (usize, u64) {
     deleted
 }
 
+/// The lock files Cargo keeps in a profile folder.
+pub(crate) const LOCKS: [&str; 3] = [".cargo-build-lock", ".cargo-artifact-lock", ".cargo-lock"];
+
 /// Cargo's locks on a profile folder, held while no build is running there; `None` while one is
 /// (or when they cannot be opened), so its objects are left alone.
-fn build_lock(profile: &Path) -> Option<Vec<File>> {
+pub(crate) fn build_lock(profile: &Path) -> Option<Vec<File>> {
     let mut held = Vec::new();
-    for name in [".cargo-build-lock", ".cargo-artifact-lock", ".cargo-lock"] {
+    for name in LOCKS {
         let path = profile.join(name);
         if !path.exists() {
             continue;

@@ -30,6 +30,7 @@ mod sweep;
 mod update_key;
 mod util;
 mod voice;
+mod worktrees;
 
 use std::process::ExitCode;
 
@@ -55,7 +56,10 @@ const HELP: &str = "cargo xtask <command>
   sweep [--dry-run]     Delete what the build folder keeps of builds no current one uses, and
                         on macOS the object files no program uses (`check`, `check-fast` and
                         `app` do it first), then those of the checkout's
-                        mutants tree (the pre-push hook's, which sweeps it too); --dry-run
+                        mutants tree (the pre-push hook's, which sweeps it too), then the
+                        build folders of other worktrees nobody is building in: merged into
+                        main and idle 2 h, idle 3 days, or any while under 50 GB is free;
+                        refuses below 15 GB free; --dry-run
                         says how much would go. CARGO_TARGET_DIR picks the build
   mutants [--plan] [--base <ref>] [-- <cargo-mutants arguments>]
                         Mutation testing of the lines changed since main (or <ref>); fails
@@ -116,18 +120,12 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let rest = args.get(1..).unwrap_or_default();
     let result = match args.first().map(String::as_str) {
-        Some("app") => {
-            sweep::build_folder(false);
-            app::run(rest)
-        }
+        Some("app") => sweep::build_folder(false).and_then(|()| app::run(rest)),
         Some("bench") => bench::run(rest),
         Some("check") => check::check(rest),
         Some("check-fast") => check::fast(),
         Some("ci-times") => ci_times::run(rest),
-        Some("sweep") => {
-            sweep::build_folder(rest.iter().any(|arg| arg == "--dry-run"));
-            Ok(())
-        }
+        Some("sweep") => sweep::build_folder(rest.iter().any(|arg| arg == "--dry-run")),
         Some("mutants") => mutants::run(rest),
         Some("pre-push") => check::pre_push(),
         Some("install-hooks") => check::install_hooks(),
