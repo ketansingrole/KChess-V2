@@ -1,10 +1,13 @@
 //! The puzzle session's transitions and the analysis tree's helpers.
 
-use serde_json::{Value, json};
+use serde::de::DeserializeOwned;
+use serde_json::{Map, Value, json};
 
 use kchess_domain::position;
 use kchess_domain::trainer::analysis_tree::{self as tree, MoveInput, Score};
-use kchess_domain::trainer::puzzle_session as session;
+use kchess_domain::trainer::puzzle_session::{
+    self as session, Detail, PuzzleSession, Reply, Resume, Selection, Step,
+};
 
 use super::{Out, arg};
 
@@ -12,23 +15,100 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
     puzzle_session(method, args).or_else(|| analysis_tree(method, args))
 }
 
+/// The session's transitions as the recorded suites called them: `{ state, internal, day, … }`
+/// in, `{ state, internal, call, record, warn }` out.
 fn puzzle_session(method: &str, args: &[Value]) -> Option<Out> {
-    let transition: fn(&Value) -> Out = match method {
-        "puzzleSessionInitial" => return Some(Ok(session::initial())),
-        "isReconnect" => return Some(Ok(json!(args.first().is_some_and(session::is_reconnect)))),
-        "puzzleSessionInvalidate" => session::invalidate,
-        "puzzleSessionLoadBegin" => session::load_begin,
-        "puzzleSessionLoadSettled" => session::load_settled,
-        "puzzleSessionRetry" => session::retry,
-        "puzzleSessionShow" => session::show,
-        "puzzleSessionReportBegin" => session::report_begin,
-        "puzzleSessionMove" => session::played,
-        "puzzleSessionEnd" => session::end,
-        "puzzleSessionReportSettled" => session::report_settled,
-        "puzzleSessionResetSession" => session::reset_session,
+    let input = args.first().unwrap_or(&Value::Null);
+    Some(match method {
+        "puzzleSessionInitial" => {
+            serde_json::to_value(PuzzleSession::new()).map_err(|e| e.to_string())
+        }
+        "isReconnect" => Ok(json!(args.first().is_some_and(session::is_reconnect))),
+        "puzzleSessionInvalidate" => step(input, |session, _, day| Ok(session.invalidate(day))),
+        "puzzleSessionLoadBegin" => step(input, |session, arg, day| {
+            let selection: Selection = take(arg, "selection")?;
+            let online = arg.get("online").and_then(Value::as_bool).unwrap_or(false);
+            Ok(session.load_begin(&selection, online, day))
+        }),
+        "puzzleSessionLoadSettled" => step(input, |session, arg, day| {
+            let token: Resume = take(arg, "resume")?;
+            let now: Selection = take(arg, "selection")?;
+            let outcome = reply(arg)?;
+            Ok(session.load_settled(token, outcome, &now, day))
+        }),
+        "puzzleSessionRetry" => step(input, |session, arg, day| {
+            let puzzle = arg.get("puzzle").cloned().unwrap_or(Value::Null);
+            let selection: Selection = take(arg, "selection")?;
+            Ok(session.retry(puzzle, &selection, day))
+        }),
+        "puzzleSessionShow" => step(input, |session, arg, day| {
+            let puzzle = arg.get("puzzle").cloned().unwrap_or(Value::Null);
+            let selection: Selection = take(arg, "selection")?;
+            Ok(session.show(puzzle, &selection, day))
+        }),
+        "puzzleSessionReportBegin" => step(input, |session, arg, _| {
+            let win = arg.get("win").and_then(Value::as_bool).unwrap_or(false);
+            let detail: Option<Detail> = take(arg, "detail")?;
+            let selection: Selection = take(arg, "selection")?;
+            Ok(session.report_begin(win, detail, &selection))
+        }),
+        "puzzleSessionMove" => step(input, |session, arg, _| {
+            let index = arg.get("index").and_then(Value::as_u64).unwrap_or(u64::MAX);
+            let correct = arg.get("correct").and_then(Value::as_bool).unwrap_or(false);
+            let uci = arg.get("uci").and_then(Value::as_str);
+            Ok(session.played(usize::try_from(index).unwrap_or(usize::MAX), correct, uci))
+        }),
+        "puzzleSessionEnd" => step(input, |session, _, day| Ok(session.end(day))),
+        "puzzleSessionReportSettled" => step(input, |session, arg, _| {
+            let token: Resume = take(arg, "resume")?;
+            let now: Selection = take(arg, "selection")?;
+            let outcome = reply(arg)?;
+            Ok(session.report_settled(token, outcome, &now))
+        }),
+        "puzzleSessionResetSession" => step(input, |session, _, _| Ok(session.reset_session())),
         _ => return None,
-    };
-    Some(transition(args.first().unwrap_or(&Value::Null)))
+    })
+}
+
+fn take<T: DeserializeOwned>(arg: &Map<String, Value>, key: &str) -> Result<T, String> {
+    serde_json::from_value(arg.get(key).cloned().unwrap_or(Value::Null))
+        .map_err(|error| format!("{key}: {error}"))
+}
+
+/// A reply as `{ ok: value }` or `{ error: message }`; an unreadable shape is an error.
+fn reply(arg: &Map<String, Value>) -> Result<Reply, String> {
+    let outcome = arg
+        .get("outcome")
+        .and_then(Value::as_object)
+        .ok_or("outcome must be an object")?;
+    if let Some(text) = outcome.get("error") {
+        return Ok(Err(text.as_str().unwrap_or_default().to_string()));
+    }
+    Ok(Ok(outcome.get("ok").cloned().unwrap_or(Value::Null)))
+}
+
+/// One step over the `{ state, internal, day, … }` input.
+fn step(
+    input: &Value,
+    body: impl FnOnce(&mut PuzzleSession, &Map<String, Value>, &str) -> Result<Step, String>,
+) -> Out {
+    let arg = input
+        .as_object()
+        .ok_or("the session input must be an object")?;
+    let _: session::State = take(arg, "state")?;
+    let mut session: PuzzleSession = serde_json::from_value(json!({
+        "state": arg.get("state"),
+        "internal": arg.get("internal").cloned().unwrap_or(Value::Null),
+    }))
+    .map_err(|error| format!("internal: {error}"))?;
+    let day = arg.get("day").and_then(Value::as_str).unwrap_or_default();
+    let step = body(&mut session, arg, day)?;
+    let mut out = serde_json::to_value(&session).map_err(|e| e.to_string())?;
+    let step = serde_json::to_value(step).map_err(|e| e.to_string())?;
+    if let (Some(out), Some(step)) = (out.as_object_mut(), step.as_object()) {
+        out.extend(step.clone());
+    }
+    Ok(out)
 }
 
 fn number(value: Option<&Value>) -> Option<f64> {

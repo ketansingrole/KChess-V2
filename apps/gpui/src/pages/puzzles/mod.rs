@@ -21,12 +21,13 @@ use shakmaty::Color;
 
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::puzzle::{PuzzleSession, Step, Transition, local_day, transitions};
+use crate::game::puzzle::{PuzzleSession, Selection, Step, local_day};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
 use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
 use crate::puzzle_db::PuzzleDbHandle;
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii, tint};
+use kchess_domain::trainer::puzzle_session::{Detail, Resume};
 mod daily;
 mod history;
 mod rush;
@@ -336,11 +337,8 @@ impl PuzzlesPage {
                         correct,
                         uci,
                     } => {
-                        let step = this.session.apply(
-                            transitions::played,
-                            json!({ "index": index, "correct": correct, "uci": uci }),
-                        );
-                        this.follow(step, transitions::load_settled, cx);
+                        let step = this.session.played(*index, *correct, Some(uci.as_str()));
+                        this.follow(step, Settle::Load, cx);
                     }
                     PuzzleBoardEvent::Outcome { win, detail } => {
                         this.report(*win, detail.clone(), cx)
@@ -408,10 +406,7 @@ impl PuzzlesPage {
         crate::core::on_quit(cx, move |cx| {
             let page = weak.upgrade()?;
             page.update(cx, |page, cx| {
-                let record = page
-                    .session
-                    .apply(transitions::invalidate, json!({}))
-                    .record?;
+                let record = page.session.invalidate(&local_day()).record?;
                 let save = cx
                     .global::<AppCore>()
                     .request(calls::RecordPuzzleAttempt { attempt: record });
@@ -512,27 +507,26 @@ impl PuzzlesPage {
             .unwrap_or_default()
     }
 
-    fn selection(&self, cx: &App) -> Value {
-        json!({
-            "account": self.account(cx),
-            "angle": crate::prefs::get::<String>(cx, ANGLE, "mix".into()),
-            "difficulty": crate::prefs::get::<String>(cx, DIFFICULTY, "normal".into()),
-            "color": crate::prefs::get::<String>(cx, COLOR, "random".into()),
-            "mode": Self::mode(cx),
-        })
+    fn selection(&self, cx: &App) -> Selection {
+        Selection {
+            account: self.account(cx),
+            angle: crate::prefs::get::<String>(cx, ANGLE, "mix".into()),
+            difficulty: crate::prefs::get::<String>(cx, DIFFICULTY, "normal".into()),
+            color: crate::prefs::get::<String>(cx, COLOR, "random".into()),
+            mode: Self::mode(cx),
+        }
     }
 
     fn load_next(&mut self, cx: &mut Context<Self>) {
-        let step = self.session.apply(
-            transitions::load_begin,
-            json!({ "selection": self.selection(cx), "online": true }),
-        );
-        self.follow(step, transitions::load_settled, cx);
+        let step = self
+            .session
+            .load_begin(&self.selection(cx), true, &local_day());
+        self.follow(step, Settle::Load, cx);
         self.sync_board(cx);
     }
 
-    /// Run the transitions' host calls in order until one asks for nothing more.
-    fn follow(&mut self, step: Step, settle: Transition, cx: &mut Context<Self>) {
+    /// Run the steps' host calls in order until one asks for nothing more.
+    fn follow(&mut self, step: Step, settle: Settle, cx: &mut Context<Self>) {
         if let Some(record) = step.record {
             self.record(record, cx);
         }
@@ -541,28 +535,19 @@ impl PuzzlesPage {
         };
         let request = cx
             .global::<AppCore>()
-            .call(&call.method, vec![call.args.clone()]);
+            .call(call.method, vec![call.args.clone()]);
         cx.spawn(async move |this, cx| {
-            let reply = match request.await {
-                Ok(ok) => json!({ "ok": ok }),
-                Err(cause) => {
-                    crate::log::write(
-                        Level::Warn,
-                        "puzzles",
-                        &format!("{} failed: {}", call.method, cause.message),
-                    );
-                    json!({ "error": cause.message })
-                }
-            };
-            let _ = this.update(cx, |this, cx| {
-                let next = this.session.apply(
-                    settle,
-                    json!({
-                        "resume": call.resume,
-                        "outcome": reply,
-                        "selection": this.selection(cx),
-                    }),
+            let reply = request.await.map_err(|cause| {
+                crate::log::write(
+                    Level::Warn,
+                    "puzzles",
+                    &format!("{} failed: {}", call.method, cause.message),
                 );
+                cause.message
+            });
+            let _ = this.update(cx, |this, cx| {
+                let selection = this.selection(cx);
+                let next = settle.apply(&mut this.session, call.resume, reply, &selection);
                 this.follow(next, settle, cx);
                 this.sync_board(cx);
             });
@@ -592,11 +577,9 @@ impl PuzzlesPage {
     }
 
     fn report(&mut self, win: bool, detail: Value, cx: &mut Context<Self>) {
-        let step = self.session.apply(
-            transitions::report_begin,
-            json!({ "win": win, "detail": detail, "selection": self.selection(cx) }),
-        );
-        self.follow(step, transitions::report_settled, cx);
+        let detail: Option<Detail> = serde_json::from_value(detail).ok();
+        let step = self.session.report_begin(win, detail, &self.selection(cx));
+        self.follow(step, Settle::Report, cx);
     }
 
     /* ── The board ────────────────────────────────────────────────────── */
@@ -609,7 +592,7 @@ impl PuzzlesPage {
         match self.session.current().cloned() {
             Some(puzzle) if ready && (!shown || key != self.shown_key) => {
                 self.shown_key = key;
-                let outcome = self.session.state["attemptOutcome"].as_bool();
+                let outcome = self.session.state().attempt_outcome;
                 self.puzzle
                     .update(cx, |board, cx| board.start(&puzzle, outcome, cx));
             }
@@ -621,8 +604,8 @@ impl PuzzlesPage {
 
     /// The puzzle is over: count and log it, and go on to the next one after a solve when asked.
     fn done(&mut self, cx: &mut Context<Self>) {
-        let step = self.session.apply(transitions::end, json!({}));
-        self.follow(step, transitions::load_settled, cx);
+        let step = self.session.end(&local_day());
+        self.follow(step, Settle::Load, cx);
         let solved = self.puzzle.read(cx).status() == "solved";
         let auto_next = cx
             .global::<SettingsHandle>()
@@ -687,11 +670,10 @@ impl PuzzlesPage {
     /// `retry`: play an earlier puzzle again on the Train tab (unrated, not counted).
     pub(crate) fn retry(&mut self, puzzle: Value, cx: &mut Context<Self>) {
         Tab::Train.store(cx);
-        let step = self.session.apply(
-            transitions::retry,
-            json!({ "puzzle": puzzle, "selection": self.selection(cx) }),
-        );
-        self.follow(step, transitions::load_settled, cx);
+        let step = self
+            .session
+            .retry(puzzle, &self.selection(cx), &local_day());
+        self.follow(step, Settle::Load, cx);
         self.sync_board(cx);
         cx.notify();
     }
@@ -765,8 +747,8 @@ impl PuzzlesPage {
     }
 
     fn reset_session(&mut self, cx: &mut Context<Self>) {
-        let step = self.session.apply(transitions::reset_session, json!({}));
-        self.follow(step, transitions::load_settled, cx);
+        let step = self.session.reset_session();
+        self.follow(step, Settle::Load, cx);
         cx.notify();
     }
 }
@@ -1235,9 +1217,7 @@ impl PuzzlesPage {
             "error" => empty(
                 icon("triangle-alert"),
                 "Couldn’t get a puzzle".into(),
-                self.session.state["trainError"]
-                    .as_str()
-                    .map(str::to_string),
+                Some(self.session.state().train_error.clone()),
             )
             .child(
                 h_flex()
@@ -1270,17 +1250,16 @@ impl PuzzlesPage {
 
     /// The session's tally, the day streak and the latest attempts.
     fn render_session(&self, cx: &mut Context<Self>, palette: &Palette) -> impl IntoElement {
-        let session = &self.session.state["session"];
-        let count = |key: &str| session[key].as_f64().unwrap_or_default();
+        let tally = &self.session.state().session;
         let parts = [
-            ("solved", "solved", palette.success, true),
-            ("hinted", "with hint", palette.success, false),
-            ("partial", "partial", palette.info, false),
-            ("missed", "missed", palette.error, true),
-            ("revealed", "revealed", palette.text, false),
+            (tally.solved, "solved", palette.success, true),
+            (tally.hinted, "with hint", palette.success, false),
+            (tally.partial, "partial", palette.info, false),
+            (tally.missed, "missed", palette.error, true),
+            (tally.revealed, "revealed", palette.text, false),
         ];
-        let tried = count("movesTried");
-        let rating = self.session.state["rating"].as_f64();
+        let tried = tally.moves_tried;
+        let rating = self.session.state().rating;
         let day_streak = self.progress["dayStreak"].as_f64().unwrap_or_default();
         let mut line = h_flex()
             .flex_wrap()
@@ -1288,8 +1267,7 @@ impl PuzzlesPage {
             .gap_y(px(4.))
             .text_size(px(13.))
             .text_color(palette.text_muted);
-        for (key, label, tone, always) in parts {
-            let value = count(key);
+        for (value, label, tone, always) in parts {
             if always || value > 0. {
                 line = line.child(
                     h_flex()
@@ -1311,13 +1289,13 @@ impl PuzzlesPage {
                         div()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.text)
-                            .child(format!("{}", count("movesFound"))),
+                            .child(format!("{}", tally.moves_found)),
                     )
                     .child(format!("/{tried} moves right")),
             );
         }
         if let Some(rating) = rating.filter(|_| Self::mode(cx) == "rated") {
-            let change = count("ratingChange");
+            let change = tally.rating_change;
             line = line.child(format!(
                 "rating {rating}{}",
                 if change != 0. {
@@ -1513,7 +1491,7 @@ impl PuzzlesPage {
             false,
             palette,
         );
-        let is_retry = self.session.state["isRetry"] == json!(true);
+        let is_retry = self.session.state().is_retry;
         let account = self.account(cx);
         let source = if is_retry {
             Some("Retry · unrated".to_string())
@@ -1526,12 +1504,14 @@ impl PuzzlesPage {
         } else {
             None
         };
-        let rating_text = self.session.state["lastReport"].as_object().map(|report| {
-            if let Some(failed) = report.get("failed").and_then(Value::as_str) {
-                (failed.to_string(), true)
-            } else if let Some(diff) = report.get("ratingDiff").and_then(Value::as_f64) {
-                let rating = self.session.state["rating"]
-                    .as_f64()
+        let rating_text = self.session.state().last_report.as_ref().map(|report| {
+            if let Some(failed) = &report.failed {
+                (failed.clone(), true)
+            } else if let Some(diff) = report.rating_diff {
+                let rating = self
+                    .session
+                    .state()
+                    .rating
                     .map(|rating| format!(" → {rating}"))
                     .unwrap_or_default();
                 (
@@ -2091,4 +2071,26 @@ pub fn open_opening(name: &str, window: &mut Window, cx: &mut App) {
         puzzles.update(cx, |puzzles, cx| puzzles.opening_chosen(window, cx));
     }
     crate::shell::open(crate::pages::Page::Puzzles, window, cx);
+}
+
+/// Which reply a host call settles: a load, or Lichess's answer to a result.
+#[derive(Clone, Copy)]
+enum Settle {
+    Load,
+    Report,
+}
+
+impl Settle {
+    fn apply(
+        self,
+        session: &mut PuzzleSession,
+        resume: Resume,
+        reply: Result<Value, String>,
+        selection: &Selection,
+    ) -> Step {
+        match self {
+            Settle::Load => session.load_settled(resume, reply, selection, &local_day()),
+            Settle::Report => session.report_settled(resume, reply, selection),
+        }
+    }
 }
