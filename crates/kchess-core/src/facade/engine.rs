@@ -21,7 +21,7 @@ impl Core {
         let settings = self.get_settings().await?;
         // A game can start while the settings were read.
         self.assistance_allowed(gate.refusal_after())?;
-        Ok(text(&settings["enginePath"]))
+        Ok(settings.core.engine_path)
     }
 }
 
@@ -35,7 +35,7 @@ impl EngineApi for Core {
         let mut status = if fairy_variant(variant).is_some() {
             as_json(variant_engine_status(host, &self.ctx.locations).await)?
         } else {
-            let configured = text(&self.get_settings().await?["enginePath"]);
+            let configured = self.get_settings().await?.core.engine_path;
             as_json(engine_status(host, &self.ctx.locations, &configured).await)?
         };
         if status["ready"].as_bool() == Some(true) {

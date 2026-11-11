@@ -18,8 +18,10 @@ use kchess_domain::misc::value::{self, J};
 use kchess_domain::variant::Variant;
 use kchess_domain::{js, replay};
 
+mod accounts;
 mod lookups;
 
+pub use accounts::*;
 pub use lookups::*;
 
 /// Why an argument was refused, as the caller is told.

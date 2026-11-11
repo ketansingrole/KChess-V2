@@ -222,6 +222,12 @@ wire_enum!(#[doc = "Format for exporting a game."] ExportKind, EXPORT_KINDS {
     Png = "png",
     Pgn = "pgn",
 });
+wire_enum!(#[doc = "What a connected account can do about a player on Lichess."] RelationAction, RELATION_ACTIONS {
+    Follow = "follow",
+    Unfollow = "unfollow",
+    Block = "block",
+    Unblock = "unblock",
+});
 
 union!(#[doc = "Tournament pairing system."] TournamentSystem { Arena = "arena", Swiss = "swiss" });
 union!(#[doc = "Whether play is rated or casual."] LookupMode { Rated = "rated", Casual = "casual" });
@@ -419,85 +425,179 @@ pub struct Settings {
     pub frontend: FrontendPreferences,
 }
 
+/// A synced game, seen from its account's side.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LichessGame {
     pub id: String,
     pub account: String,
-    pub created_at: f64,
-    pub last_move_at: f64,
+    pub created_at: i64,
+    pub last_move_at: i64,
     pub rated: bool,
     pub speed: String,
     pub perf: String,
     pub status: String,
-    #[serde(default, with = "kchess_domain::color::option_by_name")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "kchess_domain::color::option_by_name"
+    )]
     pub winner: Option<Color>,
     #[serde(with = "kchess_domain::color::by_name")]
     pub color: Color,
     pub opponent: String,
-    pub opponent_rating: Option<f64>,
-    pub player_rating: Option<f64>,
-    pub rating_diff: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opponent_rating: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub player_rating: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating_diff: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opening: Option<String>,
+    /// SAN moves, separated by spaces.
     pub moves: String,
+    /// Only `gamePgn` reads it: list rows leave it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pgn: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
+/// A page of the synced games, filtered.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(expecting = "an object")]
 pub struct GamePageQuery {
+    /// One account's games (a Lichess username or `name@chess.com`).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<GameResultFilter>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub rated: Option<bool>,
-    /// Part of an opponent's name or an opening's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Part of an opponent's name or an opening's; blank is no search.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub search: Option<String>,
-    pub offset: f64,
-    pub limit: f64,
+    pub offset: u64,
+    pub limit: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GamePage {
     pub games: Vec<LichessGame>,
-    pub total: f64,
+    /// The games the filters match, on every page.
+    pub total: i64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+/// Win, loss and draw counts.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GameRecord {
-    pub total: f64,
-    pub win: f64,
-    pub loss: f64,
-    pub draw: f64,
+    pub total: i64,
+    pub win: i64,
+    pub loss: i64,
+    pub draw: i64,
 }
 
+/// The insights filter: one account's finished games.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct InsightsQuery {
     pub account: String,
-    pub speed: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<ExplorerSpeed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rated: Option<bool>,
     /// Only games from the last this-many days.
-    pub days: Option<f64>,
-    /// A Lichess variant key; standard chess when left out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
+    pub days: Option<u64>,
+    /// Standard chess when left out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<Variant>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Streaks {
-    pub longest_win: f64,
-    pub longest_loss: f64,
-    pub current: f64,
+    pub longest_win: i64,
+    pub longest_loss: i64,
+    /// Positive for wins in a row, negative for losses.
+    pub current: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GameLibraryOverview {
+    /// By account, lower-cased.
     pub by_account: BTreeMap<String, GameRecord>,
+    /// The connected accounts' games against each added player, lower-cased.
     pub versus: BTreeMap<String, GameRecord>,
+}
+
+/// One rating category's rating, the last rated one each day: `[year, month (0–11), day,
+/// rating]`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RatingSeries {
+    pub name: String,
+    pub points: Vec<[i64; 4]>,
+}
+
+/// A Lichess account or added player, with what was synced.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    pub username: String,
+    /// Signed in (a Lichess login is kept), rather than a player added to follow.
+    pub connected: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_synced_at: Option<i64>,
+    /// The player's Lichess play time when their games were last synced, in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synced_play_time: Option<i64>,
+}
+
+/// The core's settings, the accounts and how many games are synced.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AppData {
+    pub settings: CoreSettings,
+    pub accounts: Vec<Account>,
+    pub game_count: i64,
+}
+
+/// A Lichess account signed in through the browser, and the data with it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ConnectedLichess {
+    pub data: AppData,
+    /// The account Lichess authorised.
+    pub username: String,
+}
+
+/// A Chess.com player whose games are synced.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChesscomAccount {
+    /// As Chess.com spells it.
+    pub username: String,
+    pub added_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_synced_at: Option<i64>,
+}
+
+/// A player's profile and rating history as last saved, with no network.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedProfile {
+    /// The Lichess user as Lichess sent it; null when never fetched.
+    pub profile: Option<Value>,
+    /// The rating history as Lichess sent it; null when never fetched.
+    pub rating_history: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_fetched_at: Option<i64>,
+}
+
+/// A private message went through.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MessageSent {
+    pub sent: bool,
 }
 
 /// One player's side of a review.
@@ -817,6 +917,7 @@ pub struct TournamentList {
 
 /* ── Players ──────────────────────────────────────────────────────────── */
 
+/// A game in a player's record: the opponent and when.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PerfResult {
@@ -826,6 +927,7 @@ pub struct PerfResult {
     pub game_id: String,
 }
 
+/// A rating and the game it came from.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PerfMark {
@@ -834,26 +936,11 @@ pub struct PerfMark {
     pub game_id: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PerfStreak {
-    pub current: f64,
-    pub best: f64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct PerfCount {
-    pub all: f64,
-    pub rated: f64,
-    pub win: f64,
-    pub loss: f64,
-    pub draw: f64,
-    pub tour: f64,
-    pub berserk: f64,
-    pub op_avg: f64,
-    pub seconds: f64,
-    pub disconnects: f64,
+    pub current: i64,
+    pub best: i64,
 }
 
 /// One player's record in one rating category, as Lichess's perf page shows it.
@@ -861,16 +948,26 @@ pub struct PerfCount {
 #[serde(rename_all = "camelCase")]
 pub struct PerfStats {
     pub perf: PerfType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rating: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deviation: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provisional: Option<bool>,
     /// Position on the leaderboard, when ranked.
-    pub rank: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<i64>,
     /// Better than this share of players.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub percentile: Option<f64>,
-    pub progress: Option<f64>,
-    pub count: PerfCount,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<i64>,
+    /// Lichess's game counts as it sent them (`all`, `rated`, `win`, `loss`, `draw`, `tour`,
+    /// `berserk`, `opAvg`, `seconds`, `disconnects`), null when it sent none.
+    pub count: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highest: Option<PerfMark>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lowest: Option<PerfMark>,
     pub best_wins: Vec<PerfResult>,
     pub worst_losses: Vec<PerfResult>,
@@ -882,7 +979,7 @@ pub struct PerfStats {
 #[serde(rename_all = "camelCase")]
 pub struct CrosstableMatchup {
     pub users: BTreeMap<String, f64>,
-    pub nb_games: f64,
+    pub nb_games: i64,
 }
 
 /// Two players' lifetime score against each other (and in their current match, if any).
@@ -891,12 +988,13 @@ pub struct CrosstableMatchup {
 pub struct Crosstable {
     /// Lower-cased username → points (wins plus half-points for draws).
     pub users: BTreeMap<String, f64>,
-    pub nb_games: f64,
+    pub nb_games: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matchup: Option<CrosstableMatchup>,
 }
 
 /// Whether a connected account follows or blocks a player on Lichess.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LichessRelation {
     pub following: bool,
@@ -908,10 +1006,12 @@ pub struct LichessRelation {
 #[serde(rename_all = "camelCase")]
 pub struct LeaderboardEntry {
     pub username: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub rating: f64,
     /// Rating change over the last games.
     pub progress: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub online: Option<bool>,
 }
 
@@ -920,7 +1020,9 @@ pub struct LeaderboardEntry {
 #[serde(rename_all = "camelCase")]
 pub struct PlayerSuggestion {
     pub username: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub online: Option<bool>,
 }
 
@@ -933,15 +1035,18 @@ pub struct ActivityItem {
     pub kind: String,
     pub text: String,
     /// A player the line is about, for a profile link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
     /// A game the line is about, to open it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game_id: Option<String>,
     /// The rating over the line's games or puzzles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rating: Option<RatingChange>,
 }
 
 /// A rating before and after a day's games or puzzles.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct RatingChange {
     pub before: f64,
     pub after: f64,
@@ -1180,13 +1285,18 @@ pub struct OnlineOptions {
     pub account: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+/// A followed player's Lichess ratings, of the categories they have one in.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct FollowedRatings {
-    pub bullet: Option<f64>,
-    pub blitz: Option<f64>,
-    pub rapid: Option<f64>,
-    pub classical: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bullet: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blitz: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rapid: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classical: Option<i64>,
 }
 
 /// A player one of the connected accounts follows on Lichess.
@@ -1194,6 +1304,7 @@ pub struct FollowedRatings {
 #[serde(rename_all = "camelCase")]
 pub struct FollowedUser {
     pub username: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub ratings: FollowedRatings,
     /// Connected accounts that follow them.

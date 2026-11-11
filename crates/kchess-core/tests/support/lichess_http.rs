@@ -9,10 +9,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
+use kchess_contracts::types::LichessGame;
 use kchess_core::capabilities::Capabilities;
 use kchess_core::error::Result as CoreResult;
 use kchess_core::host::{Host, Level};
-use kchess_core::lichess::accounts::{AccountRow, CachedValue, LichessGame, LichessStore};
+use kchess_core::lichess::accounts::{AccountRow, CachedValue, LichessStore};
 use kchess_core::lichess::client::TokenSource;
 use kchess_core::loopback::close_after_client;
 use serde_json::Value;

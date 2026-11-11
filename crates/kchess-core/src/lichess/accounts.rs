@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use crate::time::now_ms;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::{OnceCell, watch};
 use tokio_util::sync::CancellationToken;
@@ -29,7 +29,11 @@ use crate::capabilities::Capabilities;
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::{Host, Level};
 use crate::store::games::EXPORTED_GAME_CACHE;
-use kchess_contracts::types::UsageKind;
+use kchess_contracts::types::{
+    CachedProfile, Crosstable, CrosstableMatchup, FollowedRatings, FollowedUser, FollowingProblem,
+    FollowingReport, LichessGame, PerfMark, PerfResult, PerfStats, PerfStreak, PerfType, UsageKind,
+};
+use kchess_domain::color::Color;
 
 /// The most games one sync keeps walking back through.
 pub const MAX_GAMES: usize = 5000;
@@ -152,35 +156,6 @@ pub trait LichessStore: Send + Sync {
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
 }
 
-/// A game as the store keeps it and the UI shows it (`LichessGame`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LichessGame {
-    pub id: String,
-    pub account: String,
-    pub created_at: i64,
-    pub last_move_at: i64,
-    pub rated: bool,
-    pub speed: String,
-    pub perf: String,
-    pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub winner: Option<String>,
-    pub color: String,
-    pub opponent: String,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub opponent_rating: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub player_rating: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub rating_diff: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub opening: Option<String>,
-    pub moves: String,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub pgn: Option<String>,
-}
-
 /// The parts of a `GameJson` (`@lichess-org/types`) the sync reads.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -260,14 +235,13 @@ pub fn normalize_game(raw: &GameJson, account: &str) -> LichessGame {
     let white = player_name(&raw.players.white);
     let black = player_name(&raw.players.black);
     let color = if white.to_lowercase() == account.to_lowercase() {
-        "white"
+        Color::White
     } else {
-        "black"
+        Color::Black
     };
-    let (player, opponent, opponent_name) = if color == "white" {
-        (&raw.players.white, &raw.players.black, black)
-    } else {
-        (&raw.players.black, &raw.players.white, white)
+    let (player, opponent, opponent_name) = match color {
+        Color::White => (&raw.players.white, &raw.players.black, black),
+        Color::Black => (&raw.players.black, &raw.players.white, white),
     };
     LichessGame {
         id: raw.id.clone(),
@@ -278,8 +252,11 @@ pub fn normalize_game(raw: &GameJson, account: &str) -> LichessGame {
         speed: raw.speed.clone(),
         perf: raw.perf.clone(),
         status: raw.status.clone(),
-        winner: raw.winner.clone(),
-        color: color.to_string(),
+        winner: raw
+            .winner
+            .as_deref()
+            .and_then(kchess_domain::color::from_name),
+        color,
         opponent: opponent_name,
         opponent_rating: opponent.rating,
         player_rating: player.rating,
@@ -979,11 +956,11 @@ impl Lichess {
     }
 
     /// `playerPerf`: one player's record in one rating category (public).
-    pub async fn player_perf(&self, username: &str, perf: &str) -> CoreResult<PerfStats> {
+    pub async fn player_perf(&self, username: &str, perf: PerfType) -> CoreResult<PerfStats> {
         let path = format!(
             "/api/user/{}/perf/{}",
             path_segment(username),
-            path_segment(perf)
+            path_segment(perf.as_str())
         );
         let raw: PerfResponse = self
             .client
@@ -1501,56 +1478,6 @@ fn lower_keys<V>(map: BTreeMap<String, V>) -> BTreeMap<String, V> {
         .collect()
 }
 
-/// A profile as the cache holds it, with when it was fetched.
-#[derive(Clone, Debug, PartialEq)]
-pub struct CachedProfile {
-    pub profile: Option<Value>,
-    pub rating_history: Option<Value>,
-    pub profile_fetched_at: Option<i64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FollowedRatings {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bullet: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub blitz: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rapid: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub classical: Option<i64>,
-}
-
-/// `FollowedUser`.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FollowedUser {
-    pub username: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    pub ratings: FollowedRatings,
-    pub followed_by: Vec<String>,
-    pub already_added: bool,
-    pub dismissed: bool,
-}
-
-/// `FollowingProblem`.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FollowingProblem {
-    pub account: String,
-    pub message: String,
-    pub needs_reconnect: bool,
-}
-
-/// `FollowingReport`.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct FollowingReport {
-    pub users: Vec<FollowedUser>,
-    pub problems: Vec<FollowingProblem>,
-}
-
 #[derive(Debug, Deserialize)]
 struct PerfResponse {
     perf: PerfInfo,
@@ -1604,11 +1531,11 @@ struct PerfPoint {
 #[derive(Debug, Deserialize)]
 struct PerfResults {
     #[serde(default)]
-    results: Vec<PerfResult>,
+    results: Vec<PerfEntry>,
 }
 
 #[derive(Debug, Deserialize)]
-struct PerfResult {
+struct PerfEntry {
     #[serde(default, rename = "opRating")]
     op_rating: f64,
     #[serde(default, rename = "opId")]
@@ -1640,65 +1567,13 @@ struct StreakValue {
     v: i64,
 }
 
-/// `PerfPoint` of `PerfStats`: a rating and the game it came from.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PerfMark {
-    pub rating: f64,
-    pub at: String,
-    pub game_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PerfGame {
-    pub opponent: String,
-    pub opponent_rating: f64,
-    pub at: String,
-    pub game_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct Streak {
-    pub current: i64,
-    pub best: i64,
-}
-
-/// `PerfStats`.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PerfStats {
-    pub perf: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rating: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub deviation: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provisional: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rank: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub percentile: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub progress: Option<i64>,
-    pub count: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub highest: Option<PerfMark>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub lowest: Option<PerfMark>,
-    pub best_wins: Vec<PerfGame>,
-    pub worst_losses: Vec<PerfGame>,
-    pub win_streak: Streak,
-    pub loss_streak: Streak,
-}
-
-fn perf_stats(perf: &str, raw: PerfResponse) -> PerfStats {
-    let results = |list: Option<PerfResults>| -> Vec<PerfGame> {
+fn perf_stats(perf: PerfType, raw: PerfResponse) -> PerfStats {
+    let results = |list: Option<PerfResults>| -> Vec<PerfResult> {
         list.map(|list| list.results)
             .unwrap_or_default()
             .into_iter()
             .take(5)
-            .map(|entry| PerfGame {
+            .map(|entry| PerfResult {
                 opponent: entry
                     .op_id
                     .map(|id| id.name)
@@ -1721,14 +1596,14 @@ fn perf_stats(perf: &str, raw: PerfResponse) -> PerfStats {
             .result_streak
             .as_ref()
             .map(side)
-            .map(|(current, best)| Streak { current, best })
-            .unwrap_or(Streak {
+            .map(|(current, best)| PerfStreak { current, best })
+            .unwrap_or(PerfStreak {
                 current: 0,
                 best: 0,
             })
     };
     PerfStats {
-        perf: perf.to_string(),
+        perf,
         rating: raw.perf.glicko.as_ref().map(|glicko| glicko.rating),
         deviation: raw.perf.glicko.as_ref().map(|glicko| glicko.deviation),
         provisional: raw
@@ -1765,23 +1640,6 @@ struct CrosstableMatchupRaw {
     users: BTreeMap<String, f64>,
     #[serde(default, rename = "nbGames")]
     nb_games: i64,
-}
-
-/// `Crosstable`; names are lowercase.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Crosstable {
-    pub users: BTreeMap<String, f64>,
-    pub nb_games: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub matchup: Option<CrosstableMatchup>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CrosstableMatchup {
-    pub users: BTreeMap<String, f64>,
-    pub nb_games: i64,
 }
 
 /// Whether `pgn` records a decided result (`[Result "1-0"]`, `"0-1"` or `"1/2-1/2"`); a game
@@ -1822,7 +1680,7 @@ mod tests {
         )
         .unwrap();
         let game = normalize_game(&raw, "alice");
-        assert_eq!(game.color, "black");
+        assert_eq!(game.color, Color::Black);
         assert_eq!(game.opponent, "Bob");
         assert_eq!(game.opponent_rating, Some(1400));
         assert_eq!(game.player_rating, Some(1500));

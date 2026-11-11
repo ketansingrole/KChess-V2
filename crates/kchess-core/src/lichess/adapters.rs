@@ -6,12 +6,13 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use serde_json::Value;
 
-use super::accounts::{AccountRow, CachedValue, LichessGame, LichessStore};
+use super::accounts::{AccountRow, CachedValue, LichessStore};
 use super::client::TokenSource;
 use super::lookups::{ExplorerLogin, LookupCache};
 use crate::capabilities::Capabilities;
 use crate::error::{CoreError, Result as CoreResult};
 use crate::store::{Database, games, lookups, reviews};
+use kchess_contracts::types::LichessGame;
 
 /// `LichessStore` over `kchess.db`.
 pub struct DbLichessStore {
@@ -234,7 +235,7 @@ impl LichessStore for DbLichessStore {
                 .database
                 .read_async(|ctx| games::get_settings(ctx.db))
                 .await?;
-            Ok(settings["receiveChallenges"].as_bool().unwrap_or(true))
+            Ok(settings.core.receive_challenges)
         })
     }
 

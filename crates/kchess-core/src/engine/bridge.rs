@@ -157,11 +157,16 @@ pub struct ReviewBridge {
 impl ReviewHost for ReviewBridge {
     fn settings(&self) -> BoxFuture<'_, Result<ReviewSettings>> {
         Box::pin(async move {
-            parse(
-                self.database
-                    .read_async(|ctx| games::get_settings(ctx.db))
-                    .await?,
-            )
+            let settings = self
+                .database
+                .read_async(|ctx| games::get_settings(ctx.db))
+                .await?
+                .core;
+            Ok(ReviewSettings {
+                review_auto: settings.review_auto.as_str().to_string(),
+                review_on_battery: settings.review_on_battery,
+                engine_path: settings.engine_path,
+            })
         })
     }
 

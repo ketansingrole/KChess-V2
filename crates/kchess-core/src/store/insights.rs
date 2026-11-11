@@ -9,10 +9,11 @@ use serde_json::{Map, Value, json};
 use super::sql::Sql as _;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_contracts::types::InsightsQuery;
 use kchess_domain::js;
 use kchess_domain::js::{number_to_json as num, truthy};
 use kchess_domain::time_use::{PHASES, TimeUse, time_use};
-use kchess_domain::variant::VARIANTS;
+use kchess_domain::variant::{VARIANTS, Variant};
 
 const NEG_INF: f64 = f64::NEG_INFINITY;
 const INF: f64 = f64::INFINITY;
@@ -97,39 +98,25 @@ impl<T> Slots<T> {
     }
 }
 
-/// `SQL` value of a query argument: text, a number, or null.
-fn sql_of(value: Option<&Value>) -> Sql {
-    match value {
-        Some(Value::String(s)) => Sql::Text(s.clone()),
-        Some(Value::Number(n)) => match n.as_f64() {
-            Some(x) if x.fract() == 0.0 && x.abs() < 9.0e15 => Sql::Integer(x as i64),
-            Some(x) => Sql::Real(x),
-            None => Sql::Null,
-        },
-        _ => Sql::Null,
-    }
-}
-
 /// The filter clauses on `games`, optionally qualified (`g.`) for the review join.
-fn clauses(query: &Value, prefix: &str, now: f64) -> Result<(Vec<String>, Vec<Sql>)> {
+fn clauses(query: &InsightsQuery, prefix: &str, now: f64) -> Result<(Vec<String>, Vec<Sql>)> {
     let mut clauses = vec![format!("{prefix}account = ?")];
-    let mut params = vec![sql_of(query.get("account"))];
-    if truthy(query.get("speed")) {
+    let mut params = vec![Sql::Text(query.account.clone())];
+    if let Some(speed) = query.speed {
         clauses.push(format!("{prefix}speed = ?"));
-        params.push(sql_of(query.get("speed")));
+        params.push(Sql::Text(speed.as_str().to_string()));
     }
-    if let Some(rated) = query.get("rated") {
+    if let Some(rated) = query.rated {
         clauses.push(format!("{prefix}rated = ?"));
-        params.push(Sql::Integer(i64::from(truthy(Some(rated)))));
+        params.push(Sql::Integer(i64::from(rated)));
     }
-    if truthy(query.get("days")) {
-        let days = js::to_number(query.get("days"));
+    if let Some(days) = query.days.filter(|days| *days > 0) {
         clauses.push(format!("{prefix}createdAt >= ?"));
-        params.push(Sql::Real(now - days * DAY_MS));
+        params.push(Sql::Real(now - days as f64 * DAY_MS));
     }
     // Lichess files a variant game under the variant (`perf`): standard chess, by default, leaves
     // them out, so their results and openings do not mix into it.
-    match query.get("variant").and_then(Value::as_str) {
+    match query.variant.map(Variant::key) {
         Some(variant) if variant != "standard" => {
             clauses.push(format!("{prefix}perf = ?"));
             params.push(Sql::Text(variant.to_string()));
@@ -147,7 +134,7 @@ fn clauses(query: &Value, prefix: &str, now: f64) -> Result<(Vec<String>, Vec<Sq
 }
 
 /// The variants other than standard the account has finished games in, in KChess's order.
-fn played_variants(db: &Connection, query: &Value) -> Result<Vec<&'static str>> {
+fn played_variants(db: &Connection, query: &InsightsQuery) -> Result<Vec<&'static str>> {
     let mut statement = db
         .prepare(
             "SELECT DISTINCT perf FROM games
@@ -155,7 +142,7 @@ fn played_variants(db: &Connection, query: &Value) -> Result<Vec<&'static str>> 
         )
         .sql()?;
     let played: Vec<String> = statement
-        .query_map([sql_of(query.get("account"))], |row| row.get(0))
+        .query_map([&query.account], |row| row.get(0))
         .sql()?
         .collect::<std::result::Result<_, _>>()
         .sql()?;
@@ -167,7 +154,12 @@ fn played_variants(db: &Connection, query: &Value) -> Result<Vec<&'static str>> 
 }
 
 /// `insights(query)`.
-pub fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result<Value> {
+pub fn insights(
+    host: &dyn Host,
+    db: &Connection,
+    query: &InsightsQuery,
+    now: f64,
+) -> Result<Value> {
     let (clauses, params) = clauses(query, "", now)?;
     let where_sql = clauses.join(" AND ");
     let sql = format!(
@@ -302,10 +294,7 @@ pub fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Re
     by_ending.sort_by_key(|a| std::cmp::Reverse(a.1.total));
 
     let mut report = Map::new();
-    report.insert(
-        "account".into(),
-        query.get("account").cloned().unwrap_or(Value::Null),
-    );
+    report.insert("account".into(), Value::String(query.account.clone()));
     report.insert("total".into(), json!(rows_out.len()));
     report.insert("record".into(), record.json());
     report.insert(
@@ -402,7 +391,7 @@ struct Row {
 fn accuracy_report(
     host: &dyn Host,
     db: &Connection,
-    query: &Value,
+    query: &InsightsQuery,
     now: f64,
 ) -> Result<Option<Value>> {
     let (clauses, params) = clauses(query, "g.", now)?;
@@ -633,7 +622,7 @@ impl Clocks {
 fn time_use_report(
     host: &dyn Host,
     db: &Connection,
-    query: &Value,
+    query: &InsightsQuery,
     now: f64,
 ) -> Result<Option<Value>> {
     let (clauses, params) = clauses(query, "g.", now)?;

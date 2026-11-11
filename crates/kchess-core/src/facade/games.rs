@@ -2,91 +2,72 @@
 
 use std::sync::Arc;
 
+use kchess_contracts::check::{FriendList, GameAccount, GameId, OptionalAccount, Username};
 use kchess_contracts::core_api::GamesApi;
-use serde_json::{Value, json};
+use kchess_contracts::types::{
+    AppData, CachedProfile, ConnectedLichess, FollowingReport, GameLibraryOverview, GamePage,
+    GamePageQuery, InsightsQuery, RatingSeries,
+};
+use serde_json::Value;
 
-use super::args::{text, to_json};
-use super::core_data;
 use crate::core::Core;
 use crate::error::Result;
-use crate::store::games::{self, as_json};
+use crate::store::games;
 use crate::store::insights;
 use crate::time::now_ms;
 
 impl GamesApi for Core {
-    async fn sync_games(&self, username: Option<Value>) -> Result<Value> {
-        let username = username.as_ref().map(text);
+    async fn sync_games(&self, username: Option<Username>) -> Result<AppData> {
+        let username = username.map(|name| name.0);
         self.services
             .lichess()
             .sync_games(username.as_deref())
             .await?;
-        let data = self.app_data().await?;
-        core_data(&data)
+        self.app_data().await
     }
 
-    async fn game_page(&self, query: Value) -> Result<Value> {
+    async fn game_page(&self, query: GamePageQuery) -> Result<GamePage> {
         self.database
-            .read_async(move |ctx| games::game_page(ctx, query))
+            .read_async(move |ctx| games::game_page(ctx, &query))
             .await
     }
 
-    async fn game_library_overview(&self) -> Result<Value> {
+    async fn game_library_overview(&self) -> Result<GameLibraryOverview> {
         self.database.read_async(games::game_library_overview).await
     }
 
-    async fn insights(&self, query: Value) -> Result<Value> {
+    async fn insights(&self, query: InsightsQuery) -> Result<Value> {
         let now = now_ms() as f64;
         self.database
             .read_async(move |ctx| insights::insights(ctx.host, ctx.db, &query, now))
             .await
     }
 
-    async fn game_rating_history(&self, account: Value) -> Result<Value> {
-        let account = text(&account);
+    async fn game_rating_history(&self, account: GameAccount) -> Result<Vec<RatingSeries>> {
         self.database
-            .read_async(move |ctx| as_json(games::rating_history(ctx.db, &account)?))
+            .read_async(move |ctx| games::rating_history(ctx.db, &account.0))
             .await
     }
 
-    async fn game_pgn(&self, account: Value, id: Value) -> Result<Value> {
-        let (account, id) = (text(&account), text(&id));
+    async fn game_pgn(&self, account: GameAccount, id: GameId) -> Result<Option<String>> {
         self.database
-            .read_async(move |ctx| Ok(json!(games::game_pgn(ctx.db, &account, &id)?)))
+            .read_async(move |ctx| games::game_pgn(ctx.db, &account.0, &id.0))
             .await
     }
 
-    async fn cached_profile(&self, username: Value) -> Result<Value> {
-        let cached = self
-            .services
-            .lichess()
-            .cached_profile(&text(&username))
-            .await;
-        to_json(cached.map(|cached| {
-            let mut object = serde_json::Map::new();
-            object.insert("profile".into(), cached.profile.unwrap_or(Value::Null));
-            object.insert(
-                "ratingHistory".into(),
-                cached.rating_history.unwrap_or(Value::Null),
-            );
-            if let Some(at) = cached.profile_fetched_at {
-                object.insert("profileFetchedAt".into(), json!(at));
-            }
-            Value::Object(object)
-        }))
+    async fn cached_profile(&self, username: Username) -> Result<CachedProfile> {
+        self.services.lichess().cached_profile(&username.0).await
     }
 
-    async fn profile(&self, username: Value) -> Result<Value> {
-        self.services.lichess().profile(&text(&username)).await
+    async fn profile(&self, username: Username) -> Result<Value> {
+        self.services.lichess().profile(&username.0).await
     }
 
-    async fn rating_history(&self, username: Value) -> Result<Value> {
-        self.services
-            .lichess()
-            .rating_history(&text(&username))
-            .await
+    async fn rating_history(&self, username: Username) -> Result<Value> {
+        self.services.lichess().rating_history(&username.0).await
     }
 
-    async fn connect_lichess(&self, look: Option<Value>) -> Result<Value> {
+    async fn connect_lichess(&self, look: Option<Value>) -> Result<ConnectedLichess> {
         // An unreadable look falls back to the safe default colours.
         let look = kchess_domain::records::oauth::look(&look.unwrap_or(Value::Null))
             .filter(|look| !look.is_null());
@@ -103,21 +84,23 @@ impl GamesApi for Core {
             .lichess()
             .connect_lichess(look.as_ref(), Some(&focus))
             .await?;
-        let data = self.app_data().await?;
-        Ok(json!({ "data": core_data(&data)?, "username": connected.username }))
+        Ok(ConnectedLichess {
+            data: self.app_data().await?,
+            username: connected.username,
+        })
     }
 
-    async fn stay_connected(&self, account: Value) -> Result<Value> {
-        let wanted = text(&account);
+    async fn stay_connected(&self, account: OptionalAccount) -> Result<()> {
+        let wanted = account.0;
         let connected = self.is_connected(&wanted).await?;
         self.services
             .online()
             .stay_connected(if connected { &wanted } else { "" });
-        Ok(Value::Null)
+        Ok(())
     }
 
-    async fn clear_account_data(&self, username: Value) -> Result<Value> {
-        let account = text(&username);
+    async fn clear_account_data(&self, username: Username) -> Result<AppData> {
+        let account = username.0;
         let lichess = self.services.lichess();
         lichess.cancel_account_syncs(std::slice::from_ref(&account));
         self.reviews
@@ -125,30 +108,24 @@ impl GamesApi for Core {
         let cleared = account.clone();
         let data = self
             .database
-            .write_async(move |ctx| as_json(games::clear_account_data(ctx.db, &cleared)?))
+            .write_async(move |ctx| games::clear_account_data(ctx.db, &cleared))
             .await?;
         lichess.forget_profile(&account);
-        core_data(&data)
+        Ok(data)
     }
 
-    async fn following(&self) -> Result<Value> {
-        to_json(self.services.lichess().followed_users().await)
+    async fn following(&self) -> Result<FollowingReport> {
+        self.services.lichess().followed_users().await
     }
 
-    async fn add_friends(&self, usernames: Value) -> Result<Value> {
-        let list = usernames.as_array().cloned().unwrap_or_default();
+    async fn add_friends(&self, usernames: FriendList) -> Result<AppData> {
+        let names = usernames.0;
+        let list = names.clone();
         let data = self
             .database
-            .write_async(move |ctx| as_json(games::add_friends(ctx.db, &list)?))
+            .write_async(move |ctx| games::add_friends(ctx.db, &list))
             .await?;
-        let names: Vec<String> = usernames
-            .as_array()
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-            .iter()
-            .map(text)
-            .collect();
         self.services.lichess().prime_profiles(&names).await?;
-        core_data(&data)
+        Ok(data)
     }
 }

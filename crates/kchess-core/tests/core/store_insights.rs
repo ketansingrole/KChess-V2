@@ -4,7 +4,7 @@ use crate::support;
 
 use kchess_core::store::{games, insights};
 use serde_json::{Value, json};
-use support::store::{Store, game, list, profile};
+use support::store::{Store, game, insights_query, list, profile};
 
 #[derive(Clone, Copy, Default)]
 struct Counts {
@@ -47,7 +47,7 @@ fn insights(store: &Store) -> Value {
             insights::insights(
                 c.host,
                 c.db,
-                &json!({ "account": "Alice" }),
+                &insights_query(&json!({ "account": "Alice" })),
                 kchess_core::time::now_ms() as f64,
             )
         })
@@ -277,7 +277,7 @@ fn variant_games_are_counted_apart_from_standard_chess() {
                 insights::insights(
                     c.host,
                     c.db,
-                    &json!({ "account": "Alice", "variant": variant }),
+                    &insights_query(&json!({ "account": "Alice", "variant": variant })),
                     kchess_core::time::now_ms() as f64,
                 )
             })

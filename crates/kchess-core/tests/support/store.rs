@@ -7,6 +7,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use kchess_contracts::check::check;
+use kchess_contracts::types::{GamePageQuery, InsightsQuery, Settings};
 use kchess_core::store::{Database, StoreContext, games, import};
 use kchess_core::{Config, CoreError};
 use kchess_domain::misc::checks;
@@ -241,9 +243,8 @@ pub fn list(value: &Value) -> &[Value] {
 }
 
 /// Settings as the facade reads them from a frontend.
-pub fn parse_settings(value: Value) -> Result<games::Settings, CoreError> {
-    serde_json::from_value(value)
-        .map_err(|cause| CoreError::new(format!("Invalid settings: {cause}")))
+pub fn parse_settings(value: Value) -> Result<Settings, CoreError> {
+    check::<Settings>(J::from(&value)).map_err(CoreError::new)
 }
 
 fn config(dir: &Path, legacy: Option<PathBuf>) -> Config {
@@ -262,9 +263,20 @@ pub fn check_username(name: &str) -> Result<(), String> {
     checks::username(J::Str(name.into())).map(|_| ())
 }
 
-/// `assertGamePageQuery`: the facade's check of a page query.
-pub fn check_page_query(query: &Value) -> Result<(), String> {
-    checks::game_page_query(J::from(query)).map(|_| ())
+/// The facade's check of a page query.
+pub fn check_page_query(query: &Value) -> Result<GamePageQuery, String> {
+    check::<GamePageQuery>(J::from(query))
+}
+
+/// An insights query as the facade checks it.
+pub fn insights_query(query: &Value) -> InsightsQuery {
+    check::<InsightsQuery>(J::from(query)).expect("an insights query")
+}
+
+/// A page of the game library as the facade answers `gamePage`, the query checked first.
+pub fn game_page(c: &StoreContext, query: &Value) -> Result<Value, CoreError> {
+    let query = check_page_query(query).map_err(CoreError::new)?;
+    Ok(serde_json::to_value(games::game_page(c, &query)?).expect("a page"))
 }
 
 /// A played game as the TypeScript tests built it: an ordinary blitz win as White against Bob.

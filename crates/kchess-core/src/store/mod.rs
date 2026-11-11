@@ -31,6 +31,7 @@ use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::host::{Config, Host, Level};
 use crate::tasks::lock;
+use kchess_contracts::types::GameLibraryOverview;
 use sql::{Lane, LaneMessages, Sql as _};
 
 /// Filtered page counts, the library overview and the storage the games take, valid until a
@@ -43,7 +44,7 @@ use sql::{Lane, LaneMessages, Sql as _};
 #[derive(Default)]
 pub struct StoreCache {
     counts: Mutex<HashMap<String, i64>>,
-    overview: Mutex<Option<Value>>,
+    overview: Mutex<Option<GameLibraryOverview>>,
     storage: Mutex<Option<Vec<(String, i64, i64)>>>,
     library: Mutex<Option<(u64, Value)>>,
 }
@@ -61,12 +62,12 @@ impl StoreCache {
         counts.insert(key, total);
     }
 
-    pub fn overview(&self) -> Option<Value> {
+    pub fn overview(&self) -> Option<GameLibraryOverview> {
         lock(&self.overview).clone()
     }
 
-    pub fn remember_overview(&self, value: &Value) {
-        *lock(&self.overview) = Some(value.clone());
+    pub fn remember_overview(&self, overview: &GameLibraryOverview) {
+        *lock(&self.overview) = Some(overview.clone());
     }
 
     /// Each account's games and the bytes they take (`usageReport`'s storage).

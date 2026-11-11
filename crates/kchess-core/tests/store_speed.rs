@@ -4,6 +4,7 @@
 //! `cargo test --release -p kchess-core --test store_speed -- --ignored --nocapture`
 
 use kchess_contracts::CoreEvent;
+use kchess_contracts::types::GamePageQuery;
 use std::time::{Duration, Instant};
 
 use kchess_core::store::{self, StoreCache, StoreContext, games, library};
@@ -182,13 +183,15 @@ fn game_pages_from_newest_to_oldest() {
     for (label, account) in [("every account", None), ("one account", Some("alice"))] {
         let mut figures = Vec::new();
         for page in [0, 100, 500, 999] {
-            let mut query = json!({ "offset": page * size, "limit": size });
-            if let Some(account) = account {
-                query["account"] = json!(account);
-            }
+            let query = GamePageQuery {
+                account: account.map(str::to_string),
+                offset: (page * size) as u64,
+                limit: size as u64,
+                ..GamePageQuery::default()
+            };
             let time = median(15, || {
-                let answer = run(&db, &cache, |c| games::game_page(c, query.clone()));
-                assert_eq!(answer["games"].as_array().map(Vec::len), Some(size));
+                let answer = run(&db, &cache, |c| games::game_page(c, &query));
+                assert_eq!(answer.games.len(), size);
             });
             figures.push(format!("page {page}: {}", ms(time)));
         }

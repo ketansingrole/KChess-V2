@@ -11,7 +11,7 @@ use kchess_core::store::{
     insights, reviews, usage,
 };
 use serde_json::{Value, json};
-use support::store::{Store, profile};
+use support::store::{Store, game_page, insights_query, profile};
 
 const ACCOUNTS: [&str; 10] = [
     "Alice", "Bob", "Carol", "Dave", "Erin", "Frank", "Grace", "Heidi", "Ivan", "Judy",
@@ -89,7 +89,7 @@ fn reads() -> Vec<(&'static str, Read)> {
     let page = |query: Value| -> Read {
         Box::new(move |store: &Store| {
             store
-                .read_direct(|c| games::game_page(c, query.clone()))
+                .read_direct(|c| game_page(c, &query.clone()))
                 .expect("gamePage")
         })
     };
@@ -138,7 +138,7 @@ fn reads() -> Vec<(&'static str, Read)> {
         (
             "insights",
             Box::new(|store: &Store| {
-                let query = json!({ "account": "Alice" });
+                let query = insights_query(&json!({ "account": "Alice" }));
                 store
                     .read_direct(|c| {
                         insights::insights(c.host, c.db, &query, kchess_core::time::now_ms() as f64)
@@ -235,7 +235,7 @@ fn a_full_library_answers_every_read_with_a_bounded_response() {
     // The totals are the filters' own counts over the whole library.
     let total_of = |query: Value| {
         store
-            .read_direct(|c| games::game_page(c, query))
+            .read_direct(|c| game_page(c, &query))
             .expect("gamePage")["total"]
             .clone()
     };
@@ -264,7 +264,7 @@ fn a_full_library_answers_every_read_with_a_bounded_response() {
         ))
     );
     let last = store
-        .read_direct(|c| games::game_page(c, json!({ "offset": total - 7, "limit": 50 })))
+        .read_direct(|c| game_page(c, &json!({ "offset": total - 7, "limit": 50 })))
         .expect("gamePage");
     assert_eq!(last["games"].as_array().map(Vec::len), Some(7));
 

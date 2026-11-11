@@ -7,7 +7,7 @@ use crate::support;
 use kchess_core::store::games;
 use serde_json::{Value, json};
 use support::store::{
-    Secrets, check_page_query, check_username, game, list, parse_settings, profile,
+    Secrets, check_page_query, check_username, game, game_page, list, parse_settings, profile,
 };
 
 fn usernames(data: &Value) -> Vec<String> {
@@ -73,7 +73,7 @@ fn accounts_are_added_followed_dismissed_and_removed() {
         .expect("addAccount");
     assert!(check_username("no good name!").is_err());
     let friends = store
-        .write(|c| games::add_friends(c.db, list(&json!(["Bob", "carol"]))))
+        .write(|c| games::add_friends(c.db, &["Bob".into(), "carol".into()]))
         .expect("addFriends");
     assert_eq!(usernames(&friends), ["Alice", "Bob", "carol"]);
     assert_eq!(
@@ -184,9 +184,7 @@ fn played_games_are_saved_listed_summarised_and_read_as_pgn() {
         json!(2)
     );
     let query = json!({ "offset": 0, "limit": 1, "account": "alice" });
-    let page = store
-        .read(|c| games::game_page(c, query))
-        .expect("gamePage");
+    let page = store.read(|c| game_page(c, &query)).expect("gamePage");
     assert_eq!(page["total"], json!(2));
     assert_eq!(page["games"][0]["id"], json!("Game0002"));
     let invalid = json!({ "offset": -1, "limit": 1 });
