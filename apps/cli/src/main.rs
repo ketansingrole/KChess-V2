@@ -13,33 +13,106 @@ use serde_json::{Value, json};
 
 use crate::core::{Browser, CoreClient, Options};
 
-const HELP: &str = "KChess CLI
+/// Declares [`Command`] and [`COMMANDS`] together: each command's name, its other spellings,
+/// and its forms with what each does. The help, the
+/// suggestion for a mistyped command and `run`'s exhaustive match all read them.
+macro_rules! commands {
+    ($($variant:ident $name:literal [$($alias:literal),*] {
+        $($usage:literal => $about:literal,)+
+    })+) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum Command { $($variant,)+ }
 
-Usage: kchess-cli [options] <command>
+        const COMMANDS: &[Spec] = &[$(Spec {
+            command: Command::$variant,
+            name: $name,
+            aliases: &[$($alias),*],
+            forms: &[$(($usage, $about)),+],
+        },)+];
+    };
+}
 
-Commands:
-  library                          Print the library as JSON
-  status                           Print account and engine status
-  login                            Connect a Lichess account in your browser
-  call <method> '[arguments]'      Invoke any CoreApi method (JSON argument array)
-  call <method> --args-file <path> Read arguments from a JSON file
-  analyze [--variant name] <fen|startpos|moves>
-                                   Stream engine analysis as JSON lines until Ctrl-C
-  play [level] [white|black|random] [variant] [--fen FEN]
-                                   Play Stockfish; type moves in SAN or UCI
-  local [variant] [--fen FEN]      Play over the board (chess960, crazyhouse, atomic…)
-  puzzle [id|link]                 Solve the daily puzzle, or that one (hint, solution)
-  pgn <link>                       Print a Lichess game's PGN, or a public study chapter's
-  review <link|file|moves>         Review a game with the engine: accuracy and faulted moves
-  explore [masters|opening|tablebase] [--variant name] <fen|startpos|moves>
-                                   Look a position up (the tablebase for 7 pieces or fewer)
-  opening <fen|startpos|moves>     Name the opening a position or line reaches (ECO)
-  position [--variant name] <fen|startpos|moves>
-                                   Print whose turn, check or mate, and the legal moves
-  watch [channel|link]             Stream Lichess TV, a game or a broadcast as JSON lines
-  methods                          List available CoreApi methods
-  version                          Print the CLI's version (also --version)
+struct Spec {
+    command: Command,
+    name: &'static str,
+    aliases: &'static [&'static str],
+    forms: &'static [(&'static str, &'static str)],
+}
 
+commands! {
+    Library "library" [] {
+        "" => "Print the library as JSON",
+    }
+    Status "status" [] {
+        "" => "Print account and engine status",
+    }
+    Login "login" [] {
+        "" => "Connect a Lichess account in your browser",
+    }
+    Call "call" [] {
+        "<method> '[arguments]'" => "Invoke any CoreApi method (JSON argument array)",
+        "<method> --args-file <path>" => "Read arguments from a JSON file",
+    }
+    Analyze "analyze" [] {
+        "[--variant name] <fen|startpos|moves>" => "Stream engine analysis as JSON lines until Ctrl-C",
+    }
+    Play "play" [] {
+        "[level] [white|black|random] [variant] [--fen FEN]" => "Play Stockfish; type moves in SAN or UCI",
+    }
+    Local "local" [] {
+        "[variant] [--fen FEN]" => "Play over the board (chess960, crazyhouse, atomic…)",
+    }
+    Puzzle "puzzle" [] {
+        "[id|link]" => "Solve the daily puzzle, or that one (hint, solution)",
+    }
+    Pgn "pgn" [] {
+        "<link>" => "Print a Lichess game's PGN, or a public study chapter's",
+    }
+    Review "review" [] {
+        "<link|file|moves>" => "Review a game with the engine: accuracy and faulted moves",
+    }
+    Explore "explore" [] {
+        "[masters|opening|tablebase] [--variant name] <fen|startpos|moves>" => "Look a position up (the tablebase for 7 pieces or fewer)",
+    }
+    Opening "opening" [] {
+        "<fen|startpos|moves>" => "Name the opening a position or line reaches (ECO)",
+    }
+    Position "position" [] {
+        "[--variant name] <fen|startpos|moves>" => "Print whose turn, check or mate, and the legal moves",
+    }
+    Watch "watch" [] {
+        "[channel|link]" => "Stream Lichess TV, a game or a broadcast as JSON lines",
+    }
+    Methods "methods" [] {
+        "" => "List available CoreApi methods",
+    }
+    Version "version" ["--version", "-V"] {
+        "" => "Print the CLI's version (also --version)",
+    }
+    Help "help" ["--help", "-h"] {
+        "" => "Print this help",
+    }
+}
+
+/// Where a command's description starts in the help.
+const COLUMN: usize = 35;
+
+fn help() -> String {
+    let mut out =
+        String::from("KChess CLI\n\nUsage: kchess-cli [options] <command>\n\nCommands:\n");
+    for spec in COMMANDS {
+        for (usage, about) in spec.forms {
+            let call = format!("  {} {usage}", spec.name);
+            let call = call.trim_end();
+            if call.chars().count() < COLUMN {
+                out.push_str(&format!("{call:COLUMN$}{about}\n"));
+            } else {
+                out.push_str(&format!("{call}\n{:COLUMN$}{about}\n", ""));
+            }
+        }
+    }
+    out.push_str(
+        "
 Options:
   --data-dir <path>                Use another profile (default: the app's)
   --browser open|print             Open the login page or print its URL
@@ -49,7 +122,18 @@ Options:
 
 Interactive game commands: e4 or e2e4, undo, resign, new, status, pgn, quit.
 Local games also accept draw and pause. Sessions are saved in the core library.
-";
+",
+    );
+    out
+}
+
+/// The command `word` names.
+fn command(word: &str) -> Option<Command> {
+    COMMANDS
+        .iter()
+        .find(|spec| spec.name == word || spec.aliases.contains(&word))
+        .map(|spec| spec.command)
+}
 
 /// The most argument text `call` reads.
 const MAX_ARGUMENTS: u64 = 2_000_000;
@@ -192,17 +276,11 @@ async fn until_interrupted(
     }
 }
 
-/// Every command `run` knows, for a mistyped one's suggestion.
-const COMMANDS: [&str; 17] = [
-    "help", "methods", "opening", "position", "library", "status", "login", "call", "analyze",
-    "play", "local", "puzzle", "pgn", "review", "watch", "explore", "version",
-];
-
 /// An unknown command's message, naming the command it was probably meant to be.
 fn unknown_command(command: &str) -> String {
     let nearest = COMMANDS
         .iter()
-        .map(|known| (edit_distance(command, known), *known))
+        .map(|known| (edit_distance(command, known.name), known.name))
         .min()
         .filter(|(distance, known)| *distance <= 2.min(known.len() / 2));
     match nearest {
@@ -235,33 +313,29 @@ async fn run(argv: &[String]) -> Result<(), String> {
         args,
         engine,
     } = parse(argv)?;
-    let command = args.first().map_or("help", String::as_str);
+    let word = args.first().map_or("help", String::as_str);
+    // An unknown command is refused before the core opens, which takes a moment.
+    let command = command(word).ok_or_else(|| unknown_command(word))?;
+    let rest = args.get(1..).unwrap_or_default();
     match command {
-        "help" | "--help" | "-h" => {
-            print!("{HELP}");
-            return Ok(());
-        }
-        "version" | "--version" | "-V" => {
-            println!("kchess-cli {}", env!("CARGO_PKG_VERSION"));
-            return Ok(());
-        }
-        // Refused before the core opens, which takes a moment.
-        other if !COMMANDS.contains(&other) => return Err(unknown_command(other)),
-        "methods" => {
-            print(&json!(method_names()));
-            return Ok(());
-        }
-        "opening" => {
-            print(&opening_name(&args[1..])?);
-            return Ok(());
-        }
-        "position" => {
-            print(&position_info(&args[1..])?);
-            return Ok(());
-        }
-        _ => {}
+        Command::Help => print!("{}", help()),
+        Command::Version => println!("kchess-cli {}", env!("CARGO_PKG_VERSION")),
+        Command::Methods => print(&json!(method_names())),
+        Command::Opening => print(&opening_name(rest)?),
+        Command::Position => print(&position_info(rest)?),
+        _ => return with_core(command, rest, &options, engine).await,
     }
-    let (core, mut events) = CoreClient::open(&options).await?;
+    Ok(())
+}
+
+/// A command that needs the core, run over the profile's.
+async fn with_core(
+    command: Command,
+    rest: &[String],
+    options: &Options,
+    engine: Option<String>,
+) -> Result<(), String> {
+    let (core, mut events) = CoreClient::open(options).await?;
     let result = async {
         if let Some(engine) = engine {
             // An explicit operator path is trusted and kept without a fingerprint prompt, as the
@@ -275,13 +349,13 @@ async fn run(argv: &[String]) -> Result<(), String> {
             core.request(calls::SaveSettings { settings }).await?;
         }
         match command {
-            "library" => print(&core.request(calls::Library {}).await?),
-            "status" => {
+            Command::Library => print(&core.request(calls::Library {}).await?),
+            Command::Status => {
                 let data = core.request(calls::LoadData {}).await?;
                 let engine = core.request(calls::EngineStatus { variant: None }).await?;
                 print(&json!({ "data": data, "engine": engine }));
             }
-            "login" => {
+            Command::Login => {
                 // The sign-in page is opened (or printed) while the core waits for it.
                 let login = core.request(calls::ConnectLichess { look: None });
                 tokio::pin!(login);
@@ -297,12 +371,12 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 };
                 print(&answer);
             }
-            "call" => {
-                let method = args.get(1).map(String::as_str).unwrap_or_default();
+            Command::Call => {
+                let method = rest.first().map(String::as_str).unwrap_or_default();
                 if !method_names().contains(&method) {
                     return Err("Unknown CoreApi method. Run methods to list them.".into());
                 }
-                let parameters = arguments(&args[2..]).await?;
+                let parameters = arguments(rest.get(1..).unwrap_or_default()).await?;
                 if kchess_domain::misc::ASSISTANCE_METHODS.contains(&method) {
                     core.request(calls::ResumeOnline {}).await?;
                 }
@@ -321,8 +395,8 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 };
                 print(&answer);
             }
-            "analyze" => {
-                let request = analysis_request(&args[1..])?;
+            Command::Analyze => {
+                let request = analysis_request(rest)?;
                 core.request(calls::ResumeOnline {}).await?;
                 core.request(calls::StartAnalysis { request }).await?;
                 until_interrupted(&core, &mut events, |event| {
@@ -333,9 +407,9 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 .await;
                 let _ = core.request(calls::StopAnalysis { kill: None }).await;
             }
-            "play" | "local" => {
-                let computer = command == "play";
-                let (fen, words) = play::take_fen(&args[1..])?;
+            Command::Play | Command::Local => {
+                let computer = command == Command::Play;
+                let (fen, words) = play::take_fen(rest)?;
                 let (level, color, variant) = if computer {
                     play::choices(&words)?
                 } else {
@@ -343,20 +417,20 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 };
                 play::interactive(&core, &mut events, computer, level, color, variant, fen).await?;
             }
-            "puzzle" => {
-                let id = args.get(1).map(String::as_str);
+            Command::Puzzle => {
+                let id = rest.first().map(String::as_str);
                 puzzle::interactive(&core, &mut events, id).await?;
             }
-            "pgn" => {
-                let link = args.get(1).map(String::as_str).unwrap_or_default();
+            Command::Pgn => {
+                let link = rest.first().map(String::as_str).unwrap_or_default();
                 println!("{}", linked_pgn(&core, link).await?.trim_end());
             }
-            "review" => {
-                let pgn = review_input(&core, &args[1..]).await?;
+            Command::Review => {
+                let pgn = review_input(&core, rest).await?;
                 print(&review::run(&core, &mut events, &pgn).await?);
             }
-            "watch" => {
-                let target = watch_target(&args[1..])?;
+            Command::Watch => {
+                let target = watch_target(rest)?;
                 core.request(calls::ResumeOnline {}).await?;
                 match target {
                     Watched::Feed(target) => core.request(calls::Watch { target }).await?,
@@ -379,8 +453,8 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 let _ = core.request(calls::StopWatching { session: None }).await;
                 watched?;
             }
-            "explore" => {
-                let (kind, fen, variant) = explore_request(&args[1..])?;
+            Command::Explore => {
+                let (kind, fen, variant) = explore_request(rest)?;
                 let options = match variant {
                     Some(variant) => json!({ "variant": variant }),
                     None => json!({}),
@@ -396,7 +470,11 @@ async fn run(argv: &[String]) -> Result<(), String> {
                         .await?,
                 );
             }
-            other => return Err(unknown_command(other)),
+            Command::Help
+            | Command::Version
+            | Command::Methods
+            | Command::Opening
+            | Command::Position => {} // Answered by `run`.
         }
         Ok(())
     }
@@ -773,6 +851,29 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_command_is_in_the_help_and_named_once() {
+        let help = help();
+        let mut words = Vec::new();
+        for spec in COMMANDS {
+            assert!(
+                help.contains(&format!("\n  {} ", spec.name)),
+                "help misses {}",
+                spec.name
+            );
+            assert_eq!(command(spec.name), Some(spec.command));
+            words.push(spec.name);
+            words.extend(spec.aliases);
+        }
+        let count = words.len();
+        words.sort_unstable();
+        words.dedup();
+        assert_eq!(words.len(), count, "a word names two commands");
+        assert_eq!(command("--help"), Some(Command::Help));
+        assert_eq!(command("-V"), Some(Command::Version));
+        assert_eq!(command("bogus"), None);
+    }
 
     #[test]
     fn a_mistyped_command_names_the_nearest_one() {
