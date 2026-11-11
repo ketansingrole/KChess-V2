@@ -140,13 +140,13 @@ fn mutants_can_be_run_on_every_member() {
     let path = crate::util::root().join(".github/workflows/mutants.yml");
     let text = std::fs::read_to_string(path).unwrap();
     let workflow = &yaml_rust2::YamlLoader::load_from_str(&text).unwrap()[0];
-    let mut offered: Vec<&str> = workflow["on"]["workflow_dispatch"]["inputs"]["package"]
-        ["options"]
-        .as_vec()
-        .expect("the package choices")
-        .iter()
-        .filter_map(yaml_rust2::Yaml::as_str)
-        .collect();
+    let mut offered: Vec<&str> =
+        workflow["on"]["workflow_dispatch"]["inputs"]["package"]["options"]
+            .as_vec()
+            .expect("the package choices")
+            .iter()
+            .filter_map(yaml_rust2::Yaml::as_str)
+            .collect();
     offered.sort_unstable();
     let mut members = crate::check::members().unwrap();
     members.retain(|name| crate::members::role(name) != crate::members::Role::Hack);
