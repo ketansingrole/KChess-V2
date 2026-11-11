@@ -16,6 +16,7 @@ mod fake_lichess;
 mod hack;
 mod icons;
 mod licenses;
+mod members;
 mod mutants;
 mod mutants_tree;
 mod package;
@@ -29,6 +30,8 @@ mod sweep;
 mod update_key;
 mod util;
 mod voice;
+#[cfg(test)]
+mod workflows;
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -43,7 +46,6 @@ struct Command {
     run: Run,
 }
 
-/// The first argument, or `missing` as the error.
 fn first<'a>(rest: &'a [String], missing: &str) -> Result<&'a Path, String> {
     rest.first()
         .map(Path::new)
@@ -92,6 +94,15 @@ const COMMANDS: &[Command] = &[
         run: |_| check::fast(),
     },
     Command {
+        name: "scope",
+        forms: &[(
+            "<base>",
+            "Print code= (more than documents changed) and packaging= (a file packages are made \
+             from changed) for the commits since <base> (CI's changes job)",
+        )],
+        run: check::scope,
+    },
+    Command {
         name: "ci-times",
         forms: &[(
             "[--days <n>]",
@@ -117,10 +128,11 @@ const COMMANDS: &[Command] = &[
     Command {
         name: "mutants",
         forms: &[(
-            "[--plan] [--app] [--base <ref>] [-- <cargo-mutants arguments>]",
+            "[--plan|--warm] [--app] [--base <ref>|--all] [--in-place] [-- <cargo-mutants arguments>]",
             "Mutation testing of the lines changed since main (or <ref>), the app's left out \
              unless --app; fails when a mutant survives (docs/mutation-testing.md); with --plan, \
-             only count them and print CI's shards",
+             only count them and print CI's shards; --warm builds what the mutants build on; --all \
+             every file; --in-place mutates the checkout itself",
         )],
         run: mutants::run,
     },
@@ -326,16 +338,14 @@ const COMMANDS: &[Command] = &[
         name: "pins",
         forms: &[(
             "--check [--report <file>]",
-            "Fail when a pinned download (pins.toml) has a newer release than its pin, naming \
+            "Fail when a pinned download (tooling/xtask/src/pinned.rs) has a newer release than its pin, naming \
              both; the weekly Pins workflow runs it",
         )],
         run: pins::run,
     },
 ];
 
-/// Where a command's description starts.
 const COLUMN: usize = 24;
-/// The widest help line.
 const WIDTH: usize = 100;
 
 fn help() -> String {

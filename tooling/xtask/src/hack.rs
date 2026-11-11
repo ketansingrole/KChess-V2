@@ -16,16 +16,18 @@ const MANIFEST: &str = "crates/kchess-hack/Cargo.toml";
 const CONFIG: &str = ".config/hakari.toml";
 const DEPENDABOT: &str = ".github/dependabot.yml";
 
+/// Whether `check` reads `file`: the hack's settings, Dependabot's hold list, and the manifests
+/// and lock it is written from.
+pub fn reads(file: &str) -> bool {
+    file == CONFIG || file == DEPENDABOT || crate::check::is_manifest(file)
+}
+
 /// How `.github/dependabot.yml` holds a package only the hack depends on to the hack's
 /// requirement. Dependabot raises a requirement in whichever manifest names it, and hakari writes
 /// the hack's from what the real crates resolve: it once raised the hack's zbus 5 to 6, which
 /// nothing used, so the lockfile gained a second zbus and the hack no longer matched (2026-11-10).
 /// Patch and security updates still come; a 0.x package's minor is its major.
 const KEPT: &str = "update-types: [version-update:semver-major, version-update:semver-minor]";
-
-/// The members whose own dependencies may not go in the hack: the app and xtask. The rest are the
-/// headless ones, and the hack never makes them build the app's or xtask's dependencies.
-const NOT_HEADLESS: [&str; 3] = ["kchess-gpui", "xtask", "kchess-hack"];
 
 /// The platforms the hack is written for: `platforms` in `.config/hakari.toml`.
 fn platforms(config: &str) -> Vec<String> {
@@ -75,7 +77,7 @@ pub fn check() -> Result {
         let mut args = vec!["tree", "--locked", "--prune", "kchess-hack"];
         for package in members
             .iter()
-            .filter(|member| !NOT_HEADLESS.contains(&member.as_str()))
+            .filter(|member| crate::members::headless(member))
         {
             args.extend(["-p", package]);
         }
@@ -269,10 +271,5 @@ mod tests {
         let tree =
             "kchess-core v2026.11.7 (/r/crates/kchess-core)\ntokio v1.54.1\n\ntokio v1.54.1\n";
         assert_eq!(packages(tree), set(&["kchess-core", "tokio"]));
-    }
-
-    #[test]
-    fn the_checked_in_hack_and_dependabot_agree() {
-        check().unwrap();
     }
 }

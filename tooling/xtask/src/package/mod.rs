@@ -91,16 +91,6 @@ impl Identity {
     }
 }
 
-/// The crates whose programs every package ships: the app, the core service, the command line
-/// and the speech helper. They are built for release, attributed (`licenses`), and checked for
-/// `unwrap` (`check`).
-pub const SHIPPED: [&str; 4] = [
-    "kchess-gpui",
-    "kchess-service",
-    "kchess-cli",
-    "kchess-voice",
-];
-
 /// The license texts of everything a package ships, beside its programs.
 const LICENSES: &str = "THIRD_PARTY_LICENSES.txt";
 
@@ -210,7 +200,7 @@ fn verify_no_dev_build(path: &Path) -> Result {
 fn compile() -> Command {
     let mut cargo = Command::new("cargo");
     cargo.args(["build", "--release", "--locked"]);
-    for package in SHIPPED {
+    for package in crate::members::shipped() {
         cargo.args(["-p", package]);
     }
     // A shipped build ignores the development overrides (`kchess_core::dev_overrides`).
@@ -447,21 +437,6 @@ mod tests {
         assert!(deb.exists(), "--mas removed the .deb");
         clear_out(&out, false, false);
         assert!(!out.exists(), "a new run kept the last run's packages");
-    }
-
-    /// The build packaging ships, as `--build-only` makes it for CI's cache: every shipped program,
-    /// released and without the development overrides.
-    #[test]
-    fn the_cached_build_is_the_shipped_build() {
-        let cargo = compile();
-        let args: Vec<_> = cargo.get_args().map(|arg| arg.to_string_lossy()).collect();
-        let mut expected = vec!["build", "--release", "--locked"];
-        for package in SHIPPED {
-            expected.extend(["-p", package]);
-        }
-        expected.extend(["--features", "kchess-core/packaged"]);
-        assert_eq!(args, expected);
-        assert_eq!(cargo.get_program(), "cargo");
     }
 
     /// A platform's packaging fails without any package it releases, or with an empty one.

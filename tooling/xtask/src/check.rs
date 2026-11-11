@@ -4,6 +4,7 @@ use std::io::Read;
 use std::path::Path;
 use std::process::Command;
 
+use crate::members::{self, APP};
 use crate::util::{Result, available, output, root, run, run_with, say};
 
 /// Coverage floors for the workspace without the GPUI app and this tooling, as whole percentages
@@ -64,9 +65,7 @@ fn lints() -> Result {
 /// The shipped binaries whose code must not unwrap or expect outside tests: every shipped
 /// program's crate but the app's.
 fn shipped_bins() -> impl Iterator<Item = &'static str> {
-    crate::package::SHIPPED
-        .into_iter()
-        .filter(|package| *package != APP)
+    members::shipped().filter(|package| *package != APP)
 }
 
 /// One clippy run over every shipped binary, its `unwrap`/`expect` denied as the libraries' are.
@@ -94,17 +93,10 @@ fn nextest() -> bool {
     available("cargo", &["nextest", "--version"])
 }
 
-/// The app, whose tests run under `cargo test`: they are one binary, so nextest gains no
-/// parallelism there, and each test in its own process starts GPUI afresh (2026-11-06, 546 tests:
-/// 60 s under `cargo test`, 74 s under nextest).
-pub const APP: &str = "kchess-gpui";
-
-/// The packages outside the coverage totals: the app's views are checked by its end-to-end
-/// suite, and this tooling by running it. Their tests still run.
-const NOT_COVERED: [&str; 2] = [APP, "xtask"];
-
 /// The commands that run the tests of these packages, or of the whole workspace when there are
-/// none: the app's under `cargo test`, the others under nextest when it is installed.
+/// none: the app's under `cargo test`, the others under nextest when it is installed. The app's
+/// tests are one binary, so nextest gains no parallelism there, and each test in its own process
+/// starts GPUI afresh (2026-11-06, 546 tests: 60 s under `cargo test`, 74 s under nextest).
 fn test_commands(packages: &[String], nextest: bool) -> Vec<Vec<String>> {
     let app = packages.is_empty() || packages.iter().any(|package| package == APP);
     let others: Vec<&String> = packages.iter().filter(|package| *package != APP).collect();
@@ -144,11 +136,9 @@ fn run_tests(packages: &[String]) -> Result {
     Ok(())
 }
 
-/// The packages whose tests run outside the coverage gate: the app's unless `app` is false.
 fn uncovered(app: bool) -> Vec<String> {
-    NOT_COVERED
-        .iter()
-        .filter(|package| app || **package != APP)
+    members::uncovered()
+        .filter(|package| app || *package != APP)
         .map(|package| package.to_string())
         .collect()
 }
@@ -186,7 +176,7 @@ fn coverage_args(nextest: bool, report: &str) -> Vec<&str> {
         args.push("nextest");
     }
     args.push("--workspace");
-    for package in NOT_COVERED {
+    for package in members::uncovered() {
         args.extend(["--exclude", package]);
     }
     args.extend([
@@ -236,33 +226,44 @@ fn coverage() -> Result {
     }
 }
 
-/// `check`: everything a push to main must pass.
-pub fn full() -> Result {
-    full_with(true)
-}
-
-/// `check [--without-app-tests]`: CI's check job leaves the app's tests to its `gpui` job, which
-/// runs them on Linux beside it.
+/// `check [--without-app-tests]`: everything a push to main must pass. CI's check job leaves the
+/// app's tests to its `gpui` job, which runs them on Linux beside it.
 pub fn check(args: &[String]) -> Result {
-    full_with(!without_app_tests(args))
-}
-
-/// Whether `check`'s arguments leave the app's tests out.
-fn without_app_tests(args: &[String]) -> bool {
-    args.iter().any(|arg| arg == "--without-app-tests")
-}
-
-fn full_with(app: bool) -> Result {
+    let app = !args.iter().any(|arg| arg == "--without-app-tests");
     crate::sweep::build_folder(false);
     step("format and lints", lints)?;
     step("notices", crate::licenses::check_notices)?;
     step("workspace hack", crate::hack::check)?;
+    step("fuzz targets", fuzz_targets)?;
     step("icons", crate::icons::check)?;
     step("release metadata", crate::release::verify)?;
     step("tests", || tests(app))?;
     say("`check` passed.");
     Ok(())
 }
+
+/// The fuzz targets (`fuzz/`), their own workspace, which nothing else builds: they call the
+/// rules, and a change to the rules once left every target but one failing to compile until the
+/// weekly Fuzz run. Stable Cargo checks them; only `cargo fuzz run` needs `fuzz/`'s nightly. In
+/// `target/fuzz`, so CI's build cache keeps their dependencies.
+fn fuzz_targets() -> Result {
+    let target = root().join("target/fuzz");
+    run(
+        "cargo",
+        &[
+            "check",
+            "--manifest-path",
+            "fuzz/Cargo.toml",
+            "--bins",
+            "--locked",
+            "--target-dir",
+            &target.to_string_lossy(),
+        ],
+    )
+}
+
+/// The member the fuzz targets build on.
+const FUZZED: &str = "kchess-domain";
 
 /// The package a changed file belongs to, by its nearest Cargo.toml: a workspace member, a
 /// vendored crate (`vendor/`) or an excluded one (`fuzz/`).
@@ -390,39 +391,78 @@ fn select(scopes: &[Scope], packages: &Packages) -> Selection {
     }
 }
 
-/// Whether a change can add or drop a shipped dependency, which THIRD_PARTY_NOTICES.md must name.
-fn touches_dependencies(files: &[String]) -> bool {
-    files.iter().any(|file| {
-        file == "THIRD_PARTY_NOTICES.md"
-            || file == "Cargo.lock"
-            || file == "Cargo.toml"
-            || file.ends_with("/Cargo.toml")
-    })
+impl Selection {
+    /// Whether it runs the tests of `package`.
+    fn tests(&self, package: &str) -> bool {
+        match self {
+            Selection::Everything => true,
+            Selection::Packages(packages) => packages.iter().any(|name| name == package),
+            Selection::Nothing | Selection::Lints => false,
+        }
+    }
 }
 
-/// `check-fast`: format, lints, the notices when dependencies changed, and the tests of the packages changed since main (committed or
-/// not). Never a substitute for `check` before a push to main.
-pub fn fast() -> Result {
-    crate::sweep::build_folder(false);
-    let base = crate::util::merge_base(&root())?;
-    let mut files: Vec<String> = output("git", &["diff", "--name-only", &base])?
+/// Whether `file` is a workspace manifest or the lock, which add and drop dependencies.
+pub fn is_manifest(file: &str) -> bool {
+    file == "Cargo.lock" || file == "Cargo.toml" || file.ends_with("/Cargo.toml")
+}
+
+type Check = fn() -> Result;
+
+/// The steps beside the format, lints and tests that `check-fast` runs for these changes: each
+/// when a file it reads changed (the notices, the workspace hack), and the fuzz targets when
+/// they or the rules they call did.
+fn steps_for(files: &[String], selection: &Selection) -> Vec<(&'static str, Check)> {
+    let any = |reads: fn(&str) -> bool| files.iter().any(|file| reads(file));
+    let mut steps: Vec<(&'static str, Check)> = Vec::new();
+    if any(crate::licenses::reads) {
+        steps.push(("notices", crate::licenses::check_notices));
+    }
+    if any(crate::hack::reads) {
+        steps.push(("workspace hack", crate::hack::check));
+    }
+    if any(|file| file.starts_with("fuzz/")) || selection.tests(FUZZED) {
+        steps.push(("fuzz targets", fuzz_targets));
+    }
+    steps
+}
+
+/// The files changed since `base`: committed, and with `uncommitted` also those in the working
+/// tree, untracked ones included.
+fn changed_files(base: &str, uncommitted: bool) -> Result<Vec<String>> {
+    let range = if uncommitted {
+        base.to_string()
+    } else {
+        format!("{base}..HEAD")
+    };
+    let mut files: Vec<String> = output("git", &["diff", "--name-only", &range])?
         .lines()
         .map(str::to_string)
         .collect();
-    files.extend(
-        output("git", &["ls-files", "--others", "--exclude-standard"])?
-            .lines()
-            .map(str::to_string),
-    );
-    if touches_dependencies(&files) {
-        step("notices", crate::licenses::check_notices)?;
-        step("workspace hack", crate::hack::check)?;
+    if uncommitted {
+        files.extend(
+            output("git", &["ls-files", "--others", "--exclude-standard"])?
+                .lines()
+                .map(str::to_string),
+        );
     }
+    Ok(files)
+}
+
+/// `check-fast`: format, lints, the steps that read a changed file, and the tests of the packages
+/// changed since main (committed or not). Never a substitute for `check` before a push to main.
+pub fn fast() -> Result {
+    crate::sweep::build_folder(false);
+    let base = crate::util::merge_base(&root())?;
+    let files = changed_files(&base, true)?;
     let scopes: Vec<Scope> = files
         .iter()
         .map(|file| scope_of(file, package_of(file)))
         .collect();
     let selection = select(&scopes, &workspace_packages()?);
+    for (name, check) in steps_for(&files, &selection) {
+        step(name, check)?;
+    }
     if selection == Selection::Nothing {
         say("No change since main reaches the workspace's build.");
         return Ok(());
@@ -577,7 +617,7 @@ pub fn pre_push() -> Result {
         ));
     }
     say("Pushing to main: running `cargo xtask check`…");
-    full().map_err(|cause| format!("Push to main refused: {cause}"))
+    check(&[]).map_err(|cause| format!("Push to main refused: {cause}"))
 }
 
 /// A push of another branch: the mutants of the lines it sends, so a survivor stops the push here
@@ -683,6 +723,107 @@ fn is_workflow(file: &str) -> bool {
     file.starts_with(".github/workflows/") || file.starts_with(".github/actions/")
 }
 
+/// Whether `file` is a document that no build, check or CI job reads: `docs/`, the site and the
+/// top-level Markdown, but the notices (`licenses`).
+pub fn is_document(file: &str) -> bool {
+    file.starts_with("docs/")
+        || file.starts_with("site/")
+        || (!file.contains('/') && file.ends_with(".md") && !crate::licenses::reads(file))
+}
+
+/// Files outside xtask's sources that packaging is made from.
+const PACKAGING_FILES: [&str; 10] = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".cargo/config.toml",
+    "apps/gpui/build.rs",
+    "crates/kchess-core/src/engine/managed/shipped.rs",
+    "tooling/windows-upgrade-test.ps1",
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/windows-upgrade.yml",
+];
+
+/// Folders packaging is made from: the app's icons and bundle files, the shipped speech helper,
+/// the release crate, xtask's packaging and the repository's own actions.
+const PACKAGING_DIRS: [&str; 5] = [
+    "apps/gpui/build/",
+    "crates/kchess-voice/",
+    "crates/kchess-delta/",
+    "tooling/xtask/src/package/",
+    ".github/actions/",
+];
+
+/// The xtask modules packaging runs: those `package/` and `deltas` (the update patches, which
+/// the Windows upgrade test applies) name (`crate::<module>`), and those they name in turn, read
+/// from the sources in `repo`.
+fn packaging_modules(repo: &Path) -> Result<Vec<String>> {
+    let src = repo.join("tooling/xtask/src");
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(src.join("package"))
+        .map_err(|cause| cause.to_string())?
+        .flatten()
+        .map(|entry| entry.path())
+        .chain([src.join("deltas.rs")])
+        .collect();
+    let mut modules = vec!["deltas".to_string()];
+    while let Some(file) = files.pop() {
+        let text = std::fs::read_to_string(&file).map_err(|cause| cause.to_string())?;
+        for (at, _) in text.match_indices("crate::") {
+            let rest = &text[at + "crate::".len()..];
+            let names: Vec<&str> = match rest.strip_prefix('{') {
+                Some(list) => list
+                    .split('}')
+                    .next()
+                    .unwrap_or_default()
+                    .split(',')
+                    .map(|name| name.split("::").next().unwrap_or_default().trim())
+                    .collect(),
+                None => rest
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next()
+                    .into_iter()
+                    .collect(),
+            };
+            for name in names {
+                let path = src.join(format!("{name}.rs"));
+                if name != "package" && path.is_file() && !modules.iter().any(|m| m == name) {
+                    modules.push(name.to_string());
+                    files.push(path);
+                }
+            }
+        }
+    }
+    modules.sort();
+    Ok(modules)
+}
+
+/// Whether a change to `file` may change what packaging makes, `modules` being xtask's
+/// packaging modules (`packaging_modules`).
+fn is_packaging(file: &str, modules: &[String]) -> bool {
+    PACKAGING_FILES.contains(&file)
+        || PACKAGING_DIRS.iter().any(|dir| file.starts_with(dir))
+        || file
+            .strip_prefix("tooling/xtask/src/")
+            .and_then(|name| name.strip_suffix(".rs"))
+            .is_some_and(|name| modules.iter().any(|module| module == name))
+}
+
+/// `scope <base>`: what the commits since `base` change, for CI's `changes` job: `code=true`
+/// when one changes more than documents (`is_document`), `packaging=true` when one may change a
+/// package (`is_packaging`).
+pub fn scope(args: &[String]) -> Result {
+    let base = args
+        .first()
+        .ok_or("scope needs the commit to compare with.")?;
+    let files = changed_files(base, false)?;
+    let modules = packaging_modules(&root())?;
+    let code = files.iter().any(|file| !is_document(file));
+    let packaging = files.iter().any(|file| is_packaging(file, &modules));
+    println!("code={code}\npackaging={packaging}");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -696,14 +837,6 @@ mod tests {
             main_pushes(input),
             [("refs/heads/main".to_string(), "abc123".to_string())]
         );
-    }
-
-    #[test]
-    fn ci_can_leave_the_app_tests_to_another_job() {
-        assert!(without_app_tests(&["--without-app-tests".to_string()]));
-        assert!(!without_app_tests(&[]));
-        assert_eq!(uncovered(true), [APP, "xtask"]);
-        assert_eq!(uncovered(false), ["xtask"]);
     }
 
     #[test]
@@ -735,21 +868,6 @@ mod tests {
     }
 
     #[test]
-    fn a_branch_push_runs_cis_mutants_without_the_app() {
-        assert_eq!(
-            branch_mutants_args("abc", Path::new("/work/kchess")),
-            [
-                "--base",
-                "abc",
-                "--in-place",
-                "--",
-                "--output",
-                "/work/kchess"
-            ]
-        );
-    }
-
-    #[test]
     fn a_push_must_be_the_clean_head() {
         let pushes = [("refs/heads/main".to_string(), "abc123".to_string())];
         assert_eq!(push_problem(&pushes, "abc123", ""), None);
@@ -763,17 +881,6 @@ mod tests {
                 .unwrap()
                 .contains("untracked")
         );
-    }
-
-    #[test]
-    fn one_run_checks_every_shipped_binary() {
-        let args = shipped_bins_args();
-        for bin in ["kchess-voice", "kchess-service", "kchess-cli"] {
-            assert!(args.windows(2).any(|pair| pair == ["-p", bin]), "{bin}");
-        }
-        assert!(!args.contains(&APP));
-        assert!(args.contains(&"--bins"));
-        assert!(args.ends_with(&["-D", "clippy::expect_used"]));
     }
 
     #[test]
@@ -841,18 +948,6 @@ mod tests {
     }
 
     #[test]
-    fn coverage_runs_through_nextest_when_it_is_installed() {
-        assert_eq!(coverage_args(true, "r.json")[..2], ["llvm-cov", "nextest"]);
-        assert_eq!(coverage_args(false, "r.json")[1], "--workspace");
-        assert!(coverage_args(true, "r.json").ends_with(&["--output-path", "r.json"]));
-        assert!(
-            coverage_args(true, "r.json")
-                .windows(2)
-                .any(|pair| pair == ["--failure-mode", "all"])
-        );
-    }
-
-    #[test]
     fn files_belong_to_their_nearest_package() {
         assert_eq!(
             package_of("crates/kchess-domain/src/lib.rs").as_deref(),
@@ -865,27 +960,106 @@ mod tests {
         assert_eq!(package_of("README.md"), None);
     }
 
-    /// 2026-11-07: committing the release key (`apps/gpui/update-key.pub`, read by
-    /// `include_str!`) ran no tests, and CI found four the key broke.
     /// 2026-11-07: dropping kchess-electron-legacy took the notices' only `windows-sys` row with
     /// it while the app still ships it; `check-fast` passed and CI's notices check failed.
+    /// 2026-11-11: an edit to `.github/dependabot.yml` or `.config/hakari.toml`, both read by the
+    /// workspace hack's check, reported "No change since main reaches the workspace's build".
     #[test]
-    fn a_dependency_change_checks_the_notices() {
-        let changed = |files: &[&str]| {
-            touches_dependencies(
-                &files
-                    .iter()
-                    .map(|file| file.to_string())
-                    .collect::<Vec<_>>(),
-            )
+    fn a_change_runs_each_step_that_reads_it() {
+        let steps = |files: &[&str], selection: Selection| {
+            let files: Vec<String> = files.iter().map(|file| file.to_string()).collect();
+            steps_for(&files, &selection)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>()
         };
-        assert!(changed(&["crates/kchess-core/Cargo.toml"]));
-        assert!(changed(&["Cargo.lock"]));
-        assert!(changed(&["THIRD_PARTY_NOTICES.md"]));
-        assert!(!changed(&[
-            "crates/kchess-core/src/core.rs",
-            "docs/releasing.md"
-        ]));
+        let both = ["notices", "workspace hack"];
+        assert_eq!(
+            steps(&["crates/kchess-core/Cargo.toml"], Selection::Nothing),
+            both
+        );
+        assert_eq!(steps(&["Cargo.lock"], Selection::Nothing), both);
+        assert_eq!(
+            steps(&["THIRD_PARTY_NOTICES.md"], Selection::Nothing),
+            ["notices"]
+        );
+        assert_eq!(
+            steps(&[".github/dependabot.yml"], Selection::Nothing),
+            ["workspace hack"]
+        );
+        assert_eq!(
+            steps(&[".config/hakari.toml"], Selection::Nothing),
+            ["workspace hack"]
+        );
+        assert_eq!(
+            steps(&["fuzz/fuzz_targets/pgn.rs"], Selection::Nothing),
+            ["fuzz targets"]
+        );
+        assert_eq!(
+            steps(
+                &["crates/kchess-domain/src/tree.rs"],
+                Selection::Packages(vec!["kchess-domain".into(), "kchess-core".into()])
+            ),
+            ["fuzz targets"]
+        );
+        assert_eq!(steps(&[], Selection::Everything), ["fuzz targets"]);
+        assert!(
+            steps(
+                &["crates/kchess-core/src/core.rs", "docs/releasing.md"],
+                Selection::Packages(vec!["kchess-core".into()])
+            )
+            .is_empty()
+        );
+    }
+
+    /// CI's `changes` job asks `scope`: documents alone run none of CI's code jobs, and each file
+    /// packaging is made from runs the package jobs. A change to the code packaging runs (util.rs,
+    /// the patches, kchess-delta) once skipped the jobs that test it.
+    #[test]
+    fn scope_tells_documents_and_packaging_apart() {
+        for file in [
+            "docs/releasing.md",
+            "site/index.html",
+            "AGENTS.md",
+            "README.md",
+        ] {
+            assert!(is_document(file), "{file}");
+            assert_eq!(scope_of(file, package_of(file)), Scope::Nothing, "{file}");
+        }
+        for file in [
+            "THIRD_PARTY_NOTICES.md",
+            "apps/gpui/WHATS_NEW.md",
+            ".cargo/mutants.toml",
+            "deny.toml",
+        ] {
+            assert!(!is_document(file), "{file}");
+        }
+        let modules = packaging_modules(&root()).unwrap();
+        for module in ["deltas", "fairy", "pinned", "util", "voice"] {
+            assert!(modules.iter().any(|m| m == module), "{module}: {modules:?}");
+        }
+        for file in [
+            "tooling/xtask/src/package/mac.rs",
+            "tooling/xtask/src/util.rs",
+            "crates/kchess-delta/src/lib.rs",
+            "crates/kchess-voice/src/main.rs",
+            "crates/kchess-core/src/engine/managed/shipped.rs",
+            "Cargo.lock",
+            ".cargo/config.toml",
+            ".github/actions/engines/action.yml",
+            ".github/workflows/release.yml",
+        ] {
+            assert!(is_packaging(file, &modules), "{file}");
+        }
+        for file in [
+            "apps/gpui/src/explorer.rs",
+            "tooling/xtask/src/bench.rs",
+            "docs/releasing.md",
+            ".cargo/mutants.toml",
+            ".github/workflows/fuzz.yml",
+        ] {
+            assert!(!is_packaging(file, &modules), "{file}");
+        }
     }
 
     /// A build like the workspace's: the app uses the vendored GPUI, which uses its Apple backend.
@@ -1036,272 +1210,5 @@ mod tests {
             select(&scopes, &packages),
             Selection::Packages(vec![APP.to_string()])
         );
-    }
-
-    /// Each workflow step's shell script that runs on bash, with its line: every step of a
-    /// workflow that never runs on Windows, and elsewhere those that say `shell: bash` (a Windows
-    /// runner's default shell is PowerShell).
-    fn bash_steps(text: &str) -> Vec<(usize, String)> {
-        let windows = text.contains("windows");
-        let lines: Vec<&str> = text.lines().collect();
-        let indent = |line: &str| line.len() - line.trim_start().len();
-        let mut found = Vec::new();
-        let mut start = 0;
-        while start < lines.len() {
-            let line = lines[start];
-            if !line.trim_start().starts_with("- ") {
-                start += 1;
-                continue;
-            }
-            // The step runs to the next item at its indentation or less.
-            let item = indent(line);
-            let end = (start + 1..lines.len())
-                .find(|&n| {
-                    let next = lines[n];
-                    !next.trim().is_empty()
-                        && (indent(next) < item
-                            || (indent(next) == item && next.trim_start().starts_with("- ")))
-                })
-                .unwrap_or(lines.len());
-            let step = &lines[start..end];
-            let key = |name: &str| {
-                step.iter().position(|line| {
-                    let trimmed = line.trim_start().trim_start_matches("- ");
-                    trimmed.starts_with(&format!("{name}:"))
-                })
-            };
-            let shell = key("shell").map(|n| step[n].split(':').nth(1).unwrap_or("").trim());
-            let runs_on_bash = match shell {
-                Some(shell) => shell == "bash",
-                None => !windows,
-            };
-            if let Some(run) = key("run")
-                && runs_on_bash
-            {
-                let head = step[run]
-                    .split_once("run:")
-                    .map(|(_, rest)| rest.trim())
-                    .unwrap_or("");
-                let script = if head == "|" || head == ">" {
-                    let base = indent(step[run]);
-                    step[run + 1..]
-                        .iter()
-                        .take_while(|line| line.trim().is_empty() || indent(line) > base)
-                        .map(|line| line.get(base + 2..).unwrap_or("").to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                } else {
-                    head.to_string()
-                };
-                found.push((start + run + 1, script));
-            }
-            start += 1;
-        }
-        found
-    }
-
-    /// The workflows and the repository's own actions (`.github/actions/<name>/action.yml`).
-    fn workflow_files() -> Vec<std::path::PathBuf> {
-        let github = crate::util::root().join(".github");
-        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(github.join("workflows"))
-            .unwrap()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "yml"))
-            .collect();
-        files.extend(
-            std::fs::read_dir(github.join("actions"))
-                .unwrap()
-                .flatten()
-                .map(|entry| entry.path().join("action.yml"))
-                .filter(|path| path.is_file()),
-        );
-        files
-    }
-
-    #[test]
-    fn a_change_to_a_workflow_or_an_action_runs_their_checks() {
-        assert!(is_workflow(".github/workflows/ci.yml"));
-        assert!(is_workflow(".github/actions/snap/action.yml"));
-        assert!(!is_workflow(".github/dependabot.yml"));
-        assert!(!is_workflow("tooling/xtask/src/check.rs"));
-    }
-
-    #[test]
-    fn the_actions_are_checked_with_the_workflows() {
-        let files = workflow_files();
-        let named = |name: &str| files.iter().any(|path| path.ends_with(name));
-        assert!(named("workflows/ci.yml"), "{files:?}");
-        assert!(named("actions/install-nsis/action.yml"), "{files:?}");
-    }
-
-    /// 2026-11-07: a heredoc inside `$(...)` with a backtick in it parsed in zsh but not in bash,
-    /// and the TestFlight step failed on the first release that ran it. Every bash step parses.
-    #[cfg(unix)]
-    #[test]
-    fn every_workflow_step_parses_in_bash() {
-        let mut checked = 0;
-        for path in workflow_files() {
-            let text = std::fs::read_to_string(&path).unwrap();
-            for (line, script) in bash_steps(&text) {
-                let mut bash = std::process::Command::new("bash")
-                    .arg("-n")
-                    .stdin(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()
-                    .unwrap();
-                use std::io::Write as _;
-                bash.stdin
-                    .take()
-                    .unwrap()
-                    .write_all(script.as_bytes())
-                    .unwrap();
-                let out = bash.wait_with_output().unwrap();
-                assert!(
-                    out.status.success(),
-                    "{}:{line} does not parse in bash: {}",
-                    path.display(),
-                    String::from_utf8_lossy(&out.stderr)
-                );
-                checked += 1;
-            }
-        }
-        assert!(checked > 20, "only {checked} steps found");
-    }
-
-    /// 2026-11-09: a plain `run:` value with `: ` in it made release.yml invalid YAML, so GitHub
-    /// started no run for the v2026.11.6 tag; `bash_steps` reads lines and never noticed. Every
-    /// workflow parses as one YAML document.
-    #[test]
-    fn every_workflow_is_valid_yaml() {
-        let mut checked = 0;
-        for path in workflow_files() {
-            let text = std::fs::read_to_string(&path).unwrap();
-            let docs = yaml_rust2::YamlLoader::load_from_str(&text)
-                .unwrap_or_else(|error| panic!("{} is not valid YAML: {error}", path.display()));
-            assert_eq!(docs.len(), 1, "{} is not one YAML document", path.display());
-            checked += 1;
-        }
-        assert!(checked > 5, "only {checked} workflows found");
-    }
-
-    /// The xtask modules packaging runs: those `package/` and `deltas` (the update patches, which
-    /// the Windows upgrade test applies) name (`crate::<module>`), and those they name in turn.
-    fn packaging_modules() -> Vec<String> {
-        let src = root().join("tooling/xtask/src");
-        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(src.join("package"))
-            .unwrap()
-            .flatten()
-            .map(|entry| entry.path())
-            .chain([src.join("deltas.rs")])
-            .collect();
-        let mut modules = vec!["deltas".to_string()];
-        while let Some(file) = files.pop() {
-            let text = std::fs::read_to_string(&file).unwrap();
-            for (at, _) in text.match_indices("crate::") {
-                let rest = &text[at + "crate::".len()..];
-                let names: Vec<&str> = match rest.strip_prefix('{') {
-                    Some(list) => list
-                        .split('}')
-                        .next()
-                        .unwrap_or_default()
-                        .split(',')
-                        .map(|name| name.split("::").next().unwrap_or_default().trim())
-                        .collect(),
-                    None => vec![
-                        rest.split(|c: char| !c.is_alphanumeric() && c != '_')
-                            .next()
-                            .unwrap(),
-                    ],
-                };
-                for name in names {
-                    let path = src.join(format!("{name}.rs"));
-                    if name != "package" && path.is_file() && !modules.iter().any(|m| m == name) {
-                        modules.push(name.to_string());
-                        files.push(path);
-                    }
-                }
-            }
-        }
-        modules.sort();
-        modules
-    }
-
-    /// CI packages, builds the Snap and runs the Windows upgrade only when a file matching its
-    /// `PACKAGING` pattern changed. A change to the code packaging runs (util.rs, the patches,
-    /// kchess-delta) once skipped the jobs that test it: every such file must match.
-    #[cfg(unix)]
-    #[test]
-    fn packaging_changes_run_the_package_jobs() {
-        let ci = std::fs::read_to_string(root().join(".github/workflows/ci.yml")).unwrap();
-        let pattern = ci
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("PACKAGING: '"))
-            .and_then(|rest| rest.strip_suffix('\''))
-            .expect("ci.yml has a PACKAGING pattern");
-        let mut files: Vec<String> = std::fs::read_dir(root().join("tooling/xtask/src/package"))
-            .unwrap()
-            .flatten()
-            .map(|entry| {
-                format!(
-                    "tooling/xtask/src/package/{}",
-                    entry.file_name().to_string_lossy()
-                )
-            })
-            .collect();
-        let modules = packaging_modules();
-        for module in ["deltas", "fairy", "pinned", "util", "voice"] {
-            assert!(modules.iter().any(|m| m == module), "{module}: {modules:?}");
-        }
-        for module in modules {
-            files.push(format!("tooling/xtask/src/{module}.rs"));
-        }
-        files.extend(
-            [
-                "crates/kchess-delta/src/lib.rs",
-                "crates/kchess-voice/src/main.rs",
-                "crates/kchess-core/src/engine/managed/shipped.rs",
-                "Cargo.lock",
-                ".cargo/config.toml",
-            ]
-            .map(String::from),
-        );
-        let matches = |file: &str| {
-            let mut grep = Command::new("grep")
-                .args(["-qE", pattern])
-                .stdin(std::process::Stdio::piped())
-                .spawn()
-                .unwrap();
-            use std::io::Write as _;
-            grep.stdin
-                .take()
-                .unwrap()
-                .write_all(format!("{file}\n").as_bytes())
-                .unwrap();
-            grep.wait().unwrap().success()
-        };
-        for file in &files {
-            assert!(matches(file), "{file} does not run CI's packaging jobs");
-        }
-        for file in [
-            "apps/gpui/src/explorer.rs",
-            "tooling/xtask/src/bench.rs",
-            "docs/releasing.md",
-            // The mutants' settings: no package is built from them.
-            ".cargo/mutants.toml",
-        ] {
-            assert!(!matches(file), "{file} runs CI's packaging jobs");
-        }
-    }
-
-    #[test]
-    fn bash_steps_are_found_with_their_shell() {
-        let text = "jobs:\n  a:\n    runs-on: macos-latest\n    steps:\n      - name: One\n        run: |\n          echo \"$(date)\"\n          echo two\n      - run: echo three\n";
-        let steps = bash_steps(text);
-        assert_eq!(steps.len(), 2);
-        assert_eq!(steps[0].1, "echo \"$(date)\"\necho two");
-        assert_eq!(steps[1].1, "echo three");
-        let windows = "jobs:\n  a:\n    runs-on: windows-latest\n    steps:\n      - run: Get-Item x\n      - shell: bash\n        run: echo bash\n";
-        assert_eq!(bash_steps(windows), vec![(7, "echo bash".to_string())]);
     }
 }

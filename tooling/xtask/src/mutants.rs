@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
+use crate::members::{APP, APP_FILES};
 use crate::util::{Result, git, merge_base, root, say, succeeds, without_git_location};
 
 /// Where the diff cargo-mutants reads is written, under the (ignored) target directory.
@@ -25,7 +26,6 @@ fn base_of(repo: &Path, args: &[String]) -> Result<String> {
     }
 }
 
-/// The arguments before `--`: this command's own.
 fn own(args: &[String]) -> &[String] {
     match args.iter().position(|arg| arg == "--") {
         Some(at) => &args[..at],
@@ -33,12 +33,10 @@ fn own(args: &[String]) -> &[String] {
     }
 }
 
-/// Whether this command's own arguments hold `flag`.
 fn has(args: &[String], flag: &str) -> bool {
     own(args).iter().any(|arg| arg == flag)
 }
 
-/// The arguments after `--`, passed to cargo-mutants as they are.
 fn passed_through(args: &[String]) -> &[String] {
     match args.iter().position(|arg| arg == "--") {
         Some(at) => &args[at + 1..],
@@ -46,13 +44,10 @@ fn passed_through(args: &[String]) -> &[String] {
     }
 }
 
-/// The app's sources. Each of its mutants rebuilds the app, so a run of changed lines (a pull
-/// request's, a branch push's) leaves them out, and the weekly run's `gpui` job tests them
-/// (`--app`).
-const APP_FILES: &str = "apps/gpui/**";
-
 /// cargo-mutants' arguments for the files a run of changed lines covers: everything but the app,
-/// or with `--app` the app alone. A run of `--all` names its own files or packages.
+/// or with `--app` the app alone. Each of the app's mutants rebuilds the app, so a run of changed
+/// lines (a pull request's, a branch push's) leaves them out, and the weekly run's `gpui` job
+/// tests them (`--app`). A run of `--all` names its own files or packages.
 fn files_of(args: &[String]) -> Vec<String> {
     if has(args, "--all") {
         return Vec::new();
@@ -349,7 +344,6 @@ fn plan(args: &[String]) -> Result {
     Ok(())
 }
 
-/// The mutants in `cargo mutants --list` output: one per line.
 fn count_listed(list: &str) -> usize {
     list.lines().filter(|line| !line.trim().is_empty()).count()
 }
@@ -369,7 +363,7 @@ pub fn run(args: &[String]) -> Result {
 /// built with are the ones a mutant of it asks for (CI's mutants cache).
 fn warm() -> Result {
     for package in crate::check::members()? {
-        if package == crate::check::APP {
+        if package == APP {
             continue;
         }
         crate::util::run(
@@ -623,20 +617,17 @@ mod tests {
 
     #[test]
     fn code_that_only_moved_is_no_change() {
-        let (dir, base) = repo();
+        let (dir, _) = repo();
         std::fs::write(
             dir.path().join("a.rs"),
             format!("fn a() {{}}\n\n{MOVED_FN}"),
         )
         .unwrap();
         commit(dir.path());
-        let base = {
-            let _ = base;
-            git(dir.path(), &["rev-parse", "HEAD"], &[0])
-                .unwrap()
-                .trim()
-                .to_string()
-        };
+        let base = git(dir.path(), &["rev-parse", "HEAD"], &[0])
+            .unwrap()
+            .trim()
+            .to_string();
         // The function moves to b.rs, indented into a module, beside a new one.
         std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
         let indented: String = MOVED_FN

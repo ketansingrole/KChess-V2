@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::util::{Result, output, root, say};
 
-use crate::package::SHIPPED;
+use crate::members::{self, Role};
 
 fn metadata(no_deps: bool) -> Result<Value> {
     let mut args = vec!["metadata", "--format-version", "1", "--locked"];
@@ -41,33 +41,53 @@ pub fn names(notices: &str, name: &str) -> bool {
     false
 }
 
-/// Workspace packages whose dependencies ship in no program: the tooling, and the workspace hack
-/// (`crates/kchess-hack`), which every package depends on only to build its dependencies with one
-/// feature set; its own dependencies are linked only where a package uses them.
-const NOT_SHIPPED: [&str; 2] = ["xtask", "kchess-hack"];
-
 /// The registry and git dependencies that shipped workspace packages name directly, for their
-/// programs or libraries (not their tests or build scripts), from `cargo metadata --no-deps`.
+/// programs or libraries (not their tests or build scripts), from `cargo metadata --no-deps`: the
+/// shipped programs' and those of the workspace libraries they build on. Not the workspace hack's:
+/// its own dependencies are linked only where a package uses them.
 fn direct_dependencies(metadata: &Value) -> BTreeSet<String> {
+    let packages: BTreeMap<&str, &Value> = metadata["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|package| Some((package["name"].as_str()?, package)))
+        .collect();
+    let mut seen = BTreeSet::new();
+    let mut queue: Vec<&str> = members::shipped().collect();
     let mut dependencies = BTreeSet::new();
-    for package in metadata["packages"].as_array().into_iter().flatten() {
-        let name = package["name"].as_str().unwrap_or_default();
-        if NOT_SHIPPED.contains(&name) {
+    while let Some(name) = queue.pop() {
+        if members::role(name) == Role::Hack || !seen.insert(name) {
             continue;
         }
+        let Some(package) = packages.get(name) else {
+            continue;
+        };
         for dependency in package["dependencies"].as_array().into_iter().flatten() {
-            if dependency["kind"].is_null() && dependency["path"].is_null() {
-                dependencies.insert(dependency["name"].as_str().unwrap_or_default().to_string());
+            if !dependency["kind"].is_null() {
+                continue;
+            }
+            let dependency_name = dependency["name"].as_str().unwrap_or_default();
+            if dependency["path"].is_null() {
+                dependencies.insert(dependency_name.to_string());
+            } else {
+                queue.push(dependency_name);
             }
         }
     }
     dependencies
 }
 
+const NOTICES: &str = "THIRD_PARTY_NOTICES.md";
+
+/// Whether `check_notices` reads `file`: the notices, and the manifests that name dependencies.
+pub fn reads(file: &str) -> bool {
+    file == NOTICES || crate::check::is_manifest(file)
+}
+
 /// `notices`: every direct dependency of a shipped KChess crate is attributed.
 pub fn check_notices() -> Result {
-    let notices = std::fs::read_to_string(root().join("THIRD_PARTY_NOTICES.md"))
-        .map_err(|cause| format!("Cannot read THIRD_PARTY_NOTICES.md: {cause}"))?;
+    let notices = std::fs::read_to_string(root().join(NOTICES))
+        .map_err(|cause| format!("Cannot read {NOTICES}: {cause}"))?;
     let dependencies = direct_dependencies(&metadata(true)?);
     let missing: Vec<&String> = dependencies
         .iter()
@@ -206,7 +226,9 @@ fn shipped_crates(metadata: &Value) -> Vec<&Value> {
     let mut seen = BTreeSet::new();
     let mut queue: Vec<&str> = packages
         .iter()
-        .filter(|(_, package)| SHIPPED.contains(&package["name"].as_str().unwrap_or_default()))
+        .filter(|(_, package)| {
+            members::shipped().any(|name| package["name"].as_str() == Some(name))
+        })
         .map(|(id, _)| *id)
         .collect();
     while let Some(id) = queue.pop() {
@@ -241,7 +263,7 @@ fn shipped_crates(metadata: &Value) -> Vec<&Value> {
                     })
             });
             let hack = packages.get(target).is_some_and(|package| {
-                NOT_SHIPPED.contains(&package["name"].as_str().unwrap_or_default())
+                members::role(package["name"].as_str().unwrap_or_default()) == Role::Hack
             });
             if runtime && !proc_macro && !hack {
                 queue.push(target);
@@ -374,11 +396,18 @@ mod tests {
     #[test]
     fn notices_name_what_shipped_packages_use_directly() {
         let metadata = serde_json::json!({ "packages": [
+            { "name": "kchess-cli", "dependencies": [
+                { "name": "kchess-core", "kind": null, "path": "/r/crates/kchess-core" },
+                { "name": "kchess-hack", "kind": null, "path": "/r/crates/kchess-hack" },
+            ] },
             { "name": "kchess-core", "dependencies": [
                 { "name": "tokio", "kind": null, "path": null },
                 { "name": "tempfile", "kind": "dev", "path": null },
                 { "name": "cc", "kind": "build", "path": null },
                 { "name": "kchess-domain", "kind": null, "path": "/r/crates/kchess-domain" },
+            ] },
+            { "name": "kchess-domain", "dependencies": [
+                { "name": "shakmaty", "kind": null, "path": null },
             ] },
             { "name": "kchess-hack", "dependencies": [
                 { "name": "proptest", "kind": null, "path": null },
@@ -386,10 +415,14 @@ mod tests {
             { "name": "xtask", "dependencies": [
                 { "name": "image", "kind": null, "path": null },
             ] },
+            // A member nothing shipped builds on, such as a benchmark.
+            { "name": "kchess-bench", "dependencies": [
+                { "name": "criterion", "kind": null, "path": null },
+            ] },
         ] });
         assert_eq!(
             direct_dependencies(&metadata),
-            BTreeSet::from(["tokio".to_string()])
+            BTreeSet::from(["shakmaty".to_string(), "tokio".to_string()])
         );
     }
 
