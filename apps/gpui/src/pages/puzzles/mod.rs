@@ -128,7 +128,7 @@ fn mode_hint(mode: &str) -> &'static str {
     }
 }
 
-/// The puzzle themes (`data/puzzle-themes.json`), as Lichess names them, under their groups.
+/// The puzzle themes (`apps/gpui/data/puzzle-themes.json`), as Lichess names them, under their groups.
 #[derive(serde::Deserialize)]
 struct ThemeGroup {
     label: String,
@@ -142,9 +142,7 @@ pub(crate) struct Theme {
 }
 
 fn theme_groups() -> Vec<ThemeGroup> {
-    serde_json::from_str(include_str!(
-        "../../../../../crates/kchess-domain/data/puzzle-themes.json"
-    ))
+    serde_json::from_str(include_str!("../../../data/puzzle-themes.json"))
     .unwrap_or_default()
 }
 
@@ -1925,8 +1923,16 @@ impl Render for PuzzlesPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{coach_allowed, theme_name, themes};
+    use super::{coach_allowed, theme_groups, theme_name, themes};
     use crate::widgets::{self, format_bytes};
+
+    /// The theme list is the app's own file, read where it is shown.
+    #[test]
+    fn every_theme_group_decodes() {
+        let groups = theme_groups();
+        assert!(!groups.is_empty());
+        assert!(groups.iter().all(|group| !group.themes.is_empty()));
+    }
 
     #[test]
     fn a_rated_attempt_has_no_coach_until_it_is_over() {
