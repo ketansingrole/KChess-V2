@@ -250,7 +250,7 @@ core_api! {
         TrustEnginePath = "trustEnginePath" fn trust_engine_path(path: Value = c::any) -> Value;
     }
 
-    /// Online play, challenges and Lichess players.
+    /// Online play and challenges.
     trait OnlineApi {
         StartOnline = "startOnline" fn start_online(options: Value = c::online_options) -> Value;
         /// Reattach to a game in progress on any connected account.
@@ -297,6 +297,10 @@ core_api! {
             account: Value = c::username,
             id: Value = c::game_id
         ) -> Value;
+    }
+
+    /// Lichess players: profiles, ratings, messages and relations.
+    trait SocialApi {
         PlayerPerf = "playerPerf" fn player_perf(
             username: Value = c::username,
             perf: Value = c::perf_type

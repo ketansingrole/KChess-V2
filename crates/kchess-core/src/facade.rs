@@ -27,6 +27,7 @@ mod library;
 mod online;
 mod puzzles;
 mod settings;
+mod social;
 mod spectate;
 mod studies;
 mod system;
