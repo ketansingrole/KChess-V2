@@ -24,6 +24,7 @@ use kchess_domain::records::oauth::connection_page;
 use kchess_domain::tactics::Mates;
 
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
+const UNREADABLE: &str = "The ChatGPT connection saved in this profile could not be read.";
 /// How long the engine looks for the answer to a wrong puzzle move, in milliseconds.
 const REFUTATION_TIME: u64 = 500;
 
@@ -83,12 +84,21 @@ fn problem(refusal: Problem) -> Value {
 }
 
 impl Core {
+    /// The saved connection; none yet is the default. One this release cannot read (damaged,
+    /// or written by another release) is an error, so nothing is saved over it.
     async fn ai_connection(&self) -> Result<Connection> {
         let stored = self
             .database
             .read_async(crate::store::ai::connection)
             .await?;
-        Ok(serde_json::from_value(stored).unwrap_or_default())
+        let Some(text) = stored else {
+            return Ok(Connection::default());
+        };
+        serde_json::from_str(&text).map_err(|cause| {
+            self.host
+                .log(Level::Warn, "ai", &format!("{UNREADABLE} {cause}"));
+            CoreError::new(UNREADABLE)
+        })
     }
 
     async fn save_ai_connection(&self, connection: &Connection) -> Result<()> {

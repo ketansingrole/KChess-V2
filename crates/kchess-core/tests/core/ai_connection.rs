@@ -222,3 +222,40 @@ async fn a_plan_connects_explains_and_disconnects() {
     assert_eq!(signed["connected"], true);
     assert_eq!(signed["effort"], "high", "{signed}");
 }
+
+/// 2026-11-11: a connection document this release could not read was taken for no connection,
+/// and the next choice of model wrote a fresh one over it, losing the sign-in. It is refused and
+/// kept as it is.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreadable_connection_is_kept_rather_than_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let host = Arc::new(Recording::default());
+    let config = Config::new(dir.path().to_path_buf());
+    let core = Core::open(config, Arc::clone(&host) as Arc<dyn kchess_core::Host>).unwrap();
+    let damaged = r#"{"hostId":"urn:uuid:1","sealed":42}"#;
+    let database = core.database_for_tests();
+    tokio::task::block_in_place(|| {
+        database.write(|ctx| {
+            ctx.db
+                .execute(
+                    "INSERT INTO documents (key, body, updatedAt) VALUES ('ai:connection', ?1, 0)",
+                    [damaged],
+                )
+                .map_err(|cause| kchess_core::CoreError::new(cause.to_string()))
+        })
+    })
+    .unwrap();
+
+    let unreadable = "The ChatGPT connection saved in this profile could not be read.";
+    let status = core.call("aiStatus", vec![]).await.unwrap_err();
+    assert_eq!(status.message, unreadable);
+    let chosen = core
+        .call("aiSetOptions", vec![json!("gpt-a"), json!("low")])
+        .await
+        .unwrap_err();
+    assert_eq!(chosen.message, unreadable);
+    let kept =
+        tokio::task::block_in_place(|| database.read(kchess_core::store::ai::connection)).unwrap();
+    assert_eq!(kept.as_deref(), Some(damaged));
+    core.close().await;
+}
