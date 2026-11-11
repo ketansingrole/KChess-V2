@@ -1044,6 +1044,25 @@ mod tests {
         db
     }
 
+    /// How a stored value reads back: a volume of exactly 1 is the whole volume (not 1%), blank
+    /// text is 0, and a flag stored as neither 1 nor 0 keeps its default.
+    #[test]
+    fn stored_settings_read_back_as_their_wire_values() {
+        let cases: [(&str, Value, Value); 6] = [
+            ("soundVolume", json!(1), json!(1.0)),
+            ("soundVolume", json!(50), json!(0.5)),
+            ("soundVolume", json!("  "), json!(0.0)),
+            ("correspondencePoll", json!(""), json!(0.0)),
+            ("soundEnabled", json!(5), json!(true)),
+            ("soundEnabled", json!(0), json!(false)),
+        ];
+        for (key, stored, expected) in cases {
+            let stored_row = Map::from_iter([(key.to_string(), stored.clone())]);
+            let wire = serde_json::to_value(settings_from_stored(&stored_row)).unwrap();
+            assert_eq!(wire[key], expected, "{key} stored as {stored}");
+        }
+    }
+
     /// Clearing an account drops its games' reviews, but keeps the reviews of local games and
     /// of the analysis board, and a review another account's game still links.
     #[test]

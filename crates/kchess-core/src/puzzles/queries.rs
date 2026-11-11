@@ -712,6 +712,55 @@ mod tests {
         );
     }
 
+    /// A repeated id is stored once, and its bytes are counted once.
+    #[test]
+    fn store_sample_counts_a_repeated_id_once() {
+        let db = Connection::open_in_memory().expect("in-memory database");
+        create_schema(&db).expect("schema");
+        let good = row("good", 1200.0, "mate");
+        let count = store_sample(&db, &[good.clone(), good.clone()], &|| false).expect("store");
+        assert_eq!(count, 1);
+        assert_eq!(
+            read_status(&db, false).expect("status").bytes,
+            (good.id.len() + good.fen.len() + good.moves.len() + good.themes.len() + 24) as i64
+        );
+    }
+
+    /// Each step's puzzle is the one at that step's rating, even with many easier puzzles about.
+    #[test]
+    fn a_ladder_steps_evenly_from_its_first_rating_to_its_last() {
+        let db = Connection::open_in_memory().expect("in-memory database");
+        create_schema(&db).expect("schema");
+        let steps = [1000.0, 1200.0, 1400.0, 1600.0, 1800.0, 2000.0];
+        let rows: Vec<DbPuzzle> = steps
+            .iter()
+            .chain(
+                (0..60)
+                    .map(|i| 100.0 + f64::from(i) * 10.0)
+                    .collect::<Vec<_>>()
+                    .iter(),
+            )
+            .enumerate()
+            .map(|(i, rating)| row(&format!("r{i:03}"), *rating, "fork"))
+            .collect();
+        store_sample(&db, &rows, &|| false).expect("store sample");
+        for seed in 0..8 {
+            let mut random = seeded(seed);
+            let ladder = query_ladder(
+                &db,
+                &LocalLadderQuery {
+                    from: 1000,
+                    to: 2000,
+                    count: 6,
+                },
+                &mut random,
+            )
+            .expect("ladder");
+            let ratings: Vec<f64> = ladder.iter().map(|p| p.rating).collect();
+            assert_eq!(ratings, steps, "seed {seed}");
+        }
+    }
+
     #[test]
     fn store_sample_keeps_the_old_puzzles_when_cancelled() {
         let db = setup(50);

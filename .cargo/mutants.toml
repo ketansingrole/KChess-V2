@@ -26,6 +26,14 @@ exclude_re = [
     # A uniform draw picks White half the time whether below or above 0.5 counts, and exactly
     # 0.5 has no weight.
     'kchess-games/src/lib\.rs:.*: replace < with (>|<=) in draw_color',
+    # Every numeric setting (the sound volume and the correspondence poll) has its own arm before
+    # it, so no stored setting reaches the general numeric arm: without it, `_ => None` answers
+    # what it would have.
+    'kchess-core/src/store/games\.rs:.*: delete match arm \(_, Value::Number\(_\)\) in stored_setting$',
+    # A storage call is logged as slow past the lane's limit; `>=` differs only for a call that
+    # lasts the limit to the nanosecond. Logging past the limit and not before is tested
+    # (`a_slow_call_is_logged_with_its_caller`).
+    'kchess-core/src/store/sql\.rs:.*: replace > with >= in Lane::run_admitted$',
     # A patch exactly as long as the file whole: either makes the same file, and no input makes
     # bsdiff's compressed patch and bzip2's whole file the same length to test it.
     'kchess-delta/src/lib\.rs:.*: replace < with <= in build',
