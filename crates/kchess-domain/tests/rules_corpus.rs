@@ -7,6 +7,8 @@
 //! the Rust-only rules their golden digests covered. Regenerate it only for an intended change:
 //! `KCHESS_WRITE_CORPUS=1 cargo test -p kchess-domain --test rules_corpus` rewrites each digest.
 
+mod corpus;
+
 use std::io::{Read, Write};
 use std::path::Path;
 
@@ -72,6 +74,16 @@ fn a_report_cuts_arguments_between_characters() {
 
 #[test]
 fn every_method_answers_as_recorded() {
+    // Trees nest some 2,000 levels: parsing, walking and dropping them recurse.
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(check_the_corpus)
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+fn check_the_corpus() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rules-corpus.jsonl.gz");
     let mut text = String::new();
     flate2::read::GzDecoder::new(std::fs::File::open(&path).unwrap())
@@ -84,19 +96,8 @@ fn every_method_answers_as_recorded() {
     for line in text.lines() {
         let mut case: Value = serde_json::from_str(line).unwrap();
         let (method, args) = (case["m"].as_str().unwrap(), case["a"].as_str().unwrap());
-        let actual = digest(&kchess_domain::api::call(method, args));
+        let actual = digest(&corpus::call(method, args));
         cases += 1;
-        // Rust callers pass values (`call_value`): the same answer, whatever the arguments.
-        if let Ok(values) = serde_json::from_str::<Vec<Value>>(args) {
-            let by_value = kchess_domain::api::call_value(method, &values).map(|v| v.to_string());
-            if digest(&by_value) != actual && differ.len() < 20 {
-                differ.push(format!(
-                    "{method} by value {}: {actual} ≠ {}",
-                    head(args),
-                    digest(&by_value)
-                ));
-            }
-        }
         if actual != case["d"] {
             if differ.len() < 20 {
                 differ.push(format!("{method} {}: {} ≠ {actual}", head(args), case["d"]));

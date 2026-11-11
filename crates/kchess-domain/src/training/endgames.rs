@@ -37,11 +37,6 @@ pub struct Status {
     pub fen: String,
 }
 
-/// `repetitionKey`: the first four FEN fields.
-fn repetition_key(fen: &str) -> String {
-    fen.split(' ').take(4).collect::<Vec<_>>().join(" ")
-}
-
 /// `evaluateEndgame`: where the drill stands after `moves` (UCI, from `fen`), judged for
 /// `player` and the drill's `goal`.
 pub fn evaluate<S: AsRef<str>>(
@@ -52,12 +47,14 @@ pub fn evaluate<S: AsRef<str>>(
 ) -> Result<Status, String> {
     const INVALID: &str = "Invalid drill position.";
     let start = rules::standard_from_fen(fen).ok_or(INVALID)?;
-    let mut seen: HashMap<String, u32> =
-        HashMap::from([(repetition_key(&rules::make_fen(&start)), 1)]);
+    let mut seen: HashMap<String, u32> = HashMap::from([(
+        rules::repetition_key(&rules::make_fen(&start)).to_string(),
+        1,
+    )]);
     let (after, line) = position::line(start, moves, false, false);
     let mut repeated = false;
     for step in &line {
-        let key = repetition_key(&step.fen);
+        let key = rules::repetition_key(&step.fen).to_string();
         let count = seen.get(&key).copied().unwrap_or(0) + 1;
         seen.insert(key, count);
         if count >= 3 {

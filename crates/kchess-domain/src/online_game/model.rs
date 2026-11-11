@@ -11,7 +11,7 @@ use crate::replay::replay_setup;
 use crate::rules::{default_position, lichess_variant, make_fen};
 
 /// The standard start.
-pub const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+use crate::rules::INITIAL_FEN;
 
 use crate::misc::constants::VARIANTS;
 
@@ -418,9 +418,5 @@ pub fn number_or_zero(v: Option<&Value>) -> f64 {
 
 /// `isGameInProgress(status ?? null)`: the records rule, reused.
 pub fn is_running(status: Option<&Value>) -> bool {
-    let status = nullish(status).cloned().unwrap_or(Value::Null);
-    matches!(
-        records::call("isGameInProgress", &[status]),
-        Some(Ok(Value::Bool(true)))
-    )
+    records::games::is_game_in_progress(nullish(status))
 }

@@ -30,10 +30,6 @@ const MAX_TEXT: usize = 2_000_000;
 const MAX_NODES: usize = 10_000;
 const MAX_DEPTH: usize = 1024;
 
-fn ply_of(pos: &VariantPosition) -> u32 {
-    (pos.fullmoves().get() - 1) * 2 + u32::from(!pos.turn().is_white())
-}
-
 /// `startingPosition(headers)`.
 fn starting_position(game: &Game) -> Option<VariantPosition> {
     let variant = rules::pgn_variant(game.header("Variant"))?;
@@ -71,7 +67,7 @@ pub fn tree_from_pgn(text: &str) -> Option<TreeNode> {
         uci: String::new(),
         san: String::new(),
         fen: rules::make_fen(&root_pos),
-        ply: ply_of(&root_pos),
+        ply: rules::ply_of(&root_pos),
         children: Vec::new(),
         headers: Some(
             game.headers

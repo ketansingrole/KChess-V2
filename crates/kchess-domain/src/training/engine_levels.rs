@@ -28,13 +28,14 @@ fn ladder() -> Result<&'static [EngineLevelInfo], String> {
     Ok(&data()?.engine_ladder)
 }
 
-fn find(id: &str) -> Result<Option<&'static EngineLevelInfo>, String> {
+/// The ladder entry for a level, none for an unknown one.
+pub fn info(id: &str) -> Result<Option<&'static EngineLevelInfo>, String> {
     Ok(ladder()?.iter().find(|entry| entry.id == id))
 }
 
 /// `engineLevelLabel`: "Grandmaster · ~2550", "Stockfish Max · Full strength".
 fn label(id: &str) -> Result<String, String> {
-    let entry = find(id)?.ok_or_else(|| format!("unknown engine level {id}"))?;
+    let entry = info(id)?.ok_or_else(|| format!("unknown engine level {id}"))?;
     let strength = match entry.elo {
         Some(elo) => format!("~{}", js::number_to_string(elo)),
         None => "Full strength".into(),
@@ -82,7 +83,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         "engineLadder" => ladder().and_then(to_value),
         "defaultEngineLevels" => data().and_then(|d| to_value(&d.default_engine_levels)),
         "engineLevelInfo" => text_arg(args, 0, "id")
-            .and_then(find)
+            .and_then(info)
             .and_then(|entry| to_value(entry.cloned())),
         "engineLevelLabel" => text_arg(args, 0, "id").and_then(label).map(Value::String),
         "normalizeEngineLevels" => value_arg::<Vec<String>>(args, 0, "levels")

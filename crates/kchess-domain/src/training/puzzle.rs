@@ -9,8 +9,6 @@ use shakmaty::{Position as _, Role};
 use super::{Out, text_arg, to_value, value_arg};
 use crate::{js, position, rules};
 
-const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
 /// `PuzzleState`: where a solve stands. `index` is the solution move the player must make next.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,7 +81,7 @@ fn from_api(raw: &Value) -> Option<Value> {
     let mut fen = js::string(puzzle.get("fen")).map(str::to_string);
     let mut last_move = js::string(puzzle.get("lastMove")).map(str::to_string);
     if fen.as_deref().is_none_or(str::is_empty) || last_move.as_deref().is_none_or(str::is_empty) {
-        let start = rules::standard_from_fen(INITIAL_FEN)?;
+        let start = rules::standard_from_fen(rules::INITIAL_FEN)?;
         let pgn = game.and_then(|g| js::string(g.get("pgn"))).unwrap_or("");
         let sans: Vec<&str> = pgn
             .split(js::is_space)

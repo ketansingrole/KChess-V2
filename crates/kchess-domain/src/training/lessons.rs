@@ -213,11 +213,7 @@ fn bare_king_against_major(pos: &Chess, color: Color) -> bool {
 }
 
 fn repetition_key(pos: &Chess) -> String {
-    rules::make_fen(&VariantPosition::Chess(pos.clone()))
-        .split(' ')
-        .take(4)
-        .collect::<Vec<_>>()
-        .join(" ")
+    rules::repetition_key(&rules::make_fen(&VariantPosition::Chess(pos.clone()))).to_string()
 }
 
 /* ── Forced mate ─────────────────────────────────────────────────────────────────────────── */

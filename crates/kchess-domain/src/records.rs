@@ -2,17 +2,17 @@
 //! studies, game results, time controls, accounts, Lichess events and errors, OAuth looks and
 //! analysis contexts. Reached through `api::call`.
 
-mod accounts;
+pub mod accounts;
 pub mod challenge;
-mod context;
-mod games;
-mod lichess;
+pub mod context;
+pub mod games;
+pub mod lichess;
 pub mod oauth;
-mod online;
-mod ratings;
-mod review;
-mod studies;
-mod time_control;
+pub mod online;
+pub mod ratings;
+pub mod review;
+pub mod studies;
+pub mod time_control;
 
 /// The label of each rating category (`RATING_DISPLAY_NAMES`).
 pub use ratings::DISPLAY_NAMES as RATING_DISPLAY_NAMES;

@@ -4,42 +4,27 @@
 //! exactly the values the caller passed.
 
 pub mod constants;
-mod contracts;
-mod documents;
-mod patterns;
-mod unicode_tables;
-mod validate;
-mod value;
+pub mod contracts;
+pub mod documents;
+pub mod patterns;
+pub mod unicode_tables;
+pub mod validate;
+pub mod value;
 
 pub use constants::MAX_DOCUMENT;
-pub use contracts::{
-    ASSISTANCE_METHODS, Scope, TV_CHANNEL_KEYS, arities, normalize, validate_arguments,
-};
+pub use contracts::{ASSISTANCE_METHODS, TV_CHANNEL_KEYS, arities, normalize, validate_arguments};
 
 use serde_json::Value;
 use value::J;
 
 /// This module's methods for `api::call`; None when the method is not one of them.
 pub fn call(method: &str, args: &[Value]) -> Option<Result<Value, String>> {
-    let is_check = contracts::is_call(method);
-    let run = if is_check {
-        None
-    } else {
-        Some(Run::find(method)?)
-    };
+    let run = Run::find(method)?;
     let Some((sidecar, user)) = args.split_first() else {
         return Some(Err(format!(
             "{method} was called without its lossless arguments"
         )));
     };
-    if is_check {
-        return Some(
-            inputs(user, sidecar)
-                .and_then(|values| contracts::argument_call(&values))
-                .map(J::into_value),
-        );
-    }
-    let run = run?;
     Some(inputs(user, sidecar).and_then(|values| run.call(values)))
 }
 
@@ -68,7 +53,7 @@ impl Run {
 }
 
 /// The arguments as values, with the sidecar's `undefined`, NaN, infinite and binary entries.
-fn inputs(user: &[Value], sidecar: &Value) -> Result<Vec<J>, String> {
+pub fn inputs(user: &[Value], sidecar: &Value) -> Result<Vec<J>, String> {
     let Value::Array(entries) = sidecar else {
         return Err("the lossless sidecar is not a list".into());
     };

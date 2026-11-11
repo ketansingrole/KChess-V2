@@ -13,8 +13,6 @@ use crate::tree::{self, TreeNode};
 
 pub type Handler = fn(Vec<J>) -> Result<J, String>;
 
-const STANDARD_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
 fn arg(args: &[J], i: usize) -> &J {
     args.get(i).unwrap_or(&J::Undef)
 }
@@ -266,7 +264,7 @@ fn decode_computer(raw: &J) -> Option<J> {
         setup_source.and_then(|s| text_of(s.get("fen"), limit)),
     ) {
         (Some(2.0), Some(variant), Some(fen)) => (variant, fen),
-        _ => ("standard", STANDARD_FEN),
+        _ => ("standard", crate::rules::INITIAL_FEN),
     };
     if !matches!(version, Some(v) if v == 1.0 || v == 2.0) {
         return None;
@@ -592,7 +590,7 @@ mod tests {
         assert_eq!(kept["setup"]["variant"], "crazyhouse");
         assert_eq!(kept["moves"].as_array().map(Vec::len), Some(5));
         assert_eq!(
-            check(session("standard", STANDARD_FEN)),
+            check(session("standard", crate::rules::INITIAL_FEN)),
             Err("This session cannot be saved.".into())
         );
     }

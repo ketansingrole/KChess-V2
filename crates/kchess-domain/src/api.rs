@@ -2,18 +2,14 @@
 //! JSON result. Every host binds this one function.
 
 use serde_json::{Map, Value, json};
-use shakmaty::Position;
-use std::collections::HashMap;
 
 use crate::error::{DomainError, Result};
 use crate::pgn::{Game, PgnNode, make_pgn, study_document_pgn};
 use crate::position::{self, DestMode};
 use crate::replay::{replay_positions, replay_setup};
 use crate::review::analyse_review;
-use crate::rules;
+use crate::rules::{self, INITIAL_FEN};
 use crate::tree::tree_from_pgn;
-
-const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 /// The deepest argument nesting `call` parses. The largest analysis tree (1024 plies, see
 /// `tree.rs`) nests 2051 levels. Parsing, walking and dropping it recurse, and an overflowed
@@ -244,10 +240,16 @@ fn dispatch(method: &str, args: &[Value]) -> Result<Value> {
             let headers = arg(args, 2).and_then(Value::as_object);
             Value::String(setup_pgn(variant, fen, &texts(args, 1, "moves")?, headers)?)
         }
-        "drawReason" => to_value(draw_reason(&texts(args, 0, "moves")?))?,
+        "drawReason" => to_value(crate::records::games::draw_reason(&texts(
+            args, 0, "moves",
+        )?))?,
         "setupDrawReason" => {
             let (variant, fen) = setup(args, 0)?;
-            to_value(setup_draw_reason(variant, fen, &texts(args, 1, "moves")?))?
+            to_value(crate::records::games::setup_draw_reason(
+                variant,
+                fen,
+                &texts(args, 1, "moves")?,
+            ))?
         }
         "position" => {
             let (variant, fen) = setup(args, 0)?;
@@ -347,10 +349,6 @@ fn to_value<T: serde::Serialize>(value: T) -> Result<Value> {
 
 /* ── Analysis tree ── */
 
-fn ply_of<P: Position>(pos: &P) -> u32 {
-    (pos.fullmoves().get() - 1) * 2 + u32::from(!pos.turn().is_white())
-}
-
 fn standard_or_default(fen: &str) -> shakmaty::variant::VariantPosition {
     rules::standard_from_fen(fen)
         .unwrap_or_else(|| rules::default_position(shakmaty::variant::Variant::Chess))
@@ -359,7 +357,7 @@ fn standard_or_default(fen: &str) -> shakmaty::variant::VariantPosition {
 /// `newTree(fen)`: the root's normalized FEN and ply (the usual start when the FEN is unusable).
 fn start_node(fen: &str) -> Value {
     let pos = standard_or_default(fen);
-    json!({ "fen": rules::make_fen(&pos), "ply": ply_of(&pos) })
+    json!({ "fen": rules::make_fen(&pos), "ply": rules::ply_of(&pos) })
 }
 
 /// `addMove`'s rules: `uci` played from `fen` (standard rules), or null when illegal.
@@ -398,7 +396,7 @@ fn pv_san(fen: &str, pv: &[&str], max: usize, variant: &str) -> Value {
         return json!([]);
     };
     let mut moves = Vec::new();
-    for (ply, &uci) in (ply_of(&pos)..).zip(pv.iter().take(max)) {
+    for (ply, &uci) in (rules::ply_of(&pos)..).zip(pv.iter().take(max)) {
         let Some(m) = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u)) else {
             break;
         };
@@ -538,16 +536,6 @@ fn is_result(token: &str) -> bool {
     matches!(token, "1-0" | "0-1" | "1/2-1/2" | "*")
 }
 
-fn is_uci(token: &str) -> bool {
-    let b = token.as_bytes();
-    (b.len() == 4 || b.len() == 5)
-        && (b'a'..=b'h').contains(&b[0])
-        && (b'1'..=b'8').contains(&b[1])
-        && (b'a'..=b'h').contains(&b[2])
-        && (b'1'..=b'8').contains(&b[3])
-        && (b.len() == 4 || b"qrbn".contains(&b[4]))
-}
-
 /// `pgnFromMoves`: UCI or SAN tokens (results left out) as a PGN.
 fn pgn_from_moves(tokens: &[&str]) -> String {
     let cleaned: Vec<&str> = tokens
@@ -556,7 +544,7 @@ fn pgn_from_moves(tokens: &[&str]) -> String {
         .filter(|t| !t.is_empty() && !is_result(t))
         .collect();
     let lower: Vec<String> = cleaned.iter().map(|t| t.to_lowercase()).collect();
-    if !cleaned.is_empty() && lower.iter().all(|t| is_uci(t)) {
+    if !cleaned.is_empty() && lower.iter().all(|t| rules::is_uci_text(t)) {
         // Replayed as detected: the rules read UCI in lower case.
         let lower: Vec<&str> = lower.iter().map(String::as_str).collect();
         pgn_from_san(&san_history(&lower))
@@ -609,73 +597,6 @@ fn setup_pgn(
         parent = game.add_move(parent, PgnNode::with(san, None, None, None));
     }
     Ok(make_pgn(&game))
-}
-
-/* ── Draws ── */
-
-/// The first four FEN fields: what makes positions the same for repetition.
-fn repetition_key(pos: &shakmaty::variant::VariantPosition) -> String {
-    rules::make_fen(pos)
-        .split(' ')
-        .take(4)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn ended(pos: &shakmaty::variant::VariantPosition) -> bool {
-    pos.is_variant_end() || pos.is_insufficient_material() || pos.legal_moves().is_empty()
-}
-
-/// Repetition counting over `moves`; `parse` reads each move as the TypeScript function did.
-fn repetition(
-    mut pos: shakmaty::variant::VariantPosition,
-    moves: &[&str],
-    trim: bool,
-) -> Option<&'static str> {
-    let mut seen: HashMap<String, u32> = HashMap::new();
-    seen.insert(repetition_key(&pos), 1);
-    for &uci in moves {
-        let uci = if trim { crate::js::trim(uci) } else { uci };
-        let Some(m) = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u)) else {
-            break;
-        };
-        pos.play_unchecked(m);
-        let count = seen.entry(repetition_key(&pos)).or_insert(0);
-        *count += 1;
-        if *count >= 3 {
-            return Some("Threefold repetition");
-        }
-    }
-    (!ended(&pos) && pos.halfmoves() >= 100).then_some("Fifty-move rule")
-}
-
-/// `drawReason`: repetition or the fifty-move rule, from the standard start.
-fn draw_reason(moves: &[&str]) -> Option<&'static str> {
-    repetition(
-        rules::default_position(shakmaty::variant::Variant::Chess),
-        moves,
-        true,
-    )
-}
-
-/// `setupDrawReason`: the same from a setup, for variants where the rules apply.
-fn setup_draw_reason(variant: &str, fen: &str, moves: &[&str]) -> Option<&'static str> {
-    let replayed = replay_setup(variant, fen, moves)?;
-    if ![
-        "standard",
-        "chess960",
-        "kingOfTheHill",
-        "threeCheck",
-        "atomic",
-    ]
-    .contains(&variant)
-    {
-        return None;
-    }
-    let start = rules::setup_start(variant, fen)?;
-    // The TypeScript rules re-read each move as given, so a padded move ends the count there.
-    let played: Vec<&str> = replayed.played.iter().map(|m| m.uci.as_str()).collect();
-    repetition(start, &played, false)
 }
 
 #[cfg(test)]

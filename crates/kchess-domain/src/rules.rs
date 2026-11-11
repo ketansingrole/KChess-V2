@@ -15,6 +15,48 @@ use std::num::NonZeroU32;
 
 use crate::js;
 
+/// The standard starting position.
+pub const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+/// The first four FEN fields: what makes positions the same for repetition.
+pub fn repetition_key(fen: &str) -> &str {
+    let mut seen = 0;
+    for (index, byte) in fen.bytes().enumerate() {
+        if byte == b' ' {
+            seen += 1;
+            if seen == 4 {
+                return &fen[..index];
+            }
+        }
+    }
+    fen
+}
+
+/// Half-moves since the game's start: 0 is White's first move still to play.
+pub fn ply_of<P: Position>(pos: &P) -> u32 {
+    (pos.fullmoves().get() - 1) * 2 + u32::from(!pos.turn().is_white())
+}
+
+fn is_square_text(file: u8, rank: u8) -> bool {
+    (b'a'..=b'h').contains(&file) && (b'1'..=b'8').contains(&rank)
+}
+
+/// A move written square to square in UCI, lower case: `e2e4`, `e7e8q`.
+pub fn is_uci_text(token: &str) -> bool {
+    match *token.as_bytes() {
+        [f1, r1, f2, r2] => is_square_text(f1, r1) && is_square_text(f2, r2),
+        [f1, r1, f2, r2, promotion] => {
+            is_square_text(f1, r1) && is_square_text(f2, r2) && b"qrbn".contains(&promotion)
+        }
+        _ => false,
+    }
+}
+
+/// A Crazyhouse drop in UCI: `P@e4`.
+pub fn is_drop_text(token: &str) -> bool {
+    matches!(*token.as_bytes(), [role, b'@', file, rank] if b"PNBRQ".contains(&role) && is_square_text(file, rank))
+}
+
 /// The Lichess variant keys KChess can play.
 pub fn lichess_variant(key: &str) -> Option<Variant> {
     Some(match key {

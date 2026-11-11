@@ -2,11 +2,15 @@
 //! on time, PGN result tokens, whether a Lichess game is still being played, and how a game in
 //! Game history ended for its player.
 
-use serde_json::{Map, Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use shakmaty::Position;
+use shakmaty::variant::VariantPosition;
+use std::collections::HashMap;
 
 use super::{Out, arg, setup_position};
 use crate::js;
-use crate::position;
+use crate::{position, replay, rules};
 
 /// Why a variant game ends on a win, by variant (`VARIANT_WIN`).
 const VARIANT_WIN: &[(&str, &str)] = &[
@@ -20,11 +24,25 @@ const VARIANT_WIN: &[(&str, &str)] = &[
 
 pub fn call(method: &str, args: &[Value]) -> Option<Out> {
     Some(match method {
-        "opponent" => Ok(json!(opponent(arg(args, 0).and_then(Value::as_str)))),
-        "boardResult" => board_result(args),
-        "timeoutWinner" => timeout_winner(args),
+        "opponent" => Ok(json!(opponent(
+            arg(args, 0).and_then(Value::as_str).unwrap_or_default()
+        ))),
+        "boardResult" => setup_position(arg(args, 0)).and_then(|pos| {
+            let variant = arg(args, 1).and_then(Value::as_str).unwrap_or("");
+            let draw = arg(args, 2)
+                .filter(|draw| !js::falsy(Some(draw)))
+                .map(|draw| js::to_string(Some(draw)));
+            serde_json::to_value(board_result(&pos, variant, draw.as_deref()))
+                .map_err(|e| e.to_string())
+        }),
+        "timeoutWinner" => setup_position(arg(args, 0)).map(|pos| {
+            json!(timeout_winner(
+                &pos,
+                arg(args, 1).and_then(Value::as_str).unwrap_or_default()
+            ))
+        }),
         "pgnResult" => Ok(json!(pgn_result(
-            arg(args, 0),
+            !js::falsy(arg(args, 0)),
             arg(args, 1).and_then(Value::as_str)
         ))),
         "isGameInProgress" => Ok(json!(is_game_in_progress(arg(args, 0)))),
@@ -35,21 +53,23 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
     })
 }
 
-/// `opponent(color)`: anything but white is black's opponent, as the TypeScript reads it.
-fn opponent(color: Option<&str>) -> &'static str {
-    if color == Some("white") {
-        "black"
-    } else {
-        "white"
-    }
+/// How a game ended: the winner, none for a draw, and why.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GameEnd {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub winner: Option<String>,
+    pub reason: String,
 }
 
-/// `boardResult(pos, variant, draw?)`: how the position ended the game, or the draw already
-/// found by repetition or the fifty-move rule; null while the game goes on.
-fn board_result(args: &[Value]) -> Out {
-    let pos = setup_position(arg(args, 0))?;
-    let variant = arg(args, 1).and_then(Value::as_str).unwrap_or("");
-    let facts = position::info(&pos);
+/// The other colour: anything but white is black's opponent.
+pub fn opponent(color: &str) -> &'static str {
+    if color == "white" { "black" } else { "white" }
+}
+
+/// How the position ended the game, or the draw already found by repetition or the fifty-move
+/// rule (`draw`); none while the game goes on.
+pub fn board_result(pos: &VariantPosition, variant: &str, draw: Option<&str>) -> Option<GameEnd> {
+    let facts = position::info(pos);
     if let Some(outcome) = &facts.outcome {
         let reason = if facts.checkmate {
             "Checkmate"
@@ -63,39 +83,35 @@ fn board_result(args: &[Value]) -> Out {
         } else {
             "Insufficient material"
         };
-        let mut result = Map::new();
-        if let Some(winner) = outcome.get("winner") {
-            result.insert("winner".into(), winner.clone());
-        }
-        result.insert("reason".into(), json!(reason));
-        return Ok(Value::Object(result));
+        return Some(GameEnd {
+            winner: outcome
+                .get("winner")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            reason: reason.to_string(),
+        });
     }
-    Ok(match arg(args, 2) {
-        Some(draw) if !js::falsy(Some(draw)) => json!({ "reason": js::to_string(Some(draw)) }),
-        _ => Value::Null,
+    draw.map(|reason| GameEnd {
+        winner: None,
+        reason: reason.to_string(),
     })
 }
 
-/// `timeoutWinner(pos, flagged)`: the other side, unless it cannot possibly mate.
-fn timeout_winner(args: &[Value]) -> Out {
-    let pos = setup_position(arg(args, 0))?;
-    let winner = opponent(arg(args, 1).and_then(Value::as_str));
-    let facts = position::info(&pos);
+/// Who wins when `flagged` runs out of time: the other side, unless it cannot possibly mate.
+pub fn timeout_winner(pos: &VariantPosition, flagged: &str) -> Option<&'static str> {
+    let winner = opponent(flagged);
+    let facts = position::info(pos);
     let cannot_win = if winner == "white" {
         facts.cannot_win.white
     } else {
         facts.cannot_win.black
     };
-    Ok(if cannot_win {
-        Value::Null
-    } else {
-        json!(winner)
-    })
+    (!cannot_win).then_some(winner)
 }
 
-/// `pgnResult(over, winner?)`: the PGN result token.
-fn pgn_result(over: Option<&Value>, winner: Option<&str>) -> &'static str {
-    if js::falsy(over) {
+/// The PGN result token.
+pub fn pgn_result(over: bool, winner: Option<&str>) -> &'static str {
+    if !over {
         return "*";
     }
     match winner {
@@ -105,8 +121,63 @@ fn pgn_result(over: Option<&Value>, winner: Option<&str>) -> &'static str {
     }
 }
 
+fn ended(pos: &VariantPosition) -> bool {
+    pos.is_variant_end() || pos.is_insufficient_material() || pos.legal_moves().is_empty()
+}
+
+/// Threefold repetition or the fifty-move rule over `moves` from `pos`, reading each move
+/// trimmed when `trim`; the count stops at the first move that is not legal.
+fn repetition(mut pos: VariantPosition, moves: &[&str], trim: bool) -> Option<&'static str> {
+    let mut seen: HashMap<String, u32> = HashMap::new();
+    seen.insert(rules::repetition_key(&rules::make_fen(&pos)).to_string(), 1);
+    for &uci in moves {
+        let uci = if trim { js::trim(uci) } else { uci };
+        let Some(m) = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u)) else {
+            break;
+        };
+        pos.play_unchecked(m);
+        let count = seen
+            .entry(rules::repetition_key(&rules::make_fen(&pos)).to_string())
+            .or_insert(0);
+        *count += 1;
+        if *count >= 3 {
+            return Some("Threefold repetition");
+        }
+    }
+    (!ended(&pos) && pos.halfmoves() >= 100).then_some("Fifty-move rule")
+}
+
+/// Repetition or the fifty-move rule reached by UCI `moves` from the standard start.
+pub fn draw_reason(moves: &[&str]) -> Option<&'static str> {
+    repetition(
+        rules::default_position(shakmaty::variant::Variant::Chess),
+        moves,
+        true,
+    )
+}
+
+/// The same from a setup, for the variants where those rules apply.
+pub fn setup_draw_reason(variant: &str, fen: &str, moves: &[&str]) -> Option<&'static str> {
+    let replayed = replay::replay_setup(variant, fen, moves)?;
+    if ![
+        "standard",
+        "chess960",
+        "kingOfTheHill",
+        "threeCheck",
+        "atomic",
+    ]
+    .contains(&variant)
+    {
+        return None;
+    }
+    let start = rules::setup_start(variant, fen)?;
+    // Replayed moves are read as given, so a padded move ends the count there.
+    let played: Vec<&str> = replayed.played.iter().map(|m| m.uci.as_str()).collect();
+    repetition(start, &played, false)
+}
+
 /// `isGameInProgress(status?)`: no status, or a live game (`created` is before its first move).
-fn is_game_in_progress(status: Option<&Value>) -> bool {
+pub fn is_game_in_progress(status: Option<&Value>) -> bool {
     js::falsy(status) || matches!(status.and_then(Value::as_str), Some("started" | "created"))
 }
 

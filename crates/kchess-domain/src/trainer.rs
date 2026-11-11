@@ -4,9 +4,9 @@
 //! as and the day streak (`puzzle_progress`), and the analysis tree's
 //! edits and helpers (`analysis_tree`).
 
-mod analysis_tree;
+pub mod analysis_tree;
 pub mod puzzle_progress;
-mod puzzle_session;
+pub mod puzzle_session;
 
 use serde_json::Value;
 

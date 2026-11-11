@@ -6,7 +6,7 @@
 use serde_json::{Map, Value};
 
 use super::{Out, arg};
-use crate::js;
+use crate::{js, rules};
 
 const UNREADABLE: &str = "Lichess sent an unreadable game event. Reconnect to refresh the board.";
 const INVALID_MOVES: &str = "Lichess sent an invalid move list.";
@@ -252,32 +252,7 @@ fn moves_are_valid(moves: &str) -> bool {
         && trimmed
             .split(js::is_space)
             .filter(|token| !token.is_empty())
-            .all(|token| is_uci(token) || is_drop(token))
-}
-
-fn is_file(b: u8) -> bool {
-    (b'a'..=b'h').contains(&b)
-}
-
-fn is_rank(b: u8) -> bool {
-    (b'1'..=b'8').contains(&b)
-}
-
-/// `UCI_MOVE`: `e2e4`, `e7e8q`.
-fn is_uci(token: &str) -> bool {
-    let b = token.as_bytes();
-    (b.len() == 4 || b.len() == 5)
-        && is_file(b[0])
-        && is_rank(b[1])
-        && is_file(b[2])
-        && is_rank(b[3])
-        && (b.len() == 4 || b"qrbn".contains(&b[4]))
-}
-
-/// `DROP`: `P@e4`.
-fn is_drop(token: &str) -> bool {
-    let b = token.as_bytes();
-    b.len() == 4 && b"PNBRQ".contains(&b[0]) && b[1] == b'@' && is_file(b[2]) && is_rank(b[3])
+            .all(|token| rules::is_uci_text(token) || rules::is_drop_text(token))
 }
 
 /// `GAME_ID`: 8 to 12 letters and digits.

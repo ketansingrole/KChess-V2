@@ -4,17 +4,17 @@
 //! client clock, engine levels, UCI `info` lines and Guess the move's scoring. Their constants
 //! are data (`crates/kchess-domain/data/`).
 
-mod clock;
-mod data;
-mod endgames;
-mod engine_levels;
+pub mod clock;
+pub mod data;
+pub mod endgames;
+pub mod engine_levels;
 pub mod guess;
-mod lessons;
+pub mod lessons;
 pub mod openings;
-mod puzzle;
+pub mod puzzle;
 pub mod repetition;
-mod rush;
-mod uci_info;
+pub mod rush;
+pub mod uci_info;
 
 pub use clock::low_time_threshold;
 

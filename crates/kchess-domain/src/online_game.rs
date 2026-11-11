@@ -4,8 +4,8 @@
 //! which call to make and how its reply lands. Each method takes the state, its input, and the
 //! context the host read at that moment (`now`, `activeAccount`, `chatEnabled`) as the last argument.
 
-mod events;
-mod model;
+pub mod events;
+pub mod model;
 
 use serde_json::{Value, json};
 

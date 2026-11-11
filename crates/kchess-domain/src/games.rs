@@ -10,9 +10,9 @@
 //! exactly as the TypeScript read it. The last argument of a transition is the list of reads
 //! supplied so far.
 
-mod archive;
-mod computer;
-mod local;
+pub mod archive;
+pub mod computer;
+pub mod local;
 pub mod otb_clock;
 
 use serde::de::DeserializeOwned;
@@ -23,13 +23,11 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
-use crate::api;
 use crate::position::Info;
 use crate::replay;
 use crate::rules;
 
-/// The standard starting position's FEN (`INITIAL_FEN`).
-pub(crate) const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+pub(crate) use crate::rules::INITIAL_FEN;
 
 /// Why a transition stops early: it needs a host read it does not have yet, or it failed.
 #[derive(Debug)]
@@ -479,59 +477,47 @@ pub(crate) fn draw_reason(setup: &Setup, moves: &[String]) -> Result<Option<Stri
     DRAWS.with(|memo| memo.get(setup, moves, || setup_draw_reason(setup, moves)))
 }
 
-/// Call a rule this crate already provides through another module's dispatcher.
-fn rule(method: &str, args: &[Value]) -> Result<Value, String> {
-    crate::records::call(method, args)
-        .or_else(|| crate::training::call(method, args))
-        .unwrap_or_else(|| Err(format!("missing rule {method}")))
-}
-
-/// `setupDrawReason(setup, moves)`: the repetition or fifty-move draw already reached.
+/// The repetition or fifty-move draw already reached from a setup.
 pub(crate) fn setup_draw_reason<S: AsRef<str>>(
     setup: &Setup,
     moves: &[S],
 ) -> Result<Option<String>, String> {
     let texts: Vec<&str> = moves.iter().map(|m| m.as_ref()).collect();
-    let args = json!([setup.json(), texts]).to_string();
-    let out = api::call("setupDrawReason", &args)?;
-    let value: Value = serde_json::from_str(&out).map_err(|error| error.to_string())?;
-    Ok(value.as_str().map(str::to_string))
+    Ok(
+        crate::records::games::setup_draw_reason(&setup.variant, &setup.fen, &texts)
+            .map(str::to_string),
+    )
 }
 
-/// `opponent(color)`.
 pub(crate) fn opponent(color: &str) -> Result<String, String> {
-    rule("opponent", &[json!(color)]).map(|value| value.as_str().unwrap_or_default().to_string())
+    Ok(crate::records::games::opponent(color).to_string())
 }
 
-/// `timeoutWinner(position, flagged)`.
+fn setup_position(variant: &str, fen: &str) -> Result<VariantPosition, String> {
+    rules::setup_start(variant, fen).ok_or_else(|| "setup is not a legal position".to_string())
+}
+
 pub(crate) fn timeout_winner(
     variant: &str,
     fen: &str,
     flagged: &str,
 ) -> Result<Option<String>, String> {
-    let value = rule(
-        "timeoutWinner",
-        &[json!({ "variant": variant, "fen": fen }), json!(flagged)],
-    )?;
-    Ok(value.as_str().map(str::to_string))
+    let pos = setup_position(variant, fen)?;
+    Ok(crate::records::games::timeout_winner(&pos, flagged).map(str::to_string))
 }
 
-/// `boardResult(position, variant, draw)`: the result object, or null while the game goes on.
+/// How the position ended the game, or null while the game goes on.
 pub(crate) fn board_result(variant: &str, fen: &str, draw: Option<&str>) -> Result<Value, String> {
-    rule(
-        "boardResult",
-        &[
-            json!({ "variant": variant, "fen": fen }),
-            json!(variant),
-            json!(draw),
-        ],
-    )
+    let pos = setup_position(variant, fen)?;
+    to_value(&crate::records::games::board_result(
+        &pos,
+        variant,
+        draw.filter(|d| !d.is_empty()),
+    ))
 }
 
-/// `pgnResult(over, winner)`.
 pub(crate) fn pgn_result(over: bool, winner: Option<&str>) -> Result<String, String> {
-    let value = rule("pgnResult", &[json!(over), json!(winner)])?;
-    Ok(value.as_str().unwrap_or("*").to_string())
+    Ok(crate::records::games::pgn_result(over, winner).to_string())
 }
 
 /// The winner the position itself names, if any (`position.outcome()?.winner`).
@@ -543,11 +529,11 @@ pub(crate) fn outcome_winner(info: &Info) -> Option<String> {
         .map(str::to_string)
 }
 
-/// `engineLevelInfo(level)`: the object for a ladder level; an error for an unknown one.
+/// The ladder entry for an engine level; an error for an unknown one.
 pub(crate) fn engine_level(level: &str) -> Result<Value, String> {
-    match crate::training::call("engineLevelInfo", &[json!(level)]) {
-        Some(Ok(Value::Null)) | None => Err(format!("unknown engine level {level}")),
-        Some(result) => result,
+    match crate::training::engine_levels::info(level)? {
+        Some(entry) => to_value(entry),
+        None => Err(format!("unknown engine level {level}")),
     }
 }
 

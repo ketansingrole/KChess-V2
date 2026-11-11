@@ -6,21 +6,16 @@
 use serde_json::{Map, Value, json};
 
 use super::{Out, num_out, text_arg, to_value};
-use crate::js;
+use crate::{js, rules};
 
 /// `/^[a-h][1-8][a-h][1-8][qrbnk]?$/` (`k` promotes to a king in Antichess), or a Crazyhouse
 /// drop such as `P@e4`.
 fn is_uci_move(token: &str) -> bool {
-    let square =
-        |file: u8, rank: u8| (b'a'..=b'h').contains(&file) && (b'1'..=b'8').contains(&rank);
-    match *token.as_bytes() {
-        [role, b'@', file, rank] => b"PNBRQ".contains(&role) && square(file, rank),
-        [f1, r1, f2, r2] => square(f1, r1) && square(f2, r2),
-        [f1, r1, f2, r2, promotion] => {
-            square(f1, r1) && square(f2, r2) && b"qrbnk".contains(&promotion)
-        }
-        _ => false,
-    }
+    rules::is_uci_text(token)
+        || rules::is_drop_text(token)
+        || token
+            .strip_suffix('k')
+            .is_some_and(|from_to| from_to.len() == 4 && rules::is_uci_text(from_to))
 }
 
 /// `Number(v)` of an optional token: a missing one is NaN.
