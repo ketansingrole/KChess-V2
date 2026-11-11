@@ -1,19 +1,15 @@
 //! Two people at one board, with optional clocks.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use shakmaty::Color;
 
 use super::archive::Snapshot;
+use super::session::LocalSession;
 use super::{Board, Clock, Clocking, Outcome, Setup, Times};
 use crate::js;
+use crate::misc::constants::HistoryKind;
 use crate::records::games::GameEnd;
 
-/// The session a board game is saved as, and the Game history kinds of the board game and of
-/// the chess clock.
-pub const SESSION: &str = "local";
-pub const HISTORY: &str = "board";
-pub const CLOCK_HISTORY: &str = "clock";
 /// Its PGN's `Event`.
 pub const EVENT: &str = "Over the board (KChess)";
 
@@ -97,14 +93,11 @@ impl LocalGame {
     }
 
     /// A game from a saved session, or a new one; a session on an illegal setup is refused.
-    pub fn resume(saved: Option<&Value>, now: f64) -> Result<LocalGame, String> {
-        let saved: Saved = match saved {
-            Some(saved) => {
-                Saved::deserialize(saved).map_err(|error| format!("the saved game: {error}"))?
-            }
-            None => Saved::default(),
-        };
-        LocalGame::new(State::from_saved(saved), Runtime { turn_started: now })
+    pub fn resume(saved: Option<Saved>, now: f64) -> Result<LocalGame, String> {
+        LocalGame::new(
+            State::from_saved(saved.unwrap_or_default()),
+            Runtime { turn_started: now },
+        )
     }
 
     /// The game's start.
@@ -334,6 +327,17 @@ impl LocalGame {
         }
     }
 
+    /// The session to save, as the library keeps it.
+    pub fn session(&self, at: f64) -> LocalSession {
+        LocalSession {
+            setup: self.state.setup.clone(),
+            moves: self.state.moves.clone(),
+            clock: self.state.clock,
+            times: self.state.times.map(|_| self.clocking().times_at(at)),
+            result: self.state.result.clone(),
+        }
+    }
+
     /// The game as the archive stores it.
     pub fn archive_snapshot(&self) -> Snapshot {
         let result = self.result();
@@ -348,7 +352,7 @@ impl LocalGame {
             None => "-".to_string(),
         };
         Snapshot {
-            source: "board".into(),
+            source: HistoryKind::Board,
             setup: self.state.setup.clone(),
             moves: self.state.moves.clone(),
             white: "White".into(),
@@ -486,11 +490,12 @@ mod tests {
             "times": null,
             "result": { "winner": "black", "reason": "Checkmate" },
         });
-        let game = LocalGame::resume(Some(&stored), 0.).unwrap();
+        let game =
+            LocalGame::resume(Some(serde_json::from_value(stored.clone()).unwrap()), 0.).unwrap();
         assert_eq!(game.outcome(), Some(Outcome::Wins(Color::Black)));
         assert_eq!(json!(game.snapshot(0.)), stored);
         let drawn = json!({ "result": { "reason": "Draw agreed" } });
-        let game = LocalGame::resume(Some(&drawn), 0.).unwrap();
+        let game = LocalGame::resume(Some(serde_json::from_value(drawn).unwrap()), 0.).unwrap();
         assert_eq!(
             json!(game.snapshot(0.))["result"],
             json!({ "reason": "Draw agreed" })
@@ -502,8 +507,8 @@ mod tests {
         let mut game = LocalGame::resume(None, 0.).unwrap();
         game.play("e2e4", 1.);
         game.play("e7e5", 2.);
-        let saved = json!(game.snapshot(3.));
-        let mut resumed = LocalGame::resume(Some(&saved), 3.).unwrap();
+        let saved = game.session(3.);
+        let mut resumed = LocalGame::resume(Some(saved.into()), 3.).unwrap();
         assert_eq!(resumed.play("e2e4", 4.).0, None);
         assert_eq!(resumed.play("g1f3", 5.).0.as_deref(), Some("Nf3"));
     }

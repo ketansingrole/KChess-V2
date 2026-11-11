@@ -109,7 +109,7 @@ use crate::engine_view::EVAL_BAR;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
 use crate::export::Exporter;
 use crate::game::played::PlayedGame;
-use crate::game::session::{Resumes, SAVE_DELAY, SessionSaver, Sessions};
+use crate::game::session::{Resumes, SAVE_DELAY, SessionSaver};
 use crate::game::surface::Steps;
 use crate::game::tree::{
     TreeNode, analysis_context, child_path, comment_text, format_eval, move_glyph, move_number,
@@ -129,6 +129,7 @@ use crate::theme::{Palette, radii, tint};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
+use kchess_contracts::types::{AnalysisSession, SessionDocument, SessionKind, Sessions};
 use kchess_domain::variant::{Setup, Variant};
 
 /// Why the board left its study: another window changed the chapter it was saving to.
@@ -145,7 +146,6 @@ type StudySave = futures::future::Shared<
 /// Evaluations kept per position, so stepping back and forth shows them at once.
 const CACHE_SIZE: usize = 600;
 /// The profile's unfinished-session kind of the analysis board.
-const SESSION: &str = "analysis";
 /// Stepping quickly through a game should not send every position on the way to Lichess.
 const CLOUD_DELAY: Duration = Duration::from_millis(300);
 /// The evaluation bar's gap to the board; without the bar the board keeps its place.
@@ -358,13 +358,13 @@ impl Resumes for AnalysisPage {
         &mut self.saver
     }
 
-    fn snapshot(&mut self, _: &mut Context<Self>) -> Value {
-        json!({
-            "pgn": self.root.pgn_text(),
-            "path": self.path,
-            "orientation": if self.orientation == Color::White { "white" } else { "black" },
-            "study": self.study,
-            "chapter": self.chapter,
+    fn snapshot(&mut self, _: &mut Context<Self>) -> SessionDocument {
+        SessionDocument::Analysis(AnalysisSession {
+            pgn: self.root.pgn_text(),
+            path: self.path.clone(),
+            orientation: self.orientation,
+            study: self.study.clone(),
+            chapter: self.chapter.clone(),
         })
     }
 
@@ -374,8 +374,8 @@ impl Resumes for AnalysisPage {
         let Some(mut saved) = saved else {
             return;
         };
-        let session = saved.take(SESSION);
-        if self.navigation == 0 && !session.is_null() {
+        let session = saved.analysis.take();
+        if let Some(session) = session.filter(|_| self.navigation == 0) {
             self.reopen(&session, cx);
             self.redraw(cx);
             self.analyse(cx);
@@ -568,7 +568,7 @@ impl AnalysisPage {
             cloud_error: None,
             cloud_request: 0,
             cloud_task: None,
-            saver: SessionSaver::start(SESSION, &[], window, cx),
+            saver: SessionSaver::start(SessionKind::Analysis, &[], window, cx),
             wheel: Default::default(),
             focus: cx.focus_handle(),
             voice: VoiceMoves::new("analysis", cx),
@@ -986,42 +986,32 @@ impl AnalysisPage {
     }
 
     /// The board as the profile keeps it, to open as it was left.
-    fn reopen(&mut self, session: &Value, cx: &mut Context<Self>) {
-        let root = session["pgn"]
-            .as_str()
-            .and_then(TreeNode::from_pgn)
-            .unwrap_or_else(|| TreeNode::new(None));
-        self.path = root.existing_path(session["path"].as_str().unwrap_or_default());
+    fn reopen(&mut self, session: &AnalysisSession, cx: &mut Context<Self>) {
+        let root = TreeNode::from_pgn(&session.pgn).unwrap_or_else(|| TreeNode::new(None));
+        self.path = root.existing_path(&session.path);
         self.root = root;
-        self.orientation = if session["orientation"] == "black" {
-            Color::Black
-        } else {
-            Color::White
-        };
+        self.orientation = session.orientation;
         // A recovered session that differs from its study stays an unsaved copy; it never
         // overwrites the library.
         let library = cx.global::<StudyHandle>().0.clone();
-        let saved_study = session["study"].as_str().unwrap_or_default();
+        let saved_study = session.study.as_str();
         let linked = library.read(cx).study(saved_study).cloned();
         let linked_pgn = linked.as_ref().map(|study| {
             study
-                .chapter(session["chapter"].as_str().unwrap_or_default())
+                .chapter(&session.chapter)
                 .map_or_else(|| study.pgn.clone(), |chapter| chapter.pgn.clone())
         });
-        let conflict = session["pgn"].is_string()
-            && linked_pgn
-                .as_deref()
-                .and_then(TreeNode::from_pgn)
-                .is_some_and(|tree| tree.pgn_text() != self.root.pgn_text());
+        let conflict = linked_pgn
+            .as_deref()
+            .and_then(TreeNode::from_pgn)
+            .is_some_and(|tree| tree.pgn_text() != self.root.pgn_text());
         self.study = if conflict || linked.is_none() {
             String::new()
         } else {
             saved_study.to_string()
         };
-        self.chapter = session["chapter"]
-            .as_str()
+        self.chapter = Some(session.chapter.clone())
             .filter(|chapter| !chapter.is_empty())
-            .map(str::to_string)
             .or_else(|| {
                 linked
                     .as_ref()

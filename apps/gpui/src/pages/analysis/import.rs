@@ -151,7 +151,7 @@ impl AnalysisPage {
         }
         self.importing = None;
         if let Some(fen) =
-            crate::game::editor_setup(&text).and_then(|setup| crate::game::setup_fen(&setup))
+            kchess_domain::editor::EditorSetup::from_fen(&text).map(|setup| setup.fen())
         {
             if let Some(problem) = crate::game::position_problem(&fen) {
                 self.import_error = Some(problem.into());

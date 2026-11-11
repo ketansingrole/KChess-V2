@@ -73,7 +73,8 @@ fn played(value: Option<&Value>) -> kchess_domain::library::PlayedGame {
     };
     kchess_domain::library::PlayedGame {
         id: text("id"),
-        source: text("source"),
+        source: kchess_domain::misc::constants::HistoryKind::from_key(&text("source"))
+            .unwrap_or(kchess_domain::misc::constants::HistoryKind::Board),
         started_at: 0.0,
         updated_at: 0.0,
         white: text("white"),

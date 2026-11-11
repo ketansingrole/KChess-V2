@@ -21,7 +21,9 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
-use serde_json::{Value, json};
+use kchess_contracts::types::{HistoryKind, SessionDocument, SessionKind, Sessions};
+use kchess_domain::games::archive::Identity;
+use serde_json::json;
 use shakmaty::Color;
 
 use crate::assets::icon;
@@ -30,7 +32,7 @@ use crate::core::AppCore;
 use crate::export::Exporter;
 use crate::game::history::HistoryPlace;
 use crate::game::played::PlayedGame;
-use crate::game::session::{Resumes, SessionSaver, Sessions};
+use crate::game::session::{Resumes, SessionSaver};
 use crate::game::surface::{self, Faces, MoveBox, Steps};
 use crate::game::view;
 use crate::pages::computer_options::{Chosen, Current, GameOptions};
@@ -137,22 +139,21 @@ impl Resumes for ComputerPage {
         &mut self.saver
     }
 
-    fn snapshot(&mut self, _: &mut Context<Self>) -> Value {
-        json!(self.game.snapshot(self.host().now))
+    fn snapshot(&mut self, _: &mut Context<Self>) -> SessionDocument {
+        SessionDocument::Computer(self.game.session(self.host().now))
     }
 
     fn resume(&mut self, saved: Option<Sessions>, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(mut saved) = saved {
-            let game = saved.take(computer::SESSION);
-            if !game.is_null() {
-                match ComputerGame::resume(Some(&game), &self.host()) {
+            if let Some(game) = saved.computer.take() {
+                match ComputerGame::resume(Some(game.into()), &self.host()) {
                     Ok(game) => self.game = game,
                     Err(cause) => {
                         self.log_warn(&format!("The saved game could not be read: {cause}"))
                     }
                 }
             }
-            let identity = saved.take(&kchess_games::history::session_kind(computer::HISTORY));
+            let identity = saved.take_identity(HistoryKind::Computer);
             self.keep_history(identity, cx);
         }
         self.select_level(window, cx);
@@ -245,8 +246,8 @@ impl ComputerPage {
                 .read(cx)
                 .assistance_allowed(),
             saver: SessionSaver::start(
-                computer::SESSION,
-                &[kchess_games::history::session_kind(computer::HISTORY)],
+                SessionKind::Computer,
+                &[HistoryKind::Computer.session()],
                 window,
                 cx,
             ),
@@ -279,14 +280,14 @@ impl ComputerPage {
         }
     }
 
-    /// The game keeps its place in Game history from `identity` (null: a place of its own).
-    fn keep_history(&mut self, identity: Value, cx: &mut Context<Self>) {
+    /// The game keeps its place in Game history from `identity` (none: a place of its own).
+    fn keep_history(&mut self, identity: Option<Identity>, cx: &mut Context<Self>) {
         let Some(source) = self.archive_source() else {
             return;
         };
         let has_play = !self.game.moves().is_empty();
         self.history = Some(HistoryPlace::new(
-            computer::HISTORY,
+            HistoryKind::Computer,
             identity,
             true,
             source,
@@ -611,7 +612,7 @@ impl ComputerPage {
     fn reset_archive(&mut self, cx: &mut Context<Self>) {
         self.saver.open();
         if self.history.is_none() {
-            return self.keep_history(Value::Null, cx);
+            return self.keep_history(None, cx);
         }
         let has_play = !self.moves().is_empty();
         if let Some(source) = self.archive_source()

@@ -60,9 +60,9 @@ pub fn classify(text: &str) -> Option<Link> {
         return Some(Link::Moves(pgn));
     }
     text.contains('/')
-        .then(|| crate::game::editor_setup(text))
+        .then(|| kchess_domain::editor::EditorSetup::from_fen(text))
         .flatten()
-        .and_then(|setup| crate::game::setup_fen(&setup))
+        .map(|setup| setup.fen())
         .filter(|fen| crate::game::position_problem(fen).is_none())
         .map(Link::Position)
 }

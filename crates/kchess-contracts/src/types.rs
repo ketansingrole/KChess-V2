@@ -19,8 +19,8 @@ use kchess_domain::color::Color;
 use kchess_domain::{union, wire_enum};
 
 pub use kchess_domain::misc::constants::{
-    APPEARANCES, Appearance, ENGINE_LEVELS, EngineLevel, NotificationKind, SESSION_KINDS,
-    SessionKind, TournamentSystem,
+    APPEARANCES, Appearance, ENGINE_LEVELS, EngineLevel, HistoryKind, NotificationKind,
+    SESSION_KINDS, SessionKind, TournamentSystem,
 };
 pub use kchess_domain::online_game::connection::{Lane, OnlineConnection, OnlinePhase};
 pub use kchess_domain::online_game::model::{CHAT_ROOMS, ChatRoom};
@@ -2165,6 +2165,9 @@ pub struct PopularityMonth {
 
 /* ── Online play, watching and tournaments, as the core answers them ────── */
 
+pub use kchess_domain::games::session::{
+    AnalysisSession, ComputerSession, LocalSession, SessionDocument, Sessions,
+};
 pub use kchess_domain::keyed::Keyed;
 pub use kchess_domain::library::{Drill, PlayedGame, Study, StudyChapter, StudyCloud};
 pub use kchess_domain::records::challenge::{
@@ -2802,7 +2805,7 @@ pub struct Library {
     pub studies: Vec<Study>,
     pub games: Vec<PlayedGame>,
     pub mistakes: Vec<Drill>,
-    pub sessions: serde_json::Map<String, Value>,
+    pub sessions: Sessions,
     pub joined_tournaments: Vec<JoinedTournament>,
     pub repertoire_misses: RepertoireMisses,
     pub repertoire_schedule: RepertoireSchedule,

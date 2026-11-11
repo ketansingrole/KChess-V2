@@ -43,6 +43,13 @@ impl Validate for SessionKind {
 #[serde(transparent)]
 pub struct SessionObject(pub Value);
 
+impl SessionObject {
+    /// A session, to send.
+    pub fn of(session: &crate::types::SessionDocument) -> SessionObject {
+        SessionObject(serde_json::to_value(session).unwrap_or(Value::Null))
+    }
+}
+
 impl Validate for SessionObject {
     fn validate(value: J) -> Result<Self, Refusal> {
         ensure(value.is_object(), None, "", || "an object".into())?;

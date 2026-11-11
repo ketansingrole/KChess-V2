@@ -3,10 +3,10 @@
 
 use kchess_contracts::types::{
     Drill, JoinedTournament, Library, PlayedGame, RepertoireMisses, RepertoireSchedule,
-    SessionKind, Study,
+    SessionDocument, SessionKind, Sessions, Study,
 };
 use rusqlite::{Connection, params};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::StoreContext;
 use super::documents::{
@@ -18,7 +18,7 @@ use super::sql::{Sql as _, transaction};
 use super::studies::{Stored, study_text};
 use crate::host::{Host, Level};
 use kchess_contracts::error::{CoreError, Result};
-use kchess_domain::js::{truthy, utf16_len};
+use kchess_domain::js::utf16_len;
 use kchess_domain::library::MAX_STUDIES;
 use kchess_domain::misc::value::J;
 
@@ -149,12 +149,15 @@ pub(crate) fn read_joined(host: &dyn Host, db: &Connection) -> Result<Vec<Joined
     Ok(serde_json::from_value(decoded.into_value()).unwrap_or_default())
 }
 
-/// The decoded session, or null.
-pub(crate) fn read_session(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value> {
-    let raw = read_document(host, db, &format!("session:{kind}"))?.unwrap_or(Value::Null);
-    let session = kchess_domain::misc::documents::decode_stored(kind, &J::from(&raw))
-        .map_err(CoreError::new)?;
-    Ok(session.map_or(Value::Null, J::into_value))
+/// The decoded session, none when there is none (or it is no longer one of its kind).
+pub(crate) fn read_session(
+    host: &dyn Host,
+    db: &Connection,
+    kind: SessionKind,
+) -> Result<Option<SessionDocument>> {
+    let raw =
+        read_document(host, db, &format!("session:{}", kind.as_str()))?.unwrap_or(Value::Null);
+    Ok(SessionDocument::decode(kind, &J::from(&raw)))
 }
 
 /// The played games, newest first; a game that no longer replays is skipped.
@@ -205,12 +208,10 @@ pub fn cached_library(ctx: &StoreContext, now: f64) -> Result<Library> {
 
 /// `library(now)`: the whole snapshot.
 pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Library> {
-    let mut sessions = Map::new();
-    for kind in SessionKind::ALL {
-        let kind = kind.as_str();
-        let value = read_session(host, db, kind)?;
-        if truthy(Some(&value)) {
-            sessions.insert(kind.to_string(), value);
+    let mut sessions = Sessions::default();
+    for &kind in SessionKind::ALL {
+        if let Some(session) = read_session(host, db, kind)? {
+            sessions.insert(kind, session);
         }
     }
     let mut joined = read_joined(host, db)?;

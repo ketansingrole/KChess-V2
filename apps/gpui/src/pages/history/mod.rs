@@ -14,7 +14,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::Username;
-use kchess_contracts::types::{LichessGame, PlayedGame, Reply};
+use kchess_contracts::types::{HistoryKind, LichessGame, PlayedGame, Reply};
 use kchess_domain::variant::Variant;
 use serde_json::json;
 use shakmaty::Color;
@@ -163,7 +163,7 @@ pub(crate) fn opponent(game: &PlayedGame) -> String {
 
 /// The line under the opponent: why the game ended, or the clock's summary.
 fn details(game: &PlayedGame) -> String {
-    if game.source == "clock" {
+    if game.source == HistoryKind::Clock {
         return game
             .clock_summary
             .clone()
@@ -181,7 +181,7 @@ fn pgn(game: &PlayedGame) -> Option<String> {
     let clocks: Vec<&str> = game.time_control.as_str().split(" / ").collect();
     let split = clocks.len() > 1 && clocks[0] != clocks[1];
     let mut headers = json!({
-        "Event": if game.source.as_str() == "computer" {
+        "Event": if game.source == HistoryKind::Computer {
             "KChess computer game"
         } else {
             "KChess over-the-board game"
@@ -386,7 +386,9 @@ impl HistoryPage {
             .read(cx)
             .games()
             .iter()
-            .filter(|game| (game.source == "computer") == (self.source == Source::Computer))
+            .filter(|game| {
+                (game.source == HistoryKind::Computer) == (self.source == Source::Computer)
+            })
             .collect();
         games.sort_by(|a, b| b.started_at.total_cmp(&a.started_at));
         games
@@ -413,7 +415,7 @@ impl HistoryPage {
         loop {
             index += step;
             let game = listed.get(usize::try_from(index).ok()?)?;
-            if game.source != "clock" {
+            if game.source != HistoryKind::Clock {
                 return Some((index as usize, (*game).clone()));
             }
         }
@@ -665,14 +667,14 @@ impl HistoryPage {
             .find(|game| game.id == id)
             .cloned();
         let Some(game) = game else { return };
-        self.source = if game.source == "computer" {
+        self.source = if game.source == HistoryKind::Computer {
             Source::Computer
         } else {
             Source::Board
         };
         self.filter = Filter::All;
         self.page = 0;
-        if game.source != "clock" {
+        if game.source != HistoryKind::Clock {
             self.open_game(game, window, cx);
         }
         cx.notify();
@@ -742,7 +744,7 @@ impl HistoryPage {
 
     /// Save the game as PGN where the player picks, or copy a clock session's summary.
     fn export(&mut self, game: &PlayedGame, cx: &mut Context<Self>) {
-        if game.source == "clock" {
+        if game.source == HistoryKind::Clock {
             let summary = format!(
                 "{} / {}\n{}\n{}\nTime control: {}",
                 game.white.as_str(),
@@ -785,7 +787,7 @@ impl HistoryPage {
         let pgns: Vec<String> = self
             .shown_games(cx)
             .into_iter()
-            .filter(|game| game.source.as_str() != "clock")
+            .filter(|game| game.source != HistoryKind::Clock)
             .filter_map(pgn)
             .collect();
         if pgns.is_empty() {
@@ -1159,7 +1161,7 @@ impl HistoryPage {
                 // copies no game (four copies of each listed game's moves were made each frame).
                 let game: &PlayedGame = game;
                 let id = game.id.clone();
-                let clock = game.source == "clock";
+                let clock = game.source == HistoryKind::Clock;
                 let side = game.player_side();
                 let variant = game.setup.variant.key();
                 // Why it ended, and the opening it reached, as a Lichess game's line has; in a

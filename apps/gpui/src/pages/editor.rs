@@ -14,14 +14,14 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use serde_json::json;
 use shakmaty::{ByColor, ByRole, Color, Piece, RemainingChecks, Role};
 
 use crate::assets::icon;
 use crate::board::looks;
 use crate::board::{BoardEvent, BoardState, ChessBoard, EditTool, PieceGhost, SparePiece};
 use crate::game::surface::TakesKeys as _;
-use crate::game::{STANDARD_FEN, editor_setup, position_problem};
+use crate::game::{STANDARD_FEN, position_problem};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii, tint};
@@ -29,6 +29,7 @@ use crate::voice::control::{BarSpec, Control};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill, Tone};
+use kchess_domain::editor::{self, EditorSetup};
 use kchess_domain::variant::{Setup, Variant};
 use kchess_domain::voice::{self, EditorAction};
 
@@ -50,21 +51,6 @@ const CASTLING: [(&str, &str); 4] = [
     ("k", "Black O-O"),
     ("q", "Black O-O-O"),
 ];
-
-/// The standard starting position, as the editor holds it.
-fn start_setup() -> Value {
-    json!({
-        "board": STANDARD_FEN.split(' ').next().unwrap_or_default(),
-        "turn": "white",
-        "castling": { "K": true, "Q": true, "k": true, "q": true },
-        "ep": "",
-    })
-}
-
-/// The position as a FEN, with only the castling rights the pieces allow.
-fn setup_fen(setup: &Value) -> String {
-    crate::game::setup_fen(setup).unwrap_or_default()
-}
 
 /// The FEN of `fen` (the editor's standard one) in `variant`: Crazyhouse adds the pockets and
 /// Three-check the checks left, as pasted (empty pockets, three checks each, otherwise).
@@ -152,7 +138,7 @@ pub(crate) enum Action {
 }
 
 pub struct EditorPage {
-    setup: Value,
+    setup: EditorSetup,
     /// The variant the position is played in.
     variant: Variant,
     variant_select: Entity<SelectState<Vec<SharedString>>>,
@@ -220,7 +206,7 @@ impl EditorPage {
         let subscriptions = vec![
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
                 if let BoardEvent::Edited(placement) = event {
-                    this.set_board(json!(placement), cx);
+                    this.set_board(placement.clone(), cx);
                 }
             }),
             cx.subscribe_in(&fen_input, window, |this, _, event: &InputEvent, _, cx| {
@@ -240,7 +226,7 @@ impl EditorPage {
                         .and_then(|index| this.ep_squares.get(index))
                         .cloned()
                         .unwrap_or_default();
-                    this.setup["ep"] = json!(ep);
+                    this.setup.ep = ep;
                     this.changed(cx);
                 },
             ),
@@ -270,7 +256,7 @@ impl EditorPage {
             cx.observe(&crate::voice::handle(cx), |_, _, cx| cx.notify()),
         ];
         let mut page = EditorPage {
-            setup: start_setup(),
+            setup: EditorSetup::start(),
             variant: Variant::Standard,
             variant_select,
             pockets: None,
@@ -308,7 +294,7 @@ impl EditorPage {
         cx: &mut Context<Self>,
     ) {
         if !self.read_fen(fen) {
-            self.setup = start_setup();
+            self.setup = EditorSetup::start();
         }
         self.variant = variant;
         self.orientation = orientation;
@@ -322,7 +308,8 @@ impl EditorPage {
             return false;
         };
         let (pockets, checks) = (parsed.pockets.take(), parsed.remaining_checks.take());
-        let Some(setup) = editor_setup(&kchess_domain::rules::make_setup_fen(&parsed)) else {
+        let Some(setup) = EditorSetup::from_fen(&kchess_domain::rules::make_setup_fen(&parsed))
+        else {
             return false;
         };
         self.setup = setup;
@@ -338,12 +325,7 @@ impl EditorPage {
 
     /// The position's FEN, in its variant.
     fn fen(&self) -> String {
-        variant_fen(
-            self.variant,
-            &setup_fen(&self.setup),
-            self.pockets,
-            self.checks,
-        )
+        variant_fen(self.variant, &self.setup.fen(), self.pockets, self.checks)
     }
 
     /// The position as a game starts from it.
@@ -370,22 +352,13 @@ impl EditorPage {
             .then(|| format!("Not a legal {} position", self.variant.label()))
     }
 
-    fn turn(&self) -> Color {
-        if self.setup["turn"] == json!("black") {
-            Color::Black
-        } else {
-            Color::White
-        }
-    }
-
     /// A piece placed, moved or removed. A castling right whose king or rook now stands
     /// elsewhere than the standard start is unticked: Chess960 castling is ticked on purpose, or
     /// comes with a pasted FEN.
     /// `square` holding `piece` (its colour and role), or emptied.
     fn put_piece(&mut self, square: &str, piece: Option<(&str, &str)>, cx: &mut Context<Self>) {
-        let board = self.setup["board"].as_str().unwrap_or_default();
-        match voice::with_piece(board, square, piece) {
-            Ok(board) => self.set_board(json!(board), cx),
+        match editor::with_piece(&self.setup.board, square, piece) {
+            Ok(board) => self.set_board(board, cx),
             Err(cause) => crate::log::write(
                 kchess_contracts::Level::Warn,
                 "editor",
@@ -394,16 +367,15 @@ impl EditorPage {
         }
     }
 
-    fn set_board(&mut self, board: Value, cx: &mut Context<Self>) {
-        let before = self.setup["board"].as_str().unwrap_or_default().to_string();
-        let after = board.as_str().unwrap_or_default();
+    fn set_board(&mut self, board: String, cx: &mut Context<Self>) {
         for key in ["K", "Q", "k", "q"] {
-            let (was, now) = (castling_pieces(&before, key), castling_pieces(after, key));
+            let was = castling_pieces(&self.setup.board, key);
+            let now = castling_pieces(&board, key);
             if was != now && now != standard_castling_pieces(key) {
-                self.setup["castling"][key] = json!(false);
+                self.setup.castling.set(key, false);
             }
         }
-        self.setup["board"] = board;
+        self.setup.board = board;
         self.changed(cx);
     }
 
@@ -465,7 +437,7 @@ impl EditorPage {
             None,
         );
         // An unfinished position is no legal one: the board draws the pieces as they stand.
-        state.fen = setup_fen(&self.setup);
+        state.fen = self.setup.fen();
         state.edit = Some(self.tool);
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
@@ -490,10 +462,7 @@ impl EditorPage {
         let fen = self.fen();
         self.fen_input
             .update(cx, |input, cx| input.set_value(fen, window, cx));
-        self.ep_squares = voice::en_passant_squares(
-            self.setup["board"].as_str().unwrap_or_default(),
-            self.setup["turn"].as_str().unwrap_or_default(),
-        );
+        self.ep_squares = editor::en_passant_squares(&self.setup.board, self.setup.turn);
         let items: Vec<SharedString> = std::iter::once(SharedString::from("None"))
             .chain(self.ep_squares.iter().map(|square| square.clone().into()))
             .collect();
@@ -504,11 +473,10 @@ impl EditorPage {
         self.variant_select.update(cx, |select, cx| {
             select.set_selected_index(Some(IndexPath::new(row)), window, cx)
         });
-        let chosen = self.setup["ep"].as_str().unwrap_or_default();
         let index = self
             .ep_squares
             .iter()
-            .position(|square| square == chosen)
+            .position(|square| *square == self.setup.ep)
             .map_or(0, |index| index + 1);
         self.ep_select.update(cx, |select, cx| {
             select.set_items(items, window, cx);
@@ -522,12 +490,8 @@ impl EditorPage {
     }
 
     fn set_turn(&mut self, turn: Color, cx: &mut Context<Self>) {
-        self.setup["turn"] = json!(if turn == Color::White {
-            "white"
-        } else {
-            "black"
-        });
-        self.setup["ep"] = json!("");
+        self.setup.turn = turn;
+        self.setup.ep.clear();
         self.changed(cx);
     }
 
@@ -573,7 +537,7 @@ impl EditorPage {
         let usual = (!self.variant.standard_rules()).then(|| self.variant.default_fen());
         let variant = self.variant;
         if !usual.is_some_and(|fen| self.read_fen(&fen)) {
-            self.setup = start_setup();
+            self.setup = EditorSetup::start();
             self.pockets = None;
             self.checks = None;
         }
@@ -582,8 +546,8 @@ impl EditorPage {
     }
 
     fn clear_board(&mut self, cx: &mut Context<Self>) {
-        self.setup["board"] = json!(EMPTY_BOARD);
-        self.setup["ep"] = json!("");
+        self.setup.board = EMPTY_BOARD.into();
+        self.setup.ep.clear();
         self.changed(cx);
     }
 
@@ -851,8 +815,8 @@ impl Render for EditorPage {
         )
         .to_string();
         let problem = self.problem();
-        let turn = self.turn();
-        let available = voice::castling_available(self.setup["board"].as_str().unwrap_or_default());
+        let turn = self.setup.turn;
+        let available = editor::castling_available(&self.setup.board);
         let board_size = self
             .layout
             .board_size_in(px(0.), SPARE_ROWS + VOICE_BAR, window);
@@ -900,13 +864,13 @@ impl Render for EditorPage {
                 .label(text)
                 .min_h(px(24.))
                 .items_center()
-                .checked(self.setup["castling"][key] == json!(true) && allowed)
+                .checked(self.setup.castling.has(key) && allowed)
                 .disabled(!allowed)
                 .when(!allowed, |checkbox| {
                     checkbox.tooltip("Needs the king on its back rank and a rook on that side")
                 })
                 .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                    this.setup["castling"][key] = json!(*checked);
+                    this.setup.castling.set(key, *checked);
                     this.changed(cx);
                 }))
                 .into_any_element()
@@ -1232,21 +1196,7 @@ pub fn edit_position(
 
 #[cfg(test)]
 mod tests {
-    use super::{castling_pieces, setup_fen, standard_castling_pieces, start_setup};
-    use serde_json::json;
-
-    #[test]
-    fn a_setup_reads_as_its_fen() {
-        assert_eq!(
-            setup_fen(&start_setup()),
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-        );
-        // Castling rights the pieces no longer allow are left out.
-        let mut setup = start_setup();
-        setup["board"] = json!("4k3/8/8/8/8/8/8/4K3");
-        setup["turn"] = json!("black");
-        assert_eq!(setup_fen(&setup), "4k3/8/8/8/8/8/8/4K3 b - - 0 1");
-    }
+    use super::{castling_pieces, standard_castling_pieces};
 
     /// What a castling right names: the king's file and the outermost rook's on that side.
     #[test]

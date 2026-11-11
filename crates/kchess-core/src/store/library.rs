@@ -4,7 +4,8 @@
 
 use kchess_contracts::types::{
     Drill, JoinedTournament, Keyed, MistakeGame, MistakesAdded, PlayedGame, RepertoireMisses,
-    RepertoireSchedule, SessionKind, StudyCommand, StudyCommandResult, TournamentSystem,
+    RepertoireSchedule, SessionDocument, SessionKind, StudyCommand, StudyCommandResult,
+    TournamentSystem,
 };
 use kchess_domain::color::Color;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -33,9 +34,12 @@ const GAMES_FULL: &str =
 
 /// The unfinished session of a page, or null: a page resuming its session reads that alone, as
 /// the library replays every played game.
-pub fn session(host: &dyn Host, db: &Connection, kind: SessionKind) -> Result<Option<Value>> {
-    let session = read_session(host, db, kind.as_str())?;
-    Ok(truthy(Some(&session)).then_some(session))
+pub fn session(
+    host: &dyn Host,
+    db: &Connection,
+    kind: SessionKind,
+) -> Result<Option<SessionDocument>> {
+    read_session(host, db, kind)
 }
 
 /// Runs a study command. `based_on` is the content the editor started from: a save over a study
@@ -309,7 +313,7 @@ fn line_review_key(fen: &str, moves: &[String]) -> Option<String> {
 
 /// Each review with positions in practice, most recently played first, with
 /// its game when that is known: a synced Lichess game through its review link, or a game played
-/// here whose line it reviews (your side there is the one named "You").
+/// here whose line it reviews (with the player's side of a computer game).
 pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Vec<MistakeGame>> {
     let mut keys: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -390,13 +394,7 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Vec<MistakeGame
             let (white, black) = (game.white.as_str(), game.black.as_str());
             entry.white = Some(white.to_string());
             entry.black = Some(black.to_string());
-            if (white == "You") != (black == "You") {
-                entry.player = Some(if white == "You" {
-                    Color::White
-                } else {
-                    Color::Black
-                });
-            }
+            entry.player = game.player_side();
             at = game.started_at;
         }
         entry.played_at = at;

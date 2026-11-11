@@ -5,7 +5,9 @@
 
 use kchess_contracts::calls::{self, CoreCall};
 use kchess_contracts::check::{ArchivedGame, LibraryId, Moves, SessionObject};
-use kchess_contracts::types::{EngineLevel, PlayedGame, SessionKind};
+use kchess_contracts::types::{
+    ComputerSession, EngineLevel, HistoryKind, PlayedGame, SessionDocument, SessionKind,
+};
 use std::time::{Duration, Instant};
 
 use kchess_domain::games::archive::Snapshot;
@@ -46,13 +48,6 @@ impl Session<'_> {
             now: self.now(),
             allowed: true,
             ready: true,
-        }
-    }
-
-    fn kind(&self) -> &'static str {
-        match self.game {
-            Game::Computer(_) => computer::SESSION,
-            Game::Local(_) => local::SESSION,
         }
     }
 
@@ -138,15 +133,10 @@ impl Session<'_> {
         }
     }
 
-    async fn save_session(&mut self, kind: &str, session: Value) {
-        let Some(kind) = SessionKind::from_key(kind) else {
-            eprintln!("[cli] Saving failed: no session is kept as {kind}");
-            self.failed = true;
-            return;
-        };
+    async fn save_session(&mut self, kind: SessionKind, session: SessionDocument) {
         self.save(calls::SaveSession {
             kind,
-            session: SessionObject(session),
+            session: SessionObject::of(&session),
         })
         .await;
     }
@@ -166,7 +156,10 @@ impl Session<'_> {
                     self.save(calls::RemoveArchivedGame { id: LibraryId(id) })
                         .await
                 }
-                Write::SaveSession { kind, identity } => self.save_session(&kind, identity).await,
+                Write::SaveSession { kind, identity } => {
+                    self.save_session(kind, SessionDocument::Archive(identity))
+                        .await
+                }
             }
         }
     }
@@ -190,11 +183,17 @@ impl Session<'_> {
 
     /// The session and its Game history entry, saved as the app saves them.
     async fn persist(&mut self) {
-        let snapshot = match &self.game {
-            Game::Computer(game) => json!(game.snapshot(self.host().now)),
-            Game::Local(game) => json!(game.snapshot(self.now())),
+        let (kind, session) = match &self.game {
+            Game::Computer(game) => (
+                SessionKind::Computer,
+                SessionDocument::Computer(game.session(self.host().now)),
+            ),
+            Game::Local(game) => (
+                SessionKind::Local,
+                SessionDocument::Local(game.session(self.now())),
+            ),
         };
-        self.save_session(self.kind(), snapshot).await;
+        self.save_session(kind, session).await;
         let Some((source, has_play)) = self.archive_host() else {
             return;
         };
@@ -517,19 +516,16 @@ pub fn local_variant(words: &[String]) -> Result<Option<Variant>, String> {
 /// A game against the computer, from its saved session and the level and variant asked for.
 async fn computer_game(
     core: &CoreClient,
-    saved: &Value,
+    saved: Option<ComputerSession>,
     level: Option<String>,
     variant: Option<Variant>,
 ) -> Result<Game, String> {
-    let mut saved = saved.clone();
+    let mut saved: Option<computer::Saved> = saved.map(computer::Saved::from);
     if let Some(level) = level {
-        if !kchess_contracts::types::ENGINE_LEVELS.contains(&level.as_str()) {
+        if EngineLevel::from_key(&level).is_none() {
             return Err(format!("Unknown level {level}."));
         }
-        if !saved.is_object() {
-            saved = json!({});
-        }
-        saved["level"] = json!(level);
+        saved.get_or_insert_default().level = Some(level);
     }
 
     // The core still refuses engine help during a live game on every search.
@@ -545,10 +541,7 @@ async fn computer_game(
         allowed: true,
         ready: true,
     };
-    Ok(Game::Computer(ComputerGame::resume(
-        Some(&saved).filter(|s| s.is_object()),
-        &host,
-    )?))
+    Ok(Game::Computer(ComputerGame::resume(saved, &host)?))
 }
 
 /// What a typed line asks of the game loop.
@@ -626,25 +619,22 @@ pub async fn interactive(
     fen: Option<String>,
 ) -> Result<(), String> {
     let library = core.request(calls::Library {}).await?;
-    let sessions = Value::Object(library.sessions);
+    let mut sessions = library.sessions;
     let started = Instant::now();
     let game = if computer {
-        computer_game(core, &sessions["computer"], level, variant).await?
+        computer_game(core, sessions.computer.take(), level, variant).await?
     } else {
         Game::Local(LocalGame::resume(
-            Some(&sessions["local"]).filter(|s| s.is_object()),
+            sessions.local.take().map(local::Saved::from),
             0.0,
         )?)
     };
     let kind = if computer {
-        computer::HISTORY
+        HistoryKind::Computer
     } else {
-        local::HISTORY
+        HistoryKind::Board
     };
-    let identity = Some(&sessions[history::session_kind(kind)])
-        .filter(|identity| identity.is_object())
-        .cloned()
-        .unwrap_or(Value::Null);
+    let identity = sessions.take_identity(kind);
     let games = library.games;
     let (history, writes) = HistoryPlace::new(kind, identity, true, None, false, &games);
     let mut session = Session {
@@ -655,10 +645,7 @@ pub async fn interactive(
         started,
         failed: false,
     };
-    match writes {
-        Ok(writes) => session.written(writes).await,
-        Err(cause) => eprintln!("[cli] Game history: {cause}"),
-    }
+    session.written(writes).await;
     if let Some(color) = color.filter(|_| computer) {
         session.choose_color(&color).await?;
     }

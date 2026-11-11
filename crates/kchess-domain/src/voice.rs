@@ -1,20 +1,20 @@
-//! Spoken commands and moves, the board editor's string logic, coordinates, knight paths and
-//! material.
+//! Spoken commands and moves, coordinates, knight paths and material.
 //!
 //! JavaScript semantics are mirrored deliberately: `toLowerCase`, `\s` splitting, `trim`,
 //! `Number(…)` coercion and `String(…)` formatting (see `crate::js`). No regex crate: each
 //! pattern below is the hand-written equivalent of the regex it names.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Color, Position};
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
+use crate::editor::{file_offset, unit_number};
 use crate::js;
 use crate::position::{self, LegalMove};
 
-const FILES: [char; 8] = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+pub(crate) const FILES: [char; 8] = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const RANK_WORDS: [&str; 8] = [
     "one", "two", "three", "four", "five", "six", "seven", "eight",
 ];
@@ -638,253 +638,6 @@ pub fn spoken_move(text: &str, pos: &VariantPosition) -> SpokenMove {
             .map(|(uci, san)| MoveChoice { uci, san })
             .collect(),
     }
-}
-
-/* ── Board editor ── */
-
-/// A JavaScript array index: an integer within `0..len` (anything else reads as undefined).
-fn at_index(index: f64, len: usize) -> Option<usize> {
-    (index.fract() == 0.0 && index >= 0.0 && (index as usize) < len).then_some(index as usize)
-}
-
-/// `Number(unit)` for one UTF-16 code unit of a square name (NaN when absent).
-fn unit_number(unit: Option<&u16>) -> f64 {
-    match unit {
-        None => f64::NAN,
-        Some(unit) => js::string_to_number(&String::from_utf16_lossy(&[*unit])),
-    }
-}
-
-/// A square name's first UTF-16 unit minus `a`'s (so `a` is 0); None when empty.
-fn file_offset(square: &str) -> Option<i64> {
-    square
-        .encode_utf16()
-        .next()
-        .map(|unit| i64::from(unit) - 97)
-}
-
-/// The piece letter on a square of a FEN board field (`e1` → `K`), or None.
-fn piece_on(board: &str, square: &str) -> Option<char> {
-    let units: Vec<u16> = square.encode_utf16().collect();
-    let file = file_offset(square);
-    let rows: Vec<&str> = board.split('/').collect();
-    let row = rows[at_index(8.0 - unit_number(units.get(1)), rows.len())?];
-    let mut index: i64 = 0;
-    for c in row.chars() {
-        if c.is_ascii_digit() {
-            index += i64::from(c as u8 - b'0');
-        } else {
-            let hit = file == Some(index);
-            index += 1;
-            if hit {
-                return Some(c);
-            }
-        }
-        if file.is_some_and(|f| index > f) {
-            return None;
-        }
-    }
-    None
-}
-
-fn letter_for(role: &str) -> Option<char> {
-    Some(match role {
-        "king" => 'k',
-        "queen" => 'q',
-        "rook" => 'r',
-        "bishop" => 'b',
-        "knight" => 'n',
-        "pawn" => 'p',
-        _ => return None,
-    })
-}
-
-/// Each digit of a board row stands for that many empty squares.
-fn expand_digits(row: &str) -> String {
-    let mut out = String::new();
-    for c in row.chars() {
-        if c.is_ascii_digit() {
-            out.extend(std::iter::repeat_n('.', usize::from(c as u8 - b'0')));
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-/// Runs of empty squares back to digits.
-fn compress_row(row: &str) -> String {
-    let mut out = String::new();
-    let mut run = 0usize;
-    for c in row.chars() {
-        if c == '.' {
-            run += 1;
-            continue;
-        }
-        if run > 0 {
-            out.push_str(&run.to_string());
-            run = 0;
-        }
-        out.push(c);
-    }
-    if run > 0 {
-        out.push_str(&run.to_string());
-    }
-    out
-}
-
-/// The board field with `square` holding `piece` (its colour and role), or emptied when `piece`
-/// is None.
-pub fn with_piece(
-    board: &str,
-    square: &str,
-    piece: Option<(&str, &str)>,
-) -> Result<String, String> {
-    let mut rows: Vec<String> = board.split('/').map(expand_digits).collect();
-    let units: Vec<u16> = square.encode_utf16().collect();
-    let rank =
-        at_index(8.0 - unit_number(units.get(1)), rows.len()).ok_or("the board has no such row")?;
-    let letter = match piece {
-        None => '.',
-        Some((color, role)) => {
-            let letter = letter_for(role).ok_or("unknown piece role")?;
-            if color == "white" {
-                letter.to_ascii_uppercase()
-            } else {
-                letter
-            }
-        }
-    };
-    let mut cells: Vec<Option<char>> = rows[rank].chars().map(Some).collect();
-    // A file past the board's end leaves holes, which `join` writes as nothing.
-    if let Some(file) = file_offset(square).filter(|file| *file >= 0) {
-        let file = file as usize;
-        if file >= cells.len() {
-            cells.resize(file + 1, None);
-        }
-        cells[file] = Some(letter);
-    }
-    rows[rank] = cells.iter().flatten().collect();
-    Ok(rows
-        .iter()
-        .map(|row| compress_row(row))
-        .collect::<Vec<_>>()
-        .join("/"))
-}
-
-/// Castling rights, written as X-FEN's `KQkq`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CastlingRights {
-    #[serde(rename = "K", default)]
-    pub white_short: bool,
-    #[serde(rename = "Q", default)]
-    pub white_long: bool,
-    #[serde(rename = "k", default)]
-    pub black_short: bool,
-    #[serde(rename = "q", default)]
-    pub black_long: bool,
-}
-
-impl CastlingRights {
-    /// The right a FEN letter names: `K`, `Q`, `k` or `q`.
-    pub fn has(self, letter: &str) -> bool {
-        match letter {
-            "K" => self.white_short,
-            "Q" => self.white_long,
-            "k" => self.black_short,
-            "q" => self.black_long,
-            _ => false,
-        }
-    }
-
-    /// In `KQkq` order.
-    fn flags(self) -> [bool; 4] {
-        [
-            self.white_short,
-            self.white_long,
-            self.black_short,
-            self.black_long,
-        ]
-    }
-}
-
-/// Which castling rights the pieces allow, by the Chess960 rule that includes the standard one:
-/// the king on its back rank (b to g), and a rook on that rank on the side castled to. The FEN
-/// writes them as X-FEN's `KQkq`, which name the outermost rook on each side.
-pub fn castling_available(board: &str) -> CastlingRights {
-    let side = |rank: char, king: char, rook: char| {
-        let at = |file: usize, piece: char| {
-            piece_on(board, &format!("{}{rank}", FILES[file])) == Some(piece)
-        };
-        let Some(king_file) = (1..7).find(|file| at(*file, king)) else {
-            return [false, false];
-        };
-        [
-            (king_file + 1..8).any(|file| at(file, rook)),
-            (0..king_file).any(|file| at(file, rook)),
-        ]
-    };
-    let [white_short, white_long] = side('1', 'K', 'R');
-    let [black_short, black_long] = side('8', 'k', 'r');
-    CastlingRights {
-        white_short,
-        white_long,
-        black_short,
-        black_long,
-    }
-}
-
-/// Squares a pawn could just have skipped with a double step, so the side to move might capture
-/// en passant there.
-pub fn en_passant_squares(board: &str, turn: &str) -> Vec<String> {
-    let (pawn, rank, passed, start) = if turn == "white" {
-        ('p', '5', '6', '7')
-    } else {
-        ('P', '4', '3', '2')
-    };
-    FILES
-        .iter()
-        .filter(|file| {
-            piece_on(board, &format!("{file}{rank}")) == Some(pawn)
-                && piece_on(board, &format!("{file}{passed}")).is_none()
-                && piece_on(board, &format!("{file}{start}")).is_none()
-        })
-        .map(|file| format!("{file}{passed}"))
-        .collect()
-}
-
-/// The board editor's position: the board field, the side to move, the castling rights ticked
-/// and the en passant square chosen (empty for none).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EditorSetup {
-    pub board: String,
-    pub turn: String,
-    #[serde(default)]
-    pub castling: CastlingRights,
-    #[serde(default)]
-    pub ep: String,
-}
-
-/// The FEN of an editor setup: castling rights and en passant only where the pieces allow them.
-pub fn setup_fen(setup: &EditorSetup) -> String {
-    let (board, turn, ep) = (setup.board.as_str(), setup.turn.as_str(), setup.ep.as_str());
-    let rights: String = ["K", "Q", "k", "q"]
-        .iter()
-        .zip(castling_available(board).flags())
-        .zip(setup.castling.flags())
-        .filter(|((_, allowed), ticked)| *allowed && *ticked)
-        .map(|((right, _), _)| *right)
-        .collect();
-    let placement = if turn == "white" { "w" } else { "b" };
-    let ep = if en_passant_squares(board, turn).iter().any(|s| s == ep) {
-        ep
-    } else {
-        "-"
-    };
-    format!(
-        "{board} {placement} {} {ep} 0 1",
-        if rights.is_empty() { "-" } else { &rights }
-    )
 }
 
 /* ── Coordinates ── */

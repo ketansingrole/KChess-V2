@@ -38,6 +38,27 @@ crate::wire_enum!(
     }
 );
 crate::union!(
+    /// Where Game history keeps a game played in KChess: against the computer, two people at one
+    /// board, or the chess clock.
+    HistoryKind {
+        Computer = "computer",
+        Board = "board",
+        Clock = "clock",
+    }
+);
+
+impl HistoryKind {
+    /// The session a place of this kind keeps its game's identity as.
+    pub const fn session(self) -> SessionKind {
+        match self {
+            HistoryKind::Computer => SessionKind::ArchiveComputer,
+            HistoryKind::Board => SessionKind::ArchiveBoard,
+            HistoryKind::Clock => SessionKind::ArchiveClock,
+        }
+    }
+}
+
+crate::union!(
     /// What a desktop notification is about; each kind (except `test`) has its own switch in
     /// Settings.
     NotificationKind {
