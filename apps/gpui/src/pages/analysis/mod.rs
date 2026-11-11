@@ -1003,16 +1003,10 @@ impl AnalysisPage {
         let library = cx.global::<StudyHandle>().0.clone();
         let saved_study = session["study"].as_str().unwrap_or_default();
         let linked = library.read(cx).study(saved_study).cloned();
-        let chapter_of = |study: &Value, id: &str| {
-            study["chapters"]
-                .as_array()
-                .and_then(|chapters| chapters.iter().find(|chapter| chapter["id"] == json!(id)))
-                .cloned()
-        };
         let linked_pgn = linked.as_ref().map(|study| {
-            chapter_of(study, session["chapter"].as_str().unwrap_or_default())
-                .and_then(|chapter| chapter["pgn"].as_str().map(str::to_string))
-                .unwrap_or_else(|| study["pgn"].as_str().unwrap_or_default().to_string())
+            study
+                .chapter(session["chapter"].as_str().unwrap_or_default())
+                .map_or_else(|| study.pgn.clone(), |chapter| chapter.pgn.clone())
         });
         let conflict = session["pgn"].is_string()
             && linked_pgn
@@ -1031,7 +1025,7 @@ impl AnalysisPage {
             .or_else(|| {
                 linked
                     .as_ref()
-                    .and_then(|study| study["chapters"][0]["id"].as_str().map(str::to_string))
+                    .and_then(|study| Some(study.chapters.first()?.id.clone()))
             })
             .unwrap_or_default();
         self.study_pgn = if self.study.is_empty() {

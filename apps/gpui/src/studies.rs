@@ -10,9 +10,9 @@ use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
 use kchess_contracts::check::PgnText;
-use kchess_contracts::types::{Library, ProfileArea, StudyCommand, StudyCommandResult};
+use kchess_contracts::types::{Library, ProfileArea, Study, StudyCommand, StudyCommandResult};
 use kchess_contracts::{CoreError, ErrorKind, Level};
-use serde_json::{Map, Value, json};
+use serde_json::json;
 
 use crate::core::{Answer, AppCore, Reads};
 use crate::quit::BoxedSave;
@@ -51,7 +51,7 @@ pub fn is_stale(cause: &CoreError) -> bool {
 }
 
 pub struct StudyLibrary {
-    items: Vec<Value>,
+    items: Vec<Study>,
     /// Why the last command failed, until one succeeds; or why the stored studies could not be read.
     pub error: Option<String>,
     writes: mpsc::UnboundedSender<Write>,
@@ -90,11 +90,6 @@ pub fn init(library: &Library, cx: &mut App) {
     cx.set_global(StudyHandle(entity));
 }
 
-/// A stored study's id.
-pub fn study_id(study: &Value) -> String {
-    study["id"].as_str().unwrap_or_default().to_string()
-}
-
 /// The chapter a content save writes to an existing study.
 fn saved_chapter(command: &StudyCommand) -> Option<(String, String)> {
     let StudyCommand::Save {
@@ -127,11 +122,8 @@ fn written_chapter(
         .as_deref()
         .filter(|chapter| !chapter.is_empty())
         .or_else(|| {
-            result
-                .studies
-                .iter()
-                .find(|study| study["id"] == json!(id))?["chapters"][0]["id"]
-                .as_str()
+            let study = result.studies.iter().find(|study| study.id == id)?;
+            Some(study.chapters.first()?.id.as_str())
         })?;
     Some(((id.to_string(), chapter.to_string()), pgn.clone()))
 }
@@ -251,55 +243,45 @@ fn write_in_order(
 }
 
 /// A study's chapters as select items: their ids, and their names numbered as the study orders them.
-pub fn chapter_items(study: &Value) -> Vec<(String, String)> {
-    study["chapters"]
-        .as_array()
-        .into_iter()
-        .flatten()
+pub fn chapter_items(study: &Study) -> Vec<(String, String)> {
+    study
+        .chapters
+        .iter()
         .enumerate()
         .map(|(index, chapter)| {
             (
-                chapter["id"].as_str().unwrap_or_default().to_string(),
-                format!(
-                    "{}. {}",
-                    index + 1,
-                    chapter["name"].as_str().unwrap_or_default()
-                ),
+                chapter.id.clone(),
+                format!("{}. {}", index + 1, chapter.name),
             )
         })
         .collect()
 }
 
 /// The whole study as one PGN, a game per chapter.
-pub fn document_pgn(study: &Value) -> String {
-    let chapters: Option<Vec<(&str, &str)>> = study["chapters"].as_array().and_then(|chapters| {
-        chapters
-            .iter()
-            .map(|chapter| Some((chapter["name"].as_str()?, chapter["pgn"].as_str()?)))
-            .collect()
-    });
-    chapters
-        .and_then(|chapters| kchess_domain::pgn::study_document_pgn(&chapters))
-        .unwrap_or_default()
+pub fn document_pgn(study: &Study) -> String {
+    let chapters: Vec<(&str, &str)> = study
+        .chapters
+        .iter()
+        .map(|chapter| (chapter.name.as_str(), chapter.pgn.as_str()))
+        .collect();
+    kchess_domain::pgn::study_document_pgn(&chapters).unwrap_or_default()
 }
 
 impl StudyLibrary {
-    pub fn items(&self) -> &[Value] {
+    pub fn items(&self) -> &[Study] {
         &self.items
     }
 
-    pub fn study(&self, id: &str) -> Option<&Value> {
-        self.items.iter().find(|study| study["id"] == json!(id))
+    pub fn study(&self, id: &str) -> Option<&Study> {
+        self.items.iter().find(|study| study.id == id)
     }
 
     /// The board shows this chapter as the library has it: its saves are based on that.
     pub fn track(&self, study: &str, chapter: &str) {
         let pgn = self
             .study(study)
-            .and_then(|study| study["chapters"].as_array())
-            .and_then(|chapters| chapters.iter().find(|c| c["id"] == json!(chapter)))
-            .and_then(|chapter| chapter["pgn"].as_str())
-            .map(str::to_string);
+            .and_then(|study| study.chapter(chapter))
+            .map(|chapter| chapter.pgn.clone());
         let key = (study.to_string(), chapter.to_string());
         let _ = self.writes.unbounded_send(Write::Track { key, pgn });
     }
@@ -314,7 +296,7 @@ impl StudyLibrary {
                     format!("{base} {n}")
                 }
             })
-            .find(|name| !self.items.iter().any(|study| study["name"] == json!(name)))
+            .find(|name| !self.items.iter().any(|study| study.name == *name))
             .unwrap_or_else(|| base.to_string())
     }
 
@@ -362,11 +344,9 @@ impl StudyLibrary {
             self.items = studies;
             return;
         };
-        let mut by_id: Map<String, Value> = Map::new();
+        let mut by_id: HashMap<String, Study> = HashMap::new();
         for study in self.items.drain(..).chain(studies) {
-            if let Some(id) = study["id"].as_str() {
-                by_id.insert(id.to_string(), study);
-            }
+            by_id.insert(study.id.clone(), study);
         }
         self.items = order.iter().filter_map(|id| by_id.remove(id)).collect();
     }
@@ -405,11 +385,34 @@ mod tests {
         Bases, StudyLibrary, Write, chapter_items, forget_removed, saved_chapter, written_chapter,
     };
     use futures::channel::mpsc;
-    use kchess_contracts::types::{StudyCommand, StudyCommandResult};
-    use serde_json::json;
+    use kchess_contracts::types::{Study, StudyChapter, StudyCommand, StudyCommandResult};
 
-    fn answer(value: serde_json::Value) -> StudyCommandResult {
-        serde_json::from_value(value).expect("a study command answer")
+    /// A study of these chapters (id, name, PGN).
+    fn study(id: &str, name: &str, chapters: &[(&str, &str, &str)]) -> Study {
+        let chapters: Vec<StudyChapter> = chapters
+            .iter()
+            .map(|(id, name, pgn)| StudyChapter {
+                id: id.to_string(),
+                name: name.to_string(),
+                pgn: pgn.to_string(),
+            })
+            .collect();
+        Study {
+            id: id.into(),
+            name: name.into(),
+            pgn: chapters.first().map(|c| c.pgn.clone()).unwrap_or_default(),
+            chapters,
+            updated_at: 0.into(),
+            cloud: None,
+        }
+    }
+
+    fn answer(studies: Vec<Study>, order: Option<&[&str]>) -> StudyCommandResult {
+        StudyCommandResult {
+            studies,
+            order: order.map(|order| order.iter().map(|id| id.to_string()).collect()),
+            ..Default::default()
+        }
     }
 
     fn chapter_save(id: Option<&str>, chapter: Option<&str>, pgn: &str) -> StudyCommand {
@@ -425,38 +428,34 @@ mod tests {
     fn answers_show_the_changed_studies_in_the_library_order() {
         let (writes, _queue) = mpsc::unbounded();
         let mut library = StudyLibrary {
-            items: vec![
-                json!({ "id": "a", "name": "A" }),
-                json!({ "id": "b", "name": "B" }),
-            ],
+            items: vec![study("a", "A", &[]), study("b", "B", &[])],
             error: None,
             writes,
             reads: Default::default(),
         };
         // An incremental answer: the changed study, and every id in order.
-        library.apply(&answer(json!({
-            "studies": [{ "id": "c", "name": "C" }, { "id": "a", "name": "A2" }],
-            "order": ["c", "a", "b"],
-        })));
+        library.apply(&answer(
+            vec![study("c", "C", &[]), study("a", "A2", &[])],
+            Some(&["c", "a", "b"]),
+        ));
         let names: Vec<_> = library
             .items
             .iter()
-            .map(|study| study["name"].clone())
+            .map(|study| study.name.as_str())
             .collect();
-        assert_eq!(names, [json!("C"), json!("A2"), json!("B")]);
+        assert_eq!(names, ["C", "A2", "B"]);
         // A removal leaves the id out of the order.
-        library.apply(&answer(json!({ "studies": [], "order": ["a"] })));
+        library.apply(&answer(vec![], Some(&["a"])));
         assert_eq!(library.items.len(), 1);
         // A whole answer replaces the list.
-        library.apply(&answer(json!({ "studies": [{ "id": "z" }] })));
-        assert_eq!(library.items, [json!({ "id": "z" })]);
+        library.apply(&answer(vec![study("z", "Z2", &[])], None));
+        assert_eq!(library.items, [study("z", "Z2", &[])]);
         assert_eq!(library.fresh_name("Z"), "Z");
     }
 
     #[test]
     fn chapters_are_numbered_in_order() {
-        let study =
-            json!({ "chapters": [{ "id": "a", "name": "Main" }, { "id": "b", "name": "Side" }] });
+        let study = study("s", "S", &[("a", "Main", "*"), ("b", "Side", "*")]);
         assert_eq!(
             chapter_items(&study),
             [
@@ -473,7 +472,7 @@ mod tests {
     fn a_reopened_chapter_takes_its_base_after_the_saves_queued_before() {
         let (writes, mut queue) = mpsc::unbounded();
         let library = StudyLibrary {
-            items: vec![json!({ "id": "a", "chapters": [{ "id": "c", "pgn": "1. d4 *" }] })],
+            items: vec![study("a", "A", &[("c", "C", "1. d4 *")])],
             error: None,
             writes,
             reads: Default::default(),
@@ -514,7 +513,13 @@ mod tests {
         let key = ("a".to_string(), "c".to_string());
         assert_eq!(saved_chapter(&save), Some(key.clone()));
         assert_eq!(
-            written_chapter(&save, &answer(json!({ "id": "a", "studies": [] }))),
+            written_chapter(
+                &save,
+                &StudyCommandResult {
+                    id: Some("a".into()),
+                    ..Default::default()
+                }
+            ),
             Some((key, "1. e4 *".to_string()))
         );
         let rename = StudyCommand::Rename {
@@ -525,8 +530,11 @@ mod tests {
         // A new study: its first chapter, once the core made it.
         let new = chapter_save(None, None, "1. d4 *");
         assert_eq!(saved_chapter(&new), None);
-        let made =
-            answer(json!({ "id": "n", "studies": [{ "id": "n", "chapters": [{ "id": "n1" }] }] }));
+        let made = StudyCommandResult {
+            id: Some("n".into()),
+            studies: vec![study("n", "N", &[("n1", "N", "1. d4 *")])],
+            ..Default::default()
+        };
         assert_eq!(
             written_chapter(&new, &made),
             Some((("n".to_string(), "n1".to_string()), "1. d4 *".to_string()))

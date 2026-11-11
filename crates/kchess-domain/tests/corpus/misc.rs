@@ -149,7 +149,10 @@ fn answer(method: &str, values: Vec<J>) -> Out {
             arg(0).str().is_some_and(|k| SESSION_KINDS.contains(&k)),
         )),
         "decodeJoinedTournaments" => Ok(documents::decode_joined_tournaments(arg(0)).into_value()),
-        "decodeRepertoireMisses" => Ok(documents::decode_repertoire_misses(arg(0)).into_value()),
+        "decodeRepertoireMisses" => {
+            serde_json::to_value(documents::decode_repertoire_misses(arg(0)))
+                .map_err(|e| e.to_string())
+        }
         "assertSession" => documents::assert_session(values).map(J::into_value),
         "assertWatchTarget" => {
             let mut values = values.into_iter();

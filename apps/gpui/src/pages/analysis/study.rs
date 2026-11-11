@@ -14,10 +14,7 @@ impl AnalysisPage {
             return None;
         }
         let library = cx.global::<StudyHandle>().0.clone();
-        let name = library.read(cx).study(&self.study)?["name"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
+        let name = library.read(cx).study(&self.study)?.name.clone();
         let text = self.root.pgn_text();
         if text == self.study_pgn {
             return None;
@@ -102,26 +99,21 @@ impl AnalysisPage {
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
         let library = cx.global::<StudyHandle>().0.clone();
-        let found = library.read(cx).study(id).cloned();
-        let chapters = found
-            .as_ref()
-            .and_then(|study| study["chapters"].as_array().cloned())
-            .unwrap_or_default();
-        let opened = chapters
-            .iter()
-            .find(|entry| Some(entry["id"].as_str().unwrap_or_default()) == chapter)
-            .or_else(|| chapters.first())
-            .cloned();
+        let opened = library.read(cx).study(id).and_then(|study| {
+            chapter
+                .and_then(|chapter| study.chapter(chapter))
+                .or_else(|| study.chapters.first())
+                .cloned()
+        });
         let tree = opened
             .as_ref()
-            .and_then(|chapter| chapter["pgn"].as_str())
-            .and_then(TreeNode::from_pgn);
+            .and_then(|chapter| TreeNode::from_pgn(&chapter.pgn));
         let (Some(opened), Some(tree)) = (opened, tree) else {
             return Err("This study could not be opened".into());
         };
         self.take_board(tree, cx);
         self.study = id.to_string();
-        self.chapter = opened["id"].as_str().unwrap_or_default().to_string();
+        self.chapter = opened.id;
         library.read(cx).track(&self.study, &self.chapter);
         self.study_pgn = self.root.pgn_text();
         self.study_error = None;
@@ -162,7 +154,7 @@ impl AnalysisPage {
                 let chapter = library
                     .read(cx)
                     .study(&id)
-                    .and_then(|study| study["chapters"][0]["id"].as_str().map(str::to_string));
+                    .and_then(|study| Some(study.chapters.first()?.id.clone()));
                 let Some(chapter) = chapter else {
                     return Err("The saved study has no chapter".to_string());
                 };

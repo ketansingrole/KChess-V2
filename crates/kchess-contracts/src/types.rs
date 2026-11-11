@@ -2137,10 +2137,12 @@ pub struct PopularityMonth {
 
 /* ── Online play, watching and tournaments, as the core answers them ────── */
 
-pub use kchess_domain::library::{Drill, PlayedGame};
+pub use kchess_domain::keyed::Keyed;
+pub use kchess_domain::library::{Drill, PlayedGame, Study, StudyChapter, StudyCloud};
 pub use kchess_domain::records::challenge::{
     ChallengeDirection, ChallengeInfo, PlayerRef, TimeControl as ChallengeTimeControl,
 };
+pub use kchess_domain::training::repetition::{RepertoireMisses, RepertoireSchedule};
 
 /// What to play online and how: a public seek, or a challenge to `target`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -2618,105 +2620,10 @@ pub mod js_number {
     }
 }
 
-/// A JSON object read and written in its keys' order, every value a `V` (values by game id,
-/// by kind…); a key read twice keeps its first place and its last value, as in JavaScript.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Keyed<V>(pub Vec<(String, V)>);
-
-impl<V> Default for Keyed<V> {
-    fn default() -> Self {
-        Keyed(Vec::new())
-    }
-}
-
-impl<V> Keyed<V> {
-    pub fn get(&self, key: &str) -> Option<&V> {
-        self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v)
-    }
-
-    /// Sets `key` to `value`: in its place when it is there, else last.
-    pub fn insert(&mut self, key: String, value: V) {
-        match self.0.iter_mut().find(|(k, _)| *k == key) {
-            Some((_, known)) => *known = value,
-            None => self.0.push((key, value)),
-        }
-    }
-
-    /// The value of `key`, added last with `V::default()` when it is missing.
-    pub fn entry(&mut self, key: &str) -> &mut V
-    where
-        V: Default,
-    {
-        let at = match self.0.iter().position(|(k, _)| k == key) {
-            Some(at) => at,
-            None => {
-                self.0.push((key.to_string(), V::default()));
-                self.0.len() - 1
-            }
-        };
-        &mut self.0[at].1
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &V)> {
-        self.0.iter().map(|(k, v)| (k.as_str(), v))
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-}
-
-impl<V: Serialize> Serialize for Keyed<V> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let mut map = serializer.serialize_map(Some(self.0.len()))?;
-        for (key, value) in &self.0 {
-            map.serialize_entry(key, value)?;
-        }
-        map.end()
-    }
-}
-
-impl<'de, V: Deserialize<'de>> Deserialize<'de> for Keyed<V> {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct Entries<V>(std::marker::PhantomData<V>);
-        impl<'de, V: Deserialize<'de>> serde::de::Visitor<'de> for Entries<V> {
-            type Value = Keyed<V>;
-            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str("an object")
-            }
-            fn visit_map<A: serde::de::MapAccess<'de>>(
-                self,
-                mut map: A,
-            ) -> Result<Keyed<V>, A::Error> {
-                let mut keyed = Keyed(Vec::with_capacity(map.size_hint().unwrap_or(0)));
-                while let Some((key, value)) = map.next_entry()? {
-                    keyed.insert(key, value);
-                }
-                Ok(keyed)
-            }
-        }
-        deserializer.deserialize_map(Entries(std::marker::PhantomData))
-    }
-}
-
 /// A study chapter, as Lichess sends it or to save: its name and PGN.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(expecting = "an object")]
 pub struct ChapterInput {
-    pub name: String,
-    pub pgn: String,
-}
-
-/// A study's chapter as stored: its id, name and PGN.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(expecting = "an object")]
-pub struct ChapterEntry {
-    pub id: String,
     pub name: String,
     pub pgn: String,
 }
@@ -2775,7 +2682,7 @@ pub enum StudyCommand {
     /// Undo of a removed chapter: it goes back at its place.
     RestoreChapter {
         id: String,
-        chapter: ChapterEntry,
+        chapter: StudyChapter,
         index: u32,
     },
     /// The study is a copy of a Lichess study, as downloaded (`baseline`).
@@ -2852,8 +2759,8 @@ pub struct StudyCommandResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conflict: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub removed: Option<Value>,
-    pub studies: Vec<Value>,
+    pub removed: Option<Study>,
+    pub studies: Vec<Study>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order: Option<Vec<String>>,
 }
@@ -2864,13 +2771,13 @@ pub struct StudyCommandResult {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Library {
-    pub studies: Vec<Value>,
+    pub studies: Vec<Study>,
     pub games: Vec<PlayedGame>,
     pub mistakes: Vec<Drill>,
     pub sessions: serde_json::Map<String, Value>,
     pub joined_tournaments: Vec<JoinedTournament>,
-    pub repertoire_misses: Value,
-    pub repertoire_schedule: Value,
+    pub repertoire_misses: RepertoireMisses,
+    pub repertoire_schedule: RepertoireSchedule,
     /// Why the studies could not be read (they are kept, and shown as none).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub study_error: Option<String>,

@@ -6,10 +6,10 @@ use serde_json::Value;
 
 use super::json_codec::js_json;
 use super::sql::Sql as _;
-use super::studies::id_of;
 use crate::host::{Host, Level};
 use crate::time::now_ms;
 use kchess_contracts::error::{CoreError, Result};
+use kchess_contracts::types::Study;
 use kchess_domain::js::utf16_len;
 use kchess_domain::misc::MAX_DOCUMENT;
 
@@ -109,7 +109,7 @@ pub(crate) fn assert_replaceable(
 pub(crate) const DAMAGED_STUDIES: &str = "The saved study library is damaged. Its data has been preserved; restore a backup before editing studies.";
 
 /// Stored documents must not silently discard invalid or excess studies on the next mutation.
-pub(crate) fn stored_studies(text: &str) -> Result<Vec<Value>> {
+pub(crate) fn stored_studies(text: &str) -> Result<Vec<Study>> {
     if utf16_len(text) > MAX_DOCUMENT {
         return Err(CoreError::new(DAMAGED_STUDIES));
     }
@@ -121,7 +121,9 @@ pub(crate) fn stored_studies(text: &str) -> Result<Vec<Value>> {
         .and_then(Value::as_array)
         .ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
     let mut ids = std::collections::HashSet::new();
-    if decoded.len() != raw_items.len() || decoded.iter().any(|study| !ids.insert(id_of(study))) {
+    if decoded.len() != raw_items.len()
+        || decoded.iter().any(|study| !ids.insert(study.id.as_str()))
+    {
         return Err(CoreError::new(DAMAGED_STUDIES));
     }
     Ok(decoded)

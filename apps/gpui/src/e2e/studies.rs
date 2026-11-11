@@ -243,7 +243,7 @@ fn an_edited_study_is_summarized_again(cx: &mut gpui_kit::TestAppContext) {
                 .read(cx)
                 .items()
                 .iter()
-                .filter_map(|study| study["pgn"].as_str().map(str::to_string))
+                .map(|study| study.pgn.clone())
                 .collect();
             (page.read(cx).kept_summaries(), pgns)
         })
@@ -254,10 +254,9 @@ fn an_edited_study_is_summarized_again(cx: &mut gpui_kit::TestAppContext) {
         cx.global::<crate::studies::StudyHandle>()
             .0
             .read(cx)
-            .items()[0]["id"]
-            .as_str()
-            .expect("id")
-            .to_string()
+            .items()[0]
+            .id
+            .clone()
     });
     let saved = std::rc::Rc::new(std::cell::Cell::new(false));
     app.cx.update(|cx| {
@@ -575,7 +574,7 @@ fn refused_save_then_another_chapter(cx: &mut gpui_kit::TestAppContext, autosavi
             .0
             .read(cx)
             .study(&study)
-            .and_then(|found| found["chapters"][1]["id"].as_str().map(str::to_string))
+            .and_then(|found| Some(found.chapters.get(1)?.id.clone()))
             .expect("the second chapter");
         assert!(page.update(cx, |page, cx| page.play_for_test("g1f3", cx)));
         if autosaving {

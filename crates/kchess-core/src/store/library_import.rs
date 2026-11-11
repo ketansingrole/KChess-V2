@@ -1,7 +1,10 @@
 //! The library snapshot (`library`), its readers, and the studies-table migration.
 //! Named `library_import` because `store::import` already owns the JSON-backup/legacy-database profile migration.
 
-use kchess_contracts::types::{Drill, JoinedTournament, Library, PlayedGame, SessionKind};
+use kchess_contracts::types::{
+    Drill, JoinedTournament, Library, PlayedGame, RepertoireMisses, RepertoireSchedule,
+    SessionKind, Study,
+};
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
@@ -10,10 +13,9 @@ use super::documents::{
     DAMAGED_STUDIES, decode_archived_game_text, decode_mistakes_text, parse_text, read_document,
     read_document_text, stored_studies, write_document,
 };
-use super::json_codec::js_json;
 use super::library::{JOINED, MISSES, MISTAKES, SCHEDULE, STUDIES};
 use super::sql::{Sql as _, transaction};
-use super::studies::id_of;
+use super::studies::{Stored, study_text};
 use crate::host::{Host, Level};
 use kchess_contracts::error::{CoreError, Result};
 use kchess_domain::js::{truthy, utf16_len};
@@ -47,11 +49,11 @@ pub(crate) fn migrate_studies(db: &Connection) -> Result<()> {
             return Err(CoreError::new(DAMAGED_STUDIES));
         }
         for (position, study) in items.iter().enumerate() {
-            let body = js_json(study);
+            let body = study_text(study);
             let units = utf16_len(&body) as i64;
             db.execute(
                 "INSERT INTO studies (id, body, position, textUnits) VALUES (?1, ?2, ?3, ?4)",
-                params![id_of(study), body, position as i64, units],
+                params![study.id, body, position as i64, units],
             )
             .sql()?;
         }
@@ -65,9 +67,12 @@ pub(crate) fn migrate_studies(db: &Connection) -> Result<()> {
     }
 }
 
-pub(crate) fn read_studies(db: &Connection) -> Result<Vec<Value>> {
+pub(crate) fn read_studies(db: &Connection) -> Result<Vec<Study>> {
     migrate_studies(db)?;
-    read_study_rows(db, StudyBodies::All)
+    Ok(read_study_rows(db, StudyBodies::All)?
+        .into_iter()
+        .filter_map(Stored::into_study)
+        .collect())
 }
 
 /// Which stored studies a read decodes; the rest are their id alone.
@@ -79,7 +84,7 @@ pub(crate) enum StudyBodies<'a> {
 
 /// The `studies` table in order. A damaged row, one stored under another id, or more studies
 /// than the library holds refuses the whole read, so no edit can drop what it could not read.
-pub(crate) fn read_study_rows(db: &Connection, bodies: StudyBodies) -> Result<Vec<Value>> {
+pub(crate) fn read_study_rows(db: &Connection, bodies: StudyBodies) -> Result<Vec<Stored>> {
     let (all, target) = match bodies {
         StudyBodies::All => (true, None),
         StudyBodies::Only(target) => (false, target),
@@ -99,8 +104,8 @@ pub(crate) fn read_study_rows(db: &Connection, bodies: StudyBodies) -> Result<Ve
     for row in rows {
         let (id, body) = row.sql()?;
         items.push(match body {
-            Some(body) => decode_study_row(&id, &body)?,
-            None => json!({ "id": id }),
+            Some(body) => Stored::Read(decode_study_row(&id, &body)?),
+            None => Stored::Unread(id),
         });
     }
     if items.len() > MAX_STUDIES {
@@ -109,11 +114,11 @@ pub(crate) fn read_study_rows(db: &Connection, bodies: StudyBodies) -> Result<Ve
     Ok(items)
 }
 
-fn decode_study_row(id: &str, body: &str) -> Result<Value> {
+fn decode_study_row(id: &str, body: &str) -> Result<Study> {
     let damaged = || CoreError::new(DAMAGED_STUDIES);
     let raw = parse_text(body).ok_or_else(damaged)?;
     let study = kchess_domain::library::decode_study(&raw).ok_or_else(damaged)?;
-    if id_of(&study) != Some(id) {
+    if study.id != id {
         return Err(damaged());
     }
     Ok(study)
@@ -125,13 +130,15 @@ pub(crate) fn read_mistakes(db: &Connection) -> Result<Vec<Drill>> {
         .unwrap_or_default())
 }
 
-pub(crate) fn read_misses(host: &dyn Host, db: &Connection) -> Result<Value> {
+pub(crate) fn read_misses(host: &dyn Host, db: &Connection) -> Result<RepertoireMisses> {
     let raw = read_document(host, db, MISSES)?.unwrap_or(Value::Null);
-    Ok(kchess_domain::misc::documents::decode_repertoire_misses(&J::from(&raw)).into_value())
+    Ok(kchess_domain::misc::documents::decode_repertoire_misses(
+        &J::from(&raw),
+    ))
 }
 
 /// The repertoire schedule's lines, `key` → line → card; none in a profile from before it.
-pub(crate) fn read_schedule_lines(host: &dyn Host, db: &Connection) -> Result<Map<String, Value>> {
+pub(crate) fn read_schedule_lines(host: &dyn Host, db: &Connection) -> Result<RepertoireSchedule> {
     let raw = read_document(host, db, SCHEDULE)?.unwrap_or(Value::Null);
     Ok(kchess_domain::training::repetition::decode_schedule(&raw))
 }
@@ -223,7 +230,7 @@ pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Library> {
         sessions,
         joined_tournaments: joined,
         repertoire_misses: read_misses(host, db)?,
-        repertoire_schedule: Value::Object(read_schedule_lines(host, db)?),
+        repertoire_schedule: read_schedule_lines(host, db)?,
         study_error,
     })
 }

@@ -6,7 +6,9 @@ use std::cell::RefCell;
 use super::constants::*;
 use super::value::{J, own_entries};
 use crate::js;
+use crate::keyed::Keyed;
 use crate::replay;
+use crate::training::repetition::RepertoireMisses;
 use crate::tree::{self, TreeNode};
 use crate::variant::Variant;
 
@@ -427,7 +429,7 @@ fn entries_of(v: &J) -> Vec<(String, &J)> {
 
 /// `Object.keys` order for a built object: whole-number keys ascending first, then the rest in
 /// insertion order.
-fn js_key_order(fields: Vec<(String, J)>) -> Vec<(String, J)> {
+fn js_key_order<V>(fields: Vec<(String, V)>) -> Vec<(String, V)> {
     let index = |k: &str| {
         let canonical = k == "0"
             || (!k.starts_with('0') && !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()));
@@ -443,27 +445,34 @@ fn js_key_order(fields: Vec<(String, J)>) -> Vec<(String, J)> {
 }
 
 /// The repertoire misses, as stored: `studyId:color` → FEN → missed count.
-pub fn decode_repertoire_misses(raw: &J) -> J {
+pub fn decode_repertoire_misses(raw: &J) -> RepertoireMisses {
     let J::Obj(_) = raw else {
-        return J::Obj(Vec::new());
+        return Keyed::default();
     };
-    let mut result: Vec<(String, J)> = Vec::new();
+    let mut result = Vec::new();
     for (key, table) in entries_of(raw).into_iter().take(200) {
         if js::utf16_len(&key) > 200 || !table.truthy() || !table.is_object() {
             continue;
         }
-        let mut counts: Vec<(String, J)> = Vec::new();
+        let mut counts = Vec::new();
         for (fen, count) in entries_of(table).into_iter().take(2000) {
             let whole = integer_of(Some(count)).filter(|n| *n > 0.0);
             if let Some(n) = whole
                 && js::utf16_len(&fen) <= 100
             {
-                counts.push((fen, J::Num(n)));
+                counts.push((fen, n));
             }
         }
-        result.push((key, J::Obj(js_key_order(counts))));
+        let counts = js_key_order(counts)
+            .into_iter()
+            .filter_map(|(fen, n)| match super::value::number_value(n) {
+                serde_json::Value::Number(n) => Some((fen, n)),
+                _ => None,
+            })
+            .collect();
+        result.push((key, Keyed(counts)));
     }
-    J::Obj(js_key_order(result))
+    Keyed(js_key_order(result))
 }
 
 /* ── Session checks ── */
@@ -497,7 +506,7 @@ mod tests {
             ]),
         )]);
         assert_eq!(
-            decode_repertoire_misses(&raw).into_value(),
+            serde_json::to_value(decode_repertoire_misses(&raw)).unwrap(),
             serde_json::json!({ "study:white": { "fen-a": 2 } })
         );
     }

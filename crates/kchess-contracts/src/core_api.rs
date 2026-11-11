@@ -545,17 +545,17 @@ core_api! {
         RecordRepertoireMiss = "recordRepertoireMiss" fn record_repertoire_miss(
             key: RepertoireKey,
             fen: Position
-        ) -> Value;
+        ) -> RepertoireMisses;
         #[writes(Repertoire)]
         ClearRepertoireMisses = "clearRepertoireMisses" fn clear_repertoire_misses(
             key: RepertoireKey
-        ) -> Value;
+        ) -> RepertoireMisses;
         /// Put back a cleared repertoire's misses (Undo), added to any recorded since.
         #[writes(Repertoire)]
         RestoreRepertoireMisses = "restoreRepertoireMisses" fn restore_repertoire_misses(
             key: RepertoireKey,
             misses: MissCounts
-        ) -> Value;
+        ) -> RepertoireMisses;
         /// Answer a repertoire line right or wrong; its spaced-repetition schedule moves on.
         /// Returns every repertoire's schedule.
         #[writes(Repertoire)]
@@ -563,7 +563,7 @@ core_api! {
             key: RepertoireKey,
             line: RepertoireLine,
             correct: bool
-        ) -> Value;
+        ) -> RepertoireSchedule;
         /// How each page was last left (tabs, filters, toggles), by `kchess:` preference name.
         ViewPreferences = "viewPreferences" fn view_preferences() -> serde_json::Map<String, Value>;
         /// Remember a view preference for every KChess app on this profile; null forgets it.

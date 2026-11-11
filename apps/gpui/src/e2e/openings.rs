@@ -310,7 +310,7 @@ fn forgotten_mistakes_come_back_with_undo(cx: &mut gpui_kit::TestAppContext) {
         .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
     let misses = move || {
         core.request_now(kchess_contracts::calls::Library {})
-            .map(|library| library.repertoire_misses.to_string())
+            .map(|library| serde_json::to_string(&library.repertoire_misses).unwrap_or_default())
             .unwrap_or_default()
     };
     app.wait_for("the miss to be kept", |_, _| misses().contains("rnbqkbnr"));
@@ -380,13 +380,17 @@ fn missed_lines_are_due_for_review_and_right_ones_wait(cx: &mut gpui_kit::TestAp
         .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
     let card = move || {
         core.request_now(kchess_contracts::calls::Library {})
-            .map(|library| {
-                library.repertoire_schedule["opening:King's Gambit:white"]["e2e4 e7e5 f2f4"].clone()
+            .ok()
+            .and_then(|library| {
+                library
+                    .repertoire_schedule
+                    .get("opening:King's Gambit:white")?
+                    .get("e2e4 e7e5 f2f4")
+                    .copied()
             })
-            .unwrap_or_default()
     };
     app.wait_for("the lapse to be kept", |_, _| {
-        card()["lapses"].as_f64() == Some(1.)
+        card().is_some_and(|card| card.lapses == 1)
     });
 
     // Reviewed right, it waits a day; with nothing else due, the review is done.
@@ -395,7 +399,7 @@ fn missed_lines_are_due_for_review_and_right_ones_wait(cx: &mut gpui_kit::TestAp
     play_kings_gambit(&mut app);
     wait_for_schedule(&mut app, "Next line due in 1 day");
     app.wait_for("the review to be kept", |_, _| {
-        card()["interval"].as_f64() == Some(1.)
+        card().is_some_and(|card| card.interval == 1.)
     });
     wait_for_status(&mut app, "Due lines reviewed");
     assert_eq!(app.find("review-due").disabled(), Some(true));
