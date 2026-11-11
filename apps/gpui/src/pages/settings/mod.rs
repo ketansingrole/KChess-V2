@@ -1575,3 +1575,29 @@ mod tests {
         assert_eq!(themes[1].custom, Some(true));
     }
 }
+
+impl crate::pages::PageView for SettingsPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Settings,
+        label: "Settings",
+        short: "Settings",
+        icon: "settings-2",
+        group: None,
+        keywords: "preferences options",
+    };
+
+    type Action = std::convert::Infallible;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        SettingsPage::new(window, cx)
+    }
+
+    /// The microphone test runs only while its section is shown.
+    fn hidden(this: &Entity<Self>, _window: &mut Window, cx: &mut App) {
+        this.update(cx, |settings, cx| settings.stop_mic_test(cx));
+    }
+
+    fn opened_by() -> Option<Box<dyn gpui_kit::Action>> {
+        Some(Box::new(crate::menu::OpenSettings))
+    }
+}

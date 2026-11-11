@@ -456,7 +456,7 @@ fn a_seek_waits_for_the_check_for_a_game_in_progress(cx: &mut gpui_kit::TestAppC
     app.open("Play on Lichess");
     assert!(!app.shows("online-start"));
     // Quick pick's Play online, while Lichess has not answered.
-    app.with_window(|window, cx| crate::shell::play_online(10., 0., false, window, cx));
+    app.with_window(|window, cx| crate::pages::online::play(10., 0., false, window, cx));
     app.settle();
     assert_ne!(
         app.with_window(|_, cx| crate::online::handle(cx).read(cx).phase),

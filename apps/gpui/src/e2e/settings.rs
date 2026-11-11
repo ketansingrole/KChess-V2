@@ -191,7 +191,7 @@ fn every_settings_row_is_found_from_quick_pick(cx: &mut gpui_kit::TestAppContext
         DRAWN_TITLES.with(|titles| titles.borrow_mut().clear());
         app.with_window(|_, cx| {
             if let Some(page) =
-                crate::shell::view_of::<SettingsPage>(crate::pages::Page::Settings, cx)
+                crate::shell::view::<SettingsPage>(cx)
             {
                 page.update(cx, |_, cx| cx.notify());
             }

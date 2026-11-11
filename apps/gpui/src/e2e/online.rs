@@ -401,9 +401,7 @@ fn a_player_is_messaged_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     app.open("Players");
     app.find("players-lookup");
     app.cx.update(|cx| {
-        let page = crate::shell::view_of::<crate::pages::players::PlayersPage>(
-            crate::pages::Page::Players,
-            cx,
+        let page = crate::shell::view::<crate::pages::players::PlayersPage>(cx,
         )
         .expect("the Players page");
         page.update(cx, |page, cx| {

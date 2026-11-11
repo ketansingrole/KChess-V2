@@ -583,10 +583,10 @@ impl OpeningsPage {
                     opening.map_or_else(|| "Starting position".to_string(), |(name, _)| name);
                 Self::train(OpeningChoice { name, moves: line }, window, cx);
             }
-            Action::Analyse => crate::shell::open_analysis_line(line, window, cx),
+            Action::Analyse => crate::pages::analysis::open_line(line, window, cx),
             Action::Puzzles => {
                 if let Some((name, _)) = opening {
-                    crate::shell::open_opening_puzzles(&name, window, cx);
+                    crate::pages::puzzles::open_opening(&name, window, cx);
                 }
             }
             Action::Flip => self.flip(cx),
@@ -606,10 +606,7 @@ impl OpeningsPage {
 
     /// `useTrainOpening`: Practice → Repertoire on an opening.
     fn train(choice: OpeningChoice, window: &mut Window, cx: &mut App) {
-        crate::prefs::set(cx, "kchess:repertoire-opening", &choice);
-        crate::prefs::set(cx, "kchess:repertoire-study", "opening");
-        crate::prefs::set(cx, "kchess:practice-tab", "openings");
-        crate::shell::open(Page::Practice, window, cx);
+        crate::pages::practice::repertoire::train_opening(&choice, window, cx);
     }
 
     fn render_card(&mut self, item: &Entry, width: Pixels, cx: &mut Context<Self>) -> AnyElement {
@@ -1180,7 +1177,7 @@ impl OpeningsPage {
                             .icon(icon("microscope"))
                             .label("Analyse")
                             .on_click(move |_, window, cx| {
-                                crate::shell::open_analysis_line(analyse_line.clone(), window, cx)
+                                crate::pages::analysis::open_line(analyse_line.clone(), window, cx)
                             }),
                     )
                     .children(puzzles.map(|(name, _)| {
@@ -1189,7 +1186,7 @@ impl OpeningsPage {
                             .icon(icon("puzzle"))
                             .label("Train with puzzles")
                             .on_click(move |_, window, cx| {
-                                crate::shell::open_opening_puzzles(&name, window, cx)
+                                crate::pages::puzzles::open_opening(&name, window, cx)
                             })
                     })),
             )
@@ -1354,5 +1351,64 @@ mod tests {
             children: Vec::new(),
         };
         assert_eq!(group_of(&node), "flank");
+    }
+}
+
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::{ActionInfo, ActionRole};
+        match self {
+            Action::Train => ActionInfo::new(
+                "openings:train",
+                "Train this line",
+                "graduation-cap",
+                "repertoire drill",
+            ),
+            Action::Analyse => ActionInfo::new("openings:analyse", "Analyse", "microscope", "analysis"),
+            Action::Puzzles => {
+                ActionInfo::new("openings:puzzles", "Train with puzzles", "puzzle", "tactics")
+            }
+            Action::Flip => {
+                ActionInfo::new("openings:flip", "Flip board", "arrow-up-down", "turn rotate")
+                    .role(ActionRole::Flip)
+            }
+            Action::AllOpenings => {
+                ActionInfo::new("openings:all", "All openings", "arrow-left", "back browse")
+            }
+        }
+    }
+}
+
+impl crate::pages::PageView for OpeningsPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: Page::Openings,
+        label: "Openings",
+        short: "Openings",
+        icon: "book-open-text",
+        group: Some(crate::pages::NavGroup::Train),
+        keywords: "eco gambit defense variation explorer repertoire",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        OpeningsPage::new(window, cx)
+    }
+
+    /// The sidebar's Openings is the browser, not the line shown last.
+    fn shown(this: &Entity<Self>, _again: bool, _window: &mut Window, cx: &mut App) {
+        this.update(cx, |openings, cx| openings.show_line(None, cx));
+    }
+
+    fn search_fields(&self) -> Vec<Entity<InputState>> {
+        OpeningsPage::search_fields(self)
+    }
+
+    fn actions(&self, _: &App) -> Vec<Action> {
+        OpeningsPage::actions(self)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.act(action, window, cx));
     }
 }

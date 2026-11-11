@@ -536,7 +536,7 @@ impl OnlinePage {
                         .aria_label(link.clone())
                         .cursor_pointer()
                         .pressable_link()
-                        .on_click(move |_, window, cx| crate::shell::open_player(&link, window, cx))
+                        .on_click(move |_, window, cx| crate::pages::players::open_player(&link, window, cx))
                         .child(name)
                         .into_any_element()
                 } else {
@@ -632,10 +632,6 @@ impl OnlinePage {
                         return;
                     }
                 }
-                if crate::shell::zen_key(&event.keystroke.key, cx) {
-                    cx.stop_propagation();
-                    return;
-                }
                 if event.keystroke.key == "f" {
                     flip(cx);
                     cx.stop_propagation();
@@ -701,7 +697,7 @@ impl OnlinePage {
                                 .on_click(move |_, window, cx| {
                                     crate::online::handle(cx)
                                         .update(cx, |online, cx| online.stop(cx));
-                                    crate::shell::watch_game(&id, window, cx)
+                                    crate::pages::watch::watch_game(&id, window, cx)
                                 }),
                         )
                     })
@@ -1115,7 +1111,7 @@ impl OnlinePage {
                             .icon(icon("trophy"))
                             .label("Tournament")
                             .on_click(move |_, window, cx| {
-                                crate::shell::open_tournament(&tournament, window, cx)
+                                crate::pages::tournaments::open_tournament(&tournament, window, cx)
                             }),
                     )
                 })
@@ -1266,7 +1262,7 @@ fn analyse(window: &mut Window, cx: &mut App) {
     else {
         return;
     };
-    crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
         analysis.open_game(&pgn, ply, Some(color), Some(origin.clone()), true, cx)
     });
 }

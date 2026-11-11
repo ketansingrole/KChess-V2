@@ -742,7 +742,7 @@ impl GuessMoves {
             let Some(path) = paths.first() else {
                 return;
             };
-            let text = crate::shell::read_game_file(path);
+            let text = crate::links::read_game_file(path);
             let _ = this.update_in(cx, |this, window, cx| match text {
                 Some(text) => {
                     this.pgn

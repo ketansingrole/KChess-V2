@@ -283,7 +283,7 @@ fn a_pasted_broadcast_link_opens_its_round(cx: &mut gpui_kit::TestAppContext) {
     let wait_for_round = |app: &mut Harness, wanted: &str| {
         let wanted = wanted.to_string();
         app.wait_for(&format!("round {wanted}"), move |_, cx| {
-            crate::shell::view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx)
+            crate::shell::view::<crate::pages::watch::WatchPage>(cx)
                 .is_some_and(|watch| watch.read(cx).broadcast_round() == wanted)
         });
     };
@@ -576,7 +576,7 @@ fn a_watched_game_is_stopped_from_quick_pick(cx: &mut gpui_kit::TestAppContext) 
     };
     assert!(!listed(&mut app).contains(&"Stop watching".to_string()));
     app.with_window(|_, cx| {
-        let page = crate::shell::view_of::<WatchPage>(Page::Watch, cx).expect("Watch");
+        let page = crate::shell::view::<WatchPage>(cx).expect("Watch");
         page.update(cx, |page, cx| {
             page.show_frame(
                 serde_json::json!({
@@ -631,9 +631,8 @@ fn zen_mode_is_found_once(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn every_command_has_its_own_id_on_every_page(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _lichess) = Harness::signed_in(cx, false);
-    let labels: Vec<&str> = crate::shell::nav()
-        .iter()
-        .map(|(_, name, _)| *name)
+    let labels: Vec<&str> = crate::pages::Page::in_sidebar()
+        .map(|page| page.info().label)
         .collect();
     let check = |app: &mut Harness, place: &str| {
         let commands = app.cx.update(|cx| crate::palette::command_ids(cx));
@@ -679,7 +678,7 @@ fn a_tv_channel_is_chosen_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
     app.with_window(|_, cx| {
-        let page = crate::shell::view_of::<WatchPage>(Page::Watch, cx).expect("Watch");
+        let page = crate::shell::view::<WatchPage>(cx).expect("Watch");
         page.update(cx, |page, cx| {
             page.show_channels(
                 vec![
@@ -713,7 +712,7 @@ fn a_watched_game_is_analysed_from_its_button_and_quick_pick(cx: &mut gpui_kit::
     let watch = |app: &mut Harness| {
         app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
         app.with_window(|_, cx| {
-            let page = crate::shell::view_of::<WatchPage>(Page::Watch, cx).expect("Watch");
+            let page = crate::shell::view::<WatchPage>(cx).expect("Watch");
             page.update(cx, |page, cx| {
                 page.show_frame(
                     serde_json::json!({

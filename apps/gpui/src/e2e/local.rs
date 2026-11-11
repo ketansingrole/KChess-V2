@@ -23,11 +23,10 @@ fn type_moves(app: &mut Harness, moves: &[&str]) {
 /// second while the rest of the page keeps its last frame.
 #[gpui_kit::test]
 fn a_timed_games_clock_runs_for_the_side_to_move(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::Page;
     use crate::pages::local::LocalPage;
     let mut app = board(cx);
     app.with_window(|window, cx| {
-        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
             let setup =
                 serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
@@ -61,13 +60,12 @@ const SCHOLARS_MATE: [&str; 7] = ["e4", "e5", "Qh5", "Nc6", "Bc4", "Nf6", "Qxf7#
 
 #[gpui_kit::test]
 fn an_empty_move_list_mentions_the_clock_only_in_a_timed_game(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::Page;
     use crate::pages::local::LocalPage;
     use gpui_kit::test::TestWindowExt as _;
     let mut app = board(cx);
     assert_eq!(app.find("moves-empty").label(), Some("No moves yet"));
     app.with_window(|window, cx| {
-        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
             let setup =
                 serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
@@ -248,7 +246,6 @@ fn a_game_in_progress_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCo
 /// neither is shown until it is chosen.
 #[gpui_kit::test]
 fn a_page_made_ahead_opens_with_its_game(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::Page;
     use crate::pages::analysis::AnalysisPage;
     use crate::pages::local::LocalPage;
     let mut app = board(cx);
@@ -257,8 +254,8 @@ fn a_page_made_ahead_opens_with_its_game(cx: &mut gpui_kit::TestAppContext) {
     let made = |app: &mut Harness| {
         app.with_window(|_, cx| {
             (
-                crate::shell::view_of::<LocalPage>(Page::Local, cx).map(|page| page.entity_id()),
-                crate::shell::view_of::<AnalysisPage>(Page::Analysis, cx).is_some(),
+                crate::shell::view::<LocalPage>(cx).map(|page| page.entity_id()),
+                crate::shell::view::<AnalysisPage>(cx).is_some(),
             )
         })
     };
@@ -483,11 +480,10 @@ fn the_boards_squares_land_on_whole_pixels(cx: &mut gpui_kit::TestAppContext) {
 /// square for the side to move: the move list writes a pawn drop as `@e3`.
 #[gpui_kit::test]
 fn a_crazyhouse_capture_can_be_dropped_back(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::Page;
     use crate::pages::local::LocalPage;
     let mut app = board(cx);
     app.with_window(|window, cx| {
-        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
             let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
             let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
@@ -561,11 +557,10 @@ fn a_new_game_starts_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContext
 /// the position is played on from there as Chess960.
 #[gpui_kit::test]
 fn a_chess960_game_can_be_taken_to_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::Page;
     use crate::pages::local::LocalPage;
     let mut app = board(cx);
     app.with_window(|window, cx| {
-        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
             let fen = "1rk4r/pppppppp/8/8/8/8/PPPPPPPP/1RK4R w HBhb - 0 1";
             let setup = serde_json::json!({ "variant": "chess960", "fen": fen });
@@ -581,13 +576,12 @@ fn a_chess960_game_can_be_taken_to_the_analysis_board(cx: &mut gpui_kit::TestApp
 /// F turns the board, as its flip button does, and the arrows and Home still step the moves.
 #[gpui_kit::test]
 fn f_flips_the_board(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::Page;
     use crate::pages::local::LocalPage;
     let mut app = board(cx);
     type_moves(&mut app, &["e4", "e5"]);
     let orientation = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<LocalPage>(Page::Local, cx)
+            crate::shell::view::<LocalPage>(cx)
                 .expect("the page")
                 .read(cx)
                 .orientation(cx)
@@ -652,14 +646,13 @@ fn undo_takes_back_outside_the_move_box(cx: &mut gpui_kit::TestAppContext) {
 /// The side to move hears the low-time warning as its clock runs low, before its flag falls.
 #[gpui_kit::test]
 fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::Page;
     use crate::pages::local::LocalPage;
     use crate::sound::{Played, Sound};
     let mut app = board(cx);
     app.cx.update(|cx| cx.set_global(Played::default()));
     let started = std::time::Instant::now();
     app.with_window(|window, cx| {
-        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
             let setup =
                 serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });

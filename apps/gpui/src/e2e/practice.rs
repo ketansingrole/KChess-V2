@@ -101,7 +101,7 @@ fn a_coordinates_run_keeps_one_flash_timer(cx: &mut gpui_kit::TestAppContext) {
         app.click_square(wrong, true);
     }
     let timers = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
             .and_then(|page| page.read(cx).coordinates())
             .expect("the coordinates drill")
             .read(cx)
@@ -204,7 +204,7 @@ fn f_flips_an_endgame_drill(cx: &mut gpui_kit::TestAppContext) {
     app.find("drill-hint");
     let flipped = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+            crate::shell::view::<crate::pages::practice::PracticePage>(cx)
                 .and_then(|page| page.read(cx).drills(cx))
                 .map(|drills| drills.read(cx).flipped())
         })
@@ -240,7 +240,7 @@ fn an_endgame_drill_is_flipped_from_quick_pick(cx: &mut gpui_kit::TestAppContext
     app.press("enter");
     super::palette::wait_until_closed(&mut app);
     let flipped = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
             .and_then(|page| page.read(cx).drills(cx))
             .map(|drills| drills.read(cx).flipped())
     });
@@ -312,7 +312,7 @@ fn a_crazyhouse_mistake_is_solved_with_a_drop(cx: &mut gpui_kit::TestAppContext)
     tab(&mut app, 5);
     app.find("review-a-game");
     let mistakes = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
             .and_then(|page| page.read(cx).mistakes())
             .expect("the mistakes trainer")
     });
@@ -352,7 +352,7 @@ fn a_mistake_is_practised_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     app.find("review-a-game");
     app.cx.update(|cx| {
         let mistakes =
-            crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+            crate::shell::view::<crate::pages::practice::PracticePage>(cx)
                 .and_then(|page| page.read(cx).mistakes())
                 .expect("the mistakes trainer");
         mistakes.update(cx, |mistakes, cx| {
@@ -404,7 +404,7 @@ fn a_solved_mistake_is_stepped_through_and_turned(cx: &mut gpui_kit::TestAppCont
     tab(&mut app, 5);
     app.find("review-a-game");
     let mistakes = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
             .and_then(|page| page.read(cx).mistakes())
             .expect("the mistakes trainer")
     });
@@ -448,7 +448,7 @@ fn return_goes_on_to_the_next_due_mistake(cx: &mut gpui_kit::TestAppContext) {
     tab(&mut app, 5);
     app.find("review-a-game");
     let mistakes = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
             .and_then(|page| page.read(cx).mistakes())
             .expect("the mistakes trainer")
     });
@@ -568,7 +568,7 @@ fn a_pasted_game_is_guessed_through_and_scored(cx: &mut gpui_kit::TestAppContext
 fn a_game_opened_for_guessing_starts_as_its_side(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
     app.with_window(|window, cx| {
-        crate::shell::guess_moves("1. d4 d5 2. c4 *", Some(shakmaty::Color::Black), window, cx)
+        crate::pages::practice::guess_moves("1. d4 d5 2. c4 *", Some(shakmaty::Color::Black), window, cx)
     });
     assert_eq!(app.find(("practice-tabs", 6usize)).selected(), Some(true));
     // White's first move is played for Black to answer.
@@ -596,7 +596,7 @@ fn a_guess_before_the_engine_answers_waits_for_it(cx: &mut gpui_kit::TestAppCont
     let guess = app
         .cx
         .update(|cx| {
-            crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+            crate::shell::view::<crate::pages::practice::PracticePage>(cx)
         })
         .and_then(|practice| app.cx.update(|cx| practice.read(cx).guess()))
         .expect("the Guess the move tab");
@@ -607,7 +607,7 @@ fn a_guess_before_the_engine_answers_waits_for_it(cx: &mut gpui_kit::TestAppCont
     app.cx
         .update(|cx| guess.update(cx, |guess, _| guess.engine_status_known(true)));
     app.with_window(|window, cx| {
-        crate::shell::guess_moves("1. d4 d5 2. c4 *", Some(shakmaty::Color::Black), window, cx)
+        crate::pages::practice::guess_moves("1. d4 d5 2. c4 *", Some(shakmaty::Color::Black), window, cx)
     });
     app.wait_for_moves(&["d4"]);
     app.drag_square("d7", "d5", false);

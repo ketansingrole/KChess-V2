@@ -3,7 +3,6 @@
 use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
 
 use super::Harness;
-use crate::pages::Page;
 use crate::pages::studies::StudiesPage;
 use gpui_kit::{InputEvent as _, px};
 
@@ -246,7 +245,7 @@ fn an_edited_study_is_summarized_again(cx: &mut gpui_kit::TestAppContext) {
     wait_for_listed(&mut app, &["Alpha"]);
     let kept = |app: &mut Harness| {
         app.with_window(|_, cx| {
-            let page = crate::shell::view_of::<StudiesPage>(Page::Studies, cx).expect("the page");
+            let page = crate::shell::view::<StudiesPage>(cx).expect("the page");
             let pgns: Vec<String> = cx
                 .global::<crate::studies::StudyHandle>()
                 .0
@@ -289,7 +288,7 @@ fn an_edited_study_is_summarized_again(cx: &mut gpui_kit::TestAppContext) {
     app.wait_for("the save", |_, _| saved.get());
     app.wait_for("the study's new summary", |window, cx| {
         window.draw(cx).clear(cx);
-        let Some(page) = crate::shell::view_of::<StudiesPage>(Page::Studies, cx) else {
+        let Some(page) = crate::shell::view::<StudiesPage>(cx) else {
             return false;
         };
         let kept = page.read(cx).kept_summaries();
@@ -355,7 +354,7 @@ fn only_the_studies_in_view_are_made(cx: &mut gpui_kit::TestAppContext) {
     // is as tall as every row, made or not, and the gaps between them.
     let grid = |app: &mut Harness| {
         app.with_window(|_, cx| {
-            crate::shell::view_of::<StudiesPage>(Page::Studies, cx)
+            crate::shell::view::<StudiesPage>(cx)
                 .expect("the page")
                 .read(cx)
                 .grid_layout()
@@ -414,7 +413,7 @@ fn only_the_studies_in_view_are_made(cx: &mut gpui_kit::TestAppContext) {
     );
 
     app.cx.update(|cx| {
-        crate::shell::view_of::<StudiesPage>(Page::Studies, cx)
+        crate::shell::view::<StudiesPage>(cx)
             .expect("the page")
             .read(cx)
             .scroll_to_top();
@@ -540,9 +539,7 @@ fn refused_save_then_another_chapter(cx: &mut gpui_kit::TestAppContext, autosavi
     app.find("tree-e2e4 e7e5");
     // Another window writes the chapter (this connection's own write is not shown here).
     let (study, chapter) = app.cx.update(|cx| {
-        let page = crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
-            crate::pages::Page::Analysis,
-            cx,
+        let page = crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx,
         )
         .expect("the analysis board");
         let page = page.read(cx);
@@ -567,9 +564,7 @@ fn refused_save_then_another_chapter(cx: &mut gpui_kit::TestAppContext, autosavi
     app.wait_for("the other window's save", |_, _| written.get());
     // The edit and the chapter switch come before the edit's own delayed save.
     app.with_window(|_, cx| {
-        let page = crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
-            crate::pages::Page::Analysis,
-            cx,
+        let page = crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx,
         )
         .expect("the analysis board");
         let next = cx
@@ -619,7 +614,7 @@ fn a_position_opened_while_a_study_closes_stays_on_the_board(cx: &mut gpui_kit::
     app.click("open-imported");
     app.find("tree-e2e4");
     let opened = app.with_window(|_, cx| {
-        let page = crate::shell::view_of::<AnalysisPage>(crate::pages::Page::Analysis, cx)
+        let page = crate::shell::view::<AnalysisPage>(cx)
             .expect("the analysis board");
         page.update(cx, |page, cx| {
             page.close_study(cx).detach();
@@ -628,7 +623,7 @@ fn a_position_opened_while_a_study_closes_stays_on_the_board(cx: &mut gpui_kit::
         })
     });
     let shown = app.with_window(|_, cx| {
-        crate::shell::view_of::<AnalysisPage>(crate::pages::Page::Analysis, cx)
+        crate::shell::view::<AnalysisPage>(cx)
             .expect("the analysis board")
             .read(cx)
             .shown_fen()

@@ -2,36 +2,19 @@
 //! to icons, a top bar, and the current page.
 
 use gpui_kit::component::animation::{EffectTransition, ease_out_cubic};
-use gpui_kit::component::button::{
-    Button, ButtonCustomVariant, ButtonVariant, ButtonVariants as _,
-};
-use gpui_kit::component::dialog::AlertDialog;
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::sidebar::{SidebarItem, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::{
-    ActiveTheme as _, Collapsible, Disableable as _, Icon, Selectable as _, Sizable as _, TitleBar,
-    WindowExt as _, h_flex, v_flex,
+    ActiveTheme as _, Collapsible, Icon, Selectable as _, Sizable as _, TitleBar, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::time::Duration;
 
 use crate::assets::icon;
-use crate::part::Part;
-
-use crate::pages::analysis::AnalysisPage;
-use crate::pages::computer::ComputerPage;
-use crate::pages::editor::EditorPage;
-use crate::pages::history::HistoryPage;
-use crate::pages::home::HomePage;
-use crate::pages::local::LocalPage;
-use crate::pages::openings::OpeningsPage;
-use crate::pages::practice::PracticePage;
-use crate::pages::puzzles::PuzzlesPage;
 use crate::pages::settings::{SECTION_GROUPS, Section, sections};
-use crate::pages::studies::StudiesPage;
-use crate::pages::watch::WatchPage;
-use crate::pages::{Page, Pages};
+use crate::pages::{ActionRole, NavGroup, Page, PageCommand, PageView, Pages};
+use crate::part::Part;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
 
@@ -42,7 +25,7 @@ pub const TOPBAR_HEIGHT: Pixels = px(52.);
 const SIDEBAR_OPEN: &str = "kchess:sidebar-open";
 
 /// `USidebar`'s `--sidebar-width`, and `--sidebar-width-icon` collapsed to icons.
-const SIDEBAR_WIDTH: Pixels = px(256.);
+pub(crate) const SIDEBAR_WIDTH: Pixels = px(256.);
 /// How long the sidebar's width eases when it opens or closes.
 const SIDEBAR_EASE: Duration = Duration::from_millis(200);
 const SIDEBAR_RAIL: Pixels = px(64.);
@@ -66,7 +49,7 @@ fn toggle_left(window: &Window) -> Pixels {
 
 /// A control on a title bar, which takes its own press: on Windows a press on the drag area under
 /// it would move the window, and the control would never hear the click.
-fn over_title_bar(control: impl IntoElement) -> Div {
+pub(crate) fn over_title_bar(control: impl IntoElement) -> Div {
     div().occlude().child(control)
 }
 
@@ -84,71 +67,6 @@ fn title_bar(id: &'static str) -> Stateful<Div> {
         })
 }
 
-/// The sidebar's pages, in order.
-pub(crate) fn nav() -> [(Page, &'static str, Icon); 16] {
-    [
-        (Page::Dashboard, "Home", icon("house")),
-        (Page::Computer, "Play with computer", icon("bot")),
-        (Page::Local, "Over the board", icon("swords")),
-        (Page::Puzzles, "Puzzles", icon("puzzle")),
-        (Page::Practice, "Practice", icon("graduation-cap")),
-        (Page::Openings, "Openings", icon("book-open-text")),
-        (Page::Analysis, "Analysis board", icon("microscope")),
-        (Page::History, "Game history", icon("history")),
-        (Page::Studies, "Studies", icon("library-big")),
-        (Page::Editor, "Board editor", icon("pencil-ruler")),
-        (Page::Online, "Play on Lichess", icon("globe-2")),
-        (Page::Tournaments, "Tournaments", icon("trophy")),
-        (Page::Watch, "Watch", icon("tv")),
-        (Page::Insights, "Insights", icon("chart-pie")),
-        (Page::Friends, "Following", icon("users")),
-        (Page::Players, "Players", icon("user-search")),
-    ]
-}
-
-/// How many of `nav`'s pages each of the sidebar's groups holds: home, playing, training, your
-/// own games and boards, Lichess.
-pub(crate) const NAV_GROUPS: [usize; 5] = [1, 2, 3, 4, 6];
-
-/// The heading over each of `NAV_GROUPS` in the open sidebar; Home stands alone.
-const NAV_HEADINGS: [Option<&str>; 5] = [
-    None,
-    Some("Play"),
-    Some("Train"),
-    Some("Review"),
-    Some("Lichess"),
-];
-
-/// A page's name under its group's heading, where the heading already says it: "Computer" under
-/// Play, "Play" under Lichess. The rail's tooltips, the palette and screen readers keep the full name.
-fn nav_label(page: Page, label: &'static str) -> &'static str {
-    match page {
-        Page::Computer => "Computer",
-        Page::Online => "Play",
-        Page::Insights => "Insights",
-        _ => label,
-    }
-}
-
-#[cfg(test)]
-mod nav_tests {
-    use super::{NAV_GROUPS, nav, nav_label};
-
-    /// Shortened under their headings, the open sidebar's rows still name one page each.
-    #[test]
-    fn open_rows_name_one_page_each() {
-        let mut shown: Vec<&str> = nav()
-            .into_iter()
-            .map(|(page, label, _)| nav_label(page, label))
-            .collect();
-        shown.sort_unstable();
-        let count = shown.len();
-        shown.dedup();
-        assert_eq!(shown.len(), count, "two rows read the same");
-        assert_eq!(NAV_GROUPS.iter().sum::<usize>(), nav().len());
-    }
-}
-
 /// A row of the sidebar's navigation: 32px tall, an 18px icon 8px from its label.
 fn nav_item(label: impl Into<SharedString>, glyph: Icon) -> SidebarMenuItem {
     SidebarMenuItem::new(label)
@@ -158,6 +76,20 @@ fn nav_item(label: impl Into<SharedString>, glyph: Icon) -> SidebarMenuItem {
         .gap_x(px(8.))
 }
 
+/// The sidebar's pages in their groups, in order.
+pub(crate) fn nav_groups() -> Vec<(NavGroup, Vec<Page>)> {
+    let mut groups: Vec<(NavGroup, Vec<Page>)> = Vec::new();
+    for page in Page::all() {
+        let Some(group) = page.info().group else {
+            continue;
+        };
+        match groups.last_mut() {
+            Some((last, pages)) if *last == group => pages.push(page),
+            _ => groups.push((group, vec![page])),
+        }
+    }
+    groups
+}
 /// What the sidebar lists: menus, each under its group's heading (on the rail, a short rule
 /// instead), and while Settings is open its categories in headed groups.
 #[derive(Clone)]
@@ -290,29 +222,22 @@ struct SidebarInputs {
     section: Option<Section>,
     back: Page,
     game_mark: Option<GameMark>,
-    online: bool,
-    accounts_busy: bool,
-    active: Option<String>,
-    connected: Vec<String>,
+    account: crate::accounts::MenuInputs,
 }
 
 impl SidebarInputs {
     fn of(workspace: &Workspace, cx: &App) -> SidebarInputs {
-        let accounts = crate::accounts::handle(cx).read(cx);
         SidebarInputs {
             open: workspace.shown(),
             width_from: workspace.sidebar_width_from,
             current: workspace.pages.current(),
             section: workspace
                 .pages
-                .settings()
+                .get::<crate::pages::settings::SettingsPage>()
                 .map(|page| page.read(cx).section()),
             back: workspace.back,
             game_mark: game_mark(cx),
-            online: crate::network::online(cx),
-            accounts_busy: accounts.busy,
-            active: accounts.active(cx),
-            connected: accounts.connected(),
+            account: crate::accounts::MenuInputs::of(cx),
         }
     }
 }
@@ -324,36 +249,16 @@ struct TopbarInputs {
     sidebar_open: bool,
     online: bool,
     working: bool,
-    update: UpdateInputs,
-}
-
-/// What the update button shows (`update_button`).
-#[derive(PartialEq)]
-struct UpdateInputs {
-    phase: crate::updates::Phase,
-    /// A real-time game is on: the button waits until it ends.
-    live_game: bool,
-    version: Option<String>,
-    current: String,
-    progress: Option<(u64, u64)>,
-    error: Option<String>,
+    update: crate::pages::settings::updates::ButtonInputs,
 }
 
 impl TopbarInputs {
     fn of(workspace: &Workspace, cx: &App) -> TopbarInputs {
-        let updates = cx.global::<crate::updates::UpdatesHandle>().0.read(cx);
         TopbarInputs {
             sidebar_open: workspace.shown(),
             online: crate::network::online(cx),
             working: working(cx),
-            update: UpdateInputs {
-                phase: updates.phase,
-                live_game: crate::online::handle(cx).read(cx).live_game_on(),
-                version: updates.version.clone(),
-                current: updates.current.clone(),
-                progress: updates.progress,
-                error: updates.error.clone(),
-            },
+            update: crate::pages::settings::updates::ButtonInputs::of(cx),
         }
     }
 }
@@ -381,314 +286,152 @@ fn topbar_style() -> StyleRefinement {
     style
 }
 
-/// The window's workspace, so a page can open another (`selectPage`).
+
+/// The window's workspace, so a page can open another.
 struct Navigator(WeakEntity<Workspace>);
 
 impl Global for Navigator {}
 
-/// Z on a game page turns zen mode on or off (`toggleSetting('zenMode')`); the page calls it when
-/// it has the keys itself, so typing a move never does.
-pub fn zen_key(key: &str, cx: &mut App) -> bool {
-    if key != "z" {
-        return false;
-    }
-    crate::settings::change(cx, |settings| {
-        settings.frontend.zen_mode = !settings.frontend.zen_mode
-    });
-    true
+fn workspace(cx: &App) -> Option<Entity<Workspace>> {
+    cx.try_global::<Navigator>()?.0.upgrade()
 }
 
 /// The window's title as the workspace last set it.
 #[cfg(test)]
 pub fn window_title_shown(cx: &App) -> Option<String> {
-    let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
-    Some(workspace.read(cx).title.clone())
+    Some(workspace(cx)?.read(cx).title.clone())
 }
 
 /// The page shown, once the window is open.
 pub fn current_page(cx: &App) -> Option<Page> {
-    let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
-    Some(workspace.read(cx).pages.current())
+    Some(workspace(cx)?.read(cx).pages.current())
 }
 
 /// Open `page` as the sidebar would.
 pub fn open(page: Page, window: &mut Window, cx: &mut App) {
-    let Some(workspace) = cx
-        .try_global::<Navigator>()
-        .map(|navigator| navigator.0.clone())
-    else {
-        return;
-    };
-    let _ = workspace.update(cx, |workspace, cx| workspace.choose(page, window, cx));
+    if let Some(workspace) = workspace(cx) {
+        workspace.update(cx, |workspace, cx| workspace.choose(page, window, cx));
+    }
+}
+
+/// Open page `V` as the sidebar would, then `act` on it: how one page links into another.
+pub fn show<V: PageView>(
+    window: &mut Window,
+    cx: &mut App,
+    act: impl FnOnce(&mut V, &mut Window, &mut Context<V>),
+) {
+    open(V::INFO.page, window, cx);
+    if let Some(page) = view::<V>(cx) {
+        page.update(cx, |page, cx| act(page, window, cx));
+    }
+}
+
+/// Page `V`'s view, once it has been made.
+pub fn view<V: PageView>(cx: &App) -> Option<Entity<V>> {
+    workspace(cx)?.read(cx).pages.get::<V>()
+}
+
+/// Page `V`'s view, made now (without showing it) if it has not been.
+pub fn made<V: PageView>(window: &mut Window, cx: &mut App) -> Option<Entity<V>> {
+    workspace(cx)?.update(cx, |workspace, cx| {
+        Some(workspace.pages.get_made::<V>(window, cx))
+    })
 }
 
 /// Back (-1) or forward (1): out of the page's inner level, then through the pages visited, as
 /// a swipe goes.
 pub fn go(direction: crate::swipe::Direction, window: &mut Window, cx: &mut App) {
-    let Some(workspace) = cx
-        .try_global::<Navigator>()
-        .map(|navigator| navigator.0.clone())
-    else {
-        return;
-    };
-    let _ = workspace.update(cx, |workspace, cx| workspace.go(direction, window, cx));
-}
-
-/// Game history's Lichess tab showing one account's games (`historyAccount`).
-pub fn open_history_account(account: &str, window: &mut Window, cx: &mut App) {
-    open(Page::History, window, cx);
-    if let Some(history) = view_of::<crate::pages::history::HistoryPage>(Page::History, cx) {
-        let account = account.to_string();
-        history.update(cx, |history, cx| {
-            history.show_lichess_account(account, window, cx)
-        });
+    if let Some(workspace) = workspace(cx) {
+        workspace.update(cx, |workspace, cx| workspace.go(direction, window, cx));
     }
-}
-
-/// A player's profile on Players (`PlayerLink`).
-pub fn open_player(username: &str, window: &mut Window, cx: &mut App) {
-    open(Page::Players, window, cx);
-    if let Some(players) = view_of::<crate::pages::players::PlayersPage>(Page::Players, cx) {
-        let username = username.to_string();
-        players.update(cx, |players, cx| players.show_player(&username, window, cx));
-    }
-}
-
-/// Watch a Lichess TV channel.
-pub fn watch_channel(channel: String, window: &mut Window, cx: &mut App) {
-    open(Page::Watch, window, cx);
-    if let Some(watch) = view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx) {
-        watch.update(cx, |watch, cx| watch.open_channel(channel, window, cx));
-    }
-}
-
-/// Watch at one of its tabs (`tv`, `friends` or `broadcasts`); a Watch page made now opens there.
-pub fn watch_tab(tab: &'static str, window: &mut Window, cx: &mut App) {
-    crate::prefs::set(cx, crate::pages::watch::TAB_KEY, tab);
-    open(Page::Watch, window, cx);
-    if let Some(watch) = view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx) {
-        watch.update(cx, |watch, cx| watch.show_tab(tab, window, cx));
-    }
-}
-
-/// Watch a game being played on Lichess (`watchGame`).
-pub fn watch_game(id: &str, window: &mut Window, cx: &mut App) {
-    open(Page::Watch, window, cx);
-    if let Some(watch) = view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx) {
-        let id = id.to_string();
-        watch.update(cx, |watch, cx| watch.watch_game(&id, cx));
-    }
-}
-
-/// A live Lichess game of the account's on Play on Lichess (`openOngoing`).
-pub fn open_online_game(id: &str, window: &mut Window, cx: &mut App) {
-    let online = crate::online::handle(cx);
-    let (shown, account) = {
-        let online = online.read(cx);
-        (
-            online.id() == id && online.phase == crate::online::Phase::Playing,
-            crate::accounts::handle(cx)
-                .read(cx)
-                .active(cx)
-                .unwrap_or_default(),
-        )
-    };
-    // The game already on the board needs no new stream.
-    if !shown {
-        let id = id.to_string();
-        online.update(cx, |online, cx| online.open(&account, &id, cx));
-    }
-    open(Page::Online, window, cx);
-}
-
-/// A tournament's page (`backToTournament`).
-pub fn open_tournament(id: &str, window: &mut Window, cx: &mut App) {
-    open(Page::Tournaments, window, cx);
-    if let Some(page) = view_of::<crate::pages::tournaments::TournamentsPage>(Page::Tournaments, cx)
-    {
-        let id = id.to_string();
-        page.update(cx, |page, cx| page.show_known_event(&id, cx));
-    }
-}
-
-/// A tournament named by its system (`arena` or `swiss`) and id, as a pasted link names it.
-pub fn open_event(system: &str, id: &str, window: &mut Window, cx: &mut App) {
-    open(Page::Tournaments, window, cx);
-    if let Some(page) = view_of::<crate::pages::tournaments::TournamentsPage>(Page::Tournaments, cx)
-    {
-        page.update(cx, |page, cx| page.show_event(system, id, cx));
-    }
-}
-
-/// Play Stockfish at a level and side, from the palette (`startComputerGame`).
-pub fn play_computer(level: &str, color: &'static str, window: &mut Window, cx: &mut App) {
-    open(Page::Computer, window, cx);
-    if let Some(page) = view_of::<ComputerPage>(Page::Computer, cx) {
-        let level = level.to_string();
-        page.update(cx, |page, cx| page.play_level(&level, color, window, cx));
-    }
-}
-
-/// Look for a real-time game on Lichess, from the palette (`startOnlineGame`).
-pub fn play_online(minutes: f64, increment: f64, rated: bool, window: &mut Window, cx: &mut App) {
-    open(Page::Online, window, cx);
-    let online = crate::online::handle(cx);
-    if online.read(cx).busy_with_game() {
-        crate::online::notice(cx, "Finish or cancel your game before starting another");
-        return;
-    }
-    online.update(cx, |online, cx| {
-        let form = &mut online.form;
-        form.minutes = minutes;
-        form.increment = increment;
-        form.rated = rated;
-        form.color = "random".into();
-        form.target.clear();
-        form.correspondence = false;
-        online.start(None, cx);
-    });
-}
-
-/// An empty analysis board.
-pub fn new_analysis(window: &mut Window, cx: &mut App) {
-    replace_analysis(window, cx, |analysis, _, cx| {
-        analysis.load(None, cx);
-        true
-    });
 }
 
 /// Whether the sidebar is shown.
 pub fn sidebar_open(cx: &App) -> bool {
-    cx.try_global::<Navigator>()
-        .and_then(|navigator| navigator.0.upgrade())
-        .is_none_or(|workspace| workspace.read(cx).shown())
+    workspace(cx).is_none_or(|workspace| workspace.read(cx).shown())
 }
 
 /// Show or hide the sidebar from its shortcut, the menu or the command palette: at once, since a
 /// command repeated many times a day should not wait on an animation.
 pub fn toggle_sidebar(_: &mut Window, cx: &mut App) {
-    if let Some(workspace) = cx.try_global::<Navigator>().and_then(|n| n.0.upgrade()) {
+    if let Some(workspace) = workspace(cx) {
         workspace.update(cx, |workspace, cx| workspace.toggle_sidebar(false, cx));
-    }
-}
-
-/// Challenge a player, rated or casual (`challengeFriend(username, rated)`).
-pub fn challenge_rated(username: &str, rated: bool, window: &mut Window, cx: &mut App) {
-    crate::online::handle(cx).update(cx, |online, cx| {
-        online.form.rated = rated;
-        cx.notify();
-    });
-    open(Page::Online, window, cx);
-    if let Some(page) = view_of::<crate::pages::online::OnlinePage>(Page::Online, cx) {
-        let username = username.to_string();
-        page.update(cx, |page, cx| {
-            page.challenge_keeping_rated(&username, window, cx)
-        });
-    }
-}
-
-/// Challenge a player to a casual game on Lichess (`challengeFriend`).
-pub fn challenge(username: &str, window: &mut Window, cx: &mut App) {
-    open(Page::Online, window, cx);
-    if let Some(page) = view_of::<crate::pages::online::OnlinePage>(Page::Online, cx) {
-        let username = username.to_string();
-        page.update(cx, |page, cx| page.challenge(&username, window, cx));
-    }
-}
-
-/// Game history's Lichess tab (`/history?source=lichess`).
-pub fn open_history_lichess(window: &mut Window, cx: &mut App) {
-    open(Page::History, window, cx);
-    if let Some(history) = view_of::<crate::pages::history::HistoryPage>(Page::History, cx) {
-        history.update(cx, |history, cx| history.show_lichess(cx));
-    }
-}
-
-/// Studies at its Lichess tab: the connected account's own studies.
-pub fn open_studies_lichess(window: &mut Window, cx: &mut App) {
-    open(Page::Studies, window, cx);
-    if let Some(studies) = view_of::<crate::pages::studies::StudiesPage>(Page::Studies, cx) {
-        studies.update(cx, |studies, cx| studies.show_lichess(window, cx));
-    }
-}
-
-/// Open a synced Lichess game in Game history (`openReview`).
-pub fn open_lichess_game(game: serde_json::Value, window: &mut Window, cx: &mut App) {
-    open(Page::History, window, cx);
-    if let Some(history) = view_of::<crate::pages::history::HistoryPage>(Page::History, cx) {
-        history.update(cx, |history, cx| {
-            history.show_lichess_game(game, window, cx)
-        });
     }
 }
 
 /// Start every page afresh at Home (after signing out), so
 /// nothing a page kept for an account outlives it.
 pub fn restart_pages(window: &mut Window, cx: &mut App) {
-    let Some(workspace) = cx
-        .try_global::<Navigator>()
-        .and_then(|navigator| navigator.0.upgrade())
-    else {
-        return;
-    };
-    workspace.update(cx, |workspace, cx| {
-        workspace.pages = Pages::new(window, cx);
-        workspace.choose(Page::Dashboard, window, cx);
-    });
+    if let Some(workspace) = workspace(cx) {
+        workspace.update(cx, |workspace, cx| {
+            workspace.pages = Pages::new(window, cx);
+            workspace.choose(Page::Dashboard, window, cx);
+        });
+    }
 }
 
-/// Open Settings at one section (`openSettings`), e.g. the engine setup a page points at.
+/// Open Settings at one section, e.g. the engine setup a page points at.
 pub fn open_settings(section: Section, window: &mut Window, cx: &mut App) {
     open(Page::Settings, window, cx);
-    let Some(workspace) = cx
-        .try_global::<Navigator>()
-        .map(|navigator| navigator.0.clone())
-    else {
-        return;
-    };
-    let _ = workspace.update(cx, |workspace, cx| workspace.choose_section(section, cx));
+    if let Some(workspace) = workspace(cx) {
+        workspace.update(cx, |workspace, cx| workspace.choose_section(section, cx));
+    }
 }
 
 /// Redraw the shell, as its network, account and update observers do.
 #[cfg(any(test, feature = "bench"))]
 pub fn notify_shell(cx: &mut App) {
-    if let Some(workspace) = cx.try_global::<Navigator>().and_then(|nav| nav.0.upgrade()) {
+    if let Some(workspace) = workspace(cx) {
         workspace.update(cx, |_, cx| cx.notify());
     }
 }
 
-/// A page's view, once it has been shown.
-pub fn view_of<V: 'static>(page: Page, cx: &App) -> Option<Entity<V>> {
-    let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
-    workspace.read(cx).pages.view_of::<V>(page)
+/// The current page's actions, as Quick Pick offers them.
+pub fn page_commands(cx: &App) -> Vec<PageCommand> {
+    workspace(cx).map_or_else(Vec::new, |workspace| workspace.read(cx).pages.commands(cx))
+}
+
+/// Zen mode applies to the page shown now.
+pub fn zen_page(cx: &App) -> bool {
+    workspace(cx).is_some_and(|workspace| workspace.read(cx).pages.zen(cx))
+}
+
+/// The current page, to act on.
+fn current_handle(cx: &App) -> Option<crate::pages::PageHandle> {
+    workspace(cx)?.read(cx).pages.current_handle()
+}
+
+/// Copy outside a text field: the page's game as PGN, or its position as FEN where it has no
+/// game (the board editor), as its own Copy command would. Under a dialog, or on a page with
+/// nothing to copy, nothing happens.
+pub fn copy_on_page(window: &mut Window, cx: &mut App) {
+    use gpui_kit::component::WindowExt as _;
+    if window.has_active_dialog(cx) {
+        return;
+    }
+    if let Some(page) = current_handle(cx) {
+        page.run_role(ActionRole::Copy, window, cx);
+    }
+}
+
+/// New (⌘N): what the page's own New does, asking first where it asks: a game against the
+/// computer, over the board or on Lichess, a study, a fresh analysis board. Under a dialog, or
+/// on a page with nothing to start, nothing happens.
+pub fn new_on_page(window: &mut Window, cx: &mut App) {
+    use gpui_kit::component::WindowExt as _;
+    if window.has_active_dialog(cx) {
+        return;
+    }
+    if let Some(page) = current_handle(cx) {
+        page.new_here(window, cx);
+    }
 }
 
 /// Find: the page's own search field, focused with its text selected, when the page shows one
 /// (History's, Studies', Openings', Watch's broadcasts', Players' username). It is `false`
 /// on a page without one, for Quick Pick to search instead.
 pub fn find_on_page(window: &mut Window, cx: &mut App) -> bool {
-    use crate::pages::{history, openings, players, studies, watch};
-    use gpui_kit::component::input::InputState;
-    fn fields_of<V: Focusable>(
-        page: Page,
-        fields: fn(&V) -> Vec<Entity<InputState>>,
-        cx: &App,
-    ) -> Option<(FocusHandle, Vec<Entity<InputState>>)> {
-        let view = view_of::<V>(page, cx)?;
-        let view = view.read(cx);
-        Some((view.focus_handle(cx), fields(view)))
-    }
-    let found = match current_page(cx) {
-        Some(Page::History) => fields_of(Page::History, history::HistoryPage::search_fields, cx),
-        Some(Page::Studies) => fields_of(Page::Studies, studies::StudiesPage::search_fields, cx),
-        Some(Page::Openings) => {
-            fields_of(Page::Openings, openings::OpeningsPage::search_fields, cx)
-        }
-        Some(Page::Watch) => fields_of(Page::Watch, watch::WatchPage::search_fields, cx),
-        Some(Page::Players) => fields_of(Page::Players, players::PlayersPage::search_fields, cx),
-        _ => None,
-    };
-    let Some((page, fields)) = found else {
+    let Some((page, fields)) = workspace(cx).and_then(|w| w.read(cx).pages.search_fields(cx)) else {
         return false;
     };
     // Only a field the page draws now: History's other tab, or Watch away from Broadcasts,
@@ -704,150 +447,20 @@ pub fn find_on_page(window: &mut Window, cx: &mut App) -> bool {
     true
 }
 
-/// Open a Lichess broadcast link on Watch → Broadcasts.
-pub fn open_broadcast(link: crate::game::BroadcastLink, window: &mut Window, cx: &mut App) {
-    open(Page::Watch, window, cx);
-    if let Some(watch) = view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx) {
-        watch.update(cx, |watch, cx| watch.open_broadcast(link, window, cx));
-    }
-}
-
-/// Open a Lichess puzzle by its id on Puzzles → Daily.
-pub fn open_puzzle(id: String, window: &mut Window, cx: &mut App) {
-    open(Page::Puzzles, window, cx);
-    if let Some(puzzles) = view_of::<crate::pages::puzzles::PuzzlesPage>(Page::Puzzles, cx) {
-        puzzles.update(cx, |puzzles, cx| puzzles.open_puzzle(id, window, cx));
-    }
-}
-
-/// Open a played game in Game history (Home's recent games).
-pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
-    open(Page::History, window, cx);
-    if let Some(history) = view_of::<HistoryPage>(Page::History, cx) {
-        history.update(cx, |history, cx| history.show_game(id, window, cx));
-    }
-}
-
 /// Make the pages made ahead (`Workspace::prewarm`) now.
 #[cfg(test)]
+/// Makes `page` without showing it.
+#[cfg(test)]
+pub fn prepare(page: Page, window: &mut Window, cx: &mut App) {
+    if let Some(workspace) = workspace(cx) {
+        workspace.update(cx, |workspace, cx| workspace.pages.prepare(page, window, cx));
+    }
+}
+
 pub fn prewarm(window: &mut Window, cx: &mut App) {
-    if let Some(workspace) = cx.try_global::<Navigator>().and_then(|nav| nav.0.upgrade()) {
+    if let Some(workspace) = workspace(cx) {
         workspace.update(cx, |workspace, cx| workspace.prewarm(window, cx));
     }
-}
-
-/// A page's view, made now (without showing it) if it has not been shown.
-pub fn page_view<V: 'static>(page: Page, window: &mut Window, cx: &mut App) -> Option<Entity<V>> {
-    let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
-    workspace.update(cx, |workspace, cx| {
-        workspace.pages.view_made::<V, _>(page, window, cx)
-    })
-}
-
-/// The analysis board, made now if it has not been shown (so analysis kept from an earlier run
-/// counts).
-pub fn analysis_board(window: &mut Window, cx: &mut App) -> Option<Entity<AnalysisPage>> {
-    page_view::<AnalysisPage>(Page::Analysis, window, cx)
-}
-
-/// Whether a game can start from `setup` (`{ variant, fen }`): a standard position the engine
-/// takes (not one with too many pieces), or a legal one in its variant.
-fn playable(setup: &serde_json::Value) -> bool {
-    let variant = setup["variant"].as_str().unwrap_or("standard");
-    let fen = setup["fen"].as_str().unwrap_or_default();
-    if crate::game::standard_rules(variant) {
-        crate::game::position_problem(fen).is_none()
-    } else {
-        kchess_domain::rules::setup_start(variant, fen).is_some()
-    }
-}
-
-/// Play Stockfish (Fairy-Stockfish in another variant) from a setup's position, as the side to
-/// move (`startComputerFrom`).
-pub fn play_computer_from(setup: serde_json::Value, window: &mut Window, cx: &mut App) {
-    let color = if setup["fen"].as_str().and_then(|fen| fen.split(' ').nth(1)) == Some("b") {
-        shakmaty::Color::Black
-    } else {
-        shakmaty::Color::White
-    };
-    open(Page::Computer, window, cx);
-    // A position that cannot be played only opens the page.
-    if !playable(&setup) {
-        return;
-    }
-    if let Some(page) = view_of::<ComputerPage>(Page::Computer, cx) {
-        page.update(cx, |page, cx| page.start_from(setup, color, window, cx));
-    }
-}
-
-/// A game over the board from a setup's position (`/local?fen=`).
-pub fn play_local_from(setup: serde_json::Value, window: &mut Window, cx: &mut App) {
-    open(Page::Local, window, cx);
-    // As the page does with `?fen=`: a position that cannot be played only opens it.
-    if !playable(&setup) {
-        return;
-    }
-    if let Some(page) = view_of::<LocalPage>(Page::Local, cx) {
-        page.update(cx, |page, cx| page.start_from(setup, window, cx));
-    }
-}
-
-/// The board editor on a position (`editPosition`): a setup's (`{ variant, fen }`).
-pub fn edit_position(
-    setup: serde_json::Value,
-    orientation: shakmaty::Color,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let variant = setup["variant"].as_str().unwrap_or("standard");
-    let fen = setup["fen"].as_str().unwrap_or_default();
-    if let Some(editor) = page_view::<EditorPage>(Page::Editor, window, cx) {
-        editor.update(cx, |editor, cx| {
-            editor.set_position(variant, fen, orientation, window, cx)
-        });
-    }
-    open(Page::Editor, window, cx);
-}
-
-/// Put something else on the analysis board and show it, asking first while the board holds
-/// moves no study keeps (`useReplaceAnalysis`). `load` says whether the board took it.
-pub fn replace_analysis(
-    window: &mut Window,
-    cx: &mut App,
-    load: impl Fn(&mut AnalysisPage, &mut Window, &mut Context<AnalysisPage>) -> bool + 'static,
-) {
-    let Some(analysis) = analysis_board(window, cx) else {
-        return;
-    };
-    let load = std::rc::Rc::new(load);
-    let run = {
-        let analysis = analysis.clone();
-        move |load: &dyn Fn(&mut AnalysisPage, &mut Window, &mut Context<AnalysisPage>) -> bool,
-              window: &mut Window,
-              cx: &mut App| {
-            if analysis.update(cx, |analysis, cx| load(analysis, window, cx)) {
-                open(Page::Analysis, window, cx);
-            }
-        }
-    };
-    if !analysis.read(cx).unsaved() {
-        run(&*load, window, cx);
-        return;
-    }
-    crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-        let (load, run) = (load.clone(), run.clone());
-        dialog
-            .title("Replace the unsaved analysis?")
-            .description("The analysis board has moves that are not saved as a study")
-            .ok_text("Replace")
-            .ok_variant(ButtonVariant::Danger)
-            .cancel_text("Cancel")
-            .show_cancel(true)
-            .on_ok(move |_, window, cx| {
-                run(&*load, window, cx);
-                true
-            })
-    });
 }
 
 /// Where a dragged file goes, over the pages: hidden until a file from outside the app is over it,
@@ -884,123 +497,6 @@ fn drop_zone(palette: &Palette) -> impl IntoElement {
         )
         .invisible()
         .drag_over::<ExternalPaths>(|style, _, _, _| style.visible())
-}
-
-/// The largest file a drop reads: the import's own limit for a PGN.
-const DROPPED_MAX: u64 = 2 * 1024 * 1024;
-
-/// A PGN or FEN file dropped on the window, from any page: one game or a position opens on the
-/// analysis board, as if pasted into its import; several games are offered as a study, in the
-/// Studies import; anything else is refused with a notice.
-pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
-    let Some(path) = paths.paths().first() else {
-        return;
-    };
-    let Some(text) = read_game_file(path) else {
-        window.push_notification(
-            gpui_kit::component::notification::Notification::error(
-                "Drop a PGN or FEN file under 2 MB",
-            )
-            .title("Could not open that file"),
-            cx,
-        );
-        return;
-    };
-    let games = crate::game::rules("pgnGames", &[serde_json::json!(text)])
-        .ok()
-        .and_then(|games| games.as_array().map(Vec::len))
-        .unwrap_or(0);
-    if games > 1 {
-        open(Page::Studies, window, cx);
-        StudiesPage::open_import_with(Some(text), window, cx);
-        return;
-    }
-    replace_analysis(window, cx, move |analysis, window, cx| {
-        analysis.import_text(text.clone(), window, cx);
-        true
-    });
-}
-
-/// A PGN or FEN file's text (`.pgn`, `.fen` or `.txt`, up to 2 MB), or `None`.
-pub fn read_game_file(path: &std::path::Path) -> Option<String> {
-    let readable = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            ["pgn", "fen", "txt"].contains(&extension.to_ascii_lowercase().as_str())
-        });
-    if !readable {
-        return None;
-    }
-    // The opened file itself must be a regular file (a symlink to `/dev/zero` or a FIFO named
-    // `.pgn` reports a length of 0), and the read stops past the limit whatever it reported.
-    use std::io::Read as _;
-    let file = std::fs::File::open(path).ok()?;
-    let meta = file.metadata().ok()?;
-    if !meta.is_file() || meta.len() > DROPPED_MAX {
-        return None;
-    }
-    let mut text = String::new();
-    file.take(DROPPED_MAX + 1).read_to_string(&mut text).ok()?;
-    (text.len() as u64 <= DROPPED_MAX).then_some(text)
-}
-
-/// Practise a reviewed game's positions on the analysis board (`usePracticeGame`); another game
-/// replaces the board's only after asking, when that would lose unsaved analysis.
-pub fn practise_game(
-    game: serde_json::Value,
-    items: Vec<serde_json::Value>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let shown = analysis_board(window, cx).is_some_and(|analysis| {
-        analysis.read(cx).mainline_key() == game["key"].as_str().unwrap_or_default()
-    });
-    if shown {
-        if let Some(analysis) = analysis_board(window, cx) {
-            analysis.update(cx, |analysis, cx| analysis.practise_game(&game, items, cx));
-        }
-        open(Page::Analysis, window, cx);
-        return;
-    }
-    replace_analysis(window, cx, move |analysis, _, cx| {
-        analysis.practise_game(&game, items.clone(), cx)
-    });
-}
-
-/// Guess the move through a game's PGN as `side`, on Practice.
-pub fn guess_moves(pgn: &str, side: Option<shakmaty::Color>, window: &mut Window, cx: &mut App) {
-    crate::prefs::set(cx, "kchess:practice-tab", "guess");
-    open(Page::Practice, window, cx);
-    if let Some(practice) = view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx) {
-        practice.update(cx, |practice, cx| {
-            practice.guess_moves(pgn, side, window, cx)
-        });
-    }
-}
-
-/// Analyse a line from the starting position.
-pub fn open_analysis_line(moves: Vec<String>, window: &mut Window, cx: &mut App) {
-    replace_analysis(window, cx, move |analysis, _, cx| {
-        analysis.load_line(&moves, cx);
-        true
-    });
-}
-
-/// Puzzles from one opening (`startOpening`), by the key Lichess names its puzzles by.
-pub fn open_opening_puzzles(name: &str, window: &mut Window, cx: &mut App) {
-    let Some(key) = crate::game::rules("openingKey", &[serde_json::json!(name)])
-        .ok()
-        .and_then(|key| key.as_str().map(str::to_string))
-    else {
-        return;
-    };
-    PuzzlesPage::choose_opening(&key, name, cx);
-    // A page made now starts with the opening; one made before is told.
-    if let Some(puzzles) = view_of::<PuzzlesPage>(Page::Puzzles, cx) {
-        puzzles.update(cx, |puzzles, cx| puzzles.opening_chosen(window, cx));
-    }
-    open(Page::Puzzles, window, cx);
 }
 
 /// The edge arrow while swiping: which way, how far, and whether letting go would go there.
@@ -1055,17 +551,9 @@ pub struct Workspace {
 /// The window's title on `page`: its name, so Mission Control, the Window menu and screen
 /// readers tell the windows apart; Home is the app alone.
 fn window_title(page: Page) -> String {
-    let name = match page {
-        Page::Dashboard => None,
-        Page::Settings => Some("Settings"),
-        page => nav()
-            .into_iter()
-            .find(|(each, ..)| *each == page)
-            .map(|(_, label, _)| label),
-    };
-    match name {
-        Some(name) => format!("{name} — {}", crate::profile::APP_NAME),
-        None => crate::profile::APP_NAME.to_string(),
+    match page {
+        Page::Dashboard => crate::profile::APP_NAME.to_string(),
+        page => format!("{} — {}", page.info().label, crate::profile::APP_NAME),
     }
 }
 
@@ -1209,7 +697,7 @@ impl Workspace {
     /// Make the pages of `PREWARMED` not made yet, without showing them.
     pub fn prewarm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for page in PREWARMED {
-            let _ = self.pages.view_made::<(), _>(page, window, cx);
+            self.pages.prepare(page, window, cx);
         }
     }
 
@@ -1246,132 +734,21 @@ impl Workspace {
         }
         if page == Page::Settings && current != Page::Settings {
             self.back = current;
-        }
-        if page == Page::Settings && current != Page::Settings {
             self.sections_scroll.set_offset(point(px(0.), px(0.)));
         }
+        self.pages.choose(page, window, cx);
         if page == Page::Settings
-            && let Some(settings) = self.pages.settings()
+            && let Some(settings) = self.pages.get::<crate::pages::settings::SettingsPage>()
         {
             self.scroll_to_section(settings.read(cx).section());
-        }
-        // The microphone test runs only while its section is shown.
-        if current == Page::Settings
-            && page != Page::Settings
-            && let Some(settings) = self.pages.settings()
-        {
-            settings.update(cx, |settings, cx| settings.stop_mic_test(cx));
-        }
-        // The analysis board's engine follows the board only while it is shown.
-        if current == Page::Analysis
-            && page != Page::Analysis
-            && let Some(analysis) = self.pages.view_of::<AnalysisPage>(Page::Analysis)
-        {
-            analysis.update(cx, |analysis, cx| analysis.detach(cx));
-        }
-        // Watching streams only while Watch is shown.
-        if current == Page::Watch
-            && page != Page::Watch
-            && let Some(watch) = self
-                .pages
-                .view_of::<crate::pages::watch::WatchPage>(Page::Watch)
-        {
-            watch.update(cx, |watch, cx| watch.hidden(cx));
-        }
-        // The open tournament refreshes only while Tournaments is shown.
-        if current == Page::Tournaments
-            && page != Page::Tournaments
-            && let Some(tournaments) = self
-                .pages
-                .view_of::<crate::pages::tournaments::TournamentsPage>(Page::Tournaments)
-        {
-            tournaments.update(cx, |tournaments, _| tournaments.hidden());
-        }
-        self.pages.show(page, window, cx);
-        if page == Page::Tournaments
-            && current != Page::Tournaments
-            && let Some(tournaments) = self
-                .pages
-                .view_of::<crate::pages::tournaments::TournamentsPage>(Page::Tournaments)
-        {
-            tournaments.update(cx, |tournaments, cx| tournaments.shown(cx));
-        }
-        if page == Page::Watch
-            && current != Page::Watch
-            && let Some(watch) = self
-                .pages
-                .view_of::<crate::pages::watch::WatchPage>(Page::Watch)
-        {
-            watch.update(cx, |watch, cx| watch.shown(window, cx));
-        }
-        if page == Page::Analysis
-            && let Some(analysis) = self.pages.view_of::<AnalysisPage>(Page::Analysis)
-        {
-            analysis.update(cx, |analysis, cx| analysis.attach(cx));
-        }
-        if page == Page::Online
-            && current != Page::Online
-            && let Some(online) = self
-                .pages
-                .view_of::<crate::pages::online::OnlinePage>(Page::Online)
-        {
-            online.update(cx, |online, cx| online.shown(cx));
-        }
-        if page == Page::Insights
-            && current != Page::Insights
-            && let Some(insights) = self
-                .pages
-                .view_of::<crate::pages::insights::InsightsPage>(Page::Insights)
-        {
-            insights.update(cx, |insights, cx| insights.shown(cx));
-        }
-        if page == Page::Puzzles
-            && let Some(puzzles) = self.pages.view_of::<PuzzlesPage>(Page::Puzzles)
-        {
-            puzzles.update(cx, |puzzles, cx| puzzles.shown(window, cx));
-        }
-        if page == Page::Practice
-            && let Some(practice) = self.pages.view_of::<PracticePage>(Page::Practice)
-        {
-            practice.update(cx, |practice, cx| {
-                practice.shown();
-                cx.notify();
-            });
-        }
-        if page == Page::Studies
-            && let Some(studies) = self.pages.view_of::<StudiesPage>(Page::Studies)
-        {
-            studies.update(cx, |studies, cx| studies.shown(cx));
-        }
-        // The sidebar's Openings is the browser (`/openings`), not the line shown last.
-        if page == Page::Openings
-            && let Some(openings) = self.pages.view_of::<OpeningsPage>(Page::Openings)
-        {
-            openings.update(cx, |openings, cx| openings.show_line(None, cx));
-        }
-        // Home shows the unfinished game and accounts as they are now.
-        if page == Page::Dashboard
-            && let Some(home) = self.pages.view_of::<HomePage>(Page::Dashboard)
-        {
-            home.update(cx, |home, cx| home.refresh(cx));
         }
         cx.notify();
     }
 
-    /// The open page has a level to step out of going `direction` (`activeSwipeBackStep`): a
-    /// game in Game history, a broadcast's game or tournament.
+    /// The open page has a level to step out of going `direction`: a game in Game history, a
+    /// broadcast's game or tournament.
     fn can_step(&self, direction: crate::swipe::Direction, cx: &App) -> bool {
-        match self.pages.current() {
-            Page::History => self
-                .pages
-                .view_of::<HistoryPage>(Page::History)
-                .is_some_and(|page| page.read(cx).can_step(direction, cx)),
-            Page::Watch => self
-                .pages
-                .view_of::<WatchPage>(Page::Watch)
-                .is_some_and(|page| page.read(cx).can_step(direction)),
-            _ => false,
-        }
+        self.pages.can_step(direction, cx)
     }
 
     /// Back (-1) or forward (1): out of or into the page's inner level first, then through the
@@ -1383,19 +760,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if self.can_step(direction, cx) {
-            match self.pages.current() {
-                Page::History => {
-                    if let Some(page) = self.pages.view_of::<HistoryPage>(Page::History) {
-                        page.update(cx, |page, cx| page.step(direction, window, cx));
-                    }
-                }
-                Page::Watch => {
-                    if let Some(page) = self.pages.view_of::<WatchPage>(Page::Watch) {
-                        page.update(cx, |page, cx| page.step(direction, window, cx));
-                    }
-                }
-                _ => {}
-            }
+            self.pages.step(direction, window, cx);
             return;
         }
         let current = self.pages.current();
@@ -1501,7 +866,7 @@ impl Workspace {
     }
 
     fn choose_section(&mut self, section: Section, cx: &mut Context<Self>) {
-        if let Some(settings) = self.pages.settings() {
+        if let Some(settings) = self.pages.get::<crate::pages::settings::SettingsPage>() {
             settings.update(cx, |page, cx| page.show(section, cx));
         }
         self.scroll_to_section(section);
@@ -1536,26 +901,25 @@ impl Workspace {
         }
     }
 
-    /// The pages (`navItems`), the one under Settings marked while its dialog is open.
+    /// The pages in their groups, the one under Settings marked while its dialog is open.
     fn nav_blocks(&self, open: bool, cx: &mut Context<Self>) -> Vec<NavBlock> {
         let current = self.shown_page();
-        let mut pages = nav().into_iter();
-        NAV_GROUPS
+        nav_groups()
             .into_iter()
-            .zip(NAV_HEADINGS)
-            .map(|(size, heading)| {
-                let group: Vec<_> = pages.by_ref().take(size).collect();
-                let mark = group
+            .map(|(group, pages)| {
+                let mark = pages
                     .iter()
-                    .position(|(page, _, _)| *page == Page::Online)
+                    .position(|page| *page == Page::Online)
                     .and_then(|row| Some((row, game_mark(cx)?)));
                 NavBlock::Menu(
-                    heading,
-                    Box::new(SidebarMenu::new().gap_0().children(group.into_iter().map(
-                        |(page, label, glyph)| {
+                    group.heading(),
+                    Box::new(SidebarMenu::new().gap_0().children(pages.into_iter().map(
+                        |page| {
+                            let info = page.info();
+                            let label = info.label;
                             let marked = (page == Page::Online).then(|| game_mark(cx)).flatten();
-                            let shown = if open { nav_label(page, label) } else { label };
-                            nav_item(shown, glyph)
+                            let shown = if open { info.short } else { label };
+                            nav_item(shown, icon(info.icon))
                                 .accessibility_label(label)
                                 .active(current == page)
                                 .when_some(marked, |item, mark| {
@@ -1580,7 +944,7 @@ impl Workspace {
     fn section_blocks(&self, cx: &mut Context<Self>) -> Vec<NavBlock> {
         let shown = self
             .pages
-            .settings()
+            .get::<crate::pages::settings::SettingsPage>()
             .map_or(Section::Appearance, |page| page.read(cx).section());
         let mut rows = sections().into_iter();
         SECTION_GROUPS
@@ -1875,13 +1239,13 @@ impl Workspace {
         if open {
             h_flex()
                 .gap(px(4.))
-                .child(div().flex_1().min_w_0().child(account_button(true, cx)))
+                .child(div().flex_1().min_w_0().child(crate::accounts::menu_button(true, cx)))
                 .child(settings)
                 .into_any_element()
         } else {
             v_flex()
                 .child(settings)
-                .child(account_button(false, cx))
+                .child(crate::accounts::menu_button(false, cx))
                 .into_any_element()
         }
     }
@@ -2018,7 +1382,7 @@ impl Workspace {
                         .child("Offline"),
                 )
             })
-            .children(update_button(cx))
+            .children(crate::pages::settings::updates::title_bar_button(cx))
             .when(working(cx), |bar| {
                 bar.child(
                     h_flex()
@@ -2103,7 +1467,7 @@ fn ghost_neutral(cx: &App) -> ButtonCustomVariant {
 }
 
 /// The sidebar footer's buttons: muted like the navigation above them.
-fn ghost_sidebar(cx: &App) -> ButtonCustomVariant {
+pub(crate) fn ghost_sidebar(cx: &App) -> ButtonCustomVariant {
     let palette = cx.global::<Palette>();
     ButtonCustomVariant::new(cx)
         .foreground(palette.text_muted)
@@ -2183,236 +1547,6 @@ fn dev_build_badge(_open: bool, _cx: &App) -> Option<AnyElement> {
     None
 }
 
-/// The sidebar's account menu: which account plays (with several), its profile, managing and
-/// connecting accounts, What's new, reporting a problem, and logging out. With no account it is
-/// named Connect Lichess and opens on connecting one.
-fn account_button(expanded: bool, cx: &App) -> AnyElement {
-    let handle = crate::accounts::handle(cx);
-    let accounts = handle.read(cx);
-    let active = accounts.active(cx);
-    let connected = accounts.connected();
-    let can_connect = crate::network::online(cx) && !accounts.busy;
-    let (glyph, label) = match &active {
-        Some(active) => (icon("user"), format!("@{active}")),
-        None => (icon("log-in"), "Connect Lichess".to_string()),
-    };
-    let target = handle.downgrade();
-    // A navigation row: the label between the icon and a dimmed up-down chevron; elevated while
-    // its menu is open.
-    let palette = cx.global::<Palette>();
-    let dimmed = palette.dimmed;
-    Button::new("account-menu")
-        .custom(ghost_sidebar(cx))
-        .w_full()
-        .px(px(6.))
-        .child(
-            h_flex()
-                .flex_1()
-                .min_w_0()
-                .gap(px(8.))
-                .when(!expanded, |row| row.justify_center())
-                .child(glyph.size(px(18.)).flex_none())
-                .when(expanded, |row| {
-                    row.child(div().flex_1().min_w_0().truncate().child(label.clone()))
-                        .child(
-                            icon("chevrons-up-down")
-                                .size(px(18.))
-                                .flex_none()
-                                .text_color(dimmed),
-                        )
-                }),
-        )
-        .accessibility_label(match &active {
-            Some(_) => format!("{label} account menu"),
-            None => label.clone(),
-        })
-        // On the rail the icon stands alone: name the account as the footer's other buttons do.
-        .when(!expanded, |button| button.tooltip(label.clone()))
-        // Above the button: open, from its left edge across the sidebar; on the rail, centred on
-        // it. At least 192px wide, 8px clear.
-        .dropdown_menu_with_anchor(
-            if expanded {
-                Anchor::BottomLeft
-            } else {
-                Anchor::BottomCenter
-            },
-            move |menu, _, _| {
-                let menu = menu.min_w(if expanded {
-                    SIDEBAR_WIDTH - px(33.)
-                } else {
-                    px(192.)
-                });
-                let act = |run: fn(
-                    &mut crate::accounts::Accounts,
-                    &mut Window,
-                    &mut Context<crate::accounts::Accounts>,
-                )| {
-                    let target = target.clone();
-                    move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                        let _ = target.update(cx, |accounts, cx| run(accounts, window, cx));
-                    }
-                };
-                let mut menu = menu;
-                // Several accounts: which one plays, then the account's pages, then signing out.
-                // One account: the trigger already names it, so the menu opens on its pages.
-                let several = connected.len() > 1;
-                if let Some(active) = &active {
-                    if several {
-                        menu = menu.label("Play as");
-                        for name in &connected {
-                            let (name, target) = (name.clone(), target.clone());
-                            menu = menu.item(
-                                PopupMenuItem::new(format!("@{name}"))
-                                    .checked(&name == active)
-                                    .on_click(move |_, _, cx| {
-                                        let _ = target.update(cx, |accounts, cx| {
-                                            accounts.set_active(&name, cx)
-                                        });
-                                    }),
-                            );
-                        }
-                        menu = menu.separator();
-                    }
-                    let profile = active.clone();
-                    // The Settings button sits beside this one; the menu goes to its accounts.
-                    menu = menu
-                        .item(
-                            PopupMenuItem::new("Profile")
-                                .icon(icon("user"))
-                                .on_click(move |_, window, cx| open_player(&profile, window, cx)),
-                        )
-                        .item(
-                            PopupMenuItem::new("Manage accounts")
-                                .icon(icon("users"))
-                                .on_click(|_, window, cx| {
-                                    open_settings(Section::Accounts, window, cx)
-                                }),
-                        );
-                }
-                menu = menu
-                    .item(
-                        PopupMenuItem::new(if active.is_none() {
-                            "Connect Lichess account"
-                        } else {
-                            "Connect another account"
-                        })
-                        .icon(icon("user-plus"))
-                        .disabled(!can_connect)
-                        .on_click(act(|accounts, window, cx| accounts.connect(window, cx))),
-                    )
-                    .separator()
-                    .item(
-                        PopupMenuItem::new("What's new")
-                            .icon(icon("rocket"))
-                            .on_click(|_, window, cx| crate::whats_new::open(window, cx)),
-                    )
-                    .item(
-                        PopupMenuItem::new("Report a problem")
-                            .icon(icon("message-circle"))
-                            .on_click(|_, _, cx| {
-                                cx.open_url(crate::pages::settings::updates::ISSUES)
-                            }),
-                    );
-                if let Some(active) = &active {
-                    menu = menu.separator().item(
-                        PopupMenuItem::new(if several {
-                            format!("Log out @{active}")
-                        } else {
-                            "Log out".into()
-                        })
-                        .icon(icon("log-out"))
-                        .on_click(act(|accounts, window, cx| {
-                            accounts.logout(false, window, cx)
-                        })),
-                    );
-                    if several {
-                        menu = menu.item(
-                            PopupMenuItem::new("Log out all accounts")
-                                .icon(icon("log-out"))
-                                .on_click(act(|accounts, window, cx| {
-                                    accounts.logout(true, window, cx)
-                                })),
-                        );
-                    }
-                }
-                menu
-            },
-        )
-        .into_any_element()
-}
-
-/// A newer KChess, its download, or the restart that installs it.
-fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
-    use crate::updates::{Phase, UpdatesHandle};
-    // Not during a real-time game: the update waits in Settings → Updates until it ends.
-    if crate::online::handle(cx).read(cx).live_game_on() {
-        return None;
-    }
-    let handle = cx.global::<UpdatesHandle>().0.clone();
-    let updates = handle.read(cx);
-    let version = updates.version.clone()?;
-    let from = updates.current.clone();
-    let (label, tooltip) = match updates.phase {
-        Phase::Available => (
-            format!("Update to {version}"),
-            format!("Download KChess {version} (you have {from})"),
-        ),
-        Phase::Downloading => (
-            match updates.progress {
-                Some((received, total)) if total > 0 => {
-                    format!("Updating {}%", (100 * received / total).min(100))
-                }
-                _ => "Updating…".into(),
-            },
-            format!("Downloading KChess {version} (you have {from})"),
-        ),
-        Phase::Downloaded => (
-            "Restart to update".into(),
-            format!("KChess {version} is ready. Restart now, or it installs when you quit."),
-        ),
-        Phase::Error => (
-            "Retry update".into(),
-            updates
-                .error
-                .clone()
-                .unwrap_or_else(|| "The update could not finish".into()),
-        ),
-        _ => return None,
-    };
-    let phase = updates.phase;
-    let installs = phase == Phase::Downloaded || updates.retries_install();
-    let target = handle.downgrade();
-    Some(
-        over_title_bar(
-            Button::new("update-button")
-                .small()
-                .when(phase == Phase::Downloaded, |button| button.primary())
-                .when(phase == Phase::Error, |button| button.danger())
-                .when(
-                    !matches!(phase, Phase::Downloaded | Phase::Error),
-                    |button| button.outline(),
-                )
-                .icon(icon(match phase {
-                    Phase::Downloaded => "rotate-cw",
-                    Phase::Error => "circle-alert",
-                    _ => "download",
-                }))
-                .label(label)
-                .tooltip(tooltip)
-                .disabled(phase == Phase::Downloading)
-                .on_click(move |_, window, cx| {
-                    if installs {
-                        crate::pages::settings::updates::ask_restart(window, cx);
-                    } else {
-                        let _ = target.update(cx, |updates, cx| updates.download(cx));
-                    }
-                }),
-        )
-        // Its right edge is anchored, so a proportional "Updating N%" moves it with every percent.
-        .font_features(crate::widgets::tabular()),
-    )
-}
-
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.fit_window(window);
@@ -2421,7 +1555,7 @@ impl Render for Workspace {
             window.set_window_title(&title);
             self.title = title;
         }
-        // Zen mode on a game page leaves the board and its panel (`.app-shell.zen aside`).
+        // Zen mode on a game page leaves the board and its panel.
         let zen = cx
             .global::<SettingsHandle>()
             .0
@@ -2429,7 +1563,7 @@ impl Render for Workspace {
             .settings
             .frontend
             .zen_mode
-            && self.pages.current().zen_surface();
+            && self.pages.zen(cx);
         h_flex()
             .size_full()
             .relative()
@@ -2453,8 +1587,18 @@ impl Render for Workspace {
                             // A PGN or FEN file dropped here opens: on the analysis board, or
                             // as a study when it holds several games.
                             .on_drop(|paths: &ExternalPaths, window, cx| {
-                                open_dropped(paths, window, cx)
+                                crate::links::open_dropped(paths, window, cx)
                             })
+                            // Z on a page zen mode applies to, while no text field has the keys.
+                            .on_action(cx.listener(|this, _: &crate::menu::ToggleZen, window, cx| {
+                                if this.pages.zen_key(cx) && this.pages.page_focused(window, cx) {
+                                    crate::settings::change(cx, |settings| {
+                                        settings.frontend.zen_mode = !settings.frontend.zen_mode
+                                    });
+                                } else {
+                                    cx.propagate();
+                                }
+                            }))
                             // A mouse's back and forward buttons go as a swipe does.
                             .on_mouse_down(
                                 MouseButton::Navigate(NavigationDirection::Back),
@@ -2499,43 +1643,5 @@ impl Render for Workspace {
             .when(self.pages.current() == Page::Settings, |shell| {
                 shell.child(self.settings_dialog(window, cx))
             })
-    }
-}
-
-/// Study an earlier puzzle on the analysis board, asking first when that would replace unsaved
-/// analysis (`usePuzzleAttemptActions().analyse`).
-pub fn analyse_puzzle(
-    puzzle: serde_json::Value,
-    wrong_moves: Vec<serde_json::Value>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    replace_analysis(window, cx, move |analysis, _, cx| {
-        analysis.open_puzzle(&puzzle, &wrong_moves, cx)
-    });
-}
-
-#[cfg(test)]
-mod dropped_file_tests {
-    use super::{DROPPED_MAX, read_game_file};
-
-    #[test]
-    fn a_game_file_under_the_limit_reads() {
-        let folder = tempfile::tempdir().unwrap();
-        let path = folder.path().join("game.pgn");
-        std::fs::write(&path, "1. e4 e5 *").unwrap();
-        assert_eq!(read_game_file(&path).as_deref(), Some("1. e4 e5 *"));
-        std::fs::write(&path, vec![b'a'; DROPPED_MAX as usize + 1]).unwrap();
-        assert_eq!(read_game_file(&path), None);
-    }
-
-    /// A `.pgn` symlink to `/dev/zero` reported a length of 0 and was read until memory ran out.
-    #[cfg(unix)]
-    #[test]
-    fn a_device_behind_a_game_name_is_refused() {
-        let folder = tempfile::tempdir().unwrap();
-        let path = folder.path().join("game.pgn");
-        std::os::unix::fs::symlink("/dev/zero", &path).unwrap();
-        assert_eq!(read_game_file(&path), None);
     }
 }

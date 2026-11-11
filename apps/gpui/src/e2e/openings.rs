@@ -129,7 +129,7 @@ fn openings_that_leave_recent_let_their_preview_go(cx: &mut gpui_kit::TestAppCon
     }
     let kept = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<OpeningsPage>(Page::Openings, cx)
+            crate::shell::view::<OpeningsPage>(cx)
                 .expect("the page")
                 .read(cx)
                 .kept_previews()
@@ -143,7 +143,7 @@ fn openings_that_leave_recent_let_their_preview_go(cx: &mut gpui_kit::TestAppCon
     );
     // The boards shown stay from one frame to the next, not made afresh each time.
     app.cx.update(|cx| {
-        crate::shell::view_of::<OpeningsPage>(Page::Openings, cx)
+        crate::shell::view::<OpeningsPage>(cx)
             .expect("the page")
             .update(cx, |_, cx| cx.notify());
     });
@@ -386,7 +386,7 @@ fn f_flips_an_openings_board(cx: &mut gpui_kit::TestAppContext) {
     open_kieseritzky(&mut app);
     let orientation = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::openings::OpeningsPage>(Page::Openings, cx)
+            crate::shell::view::<crate::pages::openings::OpeningsPage>(cx)
                 .map(|page| page.read(cx).orientation())
         })
     };
@@ -404,7 +404,7 @@ fn escape_goes_back_to_all_openings(cx: &mut gpui_kit::TestAppContext) {
     open_kieseritzky(&mut app);
     let orientation = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::openings::OpeningsPage>(Page::Openings, cx)
+            crate::shell::view::<crate::pages::openings::OpeningsPage>(cx)
                 .map(|page| page.read(cx).orientation())
         })
     };

@@ -182,7 +182,7 @@ impl TournamentsPage {
                             .icon(icon("swords"))
                             .label("Go to your game")
                             .on_click(move |_, window, cx| {
-                                crate::shell::open_online_game(&id, window, cx)
+                                crate::pages::online::open_game(&id, window, cx)
                             })
                     }))
                     .child(
@@ -540,7 +540,7 @@ impl TournamentsPage {
                         .w_full()
                         .h(px(298.))
                         .cursor_pointer()
-                        .on_click(move |_, window, cx| crate::shell::watch_game(&id, window, cx))
+                        .on_click(move |_, window, cx| crate::pages::watch::watch_game(&id, window, cx))
                         .child(board),
                 )
                 .child(side(orientation, 1)),
@@ -632,7 +632,7 @@ fn duels(detail: &Value, palette: &Palette) -> Option<Div> {
                     .text_size(px(13.))
                     .cursor_pointer()
                     .pressable(palette)
-                    .on_click(move |_, window, cx| crate::shell::watch_game(&id, window, cx))
+                    .on_click(move |_, window, cx| crate::pages::watch::watch_game(&id, window, cx))
                     .child(
                         v_flex()
                             .flex_1()

@@ -7,7 +7,7 @@ use crate::pages::Page;
 /// The Online tab's games, once listed: the total and each game's opening.
 fn listed(app: &mut Harness, what: &str, ready: impl Fn(usize) -> bool) {
     app.wait_for(what, |_, cx| {
-        crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+        crate::shell::view::<crate::pages::history::HistoryPage>(cx)
             .and_then(|page| page.read(cx).lichess_listed())
             .is_some_and(|(total, _)| ready(total))
     });
@@ -34,7 +34,7 @@ fn a_chesscom_player_is_synced_listed_counted_and_removed(cx: &mut gpui_kit::Tes
     // Insights count them for that account.
     app.open("Insights");
     app.wait_for("the Chess.com report", |_, cx| {
-        crate::shell::view_of::<crate::pages::insights::InsightsPage>(Page::Insights, cx)
+        crate::shell::view::<crate::pages::insights::InsightsPage>(cx)
             .is_some_and(|page| {
                 let page = page.read(cx);
                 page.loaded()
@@ -72,7 +72,7 @@ fn home_shows_a_chesscom_players_activity(cx: &mut gpui_kit::TestAppContext) {
             .is_some_and(|label| label == "Rapid rating 1500")
     });
     let summary = app.cx.update(|cx| {
-        let home = crate::shell::view_of::<crate::pages::home::HomePage>(Page::Dashboard, cx)
+        let home = crate::shell::view::<crate::pages::home::HomePage>(cx)
             .expect("Home");
         let card = home.read(cx).activity().expect("the activity card");
         let (heading, handle, games) = card.read(cx).summary();

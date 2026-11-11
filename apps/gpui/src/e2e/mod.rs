@@ -303,7 +303,7 @@ impl Harness {
         std::fs::write(&path, text).expect("the file");
         self.with_window(|window, cx| {
             let paths = gpui_kit::ExternalPaths(std::iter::once(path).collect());
-            crate::shell::open_dropped(&paths, window, cx);
+            crate::links::open_dropped(&paths, window, cx);
         });
         folder
     }
@@ -431,21 +431,14 @@ impl Harness {
             use gpui_kit::component::WindowExt as _;
             !window.has_active_dialog(cx)
         });
-        let index = crate::shell::nav()
+        let (group, row) = crate::shell::nav_groups()
             .iter()
-            .position(|(_, name, _)| *name == label)
-            .unwrap_or_else(|| panic!("no sidebar page {label:?}"));
-        let mut row = index;
-        let group = crate::shell::NAV_GROUPS
-            .iter()
-            .position(|size| {
-                let inside = row < *size;
-                if !inside {
-                    row -= size;
-                }
-                inside
+            .enumerate()
+            .find_map(|(group, (_, pages))| {
+                let row = pages.iter().position(|page| page.info().label == label)?;
+                Some((group, row))
             })
-            .expect("every page has a group");
+            .unwrap_or_else(|| panic!("no sidebar page {label:?}"));
         self.click(format!("{group}-{row}"));
     }
 

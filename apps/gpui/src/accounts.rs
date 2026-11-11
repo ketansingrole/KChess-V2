@@ -12,6 +12,9 @@ use serde_json::{Value, json};
 
 use crate::core::{Answer, AppCore, Reads};
 
+mod menu;
+pub use menu::{MenuInputs, menu_button};
+
 /// The account chosen for online play (`onlineAccountPreference`).
 pub const ONLINE_ACCOUNT: &str = "kchess:online-account";
 

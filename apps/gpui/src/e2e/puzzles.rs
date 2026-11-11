@@ -261,9 +261,7 @@ fn f_flips_the_puzzle(cx: &mut gpui_kit::TestAppContext) {
     super::palette::wait_until_closed(&mut app);
     let flipped = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::puzzles::PuzzlesPage>(
-                crate::pages::Page::Puzzles,
-                cx,
+            crate::shell::view::<crate::pages::puzzles::PuzzlesPage>(cx,
             )
             .and_then(|page| page.read(cx).shown_flipped(cx))
         })
@@ -292,9 +290,7 @@ fn return_goes_on_to_the_next_puzzle(cx: &mut gpui_kit::TestAppContext) {
     app.open("Puzzles");
     let key = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::puzzles::PuzzlesPage>(
-                crate::pages::Page::Puzzles,
-                cx,
+            crate::shell::view::<crate::pages::puzzles::PuzzlesPage>(cx,
             )
             .map(|page| page.read(cx).puzzle_key())
         })
@@ -355,9 +351,7 @@ fn a_finished_puzzle_is_stepped_through(cx: &mut gpui_kit::TestAppContext) {
     });
     let viewing = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::puzzles::PuzzlesPage>(
-                crate::pages::Page::Puzzles,
-                cx,
+            crate::shell::view::<crate::pages::puzzles::PuzzlesPage>(cx,
             )
             .and_then(|page| page.read(cx).viewing(cx))
         })
@@ -427,9 +421,7 @@ fn a_finished_puzzle_opens_on_the_analysis_board(cx: &mut gpui_kit::TestAppConte
     super::palette::wait_for_first(&mut app, "Analysis board");
     app.press("enter");
     let pgn = |cx: &gpui_kit::App| {
-        crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
-            crate::pages::Page::Analysis,
-            cx,
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx,
         )
         .map(|page| page.read(cx).pgn())
         .unwrap_or_default()

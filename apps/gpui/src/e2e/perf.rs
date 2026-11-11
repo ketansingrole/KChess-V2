@@ -193,11 +193,8 @@ fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
     let mut app = Harness::start(cx);
     fill(&mut app);
     let mut starts: Vec<[f64; 3]> = Vec::new();
-    let mut pages: Vec<(Page, &'static str)> = crate::shell::nav()
-        .iter()
-        .map(|(page, label, _)| (*page, *label))
-        .collect();
-    pages.push((Page::Settings, "Settings"));
+    let mut pages: Vec<(Page, &'static str)> =
+        Page::all().map(|page| (page, page.info().label)).collect();
     // `KCHESS_PERF_PAGES=Studies,Game history`: those pages alone, to profile their openings.
     if let Ok(only) = std::env::var("KCHESS_PERF_PAGES") {
         pages.retain(|(_, label)| only.split(',').any(|name| name == *label));
@@ -224,7 +221,7 @@ fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
                     crate::shell::prewarm(window, cx);
                     if all {
                         for (page, _) in &pages {
-                            let _ = crate::shell::page_view::<()>(*page, window, cx);
+                            crate::shell::prepare(*page, window, cx);
                         }
                     }
                     draw(window, cx);

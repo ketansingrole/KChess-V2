@@ -43,11 +43,8 @@ struct Findings {
 fn every_page_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     let mut findings = Findings::default();
-    let mut pages: Vec<(Page, &str)> = crate::shell::nav()
-        .iter()
-        .map(|(page, label, _)| (*page, *label))
-        .collect();
-    pages.push((Page::Settings, "Settings"));
+    let pages: Vec<(Page, &'static str)> =
+        Page::all().map(|page| (page, page.info().label)).collect();
     for (width, height) in SIZES {
         app.cx
             .simulate_window_resize(app.window, size(px(width), px(height)));
@@ -256,11 +253,8 @@ fn every_page_with_content_lays_out_its_controls(cx: &mut gpui_kit::TestAppConte
     let mut app = Harness::start(cx);
     seed(&mut app);
     let mut findings = Findings::default();
-    let mut pages: Vec<(Page, &str)> = crate::shell::nav()
-        .iter()
-        .map(|(page, label, _)| (*page, *label))
-        .collect();
-    pages.push((Page::Settings, "Settings"));
+    let pages: Vec<(Page, &'static str)> =
+        Page::all().map(|page| (page, page.info().label)).collect();
     for (width, height) in SIZES {
         app.cx
             .simulate_window_resize(app.window, size(px(width), px(height)));
@@ -326,8 +320,8 @@ fn every_tab_and_settings_section_lays_out_its_controls(
     {
         app.cx
             .simulate_window_resize(app.window, size(px(width), px(height)));
-        for (page, label, _) in crate::shell::nav().iter() {
-            let (page, label) = (*page, *label);
+        for page in Page::in_sidebar() {
+            let label = page.info().label;
             app.with_window(|window, cx| crate::shell::open(page, window, cx));
             settle(&mut app);
             let tabs = app.with_window(|window, _| {
@@ -596,11 +590,8 @@ fn every_page_with_the_longest_content_lays_out_its_controls(cx: &mut gpui_kit::
     let mut app = Harness::start(cx);
     seed_longest(&mut app);
     let mut findings = Findings::default();
-    let mut pages: Vec<(Page, &str)> = crate::shell::nav()
-        .iter()
-        .map(|(page, label, _)| (*page, *label))
-        .collect();
-    pages.push((Page::Settings, "Settings"));
+    let pages: Vec<(Page, &'static str)> =
+        Page::all().map(|page| (page, page.info().label)).collect();
     for (width, height) in SIZES {
         app.cx
             .simulate_window_resize(app.window, size(px(width), px(height)));

@@ -245,7 +245,7 @@ impl HomePage {
         match action {
             Action::Review => {
                 if let Some(id) = self.reviewable(cx) {
-                    crate::shell::open_game(&id, window, cx);
+                    crate::pages::history::open_game(&id, window, cx);
                 }
             }
         }
@@ -542,7 +542,7 @@ impl Render for HomePage {
             .cursor_pointer()
             .pressable_fade(0.92)
             .on_click(move |_, window, cx| match &board_game {
-                Some(id) => crate::shell::open_game(id, window, cx),
+                Some(id) => crate::pages::history::open_game(id, window, cx),
                 None => crate::shell::open(Page::Computer, window, cx),
             })
             .children(board);
@@ -563,7 +563,7 @@ impl Render for HomePage {
             Button::new("home-review")
                 .outline()
                 .label("Review")
-                .on_click(move |_, window, cx| crate::shell::open_game(&id, window, cx))
+                .on_click(move |_, window, cx| crate::pages::history::open_game(&id, window, cx))
         });
         let has_about = title.is_some();
         let about = v_flex()
@@ -683,7 +683,7 @@ impl Render for HomePage {
                             .text_size(px(13.))
                             .cursor_pointer()
                             .pressable(&palette)
-                            .on_click(move |_, window, cx| crate::shell::open_game(&id, window, cx))
+                            .on_click(move |_, window, cx| crate::pages::history::open_game(&id, window, cx))
                             .child(
                                 div()
                                     .id(("home-game-outcome", index))
@@ -918,5 +918,48 @@ mod tests {
         );
         let (_, moves) = line(&json!({ "moves": ["e2e4", "e7e5"] }));
         assert_eq!(moves, ["e2e4", "e7e5"]);
+    }
+}
+
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        match self {
+            Action::Review => crate::pages::ActionInfo::new(
+                "home:review",
+                "Review last game",
+                "microscope",
+                "analyse recent",
+            ),
+        }
+    }
+}
+
+impl crate::pages::PageView for HomePage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: Page::Dashboard,
+        label: "Home",
+        short: "Home",
+        icon: "house",
+        group: Some(crate::pages::NavGroup::Home),
+        keywords: "start overview",
+    };
+
+    type Action = Action;
+
+    fn create(_: &mut Window, cx: &mut Context<Self>) -> Self {
+        HomePage::new(cx)
+    }
+
+    /// Home shows the unfinished game and accounts as they are now.
+    fn shown(this: &Entity<Self>, _again: bool, _window: &mut Window, cx: &mut App) {
+        this.update(cx, |home, cx| home.refresh(cx));
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        HomePage::actions(self, cx)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |home, cx| home.act(action, window, cx));
     }
 }

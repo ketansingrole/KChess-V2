@@ -542,9 +542,9 @@ impl EditorPage {
             Action::CopyFen => self.copy_fen(window, cx),
             Action::Analyse => self.analyse(window, cx),
             Action::PlayStockfish => {
-                crate::shell::play_computer_from(self.game_setup(), window, cx)
+                crate::pages::computer::play_from(self.game_setup(), window, cx)
             }
-            Action::PlayFriend => crate::shell::play_local_from(self.game_setup(), window, cx),
+            Action::PlayFriend => crate::pages::local::play_from(self.game_setup(), window, cx),
         }
     }
 
@@ -590,7 +590,7 @@ impl EditorPage {
             return;
         }
         let (setup, orientation) = (self.game_setup(), self.orientation);
-        crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+        crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
             analysis.analyse_setup(&setup, orientation, cx)
         });
     }
@@ -1115,7 +1115,7 @@ impl Render for EditorPage {
                                     .label("Play Stockfish")
                                     .disabled(problem.is_some())
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        crate::shell::play_computer_from(
+                                        crate::pages::computer::play_from(
                                             crate::game::setup_from_fen(&this.fen()),
                                             window,
                                             cx,
@@ -1130,7 +1130,7 @@ impl Render for EditorPage {
                                     .label("Play a friend here")
                                     .disabled(problem.is_some())
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        crate::shell::play_local_from(
+                                        crate::pages::local::play_from(
                                             crate::game::setup_from_fen(&this.fen()),
                                             window,
                                             cx,
@@ -1205,4 +1205,81 @@ mod tests {
         let moved = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBK1BNR";
         assert_ne!(castling_pieces(moved, "Q"), standard_castling_pieces("Q"));
     }
+}
+
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::{ActionInfo, ActionRole};
+        match self {
+            Action::StartPosition => {
+                ActionInfo::new("editor:start", "Starting position", "rotate-ccw", "reset")
+            }
+            Action::ClearBoard => ActionInfo::new("editor:clear", "Clear board", "eraser", "empty"),
+            Action::Flip => {
+                ActionInfo::new("editor:flip", "Flip board", "arrow-up-down", "turn rotate")
+                    .role(ActionRole::Flip)
+            }
+            Action::CopyFen => {
+                ActionInfo::new("editor:copy-fen", "Copy FEN", "copy", "position clipboard")
+                    .role(ActionRole::Copy)
+            }
+            Action::Analyse => ActionInfo::new(
+                "editor:analyse",
+                "Analyse this position",
+                "microscope",
+                "analysis",
+            ),
+            Action::PlayStockfish => {
+                ActionInfo::new("editor:stockfish", "Play Stockfish", "cpu", "computer")
+            }
+            Action::PlayFriend => ActionInfo::new(
+                "editor:friend",
+                "Play a friend here",
+                "users-round",
+                "over the board local",
+            ),
+        }
+    }
+}
+
+impl crate::pages::PageView for EditorPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Editor,
+        label: "Board editor",
+        short: "Board editor",
+        icon: "pencil-ruler",
+        group: Some(crate::pages::NavGroup::Review),
+        keywords: "setup position fen",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        EditorPage::new(window, cx)
+    }
+
+    fn actions(&self, _: &App) -> Vec<Action> {
+        EditorPage::actions(self)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.act(action, window, cx));
+    }
+}
+
+/// The board editor on a setup's position (`{ variant, fen }`).
+pub fn edit_position(
+    setup: Value,
+    orientation: shakmaty::Color,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let variant = setup["variant"].as_str().unwrap_or("standard");
+    let fen = setup["fen"].as_str().unwrap_or_default();
+    if let Some(editor) = crate::shell::made::<EditorPage>(window, cx) {
+        editor.update(cx, |editor, cx| {
+            editor.set_position(variant, fen, orientation, window, cx)
+        });
+    }
+    crate::shell::open(crate::pages::Page::Editor, window, cx);
 }

@@ -512,10 +512,10 @@ impl Render for LichessActivity {
                                 )
                                 .on_click(move |_, window, cx| match &all_source {
                                     Source::Lichess => {
-                                        crate::shell::open_history_lichess(window, cx)
+                                        crate::pages::history::open_lichess(window, cx)
                                     }
                                     Source::Chesscom(_) => {
-                                        crate::shell::open_history_account(&all_account, window, cx)
+                                        crate::pages::history::open_account(&all_account, window, cx)
                                     }
                                 }),
                         )
@@ -552,7 +552,7 @@ impl Render for LichessActivity {
                             None,
                             RowDetail::Brief,
                             move |window, cx| {
-                                crate::shell::open_lichess_game(chosen.clone(), window, cx)
+                                crate::pages::history::open_lichess_game(chosen.clone(), window, cx)
                             },
                             &palette,
                         )
