@@ -6,7 +6,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
 use super::json_codec::{js_json, utf16_len};
-use super::library::{db_err, now_ms};
+use super::library::now_ms;
+use super::sql::Sql as _;
 use super::studies::id_of;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
@@ -21,7 +22,7 @@ pub(crate) fn read_document_text(db: &Connection, key: &str) -> Result<Option<St
         |row| row.get::<_, String>(0),
     )
     .optional()
-    .map_err(db_err)
+    .sql()
 }
 
 /// The parsed document; None when it is missing or not JSON (`readDocument` in the TypeScript).
@@ -59,7 +60,7 @@ pub(crate) fn write_document(
          ON CONFLICT(key) DO UPDATE SET body = excluded.body, updatedAt = excluded.updatedAt",
         params![key, body, now as i64],
     )
-    .map_err(db_err)?;
+    .sql()?;
     Ok(Value::Null)
 }
 

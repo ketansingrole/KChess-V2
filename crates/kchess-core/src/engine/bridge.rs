@@ -13,7 +13,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use serde::Deserialize;
+
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -28,7 +28,7 @@ use super::uci::EngineHub;
 use crate::capabilities::Capabilities;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
-use crate::store::Database;
+use crate::store::{Database, StoreContext, chesscom, games, reviews};
 
 /// How often the battery reading is refreshed while the core runs.
 const REFRESH_EVERY: Duration = Duration::from_secs(15);
@@ -137,6 +137,10 @@ fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
     serde_json::from_value(value).map_err(|cause| CoreError::new(cause.to_string()))
 }
 
+fn to_value(value: impl serde::Serialize) -> Result<Value> {
+    serde_json::to_value(value).map_err(|cause| CoreError::new(cause.to_string()))
+}
+
 impl ReviewStorage for ReviewRecords {
     fn write_review_if<'a>(
         &'a self,
@@ -144,16 +148,14 @@ impl ReviewStorage for ReviewRecords {
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> BoxFuture<'a, Result<ReviewUpdate>> {
         Box::pin(async move {
+            let review = to_value(review)?;
             let value = self
                 .0
-                .call_async_with("store.reviewStore.writeReview", || {
+                .write_admitted(|| {
                     if !current() {
                         return Err(CoreError::new("Review was discarded."));
                     }
-                    Ok(vec![
-                        serde_json::to_value(review)
-                            .map_err(|cause| CoreError::new(cause.to_string()))?,
-                    ])
+                    Ok(move |ctx: &StoreContext| reviews::write_review(ctx.host, ctx.db, &review))
                 })
                 .await?;
             parse(value)
@@ -165,15 +167,16 @@ impl ReviewStorage for ReviewRecords {
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
+            let ids = ids.to_vec();
             self.0
-                .call_async_with("store.reviewStore.markChecked", || {
+                .write_admitted(|| {
                     if !current() {
                         return Err(CoreError::aborted("Review was discarded."));
                     }
-                    Ok(vec![json!(ids), json!(super::now_ms())])
+                    let at = super::now_ms() as f64;
+                    Ok(move |ctx: &StoreContext| reviews::mark_checked(ctx.db, &ids, at))
                 })
                 .await
-                .map(|_| ())
         })
     }
     fn read_review<'a>(
@@ -181,14 +184,12 @@ impl ReviewStorage for ReviewRecords {
         key: &'a str,
     ) -> futures_util::future::BoxFuture<'a, Result<Option<StoredReview>>> {
         Box::pin(async move {
+            let key = key.to_string();
             let value = self
                 .0
-                .call_async("store.reviewStore.readReview", &[json!(key)])
+                .read_async(move |ctx| reviews::read_review(ctx.host, ctx.db, &key))
                 .await?;
-            if value.is_null() {
-                return Ok(None);
-            }
-            parse(value).map(Some)
+            value.map(parse).transpose()
         })
     }
 
@@ -197,13 +198,10 @@ impl ReviewStorage for ReviewRecords {
         review: StoredReview,
     ) -> futures_util::future::BoxFuture<'a, Result<ReviewUpdate>> {
         Box::pin(async move {
+            let review = to_value(review)?;
             let value = self
                 .0
-                .call_async(
-                    "store.reviewStore.writeReview",
-                    &[serde_json::to_value(review)
-                        .map_err(|cause| CoreError::new(cause.to_string()))?],
-                )
+                .write_async(move |ctx| reviews::write_review(ctx.host, ctx.db, &review))
                 .await?;
             parse(value)
         })
@@ -214,12 +212,10 @@ impl ReviewStorage for ReviewRecords {
         username: &'a str,
     ) -> futures_util::future::BoxFuture<'a, Result<bool>> {
         Box::pin(async move {
-            Ok(self
-                .0
-                .call_async("store.reviewStore.hasAccount", &[json!(username)])
-                .await?
-                .as_bool()
-                == Some(true))
+            let username = username.to_string();
+            self.0
+                .read_async(move |ctx| reviews::has_account(ctx.db, &username))
+                .await
         })
     }
 
@@ -228,11 +224,10 @@ impl ReviewStorage for ReviewRecords {
         ids: &'a [String],
     ) -> futures_util::future::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            let at = super::now_ms();
+            let (ids, at) = (ids.to_vec(), super::now_ms() as f64);
             self.0
-                .call_async("store.reviewStore.markChecked", &[json!(ids), json!(at)])
+                .write_async(move |ctx| reviews::mark_checked(ctx.db, &ids, at))
                 .await
-                .map(|_| ())
         })
     }
 
@@ -242,12 +237,12 @@ impl ReviewStorage for ReviewRecords {
         since: i64,
     ) -> futures_util::future::BoxFuture<'a, Result<Vec<GameToReview>>> {
         Box::pin(async move {
+            let accounts = accounts.to_vec();
             let value = self
                 .0
-                .call_async(
-                    "store.reviewStore.gamesToReview",
-                    &[json!(accounts), json!(since), json!(REVIEW_LIMIT)],
-                )
+                .read_async(move |ctx| {
+                    reviews::games_to_review(ctx.db, &accounts, since as f64, REVIEW_LIMIT as f64)
+                })
                 .await?;
             parse(value)
         })
@@ -269,24 +264,12 @@ pub struct ReviewBridge {
     pub online: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AppAccount {
-    username: String,
-    connected: bool,
-}
-
-#[derive(Deserialize)]
-struct AppData {
-    accounts: Vec<AppAccount>,
-}
-
 impl ReviewHost for ReviewBridge {
     fn settings(&self) -> BoxFuture<'_, Result<ReviewSettings>> {
         Box::pin(async move {
             parse(
                 self.database
-                    .call_async("store.games.getSettings", &[])
+                    .read_async(|ctx| games::get_settings(ctx.db))
                     .await?,
             )
         })
@@ -294,11 +277,10 @@ impl ReviewHost for ReviewBridge {
 
     fn accounts(&self) -> BoxFuture<'_, Result<Vec<String>>> {
         Box::pin(async move {
-            let data: AppData = parse(
-                self.database
-                    .call_async("store.games.loadData", &[])
-                    .await?,
-            )?;
+            let data = self
+                .database
+                .read_async(|ctx| games::load_app_data(ctx.db))
+                .await?;
             // Your own accounts: the connected ones, or the first one added when none is, and
             // every Chess.com player added (they are added by name, as your own).
             let mut own: Vec<String> = data
@@ -317,16 +299,12 @@ impl ReviewHost for ReviewBridge {
             }
             let chesscom = self
                 .database
-                .call_async("store.chesscom.accounts", &[])
+                .read_async(|ctx| chesscom::accounts(ctx.db))
                 .await?;
             own.extend(
                 chesscom
-                    .as_array()
-                    .map(Vec::as_slice)
-                    .unwrap_or_default()
                     .iter()
-                    .filter_map(|row| row.get("username").and_then(Value::as_str))
-                    .map(kchess_domain::chesscom::account_of),
+                    .map(|row| kchess_domain::chesscom::account_of(&row.username)),
             );
             Ok(own)
         })

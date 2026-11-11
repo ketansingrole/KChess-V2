@@ -81,7 +81,10 @@ fn problem(refusal: Problem) -> Value {
 
 impl Core {
     async fn ai_connection(&self) -> Result<Connection> {
-        let stored = self.database.call_async("store.ai.connection", &[]).await?;
+        let stored = self
+            .database
+            .read_async(crate::store::ai::connection)
+            .await?;
         Ok(serde_json::from_value(stored).unwrap_or_default())
     }
 
@@ -89,9 +92,8 @@ impl Core {
         let value = serde_json::to_value(connection)
             .map_err(|_| CoreError::new("ChatGPT connection could not be saved."))?;
         self.database
-            .call_async("store.ai.saveConnection", &[value])
+            .write_async(move |ctx| crate::store::ai::save_connection(ctx, &value))
             .await
-            .map(|_| ())
     }
 
     async fn seal_tokens(&self, tokens: &Tokens) -> Result<String> {
@@ -414,9 +416,10 @@ impl Core {
             },
         };
         let key = hex(Sha256::digest(format!("{model}\n{}", brief.input).as_bytes()).as_slice());
+        let lookup = key.clone();
         let cached = self
             .database
-            .call_async("store.ai.explanation", &[json!(key)])
+            .read_async(move |ctx| crate::store::ai::explanation(ctx, &lookup))
             .await?;
         if cached.is_string() {
             // A game can start while the brief and the saved answer were read.
@@ -425,9 +428,10 @@ impl Core {
         }
         match self.ai_answer(&mut connection, &model, &brief).await {
             Ok(text) => {
+                let (key, answer) = (json!(key), json!(text));
                 let saved = self
                     .database
-                    .call_async("store.ai.saveExplanation", &[json!(key), json!(text)])
+                    .write_async(move |ctx| crate::store::ai::save_explanation(ctx, key, answer))
                     .await;
                 if let Err(cause) = saved {
                     self.host

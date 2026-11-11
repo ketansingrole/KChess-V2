@@ -11,9 +11,8 @@ use super::documents::{
     read_document_text, stored_studies, write_document,
 };
 use super::json_codec::{js_json, utf16_len};
-use super::library::{
-    JOINED, MISSES, MISTAKES, SCHEDULE, SESSION_KINDS, STUDIES, db_err, misc, transaction, truthy,
-};
+use super::library::{JOINED, MISSES, MISTAKES, SCHEDULE, SESSION_KINDS, STUDIES, misc, truthy};
+use super::sql::{Sql as _, transaction};
 use super::studies::id_of;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
@@ -41,7 +40,7 @@ pub(crate) fn migrate_studies(db: &Connection) -> Result<()> {
     let work = || {
         let count: i64 = db
             .query_row("SELECT COUNT(*) FROM studies", [], |row| row.get(0))
-            .map_err(db_err)?;
+            .sql()?;
         if count != 0 {
             return Err(CoreError::new(DAMAGED_STUDIES));
         }
@@ -52,7 +51,7 @@ pub(crate) fn migrate_studies(db: &Connection) -> Result<()> {
                 "INSERT INTO studies (id, body, position, textUnits) VALUES (?1, ?2, ?3, ?4)",
                 params![id_of(study), body, position as i64, units],
             )
-            .map_err(db_err)?;
+            .sql()?;
         }
         write_document(db, STUDIES, &json!({ "version": 3 }), "")?;
         Ok(())
@@ -68,15 +67,15 @@ pub(crate) fn read_studies(db: &Connection) -> Result<Vec<Value>> {
     migrate_studies(db)?;
     let mut statement = db
         .prepare("SELECT id, body FROM studies ORDER BY position")
-        .map_err(db_err)?;
+        .sql()?;
     let rows = statement
         .query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
-        .map_err(db_err)?;
+        .sql()?;
     let mut items = Vec::new();
     for row in rows {
-        let (id, body) = row.map_err(db_err)?;
+        let (id, body) = row.sql()?;
         let raw = parse_text(&body).ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
         let study = kchess_domain::library::decode_study(&raw)
             .ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
@@ -126,15 +125,15 @@ pub(crate) fn read_session(host: &dyn Host, db: &Connection, kind: &str) -> Resu
 pub(crate) fn read_games(host: &dyn Host, db: &Connection) -> Result<Vec<Value>> {
     let mut statement = db
         .prepare("SELECT id, body FROM archived_games ORDER BY seq DESC")
-        .map_err(db_err)?;
+        .sql()?;
     let rows = statement
         .query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
-        .map_err(db_err)?;
+        .sql()?;
     let mut games = Vec::new();
     for row in rows {
-        let (id, body) = row.map_err(db_err)?;
+        let (id, body) = row.sql()?;
         match decode_archived_game_text(&body) {
             Some(game) => games.push(game),
             None => host.log(

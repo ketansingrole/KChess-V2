@@ -1,8 +1,10 @@
-//! The facade's synced games, profiles and friends (`run_facade` arms, moved without changes).
+//! The facade's synced games, profiles and friends.
 
-use super::args::{arg, normal};
+use super::args::{arg, normal, now_ms, text};
 use crate::core::Core;
 use crate::error::{CoreError, Result};
+use crate::store::games::{self, as_json};
+use crate::store::insights;
 use serde_json::{Value, json};
 
 impl Core {
@@ -22,34 +24,33 @@ impl Core {
                 let query = normal("assertGamePageQuery", &arg(args, 0))?;
                 self.ensure_migrated().await?;
                 self.database
-                    .call_async("store.games.gamePage", &[query])
+                    .read_async(move |ctx| games::game_page(ctx, query))
                     .await
             }
             "gameLibraryOverview" => {
                 self.ensure_migrated().await?;
-                self.database
-                    .call_async("store.games.gameLibraryOverview", &[])
-                    .await
+                self.database.read_async(games::game_library_overview).await
             }
             "insights" => {
                 let query = normal("assertInsightsQuery", &arg(args, 0))?;
+                let now = now_ms() as f64;
                 self.database
-                    .call_async("store.insights.insights", &[query])
+                    .read_async(move |ctx| insights::insights(ctx.host, ctx.db, &query, now))
                     .await
             }
             "gameRatingHistory" => {
-                let account = normal("assertGameAccount", &arg(args, 0))?;
+                let account = text(&normal("assertGameAccount", &arg(args, 0))?);
                 self.ensure_migrated().await?;
                 self.database
-                    .call_async("store.games.gameRatingHistory", &[account])
+                    .read_async(move |ctx| as_json(games::rating_history(ctx.db, &account)?))
                     .await
             }
             "gamePgn" => {
-                let account = normal("assertGameAccount", &arg(args, 0))?;
-                let id = normal("assertGameId", &arg(args, 1))?;
+                let account = text(&normal("assertGameAccount", &arg(args, 0))?);
+                let id = text(&normal("assertGameId", &arg(args, 1))?);
                 self.ensure_migrated().await?;
                 self.database
-                    .call_async("store.games.gamePgn", &[account, id])
+                    .read_async(move |ctx| Ok(json!(games::game_pgn(ctx.db, &account, &id)?)))
                     .await
             }
             _ => self.run_game_accounts(method, args).await,
@@ -96,9 +97,10 @@ impl Core {
                 self.reviews
                     .discard_account_reviews(&[name.as_str().unwrap_or_default().to_string()]);
                 self.ensure_migrated().await?;
+                let account = text(&name);
                 let data = self
                     .database
-                    .call_async("store.games.clearAccountData", std::slice::from_ref(&name))
+                    .write_async(move |ctx| as_json(games::clear_account_data(ctx.db, &account)?))
                     .await?;
                 self.inner("lichess.forgetProfile", vec![name]).await?;
                 self.reviews.reviews_changed();
@@ -108,9 +110,10 @@ impl Core {
             "addFriends" => {
                 let names = normal("assertFriendList", &arg(args, 0))?;
                 self.ensure_migrated().await?;
+                let list = names.as_array().cloned().unwrap_or_default();
                 let data = self
                     .database
-                    .call_async("store.games.addFriends", std::slice::from_ref(&names))
+                    .write_async(move |ctx| as_json(games::add_friends(ctx.db, &list)?))
                     .await?;
                 self.inner("lichess.primeProfiles", vec![names]).await?;
                 Ok(data)

@@ -429,7 +429,7 @@ impl Core {
 
     /// The internal service methods, by their service names.
     /// `dispatch` routes async methods by owner: puzzles, engines,
-    /// then storage/services/sync. Each owner below is one function so `core.rs` stays
+    /// then services/sync. Each owner below is one function so `core.rs` stays
     /// composition plus lifecycle instead of one large match.
     pub(crate) async fn dispatch(&self, method: &str, args: Vec<Value>) -> Result<Value> {
         if method.starts_with("puzzles.") {
@@ -442,15 +442,6 @@ impl Core {
             || method.starts_with("engines.")
         {
             return self.engines_dispatch(method, &args).await;
-        }
-        if method.starts_with("store.") {
-            return self.database.call_async(method, &args).await;
-        }
-        if method == "voiceHistoryDocument" {
-            return self
-                .database
-                .call_async("store.voiceLog.voiceHistoryDocument", &[])
-                .await;
         }
         if method == "host.reply" {
             let id: u64 = arg(&args, 0, "id")?;
@@ -580,7 +571,7 @@ impl Core {
         self.database.hold_execution().await
     }
 
-    /// Run one synchronous method: storage, and the engine state that a synchronous caller reads
+    /// Run one synchronous method: the engine state that a synchronous caller reads
     /// or changes without starting work (`engine.threads`, `analysis.running`,
     /// `reviews.status`, ...). Unknown methods and malformed arguments are errors.
     pub fn call_sync(&self, method: &str, args: Vec<Value>) -> Result<Value> {
@@ -593,10 +584,7 @@ impl Core {
         if let Some(result) = self.facade_sync(method, &args) {
             return result;
         }
-        if !method.starts_with("store.") {
-            return Err(CoreError::new(format!("Unknown core method {method}.")));
-        }
-        self.database.call(method, &args)
+        Err(CoreError::new(format!("Unknown core method {method}.")))
     }
 
     /// The engine methods that start no work and need no runtime: safe from a synchronous caller.

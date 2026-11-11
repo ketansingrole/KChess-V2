@@ -1,10 +1,11 @@
 //! The facade's puzzles, the puzzle database and training runs (`run_facade` arms, moved without changes).
 
 use super::PUZZLE_DB_URL;
-use super::args::{arg, normal};
+use super::args::{arg, normal, text};
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use crate::store::{runs, voice_log};
 use serde_json::{Value, json};
 
 impl Core {
@@ -93,46 +94,59 @@ impl Core {
         match method {
             "saveRun" => {
                 let run = normal("assertRunInput", &arg(args, 0))?;
-                self.database.call_async("store.runs.saveRun", &[run]).await
+                self.database
+                    .write_async(move |ctx| runs::save_run(ctx.host, ctx.db, &run))
+                    .await
             }
             "runSummary" => {
-                let kind = normal("assertRunKind", &arg(args, 0))?;
+                let kind = text(&normal("assertRunKind", &arg(args, 0))?);
                 self.database
-                    .call_async("store.runs.runSummary", &[kind])
+                    .read_async(move |ctx| runs::run_summary(ctx.host, ctx.db, &kind))
                     .await
             }
             "clearRuns" => {
                 let kind = match args.first() {
-                    None | Some(Value::Null) => Value::Null,
-                    Some(value) => normal("assertRunKind", value)?,
+                    None | Some(Value::Null) => None,
+                    Some(value) => normal("assertRunKind", value)?.as_str().map(str::to_string),
                 };
                 self.database
-                    .call_async("store.runs.clearRuns", &[kind])
-                    .await
+                    .write_async(move |ctx| runs::clear_runs(ctx.db, kind.as_deref()))
+                    .await?;
+                Ok(Value::Null)
             }
             "saveVoiceAttempt" => {
                 let attempt = normal("assertVoiceAttempt", &arg(args, 0))?;
-                self.database
-                    .call_async("store.voiceLog.saveVoiceAttempt", &[attempt])
-                    .await
+                let id = self
+                    .database
+                    .write_async(move |ctx| voice_log::save_voice_attempt(ctx.db, &attempt))
+                    .await?;
+                Ok(json!(id))
             }
             "updateVoiceAttempt" => {
-                let id = normal("assertVoiceId", &arg(args, 0))?;
+                let id = normal("assertVoiceId", &arg(args, 0))?
+                    .as_i64()
+                    .ok_or_else(|| CoreError::new("id must be a number"))?;
                 let update = normal("assertVoiceUpdate", &arg(args, 1))?;
                 self.database
-                    .call_async("store.voiceLog.updateVoiceAttempt", &[id, update])
-                    .await
+                    .write_async(move |ctx| voice_log::update_voice_attempt(ctx.db, id, &update))
+                    .await?;
+                Ok(Value::Null)
             }
             "voiceHistory" => {
-                let limit = normal("assertVoiceLimit", &arg(args, 0))?;
+                let limit = normal("assertVoiceLimit", &arg(args, 0))?
+                    .as_i64()
+                    .ok_or_else(|| CoreError::new("limit must be a number"))?;
                 self.database
-                    .call_async("store.voiceLog.voiceHistory", &[limit])
+                    .read_async(move |ctx| {
+                        voice_log::voice_history(ctx.host, ctx.db, limit).map(Value::Array)
+                    })
                     .await
             }
             "clearVoiceHistory" => {
                 self.database
-                    .call_async("store.voiceLog.clearVoiceHistory", &[])
-                    .await
+                    .write_async(|ctx| voice_log::clear_voice_history(ctx.db))
+                    .await?;
+                Ok(Value::Null)
             }
             _ => Err(CoreError::new(format!("Unknown core method {method}."))),
         }

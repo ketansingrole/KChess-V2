@@ -6,10 +6,13 @@ use rusqlite::{Connection, Row, params};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::error::Result;
+use crate::store::sql::Sql as _;
+
 use kchess_domain::trainer::puzzle_progress::{Outcome, Verdict, classify, day_streak, moves};
 
 /// Appended migration: the attempt log. Later changes append to it; nothing here is rewritten.
-pub fn create_schema(db: &Connection) -> Result<(), String> {
+pub fn create_schema(db: &Connection) -> Result<()> {
     db.execute_batch(
         "CREATE TABLE IF NOT EXISTS puzzle_attempts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,17 +35,17 @@ pub fn create_schema(db: &Connection) -> Result<(), String> {
 );
 CREATE INDEX IF NOT EXISTS idx_puzzle_attempts_day ON puzzle_attempts(day);",
     )
-    .map_err(|cause| cause.to_string())?;
+    .sql()?;
     // Appended migration: what was played at each wrong first try, as `index:uci` words.
     let has_wrong_moves = db
         .prepare("SELECT 1 FROM pragma_table_info('puzzle_attempts') WHERE name = 'wrong_moves'")
         .and_then(|mut statement| statement.exists([]))
-        .map_err(|cause| cause.to_string())?;
+        .sql()?;
     if !has_wrong_moves {
         db.execute_batch(
             "ALTER TABLE puzzle_attempts ADD COLUMN wrong_moves TEXT NOT NULL DEFAULT ''",
         )
-        .map_err(|cause| cause.to_string())?;
+        .sql()?;
     }
     Ok(())
 }
@@ -96,12 +99,8 @@ pub struct ProgressQuery {
 /// How many attempts a recorded attempt's progress lists: the training page's strip.
 pub const RECENT: u32 = 10;
 
-fn sql_error(cause: rusqlite::Error) -> String {
-    cause.to_string()
-}
-
 /// Keep `attempt` (classified here, as the session did), at `at` ms since the epoch.
-pub fn record(db: &Connection, attempt: &AttemptInput, at: i64) -> Result<(), String> {
+pub fn record(db: &Connection, attempt: &AttemptInput, at: i64) -> Result<()> {
     let verdict = Verdict {
         win: attempt.win,
         revealed: attempt.revealed,
@@ -142,7 +141,7 @@ pub fn record(db: &Connection, attempt: &AttemptInput, at: i64) -> Result<(), St
             wrong_moves.join(" "),
         ],
     )
-    .map_err(sql_error)?;
+    .sql()?;
     Ok(())
 }
 
@@ -196,13 +195,13 @@ fn attempt_from(row: &Row<'_>) -> rusqlite::Result<Value> {
 }
 
 /// `PuzzleTotals` of first attempts, of one day or of all.
-fn totals(db: &Connection, day: Option<&str>) -> Result<Value, String> {
+fn totals(db: &Connection, day: Option<&str>) -> Result<Value> {
     let mut statement = db
         .prepare(
             "SELECT outcome, COUNT(*), SUM(found), SUM(tried) FROM puzzle_attempts
              WHERE retry = 0 AND (?1 IS NULL OR day = ?1) GROUP BY outcome",
         )
-        .map_err(sql_error)?;
+        .sql()?;
     let rows = statement
         .query_map(params![day], |row| {
             Ok((
@@ -212,11 +211,11 @@ fn totals(db: &Connection, day: Option<&str>) -> Result<Value, String> {
                 row.get::<_, i64>(3)?,
             ))
         })
-        .map_err(sql_error)?;
+        .sql()?;
     let (mut attempts, mut found, mut tried) = (0i64, 0i64, 0i64);
     let mut by = [0i64; 5];
     for row in rows {
-        let (outcome, count, moves_found, moves_tried) = row.map_err(sql_error)?;
+        let (outcome, count, moves_found, moves_tried) = row.sql()?;
         let Some(outcome) = Outcome::parse(&outcome) else {
             continue;
         };
@@ -238,26 +237,26 @@ fn totals(db: &Connection, day: Option<&str>) -> Result<Value, String> {
 }
 
 /// `PuzzleProgress`: the newest `limit` attempts, the day streak as of `today`, and the totals.
-pub fn progress(db: &Connection, query: &ProgressQuery) -> Result<Value, String> {
+pub fn progress(db: &Connection, query: &ProgressQuery) -> Result<Value> {
     let mut statement = db
         .prepare("SELECT * FROM puzzle_attempts ORDER BY id DESC LIMIT ?1")
-        .map_err(sql_error)?;
+        .sql()?;
     let recent = statement
         .query_map(params![query.limit], attempt_from)
-        .map_err(sql_error)?
+        .sql()?
         .collect::<rusqlite::Result<Vec<Value>>>()
-        .map_err(sql_error)?;
+        .sql()?;
     let mut statement = db
         .prepare(
             "SELECT DISTINCT day FROM puzzle_attempts
              WHERE retry = 0 AND outcome IN ('solved', 'hinted')",
         )
-        .map_err(sql_error)?;
+        .sql()?;
     let days = statement
         .query_map([], |row| row.get::<_, String>(0))
-        .map_err(sql_error)?
+        .sql()?
         .collect::<rusqlite::Result<Vec<String>>>()
-        .map_err(sql_error)?;
+        .sql()?;
     let streak = day_streak(days.iter().map(String::as_str), &query.today);
     Ok(json!({
         "recent": recent,
