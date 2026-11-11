@@ -1,0 +1,23 @@
+[package]
+name = "kchess-host"
+description = "What the core and its frontends read alike of the process they run in: the KCHESS_* switches and development overrides, the App Store sandbox, log redaction and which links open in a browser."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Diagnostics redaction (`redact.rs`).
+regex = "1"
+dirs = "7"
+# `opens_in_browser` parses the URL (already in Cargo.lock through reqwest).
+url = "2"
+kchess-hack = { version = "0.1", path = "../kchess-hack" }
+
+[features]
+# Set by `cargo xtask package` (through `kchess-core/packaged`) for every shipped build: the
+# development overrides are ignored (`dev_overrides`).
+packaged = []
+
+[lints]
+workspace = true

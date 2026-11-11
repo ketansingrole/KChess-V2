@@ -1510,7 +1510,7 @@ fn last_install_error(install: Option<&Install>, root: Option<&Path>) -> Option<
 }
 
 pub fn init(cx: &mut App) {
-    let store = kchess_core::app_store();
+    let store = kchess_host::app_store();
     let install = (!cfg!(debug_assertions) && !store)
         .then(installed)
         .flatten();
@@ -1525,7 +1525,7 @@ pub fn init(cx: &mut App) {
         }
     }
     let failed = last_install_error(install.as_ref(), root.as_deref());
-    let feed = kchess_core::dev_override("KCHESS_UPDATE_FEED")
+    let feed = kchess_host::dev_override("KCHESS_UPDATE_FEED")
         .map(|feed| feed.to_string_lossy().into_owned())
         .filter(|_| !store)
         .or_else(|| install.is_some().then(|| FEED.to_string()));

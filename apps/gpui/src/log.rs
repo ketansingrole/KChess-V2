@@ -117,4 +117,4 @@ pub fn read() -> Vec<String> {
         .collect()
 }
 
-pub use kchess_core::redact::redact;
+use kchess_host::redact;

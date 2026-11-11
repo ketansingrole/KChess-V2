@@ -11,7 +11,7 @@ downloads. It is the same app run in the App Sandbox, built by `cargo xtask pack
   helper inherit its sandbox. Its profile lives in the container
   (`~/Library/Containers/com.kchess.app/Data/Library/Application Support/KChess`), apart from a
   GitHub install's.
-- **Updated by the App Store.** `kchess_core::app_store()` (the sandbox's
+- **Updated by the App Store.** `kchess_host::app_store()` (the sandbox's
   `APP_SANDBOX_CONTAINER_ID`) turns the updater off; Settings says the App Store updates it.
 - **Bundled Stockfish only.** The store forbids downloading programs, and the sandbox cannot keep
   a chosen executable across launches, so the engine settings offer the bundled Stockfish alone.

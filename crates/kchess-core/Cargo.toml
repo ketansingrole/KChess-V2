@@ -17,9 +17,8 @@ kchess-delta = { path = "../kchess-delta" }
 kchess-voice = { path = "../kchess-voice" }
 serde.workspace = true
 serde_json.workspace = true
-# Diagnostics redaction (`redact.rs`); both already in Cargo.lock through the app.
-regex = "1"
-dirs = "7"
+# The `KCHESS_*` switches, development overrides and the App Store sandbox.
+kchess-host = { path = "../kchess-host" }
 rusqlite = { version = "0.41", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "process", "net"] }
 # `gzip`: API answers (JSON, NDJSON, PGN) arrive compressed; byte-exact downloads and live
@@ -66,7 +65,7 @@ rustix = { version = "1", features = ["fs", "process"] }
 [features]
 # Set by `cargo xtask package` for every shipped build: the development overrides (test switch,
 # engine and helper paths, update feed) are ignored (`dev_overrides` in lib.rs).
-packaged = []
+packaged = ["kchess-host/packaged"]
 
 [dev-dependencies]
 # Random legal games for the compression benchmark (`examples/http_compression.rs`).

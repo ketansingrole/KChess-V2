@@ -410,7 +410,7 @@ fn service_binary(bundled: &Path, sandboxed: bool) -> PathBuf {
 /// closing the window that started it does not stop it. Two clients starting at once are
 /// settled by the profile lock: the second service exits.
 fn launch(profile: &Path, start: &Start) -> Result<(), ConnectError> {
-    let binary = service_binary(&start.binary, kchess_core::app_store());
+    let binary = service_binary(&start.binary, kchess_host::app_store());
     let config = serde_json::to_string(&start.config)
         .map_err(|error| ConnectError::Failed(error.to_string()))?;
     let mut command = std::process::Command::new(binary);
@@ -423,7 +423,7 @@ fn launch(profile: &Path, start: &Start) -> Result<(), ConnectError> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    kchess_core::env::forward(&mut command);
+    kchess_host::env::forward(&mut command);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

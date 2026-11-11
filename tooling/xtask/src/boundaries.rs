@@ -38,11 +38,6 @@ const RULES: [Rule; 2] = [
             // Starting the core (embedded or through the service) and answering its host requests.
             "apps/gpui/src/core.rs",
             "apps/cli/src/core.rs",
-            // Log lines are redacted as the core's are.
-            "apps/gpui/src/log.rs",
-            // The App Store build: no updater, and no Stockfish download in the engine settings.
-            "apps/gpui/src/updates.rs",
-            "apps/gpui/src/pages/settings/engine.rs",
         ],
     },
     Rule {

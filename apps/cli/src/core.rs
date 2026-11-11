@@ -42,7 +42,7 @@ pub fn default_data_dir() -> PathBuf {
 /// Diagnostics go to stderr, so JSON on stdout stays usable in pipelines.
 fn log(level: Level, scope: &str, message: &str) {
     if matches!(level, Level::Warn | Level::Error) {
-        eprintln!("[{scope}] {}", kchess_core::redact::redact(message));
+        eprintln!("[{scope}] {}", kchess_host::redact(message));
     }
 }
 
@@ -116,7 +116,7 @@ fn answer(
     open: impl FnOnce(&str) -> std::io::Result<()>,
 ) -> HostReply {
     match request {
-        HostRequest::OpenExternal(url) if kchess_core::capabilities::opens_in_browser(&url) => {
+        HostRequest::OpenExternal(url) if kchess_host::opens_in_browser(&url) => {
             if browser == Browser::Open && open(&url).is_ok() {
                 eprintln!("Opened {url}");
             } else {
@@ -124,9 +124,7 @@ fn answer(
             }
             HostReply::done()
         }
-        HostRequest::OpenExternal(_) => {
-            HostReply::Error("Only web addresses open in the browser.".into())
-        }
+        HostRequest::OpenExternal(_) => HostReply::Error(kchess_host::NOT_A_WEB_PAGE.into()),
         HostRequest::OnBattery => HostReply::Value(Value::Bool(false)),
         request => HostReply::Error(format!(
             "The command line cannot answer {}.",

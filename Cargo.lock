@@ -4241,6 +4241,7 @@ dependencies = [
  "kchess-domain",
  "kchess-games",
  "kchess-hack",
+ "kchess-host",
  "kchess-service",
  "serde_json",
  "tempfile",
@@ -4264,7 +4265,6 @@ dependencies = [
  "aes-gcm",
  "base64 0.23.1",
  "bytes",
- "dirs 7.0.0",
  "flate2",
  "futures-util",
  "getrandom 0.4.3",
@@ -4272,9 +4272,9 @@ dependencies = [
  "kchess-delta",
  "kchess-domain",
  "kchess-hack",
+ "kchess-host",
  "kchess-voice",
  "keyring",
- "regex",
  "reqwest",
  "rusqlite",
  "rustix",
@@ -4355,6 +4355,7 @@ dependencies = [
  "kchess-domain",
  "kchess-games",
  "kchess-hack",
+ "kchess-host",
  "kchess-service",
  "nix",
  "notify-rust",
@@ -4397,6 +4398,7 @@ dependencies = [
  "fastrand",
  "flate2",
  "foldhash",
+ "form_urlencoded",
  "futures-channel",
  "futures-core",
  "futures-io",
@@ -4457,6 +4459,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kchess-host"
+version = "2026.11.7"
+dependencies = [
+ "dirs 7.0.0",
+ "kchess-hack",
+ "regex",
+ "url",
+]
+
+[[package]]
 name = "kchess-service"
 version = "2026.11.7"
 dependencies = [
@@ -4465,6 +4477,7 @@ dependencies = [
  "kchess-core",
  "kchess-delta",
  "kchess-hack",
+ "kchess-host",
  "rustix",
  "serde",
  "serde_json",

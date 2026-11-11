@@ -230,24 +230,6 @@ fn text(value: Value) -> Result<String> {
         .ok_or_else(|| CoreError::new("The host answered with something other than text."))
 }
 
-/// Whether a frontend may open `url` for `openExternal`: any `https://` page, or a plain-http
-/// page on this machine's loopback address (`127.0.0.1`, as the test servers listen). The URL is
-/// parsed, so `http://127.0.0.1.example.com/` or `http://127.0.0.1@example.com/` is not local,
-/// and nothing with a login in it opens.
-pub fn opens_in_browser(url: &str) -> bool {
-    let Ok(parsed) = reqwest::Url::parse(url) else {
-        return false;
-    };
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return false;
-    }
-    match parsed.scheme() {
-        "https" => parsed.host_str().is_some(),
-        "http" => parsed.host_str() == Some("127.0.0.1"),
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,24 +308,6 @@ mod tests {
         let sealed = caps.encrypt("lip_token").await.unwrap();
         assert_eq!(caps.decrypt(&sealed).await.unwrap(), "lip_token");
         assert!(caps.pending.lock().unwrap().waiting.is_empty());
-    }
-
-    #[test]
-    fn only_web_pages_and_this_machine_open() {
-        assert!(opens_in_browser("https://lichess.org/oauth?state=x"));
-        assert!(opens_in_browser("http://127.0.0.1:8123/callback"));
-        for refused in [
-            "http://127.0.0.1.evil.example/",
-            "http://127.0.0.1@evil.example/",
-            "https://user:pass@lichess.org/",
-            "http://lichess.org/",
-            "file:///etc/passwd",
-            "javascript:alert(1)",
-            "-https://lichess.org",
-            "",
-        ] {
-            assert!(!opens_in_browser(refused), "{refused}");
-        }
     }
 
     /// A request routed to one client is answered by that client alone.

@@ -1,7 +1,7 @@
 //! `connect_or_start` with a service binary that only notes, in `<profile>/launched`, whether the
 //! profile's `core.json` was still there when it started, then exits without serving.
 //!
-//! The runtime folder is set for the whole process (`kchess_core::env`), so every test here
+//! The runtime folder is set for the whole process (`kchess_host::env`), so every test here
 //! shares one, and the one script copied into it.
 
 #![cfg(unix)]
@@ -25,7 +25,7 @@ fn start() -> Start {
     static FOLDERS: OnceLock<(tempfile::TempDir, PathBuf)> = OnceLock::new();
     let (_, binary) = FOLDERS.get_or_init(|| {
         let folder = tempfile::tempdir().expect("folder");
-        kchess_core::env::set("KCHESS_RUNTIME_DIR", folder.path().join("runtime"));
+        kchess_host::env::set("KCHESS_RUNTIME_DIR", folder.path().join("runtime"));
         let binary = folder.path().join("kchess-service");
         std::fs::write(&binary, SCRIPT).expect("script");
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).expect("mode");

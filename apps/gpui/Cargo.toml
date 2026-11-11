@@ -18,6 +18,7 @@ bench = ["gpui-kit/profiler"]
 
 [dependencies]
 kchess-core = { path = "../../crates/kchess-core" }
+kchess-host = { path = "../../crates/kchess-host" }
 # The shared core: one core per profile for every KChess window (docs/shared-core.md).
 kchess-service = { path = "../../crates/kchess-service" }
 kchess-domain = { path = "../../crates/kchess-domain" }

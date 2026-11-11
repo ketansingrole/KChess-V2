@@ -4,7 +4,7 @@
 //! It is the app the `.dmg` carries, run in the App Sandbox: the core service, Stockfish and the
 //! voice helper inherit the app's sandbox, and the command line stays out (outside the sandbox it
 //! cannot reach the sandboxed core). In the sandbox the app leaves updates to the App Store and
-//! runs only the Stockfish it comes with (`kchess_core::app_store`). It carries no Electron bridge
+//! runs only the Stockfish it comes with (`kchess_host::app_store`). It carries no Electron bridge
 //! and no update manifest: nothing ever updated a store install but the store.
 //!
 //! Signing (`KCHESS_MAS_APP_IDENTITY`, `KCHESS_MAS_INSTALLER_IDENTITY`, `KCHESS_MAS_PROFILE`, the

@@ -340,7 +340,7 @@ async fn install(
     location: &ManagedLocation,
     held: tokio::sync::OwnedMutexGuard<()>,
 ) -> Result<InstallResult> {
-    if crate::app_store() {
+    if kchess_host::app_store() {
         return Err(CoreError::new(
             "The App Store version uses the Stockfish it comes with.",
         ));
