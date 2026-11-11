@@ -36,6 +36,14 @@ pub enum TimeControl {
     Unlimited,
 }
 
+crate::union!(
+    /// Whether a challenge was received or sent.
+    ChallengeDirection {
+        In = "in",
+        Out = "out",
+    }
+);
+
 /// A pending challenge to or from one of the connected accounts.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,8 +51,7 @@ pub struct ChallengeInfo {
     pub id: String,
     /// The connected account it was sent to (incoming) or from (outgoing).
     pub account: String,
-    /// `in` or `out`.
-    pub direction: String,
+    pub direction: ChallengeDirection,
     pub opponent: PlayerRef,
     pub variant: String,
     pub variant_name: String,
@@ -174,13 +181,12 @@ struct Challenge {
     speed: String,
     time_control: TimeControl,
     color: Option<String>,
-    direction: Option<String>,
+    direction: Option<ChallengeDirection>,
     initial_fen: Option<String>,
     rematch_of: Option<String>,
 }
 
 const COLORS: &[&str] = &["white", "black", "random"];
-const DIRECTIONS: &[&str] = &["in", "out"];
 
 fn challenge(object: &Object) -> Option<Challenge> {
     let id = game_id(object.get("id")?)?.to_string();
@@ -195,7 +201,9 @@ fn challenge(object: &Object) -> Option<Challenge> {
     let speed = text(object.get("speed")?, 20)?.to_string();
     let time_control = time_control(object.get("timeControl")?)?;
     let color = optional(object, "color", |v| picklist(v, COLORS))?.map(str::to_string);
-    let direction = optional(object, "direction", |v| picklist(v, DIRECTIONS))?.map(str::to_string);
+    let direction = optional(object, "direction", |v| {
+        v.as_str().and_then(ChallengeDirection::from_key)
+    })?;
     let initial_fen = optional(object, "initialFen", |v| text(v, 100))?.map(str::to_string);
     let rematch_of = optional(object, "rematchOf", game_id)?.map(str::to_string);
     Some(Challenge {
@@ -258,7 +266,7 @@ pub fn read_challenge_event(account: &str, raw: &Value, now: i64) -> Option<Chal
     };
 
     let ours = account.to_lowercase();
-    let outgoing = parsed.direction.as_deref() == Some("out")
+    let outgoing = parsed.direction == Some(ChallengeDirection::Out)
         || (parsed.direction.is_none()
             && parsed
                 .challenger
@@ -299,7 +307,11 @@ pub fn read_challenge_event(account: &str, raw: &Value, now: i64) -> Option<Chal
     let info = ChallengeInfo {
         id: parsed.id,
         account: account.to_string(),
-        direction: if outgoing { "out" } else { "in" }.to_string(),
+        direction: if outgoing {
+            ChallengeDirection::Out
+        } else {
+            ChallengeDirection::In
+        },
         opponent,
         variant: variant_key,
         variant_name,
@@ -342,7 +354,7 @@ mod tests {
     #[test]
     fn reads_incoming_and_outgoing_challenges_from_either_accounts_point_of_view() {
         let incoming = read_challenge_event("Alice", &challenge(json!({})), 1000).unwrap();
-        assert_eq!(incoming.info.direction, "in");
+        assert_eq!(incoming.info.direction, ChallengeDirection::In);
         assert_eq!(incoming.info.opponent.name, "Bob");
         assert_eq!(incoming.info.opponent.rating, Some(Number::from(1700)));
         assert_eq!(
@@ -358,7 +370,7 @@ mod tests {
                 .unwrap()
                 .info
                 .direction,
-            "out"
+            ChallengeDirection::Out
         );
         assert!(read_challenge_event("Alice", &json!({ "type": "gameStart" }), 0).is_none());
     }

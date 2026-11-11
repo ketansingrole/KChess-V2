@@ -166,11 +166,6 @@ wire_enum!(#[doc = "Lichess rating category, including variants."] PerfType, PER
     RacingKings = "racingKings",
     Crazyhouse = "crazyhouse",
 });
-union!(#[doc = "Format for exporting a game."] ExportKind {
-    Gif = "gif",
-    Png = "png",
-    Pgn = "pgn",
-});
 wire_enum!(#[doc = "What a connected account can do about a player on Lichess."] RelationAction, RELATION_ACTIONS {
     Follow = "follow",
     Unfollow = "unfollow",
@@ -208,7 +203,6 @@ impl GameResultFilter {
         }
     }
 }
-union!(#[doc = "Whether a challenge was received or sent."] ChallengeDirection { In = "in", Out = "out" });
 union!(#[doc = "Which online stream a message arrived on."] Lane { Events = "events", Game = "game", Seek = "seek" });
 union!(#[doc = "Connection state of the online play session."] OnlinePhase {
     Checking = "checking",
@@ -253,8 +247,6 @@ union!(#[doc = "Progress stage of the puzzle database download."] PuzzleDbPhase 
     Cancelled = "cancelled",
     Failed = "failed",
 });
-union!(#[doc = "Progress stage of the voice model download."] VoiceModelPhase { Checking = "checking", Downloading = "downloading", Preparing = "preparing" });
-
 /// Colors of one light or dark variant of an app theme, as `#rgb` / `#rrggbb`. Optional ones are derived from the rest.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -591,12 +583,16 @@ pub struct MessageSent {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct OnlineConnection {
-    pub session: f64,
+    pub session: u64,
     pub account: String,
     pub game_id: String,
     pub lane: Lane,
     pub phase: OnlinePhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// The kind of failure that caused this state, so the page offers what can help.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<crate::ErrorKind>,
 }
 
 /// Health of the idle event stream that waits for challenges and pairings.
@@ -605,6 +601,7 @@ pub struct OnlineConnection {
 pub struct LobbyState {
     pub account: String,
     pub phase: OnlinePhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
 
@@ -1297,12 +1294,25 @@ pub struct ProfileChange {
 pub struct PuzzleDbProgress {
     pub phase: PuzzleDbPhase,
     /// Compressed bytes received so far.
-    pub received: f64,
-    /// Total compressed bytes, when the server said.
-    pub total: Option<f64>,
+    pub received: u64,
     /// Puzzles kept so far.
-    pub kept: f64,
+    pub kept: u64,
+    /// Total compressed bytes, when the server said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+    /// Why it failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+}
+
+impl PuzzleDbPhase {
+    /// The last report of a download: none follows it.
+    pub fn is_terminal(self) -> bool {
+        match self {
+            PuzzleDbPhase::Done | PuzzleDbPhase::Cancelled | PuzzleDbPhase::Failed => true,
+            PuzzleDbPhase::Downloading | PuzzleDbPhase::Importing => false,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
@@ -1399,23 +1409,6 @@ pub struct VoiceWord {
     pub word: String,
     #[serde(with = "js_number")]
     pub conf: f64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct VoiceModelProgress {
-    pub phase: VoiceModelPhase,
-    pub received: f64,
-    pub total: Option<f64>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct VoiceModelStatus {
-    pub installed: bool,
-    pub bytes: f64,
-    pub busy: bool,
-    pub progress: Option<VoiceModelProgress>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -2019,7 +2012,7 @@ pub struct PopularityMonth {
 /* ── Online play, watching and tournaments, as the core answers them ────── */
 
 pub use kchess_domain::records::challenge::{
-    ChallengeInfo, PlayerRef, TimeControl as ChallengeTimeControl,
+    ChallengeDirection, ChallengeInfo, PlayerRef, TimeControl as ChallengeTimeControl,
 };
 
 /// What to play online and how: a public seek, or a challenge to `target`.

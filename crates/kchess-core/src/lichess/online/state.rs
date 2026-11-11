@@ -25,23 +25,7 @@ pub(crate) const SEEK_REJECTED: &str = "Lichess rejected this public seek. The B
 pub(crate) const LOST_CONNECTION: &str =
     "Lost connection to Lichess. Check your network and reopen the game.";
 
-/// The session's streams (`lane`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Lane {
-    Events,
-    Game,
-    Seek,
-}
-
-impl Lane {
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Lane::Events => "events",
-            Lane::Game => "game",
-            Lane::Seek => "seek",
-        }
-    }
-}
+pub use kchess_contracts::types::Lane;
 
 /// `OnlineHooks` of the service: the session reports these to the host through `emit`.
 pub(crate) const CHALLENGE_TYPES: [&str; 3] =

@@ -101,10 +101,10 @@ impl CoreEvent {
     pub fn is_terminal(&self) -> bool {
         match self {
             CoreEvent::Analysis(update) => update["done"].as_bool().unwrap_or(false),
-            CoreEvent::PuzzleDbProgress(progress) => matches!(
-                progress["phase"].as_str(),
-                Some("done" | "cancelled" | "failed")
-            ),
+            CoreEvent::PuzzleDbProgress(progress) => progress["phase"]
+                .as_str()
+                .and_then(PuzzleDbPhase::from_key)
+                .is_some_and(PuzzleDbPhase::is_terminal),
             _ => false,
         }
     }
@@ -144,6 +144,53 @@ mod tests {
             connection: Some(7),
         };
         assert_eq!(serde_json::to_string(&some).unwrap(), r#"{"connection":7}"#);
+    }
+
+    #[test]
+    fn progress_and_connection_states_cross_as_before() {
+        use crate::types::{
+            LobbyState, OnlineConnection, OnlinePhase, PuzzleDbPhase, PuzzleDbProgress,
+        };
+        let mut progress = PuzzleDbProgress {
+            phase: PuzzleDbPhase::Downloading,
+            received: 10,
+            kept: 2,
+            total: None,
+            message: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&progress).unwrap(),
+            r#"{"phase":"downloading","received":10,"kept":2}"#
+        );
+        progress.phase = PuzzleDbPhase::Failed;
+        progress.total = Some(99);
+        progress.message = Some("No".into());
+        assert_eq!(
+            serde_json::to_string(&progress).unwrap(),
+            r#"{"phase":"failed","received":10,"kept":2,"total":99,"message":"No"}"#
+        );
+        let state = OnlineConnection {
+            session: 4,
+            account: "me".into(),
+            game_id: "abcdefgh".into(),
+            lane: crate::types::Lane::Game,
+            phase: OnlinePhase::Idle,
+            message: None,
+            kind: Some(crate::ErrorKind::Offline),
+        };
+        assert_eq!(
+            serde_json::to_string(&state).unwrap(),
+            r#"{"session":4,"account":"me","gameId":"abcdefgh","lane":"game","phase":"idle","kind":"offline"}"#
+        );
+        let lobby = LobbyState {
+            account: "me".into(),
+            phase: OnlinePhase::Idle,
+            message: Some("Hi".into()),
+        };
+        assert_eq!(
+            serde_json::to_string(&lobby).unwrap(),
+            r#"{"account":"me","phase":"idle","message":"Hi"}"#
+        );
     }
 
     #[test]

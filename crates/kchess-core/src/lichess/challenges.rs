@@ -84,7 +84,8 @@ impl ChallengeInbox {
             while entries.len() > MAX_CHALLENGES {
                 entries.remove(0);
             }
-            known_time.is_none() && event.info.direction == "in"
+            known_time.is_none()
+                && event.info.direction == kchess_contracts::types::ChallengeDirection::In
         } else {
             entries.retain(|info| info.id != event.info.id);
             false
@@ -125,7 +126,7 @@ impl ChallengeInbox {
                     entries[at] = info;
                 }
                 None => {
-                    if info.direction == "in" {
+                    if info.direction == kchess_contracts::types::ChallengeDirection::In {
                         fresh.push(info.clone());
                     }
                     entries.push(info);
@@ -218,7 +219,10 @@ mod tests {
     #[test]
     fn reads_incoming_and_outgoing_challenges_from_either_accounts_point_of_view() {
         let incoming = read_challenge_event("Alice", &challenge(json!({})), 1000).unwrap();
-        assert_eq!(incoming.info.direction, "in");
+        assert_eq!(
+            incoming.info.direction,
+            kchess_contracts::types::ChallengeDirection::In
+        );
         assert_eq!(incoming.info.opponent.name, "Bob");
         assert_eq!(incoming.info.opponent.rating, Some(Number::from(1700)));
         assert_eq!(
@@ -234,7 +238,7 @@ mod tests {
                 .unwrap()
                 .info
                 .direction,
-            "out"
+            kchess_contracts::types::ChallengeDirection::Out
         );
         assert!(read_challenge_event("Alice", &json!({ "type": "gameStart" }), 0).is_none());
     }

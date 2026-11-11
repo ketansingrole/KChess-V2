@@ -8,17 +8,16 @@ use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
-use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, format_bytes};
-use kchess_contracts::types::PuzzleDbStatus;
+use kchess_contracts::types::{PuzzleDbPhase, PuzzleDbProgress, PuzzleDbStatus};
 
 pub struct PuzzleDb {
     pub status: PuzzleDbStatus,
-    progress: Option<Value>,
+    progress: Option<PuzzleDbProgress>,
     error: Option<String>,
     _events: Subscription,
 }
@@ -36,8 +35,10 @@ pub fn init(cx: &mut App) {
         progress: None,
         error: None,
         _events: cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
-            if let ClientEvent::Event(CoreEvent::PuzzleDbProgress(progress)) = event {
-                this.progress = Some(progress.clone());
+            if let ClientEvent::Event(CoreEvent::PuzzleDbProgress(progress)) = event
+                && let Ok(progress) = serde_json::from_value(progress.clone())
+            {
+                this.progress = Some(progress);
                 cx.notify();
             }
         }),
@@ -69,7 +70,13 @@ impl PuzzleDb {
 
     fn install(&mut self, cx: &mut Context<Self>) {
         self.error = None;
-        self.progress = Some(json!({ "phase": "downloading", "received": 0, "kept": 0 }));
+        self.progress = Some(PuzzleDbProgress {
+            phase: PuzzleDbPhase::Downloading,
+            received: 0,
+            kept: 0,
+            total: None,
+            message: None,
+        });
         cx.notify();
         let install = cx.global::<AppCore>().request(calls::PuzzleDbInstall {});
         cx.spawn(async move |this, cx| {
@@ -79,13 +86,13 @@ impl PuzzleDb {
                     Ok(status) => this.status = status,
                     Err(cause) => this.error = Some(cause.message),
                 }
-                let phase = this
-                    .progress
-                    .as_ref()
-                    .and_then(|progress| progress["phase"].as_str().map(str::to_string));
-                if matches!(phase.as_deref(), Some("done" | "cancelled") | None)
-                    || this.error.is_none()
-                {
+                let ended = this.progress.as_ref().is_none_or(|progress| {
+                    matches!(
+                        progress.phase,
+                        PuzzleDbPhase::Done | PuzzleDbPhase::Cancelled
+                    )
+                });
+                if ended || this.error.is_none() {
                     this.progress = None;
                 }
                 cx.notify();
@@ -144,12 +151,10 @@ impl PuzzleDb {
 
     fn busy(&self) -> bool {
         self.status.busy
-            || self.progress.as_ref().is_some_and(|progress| {
-                matches!(
-                    progress["phase"].as_str(),
-                    Some("downloading" | "importing")
-                )
-            })
+            || self
+                .progress
+                .as_ref()
+                .is_some_and(|progress| !progress.phase.is_terminal())
     }
 }
 
@@ -171,16 +176,21 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
             .child(text)
     };
     let body: AnyElement = if this.busy() {
-        let progress = this.progress.clone().unwrap_or(Value::Null);
-        let received = progress["received"].as_f64().unwrap_or_default();
-        let total = progress["total"].as_f64();
-        let text = match progress["phase"].as_str() {
-            Some("importing") => "Saving puzzles…".to_string(),
-            Some("failed") => progress["message"]
-                .as_str()
-                .unwrap_or("The download failed")
-                .to_string(),
-            _ => format!(
+        let progress = this.progress.clone().unwrap_or(PuzzleDbProgress {
+            phase: PuzzleDbPhase::Downloading,
+            received: 0,
+            kept: 0,
+            total: None,
+            message: None,
+        });
+        let received = progress.received as f64;
+        let total = progress.total.map(|total| total as f64);
+        let text = match progress.phase {
+            PuzzleDbPhase::Importing => "Saving puzzles…".to_string(),
+            PuzzleDbPhase::Failed => progress
+                .message
+                .unwrap_or_else(|| "The download failed".to_string()),
+            PuzzleDbPhase::Downloading | PuzzleDbPhase::Done | PuzzleDbPhase::Cancelled => format!(
                 "Downloading… {}{}",
                 format_bytes(received),
                 total
@@ -188,7 +198,7 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
                     .unwrap_or_default()
             ),
         };
-        let kept = progress["kept"].as_f64().unwrap_or_default();
+        let kept = progress.kept as f64;
         let share = total
             .filter(|total| *total > 0.)
             .map(|total| (received / total).min(1.));

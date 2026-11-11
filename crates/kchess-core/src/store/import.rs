@@ -18,10 +18,8 @@ use super::games::{
 use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use kchess_contracts::types::{PieceAnimation, ReviewAuto};
 use kchess_domain::js;
-
-const PIECE_ANIMATIONS: [&str; 4] = ["none", "fast", "normal", "slow"];
-const REVIEW_AUTO: [&str; 3] = ["off", "recent", "all"];
 
 /// A plaintext token from an earlier release, for the caller to encrypt and store.
 pub struct PlainToken {
@@ -593,7 +591,7 @@ pub fn normalize_settings(stored: &Map<String, Value>) -> Result<Map<String, Val
     settings.insert(
         "pieceAnimation".into(),
         match animation.as_str() {
-            Some(name) if PIECE_ANIMATIONS.contains(&name) => animation,
+            Some(name) if PieceAnimation::from_key(name).is_some() => animation,
             _ => default("pieceAnimation"),
         },
     );
@@ -610,7 +608,7 @@ pub fn normalize_settings(stored: &Map<String, Value>) -> Result<Map<String, Val
     settings.insert(
         "reviewAuto".into(),
         match review.as_str() {
-            Some(name) if REVIEW_AUTO.contains(&name) => review,
+            Some(name) if ReviewAuto::from_key(name).is_some() => review,
             _ => default("reviewAuto"),
         },
     );

@@ -869,7 +869,10 @@ impl OnlineState {
         let last = self.model.last_game.as_ref()?.id.as_str();
         self.challenges
             .iter()
-            .find(|c| c.direction == "in" && c.rematch_of.as_deref() == Some(last))
+            .find(|c| {
+                c.direction == kchess_contracts::types::ChallengeDirection::In
+                    && c.rematch_of.as_deref() == Some(last)
+            })
             .cloned()
     }
 
@@ -933,7 +936,7 @@ impl OnlineState {
                 let Ok(challenge) = serde_json::from_value::<ChallengeInfo>(payload.clone()) else {
                     return;
                 };
-                if challenge.direction != "in" {
+                if challenge.direction != kchess_contracts::types::ChallengeDirection::In {
                     return;
                 }
                 let (title, body) = challenge_alert(&challenge);

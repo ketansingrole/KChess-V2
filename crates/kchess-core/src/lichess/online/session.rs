@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-use kchess_contracts::types::OnlinePhase;
+use kchess_contracts::types::{OnlineConnection, OnlinePhase};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -110,19 +110,15 @@ impl OnlineSession {
             message,
             kind,
         } = update;
-        let mut payload = json!({
-            "session": session,
-            "account": account,
-            "gameId": game_id,
-            "lane": lane.name(),
-            "phase": phase,
+        let payload = json!(OnlineConnection {
+            session,
+            account: account.to_string(),
+            game_id: game_id.to_string(),
+            lane,
+            phase,
+            message: message.map(str::to_string),
+            kind,
         });
-        if let Some(message) = message {
-            payload["message"] = json!(message);
-        }
-        if let Some(kind) = kind {
-            payload["kind"] = json!(kind.as_str());
-        }
         let live_game = super::state::reports_live_game(phase, game_id);
         self.run_state_hook(live_game, self.assistance_blocked());
         self.emit(CoreEvent::OnlineState(payload));

@@ -251,14 +251,14 @@ mod tests {
     /// Each history kind's identity is a session the library keeps.
     #[test]
     fn every_place_is_kept_as_a_known_session() {
-        use kchess_domain::misc::constants::SESSION_KINDS;
+        use kchess_domain::misc::constants::SessionKind;
         for kind in [
             crate::computer::HISTORY,
             crate::local::HISTORY,
             crate::local::CLOCK_HISTORY,
         ] {
             assert!(
-                SESSION_KINDS.contains(&session_kind(kind).as_str()),
+                SessionKind::from_key(&session_kind(kind)).is_some(),
                 "{kind}"
             );
         }
