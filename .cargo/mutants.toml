@@ -20,7 +20,7 @@ exclude_re = [
     'kchess-service/src/client\.rs:.*: replace \| with \^ in launch',
     # A uniform draw picks White half the time whether below or above 0.5 counts, and exactly
     # 0.5 has no weight.
-    'apps/cli/src/play\.rs:.*: replace < with (>|<=) in Session<.*>::choose_color',
+    'kchess-games/src/lib\.rs:.*: replace < with (>|<=) in draw_color',
     # A patch exactly as long as the file whole: either makes the same file, and no input makes
     # bsdiff's compressed patch and bzip2's whole file the same length to test it.
     'kchess-delta/src/lib\.rs:.*: replace < with <= in build',

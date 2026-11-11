@@ -1,0 +1,16 @@
+name: Install GPUI build libraries
+description: >-
+  The Linux libraries GPUI builds and links against (README.md and CONTRIBUTING.md name them for
+  a development machine), and desktop-file-utils, which checks the packages' desktop entry. One
+  list for every workflow: four copies had drifted apart. Nothing on macOS or Windows.
+
+runs:
+  using: composite
+  steps:
+    - if: runner.os == 'Linux'
+      shell: bash
+      run: >-
+        sudo apt-get update && sudo apt-get install -y
+        libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev
+        libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
+        desktop-file-utils

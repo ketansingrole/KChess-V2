@@ -21,10 +21,6 @@ concurrency:
 env:
   # `.config/nextest.toml`: report every failure of the run, not only the first.
   NEXTEST_PROFILE: ci
-  GPUI_LINUX_LIBS: >-
-    libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev
-    libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
-    desktop-file-utils
 
 jobs:
   # Whether to package. The packages, the Snap and the Windows upgrade take most of CI's time
@@ -141,8 +137,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Install GPUI build libraries
-        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - uses: ./.github/actions/install-gpui-libs
       # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
       # cache quota is shared): only KChess's own crates recompile. CI and release jobs share keys.
       # Each job that saves one drops the cache it replaces first (`.github/actions/drop-caches`).
@@ -207,16 +202,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Install GPUI build libraries
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
-      # Windows links its tests with LLVM's linker (rustup ships it), which links faster than
-      # Microsoft's; the packages that ship keep Microsoft's. Set before the cache, whose key
-      # holds Cargo's variables, and on Windows only, so the other caches stay as they are.
-      - name: Link with rust-lld
-        if: runner.os == 'Windows'
-        shell: bash
-        run: echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld.exe" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/install-gpui-libs
+      - uses: ./.github/actions/windows-linker
       # `headless` restores this cache too, and saves none of its own. On macOS it holds the
       # lints' and the command line's builds too.
       - id: cache
@@ -238,16 +225,9 @@ jobs:
       - run: cargo test -p kchess-gpui --locked
         env:
           RUST_TEST_THREADS: ${{ runner.os == 'Windows' && 4 || 8 }}
-      # What `headless` runs on Windows, here for macOS: one runner fewer per run. Every member
-      # but the app (whose tests ran above), so a new one is tested here without naming it.
+      # What `headless` runs on Windows, here for macOS: one runner fewer per run.
       - if: runner.os == 'macOS'
-        uses: ./.github/actions/install-tools
-        with:
-          tools: cargo-nextest
-      - if: runner.os == 'macOS'
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - if: runner.os == 'macOS'
-        run: cargo nextest run --workspace --exclude kchess-gpui --locked
+        uses: ./.github/actions/headless-tests
       - if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         uses: ./.github/actions/drop-caches
         with:
@@ -275,12 +255,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      # Windows links its tests with LLVM's linker (rustup ships it), which links faster than
-      # Microsoft's; the packages that ship keep Microsoft's. Set before the cache, whose key
-      # holds Cargo's variables, and on Windows only, so the other caches stay as they are.
-      - name: Link with rust-lld
-        shell: bash
-        run: echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld.exe" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/windows-linker
       # The gpui job's dependencies, read only: a cache of its own held 554 to 602 MB more per
       # platform (2026-11-10), room the package caches need under the repository's 10 GB.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
@@ -293,13 +268,7 @@ jobs:
         uses: ./.github/actions/vendor-gpui
         with:
           name: vendor-headless
-      - uses: ./.github/actions/install-tools
-        with:
-          tools: cargo-nextest
-      # One clippy and one nextest over all of them: separate runs resolved features apart and
-      # rebuilt the dependencies they share.
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo nextest run --workspace --exclude kchess-gpui --locked
+      - uses: ./.github/actions/headless-tests
       - uses: ./.github/actions/vendor-gpui
         with:
           name: vendor-headless
@@ -333,9 +302,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Install GPUI build libraries
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - uses: ./.github/actions/install-gpui-libs
       # Saved even when the Snap fails after the build: the Snap Store's outages
       # (2026-11-06, 2026-11-10 twice) would otherwise keep the Linux build out of the cache.
       - id: cache
@@ -395,9 +362,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Install GPUI build libraries
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - uses: ./.github/actions/install-gpui-libs
       - id: cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:

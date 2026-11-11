@@ -1,0 +1,12 @@
+name: Link tests with rust-lld
+description: >-
+  On Windows, links the tests with LLVM's linker (rustup ships it), which links faster than
+  Microsoft's; the packages that ship keep Microsoft's. Use it before the Rust cache, whose key
+  holds Cargo's variables. Nothing on macOS or Linux, so their caches stay as they are.
+
+runs:
+  using: composite
+  steps:
+    - if: runner.os == 'Windows'
+      shell: bash
+      run: echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld.exe" >> "$GITHUB_ENV"

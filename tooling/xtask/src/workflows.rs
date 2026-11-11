@@ -133,6 +133,27 @@ fn every_workflow_is_valid_yaml() {
     assert!(checked > 5, "only {checked} workflows found");
 }
 
+/// The Mutants workflow started by hand offers every member but the workspace hack: its list
+/// was written by hand and lacked kchess-delta, the crate installed apps read updates with.
+#[test]
+fn mutants_can_be_run_on_every_member() {
+    let path = crate::util::root().join(".github/workflows/mutants.yml");
+    let text = std::fs::read_to_string(path).unwrap();
+    let workflow = &yaml_rust2::YamlLoader::load_from_str(&text).unwrap()[0];
+    let mut offered: Vec<&str> = workflow["on"]["workflow_dispatch"]["inputs"]["package"]
+        ["options"]
+        .as_vec()
+        .expect("the package choices")
+        .iter()
+        .filter_map(yaml_rust2::Yaml::as_str)
+        .collect();
+    offered.sort_unstable();
+    let mut members = crate::check::members().unwrap();
+    members.retain(|name| crate::members::role(name) != crate::members::Role::Hack);
+    members.sort_unstable();
+    assert_eq!(offered, members);
+}
+
 #[test]
 fn bash_steps_are_found_with_their_shell() {
     let text = "jobs:\n  a:\n    runs-on: macos-latest\n    steps:\n      - name: One\n        run: |\n          echo \"$(date)\"\n          echo two\n      - run: echo three\n";
