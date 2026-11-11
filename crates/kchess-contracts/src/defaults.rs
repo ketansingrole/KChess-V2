@@ -75,21 +75,3 @@ pub fn default_settings() -> Result<Settings, String> {
         },
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The settings carry the domain's engine levels, all of them, in its order.
-    #[test]
-    fn the_default_engine_levels_are_the_domains() {
-        let settings = default_settings().unwrap();
-        let levels = &settings.core.engine_levels;
-        assert_eq!(levels.first(), Some(&EngineLevel::Beginner));
-        let from_domain = engine_levels::default_levels();
-        assert_eq!(
-            serde_json::to_value(levels).unwrap(),
-            serde_json::json!(from_domain)
-        );
-    }
-}

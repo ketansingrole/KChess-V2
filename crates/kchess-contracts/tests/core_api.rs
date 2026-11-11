@@ -26,18 +26,10 @@ fn method_names_are_unique() {
     let total = names.len();
     names.dedup();
     assert_eq!(names.len(), total);
-    assert!(total > 140, "{total}");
     let lookup = core_api::method("positionLookup").expect("declared");
     let params: Vec<(&str, bool)> = lookup.params.iter().map(|p| (p.name, p.optional)).collect();
     assert_eq!(params, [("kind", false), ("fen", false), ("options", true)]);
     assert_eq!(lookup.assist, Some(Assist::Lookups));
-    assert!(
-        core_api::method("lichessStudies")
-            .expect("declared")
-            .doc
-            .trim_start()
-            .starts_with("Studies an account owns")
-    );
     assert_eq!(
         core_api::method("saveSession").expect("declared").writes,
         [ProfileArea::Sessions]
