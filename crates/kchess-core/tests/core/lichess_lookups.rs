@@ -1186,6 +1186,37 @@ async fn a_failed_lookup_says_what_went_wrong_for_its_database() {
     }
 }
 
+/// Each tablebase move keeps its move, its SAN, its category and its distance to zeroing.
+#[tokio::test]
+async fn a_tablebase_move_keeps_its_category_and_distance() {
+    let fixture = serve(|_| {
+        Reply::Json(
+            200,
+            json!({
+                "category": "win", "dtz": 1,
+                "moves": [{ "uci": "a2a8", "category": "loss", "dtz": -2 }],
+            })
+            .to_string(),
+        )
+    })
+    .await;
+    let result = lookups(&fixture.base, 1_000)
+        .service
+        .lookup(Kind::Tablebase, "8/8/8/8/8/8/R7/K6k w - - 0 1", None)
+        .await
+        .unwrap();
+    let rook = &result.saved.moves[0];
+    assert_eq!(
+        (
+            rook.uci.as_str(),
+            rook.san.as_str(),
+            rook.category.as_deref(),
+            rook.dtz
+        ),
+        ("a2a8", "Ra8", Some("loss"), Some(Some(-2)))
+    );
+}
+
 const CONNECT: &str = "Connect a Lichess account in Settings to use the opening explorer.";
 
 /// An ordinary lookup's body must arrive within the deadline, but the player database streams
