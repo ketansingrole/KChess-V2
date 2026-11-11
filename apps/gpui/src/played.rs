@@ -8,6 +8,7 @@ use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
 use kchess_contracts::Level;
 use kchess_contracts::calls;
+use kchess_contracts::check::LibraryId;
 use serde_json::{Value, json};
 
 use crate::core::{Answer, AppCore, Reads};
@@ -131,24 +132,27 @@ fn write_in_order(
     .detach();
 }
 
-async fn send(core: &AppCore, write: &Write) -> Result<Value, kchess_contracts::CoreError> {
+/// Sends a write; what the core answers is not read, only whether it went through.
+async fn send(core: &AppCore, write: &Write) -> Result<(), kchess_contracts::CoreError> {
     match write {
-        Write::Game(game) => {
-            core.request(calls::SaveArchivedGame { game: game.clone() })
-                .await
-        }
+        Write::Game(game) => core
+            .request(calls::SaveArchivedGame { game: game.clone() })
+            .await
+            .map(drop),
         Write::Remove(id) => {
-            core.request(calls::RemoveArchivedGame { id: json!(id) })
-                .await
+            core.request(calls::RemoveArchivedGame {
+                id: LibraryId(id.clone()),
+            })
+            .await
         }
-        Write::Session(key, value) => {
-            core.request(calls::SaveSession {
+        Write::Session(key, value) => core
+            .request(calls::SaveSession {
                 kind: json!(key),
                 session: value.clone(),
             })
             .await
-        }
-        Write::Flushed(..) => Ok(Value::Null),
+            .map(drop),
+        Write::Flushed(..) => Ok(()),
     }
 }
 
@@ -157,7 +161,7 @@ async fn send(core: &AppCore, write: &Write) -> Result<Value, kchess_contracts::
 /// writes are failing now.
 fn settle(
     write: Write,
-    result: Result<Value, kchess_contracts::CoreError>,
+    result: Result<(), kchess_contracts::CoreError>,
     failing: bool,
     refused: &mut Vec<(Write, String)>,
     outcomes: &mpsc::UnboundedSender<Option<String>>,

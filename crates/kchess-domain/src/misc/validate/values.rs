@@ -330,11 +330,6 @@ pub(super) fn assert_lines(value: J) -> Checked<u64> {
     Ok(n)
 }
 
-/// `CORE_CONTRACTS` `lookupKind`: one of the position lookups.
-pub(super) fn assert_lookup_kind(value: J) -> Checked<String> {
-    picked(value, &["opening", "masters", "player", "tablebase"], None)
-}
-
 /// `CORE_CONTRACTS` `optionalPage` (`tournament`): nothing, or a page from 1 to 200.
 pub(super) fn assert_optional_page(value: J) -> Checked<Option<u64>> {
     let page: Option<u64> = decode(value, plain)?;

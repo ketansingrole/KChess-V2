@@ -16,6 +16,7 @@ use tokio::process::Command;
 
 pub mod reviews;
 pub mod store;
+pub mod wire;
 
 /// Keeps every log line so a test can assert on what the controller reported.
 #[derive(Default)]

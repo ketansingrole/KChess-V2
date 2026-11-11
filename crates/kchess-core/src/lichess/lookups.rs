@@ -520,7 +520,13 @@ impl PositionLookups {
             let result = if kind == Kind::Tablebase {
                 tablebase_result(fen, (self.now)(), &raw)?
             } else {
-                explorer_result(kind, options.variant.unwrap_or_default(), fen, (self.now)(), &raw)?
+                explorer_result(
+                    kind,
+                    options.variant.unwrap_or_default(),
+                    fen,
+                    (self.now)(),
+                    &raw,
+                )?
             };
             self.cache
                 .write(
@@ -565,7 +571,10 @@ impl PositionLookups {
             match kind {
                 Kind::Opening => {
                     query.append_pair("variant", options.variant.unwrap_or_default().key());
-                    query.append_pair("speeds", &speeds(options.speeds.as_deref().unwrap_or_default()));
+                    query.append_pair(
+                        "speeds",
+                        &speeds(options.speeds.as_deref().unwrap_or_default()),
+                    );
                     if let Some(ratings) = options.ratings.as_ref().filter(|r| !r.is_empty()) {
                         query.append_pair("ratings", &join_numbers(ratings));
                     }

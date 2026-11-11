@@ -143,7 +143,8 @@ impl Session<'_> {
             match write {
                 Write::SaveGame(game) => self.save(calls::SaveArchivedGame { game }).await,
                 Write::RemoveGame(id) => {
-                    self.save(calls::RemoveArchivedGame { id: LibraryId(id) }).await
+                    self.save(calls::RemoveArchivedGame { id: LibraryId(id) })
+                        .await
                 }
                 Write::SaveSession { kind, identity } => {
                     self.save(calls::SaveSession {

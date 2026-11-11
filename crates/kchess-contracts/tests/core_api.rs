@@ -279,6 +279,52 @@ fn the_dispatch_gates_assistance_before_and_after_and_reports_writes() {
     );
 }
 
+/// A typed argument is refused with its type's message, reported as a refused call.
+#[test]
+fn a_typed_argument_is_refused_with_its_message() {
+    let api = recorder::Api::default();
+    let refused = futures_lite_block_on(dispatch(&api, "removeArchivedGame", vec![json!("")]));
+    assert_eq!(
+        refused.unwrap_err().message,
+        "invalid value, expected at least 1 character"
+    );
+    let kind = futures_lite_block_on(dispatch(
+        &api,
+        "positionLookup",
+        vec![json!("bogus"), json!("8/8/8/8/8/8/8/K6k w - - 0 1")],
+    ));
+    assert_eq!(
+        kind.unwrap_err().message,
+        "invalid value, expected one of opening, masters, player, tablebase"
+    );
+    assert_eq!(api.calls(), Vec::<String>::new());
+    assert_eq!(api.0.refused.lock().unwrap().len(), 2);
+}
+
+/// A call made as a Lichess account answers its result, or that the account must connect again.
+#[test]
+fn a_reply_crosses_as_its_result_or_needs_reconnect() {
+    use kchess_contracts::types::{LichessStudy, Reply};
+    let done = Reply::Done(vec![LichessStudy {
+        id: "abcdEFGH".into(),
+        name: "Endgames".into(),
+        updated_at: 9,
+    }]);
+    let wire = r#"[{"id":"abcdEFGH","name":"Endgames","updatedAt":9}]"#;
+    assert_eq!(serde_json::to_string(&done).unwrap(), wire);
+    assert_eq!(
+        serde_json::from_str::<Reply<Vec<LichessStudy>>>(wire).unwrap(),
+        done
+    );
+    let reconnect = Reply::<Vec<LichessStudy>>::NeedsReconnect;
+    let wire = r#"{"needsReconnect":true}"#;
+    assert_eq!(serde_json::to_string(&reconnect).unwrap(), wire);
+    assert_eq!(
+        serde_json::from_str::<Reply<Vec<LichessStudy>>>(wire).unwrap(),
+        reconnect
+    );
+}
+
 /// Runs a future that never waits on anything outside itself.
 fn futures_lite_block_on<F: std::future::Future>(future: F) -> F::Output {
     let mut future = std::pin::pin!(future);

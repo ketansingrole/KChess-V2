@@ -8,6 +8,8 @@
 
 use crate::game::tree::TreePgn as _;
 use kchess_contracts::calls;
+use kchess_contracts::check::Fen;
+use kchess_contracts::types::{LookupOptions, PositionLookupKind};
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -536,13 +538,13 @@ impl Repertoire {
                 let fen = root.node_at(&path).fen.clone();
                 let found = core
                     .request(calls::PositionLookup {
-                        kind: json!("opening"),
-                        fen: json!(fen),
-                        options: Some(json!({})),
+                        kind: PositionLookupKind::Opening,
+                        fen: Fen(fen.clone()),
+                        options: Some(LookupOptions::default()),
                     })
                     .await;
                 let moves = match found {
-                    Ok(found) => found["moves"].clone(),
+                    Ok(found) => found.saved.moves,
                     Err(cause) => {
                         crate::log::write(
                             Level::Warn,
@@ -558,17 +560,16 @@ impl Repertoire {
                         break;
                     }
                 };
-                let counts = match serde_json::from_value::<Option<Vec<ExplorerMove>>>(moves) {
-                    Ok(counts) => counts.unwrap_or_default(),
-                    Err(cause) => {
-                        crate::log::write(
-                            Level::Warn,
-                            "repertoire",
-                            &format!("Explorer moves unreadable: {cause}"),
-                        );
-                        Vec::new()
-                    }
-                };
+                let count = |n: Option<i64>| n.unwrap_or_default() as f64;
+                let counts: Vec<ExplorerMove> = moves
+                    .into_iter()
+                    .map(|found| ExplorerMove {
+                        white: count(found.white),
+                        draws: count(found.draws),
+                        black: count(found.black),
+                        uci: found.uci,
+                    })
+                    .collect();
                 let yours = turn_of(&fen) == color;
                 let replies = openings::opening_replies(&counts, yours);
                 for uci in replies {

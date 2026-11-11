@@ -3,6 +3,8 @@
 //! to one of them or to a new private study.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::Username;
+use kchess_contracts::types::{LichessStudy, Reply};
 use std::collections::HashMap;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -28,7 +30,7 @@ const NEW_STUDY: &str = "new-study";
 /// One account's list (`Entry`).
 #[derive(Default, Clone)]
 struct Entry {
-    items: Option<Vec<Value>>,
+    items: Option<Vec<LichessStudy>>,
     fetched_at: f64,
     attempted_at: f64,
     loading: bool,
@@ -118,7 +120,7 @@ impl StudiesPage {
         entry.attempted_at = at;
         cx.notify();
         let studies = cx.global::<AppCore>().request(calls::LichessStudies {
-            account: json!(account),
+            account: Username(account),
         });
         cx.spawn(async move |this, cx| {
             let result = studies.await;
@@ -128,9 +130,9 @@ impl StudiesPage {
                 };
                 entry.loading = false;
                 match result {
-                    Ok(result) if needs_reconnect(&result) => entry.needs_reconnect = true,
-                    Ok(result) => {
-                        entry.items = Some(result.as_array().cloned().unwrap_or_default());
+                    Ok(Reply::NeedsReconnect) => entry.needs_reconnect = true,
+                    Ok(Reply::Done(studies)) => {
+                        entry.items = Some(studies);
                         entry.fetched_at = now();
                         entry.needs_reconnect = false;
                     }
@@ -171,12 +173,11 @@ impl StudiesPage {
         self.lichess.entries.retain(|key, _| kept.contains(key));
         let mut targets = vec![Choice::new(NEW_STUDY, "A new private study")];
         if let Some(items) = self.entry().and_then(|entry| entry.items.clone()) {
-            targets.extend(items.iter().map(|study| {
-                Choice::new(
-                    study["id"].as_str().unwrap_or_default().to_string(),
-                    study["name"].as_str().unwrap_or_default().to_string(),
-                )
-            }));
+            targets.extend(
+                items
+                    .iter()
+                    .map(|study| Choice::new(study.id.clone(), study.name.clone())),
+            );
         }
         self.lichess
             .target
@@ -204,13 +205,13 @@ impl StudiesPage {
     /// offline edits were kept apart from the cloud version.
     fn keep_offline(
         account: String,
-        item: Value,
+        item: LichessStudy,
         window: &mut Window,
         cx: &mut App,
         then: impl FnOnce(String, bool, &mut Window, &mut App) + 'static,
         fail: impl FnOnce(String, &mut Window, &mut App) + 'static,
     ) {
-        let id = item["id"].as_str().unwrap_or_default().to_string();
+        let id = item.id.clone();
         let chapters = cx.global::<AppCore>().request(calls::LichessStudyChapters {
             account: json!(account),
             id: json!(id),
@@ -250,7 +251,7 @@ impl StudiesPage {
                 let command = json!({
                     "op": "offline",
                     "account": account,
-                    "remote": { "id": id, "name": item["name"] },
+                    "remote": { "id": id, "name": item.name },
                     "chapters": chapters,
                 });
                 let answer = cx.update(|_, cx| library.read(cx).command(command));
@@ -279,8 +280,8 @@ impl StudiesPage {
     }
 
     /// `openRemote`: open the offline copy, or keep the study offline first.
-    fn open_remote(&mut self, item: Value, window: &mut Window, cx: &mut Context<Self>) {
-        let id = item["id"].as_str().unwrap_or_default().to_string();
+    fn open_remote(&mut self, item: LichessStudy, window: &mut Window, cx: &mut Context<Self>) {
+        let id = item.id.clone();
         if let Some(saved) = self.offline_copy(&id, cx) {
             let saved = saved["id"].as_str().unwrap_or_default().to_string();
             Self::open(saved, window, cx);
@@ -314,7 +315,7 @@ impl StudiesPage {
     }
 
     /// `download`: keep (or refresh) the offline copy; the study on the board takes it in.
-    fn download(&mut self, item: Value, window: &mut Window, cx: &mut Context<Self>) {
+    fn download(&mut self, item: LichessStudy, window: &mut Window, cx: &mut Context<Self>) {
         self.lichess.busy = true;
         self.lichess.message.clear();
         cx.notify();
@@ -331,7 +332,7 @@ impl StudiesPage {
     }
 
     /// Keep the cloud copy, then reopen it on the board when the board shows that study.
-    fn merge_cloud(&mut self, item: Value, window: &mut Window, cx: &mut Context<Self>) {
+    fn merge_cloud(&mut self, item: LichessStudy, window: &mut Window, cx: &mut Context<Self>) {
         let page = cx.entity().downgrade();
         let failed = page.clone();
         Self::keep_offline(
@@ -493,7 +494,7 @@ impl StudiesPage {
         let cards: Vec<AnyElement> = items
             .iter()
             .map(|item| {
-                let id = item["id"].as_str().unwrap_or_default().to_string();
+                let id = item.id.clone();
                 let copy = self.offline_copy(&id, cx);
                 let board = copy
                     .as_ref()
@@ -523,14 +524,12 @@ impl StudiesPage {
                 let (opened, downloaded) = (item.clone(), item.clone());
                 widgets::StudyCard {
                     id: format!("lichess-{id}"),
-                    name: item["name"].as_str().unwrap_or_default().to_string(),
+                    name: item.name.clone(),
                     board,
                     location,
                     description: None,
-                    edited: item["updatedAt"]
-                        .as_f64()
-                        .filter(|at| *at > 0.)
-                        .map(|updated| format!("Edited {}", time_ago(updated, at))),
+                    edited: (item.updated_at > 0)
+                        .then(|| format!("Edited {}", time_ago(item.updated_at as f64, at))),
                     rows: 3,
                     menu: None,
                     action: Button::new(SharedString::from(format!("keep-{id}")))

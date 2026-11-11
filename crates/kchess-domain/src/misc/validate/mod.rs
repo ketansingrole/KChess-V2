@@ -235,8 +235,8 @@ use requests::*;
 use values::*;
 
 pub use requests::{
-    AnalysisRequest, BestMoveOptions, GamePageQuery, LookupOptions, assert_analysis_request,
-    assert_best_move_options, assert_game_page_query, assert_lookup_options, assert_watch_target,
+    AnalysisRequest, BestMoveOptions, GamePageQuery, assert_analysis_request,
+    assert_best_move_options, assert_game_page_query, assert_watch_target,
 };
 pub use values::{assert_moves, assert_username};
 
@@ -275,22 +275,6 @@ macro_rules! checks {
                     fields.push(("variant".into(), J::Str(variant.into())));
                 }
                 Ok(Value::String(assert_analysis_request(J::Obj(fields))?.fen))
-            }
-
-            /// `positionLookup`'s position: a variant's (`options.variant`) by its own rules,
-            /// once the options that name it pass. As sent.
-            pub fn lookup_fen(value: J, args: &[J]) -> Checked<Value> {
-                let options = args.get(2).unwrap_or(&J::Undef);
-                match options.get("variant").and_then(J::str) {
-                    Some(variant) if variant != "standard" => {
-                        assert_lookup_options(options.clone())?;
-                        position_of(value.clone(), Some(variant))?;
-                    }
-                    _ => {
-                        position_of(value.clone(), None)?;
-                    }
-                }
-                Ok(value.into_value())
             }
 
             /// `reviewGet`'s variant, when it names one.
@@ -410,9 +394,7 @@ checks! {
     game_page_query => assert_game_page_query,
     study_sync_request => assert_study_sync_request,
     broadcast_query => assert_broadcast_query,
-    lookup_options => assert_lookup_options,
     lines => assert_lines,
-    lookup_kind => assert_lookup_kind,
     optional_page => assert_optional_page,
     boolean => assert_boolean,
     watch_session => assert_watch_session,
@@ -702,12 +684,6 @@ mod tests {
         assert_eq!(
             checks::new_arena(obj(vec![])),
             Err("missing field `clockTime`".into())
-        );
-        let speeds = obj(vec![("speeds", J::Arr(vec![J::Str("bogus".into())]))]);
-        assert!(
-            checks::lookup_options(speeds)
-                .unwrap_err()
-                .starts_with("speeds: invalid value, expected one of ultraBullet")
         );
     }
 

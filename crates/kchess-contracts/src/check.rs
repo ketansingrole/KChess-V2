@@ -89,7 +89,12 @@ fn reject(msg: Msg, path: &str, expected: &str) -> Refusal {
     }
 }
 
-pub fn ensure(ok: bool, msg: Msg, path: &str, expected: impl FnOnce() -> String) -> Result<(), Refusal> {
+pub fn ensure(
+    ok: bool,
+    msg: Msg,
+    path: &str,
+    expected: impl FnOnce() -> String,
+) -> Result<(), Refusal> {
     if ok {
         Ok(())
     } else {
@@ -442,16 +447,19 @@ mod tests {
             check::<LookupOptions>(variant),
             Err("Invalid variant.".into())
         );
+        let ratings = obj(vec![("ratings", J::Arr(vec![J::Num(1234.0)]))]);
+        assert!(
+            check::<LookupOptions>(ratings)
+                .unwrap_err()
+                .starts_with("ratings: invalid value, expected one of 400, 1000")
+        );
     }
 
     #[test]
     fn a_position_is_checked_by_its_variant_s_rules() {
         let zh = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
         assert_eq!(analysis_position(zh, Some("crazyhouse")), Ok(()));
-        assert_eq!(
-            analysis_position(zh, None),
-            Err("Invalid position.".into())
-        );
+        assert_eq!(analysis_position(zh, None), Err("Invalid position.".into()));
         assert_eq!(
             analysis_position(zh, Some("bughouse")),
             Err("Invalid variant.".into())

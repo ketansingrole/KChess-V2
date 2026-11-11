@@ -1382,9 +1382,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Reply<T> {
             Wire::Reconnect(NeedsReconnect {
                 needs_reconnect: true,
             }) => Ok(Reply::NeedsReconnect),
-            Wire::Reconnect(_) => Err(serde::de::Error::custom(
-                "needsReconnect is only ever true",
-            )),
+            Wire::Reconnect(_) => Err(serde::de::Error::custom("needsReconnect is only ever true")),
             Wire::Done(value) => Ok(Reply::Done(value)),
         }
     }

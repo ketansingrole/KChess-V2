@@ -11,6 +11,7 @@ use std::time::Duration;
 use fixtures::{
     MemoryStore, MemoryTokens, Recording, Reply, Seen, http_client, lichess_service, serve,
 };
+use kchess_contracts::types::{LookupOptions, PositionLookupKind as Kind};
 use kchess_core::lichess::accounts::Lichess;
 use kchess_core::lichess::lookups::{
     CloudCache, Endpoints, LookupCache, PositionLookups, cloud_eval,
@@ -79,6 +80,11 @@ fn lookups(base: &str, start: i64) -> Lookups {
     }
 }
 
+/// Explorer filters as a frontend sends them.
+fn options(sent: Value) -> LookupOptions {
+    serde_json::from_value(sent).expect("filters")
+}
+
 fn opening_body() -> Value {
     json!({ "moves": [{ "uci": "e2e4", "white": 100, "draws": 20, "black": 50 }] })
 }
@@ -100,23 +106,16 @@ async fn lifetime_cancellation_ends_pending_and_deduplicated_lookups_without_sta
     let lifetime = CancellationToken::new();
     let lookups = lookups(&fixture.base, 1_000);
     let service = Arc::new(lookups.service.with_lifetime(lifetime.clone()));
-    service
-        .lookup(&json!("opening"), &json!(INITIAL), None)
-        .await
-        .unwrap();
+    service.lookup(Kind::Opening, INITIAL, None).await.unwrap();
     lookups.clock.store(100_000_000, Ordering::SeqCst);
     let first = {
         let service = Arc::clone(&service);
-        tokio::spawn(async move {
-            service
-                .lookup(&json!("opening"), &json!(INITIAL), None)
-                .await
-        })
+        tokio::spawn(async move { service.lookup(Kind::Opening, INITIAL, None).await })
     };
     wait_for_requests(&fixture, 2).await;
-    let kind = json!("opening");
-    let fen = json!(INITIAL);
-    let second = service.lookup(&kind, &fen, None);
+    let kind = Kind::Opening;
+    let fen = INITIAL;
+    let second = service.lookup(kind, fen, None);
     tokio::pin!(second);
     assert!(futures_util::poll!(&mut second).is_pending());
     lifetime.cancel();
@@ -131,7 +130,7 @@ async fn lifetime_cancellation_ends_pending_and_deduplicated_lookups_without_sta
     assert!(second.await.unwrap_err().aborted);
     assert!(
         service
-            .lookup(&json!("opening"), &json!(INITIAL), None)
+            .lookup(Kind::Opening, INITIAL, None)
             .await
             .unwrap_err()
             .aborted
@@ -144,14 +143,14 @@ async fn lifetime_cancellation_ends_pending_and_deduplicated_lookups_without_sta
 async fn dropping_the_producer_releases_its_pending_key_for_retry() {
     let fixture = serve(|_| Reply::Hang).await;
     let service = lookups(&fixture.base, 1_000).service;
-    let kind = json!("opening");
-    let fen = json!(INITIAL);
+    let kind = Kind::Opening;
+    let fen = INITIAL;
     {
-        let first = service.lookup(&kind, &fen, None);
+        let first = service.lookup(kind, fen, None);
         tokio::pin!(first);
         tokio::select! { biased; _ = &mut first => panic!("fixture hangs"), _ = wait_for_requests(&fixture, 1) => {} }
     }
-    let retry = service.lookup(&kind, &fen, None);
+    let retry = service.lookup(kind, fen, None);
     tokio::pin!(retry);
     tokio::select! { biased; _ = &mut retry => panic!("fixture hangs"), _ = wait_for_requests(&fixture, 2) => {} }
     assert_eq!(fixture.requests().len(), 2);
@@ -183,16 +182,16 @@ async fn deduplicates_lookups_validates_legal_san_and_reuses_the_saved_result() 
     .await;
     let lookups = lookups(&fixture.base, 1_000);
     let service = Arc::new(lookups.service);
-    let kind = json!("opening");
-    let fen = json!(INITIAL);
+    let kind = Kind::Opening;
+    let fen = INITIAL;
     let first = {
-        let (service, kind, fen) = (Arc::clone(&service), kind.clone(), fen.clone());
-        tokio::spawn(async move { service.lookup(&kind, &fen, None).await })
+        let (service, kind, fen) = (Arc::clone(&service), kind, fen);
+        tokio::spawn(async move { service.lookup(kind, fen, None).await })
     };
     wait_for_requests(&fixture, 1).await;
     let second = {
-        let (service, kind, fen) = (Arc::clone(&service), kind.clone(), fen.clone());
-        tokio::spawn(async move { service.lookup(&kind, &fen, None).await })
+        let (service, kind, fen) = (Arc::clone(&service), kind, fen);
+        tokio::spawn(async move { service.lookup(kind, fen, None).await })
     };
     // The second caller joins the pending lookup: still one request.
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -200,10 +199,12 @@ async fn deduplicates_lookups_validates_legal_san_and_reuses_the_saved_result() 
     gate_open.send(true).unwrap();
     let one = first.await.unwrap().unwrap();
     let two = second.await.unwrap().unwrap();
-    assert_eq!(one.data.moves[0].san, "e4");
+    assert_eq!(one.saved.moves[0].san, "e4");
     assert_eq!(two, one);
-    let again = service.lookup(&kind, &fen, None).await.unwrap();
+    crate::support::wire::assert_wire("positionLookup.opening", &one);
+    let again = service.lookup(kind, fen, None).await.unwrap();
     assert!(again.cached);
+    crate::support::wire::assert_wire("positionLookup.opening-cached", &again);
     assert_eq!(fixture.requests().len(), 1);
 }
 
@@ -230,7 +231,7 @@ async fn shows_a_saved_result_as_stale_after_a_failed_refresh() {
     let lookups = lookups(&fixture.base, 1_000);
     lookups
         .service
-        .lookup(&json!("opening"), &json!(INITIAL), None)
+        .lookup(Kind::Opening, INITIAL, None)
         .await
         .unwrap();
     lookups
@@ -238,10 +239,11 @@ async fn shows_a_saved_result_as_stale_after_a_failed_refresh() {
         .store(1_000 + 2 * 86_400_000, Ordering::SeqCst);
     let result = lookups
         .service
-        .lookup(&json!("opening"), &json!(INITIAL), None)
+        .lookup(Kind::Opening, INITIAL, None)
         .await
         .unwrap();
     assert!(result.stale && result.cached);
+    crate::support::wire::assert_wire("positionLookup.stale", &result);
     assert!(result.message.unwrap().contains("saved"));
 }
 
@@ -258,9 +260,9 @@ async fn a_429_pauses_every_explorer_request_until_its_retry_after_ends() {
     })
     .await;
     let lookups = lookups(&fixture.base, 1_000);
-    let kind = json!("opening");
-    let fen = json!(INITIAL);
-    let limited = lookups.service.lookup(&kind, &fen, None).await.unwrap_err();
+    let kind = Kind::Opening;
+    let fen = INITIAL;
+    let limited = lookups.service.lookup(kind, fen, None).await.unwrap_err();
     assert!(
         limited.message.contains("30 seconds"),
         "{}",
@@ -268,7 +270,7 @@ async fn a_429_pauses_every_explorer_request_until_its_retry_after_ends() {
     );
     // Neither the lookup nor the opening page's history asks again during the cooldown.
     lookups.clock.store(21_000, Ordering::SeqCst);
-    let waiting = lookups.service.lookup(&kind, &fen, None).await.unwrap_err();
+    let waiting = lookups.service.lookup(kind, fen, None).await.unwrap_err();
     assert!(
         waiting.message.contains("10 seconds"),
         "{}",
@@ -283,7 +285,7 @@ async fn a_429_pauses_every_explorer_request_until_its_retry_after_ends() {
     );
     assert_eq!(fixture.requests().len(), 1);
     lookups.clock.store(31_000, Ordering::SeqCst);
-    let result = lookups.service.lookup(&kind, &fen, None).await.unwrap();
+    let result = lookups.service.lookup(kind, fen, None).await.unwrap();
     assert!(!result.cached);
     assert_eq!(fixture.requests().len(), 2);
 }
@@ -327,14 +329,14 @@ async fn a_saved_lookup_is_shown_without_asking_during_a_cooldown() {
     })
     .await;
     let lookups = lookups(&fixture.base, 1_000);
-    let kind = json!("opening");
-    let fen = json!(INITIAL);
-    lookups.service.lookup(&kind, &fen, None).await.unwrap();
+    let kind = Kind::Opening;
+    let fen = INITIAL;
+    lookups.service.lookup(kind, fen, None).await.unwrap();
     lookups
         .clock
         .store(1_000 + 2 * 86_400_000, Ordering::SeqCst);
     for _ in 0..3 {
-        let result = lookups.service.lookup(&kind, &fen, None).await.unwrap();
+        let result = lookups.service.lookup(kind, fen, None).await.unwrap();
         assert!(result.stale && result.cached);
     }
     // Without Retry-After the cooldown is a minute; only the first refresh was sent.
@@ -353,7 +355,7 @@ async fn rejects_malformed_and_illegal_remote_moves() {
         let lookups = lookups(&fixture.base, 1_000);
         let error = lookups
             .service
-            .lookup(&json!("opening"), &json!(INITIAL), None)
+            .lookup(Kind::Opening, INITIAL, None)
             .await
             .unwrap_err();
         assert!(!error.message.is_empty());
@@ -366,14 +368,14 @@ async fn bounds_response_size_and_rejects_unsupported_tablebase_positions_before
     let lookups = lookups(&fixture.base, 1_000);
     let error = lookups
         .service
-        .lookup(&json!("tablebase"), &json!(INITIAL), None)
+        .lookup(Kind::Tablebase, INITIAL, None)
         .await
         .unwrap_err();
     assert!(error.message.contains("seven pieces"));
     assert!(fixture.requests().is_empty());
     let error = lookups
         .service
-        .lookup(&json!("opening"), &json!(INITIAL), None)
+        .lookup(Kind::Opening, INITIAL, None)
         .await
         .unwrap_err();
     assert!(error.message.contains("too much data"));
@@ -391,15 +393,12 @@ async fn retains_tablebase_fifty_move_categories_and_dtz_without_inventing_a_mat
     let lookups = lookups(&fixture.base, 1_000);
     let result = lookups
         .service
-        .lookup(
-            &json!("tablebase"),
-            &json!("8/8/8/8/8/8/R7/K6k w - - 0 1"),
-            None,
-        )
+        .lookup(Kind::Tablebase, "8/8/8/8/8/8/R7/K6k w - - 0 1", None)
         .await
         .unwrap();
-    assert_eq!(result.data.category.as_deref(), Some("cursed-win"));
-    assert_eq!(result.data.dtz, Some(Some(101)));
+    assert_eq!(result.saved.category.as_deref(), Some("cursed-win"));
+    crate::support::wire::assert_wire("positionLookup.tablebase", &result);
+    assert_eq!(result.saved.dtz, Some(Some(101)));
 }
 
 #[tokio::test]
@@ -446,7 +445,7 @@ async fn refuses_a_tablebase_lookup_for_a_position_with_more_than_seven_pieces()
     let lookups = lookups(&fixture.base, 1_000);
     let error = lookups
         .service
-        .lookup(&json!("tablebase"), &json!(INITIAL), None)
+        .lookup(Kind::Tablebase, INITIAL, None)
         .await
         .unwrap_err();
     assert!(error.message.contains("seven pieces"));
@@ -463,19 +462,19 @@ async fn saves_a_tablebase_answer_and_serves_it_again_while_fresh() {
     })
     .await;
     let lookups = lookups(&fixture.base, 1_000);
-    let kings = json!("7k/8/8/8/8/8/8/K7 w - - 0 1");
+    let kings = "7k/8/8/8/8/8/8/K7 w - - 0 1";
     let first = lookups
         .service
-        .lookup(&json!("tablebase"), &kings, None)
+        .lookup(Kind::Tablebase, kings, None)
         .await
         .unwrap();
-    assert_eq!(first.data.kind, "tablebase");
-    assert_eq!(first.data.category.as_deref(), Some("unknown"));
+    assert_eq!(first.saved.kind, Kind::Tablebase);
+    assert_eq!(first.saved.category.as_deref(), Some("unknown"));
     assert!(!first.cached);
     assert_eq!(lookups.cache.values.lock().unwrap().len(), 1);
     let again = lookups
         .service
-        .lookup(&json!("tablebase"), &kings, None)
+        .lookup(Kind::Tablebase, kings, None)
         .await
         .unwrap();
     assert!(again.cached && !again.stale);
@@ -509,20 +508,21 @@ async fn asks_the_masters_database_and_lists_its_top_games() {
     let result = lookups
         .service
         .lookup(
-            &json!("masters"),
-            &json!(INITIAL),
-            Some(&json!({ "since": "2000-01" })),
+            Kind::Masters,
+            INITIAL,
+            Some(&options(json!({ "since": "2000-01" }))),
         )
         .await
         .unwrap();
     let request = &fixture.requests()[0];
     assert!(request.target.contains("/masters"));
     assert_eq!(request.query("since").as_deref(), Some("2000"));
-    assert_eq!(result.data.total, Some(20));
-    let game = &result.data.games.as_ref().unwrap()[0];
+    assert_eq!(result.saved.total, Some(20));
+    crate::support::wire::assert_wire("positionLookup.masters", &result);
+    let game = &result.saved.games.as_ref().unwrap()[0];
     assert_eq!(game.white, "Carlsen");
     assert_eq!(game.san.as_deref(), Some("e4"));
-    assert_eq!(game.winner.as_deref(), Some("white"));
+    assert_eq!(game.winner, Some(kchess_domain::color::Color::White));
 }
 
 #[tokio::test]
@@ -547,13 +547,14 @@ async fn reads_the_last_snapshot_of_the_player_database_and_keys_its_cache_by_fi
     let result = lookups
         .service
         .lookup(
-            &json!("player"),
-            &json!(INITIAL),
-            Some(&json!({ "player": "Alice", "color": "black" })),
+            Kind::Player,
+            INITIAL,
+            Some(&options(json!({ "player": "Alice", "color": "black" }))),
         )
         .await
         .unwrap();
-    assert_eq!(result.data.moves[0].white, Some(7));
+    assert_eq!(result.saved.moves[0].white, Some(7));
+    crate::support::wire::assert_wire("positionLookup.player", &result);
     let url = &fixture.requests()[0];
     assert_eq!(url.query("player").as_deref(), Some("Alice"));
     assert_eq!(url.query("color").as_deref(), Some("black"));
@@ -563,17 +564,26 @@ async fn reads_the_last_snapshot_of_the_player_database_and_keys_its_cache_by_fi
     lookups
         .service
         .lookup(
-            &json!("player"),
-            &json!(INITIAL),
-            Some(&json!({ "player": "Bob", "color": "black" })),
+            Kind::Player,
+            INITIAL,
+            Some(&options(json!({ "player": "Bob", "color": "black" }))),
         )
         .await
         .unwrap();
     assert_eq!(fixture.requests().len(), 2);
     assert_eq!(lookups.cache.values.lock().unwrap().len(), 2);
+    let saved: std::collections::BTreeMap<String, Value> = lookups
+        .cache
+        .values
+        .lock()
+        .unwrap()
+        .clone()
+        .into_iter()
+        .collect();
+    crate::support::wire::assert_wire("positionLookup.player-saved", &saved);
     let error = lookups
         .service
-        .lookup(&json!("player"), &json!(INITIAL), Some(&json!({})))
+        .lookup(Kind::Player, INITIAL, Some(&options(json!({}))))
         .await
         .unwrap_err();
     assert!(error.message.contains("whose games"));
@@ -603,28 +613,29 @@ async fn asks_the_lichess_database_in_a_variant_and_checks_its_moves_by_that_var
     let zh = lookups
         .service
         .lookup(
-            &json!("opening"),
-            &json!(ZH),
-            Some(&json!({ "variant": "crazyhouse" })),
+            Kind::Opening,
+            ZH,
+            Some(&options(json!({ "variant": "crazyhouse" }))),
         )
         .await
         .unwrap();
     let sans: Vec<&str> = zh
-        .data
+        .saved
         .moves
         .iter()
         .map(|entry| entry.san.as_str())
         .collect();
     assert_eq!(sans, ["P@e4", "Nc3"]);
+    crate::support::wire::assert_wire("positionLookup.crazyhouse", &zh);
     let url = &fixture.requests()[0];
     assert_eq!(url.query("variant").as_deref(), Some("crazyhouse"));
     // Read again from the cache, under its own key.
     let again = lookups
         .service
         .lookup(
-            &json!("opening"),
-            &json!(ZH),
-            Some(&json!({ "variant": "crazyhouse" })),
+            Kind::Opening,
+            ZH,
+            Some(&options(json!({ "variant": "crazyhouse" }))),
         )
         .await
         .unwrap();
@@ -632,13 +643,13 @@ async fn asks_the_lichess_database_in_a_variant_and_checks_its_moves_by_that_var
     let standard = lookups
         .service
         .lookup(
-            &json!("opening"),
-            &json!(INITIAL),
-            Some(&json!({ "variant": "standard" })),
+            Kind::Opening,
+            INITIAL,
+            Some(&options(json!({ "variant": "standard" }))),
         )
         .await
         .unwrap();
-    assert_eq!(standard.data.moves[0].san, "e4");
+    assert_eq!(standard.saved.moves[0].san, "e4");
     assert_eq!(
         fixture.requests()[1].query("variant").as_deref(),
         Some("standard")
@@ -652,6 +663,15 @@ async fn asks_the_lichess_database_in_a_variant_and_checks_its_moves_by_that_var
         .cloned()
         .collect();
     assert!(keys.contains(&format!("opening:{INITIAL}")), "{keys:?}");
+    let saved: std::collections::BTreeMap<String, Value> = lookups
+        .cache
+        .values
+        .lock()
+        .unwrap()
+        .clone()
+        .into_iter()
+        .collect();
+    crate::support::wire::assert_wire("positionLookup.variant-saved", &saved);
     assert!(
         keys.iter()
             .any(|key| key.contains("\"variant\":\"crazyhouse\"")),
@@ -661,9 +681,9 @@ async fn asks_the_lichess_database_in_a_variant_and_checks_its_moves_by_that_var
     let masters = lookups
         .service
         .lookup(
-            &json!("masters"),
-            &json!(ZH),
-            Some(&json!({ "variant": "crazyhouse" })),
+            Kind::Masters,
+            ZH,
+            Some(&options(json!({ "variant": "crazyhouse" }))),
         )
         .await
         .unwrap_err();
@@ -672,34 +692,7 @@ async fn asks_the_lichess_database_in_a_variant_and_checks_its_moves_by_that_var
         "{}",
         masters.message
     );
-    assert!(
-        lookups
-            .service
-            .lookup(
-                &json!("opening"),
-                &json!(ZH),
-                Some(&json!({ "variant": "bughouse" }))
-            )
-            .await
-            .is_err()
-    );
     assert_eq!(fixture.requests().len(), 2);
-}
-
-#[tokio::test]
-async fn rejects_unknown_filters() {
-    let fixture = serve(|_| Reply::Json(200, "{}".into())).await;
-    let lookups = lookups(&fixture.base, 1_000);
-    let result = lookups
-        .service
-        .lookup(
-            &json!("opening"),
-            &json!(INITIAL),
-            Some(&json!({ "ratings": [1234] })),
-        )
-        .await;
-    assert!(result.is_err());
-    assert!(fixture.requests().is_empty());
 }
 
 #[tokio::test]
@@ -775,8 +768,8 @@ async fn the_explorer_is_asked_with_the_accounts_login_and_the_tablebase_never_i
         .with_login(Arc::new(FixedLogin(Some("lip_alice".into()))));
     with_login
         .lookup(
-            &json!("opening"),
-            &json!("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
+            Kind::Opening,
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             None,
         )
         .await
@@ -790,8 +783,8 @@ async fn the_explorer_is_asked_with_the_accounts_login_and_the_tablebase_never_i
         .with_login(Arc::new(FixedLogin(None)));
     let error = signed_out
         .lookup(
-            &json!("opening"),
-            &json!("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
+            Kind::Opening,
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             None,
         )
         .await
@@ -816,11 +809,7 @@ async fn the_explorer_is_asked_with_the_accounts_login_and_the_tablebase_never_i
         .service
         .with_login(Arc::new(FixedLogin(Some("lip_alice".into()))));
     tablebase
-        .lookup(
-            &json!("tablebase"),
-            &json!("8/8/8/8/8/8/8/k3K2R w - - 0 1"),
-            None,
-        )
+        .lookup(Kind::Tablebase, "8/8/8/8/8/8/8/k3K2R w - - 0 1", None)
         .await
         .expect("the tablebase answers");
     assert_eq!(fixture.requests()[0].header("authorization"), None);
@@ -832,10 +821,10 @@ async fn the_explorer_is_asked_with_the_accounts_login_and_the_tablebase_never_i
 async fn a_failed_lookup_shows_no_status() {
     let fixture = serve(|_| Reply::Json(500, "{}".into())).await;
     let lookups = lookups(&fixture.base, 1_000);
-    for kind in ["opening", "masters"] {
+    for kind in [Kind::Opening, Kind::Masters] {
         let error = lookups
             .service
-            .lookup(&json!(kind), &json!(INITIAL), None)
+            .lookup(kind, INITIAL, None)
             .await
             .unwrap_err();
         assert!(!error.message.contains("500"), "{}", error.message);
@@ -858,7 +847,7 @@ async fn a_lookup_that_never_answers_times_out_as_a_timeout() {
         .service
         .with_timeout(Duration::from_millis(100));
     let error = service
-        .lookup(&json!("opening"), &json!(INITIAL), None)
+        .lookup(Kind::Opening, INITIAL, None)
         .await
         .unwrap_err();
     assert_eq!(error.kind, Some(kchess_core::ErrorKind::TimedOut));

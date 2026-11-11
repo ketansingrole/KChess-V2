@@ -5,6 +5,10 @@
 
 use futures::FutureExt as _;
 use kchess_contracts::calls;
+use kchess_contracts::check::Fen;
+use kchess_contracts::types::{
+    ExplorerGame, LookupMove, LookupOptions, PositionLookup, PositionLookupKind,
+};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -19,7 +23,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use shakmaty::Color;
 
 use crate::assets::icon;
@@ -90,27 +94,45 @@ impl Default for Prefs {
 }
 
 impl Prefs {
-    /// `options()`: the filters the chosen database takes; an unset one is left out.
-    fn options(&self) -> Value {
+    /// The database chosen; the Lichess games for a name no app writes.
+    fn kind(&self) -> PositionLookupKind {
+        serde_json::from_value(json!(self.kind)).unwrap_or(PositionLookupKind::Opening)
+    }
+
+    /// The speeds chosen that the explorer knows.
+    fn speeds(&self) -> Vec<kchess_contracts::types::ExplorerSpeed> {
+        self.speeds
+            .iter()
+            .filter_map(|speed| serde_json::from_value(json!(speed)).ok())
+            .collect()
+    }
+
+    /// The filters the chosen database takes; an unset one is left out.
+    fn options(&self) -> LookupOptions {
         let since = (!self.since.is_empty()).then(|| self.since.clone());
-        let mut options = match self.kind.as_str() {
-            "opening" => json!({ "speeds": self.speeds, "ratings": self.ratings }),
-            "player" => json!({
-                "player": self.player.trim(),
-                "color": self.color,
-                "speeds": self.speeds,
-            }),
-            _ => json!({}),
+        let kind = self.kind();
+        let options = match kind {
+            PositionLookupKind::Opening => LookupOptions {
+                speeds: Some(self.speeds()),
+                ratings: Some(self.ratings.iter().map(|rating| *rating as u32).collect()),
+                ..LookupOptions::default()
+            },
+            PositionLookupKind::Player => LookupOptions {
+                player: Some(self.player.trim().to_string()),
+                color: kchess_domain::color::from_name(&self.color),
+                speeds: Some(self.speeds()),
+                ..LookupOptions::default()
+            },
+            _ => LookupOptions::default(),
         };
-        let since = match self.kind.as_str() {
-            "masters" => since.map(|since| since.chars().take(4).collect::<String>()),
-            "tablebase" => None,
+        let since = match kind {
+            PositionLookupKind::Masters => {
+                since.map(|since| since.chars().take(4).collect::<String>())
+            }
+            PositionLookupKind::Tablebase => None,
             _ => since,
         };
-        if let Some(since) = since {
-            options["since"] = json!(since);
-        }
-        options
+        LookupOptions { since, ..options }
     }
 }
 
@@ -145,22 +167,18 @@ fn category(value: &str, opponent: bool) -> String {
     value.replace('-', " ")
 }
 
-fn count(value: &Value) -> u64 {
-    value.as_f64().map_or(0, |n| n.max(0.) as u64)
+fn count(n: Option<i64>) -> u64 {
+    n.map_or(0, |n| n.max(0) as u64)
 }
 
-fn games(entry: &Value) -> u64 {
-    count(&entry["white"]) + count(&entry["draws"]) + count(&entry["black"])
+fn games(entry: &LookupMove) -> u64 {
+    count(entry.white) + count(entry.draws) + count(entry.black)
 }
 
 /// How the games from a position ended, White, draws and Black; a share is
 /// labelled once it is wider than `min_label` percent.
-pub fn result_bar(entry: &Value, min_label: u64, palette: &Palette) -> impl IntoElement {
-    let counts = [
-        count(&entry["white"]),
-        count(&entry["draws"]),
-        count(&entry["black"]),
-    ];
+pub fn result_bar(entry: &LookupMove, min_label: u64, palette: &Palette) -> impl IntoElement {
+    let counts = [count(entry.white), count(entry.draws), count(entry.black)];
     let total: u64 = counts.iter().sum();
     let looks = [
         (rgb(0xf5f5f5), rgb(0x222222)),
@@ -222,7 +240,7 @@ pub struct PositionExplorer {
     fen: String,
     /// The moves from the starting position to `fen`: each continuation is named after its opening.
     moves: Option<Vec<String>>,
-    result: Option<Value>,
+    result: Option<PositionLookup>,
     error: String,
     busy: bool,
     epoch: u64,
@@ -328,12 +346,12 @@ impl PositionExplorer {
         prefs
     }
 
-    fn options(&self, prefs: &Prefs) -> Value {
+    fn options(&self, prefs: &Prefs) -> LookupOptions {
         let mut options = prefs.options();
         if let Some(variant) = &self.variant
             && holds_variants(&prefs.kind)
         {
-            options["variant"] = json!(variant);
+            options.variant = kchess_contracts::Variant::from_key(variant);
         }
         options
     }
@@ -472,8 +490,8 @@ impl PositionExplorer {
         let request = self.epoch;
         let prefs = self.shown_prefs(cx);
         let call = cx.global::<AppCore>().request(calls::PositionLookup {
-            kind: json!(prefs.kind),
-            fen: json!(self.fen),
+            kind: prefs.kind(),
+            fen: Fen(self.fen.clone()),
             options: Some(self.options(&prefs)),
         });
         self.busy = true;
@@ -508,12 +526,12 @@ impl PositionExplorer {
 
     /// Open a listed game on the analysis board, asking first when that would replace unsaved
     /// analysis.
-    fn open_game(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_game(&mut self, game: ExplorerGame, window: &mut Window, cx: &mut Context<Self>) {
         let masters = self
             .result
             .as_ref()
-            .is_some_and(|result| result["kind"] == json!("masters"));
-        let id = game["id"].as_str().unwrap_or_default().to_string();
+            .is_some_and(|result| result.saved.kind == PositionLookupKind::Masters);
+        let id = game.id.clone();
         let core = cx.global::<AppCore>();
         let call = if masters {
             core.request(calls::MastersGame { id: json!(id) })
@@ -537,7 +555,9 @@ impl PositionExplorer {
                 };
                 let origin = GameOrigin {
                     game_id: (!masters).then_some(id),
-                    ..GameOrigin::named(&game["white"], &game["black"])
+                    white: Some(game.white.clone()),
+                    black: Some(game.black.clone()),
+                    ..GameOrigin::default()
                 };
                 crate::pages::analysis::replace(window, cx, move |analysis, window, cx| {
                     let opening = Opening {
@@ -560,12 +580,12 @@ impl PositionExplorer {
     }
 
     /// Guess a master game's moves on Practice, as the side that won (White after a draw).
-    fn guess_game(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
-        let id = game["id"].as_str().unwrap_or_default().to_string();
+    fn guess_game(&mut self, game: ExplorerGame, window: &mut Window, cx: &mut Context<Self>) {
+        let id = game.id.clone();
         let call = cx
             .global::<AppCore>()
             .request(calls::MastersGame { id: json!(id) });
-        let side = if game["winner"] == json!("black") {
+        let side = if game.winner == Some(Color::Black) {
             Color::Black
         } else {
             Color::White
@@ -606,20 +626,23 @@ impl PositionExplorer {
             .clone()
     }
 
-    fn heading(&self, result: &Value, prefs: &Prefs) -> String {
-        if let Some(opening) = result["opening"].as_str()
+    fn heading(&self, result: &PositionLookup, prefs: &Prefs) -> String {
+        let saved = &result.saved;
+        if let Some(opening) = &saved.opening
             && !self.grid
         {
-            return opening.to_string();
+            return opening.clone();
         }
-        match result["kind"].as_str().unwrap_or_default() {
-            "tablebase" => format!(
+        match saved.kind {
+            PositionLookupKind::Tablebase => format!(
                 "Tablebase · {} for the side to move",
-                category(result["category"].as_str().unwrap_or_default(), false)
+                category(saved.category.as_deref().unwrap_or_default(), false)
             ),
-            "masters" => "Master games (over the board)".into(),
-            "player" => format!("Games of {} as {}", prefs.player, prefs.color),
-            _ => "Lichess games".into(),
+            PositionLookupKind::Masters => "Master games (over the board)".into(),
+            PositionLookupKind::Player => {
+                format!("Games of {} as {}", prefs.player, prefs.color)
+            }
+            PositionLookupKind::Opening => "Lichess games".into(),
         }
     }
 
@@ -750,17 +773,18 @@ impl PositionExplorer {
 
     fn render_moves(
         &mut self,
-        result: &Value,
+        result: &PositionLookup,
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> AnyElement {
-        let moves = result["moves"].as_array().cloned().unwrap_or_default();
-        let tablebase = result["kind"] == json!("tablebase");
+        let moves = &result.saved.moves;
+        let tablebase = result.saved.kind == PositionLookupKind::Tablebase;
         if self.grid {
-            let fen = result["fen"].as_str().unwrap_or(&self.fen).to_string();
-            let total = result["total"]
-                .as_f64()
-                .map(|n| n as u64)
+            let fen = result.saved.fen.clone();
+            let total = result
+                .saved
+                .total
+                .map(|n| n.max(0) as u64)
                 .filter(|total| *total > 0)
                 .unwrap_or_else(|| moves.iter().map(games).sum());
             let width = self.area.size().width;
@@ -770,8 +794,7 @@ impl PositionExplorer {
                 .iter()
                 .enumerate()
                 .map(|(index, entry)| {
-                    let uci = entry["uci"].as_str().unwrap_or_default().to_string();
-                    let san = entry["san"].as_str().unwrap_or_default().to_string();
+                    let (uci, san) = (entry.uci.clone(), entry.san.clone());
                     let next =
                         kchess_domain::replay::replay_positions(&fen, std::slice::from_ref(&uci))
                             .get(1)
@@ -867,8 +890,7 @@ impl PositionExplorer {
         v_flex()
             .gap(px(4.))
             .children(moves.iter().enumerate().map(|(index, entry)| {
-                let uci = entry["uci"].as_str().unwrap_or_default().to_string();
-                let san = entry["san"].as_str().unwrap_or_default().to_string();
+                let (uci, san) = (entry.uci.clone(), entry.san.clone());
                 h_flex()
                     .gap(px(8.))
                     .child(
@@ -903,7 +925,7 @@ impl PositionExplorer {
                     .when(tablebase, |row| {
                         row.child(div().text_size(px(12.)).child(format!(
                             "{} for the current player",
-                            category(entry["category"].as_str().unwrap_or_default(), true)
+                            category(entry.category.as_deref().unwrap_or_default(), true)
                         )))
                     })
             }))
@@ -912,14 +934,16 @@ impl PositionExplorer {
 
     fn render_games(
         &self,
-        result: &Value,
+        result: &PositionLookup,
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> Option<Div> {
-        let list = result["games"]
-            .as_array()
+        let list = result
+            .saved
+            .games
+            .as_ref()
             .filter(|games| !games.is_empty())?;
-        let masters = result["kind"] == json!("masters");
+        let masters = result.saved.kind == PositionLookupKind::Masters;
         let title = if masters { "Top games" } else { "Recent games" };
         Some(
             v_flex()
@@ -932,21 +956,18 @@ impl PositionExplorer {
                         .child(title),
                 )
                 .children(list.iter().enumerate().map(|(index, game)| {
-                    let rating = |key: &str| {
-                        game[key]
-                            .as_f64()
-                            .map(|rating| format!("{rating}"))
-                            .unwrap_or_default()
+                    let rating = |rating: Option<f64>| {
+                        rating.map(|rating| format!("{rating}")).unwrap_or_default()
                     };
-                    let score = match game["winner"].as_str() {
-                        Some("white") => "1-0",
-                        Some("black") => "0-1",
-                        _ => "½-½",
+                    let score = match game.winner {
+                        Some(Color::White) => "1-0",
+                        Some(Color::Black) => "0-1",
+                        None => "½-½",
                     };
-                    let when = game["year"]
-                        .as_i64()
+                    let when = game
+                        .year
                         .map(|year| year.to_string())
-                        .or_else(|| game["month"].as_str().map(str::to_string))
+                        .or_else(|| game.month.clone())
                         .unwrap_or_default();
                     let muted = palette.text_muted;
                     let chosen = game.clone();
@@ -972,11 +993,11 @@ impl PositionExplorer {
                                 .min_w_0()
                                 .gap(px(4.))
                                 .overflow_hidden()
-                                .child(game["white"].as_str().unwrap_or("?").to_string())
-                                .child(div().text_color(muted).child(rating("whiteRating")))
+                                .child(game.white.clone())
+                                .child(div().text_color(muted).child(rating(game.white_rating)))
                                 .child("–")
-                                .child(game["black"].as_str().unwrap_or("?").to_string())
-                                .child(div().text_color(muted).child(rating("blackRating"))),
+                                .child(game.black.clone())
+                                .child(div().text_color(muted).child(rating(game.black_rating))),
                         )
                         .child(
                             div()
@@ -1093,13 +1114,11 @@ impl Render for PositionExplorer {
         };
         let result = self.result.clone();
         let body = result.map(|result| {
-            let total = result["total"].as_f64().filter(|total| *total > 0.);
-            let fetched = result["fetchedAt"]
-                .as_f64()
-                .and_then(|millis| chrono::DateTime::from_timestamp_millis(millis as i64))
+            let total = result.saved.total.filter(|total| *total > 0);
+            let fetched = chrono::DateTime::from_timestamp_millis(result.saved.fetched_at)
                 .map(|date| date.with_timezone(&chrono::Local).format("%b %-d, %Y").to_string())
                 .unwrap_or_default();
-            let empty = result["moves"].as_array().is_none_or(Vec::is_empty);
+            let empty = result.saved.moves.is_empty();
             v_flex()
                 .gap(px(8.))
                 .text_size(px(13.))
@@ -1110,12 +1129,14 @@ impl Render for PositionExplorer {
                         .children(total.map(|total| {
                             div()
                                 .text_color(palette.text_muted)
-                                .child(format!("· {} games", widgets::format_count(total)))
+                                .child(format!("· {} games", widgets::format_count(total as f64)))
                         })),
                 )
-                .when(result["kind"] == json!("tablebase"), |body| {
-                    let dtz = result["dtz"]
-                        .as_i64()
+                .when(result.saved.kind == PositionLookupKind::Tablebase, |body| {
+                    let dtz = result
+                        .saved
+                        .dtz
+                        .flatten()
                         .map_or_else(|| "unknown".to_string(), |dtz| dtz.to_string());
                     body.child(
                         div()
@@ -1133,14 +1154,14 @@ impl Render for PositionExplorer {
                             .child(format!("DTZ {dtz}")),
                     )
                 })
-                .when(result["cached"] == json!(true), |body| {
+                .when(result.cached, |body| {
                     body.child(
                         div()
                             .text_size(px(12.))
                             .text_color(palette.text_muted)
                             .child(format!(
                                 "{} · {fetched}",
-                                result["message"].as_str().unwrap_or("Saved lookup")
+                                result.message.as_deref().unwrap_or("Saved lookup")
                             )),
                     )
                 })
@@ -1249,14 +1270,14 @@ mod tests {
     fn options_leave_out_what_is_not_set() {
         let mut prefs = Prefs::default();
         assert_eq!(
-            prefs.options(),
+            json!(prefs.options()),
             json!({ "speeds": ["blitz", "rapid", "classical"], "ratings": [] })
         );
         prefs.kind = "masters".into();
         prefs.since = "2019-05".into();
-        assert_eq!(prefs.options(), json!({ "since": "2019" }));
+        assert_eq!(json!(prefs.options()), json!({ "since": "2019" }));
         prefs.kind = "tablebase".into();
-        assert_eq!(prefs.options(), json!({}));
+        assert_eq!(json!(prefs.options()), json!({}));
     }
 
     #[test]
