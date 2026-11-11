@@ -5,7 +5,9 @@
 use crate::loading::Epoch;
 use kchess_contracts::calls;
 use kchess_contracts::check::{BroadcastQuery, LichessId};
-use kchess_contracts::types::{BroadcastSection, BroadcastSummary, BroadcastTourDetail};
+use kchess_contracts::types::{
+    BroadcastGame, BroadcastSection, BroadcastSummary, BroadcastTourDetail, BroadcastUpdate,
+};
 use kchess_domain::training::clock::format_clock;
 use kchess_domain::variant::Setup;
 use std::collections::HashMap;
@@ -18,15 +20,13 @@ use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
 use shakmaty::Color;
 
 use super::broadcast_engine::{BroadcastEngine, GRID_EVALUATIONS};
-use super::{Pending, WatchPage, label};
+use super::{Pending, WatchPage, label, origin_of, player_of, turn_of};
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
-use crate::game::played::GameOrigin;
 use crate::game::tree::format_eval;
 use crate::game::view;
 use crate::pages::analysis::Opening;
@@ -106,11 +106,11 @@ fn timing(item: &BroadcastSummary, now: f64) -> String {
     }
 }
 
-fn result_text(game: &Value) -> String {
-    if game["ongoing"] == json!(true) {
+fn result_text(game: &BroadcastGame) -> String {
+    if game.ongoing {
         return "Live".into();
     }
-    match game["result"].as_str().unwrap_or_default() {
+    match game.result.as_str() {
         "1-0" => "White won · 1–0".into(),
         "0-1" => "Black won · 0–1".into(),
         "1/2-1/2" => "Draw · ½–½".into(),
@@ -118,12 +118,8 @@ fn result_text(game: &Value) -> String {
     }
 }
 
-pub(super) fn setup_of(game: &Value) -> Setup {
-    Setup::standard_at(game["startFen"].as_str().unwrap_or_default())
-}
-
-pub(super) fn moves_of(game: &Value) -> Vec<String> {
-    serde_json::from_value(game["moves"].clone()).unwrap_or_default()
+pub(super) fn setup_of(game: &BroadcastGame) -> Setup {
+    Setup::standard_at(&game.start_fen)
 }
 
 pub struct Broadcasts {
@@ -139,7 +135,7 @@ pub struct Broadcasts {
     round: String,
     round_select: Entity<SelectState<Vec<Choice>>>,
     /// The round's boards in the order they first came, by id.
-    pub(super) games: Vec<Value>,
+    pub(super) games: Vec<BroadcastGame>,
     clocks: HashMap<String, Clocks>,
     pub selected: String,
     /// The tournament and board the last swipe back left (no board: the tournament itself), to
@@ -228,43 +224,32 @@ impl Broadcasts {
         (self.tour.is_some() && !self.round.is_empty()).then(|| self.round.clone())
     }
 
-    pub(super) fn current(&self) -> Option<&Value> {
-        self.games
-            .iter()
-            .find(|game| game["id"].as_str() == Some(self.selected.as_str()))
+    pub(super) fn current(&self) -> Option<&BroadcastGame> {
+        self.games.iter().find(|game| game.id == self.selected)
     }
 
     /// A round's update: new boards and moves; an error once it ends badly.
-    pub fn update(&mut self, update: &Value) -> Option<String> {
-        let ended = update["ended"] == json!(true);
-        for game in update["games"].as_array().into_iter().flatten() {
-            let id = game["id"].as_str().unwrap_or_default().to_string();
-            let previous = self.games.iter().position(|g| g["id"] == game["id"]);
+    pub fn update(&mut self, update: &BroadcastUpdate) -> Option<String> {
+        let ended = update.ended == Some(true);
+        for game in &update.games {
+            let id = game.id.clone();
+            let previous = self.games.iter().position(|g| g.id == game.id);
             let changed = previous.is_none_or(|index| {
                 let old = &self.games[index];
-                ["fen", "whiteClock", "blackClock", "ongoing"]
-                    .iter()
-                    .any(|key| old[*key] != game[*key])
+                old.fen != game.fen
+                    || old.white_clock != game.white_clock
+                    || old.black_clock != game.black_clock
+                    || old.ongoing != game.ongoing
             });
             // Repeated PGNs must not reset a clock that is already counting down.
             if changed {
-                let moving = game["ongoing"] == json!(true)
-                    && game["moves"]
-                        .as_array()
-                        .is_some_and(|moves| !moves.is_empty())
-                    && !ended;
-                let turn =
-                    if game["fen"].as_str().and_then(|fen| fen.split(' ').nth(1)) == Some("b") {
-                        Color::Black
-                    } else {
-                        Color::White
-                    };
+                let moving = game.ongoing && !game.moves.is_empty() && !ended;
                 self.clocks.insert(
                     id.clone(),
                     Clocks {
-                        white: game["whiteClock"].as_f64(),
-                        black: game["blackClock"].as_f64(),
-                        ticking: moving.then_some(turn),
+                        white: game.white_clock,
+                        black: game.black_clock,
+                        ticking: moving.then_some(turn_of(&game.fen)),
                         at: Instant::now(),
                     },
                 );
@@ -278,13 +263,13 @@ impl Broadcasts {
         if ended {
             self.pause_clocks();
             self.ended = true;
-            return update["error"].as_str().map(str::to_string);
+            return update.error.clone();
         }
         None
     }
 
     pub(super) fn shown_ply(&self) -> usize {
-        let count = self.current().map_or(0, |game| moves_of(game).len());
+        let count = self.current().map_or(0, |game| game.moves.len());
         self.ply.unwrap_or(count).min(count)
     }
 
@@ -292,7 +277,7 @@ impl Broadcasts {
         let Some(game) = self.current().cloned() else {
             return;
         };
-        let moves = moves_of(&game);
+        let moves = &game.moves;
         let ply = self.shown_ply();
         let mut state = if self.engine.variation_base.is_some() {
             let history = self.history();
@@ -304,13 +289,13 @@ impl Broadcasts {
                 None,
             )
         } else if ply < moves.len() {
-            view::board_state(&setup_of(&game), &moves, ply, self.orientation, None)
+            view::board_state(&setup_of(&game), moves, ply, self.orientation, None)
         } else {
             BoardState::shown(
-                game["fen"].as_str().unwrap_or_default(),
+                &game.fen,
                 kchess_domain::variant::Variant::Standard,
                 self.orientation,
-                game["lastMove"].as_str(),
+                game.last_move.as_deref(),
             )
         };
         state.arrows = self.engine_arrows(cx);
@@ -321,7 +306,7 @@ impl Broadcasts {
     /// The open board's move shown and how many there are.
     pub fn steps(&self) -> Option<(usize, usize)> {
         let game = self.current()?;
-        Some((self.shown_ply(), moves_of(game).len()))
+        Some((self.shown_ply(), game.moves.len()))
     }
 
     /// Show the open board's position after `ply` moves: the last follows the game.
@@ -342,16 +327,15 @@ impl Broadcasts {
         self.redraw(cx);
     }
 
-    fn preview(&mut self, game: &Value, cx: &mut App) -> Entity<ChessBoard> {
-        let id = game["id"].as_str().unwrap_or_default().to_string();
+    fn preview(&mut self, game: &BroadcastGame, cx: &mut App) -> Entity<ChessBoard> {
         self.previews
-            .entry(id)
+            .entry(game.id.clone())
             .or_insert_with(|| {
                 let mut state = BoardState::shown(
-                    game["fen"].as_str().unwrap_or_default(),
+                    &game.fen,
                     kchess_domain::variant::Variant::Standard,
                     Color::White,
-                    game["lastMove"].as_str(),
+                    game.last_move.as_deref(),
                 );
                 state.preview = true;
                 cx.new(|_| ChessBoard::new(state))
@@ -541,13 +525,13 @@ impl WatchPage {
                 if !this.epoch.is_current(epoch) {
                     // The page moved on while the core started it: that feed ends now.
                     if let Ok(session) = answer {
-                        super::stop_watching(Some(session as f64), cx);
+                        super::stop_watching(Some(session), cx);
                     }
                     return;
                 }
                 match answer {
                     Ok(session) => {
-                        this.round_session = Some(session as f64);
+                        this.round_session = Some(session);
                         this.replay_early(cx);
                         this.broadcasts.redraw(cx);
                     }
@@ -590,10 +574,7 @@ impl WatchPage {
             Some((tour, game)) if !game.is_empty() => {
                 broadcasts.tour.as_ref().map(|t| t.id.as_str()) == Some(tour.as_str())
                     && broadcasts.selected.is_empty()
-                    && broadcasts
-                        .games
-                        .iter()
-                        .any(|g| g["id"].as_str() == Some(game))
+                    && broadcasts.games.iter().any(|g| g.id == *game)
             }
             Some(_) => broadcasts.tour.is_none(),
             None => false,
@@ -724,27 +705,24 @@ impl WatchPage {
             .enumerate()
             .map(|(index, game)| {
                 let board = self.broadcasts.preview(game, cx);
-                let id = game["id"].as_str().unwrap_or_default().to_string();
-                let ongoing = game["ongoing"] == json!(true);
-                let result = game["result"].as_str().unwrap_or_default().to_string();
+                let id = game.id.clone();
+                let ongoing = game.ongoing;
+                let result = game.result.clone();
                 // The grid's estimates, while they are wanted and allowed.
                 let estimate = grid_evaluations.then(|| self.broadcasts.grid_evaluation(game));
-                let name = |side: &str| {
-                    div()
-                        .text_size(px(12.))
-                        .truncate()
-                        .child(label(&game[side]))
+                let name = |side: Color| {
+                    div().text_size(px(12.)).truncate().child(label(player_of(
+                        &game.white,
+                        &game.black,
+                        side,
+                    )))
                 };
                 v_flex()
                     .id(("broadcast-cell", index))
                     .test_support()
                     .role(Role::Button)
                     .keyboard_focus(palette.primary)
-                    .aria_label(format!(
-                        "{} – {}",
-                        label(&game["white"]),
-                        label(&game["black"])
-                    ))
+                    .aria_label(format!("{} – {}", label(&game.white), label(&game.black)))
                     .gap(px(4.))
                     .p(px(8.))
                     .w(px(190.))
@@ -758,7 +736,7 @@ impl WatchPage {
                         this.broadcasts.select_game(id.clone(), cx);
                         this.engine_changed(cx);
                     }))
-                    .child(name("black"))
+                    .child(name(Color::Black))
                     .child(
                         h_flex()
                             .w_full()
@@ -776,7 +754,7 @@ impl WatchPage {
                             })
                             .child(div().flex_1().h_full().child(board)),
                     )
-                    .child(name("white"))
+                    .child(name(Color::White))
                     .child(
                         h_flex()
                             .justify_between()
@@ -1035,8 +1013,8 @@ impl WatchPage {
         let Some(game) = self.broadcasts.current() else {
             return;
         };
-        let pgn = game["pgn"].as_str().unwrap_or_default().to_string();
-        let origin = GameOrigin::named(&game["white"]["name"], &game["black"]["name"]);
+        let pgn = game.pgn.clone();
+        let origin = origin_of(&game.white, &game.black);
         let (ply, orientation) = (self.broadcasts.shown_ply(), self.broadcasts.orientation);
         window.defer(cx, move |window, cx| {
             analyse_board(pgn, ply, orientation, origin, window, cx)
@@ -1063,7 +1041,7 @@ impl WatchPage {
             .piece_set
             .clone();
         let orientation = broadcasts.orientation;
-        let moves = moves_of(&game);
+        let moves = game.moves.clone();
         let ply = broadcasts.shown_ply();
         let setup = setup_of(&game);
         let fen = if ply < moves.len() {
@@ -1072,18 +1050,11 @@ impl WatchPage {
                 .map(kchess_domain::rules::make_fen)
                 .unwrap_or_default()
         } else {
-            game["fen"].as_str().unwrap_or_default().to_string()
+            game.fen.clone()
         };
-        let clocks = broadcasts
-            .clocks
-            .get(game["id"].as_str().unwrap_or_default())
-            .copied();
+        let clocks = broadcasts.clocks.get(&game.id).copied();
         let line = |color: Color| {
-            let player = &game[if color == Color::White {
-                "white"
-            } else {
-                "black"
-            }];
+            let player = player_of(&game.white, &game.black, color);
             let running = clocks.is_some_and(|clocks| clocks.ticking == Some(color));
             let clock = clocks
                 .and_then(|clocks| clocks.remaining(color))
@@ -1141,10 +1112,7 @@ impl WatchPage {
         let page = cx.entity().downgrade();
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
             let _ = page.update(cx, |page, cx| {
-                let count = page
-                    .broadcasts
-                    .current()
-                    .map_or(0, |game| moves_of(game).len());
+                let count = page.broadcasts.current().map_or(0, |game| game.moves.len());
                 page.broadcasts.return_to_game();
                 page.broadcasts.ply = (ply < count).then_some(ply);
                 page.engine_changed(cx);
@@ -1158,7 +1126,7 @@ impl WatchPage {
                 cx.notify();
             });
         });
-        let ongoing = game["ongoing"] == json!(true);
+        let ongoing = game.ongoing;
         let banner =
             h_flex()
                 .gap(px(8.))
@@ -1167,8 +1135,8 @@ impl WatchPage {
                     if ongoing { icon("radio") } else { icon("flag") },
                     result_text(&game).into(),
                 )));
-        let pgn = game["pgn"].as_str().unwrap_or_default().to_string();
-        let origin = GameOrigin::named(&game["white"]["name"], &game["black"]["name"]);
+        let pgn = game.pgn.clone();
+        let origin = origin_of(&game.white, &game.black);
         let panel = widgets::side_panel(palette)
             .h(self.layout.panel_height(board_size))
             .flex_1()
@@ -1248,7 +1216,7 @@ fn analyse_board(
     pgn: String,
     ply: usize,
     orientation: Color,
-    origin: GameOrigin,
+    origin: crate::game::played::GameOrigin,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -1267,11 +1235,33 @@ fn analyse_board(
 mod tests {
     use std::time::{Duration, Instant};
 
-    use serde_json::json;
     use shakmaty::Color;
 
     use super::{Clocks, result_text, timing};
-    use kchess_contracts::types::{BroadcastSection, BroadcastSummary};
+    use kchess_contracts::types::{BroadcastGame, BroadcastSection, BroadcastSummary, WatchPlayer};
+
+    fn board(ongoing: bool, result: &str) -> BroadcastGame {
+        let player = |name: &str| WatchPlayer {
+            name: name.into(),
+            title: None,
+            rating: None,
+        };
+        BroadcastGame {
+            id: "c".into(),
+            name: "A - B".into(),
+            white: player("A"),
+            black: player("B"),
+            result: result.into(),
+            start_fen: String::new(),
+            moves: Vec::new(),
+            fen: String::new(),
+            last_move: None,
+            white_clock: None,
+            black_clock: None,
+            ongoing,
+            pgn: String::new(),
+        }
+    }
 
     fn card(ongoing: bool, section: BroadcastSection, starts_at: Option<f64>) -> BroadcastSummary {
         BroadcastSummary {
@@ -1307,9 +1297,9 @@ mod tests {
 
     #[test]
     fn results_read_in_words() {
-        assert_eq!(result_text(&json!({ "ongoing": true })), "Live");
-        assert_eq!(result_text(&json!({ "result": "0-1" })), "Black won · 0–1");
-        assert_eq!(result_text(&json!({ "result": "1/2-1/2" })), "Draw · ½–½");
+        assert_eq!(result_text(&board(true, "*")), "Live");
+        assert_eq!(result_text(&board(false, "0-1")), "Black won · 0–1");
+        assert_eq!(result_text(&board(false, "1/2-1/2")), "Draw · ½–½");
     }
 
     #[test]

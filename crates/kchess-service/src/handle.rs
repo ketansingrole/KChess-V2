@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use kchess_contracts::calls::CoreCall;
-use kchess_contracts::{CoreError, CoreEvent, HostAsk, HostReply, HostRequest, Level};
+use kchess_contracts::{CoreError, CoreEvent, HostReply, HostRequest, Level};
 use kchess_core::connection::{APP, ClientInfo};
 use kchess_core::{Config, Core, Host};
 use serde_json::{Value, json};
@@ -293,11 +293,8 @@ async fn deliver(
     events: &mpsc::UnboundedSender<ClientEvent>,
     answer: Option<&Answer>,
 ) {
-    if let (Some(answer), ClientEvent::Event(CoreEvent::HostRequest(payload))) = (answer, &event) {
-        let Ok(ask) = serde_json::from_value::<HostAsk>(payload.clone()) else {
-            return;
-        };
-        let reply = answer(ask.request);
+    if let (Some(answer), ClientEvent::Event(CoreEvent::HostRequest(ask))) = (answer, &event) {
+        let reply = answer(ask.request.clone());
         if let Some(backend) = backend.upgrade() {
             // The request has a deadline: a reply that does not arrive fails it there.
             let _ = reply_to(&backend, ask.id, reply).await;
@@ -489,8 +486,7 @@ mod tests {
             tokio::select! {
                 asked = &mut asking => break asked.expect("asked").expect("answered"),
                 Some(event) = events.recv() => {
-                    if let ClientEvent::Event(CoreEvent::HostRequest(payload)) = event {
-                        let ask: HostAsk = serde_json::from_value(payload).expect("a request");
+                    if let ClientEvent::Event(CoreEvent::HostRequest(ask)) = event {
                         assert_eq!(ask.request, HostRequest::OnBattery);
                         core.reply(ask.id, HostReply::Value(json!(true)))
                             .await

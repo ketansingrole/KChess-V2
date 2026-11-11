@@ -86,9 +86,7 @@ impl VoiceApi for Core {
     async fn voice_model_install(&self) -> Result<()> {
         let host = Arc::clone(&self.host);
         let progress: crate::voice::Listener = Arc::new(move |progress| {
-            if let Ok(payload) = serde_json::to_value(progress) {
-                host.emit(CoreEvent::VoiceModelProgress(payload));
-            }
+            host.emit(CoreEvent::VoiceModelProgress(progress.clone()));
         });
         self.voice_model.ensure(Some(progress)).await?;
         Ok(())

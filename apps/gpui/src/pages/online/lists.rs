@@ -6,7 +6,7 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::types::{ChallengeInfo, ChallengeTimeControl, DeclineReason};
+use kchess_contracts::types::{ChallengeInfo, ChallengeTimeControl, DeclineReason, OnlinePhase};
 use serde_json::Number;
 
 use super::OnlinePage;
@@ -127,26 +127,23 @@ impl OnlinePage {
                 "Listening for challenges while a game is open".to_string(),
                 palette.text_muted,
             ),
-            Some(lobby) => match lobby["phase"].as_str() {
-                Some("connected") => (
-                    format!(
-                        "Listening for challenges to @{}",
-                        lobby["account"].as_str().unwrap_or_default()
-                    ),
+            Some(lobby) => match lobby.phase {
+                OnlinePhase::Connected => (
+                    format!("Listening for challenges to @{}", lobby.account),
                     palette.success,
                 ),
-                Some("auth-required") => (
-                    lobby["message"]
-                        .as_str()
-                        .unwrap_or("Sign in to Lichess again in Settings")
-                        .to_string(),
+                OnlinePhase::AuthRequired => (
+                    lobby
+                        .message
+                        .clone()
+                        .unwrap_or_else(|| "Sign in to Lichess again in Settings".into()),
                     palette.error,
                 ),
-                Some("disconnected") => (
-                    lobby["message"]
-                        .as_str()
-                        .unwrap_or("Not connected to Lichess")
-                        .to_string(),
+                OnlinePhase::Disconnected => (
+                    lobby
+                        .message
+                        .clone()
+                        .unwrap_or_else(|| "Not connected to Lichess".into()),
                     palette.error,
                 ),
                 _ => ("Connecting to Lichess…".to_string(), palette.text_muted),

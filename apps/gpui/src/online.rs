@@ -15,8 +15,8 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use kchess_contracts::check::{GameId, PresenceUsers, Uci, Username, Validate};
 use kchess_contracts::types::{
-    ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, NotificationKind, OngoingGame,
-    PresenceReport,
+    ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, LobbyState, NotificationKind,
+    OngoingGame, PresenceReport,
 };
 use kchess_contracts::{CoreError, Level};
 use kchess_domain::online_game::model::{Call, Ctx, Effect, Model, Op, Outcome, Reply, View};
@@ -110,7 +110,7 @@ pub struct OnlineState {
     /// Something the rules started is waiting for Lichess (`busy`).
     pub busy: bool,
     pub challenges: Vec<ChallengeInfo>,
-    pub lobby: Option<Value>,
+    pub lobby: Option<LobbyState>,
     pub ongoing: Vec<OngoingGame>,
     pub ongoing_loaded: bool,
     pub ongoing_error: Option<String>,
@@ -906,7 +906,9 @@ impl OnlineState {
                     });
                 }
             }
-            CoreEvent::OnlineState(payload) => {
+            CoreEvent::OnlineState(state) => {
+                // The online-game model reads the report as JSON.
+                let payload = &serde_json::to_value(state).unwrap_or_default();
                 let report = ConnectionReport::read(payload);
                 let kind = report.kind;
                 if report.lane.as_deref() == Some("game") {
@@ -919,25 +921,19 @@ impl OnlineState {
                 }
                 self.transition(|model, ctx| model.connection(payload, ctx), None, cx);
             }
-            CoreEvent::OnlineError(payload) => {
-                if let Some(message) = payload.as_str() {
-                    notice(cx, message.to_string());
-                }
-            }
-            CoreEvent::OnlineLobby(payload) => {
-                self.lobby = Some(payload.clone()).filter(|lobby| !lobby.is_null());
+            CoreEvent::OnlineError(message) => notice(cx, message.clone()),
+            CoreEvent::OnlineLobby(lobby) => {
+                self.lobby = Some(lobby.clone());
                 cx.notify();
             }
-            CoreEvent::OngoingChanged(_) => self.refresh_ongoing(cx),
-            CoreEvent::ChallengesUpdate(payload) => {
-                self.challenges = serde_json::from_value(payload.clone()).unwrap_or_default();
+            CoreEvent::OngoingChanged(()) => self.refresh_ongoing(cx),
+            CoreEvent::ChallengesUpdate(challenges) => {
+                self.challenges = challenges.clone();
                 cx.notify();
             }
             // A new challenge for one of the accounts: Accept and Decline from its notification.
-            CoreEvent::ChallengeReceived(payload) => {
-                let Ok(challenge) = serde_json::from_value::<ChallengeInfo>(payload.clone()) else {
-                    return;
-                };
+            CoreEvent::ChallengeReceived(challenge) => {
+                let challenge = ChallengeInfo::clone(challenge);
                 if challenge.direction != kchess_contracts::types::ChallengeDirection::In {
                     return;
                 }

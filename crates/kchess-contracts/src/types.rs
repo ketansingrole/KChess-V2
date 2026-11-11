@@ -937,12 +937,14 @@ pub struct ImportedGame {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct WatchState {
-    pub session: f64,
+    pub session: u64,
     pub phase: WatchPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-    /// The kind of failure of an `error` phase (`offline`, `refused`, `notFound`…).
-    #[serde(default)]
-    pub kind: Option<String>,
+    /// The kind of failure of an `error` phase, so the viewer is offered a retry only when one
+    /// can help.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<crate::ErrorKind>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
@@ -961,11 +963,17 @@ pub struct TvPastGame {
     pub black: WatchPlayer,
     /// The last position the feed sent.
     pub fen: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_move: Option<String>,
     #[serde(with = "kchess_domain::color::by_name")]
     pub orientation: Color,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
-    #[serde(default, with = "kchess_domain::color::option_by_name")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "kchess_domain::color::option_by_name"
+    )]
     pub winner: Option<Color>,
 }
 
@@ -974,8 +982,9 @@ pub struct TvPastGame {
 #[serde(rename_all = "camelCase")]
 pub struct WatchFrame {
     /// Which `watch` call it belongs to; frames of an earlier one are stale.
-    pub session: f64,
+    pub session: u64,
     pub source: WatchSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel: Option<String>,
     pub game_id: String,
     pub white: WatchPlayer,
@@ -984,25 +993,39 @@ pub struct WatchFrame {
     pub orientation: Color,
     /// Board placement plus side to move (pockets of Crazyhouse are dropped).
     pub fen: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_move: Option<String>,
     /// Clocks in seconds when the frame was sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub white_clock: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub black_clock: Option<f64>,
     pub variant: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed: Option<String>,
     /// Rated on Lichess; unknown until the game's details arrive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rated: Option<bool>,
     /// Time control in seconds; absent for correspondence or until the details arrive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clock: Option<WatchClock>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
-    #[serde(default, with = "kchess_domain::color::option_by_name")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "kchess_domain::color::option_by_name"
+    )]
     pub winner: Option<Color>,
     pub finished: bool,
     /// FEN before the first move, once the move list is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_fen: Option<String>,
     /// UCI moves from `startFen`; absent until the TV feed and Lichess's delayed export line up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub moves: Option<Vec<String>>,
     /// Games this channel showed earlier in this session, newest first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous: Option<Vec<TvPastGame>>,
 }
 
@@ -1020,9 +1043,12 @@ pub struct BroadcastGame {
     /// UCI moves of the main line.
     pub moves: Vec<String>,
     pub fen: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_move: Option<String>,
     /// Clocks in seconds, from the last comments of each side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub white_clock: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub black_clock: Option<f64>,
     pub ongoing: bool,
     /// The game as PGN, for the analysis board.
@@ -1032,12 +1058,14 @@ pub struct BroadcastGame {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BroadcastUpdate {
-    pub session: f64,
+    pub session: u64,
     pub round_id: String,
     /// Games that changed (all of them at first).
     pub games: Vec<BroadcastGame>,
     /// The feed ended (the round is over or the connection dropped).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 

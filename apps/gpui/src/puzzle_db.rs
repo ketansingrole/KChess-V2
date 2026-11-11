@@ -35,10 +35,8 @@ pub fn init(cx: &mut App) {
         progress: None,
         error: None,
         _events: cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
-            if let ClientEvent::Event(CoreEvent::PuzzleDbProgress(progress)) = event
-                && let Ok(progress) = serde_json::from_value(progress.clone())
-            {
-                this.progress = Some(progress);
+            if let ClientEvent::Event(CoreEvent::PuzzleDbProgress(progress)) = event {
+                this.progress = Some(progress.clone());
                 cx.notify();
             }
         }),

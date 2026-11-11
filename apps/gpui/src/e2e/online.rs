@@ -495,7 +495,6 @@ fn follow(app: &mut Harness, name: &str) {
 #[gpui_kit::test]
 fn a_restarted_core_is_followed_from_its_first_session(cx: &mut gpui_kit::TestAppContext) {
     use crate::core::{AppCore, ClientEvent, CoreEvent};
-    use serde_json::json;
     let mut app = Harness::start(cx);
     let send = |app: &mut Harness, event: ClientEvent| {
         app.cx.update(|cx| {
@@ -508,8 +507,19 @@ fn a_restarted_core_is_followed_from_its_first_session(cx: &mut gpui_kit::TestAp
         app.cx
             .update(|cx| crate::online::handle(cx).read(cx).state_epoch())
     };
-    let report = |session: u64| json!({ "session": session, "account": "", "lane": "events", "phase": "connected" });
-    let state = |session| ClientEvent::Event(CoreEvent::OnlineState(report(session)));
+    let state = |session| {
+        ClientEvent::Event(CoreEvent::OnlineState(
+            kchess_contracts::types::OnlineConnection {
+                session,
+                account: String::new(),
+                game_id: String::new(),
+                lane: kchess_contracts::types::Lane::Events,
+                phase: kchess_contracts::types::OnlinePhase::Connected,
+                message: None,
+                kind: None,
+            },
+        ))
+    };
     send(&mut app, state(40));
     assert_eq!(epoch(&mut app), 40.);
     send(&mut app, ClientEvent::Reconnected);

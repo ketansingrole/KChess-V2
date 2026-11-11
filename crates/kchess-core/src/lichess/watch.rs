@@ -10,13 +10,11 @@ use kchess_contracts::CoreEvent;
 use std::sync::Arc;
 use std::time::Duration;
 
-use kchess_contracts::types::WatchPhase;
 pub use kchess_contracts::types::{
-    BroadcastRoundPlace, BroadcastRoundRef, BroadcastSummary, BroadcastTourDetail, TvChannel,
-    WatchPlayer, WatchTarget,
+    BroadcastGame, BroadcastRoundPlace, BroadcastRoundRef, BroadcastSummary, BroadcastTourDetail,
+    BroadcastUpdate, TvChannel, TvPastGame, WatchClock, WatchFrame, WatchPlayer, WatchState,
+    WatchTarget,
 };
-use serde::Serialize;
-use serde_json::Value;
 
 use crate::host::Host;
 
@@ -39,119 +37,6 @@ const PAST_GAMES: usize = 6;
 const MAX_BROADCAST_PGN: usize = 200_000;
 /// The most PGN text the round stream keeps waiting for a game to end.
 const MAX_PGN: usize = 2_000_000;
-
-/* ── Wire shapes ── */
-
-/// A time control in seconds (`clock` of `WatchFrame`).
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-pub struct WatchClock {
-    pub initial: f64,
-    pub increment: f64,
-}
-
-/// Connection health of a watch (`WatchState`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct WatchState {
-    pub session: u64,
-    pub phase: WatchPhase,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    /// The kind of failure (`ErrorKind`) of an `error` phase, so the viewer is offered a retry
-    /// only when one can help.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub kind: Option<&'static str>,
-}
-
-/// A game a TV channel showed before the current one (`TvPastGame`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TvPastGame {
-    pub game_id: String,
-    pub white: WatchPlayer,
-    pub black: WatchPlayer,
-    pub fen: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_move: Option<String>,
-    pub orientation: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub winner: Option<&'static str>,
-}
-
-/// One position of a watched game (`WatchFrame`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WatchFrame {
-    pub session: u64,
-    pub source: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub channel: Option<String>,
-    pub game_id: String,
-    pub white: WatchPlayer,
-    pub black: WatchPlayer,
-    pub orientation: &'static str,
-    pub fen: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_move: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub white_clock: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub black_clock: Option<f64>,
-    pub variant: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub speed: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rated: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub clock: Option<WatchClock>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub winner: Option<&'static str>,
-    pub finished: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_fen: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub moves: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub previous: Option<Vec<TvPastGame>>,
-}
-
-/// One board of a broadcast round (`BroadcastGame`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BroadcastGame {
-    pub id: String,
-    pub name: String,
-    pub white: WatchPlayer,
-    pub black: WatchPlayer,
-    pub result: String,
-    pub start_fen: String,
-    pub moves: Vec<String>,
-    pub fen: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_move: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub white_clock: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub black_clock: Option<f64>,
-    pub ongoing: bool,
-    pub pgn: String,
-}
-
-/// What a broadcast round's feed sent (`BroadcastUpdate`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BroadcastUpdate {
-    pub session: u64,
-    pub round_id: String,
-    pub games: Vec<BroadcastGame>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ended: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
 
 /// Where watch frames, states and broadcast updates go.
 pub trait WatchSink: Send + Sync {
@@ -193,21 +78,15 @@ impl HostSink {
 
 impl WatchSink for HostSink {
     fn frame(&self, frame: WatchFrame) {
-        self.emit(CoreEvent::WatchFrame(
-            serde_json::to_value(frame).unwrap_or(Value::Null),
-        ));
+        self.emit(CoreEvent::WatchFrame(Box::new(frame)));
     }
 
     fn state(&self, state: WatchState) {
-        self.emit(CoreEvent::WatchState(
-            serde_json::to_value(state).unwrap_or(Value::Null),
-        ));
+        self.emit(CoreEvent::WatchState(state));
     }
 
     fn broadcast(&self, update: BroadcastUpdate) {
-        self.emit(CoreEvent::WatchBroadcast(
-            serde_json::to_value(update).unwrap_or(Value::Null),
-        ));
+        self.emit(CoreEvent::WatchBroadcast(update));
     }
 }
 

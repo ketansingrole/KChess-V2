@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use kchess_contracts::types::{OnlineConnection, OnlinePhase};
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use super::super::accounts::Lichess;
@@ -80,7 +80,7 @@ impl OnlineSession {
     }
 
     fn emit_error(&self, message: &str) {
-        self.emit(CoreEvent::OnlineError(json!(message)));
+        self.emit(CoreEvent::OnlineError(message.to_string()));
     }
 
     fn emit_state(
@@ -115,7 +115,7 @@ impl OnlineSession {
             message,
             kind,
         } = update;
-        let payload = json!(OnlineConnection {
+        let payload = OnlineConnection {
             session,
             account: account.to_string(),
             game_id: game_id.to_string(),
@@ -123,7 +123,7 @@ impl OnlineSession {
             phase,
             message: message.map(str::to_string),
             kind,
-        });
+        };
         let live_game = super::state::reports_live_game(phase, game_id);
         self.run_state_hook(live_game, self.assistance_blocked());
         self.emit(CoreEvent::OnlineState(payload));
@@ -499,9 +499,7 @@ impl OnlineSession {
 
     fn on_challenge(&self, account: &str, event: &Value) {
         if let Some(info) = self.inner.challenges.ingest(account, event) {
-            self.emit(CoreEvent::ChallengeReceived(
-                serde_json::to_value(info).unwrap_or(Value::Null),
-            ));
+            self.emit(CoreEvent::ChallengeReceived(Box::new(info)));
         }
     }
 
@@ -537,7 +535,7 @@ impl OnlineSession {
         }
         st.ongoing_timer = Some(tokio::spawn(async move {
             tokio::time::sleep(ONGOING_DEBOUNCE).await;
-            this.emit(CoreEvent::OngoingChanged(Value::Null));
+            this.emit(CoreEvent::OngoingChanged(()));
         }));
     }
 }

@@ -8,7 +8,9 @@ mod wait;
 
 use kchess_contracts::calls;
 use kchess_contracts::check::{Fen, GameId, LichessId, StudyId};
-use kchess_contracts::types::{AnalysisRequest, LookupOptions, PositionLookupKind, WatchTarget};
+use kchess_contracts::types::{
+    AnalysisRequest, LookupOptions, PositionLookupKind, WatchPhase, WatchTarget,
+};
 use kchess_domain::variant::Variant;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -503,19 +505,18 @@ async fn watch_frames(
         match wait.next().await {
             Next::Interrupted | Next::InputEnded => return Ok(()),
             Next::Closed => return Err("The core closed.".into()),
-            Next::Event(CoreEvent::WatchFrame(frame)) => print(&frame),
+            Next::Event(CoreEvent::WatchFrame(frame)) => print(json!(frame)),
             Next::Event(CoreEvent::WatchBroadcast(update)) => {
-                if let Some(error) = update["error"].as_str() {
-                    return Err(error.to_string());
+                if let Some(error) = update.error {
+                    return Err(error);
                 }
-                print(&update);
-                if update["ended"] == json!(true) {
+                print(json!(update));
+                if update.ended == Some(true) {
                     return Ok(());
                 }
             }
-            Next::Event(CoreEvent::WatchState(state)) if state["phase"] == "error" => {
-                let message = state["message"].as_str().unwrap_or("Watching failed.");
-                return Err(message.to_string());
+            Next::Event(CoreEvent::WatchState(state)) if state.phase == WatchPhase::Error => {
+                return Err(state.message.unwrap_or_else(|| "Watching failed.".into()));
             }
             Next::Event(_) | Next::Line(_) | Next::Tick => {}
         }

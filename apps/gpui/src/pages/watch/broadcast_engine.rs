@@ -4,7 +4,7 @@
 //! Lichess game.
 
 use kchess_contracts::calls;
-use kchess_contracts::types::{AnalysisUpdate, EngineLine};
+use kchess_contracts::types::{AnalysisUpdate, BroadcastGame, EngineLine};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use shakmaty::{Color, Position as _, Square};
 
 use super::WatchPage;
-use super::broadcasts::{Broadcasts, moves_of, setup_of};
+use super::broadcasts::{Broadcasts, setup_of};
 use crate::assets::icon;
 use crate::board::Arrow;
 use crate::core::AppCore;
@@ -65,11 +65,8 @@ fn engine_of(page: &mut WatchPage) -> &mut PositionEngine {
 }
 
 /// The context a board's live position is analysed in.
-fn context_of(game: &Value) -> String {
-    analysis_context(
-        game["startFen"].as_str().unwrap_or_default(),
-        &moves_of(game),
-    )
+fn context_of(game: &BroadcastGame) -> String {
+    analysis_context(&game.start_fen, &game.moves)
 }
 
 fn assistance(cx: &App) -> bool {
@@ -116,7 +113,10 @@ impl Broadcasts {
         if let Some(base) = &self.engine.variation_base {
             return base.iter().chain(&self.engine.variation).cloned().collect();
         }
-        let moves = self.current().map(moves_of).unwrap_or_default();
+        let moves = self
+            .current()
+            .map(|game| game.moves.clone())
+            .unwrap_or_default();
         moves[..self.shown_ply().min(moves.len())].to_vec()
     }
 
@@ -169,8 +169,8 @@ impl Broadcasts {
     }
 
     /// A grid board's estimate, and whether the engine could not make one for its position.
-    pub(super) fn grid_evaluation(&self, game: &Value) -> (Option<EngineLine>, bool) {
-        let id = game["id"].as_str().unwrap_or_default();
+    pub(super) fn grid_evaluation(&self, game: &BroadcastGame) -> (Option<EngineLine>, bool) {
+        let id = game.id.as_str();
         let context = context_of(game);
         if self.current().is_none()
             && self
@@ -237,7 +237,7 @@ impl WatchPage {
                 .unwrap_or_default();
             let request = json!({
                 "fen": fen,
-                "rootFen": game["startFen"],
+                "rootFen": game.start_fen,
                 "moves": history,
                 "lines": crate::prefs::get::<usize>(cx, LINES, 3).clamp(1, 5),
                 "infinite": crate::prefs::get(cx, INFINITE, false),
@@ -248,26 +248,23 @@ impl WatchPage {
             return (None, None);
         }
         let next = broadcasts.games.iter().find(|game| {
-            game["ongoing"] == json!(true)
+            game.ongoing
                 && broadcasts
                     .engine
                     .previews
-                    .get(game["id"].as_str().unwrap_or_default())
+                    .get(&game.id)
                     .is_none_or(|preview| preview.context != context_of(game))
         });
         let Some(game) = next else {
             return (None, None);
         };
         let request = json!({
-            "fen": game["fen"],
-            "rootFen": game["startFen"],
-            "moves": moves_of(game),
+            "fen": game.fen,
+            "rootFen": game.start_fen,
+            "moves": game.moves,
             "lines": 1,
         });
-        let previewing = (
-            game["id"].as_str().unwrap_or_default().to_string(),
-            context_of(game),
-        );
+        let previewing = (game.id.clone(), context_of(game));
         (Some(request), Some(previewing))
     }
 
@@ -331,7 +328,7 @@ impl WatchPage {
             .broadcasts
             .games
             .iter()
-            .filter_map(|game| game["id"].as_str().map(str::to_string))
+            .map(|game| game.id.clone())
             .collect();
         self.broadcasts
             .engine

@@ -81,7 +81,7 @@ async fn reports_an_initial_http_failure_after_the_start_call_has_returned() {
         last.message.as_deref(),
         Some("Lichess isn’t working right now. Try again shortly.")
     );
-    assert_eq!(last.kind, Some("unavailable"));
+    assert_eq!(last.kind, Some(kchess_contracts::ErrorKind::Unavailable));
     spectator.stop();
 }
 
@@ -341,7 +341,7 @@ async fn a_tv_feed_adds_its_moves_once_the_delayed_export_lines_up() {
         .find(|frame| frame.moves.is_some())
         .cloned()
         .unwrap();
-    assert_eq!(lined.source, "tv");
+    assert_eq!(lined.source, kchess_contracts::types::WatchSource::Tv);
     assert_eq!(lined.channel.as_deref(), Some("rapid"));
     assert_eq!(lined.game_id, "abcdefghijkl");
     assert_eq!(lined.white.name, "Alice");
@@ -584,7 +584,7 @@ fn reads_the_start_moves_and_result_from_a_game_export() {
     );
     assert_eq!(game.san, ["e4", "e5"]);
     assert_eq!(game.status.as_deref(), Some("mate"));
-    assert_eq!(game.winner, Some("black"));
+    assert_eq!(game.winner, Some(kchess_domain::color::Color::Black));
     assert_eq!(game.details.rated, Some(true));
     // Crazyhouse replays, pockets and all; a variant KChess cannot play gets the board without a
     // move list.

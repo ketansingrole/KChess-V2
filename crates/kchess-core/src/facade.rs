@@ -9,7 +9,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use kchess_contracts::core_api::CoreApi;
 use kchess_contracts::types::{AppData, ProfileArea, ProfileChange, Settings};
-use serde_json::json;
 use std::sync::Arc;
 
 use crate::core::Core;
@@ -91,11 +90,10 @@ impl CoreApi for Core {
         {
             self.reviews.reviews_changed();
         }
-        self.host
-            .emit(CoreEvent::ProfileChanged(json!(ProfileChange {
-                areas: areas.to_vec(),
-                origin: crate::connection::current_or_app(),
-            })));
+        self.host.emit(CoreEvent::ProfileChanged(ProfileChange {
+            areas: areas.to_vec(),
+            origin: crate::connection::current_or_app(),
+        }));
     }
 }
 
@@ -281,9 +279,7 @@ impl Core {
         if previous.core.engine_path != saved.core.engine_path {
             crate::engine::stop_engines(&self.search, &self.analysis, &self.reviews, true);
         }
-        let core = serde_json::to_value(&saved.core)
-            .map_err(|cause| CoreError::wrap("core settings", cause))?;
-        self.host.emit(CoreEvent::SettingsSaved(core));
+        self.host.emit(CoreEvent::SettingsSaved(saved.core.clone()));
         self.reviews.reviews_changed();
         Ok(saved)
     }

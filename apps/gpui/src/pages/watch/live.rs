@@ -4,7 +4,7 @@
 
 use kchess_contracts::calls;
 use kchess_contracts::check::Username;
-use kchess_contracts::types::Crosstable;
+use kchess_contracts::types::{Crosstable, TvPastGame, WatchFrame, WatchPhase, WatchSource};
 use kchess_domain::training::clock::format_clock;
 use kchess_domain::variant::{Setup, Variant};
 use std::collections::BTreeMap;
@@ -15,10 +15,10 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use serde_json::Value;
 use shakmaty::Color;
 
-use super::{WatchPage, label, live_badge};
+use super::{WatchPage, label, live_badge, origin_of, player_of, turn_of};
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
@@ -32,10 +32,8 @@ use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 
 /// Whether KChess plays the variant of a game Lichess sends (standard chess when it names none).
-fn plays_variant(frame: &Value) -> bool {
-    frame["variant"]
-        .as_str()
-        .is_none_or(|key| Variant::from_key(key).is_some())
+fn plays_variant(frame: &WatchFrame) -> bool {
+    Variant::from_key(&frame.variant).is_some()
 }
 
 /// A speed's name.
@@ -56,18 +54,23 @@ fn speed_icon(speed: &str) -> Option<gpui_kit::component::Icon> {
 }
 
 /// "Black won · Checkmate", or "Live" while the game goes on.
-pub fn result_line(frame: &Value) -> String {
-    if frame["finished"] != json!(true) {
+pub fn result_line(frame: &WatchFrame) -> String {
+    if !frame.finished {
         return "Live".into();
     }
-    let how = frame["status"]
-        .as_str()
+    let how = frame
+        .status
+        .as_deref()
         .map(kchess_domain::records::games::status_label)
         .unwrap_or_default();
-    match frame["winner"].as_str() {
+    match frame.winner {
         Some(winner) => format!(
             "{} won{}",
-            if winner == "white" { "White" } else { "Black" },
+            if winner == Color::White {
+                "White"
+            } else {
+                "Black"
+            },
             if how.is_empty() {
                 String::new()
             } else {
@@ -80,11 +83,12 @@ pub fn result_line(frame: &Value) -> String {
 }
 
 /// "1+0 · Rated · Bullet", the line Lichess shows above a TV game.
-pub fn info_line(frame: &Value, channels: &[kchess_contracts::types::TvChannel]) -> String {
-    let speed = frame["speed"].as_str().unwrap_or_default();
-    let variant = if frame["source"] == json!("tv") {
-        frame["channel"]
-            .as_str()
+pub fn info_line(frame: &WatchFrame, channels: &[kchess_contracts::types::TvChannel]) -> String {
+    let speed = frame.speed.as_deref().unwrap_or_default();
+    let variant = if frame.source == WatchSource::Tv {
+        frame
+            .channel
+            .as_deref()
             .filter(|channel| {
                 !matches!(*channel, "best" | "bot" | "computer") && speed_label(channel).is_none()
             })
@@ -96,19 +100,18 @@ pub fn info_line(frame: &Value, channels: &[kchess_contracts::types::TvChannel])
             })
     } else {
         // A game's variant comes as Lichess's key ("kingOfTheHill"): shown by its name.
-        frame["variant"]
-            .as_str()
+        Some(frame.variant.as_str())
             .filter(|variant| *variant != "standard")
             .map(|variant| crate::game::variant_label(variant).to_string())
     };
     let mut parts = Vec::new();
-    if let (Some(initial), Some(increment)) = (
-        frame["clock"]["initial"].as_f64(),
-        frame["clock"]["increment"].as_f64(),
-    ) {
-        parts.push(crate::widgets::time_control(initial / 60., increment));
+    if let Some(clock) = frame.clock {
+        parts.push(crate::widgets::time_control(
+            clock.initial / 60.,
+            clock.increment,
+        ));
     }
-    if let Some(rated) = frame["rated"].as_bool() {
+    if let Some(rated) = frame.rated {
         parts.push(if rated { "Rated" } else { "Casual" }.into());
     }
     if !speed.is_empty() {
@@ -138,8 +141,8 @@ fn points(value: f64) -> String {
 }
 
 /// One side's points in a finished past game: 1, 0 or ½.
-fn past_score(entry: &Value, side: &str) -> &'static str {
-    match (entry["winner"].as_str(), entry["status"].as_str()) {
+fn past_score(entry: &TvPastGame, side: Color) -> &'static str {
+    match (entry.winner, entry.status.as_deref()) {
         (Some(winner), _) if winner == side => "1",
         (Some(_), _) => "0",
         (None, None | Some("created" | "started" | "aborted" | "noStart")) => "",
@@ -147,9 +150,9 @@ fn past_score(entry: &Value, side: &str) -> &'static str {
     }
 }
 
-fn past_result(entry: &Value) -> &'static str {
-    match (entry["winner"].as_str(), entry["status"].as_str()) {
-        (Some("white"), _) => "1–0",
+fn past_result(entry: &TvPastGame) -> &'static str {
+    match (entry.winner, entry.status.as_deref()) {
+        (Some(Color::White), _) => "1–0",
         (Some(_), _) => "0–1",
         (None, None | Some("created" | "started")) => "Result pending",
         (None, Some("aborted" | "noStart")) => "Aborted",
@@ -158,7 +161,7 @@ fn past_result(entry: &Value) -> &'static str {
 }
 
 pub struct Live {
-    pub frame: Option<Value>,
+    pub frame: Option<WatchFrame>,
     frame_at: Instant,
     /// The ply looked at, or `None` to follow the game.
     ply: Option<usize>,
@@ -208,17 +211,12 @@ impl Live {
         self.ply = None;
     }
 
-    pub fn set_frame(&mut self, frame: Value, cx: &mut Context<WatchPage>) {
-        let game = frame["gameId"].clone();
-        if self.frame.as_ref().map(|old| &old["gameId"]) != Some(&game) {
+    pub fn set_frame(&mut self, frame: WatchFrame, cx: &mut Context<WatchPage>) {
+        if self.frame.as_ref().map(|old| &old.game_id) != Some(&frame.game_id) {
             self.ply = None;
             self.flipped = false;
         }
-        let pairing = format!(
-            "{}|{}",
-            frame["white"]["name"].as_str().unwrap_or_default(),
-            frame["black"]["name"].as_str().unwrap_or_default()
-        );
+        let pairing = format!("{}|{}", frame.white.name, frame.black.name);
         self.frame = Some(frame);
         self.frame_at = Instant::now();
         if pairing != self.pairing {
@@ -258,16 +256,16 @@ impl Live {
     pub fn freeze_clock(&mut self) {
         let elapsed = self.frame_at.elapsed().as_secs_f64();
         if let Some(frame) = &mut self.frame
-            && frame["finished"] != json!(true)
-            && frame["lastMove"].is_string()
+            && !frame.finished
+            && frame.last_move.is_some()
         {
-            let key = if turn_of(frame) == Color::Black {
-                "blackClock"
+            let clock = if turn_of(&frame.fen) == Color::Black {
+                &mut frame.black_clock
             } else {
-                "whiteClock"
+                &mut frame.white_clock
             };
-            if let Some(left) = frame[key].as_f64() {
-                frame[key] = json!((left - elapsed).max(0.));
+            if let Some(left) = clock {
+                *left = (*left - elapsed).max(0.);
             }
         }
         self.frame_at = Instant::now();
@@ -277,9 +275,9 @@ impl Live {
     /// for a variant KChess does not play.
     fn setup(&self) -> Option<Setup> {
         let frame = self.frame.as_ref()?;
-        let fen = frame["startFen"].as_str()?;
-        let setup = crate::game::setup_of(&json!({ "variant": frame["variant"], "fen": fen }))?;
-        frame["moves"].is_array().then_some(setup)
+        let fen = frame.start_fen.clone()?;
+        let variant = Variant::from_key(&frame.variant)?;
+        frame.moves.is_some().then_some(Setup { variant, fen })
     }
 
     fn moves(&self) -> Vec<String> {
@@ -288,7 +286,7 @@ impl Live {
         }
         self.frame
             .as_ref()
-            .and_then(|frame| serde_json::from_value(frame["moves"].clone()).ok())
+            .and_then(|frame| frame.moves.clone())
             .unwrap_or_default()
     }
 
@@ -302,12 +300,10 @@ impl Live {
     }
 
     fn orientation(&self) -> Color {
-        let side = self.frame.as_ref().map_or(Color::White, |frame| {
-            frame["orientation"]
-                .as_str()
-                .and_then(kchess_domain::color::from_name)
-                .unwrap_or(Color::White)
-        });
+        let side = self
+            .frame
+            .as_ref()
+            .map_or(Color::White, |frame| frame.orientation);
         if self.flipped { !side } else { side }
     }
 
@@ -321,8 +317,8 @@ impl Live {
             return;
         };
         let orientation = self.orientation();
-        let fen = frame["fen"].as_str().unwrap_or_default();
-        let crazyhouse = frame["variant"] == json!("crazyhouse");
+        let fen = frame.fen.as_str();
+        let crazyhouse = frame.variant == "crazyhouse";
         let moves = self.moves();
         let replayed = self
             .setup()
@@ -341,10 +337,9 @@ impl Live {
         let state = replayed.unwrap_or_else(|| {
             let mut state = BoardState::shown(
                 fen,
-                kchess_domain::variant::Variant::from_lichess(frame["variant"].as_str())
-                    .unwrap_or_default(),
+                Variant::from_lichess(Some(&frame.variant)).unwrap_or_default(),
                 orientation,
-                frame["lastMove"].as_str(),
+                frame.last_move.as_deref(),
             );
             // Pockets the feed does not send are not shown as empty.
             if crazyhouse {
@@ -372,16 +367,15 @@ impl Live {
     /// One side's clock, the side to move's running while connected.
     pub(super) fn clock(&self, color: Color, connected: bool) -> Option<(String, bool)> {
         let frame = self.frame.as_ref()?;
-        let base = frame[if color == Color::White {
-            "whiteClock"
+        let base = if color == Color::White {
+            frame.white_clock
         } else {
-            "blackClock"
-        }]
-        .as_f64()?;
+            frame.black_clock
+        }?;
         let running = connected
-            && frame["finished"] != json!(true)
-            && turn_of(frame) == color
-            && frame["lastMove"].is_string();
+            && !frame.finished
+            && turn_of(&frame.fen) == color
+            && frame.last_move.is_some();
         let elapsed = if running {
             self.frame_at.elapsed().as_secs_f64()
         } else {
@@ -396,14 +390,8 @@ impl Live {
         let (Some((_, table)), Some(frame)) = (&self.head_to_head, &self.frame) else {
             return Vec::new();
         };
-        let white = frame["white"]["name"]
-            .as_str()
-            .unwrap_or_default()
-            .to_lowercase();
-        let black = frame["black"]["name"]
-            .as_str()
-            .unwrap_or_default()
-            .to_lowercase();
+        let white = frame.white.name.to_lowercase();
+        let black = frame.black.name.to_lowercase();
         let score = |users: &BTreeMap<String, f64>| {
             format!(
                 "{}–{}",
@@ -425,14 +413,11 @@ impl Live {
     /// A channel's earlier games (`Previously on this channel`), each opened on the analysis
     /// board.
     pub fn past_games(&mut self, cx: &mut App, palette: &Palette) -> Option<AnyElement> {
-        let previous = self.frame.as_ref()?["previous"].as_array()?.clone();
+        let previous = self.frame.as_ref()?.previous.clone()?;
         // Boards of games the channel no longer lists are let go: a channel left on for hours
         // added one per game.
-        self.past.retain(|id, _| {
-            previous
-                .iter()
-                .any(|entry| entry["gameId"].as_str() == Some(id))
-        });
+        self.past
+            .retain(|id, _| previous.iter().any(|entry| entry.game_id == *id));
         if previous.is_empty() {
             return None;
         }
@@ -440,31 +425,23 @@ impl Live {
             .iter()
             .enumerate()
             .map(|(index, entry)| {
-                let id = entry["gameId"].as_str().unwrap_or_default().to_string();
-                let orientation = entry["orientation"]
-                    .as_str()
-                    .and_then(kchess_domain::color::from_name)
-                    .unwrap_or(Color::White);
+                let id = entry.game_id.clone();
+                let orientation = entry.orientation;
                 let board = self
                     .past
                     .entry(id.clone())
                     .or_insert_with(|| {
                         let mut state = BoardState::shown(
-                            entry["fen"].as_str().unwrap_or_default(),
+                            &entry.fen,
                             kchess_domain::variant::Variant::Standard,
                             orientation,
-                            entry["lastMove"].as_str().filter(|uci| !uci.contains('@')),
+                            entry.last_move.as_deref().filter(|uci| !uci.contains('@')),
                         );
                         state.preview = true;
                         cx.new(|_| ChessBoard::new(state))
                     })
                     .clone();
-                let (top, bottom) = if orientation == Color::White {
-                    ("black", "white")
-                } else {
-                    ("white", "black")
-                };
-                let line = |side: &'static str, slot: usize| {
+                let line = |side: Color, slot: usize| {
                     h_flex()
                         .justify_between()
                         .gap(px(8.))
@@ -472,7 +449,7 @@ impl Live {
                         .child(
                             crate::pages::players::player_link(
                                 ("watch-past-player", index * 2 + slot),
-                                entry[side]["name"].as_str().unwrap_or("?").to_string(),
+                                player_of(&entry.white, &entry.black, side).name.clone(),
                                 palette.primary,
                             )
                             .child(""),
@@ -492,7 +469,7 @@ impl Live {
                     .border_1()
                     .border_color(palette.border)
                     .bg(palette.elevated)
-                    .child(line(top, 0))
+                    .child(line(!orientation, 0))
                     .child(
                         div()
                             .id(("watch-past-board", index))
@@ -502,20 +479,17 @@ impl Live {
                             .cursor_pointer()
                             .on_click(move |_, window, cx| {
                                 crate::pages::players::open_exported(
-                                    open["gameId"].as_str().unwrap_or_default(),
-                                    open["white"]["name"].clone(),
-                                    open["black"]["name"].clone(),
-                                    open["orientation"]
-                                        .as_str()
-                                        .and_then(kchess_domain::color::from_name)
-                                        .unwrap_or(Color::White),
+                                    &open.game_id,
+                                    Value::String(open.white.name.clone()),
+                                    Value::String(open.black.name.clone()),
+                                    open.orientation,
                                     window,
                                     cx,
                                 )
                             })
                             .child(div().w_full().h(px(174.)).child(board)),
                     )
-                    .child(line(bottom, 1))
+                    .child(line(orientation, 1))
                     .child(
                         div()
                             .text_size(px(12.))
@@ -535,15 +509,6 @@ impl Live {
     }
 }
 
-/// The side to move in a frame's FEN.
-fn turn_of(frame: &Value) -> Color {
-    if frame["fen"].as_str().and_then(|fen| fen.split(' ').nth(1)) == Some("b") {
-        Color::Black
-    } else {
-        Color::White
-    }
-}
-
 impl WatchPage {
     /// The list, the board and its panel; or the list and an empty card.
     /// The live game's panel beside (or under) the board: what is on, the moves, the actions.
@@ -556,7 +521,7 @@ impl WatchPage {
             return div().into_any_element();
         };
         let palette = &{ *cx.global::<Palette>() };
-        let finished = frame["finished"] == json!(true);
+        let finished = frame.finished;
         let board_size = self
             .layout
             .board_size_in(px(240.) + LAYOUT_GAP, super::HEADER, window);
@@ -565,11 +530,12 @@ impl WatchPage {
         let banner_icon = if finished {
             icon("flag")
         } else {
-            frame["speed"]
-                .as_str()
+            frame
+                .speed
+                .as_deref()
                 .and_then(speed_icon)
                 .unwrap_or_else(|| {
-                    super::channel_icon(frame["channel"].as_str().unwrap_or_default())
+                    super::channel_icon(frame.channel.as_deref().unwrap_or_default())
                 })
         };
         let (title, detail) = if finished {
@@ -609,14 +575,8 @@ impl WatchPage {
             .children(action);
         let scores = self.live.score_lines();
         let head_to_head = (!scores.is_empty()).then(|| {
-            let white = frame["white"]["name"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
-            let black = frame["black"]["name"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
+            let white = frame.white.name.clone();
+            let black = frame.black.name.clone();
             h_flex()
                 .flex_wrap()
                 .gap(px(16.))
@@ -660,7 +620,7 @@ impl WatchPage {
             .as_ref()
             .map(|setup| view::sans(setup, &moves))
             .unwrap_or_default();
-        let empty = if frame["source"] != json!("tv") {
+        let empty = if frame.source != WatchSource::Tv {
             "Lichess does not send this game’s moves"
         } else {
             "Loading moves…"
@@ -707,7 +667,7 @@ impl WatchPage {
                 widgets::TurnButton::Flip(flip),
                 cx,
             ))
-            .when(frame["source"] == json!("game"), |panel| {
+            .when(frame.source == WatchSource::Game, |panel| {
                 panel.child(widgets::hint(
                     "Moves shown with Lichess’s anti-cheat delay",
                     palette,
@@ -769,7 +729,7 @@ impl WatchPage {
     /// A player's clock beside their name: its own `Part`, which a tick redraws.
     pub(super) fn render_live_face(&mut self, color: Color, cx: &mut Context<Self>) -> AnyElement {
         let palette = *cx.global::<Palette>();
-        let connected = self.phase.as_deref() == Some("connected");
+        let connected = self.phase == Some(WatchPhase::Connected);
         let shown = self.live.clock(color, connected);
         match shown {
             Some((text, running)) => {
@@ -793,7 +753,7 @@ impl WatchPage {
                 .child(list)
                 .child(widgets::card(palette).flex_1().child(widgets::empty_state(
                     icon("tv"),
-                    placeholder(self.target.is_some(), self.phase.as_deref()),
+                    placeholder(self.target.is_some(), self.phase),
                     None,
                     palette,
                 )))
@@ -807,23 +767,19 @@ impl WatchPage {
             .frontend
             .piece_set
             .clone();
-        let connected = self.phase.as_deref() == Some("connected");
+        let connected = self.phase == Some(WatchPhase::Connected);
         let orientation = self.live.orientation();
-        let fen = frame["fen"].as_str().unwrap_or_default().to_string();
-        let crazyhouse = frame["variant"] == json!("crazyhouse");
-        let turn = turn_of(&frame);
-        let finished = frame["finished"] == json!(true);
+        let fen = frame.fen.clone();
+        let crazyhouse = frame.variant == "crazyhouse";
+        let turn = turn_of(&frame.fen);
+        let finished = frame.finished;
         let mut pockets = [
             crate::board::pocket(&self.live.board, Color::White, cx),
             crate::board::pocket(&self.live.board, Color::Black, cx),
         ];
         let mut line = |color: Color, index: usize| {
-            let player = &frame[if color == Color::White {
-                "white"
-            } else {
-                "black"
-            }];
-            let name = player["name"].as_str().unwrap_or("?").to_string();
+            let player = player_of(&frame.white, &frame.black, color);
+            let name = player.name.clone();
             let shown = label(player);
             let identity = h_flex()
                 .gap(px(8.))
@@ -977,16 +933,17 @@ impl WatchPage {
         };
         let orientation = self.live.orientation();
         let origin = GameOrigin {
-            game_id: frame["gameId"].as_str().map(str::to_string),
-            ..GameOrigin::named(&frame["white"]["name"], &frame["black"]["name"])
+            game_id: Some(frame.game_id.clone()),
+            ..origin_of(&frame.white, &frame.black)
         };
         if let Some(setup) = self.live.setup() {
-            let pgn = crate::game::setup_pgn(
-                &setup,
+            let pgn = kchess_domain::pgn::setup_pgn(
+                setup.variant,
+                &setup.fen,
                 &self.live.moves(),
-                &json!({ "White": frame["white"]["name"], "Black": frame["black"]["name"] }),
+                &[("White", &frame.white.name), ("Black", &frame.black.name)],
             );
-            if let Some(pgn) = pgn {
+            if let Ok(pgn) = pgn {
                 let ply = self.live.shown_ply();
                 // Once this page is no longer being updated: leaving Watch tells it it is hidden.
                 window.defer(cx, move |window, cx| {
@@ -1005,9 +962,9 @@ impl WatchPage {
         }
         window.defer(cx, move |window, cx| {
             crate::pages::players::open_exported(
-                frame["gameId"].as_str().unwrap_or_default(),
-                frame["white"]["name"].clone(),
-                frame["black"]["name"].clone(),
+                &frame.game_id,
+                Value::String(frame.white.name),
+                Value::String(frame.black.name),
                 orientation,
                 window,
                 cx,
@@ -1027,63 +984,90 @@ pub(crate) enum Action {
 }
 
 /// What the board's place says before a game arrives: a failed feed is not still connecting.
-fn placeholder(target: bool, phase: Option<&str>) -> &'static str {
+fn placeholder(target: bool, phase: Option<WatchPhase>) -> &'static str {
     match (target, phase) {
         (false, _) => "Pick something to watch",
-        (true, Some("error")) => "Not connected",
+        (true, Some(WatchPhase::Error)) => "Not connected",
         (true, _) => "Connecting…",
     }
 }
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn a_failed_feed_does_not_say_it_is_connecting() {
-        use super::placeholder;
-        assert_eq!(placeholder(false, None), "Pick something to watch");
-        assert_eq!(placeholder(true, None), "Connecting…");
-        assert_eq!(placeholder(true, Some("error")), "Not connected");
+    use super::{info_line, past_result, past_score, placeholder, points, result_line};
+    use kchess_contracts::types::{TvPastGame, WatchFrame, WatchPhase};
+    use serde_json::json;
+    use shakmaty::Color;
+
+    /// A frame with what `fields` says over a game's bare frame.
+    fn frame(fields: serde_json::Value) -> WatchFrame {
+        let mut frame = json!({
+            "session": 1, "source": "game", "gameId": "g", "white": { "name": "A" },
+            "black": { "name": "B" }, "orientation": "white", "fen": "8/8/8/8/8/8/8/8 w - - 0 1",
+            "variant": "standard", "finished": false,
+        });
+        for (key, value) in fields.as_object().expect("fields") {
+            frame[key] = value.clone();
+        }
+        serde_json::from_value(frame).expect("a frame")
     }
 
-    use super::{info_line, past_result, past_score, points, result_line};
-    use serde_json::json;
+    fn past(fields: serde_json::Value) -> TvPastGame {
+        let mut game = json!({
+            "gameId": "g", "white": { "name": "A" }, "black": { "name": "B" },
+            "fen": "8/8/8/8/8/8/8/8 w - - 0 1", "orientation": "white",
+        });
+        for (key, value) in fields.as_object().expect("fields") {
+            game[key] = value.clone();
+        }
+        serde_json::from_value(game).expect("a past game")
+    }
+
+    #[test]
+    fn a_failed_feed_does_not_say_it_is_connecting() {
+        assert_eq!(placeholder(false, None), "Pick something to watch");
+        assert_eq!(placeholder(true, None), "Connecting…");
+        assert_eq!(placeholder(true, Some(WatchPhase::Error)), "Not connected");
+    }
 
     #[test]
     fn a_finished_game_says_who_won_and_how() {
         assert_eq!(
-            result_line(&json!({ "finished": true, "winner": "black", "status": "mate" })),
+            result_line(&frame(
+                json!({ "finished": true, "winner": "black", "status": "mate" })
+            )),
             "Black won · Checkmate"
         );
         assert_eq!(
-            result_line(&json!({ "finished": true, "status": "stalemate" })),
+            result_line(&frame(json!({ "finished": true, "status": "stalemate" }))),
             "Stalemate"
         );
-        assert_eq!(result_line(&json!({ "finished": false })), "Live");
+        assert_eq!(result_line(&frame(json!({ "finished": false }))), "Live");
     }
 
     #[test]
     fn the_info_line_reads_like_lichess() {
-        let frame = json!({
+        let tv = frame(json!({
             "source": "tv", "channel": "atomic", "speed": "blitz", "rated": true,
             "clock": { "initial": 180, "increment": 2 },
-        });
+        }));
         let channels = vec![kchess_contracts::types::TvChannel {
             key: "atomic".into(),
             label: "Atomic".into(),
             game_id: None,
             player: None,
         }];
-        assert_eq!(info_line(&frame, &channels), "3+2 · Rated · Blitz · Atomic");
+        assert_eq!(info_line(&tv, &channels), "3+2 · Rated · Blitz · Atomic");
         // A watched game (not TV) names its variant, not Lichess's key for it.
-        let game = json!({
+        let game = frame(json!({
             "source": "game", "variant": "kingOfTheHill", "speed": "rapid", "rated": false,
             "clock": { "initial": 600, "increment": 5 },
-        });
+        }));
         assert_eq!(
             info_line(&game, &channels),
             "10+5 · Casual · Rapid · King of the Hill"
         );
-        let standard = json!({ "source": "game", "variant": "standard", "speed": "rapid" });
+        let standard = frame(json!({ "source": "game", "variant": "standard", "speed": "rapid" }));
         assert_eq!(info_line(&standard, &channels), "Rapid");
     }
 
@@ -1096,16 +1080,19 @@ mod tests {
 
     #[test]
     fn past_games_show_each_sides_points() {
-        let won = json!({ "winner": "white", "status": "mate" });
+        let won = past(json!({ "winner": "white", "status": "mate" }));
         assert_eq!(
-            (past_score(&won, "white"), past_score(&won, "black")),
+            (
+                past_score(&won, Color::White),
+                past_score(&won, Color::Black)
+            ),
             ("1", "0")
         );
         assert_eq!(past_result(&won), "1–0");
-        let drawn = json!({ "status": "draw" });
-        assert_eq!(past_score(&drawn, "white"), "½");
+        let drawn = past(json!({ "status": "draw" }));
+        assert_eq!(past_score(&drawn, Color::White), "½");
         assert_eq!(
-            past_result(&json!({ "status": "started" })),
+            past_result(&past(json!({ "status": "started" }))),
             "Result pending"
         );
     }

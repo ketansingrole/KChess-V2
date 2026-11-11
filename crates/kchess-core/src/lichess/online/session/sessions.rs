@@ -525,9 +525,7 @@ impl OnlineSession {
             return;
         };
         for info in fresh {
-            self.emit(CoreEvent::ChallengeReceived(
-                serde_json::to_value(info).unwrap_or(Value::Null),
-            ));
+            self.emit(CoreEvent::ChallengeReceived(Box::new(info)));
         }
     }
 }

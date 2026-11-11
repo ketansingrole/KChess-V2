@@ -679,10 +679,10 @@ fn puzzles_deleted_in_another_window_are_gone_here_too(cx: &mut gpui_kit::TestAp
     app.cx.update(|cx| {
         let core = cx.global::<AppCore>().clone();
         let other = core.bridge.connection() + 1;
-        let change = serde_json::json!(kchess_contracts::types::ProfileChange {
+        let change = kchess_contracts::types::ProfileChange {
             areas: vec![kchess_contracts::types::ProfileArea::Puzzles],
             origin: other,
-        });
+        };
         core.events.update(cx, |_, cx| {
             cx.emit(ClientEvent::Event(CoreEvent::ProfileChanged(change)))
         });

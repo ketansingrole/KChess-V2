@@ -178,8 +178,7 @@ impl ChallengeInbox {
 
     /// `changed(list())`: the whole list as `challenges:update` carries it.
     fn emit(&self, entries: &[ChallengeInfo]) {
-        let payload = serde_json::to_value(sorted(entries)).unwrap_or(Value::Array(Vec::new()));
-        self.host.emit(CoreEvent::ChallengesUpdate(payload));
+        self.host.emit(CoreEvent::ChallengesUpdate(sorted(entries)));
     }
 }
 
