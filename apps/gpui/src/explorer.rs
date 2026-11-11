@@ -3,6 +3,7 @@
 //! list on the analysis board or as a grid of boards beside an opening's line. Its settings are
 //! the view preference both apps keep (`kchess:explorer`).
 
+use futures::FutureExt as _;
 use kchess_contracts::calls;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -513,10 +514,14 @@ impl PositionExplorer {
             .as_ref()
             .is_some_and(|result| result["kind"] == json!("masters"));
         let id = game["id"].as_str().unwrap_or_default().to_string();
-        let call = cx.global::<AppCore>().call(
-            if masters { "mastersGame" } else { "exportGame" },
-            vec![json!(id)],
-        );
+        let core = cx.global::<AppCore>();
+        let call = if masters {
+            core.request(calls::MastersGame { id: json!(id) })
+                .boxed_local()
+        } else {
+            core.request(calls::ExportGame { id: json!(id) })
+                .boxed_local()
+        };
         cx.spawn_in(window, async move |_, cx| {
             let outcome = call.await;
             let _ = cx.update(|window, cx| {

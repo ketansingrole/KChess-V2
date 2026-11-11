@@ -10,13 +10,13 @@
 use std::time::{Duration, Instant};
 
 use gpui_kit::{AppContext as _, TestAppContext};
-use serde_json::{Value, json};
+use serde_json::json;
 use shakmaty::uci::UciMove;
 use shakmaty::{CastlingMode, Chess, Position};
 
 use super::{Harness, draw};
-use crate::core::AppCore;
 use crate::pages::Page;
+use kchess_contracts::calls;
 
 /// xorshift64: the same games on every run.
 fn random_game(seed: &mut u64, plies: usize) -> (Vec<String>, String) {
@@ -42,15 +42,6 @@ fn random_game(seed: &mut u64, plies: usize) -> (Vec<String>, String) {
     (moves, pgn)
 }
 
-fn call(app: &mut Harness, method: &str, args: Vec<Value>) {
-    app.cx.update(|cx| {
-        cx.global::<AppCore>()
-            .bridge
-            .call_now(method, args)
-            .unwrap_or_else(|cause| panic!("{method}: {}", cause.message));
-    });
-}
-
 fn fill(app: &mut Harness) {
     let mut seed = 0x9E37_79B9_7F4A_7C15;
     let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -62,12 +53,16 @@ fn fill(app: &mut Harness) {
             "timeControl": "-", "finished": false,
             "setup": { "variant": "standard", "fen": start }, "moves": moves,
         });
-        call(app, "saveArchivedGame", vec![game]);
+        app.request(calls::SaveArchivedGame { game });
     }
     for n in 0..50 {
         let (_, pgn) = random_game(&mut seed, 60);
         let command = json!({ "op": "save", "name": format!("Study {n}"), "pgn": pgn });
-        call(app, "studyCommand", vec![command]);
+        app.request(calls::StudyCommand {
+            command,
+            incremental: None,
+            based_on: None,
+        });
     }
 }
 

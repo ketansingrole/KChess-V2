@@ -517,7 +517,7 @@ fn history_shows_the_puzzles_not_solved(cx: &mut gpui_kit::TestAppContext) {
         });
         let saved = app.cx.update(|cx| {
             cx.global::<crate::core::AppCore>()
-                .call("recordPuzzleAttempt", vec![attempt])
+                .request(kchess_contracts::calls::RecordPuzzleAttempt { attempt })
         });
         app.cx
             .foreground_executor()
@@ -567,7 +567,7 @@ fn puzzle_history_rows_fit_every_window(cx: &mut gpui_kit::TestAppContext) {
     });
     let saved = app.cx.update(|cx| {
         cx.global::<crate::core::AppCore>()
-            .call("recordPuzzleAttempt", vec![attempt])
+            .request(kchess_contracts::calls::RecordPuzzleAttempt { attempt })
     });
     app.cx
         .foreground_executor()

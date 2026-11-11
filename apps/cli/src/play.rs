@@ -130,8 +130,8 @@ impl Session<'_> {
         );
     }
 
-    async fn save(&mut self, method: &str, args: Vec<Value>) {
-        if let Err(cause) = self.core.call(method, args).await {
+    async fn save<C: calls::CoreCall>(&mut self, call: C) {
+        if let Err(cause) = self.core.request(call).await {
             eprintln!("[cli] Saving failed: {cause}");
             self.failed = true;
         }
@@ -142,10 +142,16 @@ impl Session<'_> {
         history::apply_to(&mut self.games, &writes);
         for write in writes {
             match write {
-                Write::SaveGame(game) => self.save("saveArchivedGame", vec![game]).await,
-                Write::RemoveGame(id) => self.save("removeArchivedGame", vec![json!(id)]).await,
+                Write::SaveGame(game) => self.save(calls::SaveArchivedGame { game }).await,
+                Write::RemoveGame(id) => {
+                    self.save(calls::RemoveArchivedGame { id: json!(id) }).await
+                }
                 Write::SaveSession { kind, identity } => {
-                    self.save("saveSession", vec![json!(kind), identity]).await
+                    self.save(calls::SaveSession {
+                        kind: json!(kind),
+                        session: identity,
+                    })
+                    .await
                 }
             }
         }
@@ -166,8 +172,11 @@ impl Session<'_> {
             Game::Computer(game) => game.snapshot(&self.host()),
             Game::Local(game) => game.snapshot(self.now()),
         };
-        self.save("saveSession", vec![json!(self.kind()), snapshot])
-            .await;
+        self.save(calls::SaveSession {
+            kind: json!(self.kind()),
+            session: snapshot,
+        })
+        .await;
         let (source, has_play) = self.archive_host();
         let finished = self.over();
         let writes = self.history.save(finished, source, has_play, &self.games);

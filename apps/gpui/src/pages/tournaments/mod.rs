@@ -2,7 +2,7 @@
 //! timeline, one tournament's details (join, standings, the top game, games in progress and
 //! totals), and creating an arena.
 
-use kchess_contracts::calls;
+use kchess_contracts::calls::{self, CoreCall};
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -385,18 +385,15 @@ impl TournamentsPage {
             return;
         };
         let password = self.password.read(cx).value().trim().to_string();
-        let mut args = vec![
-            detail["system"].clone(),
-            detail["id"].clone(),
-            json!(account),
-        ];
-        // An unset code is left out: the validators reject null.
-        if !password.is_empty() {
-            args.push(json!(password));
-        }
+        let join = calls::JoinTournament {
+            system: detail["system"].clone(),
+            id: detail["id"].clone(),
+            account: json!(account),
+            // An unset code is left out: the validators reject null.
+            password: (!password.is_empty()).then(|| json!(password)),
+        };
         self.act(
-            "joinTournament",
-            args,
+            join,
             Some(if detail["system"] == json!("arena") {
                 format!(
                     "Joined {}. Games open here automatically when you are paired.",
@@ -421,12 +418,11 @@ impl TournamentsPage {
             return;
         };
         self.act(
-            "leaveTournament",
-            vec![
-                detail["system"].clone(),
-                detail["id"].clone(),
-                json!(account),
-            ],
+            calls::LeaveTournament {
+                system: detail["system"].clone(),
+                id: detail["id"].clone(),
+                account: json!(account),
+            },
             None,
             window,
             cx,
@@ -434,10 +430,9 @@ impl TournamentsPage {
     }
 
     /// Join or leave, then read the tournament again.
-    fn act(
+    fn act<C: CoreCall<Answer = Value> + Send + 'static>(
         &mut self,
-        method: &'static str,
-        args: Vec<Value>,
+        call: C,
         done: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -448,7 +443,7 @@ impl TournamentsPage {
         self.busy = true;
         self.needs_reconnect = false;
         cx.notify();
-        let call = cx.global::<AppCore>().call(method, args);
+        let call = cx.global::<AppCore>().request(call);
         cx.spawn_in(window, async move |this, cx| {
             let answer = call.await;
             let _ = this.update_in(cx, |this, window, cx| {

@@ -262,11 +262,11 @@ fn a_setting_saved_elsewhere_is_shown(cx: &mut gpui_kit::TestAppContext) {
     let base = app.saved_settings();
     let mut edited = base.clone();
     edited["soundEnabled"] = json!(false);
-    let core = app
-        .cx
-        .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
-    core.call_now("saveDesktopSettings", vec![edited, base])
-        .expect("another window saves");
+    let settings = |value| serde_json::from_value(value).expect("settings");
+    app.request(kchess_contracts::calls::SaveDesktopSettings {
+        settings: settings(edited),
+        base: Some(settings(base)),
+    });
     app.wait_for("the saved setting", |window, _| {
         use gpui_kit::test::TestWindowExt as _;
         window

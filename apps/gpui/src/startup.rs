@@ -7,6 +7,7 @@ use gpui_kit::*;
 use serde_json::Value;
 
 use crate::core::AppCore;
+use kchess_contracts::{CoreError, calls};
 
 /// The models have started from the profile.
 pub struct Started;
@@ -16,18 +17,21 @@ impl Global for Started {}
 /// The library the models start from, when the core can read what they need, or why not.
 pub fn check(cx: &App) -> Result<Value, String> {
     let bridge = &cx.global::<AppCore>().bridge;
-    readable(|method| {
-        bridge
-            .call_now(method, Vec::new())
-            .map_err(|cause| cause.message)
-    })
+    readable(
+        || bridge.request_now(calls::DesktopSettings {}).map(drop),
+        || bridge.request_now(calls::Library {}),
+    )
+    .map_err(|cause| cause.message)
 }
 
 /// The settings must be readable, and the library is read once for every model that starts
 /// from it: each read decodes every study and replays every played game.
-fn readable(read: impl Fn(&str) -> Result<Value, String>) -> Result<Value, String> {
-    read("desktopSettings")?;
-    read("library")
+fn readable(
+    settings: impl FnOnce() -> Result<(), CoreError>,
+    library: impl FnOnce() -> Result<Value, CoreError>,
+) -> Result<Value, CoreError> {
+    settings()?;
+    library()
 }
 
 /// Start the models and open the window, or the startup screen when the profile cannot be read.
@@ -116,40 +120,49 @@ impl Render for StartupScreen {
 #[cfg(test)]
 mod tests {
     use super::readable;
+    use kchess_contracts::CoreError;
     use serde_json::{Value, json};
 
     /// Settings the core could not read started as defaults, which the next save wrote over the
     /// profile's: any failed read must keep the models from starting.
     #[test]
     fn a_failed_read_keeps_the_models_from_starting() {
-        assert_eq!(readable(|method| Ok(json!(method))), Ok(json!("library")));
-        let failed = readable(|method| {
-            if method == "desktopSettings" {
-                Err("The settings file is locked".into())
-            } else {
-                Ok(Value::Null)
-            }
-        });
-        assert_eq!(failed, Err("The settings file is locked".into()));
-        assert!(
-            readable(|method| if method == "library" {
-                Err("x".into())
-            } else {
-                Ok(Value::Null)
-            })
-            .is_err()
+        assert_eq!(
+            readable(|| Ok(()), || Ok(json!("library"))).map_err(|e| e.message),
+            Ok(json!("library"))
         );
+        let failed = readable(
+            || Err(CoreError::new("The settings file is locked")),
+            || Ok(Value::Null),
+        );
+        assert_eq!(
+            failed.map_err(|e| e.message),
+            Err("The settings file is locked".into())
+        );
+        assert!(readable(|| Ok(()), || Err(CoreError::new("x"))).is_err());
     }
 
-    /// The library is read once to start, not once for each model that starts from it.
+    /// The library is read once to start, not once for each model that starts from it, and not
+    /// at all when the settings cannot be read.
     #[test]
     fn the_library_is_read_once_to_start() {
-        let reads = std::cell::RefCell::new(Vec::new());
-        readable(|method| {
-            reads.borrow_mut().push(method.to_string());
-            Ok(Value::Null)
-        })
+        let reads = std::cell::Cell::new(0);
+        readable(
+            || Ok(()),
+            || {
+                reads.set(reads.get() + 1);
+                Ok(Value::Null)
+            },
+        )
         .expect("readable");
-        assert_eq!(*reads.borrow(), ["desktopSettings", "library"]);
+        assert_eq!(reads.get(), 1);
+        let _ = readable(
+            || Err(CoreError::new("locked")),
+            || {
+                reads.set(reads.get() + 1);
+                Ok(Value::Null)
+            },
+        );
+        assert_eq!(reads.get(), 1);
     }
 }

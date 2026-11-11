@@ -530,9 +530,18 @@ impl PuzzlesPage {
         let Some(call) = step.call else {
             return;
         };
-        let request = cx
-            .global::<AppCore>()
-            .call(call.method, vec![call.args.clone()]);
+        let (core, args) = (cx.global::<AppCore>(), call.args.clone());
+        let request = match call.method {
+            "localPuzzles" => {
+                futures::FutureExt::boxed_local(core.request(calls::LocalPuzzles { query: args }))
+            }
+            "puzzleNext" => {
+                futures::FutureExt::boxed_local(core.request(calls::PuzzleNext { request: args }))
+            }
+            _ => {
+                futures::FutureExt::boxed_local(core.request(calls::PuzzleSolve { request: args }))
+            }
+        };
         cx.spawn(async move |this, cx| {
             let reply = request.await.map_err(|cause| {
                 crate::log::write(

@@ -615,11 +615,23 @@ impl Harness {
 
     /// The settings as the core has them (the app saves a change after 400 ms).
     pub fn saved_settings(&mut self) -> serde_json::Value {
+        serde_json::to_value(self.request(kchess_contracts::calls::DesktopSettings {}))
+            .expect("the settings as JSON")
+    }
+
+    /// A typed core call, waited for: the core answers on its own threads.
+    pub fn request<C: kchess_contracts::calls::CoreCall + Send + 'static>(
+        &mut self,
+        call: C,
+    ) -> C::Answer
+    where
+        C::Answer: Send,
+    {
         let core = self
             .cx
             .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
-        core.call_now("desktopSettings", Vec::new())
-            .expect("the core reads the settings")
+        core.request_now(call)
+            .unwrap_or_else(|cause| panic!("{}: {}", C::METHOD, cause.message))
     }
 
     /// Wait until the core has saved `key` as `value`.
