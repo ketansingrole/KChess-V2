@@ -3,9 +3,9 @@
 //! never the core. The core starts it on the first `voiceStart`, keeps it while voice input is in
 //! use, and stops it on `voiceStop`, a failure or close.
 //!
-//! Requests are framed on the helper's stdin (one tag byte, a little-endian `u32` length, the
-//! payload) and each is answered with one JSON line; see `crates/kchess-voice/src/protocol.rs`.
-//! Calls are serialized, so audio reaches the recognizer in the order it was sent.
+//! Requests are framed on the helper's stdin and each is answered with one JSON line
+//! (`kchess_voice::protocol`). Calls are serialized, so audio reaches the recognizer in the order
+//! it was sent.
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -14,8 +14,10 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+use kchess_voice::protocol::{self, Answer, Grammar, MAX_LINE, MAX_PAYLOAD, Tag};
+pub use kchess_voice::protocol::{Recognized, Word};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
@@ -28,28 +30,10 @@ use crate::host::{Host, Level};
 const STARTUP_DEADLINE: Duration = Duration::from_secs(60);
 /// A 100 ms chunk is recognized in milliseconds; anything this slow has hung.
 const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
-/// The longest answer line read from the helper.
-const MAX_LINE: u64 = 1 << 20;
-/// The largest request payload the helper reads (`MAX_PAYLOAD` in `kchess-voice`).
-const MAX_PAYLOAD: usize = 1 << 20;
 
 const UNAVAILABLE: &str = "Voice input isn’t available in this build.";
 const NOT_INSTALLED: &str = "The offline voice model isn’t installed. Download it and try again.";
 const STOPPED: &str = "Speech recognition stopped. Try again.";
-
-/// One word the recognizer heard, with its confidence from 0 to 1.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Word {
-    pub word: String,
-    pub conf: f64,
-}
-
-/// A finished utterance.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Recognized {
-    pub text: String,
-    pub words: Vec<Word>,
-}
 
 /// What one request produced: words so far, or a finished utterance (`VoiceHeard`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -61,17 +45,6 @@ pub struct Heard {
     pub result: Option<Recognized>,
 }
 
-/// One helper answer line.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Answer {
-    ready: Option<bool>,
-    ok: Option<bool>,
-    partial: Option<String>,
-    result: Option<Recognized>,
-    error: Option<String>,
-}
-
 struct Helper {
     // Held for `kill_on_drop`: dropping the helper ends the process.
     _child: Child,
@@ -80,13 +53,9 @@ struct Helper {
 }
 
 impl Helper {
-    async fn send(&mut self, tag: u8, payload: &[u8]) -> std::io::Result<()> {
-        let length =
-            u32::try_from(payload.len()).map_err(|_| std::io::Error::other("request too large"))?;
-        let mut frame = Vec::with_capacity(5 + payload.len());
-        frame.push(tag);
-        frame.extend_from_slice(&length.to_le_bytes());
-        frame.extend_from_slice(payload);
+    async fn send(&mut self, tag: Tag, payload: &[u8]) -> std::io::Result<()> {
+        let frame = protocol::frame(tag, payload)
+            .ok_or_else(|| std::io::Error::other("request too large"))?;
         self.stdin.write_all(&frame).await?;
         self.stdin.flush().await
     }
@@ -103,10 +72,10 @@ impl Helper {
                 "the helper exited",
             ));
         }
-        serde_json::from_slice(&line).map_err(std::io::Error::other)
+        Answer::read(&line).map_err(std::io::Error::other)
     }
 
-    async fn request(&mut self, tag: u8, payload: &[u8]) -> std::io::Result<Answer> {
+    async fn request(&mut self, tag: Tag, payload: &[u8]) -> std::io::Result<Answer> {
         self.send(tag, payload).await?;
         self.answer().await
     }
@@ -181,13 +150,8 @@ impl VoiceRecognizer {
             stdout: BufReader::new(stdout),
         };
         match tokio::time::timeout(self.startup_deadline, helper.answer()).await {
-            Ok(Ok(Answer {
-                ready: Some(true), ..
-            })) => Ok(helper),
-            Ok(Ok(Answer {
-                error: Some(message),
-                ..
-            })) => {
+            Ok(Ok(Answer::Ready(true))) => Ok(helper),
+            Ok(Ok(Answer::Error(message))) => {
                 self.log(
                     Level::Warn,
                     &format!("Voice helper refused to start: {message}"),
@@ -212,7 +176,7 @@ impl VoiceRecognizer {
 
     /// One request to the running helper, answered within `deadline`. A broken pipe, a timeout or
     /// an unreadable answer ends the helper; the next `start` launches a new one.
-    async fn exchange(&self, tag: u8, payload: &[u8], deadline: Duration) -> Result<Answer> {
+    async fn exchange(&self, tag: Tag, payload: &[u8], deadline: Duration) -> Result<Answer> {
         let mut slot = self.helper.lock().await;
         // Out of its slot until its answer is read: a call cancelled after sending would leave
         // the answer in the pipe, and every later request would read the one before it. Dropped
@@ -221,10 +185,7 @@ impl VoiceRecognizer {
             .take()
             .ok_or_else(|| CoreError::new("Voice input isn’t listening."))?;
         match tokio::time::timeout(deadline, helper.request(tag, payload)).await {
-            Ok(Ok(Answer {
-                error: Some(message),
-                ..
-            })) => {
+            Ok(Ok(Answer::Error(message))) => {
                 *slot = Some(helper);
                 self.log(
                     Level::Warn,
@@ -256,17 +217,22 @@ impl VoiceRecognizer {
                 *slot = Some(self.spawn().await?);
             }
         }
-        let payload = json!({ "sampleRate": sample_rate, "grammar": grammar }).to_string();
+        // The helper takes rates from 8 kHz to 192 kHz, exact in f32.
+        let grammar = Grammar {
+            sample_rate: sample_rate as f32,
+            grammar: grammar.to_vec(),
+        };
+        let payload = serde_json::to_vec(&grammar).unwrap_or_default();
         if payload.len() > MAX_PAYLOAD {
             return Err(CoreError::new("Invalid voice grammar."));
         }
         // Not the per-chunk bound: a new helper's first request and a large grammar take longer
         // than a chunk of audio, and a helper that is merely slow to set up has not hung.
         match self
-            .exchange(b'G', payload.as_bytes(), self.startup_deadline)
+            .exchange(Tag::Grammar, &payload, self.startup_deadline)
             .await?
         {
-            Answer { ok: Some(true), .. } => Ok(()),
+            Answer::Ok(true) => Ok(()),
             _ => Err(CoreError::new(STOPPED)),
         }
     }
@@ -280,12 +246,18 @@ impl VoiceRecognizer {
         if pcm.len() % 2 != 0 || pcm.len() > MAX_PAYLOAD {
             return Err(CoreError::new("Invalid audio."));
         }
-        heard(self.exchange(b'A', &pcm, self.request_deadline).await?)
+        heard(
+            self.exchange(Tag::Audio, &pcm, self.request_deadline)
+                .await?,
+        )
     }
 
     /// Ends the utterance (push-to-talk released) and answers what it said.
     pub async fn finish(&self) -> Result<Heard> {
-        heard(self.exchange(b'F', &[], self.request_deadline).await?)
+        heard(
+            self.exchange(Tag::Final, &[], self.request_deadline)
+                .await?,
+        )
     }
 
     /// Stops the helper, releasing the model's memory.
@@ -296,17 +268,11 @@ impl VoiceRecognizer {
 
 fn heard(answer: Answer) -> Result<Heard> {
     match answer {
-        Answer {
-            result: Some(result),
-            ..
-        } => Ok(Heard {
+        Answer::Result(result) => Ok(Heard {
             partial: None,
             result: Some(result),
         }),
-        Answer {
-            partial: Some(partial),
-            ..
-        } => Ok(Heard {
+        Answer::Partial(partial) => Ok(Heard {
             partial: Some(partial),
             result: None,
         }),

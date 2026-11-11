@@ -4271,6 +4271,7 @@ dependencies = [
  "kchess-contracts",
  "kchess-domain",
  "kchess-hack",
+ "kchess-voice",
  "keyring",
  "regex",
  "reqwest",

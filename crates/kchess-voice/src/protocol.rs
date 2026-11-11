@@ -1,4 +1,6 @@
-//! The pipe protocol between the core and this helper.
+//! The pipe protocol between the core and the helper: the helper reads requests with
+//! [`read_request`] and writes [`Answer`] lines; the core writes [`frame`]s and reads the lines
+//! back with [`Answer::read`].
 //!
 //! Requests arrive on stdin as frames: one tag byte, a little-endian `u32` payload length, then
 //! the payload. Every request is answered with exactly one line of compact JSON on stdout.
@@ -20,9 +22,33 @@ use serde_json::Value;
 
 /// The largest payload accepted: far above a 100 ms chunk, far below anything harmful.
 pub const MAX_PAYLOAD: usize = 1 << 20;
+/// The longest answer line the core reads.
+pub const MAX_LINE: u64 = 1 << 20;
 /// The most phrases one grammar may hold, and the longest phrase.
 pub const MAX_PHRASES: usize = 4096;
 pub const MAX_PHRASE_CHARS: usize = 200;
+
+/// A request's tag byte.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Tag {
+    Grammar = b'G',
+    Audio = b'A',
+    Final = b'F',
+}
+
+/// `payload` framed as a `tag` request, or `None` when it is larger than the helper reads.
+pub fn frame(tag: Tag, payload: &[u8]) -> Option<Vec<u8>> {
+    if payload.len() > MAX_PAYLOAD {
+        return None;
+    }
+    let length = u32::try_from(payload.len()).ok()?;
+    let mut frame = Vec::with_capacity(5 + payload.len());
+    frame.push(tag as u8);
+    frame.extend_from_slice(&length.to_le_bytes());
+    frame.extend_from_slice(payload);
+    Some(frame)
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Request {
@@ -33,7 +59,7 @@ pub enum Request {
     Invalid(&'static str),
 }
 
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Grammar {
     pub sample_rate: f32,
@@ -65,8 +91,11 @@ pub fn read_request(input: &mut impl Read) -> io::Result<Option<Request>> {
 
 fn parse(tag: u8, payload: &[u8]) -> Request {
     let length = payload.len();
+    const GRAMMAR: u8 = Tag::Grammar as u8;
+    const AUDIO: u8 = Tag::Audio as u8;
+    const FINAL: u8 = Tag::Final as u8;
     match tag {
-        b'G' => {
+        GRAMMAR => {
             let Ok(grammar) = serde_json::from_slice::<Grammar>(payload) else {
                 return Request::Invalid("invalid grammar");
             };
@@ -82,7 +111,7 @@ fn parse(tag: u8, payload: &[u8]) -> Request {
             }
             Request::Grammar(grammar)
         }
-        b'A' if length.is_multiple_of(2) => Request::Audio(
+        AUDIO if length.is_multiple_of(2) => Request::Audio(
             payload
                 .as_chunks::<2>()
                 .0
@@ -90,27 +119,28 @@ fn parse(tag: u8, payload: &[u8]) -> Request {
                 .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
                 .collect(),
         ),
-        b'A' => Request::Invalid("odd audio length"),
-        b'F' if length == 0 => Request::Final,
+        AUDIO => Request::Invalid("odd audio length"),
+        FINAL if length == 0 => Request::Final,
         _ => Request::Invalid("unknown request"),
     }
 }
 
-/// One recognized word with Vosk's confidence.
-#[derive(Debug, PartialEq, Serialize)]
+/// One recognized word with Vosk's confidence, from 0 to 1.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Word {
     pub word: String,
     pub conf: f64,
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+/// A finished utterance.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Recognized {
     pub text: String,
     pub words: Vec<Word>,
 }
 
 /// An answer line.
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Answer {
     Ready(bool),
@@ -126,6 +156,11 @@ impl Answer {
         let mut text = serde_json::to_string(self).unwrap_or_else(|_| "{}".into());
         text.push('\n');
         text
+    }
+
+    /// An answer line as the helper wrote it.
+    pub fn read(line: &[u8]) -> serde_json::Result<Answer> {
+        serde_json::from_slice(line)
     }
 }
 
@@ -167,6 +202,50 @@ mod tests {
         out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
         out.extend_from_slice(payload);
         out
+    }
+
+    #[test]
+    fn the_cores_frames_read_back_as_the_requests_it_meant() {
+        let grammar = Grammar {
+            sample_rate: 16_000.0,
+            grammar: vec!["e four".into()],
+        };
+        let payload = serde_json::to_vec(&grammar).expect("grammar");
+        let mut bytes = super::frame(Tag::Grammar, &payload).expect("frame");
+        bytes.extend(super::frame(Tag::Audio, &[1, 0]).expect("frame"));
+        bytes.extend(super::frame(Tag::Final, &[]).expect("frame"));
+        let requests: Vec<Request> = read_all(&bytes)
+            .into_iter()
+            .map_while(|request| request.expect("valid"))
+            .collect();
+        assert_eq!(
+            requests,
+            vec![
+                Request::Grammar(grammar),
+                Request::Audio(vec![1]),
+                Request::Final
+            ]
+        );
+        assert!(super::frame(Tag::Audio, &vec![0; MAX_PAYLOAD]).is_some());
+        assert!(super::frame(Tag::Audio, &vec![0; MAX_PAYLOAD + 1]).is_none());
+    }
+
+    #[test]
+    fn answers_read_back_as_written() {
+        for answer in [
+            Answer::Ready(true),
+            Answer::Ok(true),
+            Answer::Partial("e".into()),
+            result(r#"{"result":[{"conf":0.5,"word":"e"}],"text":"e"}"#),
+            Answer::Error("no model".into()),
+        ] {
+            assert_eq!(
+                Answer::read(answer.line().as_bytes()).expect("read"),
+                answer
+            );
+        }
+        assert!(Answer::read(br#"{"ok":true,"error":"x"}"#).is_err());
+        assert!(Answer::read(br#"{"other":1}"#).is_err());
     }
 
     fn read_all(bytes: &[u8]) -> Vec<io::Result<Option<Request>>> {
