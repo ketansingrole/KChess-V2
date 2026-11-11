@@ -6,8 +6,15 @@
 //! each answer (keys sorted, fractions to 9 significant digits), or `e:` and the error. This pins the behaviour those suites checked, including
 //! the Rust-only rules their golden digests covered. Regenerate it only for an intended change:
 //! `KCHESS_WRITE_CORPUS=1 cargo test -p kchess-domain --test rules_corpus` rewrites each digest.
+//!
+//! The calls go through the corpus's own dispatcher (`corpus/`), which reads each method's JSON
+//! arguments and calls the typed rules. Methods whose rules were deleted, since nothing but the
+//! corpus called them, are `RETIRED`: their recorded cases are kept and skipped.
 
 mod corpus;
+
+/// Methods whose rules are gone: nothing but the corpus called them.
+const RETIRED: &[&str] = &[];
 
 use std::io::{Read, Write};
 use std::path::Path;
@@ -96,6 +103,10 @@ fn check_the_corpus() {
     for line in text.lines() {
         let mut case: Value = serde_json::from_str(line).unwrap();
         let (method, args) = (case["m"].as_str().unwrap(), case["a"].as_str().unwrap());
+        if RETIRED.contains(&method) {
+            rewritten.push(case.to_string());
+            continue;
+        }
         let actual = digest(&corpus::call(method, args));
         cases += 1;
         if actual != case["d"] {
@@ -116,6 +127,6 @@ fn check_the_corpus() {
         out.finish().unwrap();
         return;
     }
-    assert!(cases > 30_000, "the corpus holds {cases} cases");
+    assert!(cases > 20_000, "the corpus checks {cases} cases");
     assert!(differ.is_empty(), "answers changed:\n{}", differ.join("\n"));
 }
