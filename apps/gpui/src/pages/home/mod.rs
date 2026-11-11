@@ -31,8 +31,7 @@ mod lichess;
 
 /// A game's variant by name, when it is not standard chess.
 fn variant_of(game: &PlayedGame) -> Option<String> {
-    (game.setup.variant != Variant::Standard)
-        .then(|| crate::game::variant_label(game.setup.variant.key()).to_string())
+    (game.setup.variant != Variant::Standard).then(|| game.setup.variant.label().to_string())
 }
 
 /// Recent games on Home.

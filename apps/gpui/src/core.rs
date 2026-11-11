@@ -232,14 +232,14 @@ pub fn on_profile_change(
 
 /// Which connection raises system notifications now (`alerts:owner`); `None` until the core says.
 #[derive(Default)]
-pub struct AlertOwner(pub Option<u64>);
+pub struct AlertsOwnerGlobal(pub Option<u64>);
 
-impl Global for AlertOwner {}
+impl Global for AlertsOwnerGlobal {}
 
 /// Whether this app may raise a system notification: it is the alert owner, or nobody is.
 pub fn alerts_here(cx: &App) -> bool {
     let own = cx.global::<AppCore>().bridge.connection();
-    cx.try_global::<AlertOwner>()
+    cx.try_global::<AlertsOwnerGlobal>()
         .and_then(|owner| owner.0)
         .is_none_or(|owner| owner == own)
 }
@@ -294,7 +294,7 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
                 let owner = serde_json::from_value::<types::AlertOwner>(owner.clone())
                     .ok()
                     .and_then(|owner| owner.connection);
-                cx.update(|cx| cx.set_global(AlertOwner(owner)));
+                cx.update(|cx| cx.set_global(AlertsOwnerGlobal(owner)));
             }
             core.events.update(cx, |_, cx| cx.emit(event));
         }

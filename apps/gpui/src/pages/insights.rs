@@ -13,6 +13,7 @@ use kchess_contracts::types::{
     Blunders, ExplorerSpeed, GameRecord, InsightsQuery, InsightsReport, OpeningRecord,
     TimeUseReport,
 };
+use kchess_domain::perf::Speed;
 use kchess_domain::variant::Variant;
 
 use crate::assets::icon;
@@ -50,13 +51,6 @@ const WEEKDAYS: [&str; 7] = [
     "Friday",
     "Saturday",
 ];
-
-/// A Lichess speed key's name; the key itself for one that names no speed.
-fn speed_name(key: &str) -> String {
-    kchess_domain::perf::Speed::from_key(key)
-        .map_or(key, |speed| speed.label())
-        .to_string()
-}
 
 fn record(record: &GameRecord) -> (f64, f64, f64) {
     (record.win as f64, record.draw as f64, record.loss as f64)
@@ -842,7 +836,11 @@ impl InsightsPage {
                 report
                     .by_speed
                     .iter()
-                    .map(|entry| (speed_name(&entry.speed), record(&entry.record)))
+                    .map(|entry| {
+                        let name = Speed::from_key(&entry.speed)
+                            .map_or(&*entry.speed, |speed| speed.label());
+                        (name.to_string(), record(&entry.record))
+                    })
                     .collect(),
             ),
             ("By opponent rating", bands(&report.by_opponent)),
@@ -963,7 +961,6 @@ impl crate::pages::PageView for InsightsPage {
 mod tests {
     use super::{
         InsightsPage, balance, best_and_weakest, blunder_rate, by_clock, by_time, seconds,
-        speed_name,
     };
     use crate::e2e::Harness;
     use gpui_kit::AppContext as _;
@@ -1035,9 +1032,6 @@ mod tests {
             Some(("Sicilian".into(), "French".into()))
         );
         assert_eq!(best_and_weakest(&openings[..1]), None);
-        assert_eq!(speed_name("ultraBullet"), "UltraBullet");
-        assert_eq!(speed_name("blitz"), "Blitz");
-        assert_eq!(speed_name("correspondence"), "Correspondence");
     }
 
     #[test]

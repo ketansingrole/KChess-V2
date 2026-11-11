@@ -1161,12 +1161,11 @@ impl HistoryPage {
                 let id = game.id.clone();
                 let clock = game.source == "clock";
                 let side = game.player_side();
-                let variant = game.setup.variant.key();
+                let variant = game.setup.variant;
                 // Why it ended, and the opening it reached, as a Lichess game's line has; in a
                 // narrow list, which leaves the game's column out, its variant first.
                 let details = [
-                    (narrow && variant != "standard")
-                        .then(|| crate::game::variant_label(variant).to_string()),
+                    (narrow && variant != Variant::Standard).then(|| variant.label().to_string()),
                     Some(details(game)),
                     self.opening(game).filter(|_| opening_names_shown(cx)),
                 ]
@@ -1176,8 +1175,8 @@ impl HistoryPage {
                 .collect::<Vec<_>>()
                 .join(" · ");
                 let mut kind = time_label(game.time_control.as_str());
-                if variant != "standard" {
-                    kind.push_str(&format!(" · {}", crate::game::variant_label(variant)));
+                if variant != Variant::Standard {
+                    kind.push_str(&format!(" · {}", variant.label()));
                 }
                 let players = v_flex()
                     .min_w_0()

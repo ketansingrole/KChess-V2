@@ -105,7 +105,7 @@ fn game_pgn(game: &PlayedGame) -> Option<String> {
     if let Some(pgn) = &game.pgn {
         return Some(pgn.clone());
     }
-    let result = kchess_games::Outcome::tag(game.result);
+    let result = kchess_domain::games::Outcome::tag(game.result);
     let date = chrono::Local::now().format("%Y.%m.%d").to_string();
     kchess_domain::pgn::setup_pgn(
         game.setup.variant,

@@ -1,8 +1,8 @@
 //! A game as a page hands it on: to its Export menu, and to the analysis board to open or
 //! review it. One value says both, so the two never disagree about its players or result.
 
+use kchess_domain::games::Outcome;
 use kchess_domain::variant::Setup;
-use kchess_games::Outcome;
 use serde_json::Value;
 use shakmaty::Color;
 

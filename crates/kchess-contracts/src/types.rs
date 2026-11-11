@@ -1404,7 +1404,6 @@ pub struct PuzzleProgressQuery {
     pub limit: u32,
 }
 
-/// A puzzle-database download or import in progress (or finished), streamed to the window.
 /// What part of the profile a write changed (`profile:changed`), so other windows refetch it.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -1442,6 +1441,7 @@ pub struct ProfileChange {
     pub origin: u64,
 }
 
+/// A puzzle-database download or import in progress (or finished), streamed to the window.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleDbProgress {

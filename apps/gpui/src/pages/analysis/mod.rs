@@ -1309,7 +1309,7 @@ impl AnalysisPage {
             orientation: self.orientation,
             white: self.player_name(Color::White),
             black: self.player_name(Color::Black),
-            result: kchess_games::Outcome::from_tag(&self.header("Result")),
+            result: kchess_domain::games::Outcome::from_tag(&self.header("Result")),
             player: self.review.origin.as_ref().and_then(|origin| origin.player),
             account: self
                 .review

@@ -1138,7 +1138,7 @@ impl OnlinePage {
         };
         PlayedGame {
             ply: Some(online.ply()),
-            result: kchess_games::Outcome::from_tag(&model.online_result),
+            result: kchess_domain::games::Outcome::from_tag(&model.online_result),
             player: Some(online.color()),
             lichess_id: Some(online.id().to_string()).filter(|id| !id.is_empty()),
             account: Some(model.online_account.clone()),

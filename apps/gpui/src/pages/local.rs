@@ -40,9 +40,9 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_domain::games::Outcome;
 use kchess_domain::games::archive::Snapshot;
 use kchess_domain::games::otb_clock::{Config, OtbClock, Side};
-use kchess_games::Outcome;
 use kchess_games::history::session_kind;
 use serde_json::{Value, json};
 use shakmaty::Color;

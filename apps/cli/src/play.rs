@@ -8,12 +8,12 @@ use kchess_contracts::check::{ArchivedGame, LibraryId, Moves, SessionObject};
 use kchess_contracts::types::{EngineLevel, PlayedGame, SessionKind};
 use std::time::{Duration, Instant};
 
+use kchess_domain::games::Outcome;
 use kchess_domain::games::archive::Snapshot;
 use kchess_domain::games::computer::{self, ComputerGame, SearchRequest};
 use kchess_domain::games::local::{self, LocalGame};
 use kchess_domain::games::{Host, Setup};
 use kchess_domain::variant::Variant;
-use kchess_games::Outcome;
 use kchess_games::history::{self, HistoryPlace, Write};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -377,9 +377,9 @@ impl Session<'_> {
                 "resign" => {
                     let fen = self.fen();
                     let turn = if fen.split_whitespace().nth(1) == Some("b") {
-                        kchess_games::Color::Black
+                        kchess_domain::color::Color::Black
                     } else {
-                        kchess_games::Color::White
+                        kchess_domain::color::Color::White
                     };
                     let Game::Local(game) = &mut self.game else {
                         return Ok(false);
