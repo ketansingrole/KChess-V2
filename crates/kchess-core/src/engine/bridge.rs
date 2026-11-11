@@ -31,7 +31,10 @@ use crate::store::{Database, chesscom, games};
 use kchess_contracts::error::Result;
 
 /// How often the battery reading is refreshed while the core runs.
+#[cfg(not(test))]
 const REFRESH_EVERY: Duration = Duration::from_secs(15);
+#[cfg(test)]
+const REFRESH_EVERY: Duration = Duration::from_millis(10);
 
 /// The battery reading the scheduler consults. A refresh asks the host once at a time, in the
 /// background.
@@ -269,5 +272,53 @@ impl EngineHandoff for EngineOwners {
             let _ = tokio::time::timeout(SETTLE_DEADLINE, self.analysis.settled()).await;
             Ok(Box::new(hold) as EngineGuard)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::scheduler::{Priority, Scheduler};
+    use crate::test_host::TestHost;
+
+    fn battery() -> (Arc<TestHost>, Arc<Capabilities>, Arc<Battery>) {
+        let host = TestHost::new();
+        let caps = Arc::new(Capabilities::new(host.clone()));
+        let battery = Battery::new(host.clone(), Arc::clone(&caps));
+        (host, caps, battery)
+    }
+
+    /// Waits until the host has been asked for the battery reading.
+    async fn asked(host: &TestHost) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while host.requests("onBattery").is_empty() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the host was asked for the battery reading");
+    }
+
+    /// A lease refreshes the reading the scheduler consults.
+    #[tokio::test]
+    async fn a_lease_asks_for_the_battery_reading() {
+        let (host, caps, battery) = battery();
+        let scheduler = Scheduler::with_budget(1, Arc::clone(&battery));
+        let lease = scheduler
+            .acquire(Priority::Analysis, &CancellationToken::new())
+            .await
+            .unwrap();
+        asked(&host).await;
+        drop(lease);
+        caps.close();
+    }
+
+    #[tokio::test]
+    async fn the_reading_is_refreshed_while_the_core_runs() {
+        let (host, caps, battery) = battery();
+        battery.start_refreshing();
+        asked(&host).await;
+        battery.close();
+        caps.close();
     }
 }

@@ -289,6 +289,46 @@ async fn reports_missing_when_the_directory_or_binary_is_absent() {
     let nested = dir.path().join("notadir").join("sub");
     std::fs::create_dir_all(&nested).unwrap();
     assert!(!managed_engine(&host, &nested).await.installed);
+    // A folder where the executable belongs is no engine.
+    let folder = dir.path().join("folder");
+    std::fs::create_dir_all(folder.join(executable_name())).unwrap();
+    assert!(!managed_engine(&host, &folder).await.installed);
+}
+
+/// Every install and delete of one folder takes the same lock; another folder has its own.
+#[tokio::test]
+async fn one_folder_has_one_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let lock = dir_lock(dir.path());
+    let _held = lock.lock().await;
+    assert!(dir_lock(dir.path()).try_lock().is_err(), "the same folder");
+    assert!(dir_lock(&dir.path().join("other")).try_lock().is_ok());
+}
+
+/// Release metadata of a few megabytes (a long changelog) is read; the limit is ten.
+#[tokio::test]
+async fn release_metadata_of_a_few_megabytes_is_read() {
+    let mut metadata = json!({ "tag_name": "sf_17.1", "assets": [] });
+    metadata["body"] = json!("x".repeat(2 * 1024 * 1024));
+    let (base, _) = serve(|_| {
+        vec![Route(
+            "/release",
+            200,
+            serde_json::to_vec(&metadata).unwrap(),
+        )]
+    })
+    .await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let release = fetch_release(
+        &Unmetered,
+        &client,
+        &format!("{base}/release"),
+        None,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(release.tag, "sf_17.1");
 }
 
 #[tokio::test]

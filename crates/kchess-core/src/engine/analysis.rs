@@ -500,3 +500,34 @@ async fn analyse(
         })
         .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Only the ranks asked for become lines.
+    #[test]
+    fn lines_past_the_ranks_asked_for_are_ignored() {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let sink_sent = Arc::clone(&sent);
+        let session = Session {
+            id: 1,
+            fen: String::new(),
+            context: String::new(),
+            client_id: None,
+            sink: Arc::new(move |update| lock(&sink_sent).push(update)),
+            progress: Mutex::new(Progress::default()),
+        };
+        let token = CancellationToken::new();
+        for rank in [1, 3, 2] {
+            session.on_info(
+                &format!("info depth 9 multipv {rank} score cp 20 pv e2e4"),
+                true,
+                2,
+                &token,
+            );
+        }
+        let ranks: Vec<u32> = lock(&session.progress).lines.keys().copied().collect();
+        assert_eq!(ranks, vec![1, 2]);
+    }
+}

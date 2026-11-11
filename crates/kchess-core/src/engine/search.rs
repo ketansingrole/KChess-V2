@@ -474,7 +474,24 @@ fn perft_move(line: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::perft_move;
+    use super::{BestMoveOptions, perft_move, prepare};
+
+    /// A variant's moves, drops among them, replay by its own rules and go to the engine as
+    /// they are.
+    #[test]
+    fn a_variant_game_replays_by_its_rules() {
+        let moves: Vec<String> = ["e2e4", "d7d5", "e4d5", "d8d5", "P@e4"]
+            .map(String::from)
+            .to_vec();
+        let options = BestMoveOptions {
+            variant: Some("crazyhouse".into()),
+            ..BestMoveOptions::default()
+        };
+        let request = prepare(moves.clone(), options, "max", "").expect("a crazyhouse game");
+        assert_eq!(request.moves, moves);
+        assert_eq!(request.variant, Some("crazyhouse"));
+        assert!(prepare(moves, BestMoveOptions::default(), "max", "").is_err());
+    }
 
     /// The weakest levels pick from `go perft 1`'s moves: drops and Antichess's king promotions
     /// are among them.

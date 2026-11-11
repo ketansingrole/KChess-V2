@@ -248,6 +248,39 @@ async fn a_stopped_analysis_ends_with_an_interrupted_final_update() {
     analysis.stop_analysis(true);
 }
 
+/// `settled` (what closing waits for) ends only once the running analysis has sent its final
+/// update.
+#[tokio::test]
+async fn settling_waits_for_the_running_analysis_to_end() {
+    let log = log_path("analysis-settled");
+    let (analysis, _) = analysis_with("search", &log);
+    let (updates, sink) = recorder();
+    let id = analysis
+        .start_analysis(
+            json!({ "fen": START, "lines": 1, "infinite": true }),
+            &fake_path(),
+            sink,
+        )
+        .expect("a valid request");
+    wait_until(WAIT, "a line", || {
+        find(&updates, |u| u.id == id && !u.lines.is_empty())
+    })
+    .await;
+    let settling = tokio::spawn({
+        let analysis = analysis.clone();
+        async move { analysis.settled().await }
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!settling.is_finished(), "settled while the analysis runs");
+    analysis.stop_analysis(false);
+    tokio::time::timeout(WAIT, settling)
+        .await
+        .expect("settled once stopped")
+        .expect("the wait");
+    assert!(find(&updates, |u| u.id == id && u.done).is_some());
+    analysis.stop_analysis(true);
+}
+
 #[tokio::test]
 async fn a_bounded_analysis_that_finishes_is_completed() {
     let log = log_path("analysis-bounded");

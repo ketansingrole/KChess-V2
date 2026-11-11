@@ -261,4 +261,40 @@ mod tests {
         assert_eq!(Scheduler::with_budget(1, || true).search_threads(), 1);
         assert_eq!(Scheduler::with_budget(4, || false).search_threads(), 4);
     }
+
+    /// Only a higher priority stops the active lease; an equal one waits its turn.
+    #[tokio::test]
+    async fn only_a_higher_priority_preempts() {
+        let scheduler = Scheduler::with_budget(1, || false);
+        let first = CancellationToken::new();
+        let lease = scheduler.acquire(Priority::Analysis, &first).await.unwrap();
+        let (same, higher) = (CancellationToken::new(), CancellationToken::new());
+        let waiting = {
+            let scheduler = scheduler.clone();
+            let same = same.clone();
+            tokio::spawn(
+                async move { scheduler.acquire(Priority::Analysis, &same).await.map(drop) },
+            )
+        };
+        for _ in 0..3 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!first.is_cancelled(), "an equal priority preempted");
+        let computer = {
+            let scheduler = scheduler.clone();
+            let higher = higher.clone();
+            tokio::spawn(async move {
+                scheduler
+                    .acquire(Priority::Computer, &higher)
+                    .await
+                    .map(drop)
+            })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), first.cancelled())
+            .await
+            .expect("a higher priority preempts");
+        drop(lease);
+        computer.await.unwrap().unwrap();
+        waiting.await.unwrap().unwrap();
+    }
 }
