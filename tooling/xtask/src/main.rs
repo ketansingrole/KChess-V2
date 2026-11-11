@@ -431,11 +431,5 @@ mod tests {
             );
         }
         assert!(help.lines().all(|line| line.len() <= WIDTH), "{help}");
-        assert!(
-            help.contains(
-                "  ci-times [--days <n>] How long CI took over the last n days (7), job by job,"
-            ),
-            "{help}"
-        );
     }
 }

@@ -26,7 +26,6 @@ fn format() -> Result {
     run("cargo", &["fmt", "--all", "--check"])
 }
 
-/// Clippy over every target of the workspace, its warnings denied.
 fn clippy_workspace() -> Result {
     run(
         "cargo",
@@ -486,7 +485,6 @@ struct Packages {
     uses: Vec<(String, Vec<String>)>,
 }
 
-/// The workspace's members.
 pub fn members() -> Result<Vec<String>> {
     let text = output(
         "cargo",
@@ -505,7 +503,6 @@ fn workspace_packages() -> Result<Packages> {
     Ok(packages_in(&metadata))
 }
 
-/// The packages in `cargo metadata`'s answer.
 fn packages_in(metadata: &serde_json::Value) -> Packages {
     let names: std::collections::HashMap<&str, &str> = metadata["packages"]
         .as_array()
@@ -718,7 +715,6 @@ pub fn install_hooks() -> Result {
     run("git", &["config", "core.hooksPath", ".githooks"])
 }
 
-/// A workflow or one of the repository's own actions, whose scripts xtask's tests check.
 fn is_workflow(file: &str) -> bool {
     file.starts_with(".github/workflows/") || file.starts_with(".github/actions/")
 }

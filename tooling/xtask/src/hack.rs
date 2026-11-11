@@ -164,7 +164,6 @@ fn unkept(hack_only: &BTreeSet<String>, kept: &BTreeSet<String>) -> Result {
     Err(message)
 }
 
-/// The package names `cargo tree --prefix none -f '{p}'` prints.
 fn packages(tree: &str) -> BTreeSet<String> {
     tree.lines()
         .filter_map(|line| line.split_whitespace().next())
@@ -190,7 +189,6 @@ fn dependencies(manifest: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// The hack's dependencies the headless packages do not build without it.
 fn outside(hack: &BTreeSet<String>, headless: &BTreeSet<String>) -> Vec<String> {
     hack.difference(headless).cloned().collect()
 }

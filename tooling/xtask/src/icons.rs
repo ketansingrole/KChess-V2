@@ -22,7 +22,6 @@ use crate::util::{Result, root, say};
 const PACKAGE: &str = "https://registry.npmjs.org/@fluentui/svg-icons/-/svg-icons-1.1.345.tgz";
 const INTEGRITY: &str = "sha512-Mz5e5BFKtvRN5Yiwrs5JqZRKgd8Rt8S3YiCAuwOWudmm7NA14Y8Ijr8QzMrE6gtNdoUP6/om7ue0lBQJLL57Mw==";
 
-/// The sizes Fluent draws icons at.
 const SIZES: [u32; 7] = [12, 16, 20, 24, 28, 32, 48];
 
 /// Each icon the app names, and the Fluent icon drawn for it (`None`: KChess's own drawing).
@@ -214,7 +213,6 @@ fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Every name written as `icon("…")`.
 pub fn named(text: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     let mut rest = text;

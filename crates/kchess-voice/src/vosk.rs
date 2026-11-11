@@ -100,7 +100,6 @@ impl Vosk {
         })
     }
 
-    /// Loads the model folder at `path`.
     pub fn model(&self, path: &Path) -> Result<Model<'_>, String> {
         let text = path
             .to_str()
