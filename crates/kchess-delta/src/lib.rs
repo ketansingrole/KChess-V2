@@ -1,6 +1,7 @@
 //! What a release and the installed app must agree on: the repository releases come from, the
 //! release versions ([`Version`]), the release notes ([`notes`]), the packages' names
-//! ([`Asset`]), the names an installation holds ([`installed`]), and update patches.
+//! ([`Asset`]), the names an installation holds ([`installed`]), the checksums and their
+//! signature ([`sums`]), and update patches.
 //!
 //! Update patches are the program files of a new release, rebuilt from the files of the one that
 //! is installed.
@@ -30,6 +31,7 @@
 mod assets;
 pub mod installed;
 pub mod notes;
+pub mod sums;
 mod tree;
 mod version;
 
@@ -118,7 +120,6 @@ fn fail<T>(message: impl Into<String>) -> Result<T> {
     Err(Error(message.into()))
 }
 
-/// The SHA-256 of `bytes`, in lowercase hex.
 pub fn digest(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }

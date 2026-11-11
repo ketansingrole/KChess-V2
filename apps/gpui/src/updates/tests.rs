@@ -1,7 +1,7 @@
 use super::{
     BRIDGE_FOLDER, INSTALLING, Install, InstallLock, Package, Release, Signer, Workspace, aside,
-    asset_name, detect, digest_for, download_signed, downloads_in, incoming, last_install_error,
-    latest, offer, parse_version, rename_bridge_folder, replace_by, signed_alike, swap_file, tidy,
+    asset_name, detect, download_signed, downloads_in, incoming, last_install_error, latest, offer,
+    parse_version, rename_bridge_folder, replace_by, signed_alike, swap_file, tidy,
 };
 use sha2::{Digest, Sha256};
 use std::io::{Read as _, Write as _};
@@ -599,12 +599,17 @@ fn packages_are_named_as_the_release_names_them() {
         );
         assert_eq!(name(Package::Deb), "KChess-2026.11.0-linux-amd64.deb");
     }
-    let sums = format!("ABC123  {}\nfff  other.zip\n", name(Package::Deb));
-    assert_eq!(
-        digest_for(&sums, &name(Package::Deb)).as_deref(),
-        Some("abc123")
+    let digest = "AB".repeat(32);
+    let sums = format!(
+        "{digest} *{}\n{}  other.zip\n",
+        name(Package::Deb),
+        "f".repeat(64)
     );
-    assert_eq!(digest_for(&sums, "missing.zip"), None);
+    assert_eq!(
+        kchess_delta::sums::digest_of(&sums, &name(Package::Deb)),
+        Some(digest.to_ascii_lowercase())
+    );
+    assert_eq!(kchess_delta::sums::digest_of(&sums, "missing.zip"), None);
 }
 
 /// Serve `files` (path → body) over HTTP on a local port until the test ends; the base URL.
@@ -1102,15 +1107,6 @@ fn an_update_needs_checksums_signed_by_the_release_key() {
 
 #[test]
 fn the_release_key_file_holds_one_key_or_none() {
-    use super::parse_update_key;
-    assert_eq!(parse_update_key("# only comments\n\n"), None);
-    let key = base64(&[7u8; 32]);
-    assert_eq!(
-        parse_update_key(&format!("# comment\n{key}\n")),
-        Some(vec![7u8; 32])
-    );
-    assert_eq!(parse_update_key(&base64(&[7u8; 31])), None, "wrong length");
-    // The committed file is either empty of keys or holds a valid one.
     let committed = include_str!("../../update-key.pub");
     let has_key_line = committed
         .lines()

@@ -5,7 +5,8 @@
 use std::path::Path;
 
 use base64::Engine as _;
-use ring::signature::{ED25519, Ed25519KeyPair, KeyPair as _, UnparsedPublicKey};
+use kchess_delta::sums;
+use ring::signature::{Ed25519KeyPair, KeyPair as _};
 
 use crate::util::{Result, root, say};
 
@@ -16,18 +17,9 @@ fn key_file() -> std::path::PathBuf {
     root().join("apps/gpui/update-key.pub")
 }
 
-/// The committed public key, if one has been made: the base64 of 32 bytes on the file's one line
-/// that is not a comment, as the app reads it (`apps/gpui/src/updates.rs`, `parse_update_key`).
+/// The committed public key, if one has been made, read as the app reads it.
 pub fn public_key() -> Option<Vec<u8>> {
-    let text = std::fs::read_to_string(key_file()).ok()?;
-    let line = text
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with('#'))?;
-    base64::engine::general_purpose::STANDARD
-        .decode(line)
-        .ok()
-        .filter(|key| key.len() == 32)
+    sums::parse_key(&std::fs::read_to_string(key_file()).ok()?)
 }
 
 /// The committed public key, which every release step that signs or checks needs.
@@ -105,7 +97,7 @@ fn write_private(path: &Path, text: &str) -> Result {
 }
 
 /// `sign-sums <file>`: sign `file` with the secret in `KCHESS_UPDATE_SIGNING_KEY` into
-/// `<file>.sig`, and check the signature against the committed public key, so a wrong secret
+/// `SHA256SUMS.txt.sig` beside it, and check the signature against the committed public key, so a wrong secret
 /// fails the release instead of every app's update.
 pub fn sign(file: &Path) -> Result {
     sign_with(file, std::env::var(SECRET).ok(), &require_public_key()?)
@@ -123,8 +115,7 @@ fn sign_with(file: &Path, secret: Option<String>, public: &[u8]) -> Result {
     let sums = std::fs::read(file).map_err(|cause| format!("{}: {cause}", file.display()))?;
     let signature = signature_of(&pair, &sums);
     check(public, &sums, &signature)?;
-    let mut target = file.as_os_str().to_owned();
-    target.push(".sig");
+    let target = file.with_file_name(sums::SIGNATURE);
     std::fs::write(&target, format!("{signature}\n")).map_err(|cause| cause.to_string())?;
     say(&format!("Signed {}", file.display()));
     Ok(())
@@ -135,14 +126,9 @@ fn signature_of(pair: &Ed25519KeyPair, bytes: &[u8]) -> String {
 }
 
 fn check(public: &[u8], bytes: &[u8], signature: &str) -> Result {
-    let signature = base64::engine::general_purpose::STANDARD
-        .decode(signature)
-        .map_err(|_| "The signature is not base64.".to_string())?;
-    UnparsedPublicKey::new(&ED25519, public)
-        .verify(bytes, &signature)
-        .map_err(|_| {
-            format!("{SECRET} does not match apps/gpui/update-key.pub: the app would refuse it.")
-        })
+    sums::verify(public, bytes, signature).map_err(|_| {
+        format!("{SECRET} does not match apps/gpui/update-key.pub: the app would refuse it.")
+    })
 }
 
 #[cfg(test)]
@@ -180,9 +166,9 @@ mod tests {
         let pair = Ed25519KeyPair::from_pkcs8(ours.as_ref()).unwrap();
         let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
         let dir = tempfile::tempdir().unwrap();
-        let sums = dir.path().join("SHA256SUMS.txt");
+        let sums = dir.path().join(sums::FILE);
         std::fs::write(&sums, "abc  KChess.deb\n").unwrap();
-        let signature = dir.path().join("SHA256SUMS.txt.sig");
+        let signature = dir.path().join(sums::SIGNATURE);
         let theirs = Ed25519KeyPair::generate_pkcs8(&random).unwrap();
         assert!(
             sign_with(

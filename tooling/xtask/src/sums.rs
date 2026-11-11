@@ -1,13 +1,12 @@
-//! `SHA256SUMS.txt`, in `sha256sum`'s format (`<hex>  <name>` a line): what packaging writes
-//! beside the packages, the release writes over all its assets (`cargo xtask sums`), the release
-//! key signs, and installed apps check every download against.
+//! `SHA256SUMS.txt` (`kchess_delta::sums`): what packaging writes beside the packages, the
+//! release writes over all its assets (`cargo xtask sums`), the release key signs, and installed
+//! apps check every download against.
 
 use std::path::Path;
 
-use crate::util::{Result, say};
+pub use kchess_delta::sums::{FILE, SIGNATURE, listed};
 
-/// The file's name.
-pub const FILE: &str = "SHA256SUMS.txt";
+use crate::util::{Result, say};
 
 /// The SHA-256 of the file at `path`, in lowercase hex.
 pub fn file(path: &Path) -> Result<String> {
@@ -23,26 +22,17 @@ pub fn write(dir: &Path) -> Result<String> {
         .filter(|path| path.is_file())
         .filter(|path| {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
-            name != FILE && name != format!("{FILE}.sig")
+            name != FILE && name != SIGNATURE
         })
         .collect();
     files.sort();
     let mut sums = String::new();
     for path in &files {
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        sums.push_str(&format!("{}  {name}\n", file(path)?));
+        sums.push_str(&kchess_delta::sums::line(&file(path)?, &name));
     }
     std::fs::write(dir.join(FILE), &sums).map_err(|cause| cause.to_string())?;
     Ok(sums)
-}
-
-/// The digests `sums` lists for `name`: one, unless the file is missing or listed again.
-pub fn listed<'a>(sums: &'a str, name: &str) -> Vec<&'a str> {
-    sums.lines()
-        .filter_map(|line| line.split_once("  "))
-        .filter(|(_, listed)| *listed == name)
-        .map(|(digest, _)| digest)
-        .collect()
 }
 
 /// `sums <dir>`: write the release's checksums (release CI, before they are signed).
@@ -69,7 +59,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("b.deb"), "hello").unwrap();
         std::fs::write(dir.path().join("a.exe"), "").unwrap();
-        std::fs::write(dir.path().join("SHA256SUMS.txt.sig"), "sig").unwrap();
+        std::fs::write(dir.path().join(SIGNATURE), "sig").unwrap();
         std::fs::create_dir(dir.path().join("folder")).unwrap();
         let sums = write(dir.path()).unwrap();
         let empty = kchess_delta::digest(b"");
@@ -81,15 +71,6 @@ mod tests {
             std::fs::read_to_string(dir.path().join(FILE)).unwrap(),
             sums
         );
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join(FILE)).unwrap(),
-            sums
-        );
         assert_eq!(listed(&sums, "b.deb"), [HELLO]);
-        assert!(listed(&sums, "b").is_empty());
-        assert_eq!(
-            listed(&format!("{sums}{HELLO}  a.exe\n"), "a.exe"),
-            [empty.as_str(), HELLO]
-        );
     }
 }

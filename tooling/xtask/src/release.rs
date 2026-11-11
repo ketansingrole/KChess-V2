@@ -444,12 +444,12 @@ pub fn download_snap() -> Result {
             "--pattern",
             &name,
             "--pattern",
-            "SHA256SUMS.txt",
+            crate::sums::FILE,
             "--dir",
             "packages",
         ],
     )?;
-    let checksums = std::fs::read_to_string(root().join("packages/SHA256SUMS.txt"))
+    let checksums = std::fs::read_to_string(root().join("packages").join(crate::sums::FILE))
         .map_err(|cause| cause.to_string())?;
     let digest = crate::sums::file(&root().join("packages").join(&name))?;
     verify_snap(&tag, &checksums, &digest).map(|_| ())
@@ -515,11 +515,12 @@ mod tests {
     #[test]
     fn a_snap_is_published_only_with_its_one_checksum() {
         let name = "KChess-2026.10.16-linux-amd64.snap";
-        let sums = format!("abc  {name}\ndef  other.deb\n");
-        assert_eq!(verify_snap("v2026.10.16", &sums, "abc").unwrap(), name);
-        assert!(verify_snap("v2026.10.16", &sums, "fff").is_err());
-        assert!(verify_snap("v2026.10.16", &format!("{sums}abc  {name}\n"), "abc").is_err());
-        assert!(verify_snap("2026.10.16", &sums, "abc").is_err());
+        let (abc, def) = ("abc".repeat(21) + "a", "d".repeat(64));
+        let sums = format!("{abc}  {name}\n{def}  other.deb\n");
+        assert_eq!(verify_snap("v2026.10.16", &sums, &abc).unwrap(), name);
+        assert!(verify_snap("v2026.10.16", &sums, &def).is_err());
+        assert!(verify_snap("v2026.10.16", &format!("{sums}{abc}  {name}\n"), &abc).is_err());
+        assert!(verify_snap("2026.10.16", &sums, &abc).is_err());
     }
 
     #[test]

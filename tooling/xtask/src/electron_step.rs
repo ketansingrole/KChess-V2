@@ -168,12 +168,14 @@ pub fn matches(file: &Pinned, bytes: &[u8]) -> Result {
 /// Whether the step's `SHA256SUMS.txt` (`sums`) is signed by `key` (`signature`, base64) and
 /// lists each pinned file with its pinned digest.
 pub fn check_sums(step: &Step, key: &[u8], sums: &[u8], signature: &str) -> Result {
-    let signature = base64::engine::general_purpose::STANDARD
-        .decode(signature.trim())
-        .map_err(|_| "The step's checksum signature is not base64.".to_string())?;
-    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key)
-        .verify(sums, &signature)
-        .map_err(|_| "The step's SHA256SUMS.txt is not signed by the release key.".to_string())?;
+    kchess_delta::sums::verify(key, sums, signature).map_err(|unsigned| match unsigned {
+        kchess_delta::sums::Unsigned::Unreadable => {
+            "The step's checksum signature is not base64.".to_string()
+        }
+        kchess_delta::sums::Unsigned::NotTheKeys => {
+            "The step's SHA256SUMS.txt is not signed by the release key.".to_string()
+        }
+    })?;
     let text = String::from_utf8_lossy(sums);
     for file in step.files {
         if crate::sums::listed(&text, file.name) != [file.sha256] {
@@ -214,8 +216,8 @@ pub fn write(packages: &Path) -> Result {
     check_step(&step)?;
     let key = crate::update_key::require_public_key()?;
     let work = tempfile::tempdir().map_err(|cause| cause.to_string())?;
-    let sums = download(step.tag, "SHA256SUMS.txt", work.path())?;
-    let signature = download(step.tag, "SHA256SUMS.txt.sig", work.path())?;
+    let sums = download(step.tag, crate::sums::FILE, work.path())?;
+    let signature = download(step.tag, crate::sums::SIGNATURE, work.path())?;
     check_sums(&step, &key, &sums, &String::from_utf8_lossy(&signature))?;
     for file in step.files {
         let bytes = download(step.tag, file.name, work.path())?;

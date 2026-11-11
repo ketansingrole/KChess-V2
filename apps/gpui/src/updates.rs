@@ -22,7 +22,7 @@ use crate::settings::{SettingsChanged, SettingsHandle};
 
 mod patch;
 
-use kchess_delta::{PREFIX, REPOSITORY, Version};
+use kchess_delta::{PREFIX, REPOSITORY, Version, sums};
 
 const FEED: &str = "https://api.github.com";
 /// How long a download waits for the server's next bytes before it counts as stopped.
@@ -165,40 +165,20 @@ pub fn asset_name(version: &str, package: Package) -> Option<String> {
     Some(asset.name(version, kchess_delta::Arch::current()?))
 }
 
-/// The release key's public half (`update-key.pub`): its one line that is not a comment, the
-/// base64 of a 32-byte Ed25519 key. `None` until a key is made (`cargo xtask update-key`).
+/// The release key's public half (`update-key.pub`). `None` until a key is made
+/// (`cargo xtask update-key`).
 pub fn update_key() -> Option<Vec<u8>> {
-    parse_update_key(include_str!("../update-key.pub"))
+    sums::parse_key(include_str!("../update-key.pub"))
 }
 
-pub fn parse_update_key(file: &str) -> Option<Vec<u8>> {
-    use base64::Engine as _;
-    let line = file
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with('#'))?;
-    base64::engine::general_purpose::STANDARD
-        .decode(line)
-        .ok()
-        .filter(|key| key.len() == 32)
-}
-
-/// Whether `signature` (base64, `SHA256SUMS.txt.sig`) is `key`'s Ed25519 signature of `sums`.
+/// Whether `signature` is `key`'s signature of the release's checksums `sums`.
 pub fn sums_signed_by(key: &[u8], sums: &[u8], signature: &str) -> Result<(), String> {
-    use base64::Engine as _;
-    let signature = base64::engine::general_purpose::STANDARD
-        .decode(signature.trim())
-        .map_err(|_| "The release's checksum signature could not be read")?;
-    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key)
-        .verify(sums, &signature)
-        .map_err(|_| "The release's checksums are not signed by KChess".to_string())
-}
-
-/// The SHA-256 a `SHA256SUMS.txt` lists for `name`.
-pub fn digest_for(sums: &str, name: &str) -> Option<String> {
-    sums.lines().find_map(|line| {
-        let (digest, file) = line.split_once(char::is_whitespace)?;
-        (file.trim().trim_start_matches('*') == name).then(|| digest.to_ascii_lowercase())
+    sums::verify(key, sums, signature).map_err(|unsigned| {
+        match unsigned {
+            sums::Unsigned::Unreadable => "The release's checksum signature could not be read",
+            sums::Unsigned::NotTheKeys => "The release's checksums are not signed by KChess",
+        }
+        .to_string()
     })
 }
 
@@ -731,7 +711,7 @@ async fn download_signed(
     let sums = small_file(
         &client,
         &release,
-        "SHA256SUMS.txt",
+        sums::FILE,
         "The release lists no checksums",
         "Could not download the checksums",
     )
@@ -740,15 +720,15 @@ async fn download_signed(
         let signature = small_file(
             &client,
             &release,
-            "SHA256SUMS.txt.sig",
+            sums::SIGNATURE,
             "The release's checksums are not signed",
             "Could not download the checksum signature",
         )
         .await?;
         sums_signed_by(&key, sums.as_bytes(), &signature)?;
     }
-    let expected =
-        digest_for(&sums, &asset.name).ok_or("The release lists no checksum for this package")?;
+    let expected = sums::digest_of(&sums, &asset.name)
+        .ok_or("The release lists no checksum for this package")?;
     let fail = |cause: std::io::Error| cause.to_string();
     std::fs::create_dir_all(&folder).map_err(fail)?;
     // One download of a version at a time: another KChess downloading it is waited for, and its

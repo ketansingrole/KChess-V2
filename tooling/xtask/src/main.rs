@@ -216,7 +216,8 @@ const COMMANDS: &[Command] = &[
         name: "sign-sums",
         forms: &[(
             "<file>",
-            "Sign a release's SHA256SUMS.txt into <file>.sig with KCHESS_UPDATE_SIGNING_KEY (CI)",
+            "Sign a release's SHA256SUMS.txt into SHA256SUMS.txt.sig beside it with \
+             KCHESS_UPDATE_SIGNING_KEY (CI)",
         )],
         run: |rest| update_key::sign(first(rest, "sign-sums needs the checksums file.")?),
     },
