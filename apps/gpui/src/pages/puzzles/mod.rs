@@ -561,13 +561,15 @@ type Answer = std::pin::Pin<
     Box<dyn std::future::Future<Output = Result<Value, kchess_contracts::CoreError>>>,
 >;
 
-/// The session's value as the contract's type of it (they serialize alike).
-fn as_contract<T: serde::de::DeserializeOwned>(
+/// The session's value as the contract's type of it, read by the contract's own check as the
+/// core reads what is sent to it (a whole rating written `1500.0` is the integer 1500).
+fn as_contract<T: kchess_contracts::check::Validate>(
     value: &impl serde::Serialize,
 ) -> Result<T, kchess_contracts::CoreError> {
-    serde_json::to_value(value)
-        .and_then(serde_json::from_value)
-        .map_err(|cause| kchess_contracts::CoreError::new(cause.to_string()))
+    let value = serde_json::to_value(value)
+        .map_err(|cause| kchess_contracts::CoreError::new(cause.to_string()))?;
+    T::validate(kchess_domain::misc::value::J::from(&value))
+        .map_err(kchess_contracts::CoreError::new)
 }
 
 /// A call's answer, as the session reads it.
@@ -1976,8 +1978,21 @@ impl Render for PuzzlesPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{coach_allowed, theme_groups, theme_name, themes};
+    use super::{as_contract, coach_allowed, theme_groups, theme_name, themes};
     use crate::widgets::{self, format_bytes};
+    use kchess_contracts::types::LocalLadderQuery;
+
+    /// The session writes its numbers as floats (`1500.0`); read as JSON into the contract's
+    /// integer fields they were refused, so a ladder never reached the core. The contract's own
+    /// check reads them as the core reads what is sent to it.
+    #[test]
+    fn the_sessions_whole_floats_reach_the_core_as_integers() {
+        let ladder: LocalLadderQuery =
+            as_contract(&serde_json::json!({ "from": 600.0, "to": 1800.0, "count": 30.0 }))
+                .expect("a ladder");
+        assert_eq!((ladder.from, ladder.to, ladder.count), (600, 1800, 30));
+        assert!(as_contract::<LocalLadderQuery>(&serde_json::json!({ "from": "x" })).is_err());
+    }
 
     /// The theme list is the app's own file, read where it is shown.
     #[test]
