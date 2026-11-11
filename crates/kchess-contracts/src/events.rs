@@ -41,7 +41,7 @@ impl EventPayload for Value {
 }
 
 impl EventPayload for AnalysisUpdate {}
-impl EventPayload for ReviewUpdate {}
+impl EventPayload for Box<ReviewUpdate> {}
 impl EventPayload for ReviewStatus {}
 
 /// What a variant holds: its payload type when the line is `typed`, else JSON.
@@ -114,7 +114,7 @@ core_events! {
     VoiceModelProgress = "voicemodel:progress" (crate::voice::Progress),
     /// To the window that started the analysis.
     Analysis = "engine:analysis" (AnalysisUpdate) typed,
-    ReviewUpdate = "review:update" (ReviewUpdate) typed,
+    ReviewUpdate = "review:update" (Box<ReviewUpdate>) typed,
     ReviewStatus = "review:status" (ReviewStatus) typed,
     ChallengesUpdate = "challenges:update" (Vec<ChallengeInfo>),
     OnlineLobby = "online:lobby" (LobbyState),

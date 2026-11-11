@@ -574,7 +574,7 @@ impl GuessMoves {
             .and_then(|line| line.pv.first())
             .and_then(|best| {
                 let mut line = game.moves[..self.ply].to_vec();
-                line.push(best.to_string());
+                line.push(best.clone());
                 // Named only when it is a legal move there.
                 let mut sans = view::sans(&game.setup, &line);
                 (sans.len() == line.len()).then(|| sans.pop()).flatten()

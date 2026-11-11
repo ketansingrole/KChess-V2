@@ -232,7 +232,7 @@ impl ReviewHost for ReviewBridge {
     }
 
     fn update(&self, update: ReviewUpdate) {
-        self.emit(CoreEvent::ReviewUpdate(update));
+        self.emit(CoreEvent::ReviewUpdate(Box::new(update)));
     }
 
     fn status(&self, status: ReviewStatus) {
