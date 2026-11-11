@@ -4273,6 +4273,7 @@ dependencies = [
  "kchess-domain",
  "kchess-hack",
  "kchess-host",
+ "kchess-testkit",
  "kchess-voice",
  "keyring",
  "reqwest",
@@ -4357,6 +4358,7 @@ dependencies = [
  "kchess-hack",
  "kchess-host",
  "kchess-service",
+ "kchess-testkit",
  "nix",
  "notify-rust",
  "objc2 0.6.5",
@@ -4485,6 +4487,14 @@ dependencies = [
  "tempfile",
  "tokio",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "kchess-testkit"
+version = "2026.11.7"
+dependencies = [
+ "kchess-hack",
+ "serde_json",
 ]
 
 [[package]]
@@ -9982,6 +9992,7 @@ dependencies = [
  "image",
  "kchess-delta",
  "kchess-hack",
+ "kchess-testkit",
  "kchess-voice",
  "lzma-rust2",
  "ring",

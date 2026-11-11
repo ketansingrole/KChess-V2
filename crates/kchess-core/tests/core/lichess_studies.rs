@@ -59,7 +59,7 @@ fn service(base: &str) -> Arc<kchess_core::lichess::accounts::Lichess> {
     )
 }
 
-fn posts(fixture: &fixtures::Fixture) -> Vec<fixtures::Seen> {
+fn posts(fixture: &fixtures::Fixture) -> Vec<fixtures::Request> {
     fixture
         .requests()
         .into_iter()

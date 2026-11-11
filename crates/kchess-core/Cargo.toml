@@ -68,6 +68,8 @@ rustix = { version = "1", features = ["fs", "process"] }
 packaged = ["kchess-host/packaged"]
 
 [dev-dependencies]
+# The loopback HTTP fixture's request parsing and response heads (`tests/support/lichess_http.rs`).
+kchess-testkit = { path = "../kchess-testkit" }
 # Random legal games for the compression benchmark (`examples/http_compression.rs`).
 shakmaty.workspace = true
 

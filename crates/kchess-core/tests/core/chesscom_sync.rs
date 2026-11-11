@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use crate::fixtures::{Fixture, Reply, Seen, serve};
+use crate::fixtures::{Fixture, Reply, Request, serve};
 use crate::support::Recording;
 use crate::support::store::game_page;
 
@@ -108,7 +108,7 @@ async fn a_player_is_synced_and_a_second_sync_asks_only_for_this_month_if_change
     let month_path = format!("/pub/player/alice/games/{now}");
     let past_path = format!("/pub/player/alice/games/{PAST}");
     let (month, past) = (month_path.clone(), past_path.clone());
-    let fixture = serve(move |seen: &Seen| match seen.path() {
+    let fixture = serve(move |seen: &Request| match seen.path() {
         "/pub/player/alice" => Reply::Json(200, profile_body()),
         "/pub/player/alice/games/archives" => Reply::Json(200, archives(&this_month())),
         path if path == past => Reply::WithHeaders(
@@ -169,7 +169,7 @@ async fn a_player_is_synced_and_a_second_sync_asks_only_for_this_month_if_change
 async fn a_rate_limited_month_is_asked_again_after_the_wait() {
     let limited = Arc::new(AtomicUsize::new(0));
     let seen_limits = Arc::clone(&limited);
-    let fixture = serve(move |seen: &Seen| match seen.path() {
+    let fixture = serve(move |seen: &Request| match seen.path() {
         "/pub/player/alice" => Reply::Json(200, profile_body()),
         "/pub/player/alice/games/archives" => Reply::Json(
             200,
@@ -230,7 +230,7 @@ async fn removed_during_add(
 #[tokio::test]
 async fn removing_a_player_during_their_sync_leaves_nothing_behind() {
     let (open, gate) = watch::channel(false);
-    let fixture = serve(move |seen: &Seen| match seen.path() {
+    let fixture = serve(move |seen: &Request| match seen.path() {
         "/pub/player/alice" => Reply::Json(200, profile_body()),
         "/pub/player/alice/games/archives" => Reply::Json(
             200,
@@ -265,7 +265,7 @@ async fn removing_a_player_during_their_sync_leaves_nothing_behind() {
 #[tokio::test]
 async fn removing_a_player_while_they_are_looked_up_does_not_add_them_back() {
     let (open, gate) = watch::channel(false);
-    let fixture = serve(move |seen: &Seen| match seen.path() {
+    let fixture = serve(move |seen: &Request| match seen.path() {
         "/pub/player/alice" => {
             Reply::Gated(gate.clone(), Box::new(Reply::Json(200, profile_body())))
         }
@@ -300,7 +300,7 @@ async fn removing_a_player_while_they_are_looked_up_does_not_add_them_back() {
 async fn a_cancelled_sync_does_not_fail_the_next_one() {
     let (open, gate) = watch::channel(false);
     let gate = Arc::new(Mutex::new(Some(gate)));
-    let fixture = serve(move |seen: &Seen| match seen.path() {
+    let fixture = serve(move |seen: &Request| match seen.path() {
         "/pub/player/alice" => Reply::Json(200, profile_body()),
         "/pub/player/alice/games/archives" => Reply::Json(
             200,
@@ -344,7 +344,7 @@ async fn a_cancelled_sync_does_not_fail_the_next_one() {
 
 #[tokio::test]
 async fn an_unknown_player_is_not_added() {
-    let fixture = serve(|_: &Seen| Reply::Json(404, "{\"code\":0}".into())).await;
+    let fixture = serve(|_: &Request| Reply::Json(404, "{\"code\":0}".into())).await;
     let profile = profile(&fixture);
     let error = profile.chesscom.add("nobody_here").await.unwrap_err();
     assert_eq!(error.message, "No Chess.com player is called nobody_here.");
@@ -358,7 +358,7 @@ async fn an_unknown_player_is_not_added() {
 
 #[tokio::test]
 async fn chesscom_games_are_reviewed_without_asking_lichess() {
-    let fixture = serve(move |seen: &Seen| match seen.path() {
+    let fixture = serve(move |seen: &Request| match seen.path() {
         "/pub/player/alice" => Reply::Json(200, profile_body()),
         "/pub/player/alice/games/archives" => Reply::Json(
             200,
@@ -387,7 +387,7 @@ async fn chesscom_games_are_reviewed_without_asking_lichess() {
 /// point a day per speed (Home's rating cards and chart for a Chess.com player).
 #[tokio::test]
 async fn chesscom_ratings_make_a_history_without_rating_changes() {
-    let fixture = serve(move |seen: &Seen| match seen.path() {
+    let fixture = serve(move |seen: &Request| match seen.path() {
         "/pub/player/alice" => Reply::Json(200, profile_body()),
         "/pub/player/alice/games/archives" => Reply::Json(
             200,

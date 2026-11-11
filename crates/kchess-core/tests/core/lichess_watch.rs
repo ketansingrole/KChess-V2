@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use fixtures::{
-    MemoryStore, MemoryTokens, Recording, Reply, Seen, lichess_service, lichess_service_with_idle,
-    serve,
+    MemoryStore, MemoryTokens, Recording, Reply, Request, lichess_service,
+    lichess_service_with_idle, serve,
 };
 use kchess_contracts::check::{BroadcastQuery, WatchSession, check};
 use kchess_contracts::types::{BroadcastSection, WatchPhase};
@@ -135,7 +135,7 @@ async fn a_stopped_broadcast_round_is_not_logged_as_failed() {
 async fn a_game_described_without_its_position_is_shown_from_the_next_one() {
     // Lichess's description of a streamed game carries `initialFen` and no `fen`: the watch page
     // once waited on "Connecting…" for an arena game, every record after it dropped.
-    let fixture = serve(|seen: &Seen| {
+    let fixture = serve(|seen: &Request| {
         if seen.path() != "/api/stream/game/VuAqDosj" {
             return Reply::Hang;
         }
@@ -197,7 +197,7 @@ async fn a_game_described_without_its_position_is_shown_from_the_next_one() {
 
 /// Watches one game whose stream sends `records` and closes; answers the last state reported.
 async fn last_state_of_a_closed_game_stream(records: Vec<Value>) -> WatchState {
-    let fixture = serve(move |seen: &Seen| {
+    let fixture = serve(move |seen: &Request| {
         if seen.path() != "/api/stream/game/Game0001" {
             return Reply::Hang;
         }
@@ -290,7 +290,7 @@ async fn a_tv_feed_adds_its_moves_once_the_delayed_export_lines_up() {
     let after_e5 = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1";
     let (feed_tx, feed_rx) = mpsc::unbounded_channel::<String>();
     let feed_rx = Mutex::new(Some(feed_rx));
-    let fixture = serve(move |seen: &Seen| {
+    let fixture = serve(move |seen: &Request| {
         if seen.path() == "/api/tv/rapid/feed" {
             match feed_rx.lock().unwrap().take() {
                 Some(rx) => Reply::Stream(rx),
@@ -388,7 +388,7 @@ async fn a_silent_tv_feed_reconnects_instead_of_ending_the_watch() {
     // The TV feed sends no keep-alives, so a long think once ended TV with a stall error.
     let feeds = Arc::new(Mutex::new(Vec::new()));
     let senders = Arc::clone(&feeds);
-    let fixture = serve(move |seen: &Seen| {
+    let fixture = serve(move |seen: &Request| {
         if seen.path() != "/api/tv/rapid/feed" {
             return Reply::Hang;
         }

@@ -14,7 +14,7 @@ on:
         default: kchess-domain
         type: choice
         # Every workspace member but the workspace hack (xtask's `workflows` tests hold it to that).
-        options: [kchess-domain, kchess-core, kchess-gpui, kchess-service, kchess-cli, kchess-games, kchess-contracts, kchess-delta, kchess-host, kchess-voice, xtask]
+        options: [kchess-domain, kchess-core, kchess-gpui, kchess-service, kchess-cli, kchess-games, kchess-contracts, kchess-delta, kchess-host, kchess-testkit, kchess-voice, xtask]
 
 permissions:
   contents: read

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use fixtures::{MemoryStore, Recording, Reply, Seen, capabilities_for, http_client, serve};
+use fixtures::{MemoryStore, Recording, Reply, Request, capabilities_for, http_client, serve};
 use futures_util::future::BoxFuture;
 use kchess_contracts::Variant;
 use kchess_contracts::error::{CoreError, Result as CoreResult};
@@ -157,7 +157,7 @@ fn has_state(host: &Recording, phase: &str, game: &str) -> bool {
 
 /// The default answer of the account and game routes: a game of Alice's, and every stream
 /// refused (`401`).
-fn refuse(seen: &Seen) -> Reply {
+fn refuse(seen: &Request) -> Reply {
     Reply::Json(
         401,
         json!({ "error": format!("refused {}", seen.path()) }).to_string(),
@@ -217,7 +217,7 @@ fn seek_options(target: Option<&str>) -> OnlineOptions {
 }
 
 /// The form fields of a request body, decoded.
-fn form(seen: &Seen) -> Vec<(String, String)> {
+fn form(seen: &Request) -> Vec<(String, String)> {
     reqwest::Url::parse(&format!("http://fixture.invalid/?{}", seen.body))
         .expect("form body")
         .query_pairs()
@@ -225,7 +225,7 @@ fn form(seen: &Seen) -> Vec<(String, String)> {
         .collect()
 }
 
-fn field(seen: &Seen, name: &str) -> Option<String> {
+fn field(seen: &Request, name: &str) -> Option<String> {
     form(seen)
         .into_iter()
         .find(|(key, _)| key == name)
@@ -915,7 +915,7 @@ async fn treats_a_late_credential_failure_for_a_cancelled_attachment_as_cancella
 /// A session attached to game AbCd1234 of Alice (a correspondence game of the same account is
 /// listed first and must not be picked).
 async fn playing(
-    extra: impl Fn(&Seen) -> Option<Reply> + Send + 'static,
+    extra: impl Fn(&Request) -> Option<Reply> + Send + 'static,
 ) -> (Arc<Recording>, fixtures::Fixture, OnlineSession) {
     let fixture = serve(move |seen| {
         if let Some(reply) = extra(seen) {

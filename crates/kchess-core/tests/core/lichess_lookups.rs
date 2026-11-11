@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use fixtures::{
-    MemoryStore, MemoryTokens, Recording, Reply, Seen, http_client, lichess_service, serve,
+    MemoryStore, MemoryTokens, Recording, Reply, Request, http_client, lichess_service, serve,
 };
 use kchess_contracts::types::{LookupOptions, PositionLookupKind as Kind};
 use kchess_core::lichess::accounts::Lichess;
@@ -535,7 +535,7 @@ async fn asks_the_masters_database_and_lists_its_top_games() {
 async fn reads_the_last_snapshot_of_the_player_database_and_keys_its_cache_by_filters() {
     let snapshot =
         |n: i64| json!({ "moves": [{ "uci": "d2d4", "white": n, "draws": 0, "black": 0 }] });
-    let fixture = serve(move |seen: &Seen| {
+    let fixture = serve(move |seen: &Request| {
         // The player database streams snapshots; the last one is the answer.
         let n = if seen.query("player").as_deref() == Some("Bob") {
             3
@@ -600,7 +600,7 @@ async fn reads_the_last_snapshot_of_the_player_database_and_keys_its_cache_by_fi
 #[tokio::test]
 async fn asks_the_lichess_database_in_a_variant_and_checks_its_moves_by_that_variant() {
     const ZH: &str = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[P] w KQkq - 0 3";
-    let fixture = serve(|seen: &Seen| {
+    let fixture = serve(|seen: &Request| {
         let body = if seen.query("variant").as_deref() == Some("crazyhouse") {
             json!({
                 "moves": [
@@ -703,7 +703,7 @@ async fn asks_the_lichess_database_in_a_variant_and_checks_its_moves_by_that_var
 
 #[tokio::test]
 async fn cloud_evaluation_keeps_legal_lines_and_remembers_unknown_positions() {
-    let fixture = serve(|seen: &Seen| {
+    let fixture = serve(|seen: &Request| {
         // The query text is not decoded, so the FEN's letters identify the position.
         if seen.target.contains("rnbqkbnr") {
             Reply::Json(
