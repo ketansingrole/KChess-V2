@@ -17,6 +17,7 @@ use crate::connection::{Capability, Connections};
 use crate::error::{CoreError, Result};
 use crate::host::Host;
 use crate::secrets::{self, Credentials};
+use crate::tasks::lock;
 
 const DEADLINE: Duration = Duration::from_secs(30);
 const HOST_CLOSED: &str = "The host closed before answering.";
@@ -117,10 +118,7 @@ impl Capabilities {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (send, receive) = oneshot::channel();
         {
-            let mut pending = self
-                .pending
-                .lock()
-                .map_err(|_| CoreError::new("The host is unavailable."))?;
+            let mut pending = lock(&self.pending);
             if pending.closed {
                 return Err(CoreError::new(HOST_CLOSED));
             }
@@ -129,9 +127,7 @@ impl Capabilities {
         // Forgotten however the wait ends: a caller that was cancelled while its window had
         // gone would otherwise leave the entry until the core closed.
         let _forget = crate::tasks::on_drop(|| {
-            if let Ok(mut pending) = self.pending.lock() {
-                pending.waiting.remove(&id);
-            }
+            lock(&self.pending).waiting.remove(&id);
         });
         let request = json!({ "id": id, "kind": kind, "payload": payload });
         match target {
@@ -151,7 +147,8 @@ impl Capabilities {
     /// an answer from any client but the one the request was sent to: another client of the
     /// shared core could otherwise answer a window's `secrets.decrypt` with a token of its own.
     pub fn reply(&self, id: u64, answer: &Value) {
-        let Some(send) = self.pending.lock().ok().and_then(|mut pending| {
+        let send = {
+            let mut pending = lock(&self.pending);
             let replier = crate::connection::current();
             match pending.waiting.get(&id) {
                 // In-process callers run outside any connection's scope; every socket client's
@@ -162,7 +159,8 @@ impl Capabilities {
                 Some(_) => pending.waiting.remove(&id).map(|(_, send)| send),
                 None => None,
             }
-        }) else {
+        };
+        let Some(send) = send else {
             return;
         };
         let result = match answer.get("error").and_then(Value::as_str) {
@@ -174,10 +172,9 @@ impl Capabilities {
 
     /// Fail every unanswered request, and every later one (the core is closing).
     pub fn close(&self) {
-        if let Ok(mut pending) = self.pending.lock() {
-            pending.closed = true;
-            pending.waiting.clear();
-        }
+        let mut pending = lock(&self.pending);
+        pending.closed = true;
+        pending.waiting.clear();
     }
 
     /// `SecretStore.available()`, or whether the profile's credentials can be used.

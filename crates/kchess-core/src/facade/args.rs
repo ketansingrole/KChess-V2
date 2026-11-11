@@ -14,6 +14,11 @@ pub(crate) fn arg(args: &[Value], index: usize) -> Value {
     args.get(index).cloned().unwrap_or(Value::Null)
 }
 
+/// A normalized string value; anything else is empty.
+pub(crate) fn text(value: &Value) -> String {
+    value.as_str().unwrap_or_default().to_string()
+}
+
 pub(crate) fn text_arg(args: &[Value], index: usize) -> String {
     arg(args, index).as_str().unwrap_or_default().to_string()
 }

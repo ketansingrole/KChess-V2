@@ -25,6 +25,7 @@ use crate::capabilities::Capabilities;
 use crate::error::{CoreError, Result};
 use crate::host::Host;
 use crate::store::Database;
+use crate::store::games::{self, as_json};
 use crate::usage::UsageBatch;
 
 /// The Lichess services of one core.
@@ -686,7 +687,9 @@ impl Services {
     async fn sync_games(&self, args: &[Value]) -> Result<Value> {
         let username = optional_text(args, 0);
         self.lichess.sync_games(username.as_deref()).await?;
-        self.database.call_async("store.games.loadData", &[]).await
+        self.database
+            .read_async(|ctx| as_json(games::load_app_data(ctx.db)?))
+            .await
     }
 
     /// `connectLichess(look)`: the browser sign-in; the window is focused when the browser returns.
@@ -702,7 +705,7 @@ impl Services {
         let connected = self.lichess.connect_lichess(look, Some(&focus)).await?;
         let data = self
             .database
-            .call_async("store.games.loadData", &[])
+            .read_async(|ctx| as_json(games::load_app_data(ctx.db)?))
             .await?;
         Ok(json!({ "data": data, "username": connected.username }))
     }

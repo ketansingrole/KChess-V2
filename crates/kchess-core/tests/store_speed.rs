@@ -5,8 +5,8 @@
 
 use std::time::{Duration, Instant};
 
-use kchess_core::store::{self, StoreCache, StoreContext};
-use kchess_core::{Config, Host, Level};
+use kchess_core::store::{self, StoreCache, StoreContext, games, library};
+use kchess_core::{Config, CoreError, Host, Level};
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use shakmaty::uci::UciMove;
@@ -47,7 +47,11 @@ fn random_game(rng: &mut Rng, plies: usize) -> Vec<String> {
     moves
 }
 
-fn run(db: &Connection, cache: &StoreCache, method: &str, args: &[Value]) -> Value {
+fn run<T>(
+    db: &Connection,
+    cache: &StoreCache,
+    work: impl FnOnce(&StoreContext) -> Result<T, CoreError>,
+) -> T {
     let config = Config::new(std::path::PathBuf::new());
     let ctx = StoreContext {
         db,
@@ -55,7 +59,7 @@ fn run(db: &Connection, cache: &StoreCache, method: &str, args: &[Value]) -> Val
         config: &config,
         cache,
     };
-    store::call(&ctx, method, args).unwrap_or_else(|cause| panic!("{method}: {cause:?}"))
+    work(&ctx).unwrap_or_else(|cause| panic!("{cause:?}"))
 }
 
 /// The median of `runs` timings of `f`.
@@ -86,7 +90,7 @@ fn full_library(db: &Connection, cache: &StoreCache, games: usize, studies: usiz
             "setup": { "variant": "standard", "fen": shakmaty::fen::Fen::from_position(&Chess::default(), shakmaty::EnPassantMode::Legal).to_string() },
             "moves": random_game(&mut rng, 80),
         });
-        run(db, cache, "store.library.saveArchivedGame", &[game]);
+        run(db, cache, |c| library::write_game(c.db, &game));
     }
     for n in 0..studies {
         let moves = random_game(&mut rng, 60);
@@ -106,12 +110,9 @@ fn full_library(db: &Connection, cache: &StoreCache, games: usize, studies: usiz
         }
         pgn.push('*');
         let command = json!({ "op": "save", "name": format!("Study {n}"), "pgn": pgn });
-        run(
-            db,
-            cache,
-            "store.library.studyCommand",
-            &[command, json!(n), Value::Null],
-        );
+        run(db, cache, |c| {
+            library::run_study_command(c.db, command, n as f64, false, None)
+        });
     }
 }
 
@@ -127,21 +128,18 @@ fn library_read_over_a_full_profile() {
         let db = store::open(&dir.path().join("kchess.db"), &Quiet).expect("open");
         let cache = StoreCache::default();
         full_library(&db, &cache, games, studies);
-        let library = run(&db, &cache, "store.library.library", &[json!(0)]);
+        let library = run(&db, &cache, |c| library::cached_library(c, 0.0));
         assert_eq!(library["games"].as_array().map(Vec::len), Some(games));
         let bytes = library.to_string().len();
         // A fresh cache each time: what a first read (or one after a write) costs.
         let first = median(15, || {
-            run(
-                &db,
-                &StoreCache::default(),
-                "store.library.library",
-                &[json!(0)],
-            );
+            run(&db, &StoreCache::default(), |c| {
+                library::cached_library(c, 0.0)
+            });
         });
         // What every later read costs, written as JSON as the service sends it.
         let again = median(15, || {
-            let value = run(&db, &cache, "store.library.library", &[json!(0)]);
+            let value = run(&db, &cache, |c| library::cached_library(c, 0.0));
             std::hint::black_box(value.to_string());
         });
         println!(
@@ -188,7 +186,7 @@ fn game_pages_from_newest_to_oldest() {
                 query["account"] = json!(account);
             }
             let time = median(15, || {
-                let answer = run(&db, &cache, "store.games.gamePage", &[query.clone()]);
+                let answer = run(&db, &cache, |c| games::game_page(c, query.clone()));
                 assert_eq!(answer["games"].as_array().map(Vec::len), Some(size));
             });
             figures.push(format!("page {page}: {}", ms(time)));

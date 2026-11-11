@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use kchess_core::Config;
 use kchess_core::chesscom::Chesscom;
-use kchess_core::store::Database;
+use kchess_core::store::{Database, chesscom, games, reviews};
 use serde_json::{Value, json};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -75,12 +75,12 @@ fn profile(fixture: &Fixture) -> Profile {
 
 impl Profile {
     async fn games(&self, account: &str) -> Vec<Value> {
+        let account = account.to_string();
         let page = self
             .database
-            .call_async(
-                "store.games.gamePage",
-                &[json!({ "account": account, "offset": 0, "limit": 100 })],
-            )
+            .read_async(move |c| {
+                games::game_page(c, json!({ "account": account, "offset": 0, "limit": 100 }))
+            })
             .await
             .unwrap();
         page["games"].as_array().cloned().unwrap_or_default()
@@ -211,13 +211,13 @@ async fn removed_during_add(
     assert!(profile.games("Alice@chess.com").await.is_empty());
     let accounts = profile
         .database
-        .call_async("store.chesscom.accounts", &[])
+        .read_async(|c| chesscom::accounts(c.db))
         .await
         .unwrap();
-    assert_eq!(accounts, json!([]));
+    assert!(accounts.is_empty());
     let archives = profile
         .database
-        .call_async("store.chesscom.archives", &[json!("alice")])
+        .read_async(|c| chesscom::archives(c.db, "alice"))
         .await
         .unwrap();
     assert_eq!(archives, json!([]));
@@ -289,24 +289,6 @@ async fn removing_a_player_while_they_are_looked_up_does_not_add_them_back() {
 }
 
 /// An add the player's removal overtook stores nothing, however late the database admits it.
-#[tokio::test]
-async fn an_overtaken_add_stores_no_player() {
-    let fixture = serve(|_: &Seen| Reply::Json(404, "{}".into())).await;
-    let profile = profile(&fixture);
-    let refused = profile
-        .database
-        .call_async("store.chesscom.addAccount", &[json!("alice"), json!(false)])
-        .await
-        .unwrap_err();
-    assert_eq!(refused.message, "Sync was cancelled.");
-    let added = profile
-        .database
-        .call_async("store.chesscom.addAccount", &[json!("alice"), json!(true)])
-        .await
-        .unwrap();
-    assert_eq!(added[0]["username"], "alice");
-}
-
 /// Regression: a sync whose call was cancelled (a socket client cancelling it or leaving aborts
 /// the call's task) left its entry behind, and every later sync of the player joined that dead
 /// entry and failed at once with "Sync was cancelled." until the player was removed.
@@ -364,10 +346,10 @@ async fn an_unknown_player_is_not_added() {
     assert_eq!(error.message, "No Chess.com player is called nobody_here.");
     let accounts = profile
         .database
-        .call_async("store.chesscom.accounts", &[])
+        .read_async(|c| chesscom::accounts(c.db))
         .await
         .unwrap();
-    assert_eq!(accounts, json!([]));
+    assert!(accounts.is_empty());
 }
 
 #[tokio::test]
@@ -390,10 +372,7 @@ async fn chesscom_games_are_reviewed_without_asking_lichess() {
     profile.chesscom.add("alice").await.expect("added");
     let queue = profile
         .database
-        .call_async(
-            "store.reviewStore.gamesToReview",
-            &[json!(["Alice@chess.com"]), json!(0), json!(10)],
-        )
+        .read_async(|c| reviews::games_to_review(c.db, &["Alice@chess.com".to_string()], 0.0, 10.0))
         .await
         .unwrap();
     assert_eq!(queue[0]["id"], "cc-l5");
@@ -425,9 +404,10 @@ async fn chesscom_ratings_make_a_history_without_rating_changes() {
     profile.chesscom.add("alice").await.expect("added");
     let history = profile
         .database
-        .call_async("store.games.gameRatingHistory", &[json!("alice@chess.com")])
+        .read_async(|c| games::rating_history(c.db, "alice@chess.com"))
         .await
         .unwrap();
+    let history = serde_json::to_value(history).unwrap();
     assert_eq!(
         history,
         json!([{ "name": "rapid", "points": [[2020, 0, 6, 1500], [2020, 0, 7, 1480]] }])

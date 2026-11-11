@@ -6,8 +6,8 @@
 use rusqlite::{Connection, params_from_iter, types::Value as Sql};
 use serde_json::{Map, Value, json};
 
-use super::StoreContext;
-use super::library::{db_err, now_ms, num, truthy};
+use super::library::{num, truthy};
+use super::sql::Sql as _;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::js;
@@ -41,20 +41,6 @@ const REVIEW_LIMIT: i64 = 2_000;
 const CLOCK_LIMIT: i64 = 2_000;
 /// The moves whose clocks are compared with the opponent's.
 const CLOCK_MOVES: [usize; 2] = [20, 40];
-
-/// This module's storage methods; None when the method is not one of them.
-pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
-    let db = ctx.db;
-    let host = ctx.host;
-    let result = match method {
-        "store.insights.insights" => {
-            let query = args.first().unwrap_or(&Value::Null);
-            now_ms().and_then(|now| insights(host, db, query, now))
-        }
-        _ => return None,
-    };
-    Some(result)
-}
 
 /// Win/loss/draw counts.
 #[derive(Default)]
@@ -167,12 +153,12 @@ fn played_variants(db: &Connection, query: &Value) -> Result<Vec<&'static str>> 
             "SELECT DISTINCT perf FROM games
              WHERE account = ? AND status NOT IN ('created', 'started')",
         )
-        .map_err(db_err)?;
+        .sql()?;
     let played: Vec<String> = statement
         .query_map([sql_of(query.get("account"))], |row| row.get(0))
-        .map_err(db_err)?
+        .sql()?
         .collect::<std::result::Result<_, _>>()
-        .map_err(db_err)?;
+        .sql()?;
     Ok(VARIANTS[1..]
         .iter()
         .copied()
@@ -181,7 +167,7 @@ fn played_variants(db: &Connection, query: &Value) -> Result<Vec<&'static str>> 
 }
 
 /// `insights(query)`.
-fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result<Value> {
+pub fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result<Value> {
     let (clauses, params) = clauses(query, "", now)?;
     let where_sql = clauses.join(" AND ");
     let sql = format!(
@@ -191,7 +177,7 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
           CASE WHEN moves = '' THEN 0 ELSE LENGTH(moves) - LENGTH(REPLACE(moves, ' ', '')) + 1 END AS plies
          FROM games WHERE {where_sql} ORDER BY createdAt DESC LIMIT {ROW_LIMIT}"
     );
-    let mut statement = db.prepare(&sql).map_err(db_err)?;
+    let mut statement = db.prepare(&sql).sql()?;
     let rows = statement
         .query_map(params_from_iter(params.iter()), |row| {
             let dayhour: Option<String> = row.get(9)?;
@@ -217,10 +203,10 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
                 status: row.get(3)?,
             })
         })
-        .map_err(db_err)?;
+        .sql()?;
     let mut rows_out = Vec::new();
     for row in rows {
-        rows_out.push(row.map_err(db_err)?);
+        rows_out.push(row.sql()?);
     }
 
     let mut record = Record::default();
@@ -428,15 +414,15 @@ fn accuracy_report(
          WHERE {where_sql} AND r.complete = 1
          ORDER BY g.createdAt DESC LIMIT {REVIEW_LIMIT}"
     );
-    let mut statement = db.prepare(&sql).map_err(db_err)?;
+    let mut statement = db.prepare(&sql).sql()?;
     let rows = statement
         .query_map(params_from_iter(params.iter()), |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
-        .map_err(db_err)?;
+        .sql()?;
     let mut reviewed = Vec::new();
     for row in rows {
-        reviewed.push(row.map_err(db_err)?);
+        reviewed.push(row.sql()?);
     }
     if reviewed.is_empty() {
         return Ok(None);
@@ -661,7 +647,7 @@ fn time_use_report(
          WHERE {where_sql} AND g.pgn LIKE '%[%clk %' AND g.speed != 'correspondence'
          ORDER BY g.createdAt DESC LIMIT {CLOCK_LIMIT}"
     );
-    let mut statement = db.prepare(&sql).map_err(db_err)?;
+    let mut statement = db.prepare(&sql).sql()?;
     let rows = statement
         .query_map(params_from_iter(params.iter()), |row| {
             Ok((
@@ -671,10 +657,10 @@ fn time_use_report(
                 row.get::<_, Option<String>>(3)?,
             ))
         })
-        .map_err(db_err)?;
+        .sql()?;
     let mut clocks = Clocks::default();
     for row in rows {
-        let (color, pgn, result, review) = row.map_err(db_err)?;
+        let (color, pgn, result, review) = row.sql()?;
         let Some(time) = time_use(&pgn) else {
             continue;
         };

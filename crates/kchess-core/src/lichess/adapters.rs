@@ -1,19 +1,17 @@
 //! The Lichess services' storage and credentials, over the core's one database
-//! (`store::Database::call`) and the host's secret store (`Capabilities`). Each trait method is a
-//! storage method of the same meaning the service calls, so the tables and their writes are
-//! unchanged.
+//! (`store::Database`) and the host's secret store (`Capabilities`).
 
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::accounts::{AccountRow, CachedValue, LichessGame, LichessStore};
 use super::client::TokenSource;
 use super::lookups::{ExplorerLogin, LookupCache};
 use crate::capabilities::Capabilities;
 use crate::error::{CoreError, Result as CoreResult};
-use crate::store::Database;
+use crate::store::{Database, games, lookups, reviews};
 
 /// `LichessStore` over `kchess.db`.
 pub struct DbLichessStore {
@@ -24,44 +22,31 @@ impl DbLichessStore {
     pub fn new(database: Arc<Database>) -> DbLichessStore {
         DbLichessStore { database }
     }
+}
 
-    async fn call(&self, method: &str, args: &[Value]) -> CoreResult<Value> {
-        self.database.call_async(method, args).await
-    }
-
-    fn strings(value: Value) -> Vec<String> {
-        value
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default()
+/// A sync's write, unless a logout ended the sync while it waited its turn.
+fn unless_cancelled(current: &(dyn Fn() -> bool + Sync)) -> CoreResult<()> {
+    if current() {
+        Ok(())
+    } else {
+        Err(CoreError::new("Sync was cancelled."))
     }
 }
 
 impl LichessStore for DbLichessStore {
     fn accounts<'a>(&'a self) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<AccountRow>>> {
         Box::pin(async move {
-            let data = self.call("store.games.loadData", &[]).await?;
-            let rows = data
-                .get("accounts")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            Ok(rows
-                .iter()
-                .filter_map(|row| {
-                    Some(AccountRow {
-                        username: row.get("username")?.as_str()?.to_string(),
-                        connected: row
-                            .get("connected")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
-                        last_synced_at: row.get("lastSyncedAt").and_then(Value::as_i64),
-                    })
+            let data = self
+                .database
+                .read_async(|ctx| games::load_app_data(ctx.db))
+                .await?;
+            Ok(data
+                .accounts
+                .into_iter()
+                .map(|row| AccountRow {
+                    username: row.username,
+                    connected: row.connected,
+                    last_synced_at: row.last_synced_at,
                 })
                 .collect())
         })
@@ -71,9 +56,9 @@ impl LichessStore for DbLichessStore {
         &'a self,
     ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<String>>> {
         Box::pin(async move {
-            Ok(Self::strings(
-                self.call("store.games.dismissedFriends", &[]).await?,
-            ))
+            self.database
+                .read_async(|ctx| games::dismissed_friends(ctx.db))
+                .await
         })
     }
 
@@ -82,10 +67,10 @@ impl LichessStore for DbLichessStore {
         account: &'a str,
     ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<String>>> {
         Box::pin(async move {
-            Ok(Self::strings(
-                self.call("store.games.pendingGameIds", &[json!(account)])
-                    .await?,
-            ))
+            let account = account.to_string();
+            self.database
+                .read_async(move |ctx| games::pending_game_ids(ctx.db, &account))
+                .await
         })
     }
 
@@ -97,19 +82,19 @@ impl LichessStore for DbLichessStore {
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
-            // The store writes the games and their reviews in one transaction, and checks `current`
-            // once more before it writes.
+            // The games and their reviews go in one transaction, once the database admits the
+            // write and `current` still holds.
+            let account = account.to_string();
+            let games = games_json(games)?;
+            let reviews = reviews.to_vec();
             self.database
-                .call_async_with("store.games.saveGamesPage", || {
-                    Ok(vec![
-                        json!(account),
-                        json!(games),
-                        json!(reviews),
-                        json!(current()),
-                    ])
+                .write_admitted(|| {
+                    unless_cancelled(current)?;
+                    Ok(move |ctx: &crate::store::StoreContext| {
+                        games::save_games_page(ctx.host, ctx.db, &account, &games, &reviews)
+                    })
                 })
                 .await
-                .map(|_| ())
         })
     }
 
@@ -120,17 +105,16 @@ impl LichessStore for DbLichessStore {
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
+            let account = account.to_string();
             self.database
-                .call_async_with("store.games.saveGames", || {
-                    Ok(vec![
-                        json!(account),
-                        json!([]),
-                        json!(synced_at),
-                        json!(current()),
-                    ])
+                .write_admitted(|| {
+                    unless_cancelled(current)?;
+                    Ok(move |ctx: &crate::store::StoreContext| {
+                        games::save_games(ctx.host, ctx.db, &account, &[], Some(synced_at))
+                            .map(|_| ())
+                    })
                 })
                 .await
-                .map(|_| ())
         })
     }
 
@@ -141,12 +125,15 @@ impl LichessStore for DbLichessStore {
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
+            let account = account.to_string();
             self.database
-                .call_async_with("store.games.saveSyncedPlayTime", || {
-                    Ok(vec![json!(account), json!(play_time), json!(current())])
+                .write_admitted(|| {
+                    unless_cancelled(current)?;
+                    Ok(move |ctx: &crate::store::StoreContext| {
+                        games::save_synced_play_time(ctx.db, &account, play_time)
+                    })
                 })
                 .await
-                .map(|_| ())
         })
     }
 
@@ -155,7 +142,11 @@ impl LichessStore for DbLichessStore {
         key: &'a str,
     ) -> futures_util::future::BoxFuture<'a, CoreResult<Option<CachedValue>>> {
         Box::pin(async move {
-            let row = self.call("store.games.readApiCache", &[json!(key)]).await?;
+            let key = key.to_string();
+            let row = self
+                .database
+                .read_async(move |ctx| games::read_api_cache(ctx.host, ctx.db, &key))
+                .await?;
             Ok(match row {
                 Value::Object(object) => Some(CachedValue {
                     value: object.get("value").cloned().unwrap_or(Value::Null),
@@ -173,12 +164,20 @@ impl LichessStore for DbLichessStore {
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
+            // A write a logout overtook is skipped: the account's cache is gone with it.
+            let (key, value) = (key.to_string(), value.clone());
             self.database
-                .call_async_with("store.games.writeApiCache", || {
-                    Ok(vec![json!(key), value.clone(), json!(current())])
+                .write_admitted(|| {
+                    let wanted = current();
+                    Ok(move |ctx: &crate::store::StoreContext| {
+                        if wanted {
+                            games::write_api_cache(ctx.db, &key, &value)
+                        } else {
+                            Ok(())
+                        }
+                    })
                 })
                 .await
-                .map(|_| ())
         })
     }
 
@@ -189,15 +188,17 @@ impl LichessStore for DbLichessStore {
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
+            let (username, ciphertext) = (username.to_string(), ciphertext.to_string());
             self.database
-                .call_async_with("store.games.saveTokenCiphertext", || {
+                .write_admitted(|| {
                     if !current() {
                         return Err(CoreError::aborted("Login was cancelled by logout."));
                     }
-                    Ok(vec![json!(username), json!(ciphertext)])
+                    Ok(move |ctx: &crate::store::StoreContext| {
+                        games::save_login(ctx.db, &username, &ciphertext).map(|_| ())
+                    })
                 })
                 .await
-                .map(|_| ())
         })
     }
 
@@ -213,13 +214,14 @@ impl LichessStore for DbLichessStore {
                 return Err(CoreError::new("Sync was cancelled."));
             }
             // One transaction: a cancelled or failed batch keeps the previous reviews.
+            let reviews = Value::Array(reviews.to_vec());
             let stored = self
                 .database
-                .call_async_with("store.reviewStore.writeReviews", || {
-                    if !current() {
-                        return Err(CoreError::new("Sync was cancelled."));
-                    }
-                    Ok(vec![Value::Array(reviews.to_vec())])
+                .write_admitted(|| {
+                    unless_cancelled(current)?;
+                    Ok(move |ctx: &crate::store::StoreContext| {
+                        reviews::write_reviews(ctx.host, ctx.db, &reviews)
+                    })
                 })
                 .await?;
             Ok(stored.as_array().cloned().unwrap_or_default())
@@ -228,7 +230,10 @@ impl LichessStore for DbLichessStore {
 
     fn receives_challenges<'a>(&'a self) -> BoxFuture<'a, CoreResult<bool>> {
         Box::pin(async move {
-            let settings = self.call("store.games.getSettings", &[]).await?;
+            let settings = self
+                .database
+                .read_async(|ctx| games::get_settings(ctx.db))
+                .await?;
             Ok(settings["receiveChallenges"].as_bool().unwrap_or(true))
         })
     }
@@ -240,17 +245,27 @@ impl LichessStore for DbLichessStore {
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
             let now = super::accounts::now_ms();
+            let ids = ids.to_vec();
             self.database
-                .call_async_with("store.reviewStore.markChecked", || {
+                .write_admitted(|| {
                     if !current() {
                         return Err(CoreError::aborted("Sync was cancelled."));
                     }
-                    Ok(vec![json!(ids), json!(now)])
+                    Ok(move |ctx: &crate::store::StoreContext| {
+                        reviews::mark_checked(ctx.db, &ids, now as f64)
+                    })
                 })
                 .await
-                .map(|_| ())
         })
     }
+}
+
+/// Games as the rows the store writes.
+fn games_json(games: &[LichessGame]) -> CoreResult<Vec<Value>> {
+    games
+        .iter()
+        .map(|game| serde_json::to_value(game).map_err(|cause| CoreError::new(cause.to_string())))
+        .collect()
 }
 
 /// `TokenSource` over the encrypted tokens of `kchess.db`, decrypted by the host's secret store.
@@ -271,14 +286,15 @@ impl DbTokens {
 impl TokenSource for DbTokens {
     fn token<'a>(&'a self, account: &'a str) -> BoxFuture<'a, CoreResult<Option<String>>> {
         Box::pin(async move {
+            let owner = account.to_string();
             let ciphertext = self
                 .database
-                .call_async("store.games.tokenCiphertext", &[json!(account)])
+                .read_async(move |ctx| games::token_ciphertext(ctx.db, &owner))
                 .await?;
-            let Some(ciphertext) = ciphertext.as_str() else {
+            let Some(ciphertext) = ciphertext else {
                 return Ok(None);
             };
-            Ok(Some(self.capabilities.decrypt(ciphertext).await?))
+            Ok(Some(self.capabilities.decrypt(&ciphertext).await?))
         })
     }
 }
@@ -300,7 +316,7 @@ impl ExplorerLogin for DbExplorerLogin {
         Box::pin(async move {
             let account = self
                 .database
-                .call_async("store.setupPositionLookup.explorerAccount", &[])
+                .read_async(|ctx| lookups::explorer_account(ctx.db))
                 .await?;
             match account.as_str() {
                 Some(account) => self.tokens.token(account).await,
@@ -329,9 +345,10 @@ impl LookupCache for DbLookups {
         Box::pin(async move {
             // The store answers the saved text, or null when it is missing or too large to read; text
             // that is not JSON is an unreadable entry, which the explorer treats as missing.
+            let key = key.to_string();
             let text = self
                 .database
-                .call_async("store.setupPositionLookup.read", &[json!(key)])
+                .read_async(move |ctx| lookups::read(ctx.db, &key))
                 .await?;
             Ok(text
                 .as_str()
@@ -345,11 +362,9 @@ impl LookupCache for DbLookups {
         value: &'a Value,
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
+            let (key, value) = (key.to_string(), value.clone());
             self.database
-                .call_async(
-                    "store.setupPositionLookup.write",
-                    &[json!(key), value.clone()],
-                )
+                .write_async(move |ctx| lookups::write(ctx.db, &key, &value))
                 .await
                 .map(|_| ())
         })
@@ -360,6 +375,7 @@ impl LookupCache for DbLookups {
 mod tests {
     use super::*;
     use crate::host::{Config, Host, Level};
+    use serde_json::json;
 
     struct Quiet;
 
@@ -388,5 +404,34 @@ mod tests {
         assert_eq!(cache.read("opening:fen").await.expect("read"), None);
         cache.write("opening:fen", &saved).await.expect("write");
         assert_eq!(cache.read("opening:fen").await.expect("read"), Some(saved));
+    }
+
+    /// A sync's writes check that the sync still runs once the database admits them, so a logout
+    /// while they waited their turn leaves nothing behind.
+    #[tokio::test]
+    async fn a_sync_write_admitted_after_its_sync_was_cancelled_is_refused() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let database = Arc::new(Database::new(
+            Config::new(dir.path().to_path_buf()),
+            Arc::new(Quiet),
+        ));
+        database
+            .write(|ctx| games::add_account(ctx.db, "Alice", true))
+            .expect("account");
+        let store = DbLichessStore::new(Arc::clone(&database));
+        let cancelled = || false;
+        let refused = store
+            .save_games_page("Alice", &[], &[json!({ "key": "k" })], &cancelled)
+            .await
+            .expect_err("cancelled");
+        assert_eq!(refused.message, "Sync was cancelled.");
+        let refused = store
+            .save_games_cursor("Alice", 1, &cancelled)
+            .await
+            .expect_err("cancelled");
+        assert_eq!(refused.message, "Sync was cancelled.");
+        let accounts = store.accounts().await.expect("accounts");
+        assert_eq!(accounts[0].last_synced_at, None);
+        database.close_async().await;
     }
 }

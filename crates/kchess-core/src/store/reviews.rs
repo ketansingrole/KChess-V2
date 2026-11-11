@@ -4,53 +4,10 @@
 use rusqlite::{Connection, OptionalExtension, params, types::Value as Sql};
 use serde_json::{Map, Value, json};
 
-use super::StoreContext;
-use super::library::{
-    db_err, js_json, now_arg, now_ms, num, str_arg, string_list, transaction, truthy,
-};
+use super::library::{js_json, now_ms, num, truthy};
+use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
-
-const GAMES_TO_REVIEW_LIMIT: f64 = 300.0;
-
-/// This module's storage methods; None when the method is not one of them.
-pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
-    let db = ctx.db;
-    let result = match method {
-        "store.reviewStore.readReview" => {
-            str_arg(args, 0, "key").and_then(|key| read_review(ctx.host, db, key).map(or_null))
-        }
-        "store.reviewStore.writeReview" => {
-            write_review(ctx.host, db, args.first().unwrap_or(&Value::Null))
-        }
-        "store.reviewStore.writeReviews" => {
-            let reviews = args.first().cloned().unwrap_or(Value::Null);
-            write_reviews(ctx.host, db, &reviews)
-        }
-        "store.reviewStore.reviewSummaries" => {
-            review_summaries(ctx.host, db, &string_list(args.first()))
-        }
-        "store.reviewStore.hasAccount" => str_arg(args, 0, "username")
-            .and_then(|name| has_account(db, name))
-            .map(Value::Bool),
-        "store.reviewStore.markChecked" => now_arg(args, 1)
-            .and_then(|at| mark_checked(db, &string_list(args.first()), at).map(|()| Value::Null)),
-        "store.reviewStore.gamesToReview" => {
-            let since = args.get(1).and_then(Value::as_f64).unwrap_or(0.0);
-            let limit = args
-                .get(2)
-                .and_then(Value::as_f64)
-                .unwrap_or(GAMES_TO_REVIEW_LIMIT);
-            games_to_review(db, &string_list(args.first()), since, limit)
-        }
-        _ => return None,
-    };
-    Some(result)
-}
-
-fn or_null(value: Option<Value>) -> Value {
-    value.unwrap_or(Value::Null)
-}
 
 /// `parse` for a stored review or summary: a failure is logged.
 fn parse_logged(host: &dyn Host, text: &str) -> Option<Value> {
@@ -81,7 +38,7 @@ fn read_stored(host: &dyn Host, db: &Connection, key: &str) -> Result<Option<Sto
             |row| Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
         )
         .optional()
-        .map_err(db_err)?;
+        .sql()?;
     let Some((data, summary)) = row else {
         return Ok(None);
     };
@@ -197,7 +154,7 @@ pub fn write_review(host: &dyn Host, db: &Connection, input: &Value) -> Result<V
                 "INSERT OR IGNORE INTO game_reviews (gameId, reviewKey) VALUES (?1, ?2)",
                 params![game, key],
             )
-            .map_err(db_err)?;
+            .sql()?;
         }
         Ok(())
     };
@@ -246,7 +203,7 @@ pub fn write_review(host: &dyn Host, db: &Connection, input: &Value) -> Result<V
                 .unwrap_or_default() as i64,
         ],
     )
-    .map_err(db_err)?;
+    .sql()?;
     link(db)?;
     Ok(json!({ "review": merged, "summary": summary }))
 }
@@ -254,8 +211,7 @@ pub fn write_review(host: &dyn Host, db: &Connection, input: &Value) -> Result<V
 /// `writeReviews(reviews)`: save a batch atomically; a failure or cancellation
 /// keeps the previous batch. Callers that need per-review cancellability keep
 /// using `writeReview`.
-fn write_reviews(host: &dyn Host, db: &Connection, reviews: &Value) -> Result<Value> {
-    use super::library::transaction;
+pub fn write_reviews(host: &dyn Host, db: &Connection, reviews: &Value) -> Result<Value> {
     let list = reviews.as_array().cloned().unwrap_or_default();
     transaction(db, || {
         let mut stored = Vec::with_capacity(list.len());
@@ -286,15 +242,15 @@ pub fn review_summaries(host: &dyn Host, db: &Connection, ids: &[String]) -> Res
         "SELECT gr.gameId, r.summary FROM game_reviews gr JOIN reviews r ON r.key=gr.reviewKey
          WHERE gr.gameId IN ({marks}) ORDER BY r.complete, r.updatedAt"
     );
-    let mut statement = db.prepare(&sql).map_err(db_err)?;
+    let mut statement = db.prepare(&sql).sql()?;
     let rows = statement
         .query_map(rusqlite::params_from_iter(ids.iter()), |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
-        .map_err(db_err)?;
+        .sql()?;
     let mut result = Map::new();
     for row in rows {
-        let (game, summary) = row.map_err(db_err)?;
+        let (game, summary) = row.sql()?;
         if let Some(summary) = parse_logged(host, &summary).filter(|s| truthy(Some(s))) {
             result.insert(game, summary);
         }
@@ -303,7 +259,7 @@ pub fn review_summaries(host: &dyn Host, db: &Connection, ids: &[String]) -> Res
 }
 
 /// Whether this account is still on this device.
-fn has_account(db: &Connection, username: &str) -> Result<bool> {
+pub fn has_account(db: &Connection, username: &str) -> Result<bool> {
     let row = db
         .query_row(
             "SELECT 1 FROM accounts WHERE username = ?1 COLLATE NOCASE",
@@ -311,12 +267,12 @@ fn has_account(db: &Connection, username: &str) -> Result<bool> {
             |_| Ok(()),
         )
         .optional()
-        .map_err(db_err)?;
+        .sql()?;
     Ok(row.is_some())
 }
 
 /// Remember that Lichess was asked for these games' analysis.
-fn mark_checked(db: &Connection, ids: &[String], at: f64) -> Result<()> {
+pub fn mark_checked(db: &Connection, ids: &[String], at: f64) -> Result<()> {
     if ids.is_empty() {
         return Ok(());
     }
@@ -326,14 +282,19 @@ fn mark_checked(db: &Connection, ids: &[String], at: f64) -> Result<()> {
                 "INSERT OR REPLACE INTO lichess_review_checks (id, checkedAt) VALUES (?1, ?2)",
                 params![id, sql_number(Some(&json!(at)))],
             )
-            .map_err(db_err)?;
+            .sql()?;
         }
         Ok(())
     })
 }
 
 /// The accounts' finished games with no finished review, newest first.
-fn games_to_review(db: &Connection, accounts: &[String], since: f64, limit: f64) -> Result<Value> {
+pub fn games_to_review(
+    db: &Connection,
+    accounts: &[String],
+    since: f64,
+    limit: f64,
+) -> Result<Value> {
     if accounts.is_empty() {
         return Ok(json!([]));
     }
@@ -355,7 +316,7 @@ fn games_to_review(db: &Connection, accounts: &[String], since: f64, limit: f64)
     let mut params_list: Vec<Sql> = accounts.iter().map(|a| Sql::Text(a.clone())).collect();
     params_list.push(sql_number(Some(&json!(since))));
     params_list.push(sql_number(Some(&json!(limit))));
-    let mut statement = db.prepare(&sql).map_err(db_err)?;
+    let mut statement = db.prepare(&sql).sql()?;
     let rows = statement
         .query_map(rusqlite::params_from_iter(params_list.iter()), |row| {
             Ok(json!({
@@ -370,10 +331,10 @@ fn games_to_review(db: &Connection, accounts: &[String], since: f64, limit: f64)
                 "checked": row.get::<_, i64>(6)? == 1,
             }))
         })
-        .map_err(db_err)?;
+        .sql()?;
     let mut out = Vec::new();
     for row in rows {
-        out.push(row.map_err(db_err)?);
+        out.push(row.sql()?);
     }
     Ok(Value::Array(out))
 }

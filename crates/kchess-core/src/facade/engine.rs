@@ -149,9 +149,17 @@ impl Core {
             }
             "reviewStatus" => self.inner("reviews.status", vec![]).await,
             "reviewSummaries" => {
-                let ids = normal("assertGameIds", &arg(args, 0))?;
+                let ids: Vec<String> = normal("assertGameIds", &arg(args, 0))?
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|id| id.as_str().unwrap_or_default().to_string())
+                    .collect();
                 self.database
-                    .call_async("store.reviewStore.reviewSummaries", &[ids])
+                    .read_async(move |ctx| {
+                        crate::store::reviews::review_summaries(ctx.host, ctx.db, &ids)
+                    })
                     .await
             }
             _ => Err(CoreError::new(format!("Unknown core method {method}."))),

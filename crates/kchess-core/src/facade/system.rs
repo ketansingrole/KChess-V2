@@ -21,7 +21,10 @@ impl Core {
             }
             "voiceHistoryDocument" => {
                 self.database
-                    .call_async("store.voiceLog.voiceHistoryDocument", &[])
+                    .read_async(|ctx| {
+                        crate::store::voice_log::voice_history_document(ctx.host, ctx.db)
+                            .map(Value::String)
+                    })
                     .await
             }
             "suspend" => {

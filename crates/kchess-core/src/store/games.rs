@@ -1,23 +1,16 @@
-//! Settings, accounts, the game library, the Lichess API cache and the
-//! account lifecycle, as `store.games.<name>` methods over `kchess.db`.
-//!
-//! Each method takes its arguments as a JSON array and returns its result as
-//! JSON (`undefined` is `null` or an omitted key, as `JSON.stringify` writes it). Not mirrored yet:
-//! `saveLogin` and `getToken` (the host's credential encryption is not a core capability yet), the
-//! Lichess reviews that `saveGames`/`saveGamesPage` write (`store/reviews.rs`),
-//! the one-time JSON and legacy imports that run before the first read (they need the data
-//! directory and the legacy path, which the dispatch does not carry), and the in-memory caches
-//! (`snapshot`, `pageTotals`): they only save recounting, so results are the same.
-//! A callback argument (`stillCurrent`) is passed as its boolean result, read just before the call.
+//! Settings, accounts, the game library, the Lichess API cache and the account lifecycle in
+//! `kchess.db`. Logins arrive already encrypted: the caller seals them with the operating system's
+//! credential store.
 
 use std::collections::{BTreeMap, HashMap};
 
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::StoreContext;
+use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::calendar::civil_from_days;
@@ -289,166 +282,39 @@ struct GamePageQuery {
     limit: f64,
 }
 
-/// Lets the `?` operator carry SQLite failures as the core's errors.
-pub(super) trait StorageResult<T> {
-    fn sql(self) -> Result<T>;
-}
-
-impl<T> StorageResult<T> for rusqlite::Result<T> {
-    fn sql(self) -> Result<T> {
-        self.map_err(|cause| CoreError::new(cause.to_string()))
-    }
-}
-
-/// This module's storage methods; None when the method is not one of them.
-pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
-    let db = ctx.db;
-    let name = method.strip_prefix("store.games.")?;
-    Some(match name {
-        "getSettings" => get_settings(db),
-        "loadData" => load_app_data(db).and_then(as_json),
-        "gamePage" => arg(args, 0, "query").and_then(|query| game_page(ctx, query)),
-        "gameLibraryOverview" => game_library_overview(ctx),
-        "gameRatingHistory" => arg(args, 0, "account")
-            .and_then(|account: String| rating_history(db, &account))
-            .and_then(as_json),
-        "pendingGameIds" => arg(args, 0, "account")
-            .and_then(|account: String| pending_game_ids(db, &account))
-            .and_then(as_json),
-        "gamePgn" => arg(args, 0, "account").and_then(|account: String| {
-            arg(args, 1, "id").and_then(|id: String| game_pgn(db, &account, &id))
-        }),
-        "readApiCache" => {
-            arg(args, 0, "key").and_then(|key: String| read_api_cache(ctx.host, db, &key))
-        }
-        "writeApiCache" => arg(args, 0, "key").and_then(|key: String| {
-            write_api_cache(
-                db,
-                &key,
-                args.get(1).unwrap_or(&Value::Null),
-                current(args, 2),
-            )
-        }),
-        "saveSettings" => arg(args, 0, "settings").and_then(|settings: Settings| {
-            write_settings(db, &settings)?;
-            as_json(settings)
-        }),
-        "addAccount" => arg(args, 0, "username").and_then(|username: String| {
-            let connected = args.get(1).and_then(Value::as_bool).unwrap_or(false);
-            add_account(db, &username, connected)
-        }),
-        "addFriends" => arg(args, 0, "usernames")
-            .and_then(|usernames: Vec<Value>| add_friends(ctx.host, db, &usernames))
-            .and_then(as_json),
-        "dismissedFriends" => dismissed_friends(db).and_then(as_json),
-        "logoutAccounts" => optional_arg::<String>(args, 0, "username")
-            .and_then(|username| logout_accounts(ctx.host, db, username.as_deref()))
-            .and_then(as_json),
-        // A legacy token that could not be re-encrypted: forget the token, keep the games.
-        "disconnectAccount" => optional_arg::<String>(args, 0, "username").and_then(|username| {
-            let Some(username) = username else {
-                return Ok(Value::Null);
-            };
-            transaction(ctx.host, db, || {
-                db.execute(
-                    "UPDATE accounts SET connected = 0 WHERE username = ? COLLATE NOCASE",
-                    [&username],
-                )
-                .sql()?;
-                db.execute(
-                    "DELETE FROM tokens WHERE username = ? COLLATE NOCASE",
-                    [&username],
-                )
-                .sql()?;
-                Ok(())
-            })
-            .map(|()| Value::Null)
-        }),
-        "removeAccount" => arg(args, 0, "username")
-            .and_then(|username: String| remove_account(ctx.host, db, &username))
-            .and_then(as_json),
-        "clearAccountData" => arg(args, 0, "username")
-            .and_then(|username: String| clear_account_data(ctx.host, db, &username))
-            .and_then(as_json),
-        "saveGamesPage" => arg(args, 0, "username").and_then(|username: String| {
-            let games: Vec<Value> = arg(args, 1, "games")?;
-            let reviews: Vec<Value> = optional_arg(args, 2, "reviews")?.unwrap_or_default();
-            save_games_page(ctx.host, db, &username, &games, &reviews, current(args, 3))
-        }),
-        "saveGames" => arg(args, 0, "username").and_then(|username: String| {
-            let games: Vec<Value> = arg(args, 1, "games")?;
-            let synced_at: Option<i64> = optional_arg(args, 2, "syncedAt")?;
-            save_games(ctx.host, db, &username, &games, synced_at, current(args, 3))
-        }),
-        "saveSyncedPlayTime" => arg(args, 0, "username").and_then(|username: String| {
-            let play_time: i64 = arg(args, 1, "playTime")?;
-            save_synced_play_time(db, &username, play_time, current(args, 2))
-        }),
-        // The one-time import from an earlier release, run by the first read (`ensureMigrated`).
-        // The plaintext tokens it finds go back to the caller, which encrypts and stores them.
-        "legacyImportPending" => super::import::legacy_import_pending(ctx).map(Value::Bool),
-        "scrubLegacyTokens" => super::import::scrub_legacy_tokens(ctx).map(|()| Value::Null),
-        "migrate" => optional_arg::<bool>(args, 0, "encryptionAvailable")
-            .and_then(|flag| super::import::migrate(ctx, flag.unwrap_or(false)))
-            .map(|tokens| {
-                json!({
-                    "legacyTokens": tokens
-                        .into_iter()
-                        .map(|token| json!({ "account": token.account, "token": token.token }))
-                        .collect::<Vec<_>>(),
-                })
-            }),
-        "importTokenCiphertext" => {
-            optional_arg::<String>(args, 0, "username").and_then(|username| {
-                arg(args, 1, "encrypted").and_then(|encrypted: String| {
-                    db.execute(
-                        "INSERT OR REPLACE INTO tokens (username, encrypted) VALUES (?, ?)",
-                        params![username, encrypted],
-                    )
-                    .sql()
-                    .map(|_| Value::Null)
-                })
-            })
-        }
-        "saveTokenCiphertext" => arg(args, 0, "username").and_then(|username: String| {
-            arg(args, 1, "encrypted")
-                .and_then(|encrypted: String| save_login(ctx.host, db, &username, &encrypted))
-        }),
-        "tokenCiphertext" => {
-            arg(args, 0, "username").and_then(|username: String| token_ciphertext(db, &username))
-        }
-        // Cache resets only drop in-memory state, which this port does not keep.
-        "resetStore" => Ok(Value::Null),
-        _ => return None,
-    })
-}
-
-pub(super) fn as_json<T: Serialize>(value: T) -> Result<Value> {
+pub fn as_json<T: Serialize>(value: T) -> Result<Value> {
     serde_json::to_value(value).map_err(|cause| CoreError::new(cause.to_string()))
 }
 
-pub(super) fn arg<T: DeserializeOwned>(args: &[Value], index: usize, name: &str) -> Result<T> {
-    serde_json::from_value(args.get(index).cloned().unwrap_or(Value::Null))
-        .map_err(|cause| CoreError::new(format!("Invalid {name}: {cause}")))
+/// A legacy token that could not be sealed again: the token goes, the account and games stay.
+pub fn disconnect_account(db: &Connection, username: &str) -> Result<()> {
+    transaction(db, || {
+        db.execute(
+            "UPDATE accounts SET connected = 0 WHERE username = ? COLLATE NOCASE",
+            [username],
+        )
+        .sql()?;
+        db.execute(
+            "DELETE FROM tokens WHERE username = ? COLLATE NOCASE",
+            [username],
+        )
+        .sql()?;
+        Ok(())
+    })
 }
 
-/// An argument that may be absent or `null`.
-pub(super) fn optional_arg<T: DeserializeOwned>(
-    args: &[Value],
-    index: usize,
-    name: &str,
-) -> Result<Option<T>> {
-    match args.get(index) {
-        None | Some(Value::Null) => Ok(None),
-        Some(value) => serde_json::from_value(value.clone())
-            .map(Some)
-            .map_err(|cause| CoreError::new(format!("Invalid {name}: {cause}"))),
-    }
-}
-
-/// `stillCurrent`, as the boolean the caller evaluated: absent means still current.
-pub(super) fn current(args: &[Value], index: usize) -> bool {
-    !matches!(args.get(index), Some(Value::Bool(false)))
+/// Stores a sealed token from the one-time import, without touching its account.
+pub fn import_token_ciphertext(
+    db: &Connection,
+    username: Option<&str>,
+    encrypted: &str,
+) -> Result<()> {
+    db.execute(
+        "INSERT OR REPLACE INTO tokens (username, encrypted) VALUES (?, ?)",
+        params![username, encrypted],
+    )
+    .sql()?;
+    Ok(())
 }
 
 pub(super) fn now_ms() -> i64 {
@@ -467,28 +333,6 @@ fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
 /// `rulesLossless(name, value)` with no special values to carry.
 fn validate(method: &str, value: &Value) -> Result<Value> {
     domain(method, vec![json!([]), value.clone()])
-}
-
-/// Runs `work` inside `BEGIN IMMEDIATE`, committing on success and rolling back on any failure.
-pub(super) fn transaction<T>(
-    host: &dyn Host,
-    db: &Connection,
-    work: impl FnOnce() -> Result<T>,
-) -> Result<T> {
-    db.execute_batch("BEGIN IMMEDIATE").sql()?;
-    match work().and_then(|value| db.execute_batch("COMMIT").sql().map(|()| value)) {
-        Ok(value) => Ok(value),
-        Err(cause) => {
-            if let Err(rollback) = db.execute_batch("ROLLBACK") {
-                host.log(
-                    Level::Debug,
-                    "store",
-                    &format!("Rollback failed: {rollback}"),
-                );
-            }
-            Err(cause)
-        }
-    }
 }
 
 // ---- Values: SQLite and JavaScript semantics ------------------------------------------------
@@ -675,10 +519,11 @@ fn read_settings(db: &Connection) -> Result<Option<Settings>> {
         .transpose()
 }
 
-fn write_settings(db: &Connection, settings: &Settings) -> Result<()> {
-    let object =
-        serde_json::to_value(settings).map_err(|cause| CoreError::new(cause.to_string()))?;
-    write_settings_json(db, &object)
+/// Stores every setting; the settings as stored.
+pub fn save_settings(db: &Connection, settings: &Settings) -> Result<Value> {
+    let object = as_json(settings)?;
+    write_settings_json(db, &object)?;
+    Ok(object)
 }
 
 /// `writeSettings`: every persisted setting of a settings object, as `toSql` binds it.
@@ -696,11 +541,11 @@ pub(super) fn write_settings_json(db: &Connection, object: &Value) -> Result<()>
     Ok(())
 }
 
-fn get_settings(db: &Connection) -> Result<Value> {
+pub fn get_settings(db: &Connection) -> Result<Value> {
     as_json(read_settings(db)?.unwrap_or_else(default_settings))
 }
 
-fn load_app_data(db: &Connection) -> Result<AppData> {
+pub fn load_app_data(db: &Connection) -> Result<AppData> {
     let mut statement = db
         .prepare(
             "SELECT username, connected, lastSyncedAt, syncedPlayTime FROM accounts ORDER BY rowid",
@@ -730,8 +575,8 @@ fn load_app_data(db: &Connection) -> Result<AppData> {
 
 /// `saveLogin`'s write: the stored login and its connected account, in one transaction. The token
 /// arrives already encrypted; the caller encrypts it with the operating system's credential store.
-fn save_login(host: &dyn Host, db: &Connection, username: &str, encrypted: &str) -> Result<Value> {
-    transaction(host, db, || {
+pub fn save_login(db: &Connection, username: &str, encrypted: &str) -> Result<AppData> {
+    transaction(db, || {
         db.execute(
             "INSERT OR REPLACE INTO tokens (username, encrypted) VALUES (?, ?)",
             params![username, encrypted],
@@ -757,20 +602,18 @@ fn save_login(host: &dyn Host, db: &Connection, username: &str, encrypted: &str)
         .sql()?;
         Ok(())
     })?;
-    as_json(load_app_data(db)?)
+    load_app_data(db)
 }
 
-/// `getToken`'s read: the stored ciphertext for an account, or null.
-fn token_ciphertext(db: &Connection, username: &str) -> Result<Value> {
-    let encrypted: Option<String> = db
-        .query_row(
-            "SELECT encrypted FROM tokens WHERE username = ? COLLATE NOCASE",
-            [username],
-            |row| row.get(0),
-        )
-        .optional()
-        .sql()?;
-    Ok(encrypted.map_or(Value::Null, Value::String))
+/// The sealed token stored for an account.
+pub fn token_ciphertext(db: &Connection, username: &str) -> Result<Option<String>> {
+    db.query_row(
+        "SELECT encrypted FROM tokens WHERE username = ? COLLATE NOCASE",
+        [username],
+        |row| row.get(0),
+    )
+    .optional()
+    .sql()
 }
 
 // ---- Games ----------------------------------------------------------------------------------
@@ -804,7 +647,7 @@ fn game_from_row(row: &Row<'_>) -> rusqlite::Result<LichessGame> {
 }
 
 /// `gamePage`: a bounded page of list rows, with the total for the same filters.
-fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
+pub fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
     let db = ctx.db;
     let query: GamePageQuery =
         serde_json::from_value(domain("assertGamePageQuery", vec![json!([]), input])?)
@@ -917,7 +760,7 @@ fn game_records(db: &Connection, sql: &str) -> Result<BTreeMap<String, GameRecor
     Ok(records.into_iter().collect())
 }
 
-fn game_library_overview(ctx: &StoreContext) -> Result<Value> {
+pub fn game_library_overview(ctx: &StoreContext) -> Result<Value> {
     if let Some(cached) = ctx.cache.overview() {
         return Ok(cached);
     }
@@ -954,7 +797,7 @@ fn game_library_overview(ctx: &StoreContext) -> Result<Value> {
 
 /// `gameRatingHistory`: the last rated rating each day, per variant. A Chess.com game records the
 /// player's rating after it and no change, so its rating stands as it is.
-fn rating_history(db: &Connection, account: &str) -> Result<Vec<RatingSeries>> {
+pub fn rating_history(db: &Connection, account: &str) -> Result<Vec<RatingSeries>> {
     let after_game = kchess_domain::chesscom::username_of(account).is_some();
     let mut statement = db
         .prepare(
@@ -996,7 +839,7 @@ fn rating_history(db: &Connection, account: &str) -> Result<Vec<RatingSeries>> {
     Ok(series)
 }
 
-fn pending_game_ids(db: &Connection, account: &str) -> Result<Vec<String>> {
+pub fn pending_game_ids(db: &Connection, account: &str) -> Result<Vec<String>> {
     let mut statement = db
         .prepare("SELECT id FROM pending_game_sync WHERE account = ? COLLATE NOCASE ORDER BY id")
         .sql()?;
@@ -1007,7 +850,7 @@ fn pending_game_ids(db: &Connection, account: &str) -> Result<Vec<String>> {
         .sql()
 }
 
-fn game_pgn(db: &Connection, account: &str, id: &str) -> Result<Value> {
+pub fn game_pgn(db: &Connection, account: &str, id: &str) -> Result<Option<String>> {
     let pgn = db
         .query_row(
             "SELECT pgn FROM games WHERE account = ? COLLATE NOCASE AND id = ?",
@@ -1016,11 +859,11 @@ fn game_pgn(db: &Connection, account: &str, id: &str) -> Result<Value> {
         )
         .optional()
         .sql()?;
-    Ok(json!(pgn.flatten()))
+    Ok(pgn.flatten())
 }
 
-/// `readApiCache`: a cached document, or null when absent or unreadable.
-fn read_api_cache(host: &dyn Host, db: &Connection, key: &str) -> Result<Value> {
+/// A cached document as `{ value, fetchedAt }`, or null when absent or unreadable.
+pub fn read_api_cache(host: &dyn Host, db: &Connection, key: &str) -> Result<Value> {
     let row = db
         .query_row(
             "SELECT value, fetchedAt FROM api_cache WHERE key = ?",
@@ -1050,15 +893,7 @@ pub const EXPORTED_GAME_CACHE: &str = "exportGame:";
 /// How many of those are kept, newest first.
 const EXPORTED_GAMES_KEPT: i64 = 200;
 
-fn write_api_cache(
-    db: &Connection,
-    key: &str,
-    value: &Value,
-    still_current: bool,
-) -> Result<Value> {
-    if !still_current {
-        return Ok(Value::Null);
-    }
+pub fn write_api_cache(db: &Connection, key: &str, value: &Value) -> Result<()> {
     db.execute(
         "INSERT OR REPLACE INTO api_cache (key, value, fetchedAt) VALUES (?, ?, ?)",
         params![key, value.to_string(), now_ms()],
@@ -1073,10 +908,10 @@ fn write_api_cache(
         )
         .sql()?;
     }
-    Ok(Value::Null)
+    Ok(())
 }
 
-fn add_account(db: &Connection, username: &str, connected: bool) -> Result<Value> {
+pub fn add_account(db: &Connection, username: &str, connected: bool) -> Result<AppData> {
     let normalized: String = serde_json::from_value(validate("assertUsername", &json!(username))?)
         .map_err(|cause| CoreError::new(cause.to_string()))?;
     let existing = db
@@ -1111,12 +946,12 @@ fn add_account(db: &Connection, username: &str, connected: bool) -> Result<Value
         [&normalized],
     )
     .sql()?;
-    as_json(load_app_data(db)?)
+    load_app_data(db)
 }
 
-/// `addFriends`: follow many players at once; validation failure rolls the whole batch back.
-fn add_friends(host: &dyn Host, db: &Connection, usernames: &[Value]) -> Result<AppData> {
-    transaction(host, db, || {
+/// Follows many players at once; validation failure rolls the whole batch back.
+pub fn add_friends(db: &Connection, usernames: &[Value]) -> Result<AppData> {
+    transaction(db, || {
         for raw in usernames {
             let name: String = serde_json::from_value(validate("assertUsername", raw)?)
                 .map_err(|cause| CoreError::new(cause.to_string()))?;
@@ -1146,7 +981,7 @@ fn add_friends(host: &dyn Host, db: &Connection, usernames: &[Value]) -> Result<
     load_app_data(db)
 }
 
-fn dismissed_friends(db: &Connection) -> Result<Vec<String>> {
+pub fn dismissed_friends(db: &Connection) -> Result<Vec<String>> {
     let mut statement = db.prepare("SELECT username FROM dismissed_friends").sql()?;
     let names = statement
         .query_map([], |row| row.get::<_, String>(0))
@@ -1231,8 +1066,8 @@ pub(super) fn purge_account_data(
     Ok(())
 }
 
-fn logout_accounts(host: &dyn Host, db: &Connection, username: Option<&str>) -> Result<AppData> {
-    transaction(host, db, || {
+pub fn logout_accounts(db: &Connection, username: Option<&str>) -> Result<AppData> {
+    transaction(db, || {
         let filter = username.map_or(SqlValue::Null, |name| SqlValue::Text(name.to_owned()));
         let accounts = {
             let mut statement = db
@@ -1269,8 +1104,8 @@ fn logout_accounts(host: &dyn Host, db: &Connection, username: Option<&str>) -> 
     load_app_data(db)
 }
 
-fn remove_account(host: &dyn Host, db: &Connection, username: &str) -> Result<AppData> {
-    transaction(host, db, || {
+pub fn remove_account(db: &Connection, username: &str) -> Result<AppData> {
+    transaction(db, || {
         // Only friends are remembered as removed; disconnecting one's own account is not a "no thanks".
         let connected = db
             .query_row(
@@ -1305,8 +1140,8 @@ fn remove_account(host: &dyn Host, db: &Connection, username: &str) -> Result<Ap
 
 /// Deletes what was downloaded for one account but keeps the account; the cursor resets so the next
 /// sync fetches everything again.
-fn clear_account_data(host: &dyn Host, db: &Connection, username: &str) -> Result<AppData> {
-    transaction(host, db, || {
+pub fn clear_account_data(db: &Connection, username: &str) -> Result<AppData> {
+    transaction(db, || {
         // The account and its data-usage history stay; only what was downloaded goes.
         purge_account_data(db, username, false).sql()?;
         db.execute(
@@ -1352,7 +1187,7 @@ fn upsert_games(
     synced_at: Option<i64>,
     reviews: &[Value],
 ) -> Result<()> {
-    transaction(host, db, || {
+    transaction(db, || {
         let exists = db
             .query_row(
                 "SELECT 1 FROM accounts WHERE username = ? COLLATE NOCASE",
@@ -1413,32 +1248,25 @@ fn upsert_games(
     })
 }
 
-fn save_games_page(
+/// One page of a sync: its games and their Lichess reviews.
+pub fn save_games_page(
     host: &dyn Host,
     db: &Connection,
     username: &str,
     games: &[Value],
     reviews: &[Value],
-    still_current: bool,
-) -> Result<Value> {
-    if !still_current {
-        return Err(CoreError::new("Sync was cancelled."));
-    }
-    upsert_games(host, db, username, games, None, reviews)?;
-    Ok(Value::Null)
+) -> Result<()> {
+    upsert_games(host, db, username, games, None, reviews)
 }
 
-fn save_games(
+/// The last page of a sync, which trims the account's games and marks it synced.
+pub fn save_games(
     host: &dyn Host,
     db: &Connection,
     username: &str,
     games: &[Value],
     synced_at: Option<i64>,
-    still_current: bool,
-) -> Result<Value> {
-    if !still_current {
-        return Err(CoreError::new("Sync was cancelled."));
-    }
+) -> Result<AppData> {
     upsert_games(
         host,
         db,
@@ -1447,25 +1275,17 @@ fn save_games(
         Some(synced_at.unwrap_or_else(now_ms)),
         &[],
     )?;
-    as_json(load_app_data(db)?)
+    load_app_data(db)
 }
 
 /// The player's Lichess play time as of their last sync, which a later profile is compared with.
-fn save_synced_play_time(
-    db: &Connection,
-    username: &str,
-    play_time: i64,
-    still_current: bool,
-) -> Result<Value> {
-    if !still_current {
-        return Err(CoreError::new("Sync was cancelled."));
-    }
+pub fn save_synced_play_time(db: &Connection, username: &str, play_time: i64) -> Result<()> {
     db.execute(
         "UPDATE accounts SET syncedPlayTime = ? WHERE username = ? COLLATE NOCASE",
         params![play_time, username],
     )
     .sql()?;
-    Ok(Value::Null)
+    Ok(())
 }
 
 #[cfg(test)]

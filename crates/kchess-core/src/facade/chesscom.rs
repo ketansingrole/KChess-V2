@@ -3,6 +3,8 @@
 use super::args::{arg, normal};
 use crate::core::Core;
 use crate::error::{CoreError, Result};
+use crate::store::chesscom;
+use crate::store::games::as_json;
 use serde_json::Value;
 
 impl Core {
@@ -18,7 +20,7 @@ impl Core {
         match method {
             "chesscomAccounts" => {
                 self.database
-                    .call_async("store.chesscom.accounts", &[])
+                    .read_async(|ctx| as_json(chesscom::accounts(ctx.db)?))
                     .await
             }
             "addChesscomAccount" => {

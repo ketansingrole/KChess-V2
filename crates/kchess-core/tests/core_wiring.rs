@@ -253,12 +253,7 @@ async fn a_review_update_carries_the_stored_review_and_its_summary() {
     let core = core(&host, dir.path());
     let script = support::engine_copy(dir.path(), "review");
     // Point the review at the scripted engine through the settings the store keeps.
-    let mut settings = core
-        .call_sync("store.games.getSettings", vec![])
-        .expect("settings");
-    settings["enginePath"] = json!(script);
-    core.call_sync("store.games.saveSettings", vec![settings])
-        .expect("save");
+    support::save_engine_path(&core, &script);
     core.call("reviews.setup", vec![]).await.expect("setup");
     core.call(
         "reviews.request",

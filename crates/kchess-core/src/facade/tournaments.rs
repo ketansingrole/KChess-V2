@@ -1,12 +1,29 @@
-//! The facade's tournaments (`run_facade` arms, moved without changes).
+//! The facade's tournaments.
 
-use super::args::{arg, normal, now_ms};
+use super::args::{arg, normal, now_ms, text};
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use crate::store::library;
 use serde_json::{Value, json};
 
 impl Core {
+    /// Forgets one account's membership of a tournament, or every account's without one.
+    async fn forget_tournament(
+        &self,
+        system: &Value,
+        id: &Value,
+        account: Option<&Value>,
+    ) -> Result<()> {
+        let (system, id) = (text(system), text(id));
+        let account = account.map(text);
+        self.database
+            .write_async(move |ctx| {
+                library::forget_tournament(ctx.host, ctx.db, &system, &id, account.as_deref())
+            })
+            .await
+    }
+
     /// Answers the facade's tournaments methods.
     pub(crate) async fn run_tournaments(&self, method: &str, args: &[Value]) -> Result<Value> {
         match method {
@@ -31,15 +48,13 @@ impl Core {
                 if system.as_str() == Some("arena") {
                     // An arena that is over is over for every account.
                     if detail["status"].as_str() == Some("finished") {
-                        self.inner("store.library.forgetTournament", vec![system, id])
-                            .await?;
+                        self.forget_tournament(&system, &id, None).await?;
                     } else if account.as_str().is_some_and(|name| !name.is_empty())
                         && (detail["me"].is_null()
                             || detail["me"]["withdraw"].as_bool() == Some(true))
                     {
                         // `me` is the looked-up account's place only: another account's stays.
-                        self.inner("store.library.forgetTournament", vec![system, id, account])
-                            .await?;
+                        self.forget_tournament(&system, &id, Some(&account)).await?;
                     }
                 }
                 Ok(detail)
@@ -96,7 +111,9 @@ impl Core {
                     ),
                 }
                 self.database
-                    .call_async("store.library.rememberTournament", &[entry, json!(now)])
+                    .write_async(move |ctx| {
+                        library::remember_tournament(ctx.host, ctx.db, &entry, now as f64)
+                    })
                     .await?;
                 Ok(result)
             }
@@ -111,8 +128,7 @@ impl Core {
                     )
                     .await?;
                 if result == json!(true) {
-                    self.inner("store.library.forgetTournament", vec![system, id, account])
-                        .await?;
+                    self.forget_tournament(&system, &id, Some(&account)).await?;
                 }
                 Ok(result)
             }
