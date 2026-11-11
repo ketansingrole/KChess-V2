@@ -262,7 +262,8 @@ impl Client {
         &self.release
     }
 
-    /// Runs a core method; the future resolves on any executor.
+    /// Runs a core method; the future resolves on any executor. Dropped before its answer, it
+    /// cancels the call: the core stops the work, not only the reply (`cancel`).
     pub fn call(
         &self,
         method: &str,
@@ -287,14 +288,16 @@ impl Client {
             if !admitted {
                 return Err(STOPPED.into());
             }
-            if sender.send(frame).await.is_err() {
-                if let Ok(mut pending) = pending.lock()
-                    && let Some(pending) = pending.as_mut()
-                {
-                    pending.remove(&id);
-                }
+            let mut call = Unanswered {
+                id,
+                sender,
+                pending,
+                sent: false,
+            };
+            if call.sender.send(frame).await.is_err() {
                 return Err(STOPPED.into());
             }
+            call.sent = true;
             answered.await.unwrap_or_else(|_| Err(STOPPED.into()))
         }
     }
@@ -307,6 +310,30 @@ impl Client {
     /// Tells the core this client has no window open: what it started stops.
     pub fn suspend(&self) {
         let _ = self.sender.try_send(Frame::Suspend);
+    }
+}
+
+/// A call on its way. Dropped before its answer arrived (which takes it out of `pending`), it
+/// forgets the call and, once sent, tells the core to cancel it.
+struct Unanswered {
+    id: u64,
+    sender: mpsc::Sender<Frame>,
+    pending: Pending,
+    sent: bool,
+}
+
+impl Drop for Unanswered {
+    fn drop(&mut self) {
+        let waiting = self
+            .pending
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.as_mut().and_then(|p| p.remove(&self.id)));
+        // A full queue means the core is not reading; the connection then ends, and the call
+        // with it.
+        if self.sent && waiting.is_some() {
+            let _ = self.sender.try_send(Frame::Cancel { id: self.id });
+        }
     }
 }
 
