@@ -197,6 +197,40 @@ fn the_commands_used_last_are_offered_first_and_kept(cx: &mut gpui_kit::TestAppC
     wait_until_listed(&mut app, "New analysis board");
 }
 
+/// The analysis board opens only once it has read its saved session. Quick Pick opened again
+/// before that answer was closed by the board taking the keys as it opened, so the person's
+/// search was lost (`the_commands_used_last_are_offered_first_and_kept` timed out under load).
+#[gpui_kit::test]
+fn a_page_opening_after_its_read_leaves_quick_pick_open(cx: &mut gpui_kit::TestAppContext) {
+    use crate::game::session::{Resumes, SessionSaver};
+    let mut app = Harness::start(cx);
+    let board = app.with_window(|window, cx| {
+        crate::pages::analysis::board(window, cx).expect("the analysis board")
+    });
+    app.wait_for("the board's saved session to be read", |_, cx| {
+        board.update(cx, |page, _| page.saver().loaded())
+    });
+    // As on a slow profile: the read has not answered yet.
+    app.cx
+        .update(|cx| board.update(cx, |page, _| page.saver().forget()));
+
+    run_command(&mut app, "New analysis board");
+    app.press("secondary-k");
+    app.type_text("puz");
+    wait_for_first(&mut app, "Puzzles");
+    app.with_window(|window, cx| {
+        board.update(cx, |page, cx| SessionSaver::answer(page, window, cx))
+    });
+    app.wait_for_page(Page::Analysis);
+    // Still searching: the board opened behind Quick Pick, which keeps the keys.
+    assert!(lists(&mut app, "Puzzles"));
+    app.type_text("zles");
+    wait_for_first(&mut app, "Puzzles");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.wait_for_page(Page::Puzzles);
+}
+
 #[gpui_kit::test]
 fn the_interface_zoom_steps_with_the_keys_and_is_kept(cx: &mut gpui_kit::TestAppContext) {
     use crate::interface_zoom::{InterfaceZoom, Setting};
