@@ -493,4 +493,48 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].judgment, "3");
     }
+
+    /// A drill's schedule reads back as the numbers it was stored with.
+    #[test]
+    fn a_drill_reads_its_schedule() {
+        let doc = json!({ "version": 1, "items": [
+            { "id": "m", "fen": START, "solution": ["e2e4"], "dueAt": 1234.5, "streak": 2, "attempts": 3 },
+        ]});
+        let drill = &decode_mistakes(&doc).unwrap()[0];
+        assert_eq!(
+            (drill.due_at_ms(), drill.streak(), drill.attempts()),
+            (1234.5, 2.0, 3.0)
+        );
+    }
+
+    /// A study finds a chapter by its id and keeps when it was last changed.
+    #[test]
+    fn a_study_finds_its_chapters_by_id() {
+        let study = decode_study(
+            &json!({ "id": "s", "name": "S", "pgn": "1. e4 *", "updatedAt": 1234.5,
+            "chapters": [
+                { "id": "c1", "name": "One", "pgn": "1. e4 *" },
+                { "id": "c2", "name": "Two", "pgn": "1. d4 *" },
+            ] }),
+        )
+        .unwrap();
+        assert_eq!(study.updated_at_ms(), 1234.5);
+        assert_eq!(study.chapter("c2").map(|c| c.name.as_str()), Some("Two"));
+        assert_eq!(study.chapter("c1").map(|c| c.name.as_str()), Some("One"));
+        assert_eq!(study.chapter("c3"), None);
+    }
+
+    /// A played game keeps the variant it was played in, and one KChess does not know is
+    /// refused rather than read as standard chess.
+    #[test]
+    fn a_played_game_keeps_its_variant() {
+        let mut atomic = game(&["e2e4"]);
+        atomic["setup"]["variant"] = json!("atomic");
+        assert_eq!(
+            decode_archived_game(&atomic).unwrap().setup.variant,
+            Variant::Atomic
+        );
+        atomic["setup"]["variant"] = json!("shogi");
+        assert!(decode_archived_game(&atomic).is_none());
+    }
 }

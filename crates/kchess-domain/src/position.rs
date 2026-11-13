@@ -400,10 +400,8 @@ pub fn fen_problem(fen: &str) -> Option<FenProblem> {
     if board.occupied().is_empty() {
         return Some(FenProblem::Empty);
     }
-    if board.kings().count() != 2 || board.king_of(turn).is_none() {
-        return Some(FenProblem::Kings);
-    }
-    let Some(other) = board.king_of(!turn) else {
+    // A side's king is one king of its colour, so two of them are the board's two kings.
+    let (Some(_), Some(other)) = (board.king_of(turn), board.king_of(!turn)) else {
         return Some(FenProblem::Kings);
     };
     if board.attacks_to(other, turn, board.occupied()).any() {
@@ -727,6 +725,33 @@ mod tests {
         assert_eq!(
             fen_problem("4k3/8/8/8/8/PPPPPPPP/PPPPPPPP/RNBQKBNR w - - 0 1").map(FenProblem::as_str),
             Some("tooManyPieces")
+        );
+    }
+
+    /// Each problem tells the player what is wrong in its own words.
+    #[test]
+    fn each_fen_problem_has_its_own_message() {
+        let messages = [
+            FenProblem::Fen,
+            FenProblem::Empty,
+            FenProblem::Kings,
+            FenProblem::OppositeCheck,
+            FenProblem::PawnsOnBackrank,
+            FenProblem::TooManyPieces,
+            FenProblem::Illegal,
+        ]
+        .map(FenProblem::message);
+        assert_eq!(
+            messages,
+            [
+                "That is not a valid FEN",
+                "The board is empty",
+                "Each side needs exactly one king",
+                "The side not to move is in check",
+                "Pawns can’t stand on the first or last rank",
+                "Each side can have at most 16 pieces",
+                "This position is not legal",
+            ]
         );
     }
 

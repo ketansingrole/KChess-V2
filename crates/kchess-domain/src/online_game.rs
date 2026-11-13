@@ -397,7 +397,7 @@ fn settle_chat(mut run: Run, id: &str, value: Option<&Value>) -> Outcome {
 mod tests {
     use serde_json::json;
 
-    use super::model::{ClockConfig, Effect, Setup};
+    use super::model::{ChatRoom, ClockConfig, Effect, Setup};
     use super::server::ServerEvent;
     use super::*;
 
@@ -476,6 +476,48 @@ mod tests {
         model.online_phase = GamePhase::Finished;
         model.settle(&begun.pending.unwrap(), Reply::Ok(json!(true)), &ctx(20.0));
         assert_eq!(model.draw_offer, Offer::None);
+    }
+
+    /// A takeback asked for is ours, unless it answers theirs, which it accepts; declining
+    /// clears theirs.
+    #[test]
+    fn a_takeback_reply_sets_the_offer() {
+        for (action, before, after) in [
+            ("takeback", Offer::None, Offer::Mine),
+            ("takeback", Offer::Theirs, Offer::None),
+            ("declineTakeback", Offer::Theirs, Offer::None),
+        ] {
+            let mut model = playing();
+            model.takeback_offer = before;
+            let begun = model.begin(Op::Action(action.into()), &ctx(10.0));
+            model.settle(&begun.pending.unwrap(), Reply::Ok(json!(true)), &ctx(20.0));
+            assert_eq!(model.takeback_offer, after, "{action} after {before:?}");
+        }
+    }
+
+    /// The players' chat comes from Lichess; the spectators' lines already shown are kept.
+    #[test]
+    fn a_chat_reply_replaces_the_players_lines_and_keeps_the_spectators() {
+        let line = |text: &str, room: ChatRoom| ChatEntry {
+            user: Some("Bob".into()),
+            text: Some(text.into()),
+            room,
+        };
+        let mut model = playing();
+        model.chat = vec![
+            line("old", ChatRoom::Player),
+            line("watching", ChatRoom::Spectator),
+        ];
+        let begun = model.begin(Op::Chat("AbCd1234".into()), &ctx(0.0));
+        let reply = json!([{ "user": "Bob", "text": "new", "room": "player" }]);
+        model.settle(&begun.pending.unwrap(), Reply::Ok(reply), &ctx(1.0));
+        assert_eq!(
+            model.chat,
+            [
+                line("new", ChatRoom::Player),
+                line("watching", ChatRoom::Spectator)
+            ]
+        );
     }
 
     /// A move whose reply failed after the game ended turned the result into "The move could not

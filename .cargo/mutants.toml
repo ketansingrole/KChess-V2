@@ -29,6 +29,15 @@ exclude_re = [
     # A uniform draw picks White half the time whether below or above 0.5 counts, and exactly
     # 0.5 has no weight.
     'kchess-games/src/lib\.rs:.*: replace < with (>|<=) in draw_color',
+    # A review with a score for every position is told its positions' ends too when `<` becomes
+    # `<=`: only `eval_at` reads them, and it reads a position's score first, so the analysis is
+    # the same; the ends only cost the time to work them out.
+    'kchess-domain/src/review\.rs:.*: replace < with <= in analyse_moves$',
+    # A move is Good below a loss of 5 and `<=` differs only at exactly 5, which no score
+    # reaches: the loss is 50 times a difference of winning chances, each `2 / (1 + exp) - 1` and
+    # so a multiple of 2^-53, and none of those lies within half an ulp of 5 / 50. (Searched over
+    # 60,000 starting scores too: the nearest is 5.000000000000004.)
+    'kchess-domain/src/review\.rs:.*: replace < with <= in classifications$',
     # Every numeric setting (the sound volume and the correspondence poll) has its own arm before
     # it, so no stored setting reaches the general numeric arm: without it, `_ => None` answers
     # what it would have.

@@ -242,6 +242,24 @@ mod tests {
         assert_eq!(board.turn_after(0), Color::White);
     }
 
+    /// The board says where its moves lead: the position, a mate's winner and a repetition.
+    #[test]
+    fn a_board_reads_its_position_winner_and_draw() {
+        let moves = |list: &[&str]| list.iter().map(|m| m.to_string()).collect();
+        let mate = Board::new(Setup::standard(), moves(&["f2f3", "e7e5", "g2g4", "d8h4"])).unwrap();
+        assert_eq!(mate.outcome_winner(), Some(Color::Black));
+        assert_eq!(mate.draw(), None);
+        assert_eq!(
+            shakmaty::Position::board(mate.position()).to_string(),
+            "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR"
+        );
+        let knights = ["g1f3", "g8f6", "f3g1", "f6g8"];
+        let repeated: Vec<&str> = knights.iter().chain(&knights).copied().collect();
+        let draw = Board::new(Setup::standard(), moves(&repeated)).unwrap();
+        assert!(draw.draw().is_some());
+        assert_eq!(draw.outcome_winner(), None);
+    }
+
     #[test]
     fn outcomes_read_and_write_as_pgn_tags() {
         for outcome in [

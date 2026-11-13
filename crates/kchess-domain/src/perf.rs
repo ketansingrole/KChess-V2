@@ -147,4 +147,29 @@ mod tests {
         }
         assert_eq!(Speed::from_key("chess960"), None);
     }
+
+    /// A perf is labelled as its speed or its variant is.
+    #[test]
+    fn a_perf_reads_as_its_speed_or_variant() {
+        let labels: Vec<&str> = Perf::ALL.into_iter().map(Perf::label).collect();
+        assert_eq!(
+            labels,
+            [
+                "UltraBullet",
+                "Bullet",
+                "Blitz",
+                "Rapid",
+                "Classical",
+                "Correspondence",
+                "Chess960",
+                "King of the Hill",
+                "Three-check",
+                "Antichess",
+                "Atomic",
+                "Horde",
+                "Racing Kings",
+                "Crazyhouse",
+            ]
+        );
+    }
 }

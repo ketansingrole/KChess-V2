@@ -189,11 +189,13 @@ fn judge(before: Score, after: Score, mover_white: bool) -> Option<Judgment> {
         .mate
         .filter(|&m| m != 0.0)
         .map(|m| pov(mover_white, m));
+    // A mate after the move is never 0 (that one is delivered), so its sign says who mates.
+    let mated = |m: f64| m.is_sign_negative();
     let delivered = after.mate == Some(0.0);
     let cp_before = before.cp.map_or(0.0, |cp| pov(mover_white, clamp_cp(cp)));
     let cp_after = after.cp.map_or(0.0, |cp| pov(mover_white, clamp_cp(cp)));
     if !delivered {
-        if mate_before.is_none() && mate_after.is_some_and(|m| m < 0.0) {
+        if mate_before.is_none() && mate_after.is_some_and(mated) {
             return Some(if cp_before < -999.0 {
                 Judgment::Inaccuracy
             } else if cp_before < -700.0 {
@@ -202,7 +204,7 @@ fn judge(before: Score, after: Score, mover_white: bool) -> Option<Judgment> {
                 Judgment::Blunder
             });
         }
-        if mate_before.is_some_and(|m| m > 0.0) && mate_after.is_none_or(|m| m < 0.0) {
+        if mate_before.is_some_and(|m| m > 0.0) && mate_after.is_none_or(mated) {
             return Some(if cp_after > 999.0 {
                 Judgment::Inaccuracy
             } else if cp_after > 700.0 {
@@ -1132,6 +1134,70 @@ mod tests {
     #[test]
     fn never_judges_the_mating_move() {
         assert_eq!(judge(mate(-1.0), mate(0.0), false), None);
+    }
+
+    /// The bands of a mate walked into or missed include their lower edge (-999 and -700, 999
+    /// and 700 centipawns) in the milder label; a side already mated has no forced mate to miss.
+    #[test]
+    fn mate_judgments_start_their_bands_at_the_edge() {
+        use Judgment::{Blunder, Mistake};
+        for (before, after, judgment) in [
+            (cp(-999.0), mate(-3.0), Some(Mistake)),
+            (cp(-700.0), mate(-3.0), Some(Blunder)),
+            (mate(2.0), cp(999.0), Some(Mistake)),
+            (mate(2.0), cp(700.0), Some(Blunder)),
+            (mate(0.0), cp(0.0), None),
+        ] {
+            assert_eq!(judge(before, after, true), judgment, "{before:?} {after:?}");
+            let flip = |s: Score| Score {
+                cp: s.cp.map(|v| -v),
+                mate: s.mate.map(|v| -v),
+            };
+            assert_eq!(judge(flip(before), flip(after), false), judgment);
+        }
+    }
+
+    /// A review missing its last position's score still sees the mate the last move gave.
+    #[test]
+    fn a_mate_ending_a_review_counts_without_its_score() {
+        let review = stored(json!({
+            "fen": INITIAL_FEN, "moves": ["f2f3", "e7e5", "g2g4", "d8h4"],
+            "evals": [{ "cp": 20 }, { "cp": -30 }, { "cp": -20 }, { "cp": -400 }],
+        }));
+        let analysis = analyse(&review).unwrap();
+        assert_eq!(analysis.moves[3].chances, Some(-1.0));
+    }
+
+    /// Each side's figures, and its accuracy in each phase, are its own.
+    #[test]
+    fn each_side_reads_its_own_figures() {
+        let review = stored(json!({
+            "fen": INITIAL_FEN, "moves": ["e2e4", "e7e5", "d1h5"],
+            "evals": [{ "cp": 20 }, { "cp": 30 }, { "cp": 30 }, { "cp": -400 }],
+        }));
+        let analysis = analyse(&review).unwrap();
+        assert_eq!(analysis.side(Color::White).blunder, 1);
+        assert_eq!(analysis.side(Color::White), &analysis.white);
+        assert_eq!(analysis.side(Color::Black), &analysis.black);
+        let phases = phases(&review).unwrap();
+        assert!(phases.side(Color::White).opening.is_some());
+        assert_eq!(phases.side(Color::White), &phases.white);
+        assert_eq!(phases.side(Color::Black), &phases.black);
+    }
+
+    /// A sacrifice is brilliant only from a deep enough search before the move as well as after,
+    /// and a mate found for the mover keeps it sound; a mate against them, or none, does not.
+    #[test]
+    fn brilliant_needs_both_depths_and_reads_a_mate_for_the_mover() {
+        use Classification::{Best, Brilliant};
+        let mut shallow = sacrifice_review();
+        shallow["evals"][0]["depth"] = json!(10);
+        assert_eq!(classify(&shallow), Some(vec![Some(Best)]));
+        for (mate, label) in [(5, Brilliant), (0, Best)] {
+            let mut raw = sacrifice_review();
+            raw["evals"][1] = json!({ "mate": mate, "depth": 18, "pv": ["g8h7", "f3g5"] });
+            assert_eq!(classify(&raw), Some(vec![Some(label)]), "mate {mate}");
+        }
     }
 
     #[test]

@@ -87,3 +87,19 @@ impl<'de, V: Deserialize<'de>> Deserialize<'de> for Keyed<V> {
         deserializer.deserialize_map(Entries(std::marker::PhantomData))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Keys come back in the order first read, each with its last value.
+    #[test]
+    fn reads_its_entries_in_their_first_order() {
+        let empty = Keyed::<u32>::default();
+        assert!(empty.is_empty());
+        assert_eq!(empty.iter().count(), 0);
+        let keyed: Keyed<u32> = serde_json::from_str(r#"{"b": 1, "a": 2, "b": 3}"#).unwrap();
+        assert!(!keyed.is_empty());
+        assert_eq!(keyed.iter().collect::<Vec<_>>(), [("b", &3), ("a", &2)]);
+    }
+}
