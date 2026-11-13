@@ -148,6 +148,7 @@ mod tests {
         );
         assert!(!board.player_move("c4f7").0);
         assert_eq!(board.status(), PuzzleStatus::Playing);
+        assert!(!board.solved());
         assert!(board.player_move("h5f7").0);
         assert_eq!(board.status(), PuzzleStatus::Solved);
         assert_eq!(board.last_san(), "Qxf7#");
