@@ -566,10 +566,11 @@ impl ComputerGame {
         self.cancel(&mut fx);
         self.state.resigned = false;
         self.state.flagged = None;
-        let mut kept = self.state.moves.len() - 1;
-        while kept > 0 && self.board.turn_after(kept) != self.state.color {
-            kept -= 1;
-        }
+        // The last position before the latest move with the player to move, else the start.
+        let kept = (1..self.state.moves.len())
+            .rev()
+            .find(|&kept| self.board.turn_after(kept) == self.state.color)
+            .unwrap_or(0);
         let moves = self.state.moves[..kept].to_vec();
         if let Ok(board) = Board::new(self.state.setup.clone(), moves) {
             self.set_board(board);
@@ -913,6 +914,190 @@ mod tests {
         let game = ComputerGame::resume(Some(serde_json::from_value(flagged).unwrap()), &host(0.))
             .unwrap();
         assert_eq!(json!(game.snapshot(0.))["flagged"], "white");
+    }
+
+    /// A game of `moves` from the usual start with the player on `color`.
+    fn game_of(moves: &[&str], color: Color) -> ComputerGame {
+        let state = State {
+            moves: moves.iter().map(|m| m.to_string()).collect(),
+            ply: moves.len(),
+            color,
+            ..State::from_saved(Saved::default())
+        };
+        ComputerGame::new(state, Runtime::start(&host(0.))).unwrap()
+    }
+
+    /// A takeback goes back to the player's last turn: past the engine's reply and the player's
+    /// own move, to the start when that was the player's only one.
+    #[test]
+    fn a_takeback_returns_to_the_players_last_turn() {
+        let table: [(&[&str], Color, &[&str]); 4] = [
+            (&["e2e4"], Color::White, &[]),
+            (&["e2e4", "e7e5"], Color::White, &[]),
+            (
+                &["e2e4", "e7e5", "g1f3", "b8c6"],
+                Color::White,
+                &["e2e4", "e7e5"],
+            ),
+            (&["e2e4", "e7e5", "g1f3"], Color::Black, &["e2e4"]),
+        ];
+        for (moves, color, kept) in table {
+            let mut game = game_of(moves, color);
+            assert_eq!(
+                game.takeback(&host(1.)),
+                [Effect::StopEngine, Effect::ComputerTurn]
+            );
+            assert_eq!(game.moves(), kept, "{moves:?} as {color:?}");
+            assert_eq!(game.ply(), kept.len());
+        }
+    }
+
+    /// What the views read: the move shown, the level, the clock and whether it runs.
+    #[test]
+    fn a_game_reports_its_ply_level_and_clock() {
+        let mut game = game_of(&["e2e4", "e7e5", "g1f3"], Color::White);
+        assert_eq!(game.ply(), 3);
+        game.show_ply(2);
+        assert_eq!(game.ply(), 2);
+        game.show_ply(9);
+        assert_eq!(game.ply(), 3);
+        assert_eq!(game.level(), "club");
+        let level = &engine_levels::ladder()[0].id;
+        game.set_level(level);
+        assert_eq!(game.level(), level);
+        assert_eq!(game.clock(), None);
+        assert!(!game.timed());
+        let clock = Clock {
+            minutes: 3.,
+            increment: 2.,
+        };
+        game.start(None, Some(Some(clock)), &host(0.)).unwrap();
+        assert_eq!(game.clock(), Some(clock));
+        assert!(game.timed());
+        assert_eq!(game.draw(), None);
+    }
+
+    /// Each way a game ends on its own ends it: mate, and a draw by repetition.
+    #[test]
+    fn mate_and_repetition_end_the_game() {
+        let mate = game_of(&["f2f3", "e7e5", "g2g4", "d8h4"], Color::White);
+        assert!(mate.over());
+        assert_eq!(mate.draw(), None);
+        assert_eq!(mate.result().unwrap().kind, Kind::Loss);
+        let shuffle = ["g1f3", "g8f6", "f3g1", "f6g8"].repeat(2);
+        let repeated = game_of(&shuffle, Color::White);
+        assert!(repeated.draw().is_some());
+        assert!(!repeated.board().info().end);
+        assert!(repeated.over());
+        assert_eq!(repeated.result().unwrap().kind, Kind::Draw);
+    }
+
+    /// The player moves only when every condition holds; each one alone refuses the move.
+    #[test]
+    fn a_move_is_refused_unless_it_is_the_players_turn_to_make() {
+        let played = |game: &mut ComputerGame, host: Host| game.play("g1f3", &host).0;
+        let fresh = || game_of(&["e2e4", "e7e5"], Color::White);
+        assert!(played(&mut fresh(), host(1.)));
+
+        let mut disposed = fresh();
+        disposed.runtime.disposed = true;
+        assert!(!played(&mut disposed, host(1.)));
+        let refused = Host {
+            allowed: false,
+            ..host(1.)
+        };
+        assert!(!played(&mut fresh(), refused));
+        let busy = Host {
+            ready: false,
+            ..host(1.)
+        };
+        assert!(!played(&mut fresh(), busy));
+        let mut looking_back = fresh();
+        looking_back.show_ply(1);
+        assert!(!played(&mut looking_back, host(1.)));
+        let mut thinking = fresh();
+        thinking.state.thinking = true;
+        assert!(!played(&mut thinking, host(1.)));
+        let mut black = game_of(&["e2e4", "e7e5"], Color::Black);
+        assert!(!played(&mut black, host(1.)));
+        let mut resigned = fresh();
+        resigned.resign();
+        assert!(!played(&mut resigned, host(1.)));
+    }
+
+    /// The engine searches only on its turn in a game going on, ready and allowed, and not
+    /// already searching; each condition alone holds the search back.
+    #[test]
+    fn a_search_starts_only_when_due() {
+        let fresh = || game_of(&["e2e4"], Color::White);
+        let starts =
+            |game: &mut ComputerGame, host: Host| game.search_start(&host).unwrap().is_some();
+        assert!(starts(&mut fresh(), host(1.)));
+
+        let mut disposed = fresh();
+        disposed.runtime.disposed = true;
+        assert!(!starts(&mut disposed, host(1.)));
+        let mut thinking = fresh();
+        thinking.state.thinking = true;
+        assert!(!starts(&mut thinking, host(1.)));
+        assert!(!starts(&mut game_of(&["e2e4"], Color::Black), host(1.)));
+        let mut resigned = fresh();
+        resigned.state.resigned = true;
+        assert!(!starts(&mut resigned, host(1.)));
+        let not_ready = Host {
+            ready: false,
+            ..host(1.)
+        };
+        assert!(!starts(&mut fresh(), not_ready));
+        let refused = Host {
+            allowed: false,
+            ..host(1.)
+        };
+        assert!(!starts(&mut fresh(), refused));
+    }
+
+    /// The engine's reply is played only while it is still wanted; each stale condition alone
+    /// drops it.
+    #[test]
+    fn a_reply_is_played_only_while_wanted() {
+        let searching = || {
+            let mut game = game_of(&["e2e4"], Color::White);
+            let request = game.search_start(&host(1.)).unwrap().unwrap();
+            (game, request)
+        };
+        let played = |game: &mut ComputerGame, epoch: u64, count: usize, host: Host| {
+            game.reply(epoch, count, "e7e5", &host);
+            game.moves().len() == 2
+        };
+        let (mut game, request) = searching();
+        assert!(played(&mut game, request.epoch, request.count, host(2.)));
+
+        let (mut game, request) = searching();
+        game.runtime.disposed = true;
+        assert!(!played(&mut game, request.epoch, request.count, host(2.)));
+        let (mut game, request) = searching();
+        assert!(!played(
+            &mut game,
+            request.epoch + 1,
+            request.count,
+            host(2.)
+        ));
+        let (mut game, request) = searching();
+        assert!(!played(
+            &mut game,
+            request.epoch,
+            request.count + 1,
+            host(2.)
+        ));
+        let (mut game, request) = searching();
+        game.state.resigned = true;
+        assert!(!played(&mut game, request.epoch, request.count, host(2.)));
+        let (mut game, request) = searching();
+        let refused = Host {
+            allowed: false,
+            ..host(2.)
+        };
+        assert!(!played(&mut game, request.epoch, request.count, refused));
     }
 
     #[test]

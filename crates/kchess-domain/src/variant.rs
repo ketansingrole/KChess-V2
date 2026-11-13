@@ -295,4 +295,64 @@ mod tests {
         assert!(Setup::standard().is_standard_start());
         assert!(!Setup::of(Variant::Chess960).is_standard_start());
     }
+
+    /// Each variant's engine name, rules for a draw by repetition and picker hint.
+    #[test]
+    fn each_variant_names_its_engine_repetition_and_hint() {
+        let table = [
+            (Variant::Standard, None, true, "Normal chess."),
+            (Variant::Chess960, None, true, "Pieces on the back rank"),
+            (
+                Variant::KingOfTheHill,
+                Some("kingofthehill"),
+                true,
+                "four centre squares",
+            ),
+            (
+                Variant::ThreeCheck,
+                Some("3check"),
+                true,
+                "check three times",
+            ),
+            (
+                Variant::Antichess,
+                Some("antichess"),
+                false,
+                "Captures are forced",
+            ),
+            (Variant::Atomic, Some("atomic"), true, "Captures explode"),
+            (Variant::Horde, Some("horde"), false, "36 pawns"),
+            (
+                Variant::RacingKings,
+                Some("racingkings"),
+                false,
+                "No checks",
+            ),
+            (
+                Variant::Crazyhouse,
+                Some("crazyhouse"),
+                false,
+                "change sides",
+            ),
+        ];
+        for (variant, fairy, repetition, hint) in table {
+            assert_eq!(variant.fairy_name(), fairy, "{variant:?}");
+            assert_eq!(variant.counts_repetition(), repetition, "{variant:?}");
+            assert!(variant.hint().contains(hint), "{variant:?}");
+        }
+    }
+
+    /// A setup's position is its own variant's, from its own FEN; none for an unusable FEN.
+    #[test]
+    fn a_setup_reads_its_own_position() {
+        let position = Setup::of(Variant::Crazyhouse).position().unwrap();
+        assert_eq!(
+            crate::rules::variant_of(&position),
+            shakmaty::variant::Variant::Crazyhouse
+        );
+        let fen = "4k3/8/8/8/8/8/8/4K2R w K - 0 1";
+        let position = Setup::standard_at(fen).position().unwrap();
+        assert_eq!(crate::rules::make_fen(&position), fen);
+        assert!(Setup::standard_at("not a fen").position().is_none());
+    }
 }

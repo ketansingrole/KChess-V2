@@ -892,4 +892,17 @@ mod tests {
         assert!(moves.contains(&"e four".to_string()) && moves.contains(&"knight".to_string()));
         assert!(grammar(Grammar::Game).contains(&"take back".to_string()));
     }
+
+    /// Silence is no move and no cancel; a cancel word is a cancel, and a square a move.
+    #[test]
+    fn silence_is_not_a_cancel() {
+        use super::{SpokenMove, spoken_move};
+        let start = crate::rules::default_position(shakmaty::variant::Variant::Chess);
+        assert_eq!(spoken_move("", &start), SpokenMove::Invalid);
+        assert_eq!(spoken_move("cancel", &start), SpokenMove::Cancel);
+        assert!(matches!(
+            spoken_move("e four", &start),
+            SpokenMove::Move { choices } if choices[0].uci == "e2e4"
+        ));
+    }
 }

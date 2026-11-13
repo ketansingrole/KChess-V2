@@ -352,6 +352,41 @@ mod tests {
     }
 
     #[test]
+    fn a_solve_is_over_once_it_is_not_being_played() {
+        assert!(!PuzzleStatus::Playing.is_over());
+        for status in [
+            PuzzleStatus::Solved,
+            PuzzleStatus::Failed,
+            PuzzleStatus::Revealed,
+        ] {
+            assert!(status.is_over(), "{status:?}");
+        }
+    }
+
+    /// A drop marks the square it lands on, only in a variant with drops and on a real square.
+    #[test]
+    fn a_drop_marks_its_square_in_a_drill_of_a_variant() {
+        let start = |variant| {
+            start_puzzle(
+                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[Nn] w KQkq - 0 1",
+                None,
+                variant,
+            )
+        };
+        let crazyhouse = start(Variant::Crazyhouse);
+        let pos = position_of(&crazyhouse);
+        let f3 = Some(vec!["f3".to_string(), "f3".to_string()]);
+        assert_eq!(drill_squares(&crazyhouse, pos.as_ref(), "N@f3"), f3);
+        assert_eq!(drill_squares(&crazyhouse, pos.as_ref(), "N@z9"), None);
+        let standard = start(Variant::Standard);
+        assert_ne!(drill_squares(&standard, None, "N@f3"), f3);
+        assert_eq!(
+            drill_squares(&crazyhouse, pos.as_ref(), "e2e4"),
+            Some(vec!["e2".to_string(), "e4".to_string()])
+        );
+    }
+
+    #[test]
     fn move_numbers_and_squares() {
         assert!(is_move_number("12."));
         assert!(is_move_number("3..."));

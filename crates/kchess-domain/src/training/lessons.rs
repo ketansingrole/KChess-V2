@@ -739,6 +739,34 @@ mod tests {
         assert_eq!(hint(fen, &task, &m(&[])).unwrap().as_deref(), Some("e2e8"));
     }
 
+    /// A repetition reached stays reached, and material lost stays lost, whatever is played
+    /// after.
+    #[test]
+    fn a_repetition_or_a_loss_of_material_is_kept_past_later_moves() {
+        let fen = "7k/8/8/8/8/8/8/R5K1 w - - 0 1";
+        let task = Task::Mate { within: 20 };
+        let shuffle = ["a1a2", "h8g8", "a2a1", "g8h8"].repeat(2);
+        let mut moves = m(&shuffle);
+        moves.push("a1a2".into());
+        let after = status(fen, &task, &moves).unwrap();
+        assert_eq!(
+            (after.over, after.success, after.reason),
+            (true, Some(false), Some(Reason::Repetition))
+        );
+
+        let fen = "r6k/8/8/8/8/8/8/R5K1 w - - 0 1";
+        let task = Task::Play {
+            goal: Goal::Mate,
+            within: 10,
+            squares: Vec::new(),
+        };
+        let after = status(fen, &task, &m(&["a1a7", "a8a7", "g1f2"])).unwrap();
+        assert_eq!(
+            (after.over, after.success, after.reason),
+            (true, Some(false), Some(Reason::MaterialLost))
+        );
+    }
+
     #[test]
     fn lines_follow_the_script_and_accept_any_final_mate() {
         let fen = "6k1/8/6K1/8/8/8/8/R7 w - - 0 1";

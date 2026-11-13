@@ -113,10 +113,10 @@ pub fn parse_info(text: &str, white_to_move: bool) -> Option<Info> {
     if cp.is_none() && mate.is_none() {
         return None;
     }
-    let sign = if white_to_move { 1.0 } else { -1.0 };
+    let white = |score: f64| if white_to_move { score } else { -score };
     let (cp, mate) = match mate.filter(|m| m.is_finite()) {
-        Some(mate) => (None, Some(mate * sign)),
-        None => (Some(cp.filter(|c| c.is_finite())? * sign), None),
+        Some(mate) => (None, Some(white(mate))),
+        None => (Some(white(cp.filter(|c| c.is_finite())?)), None),
     };
     Some(Info {
         line: InfoLine {
@@ -149,5 +149,22 @@ mod tests {
         assert_eq!(line.line.pv, ["b1c3", "d5e6", "P@b4", "e7e8k"]);
         let line = parse_info("info depth 9 score cp 50 pv e2e4 K@e5 p@e4", true).unwrap();
         assert_eq!(line.line.pv, ["e2e4"]);
+        // A king promotion is four squares and a `k`; nothing else ending in `k` is a move.
+        let line = parse_info("info depth 9 score cp 5 pv e7e8k zzzzk e7e8qk", true).unwrap();
+        assert_eq!(line.line.pv, ["e7e8k"]);
+    }
+
+    /// A mate's moves count from White's side: positive when White mates.
+    #[test]
+    fn a_mate_turns_to_white() {
+        let mate = |white_to_move| {
+            parse_info("info depth 5 score mate 3 pv e2e4", white_to_move)
+                .unwrap()
+                .line
+        };
+        assert_eq!((mate(true).mate, mate(true).cp), (Some(3.0), None));
+        assert_eq!(mate(false).mate, Some(-3.0));
+        let cp = parse_info("info depth 5 score cp 20 pv e2e4", true).unwrap();
+        assert_eq!(cp.line.cp, Some(20.0));
     }
 }

@@ -838,6 +838,26 @@ mod tests {
         assert_eq!(session.state().current.as_ref().unwrap()["id"], "chosen");
     }
 
+    /// What the page reads: the phase, the puzzle shown and a key that changes with each one.
+    #[test]
+    fn a_session_reports_the_puzzle_shown() {
+        let mut session = PuzzleSession::new();
+        assert_eq!(session.current(), None);
+        let first = session.puzzle_key();
+        session.show(puzzle("one"), &selection(), "");
+        assert_eq!(session.phase(), "ready");
+        assert_eq!(session.current().map(|p| &p["id"]), Some(&json!("one")));
+        session.show(puzzle("two"), &selection(), "");
+        assert_eq!(session.current().map(|p| &p["id"]), Some(&json!("two")));
+        assert_eq!(session.puzzle_key(), first + 2);
+        session.state.current = Some(Value::Null);
+        assert_eq!(session.current(), None);
+        let call = session.load_begin(&selection(), true, "").call.unwrap();
+        assert_eq!(session.phase(), "loading");
+        session.load_settled(call.resume, Ok(json!([null])), &selection(), "");
+        assert_eq!(session.phase(), "exhausted");
+    }
+
     #[test]
     fn a_hint_takes_an_attempt_off_the_rating() {
         assert!(counts_for_rating("rated", false));

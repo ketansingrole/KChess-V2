@@ -313,6 +313,30 @@ mod tests {
         assert_eq!(sessions.archive_clock, None);
     }
 
+    /// A stored computer session decodes to its type, and resumes as the game it saved.
+    #[test]
+    fn a_stored_computer_session_resumes_its_game() {
+        let sent = json!({
+            "moves": ["e2e4", "e7e5"], "ply": 1, "level": "club", "color": "black",
+            "resigned": true, "setup": { "variant": "standard", "fen": START },
+            "clock": { "minutes": 3, "increment": 2 }, "times": { "white": 1, "black": 2.5 },
+            "flagged": "white",
+        });
+        let stored = encode_session("computer", &J::from(&sent));
+        let Some(SessionDocument::Computer(session)) =
+            SessionDocument::decode(SessionKind::Computer, &stored)
+        else {
+            panic!("a computer session");
+        };
+        let saved = super::super::computer::Saved::from(session);
+        let expected: super::super::computer::Saved = serde_json::from_value(sent).unwrap();
+        assert_eq!(saved, expected);
+        assert_eq!(
+            SessionDocument::decode(SessionKind::Computer, &J::from(&json!("no"))),
+            None
+        );
+    }
+
     /// A document of another kind is not kept as this one.
     #[test]
     fn a_document_is_kept_only_as_its_kind() {
