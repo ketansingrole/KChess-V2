@@ -123,5 +123,7 @@ These stay in the reports on purpose; each is listed with the reason.
 - **The tooling's other bindings and tool runs** (xtask): the steps of `check` that run cargo
   over the workspace, what talks to GitHub through `gh`, the platform packagers (snapcraft and
   the macOS tools), and the bindings of the real environment to the functions their tests run
-  whole (`engines::run_with`, `update_key::sign_with`, `release::metadata`, `voice::outdated`).
+  whole (`engines::run_with`, `update_key::sign_with`, `release::metadata`, `voice::outdated`,
+  `app::startable`, `mutants::warm_commands`, `check::scope_report`), and `release-version`,
+  which rewrites the repository's version and notes from origin's tags.
   Each is excluded in `.cargo/mutants.toml`, naming the CI job or command that runs it.

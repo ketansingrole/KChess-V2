@@ -59,7 +59,10 @@ mod tests {
     #[test]
     fn a_chess960_start_is_drawn_from_all_960() {
         let draws: Vec<i64> = (0..64).map(|_| random_chess960().unwrap()).collect();
-        assert!(draws.iter().all(|draw| (0..960).contains(draw)), "{draws:?}");
+        assert!(
+            draws.iter().all(|draw| (0..960).contains(draw)),
+            "{draws:?}"
+        );
         let mut distinct = draws.clone();
         distinct.sort_unstable();
         distinct.dedup();

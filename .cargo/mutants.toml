@@ -77,6 +77,9 @@ exclude_re = [
     'tooling/xtask/src/voice\.rs:.*: replace stage_if_outdated -> Result<\(\)> with ',
     'tooling/xtask/src/engines\.rs:.*: replace (stockfish -> Result<PathBuf>|run -> Result) with ',
     'tooling/xtask/src/app\.rs:.*: replace engine -> Result<PathBuf> with ',
+    # `check_startable` binds the PID file's running app and the environment to `startable`,
+    # tested; only `cargo xtask app` sees the binding.
+    'tooling/xtask/src/app\.rs:.*: replace check_startable -> Result with ',
     'tooling/xtask/src/update_key\.rs:.*: replace sign -> Result with ',
     'tooling/xtask/src/release\.rs:.*: replace (verify -> Result|tag_build -> Option<String>) with ',
     # Stops the profile's running core service by its process ID; which one is outdated is
