@@ -287,7 +287,7 @@ pub fn parse_fen(fen: &str) -> Option<Setup> {
 }
 
 /// A FEN's fields, separated by runs of whitespace or `_`.
-fn split_fen(fen: &str) -> Vec<&str> {
+pub(crate) fn split_fen(fen: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;
     let mut in_sep = false;

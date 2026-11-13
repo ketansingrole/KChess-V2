@@ -261,17 +261,14 @@ impl EditorSetup {
     pub fn from_fen(text: &str) -> Option<EditorSetup> {
         let trimmed = text.trim();
         let parsed = crate::position::fen_setup(trimmed)?;
-        let fields: Vec<&str> = trimmed.split_whitespace().collect();
+        // Split as `fen_setup` read it: Lichess writes a FEN's fields with `_` between them.
+        let fields = crate::rules::split_fen(trimmed);
         let rights = castling_letters(&parsed.board, fields.get(2).copied().unwrap_or("-"));
+        // `fen_setup` read the square, so it is `-` or a square: kept on the third or sixth rank.
         let ep = fields
             .get(3)
             .copied()
-            .filter(|ep| {
-                let bytes = ep.as_bytes();
-                bytes.len() == 2
-                    && (b'a'..=b'h').contains(&bytes[0])
-                    && matches!(bytes[1], b'3' | b'6')
-            })
+            .filter(|ep| ep.ends_with(['3', '6']))
             .unwrap_or_default();
         Some(EditorSetup {
             turn: crate::color::from_name(parsed.turn)?,
@@ -404,5 +401,63 @@ mod tests {
         rights.set("x", true);
         assert!(rights.has("q") && !rights.has("K"));
         assert_eq!(EditorSetup::from_fen("not a fen"), None);
+    }
+
+    /// Each letter ticks and reads its own right and no other.
+    #[test]
+    fn each_castling_letter_names_its_own_right() {
+        for (letter, right) in [
+            (
+                "K",
+                CastlingRights {
+                    white_short: true,
+                    ..CastlingRights::default()
+                },
+            ),
+            (
+                "Q",
+                CastlingRights {
+                    white_long: true,
+                    ..CastlingRights::default()
+                },
+            ),
+            (
+                "k",
+                CastlingRights {
+                    black_short: true,
+                    ..CastlingRights::default()
+                },
+            ),
+            (
+                "q",
+                CastlingRights {
+                    black_long: true,
+                    ..CastlingRights::default()
+                },
+            ),
+        ] {
+            let mut rights = CastlingRights::default();
+            rights.set(letter, true);
+            assert_eq!(rights, right, "{letter}");
+            for other in ["K", "Q", "k", "q", "x"] {
+                assert_eq!(right.has(other), other == letter, "{letter} has {other}");
+            }
+            let mut all = ALL;
+            all.set(letter, false);
+            assert!(!all.has(letter), "{letter}");
+        }
+    }
+
+    /// A FEN written with `_` between its fields, as Lichess writes it in a link, lost its
+    /// castling rights and en passant square in the board editor: they were read from fields
+    /// split at spaces only.
+    #[test]
+    fn a_fen_with_underscores_keeps_its_castling_and_en_passant() {
+        let start = EditorSetup::from_fen(&crate::rules::INITIAL_FEN.replace(' ', "_"));
+        assert_eq!(start, Some(EditorSetup::start()));
+        let setup = EditorSetup::from_fen("4k3/8/8/3pP3/8/8/8/4K3_w_-_d6_0_1").expect("a position");
+        assert_eq!(setup.ep, "d6");
+        let setup = EditorSetup::from_fen("4k3/8/8/3pP3/8/8/8/4K3 w - d5 0 1").expect("a position");
+        assert_eq!(setup.ep, "");
     }
 }
