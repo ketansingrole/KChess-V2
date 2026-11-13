@@ -72,3 +72,47 @@ pub(crate) fn game_body(options: &OnlineOptions) -> Vec<(&'static str, String)> 
     }
     body
 }
+
+#[cfg(test)]
+mod tests {
+    use kchess_contracts::types::ChallengeColor;
+
+    use super::*;
+
+    /// The variant field a seek or challenge sends: none for standard chess, the variant's key,
+    /// and `fromPosition` for a position unless the game is Chess960 (whose position it is).
+    #[test]
+    fn the_variant_sent_follows_the_variant_and_the_position() {
+        const FEN: &str = "4k3/8/8/8/8/8/8/4K3 w - - 0 1";
+        let cases: [(Option<Variant>, Option<&str>, Option<&str>); 7] = [
+            (None, None, None),
+            (Some(Variant::Standard), None, None),
+            (Some(Variant::Atomic), None, Some("atomic")),
+            (Some(Variant::Chess960), None, Some("chess960")),
+            (Some(Variant::Chess960), Some(FEN), Some("chess960")),
+            (Some(Variant::Standard), Some(FEN), Some("fromPosition")),
+            (None, Some(""), None),
+        ];
+        for (variant, fen, sent) in cases {
+            let options = OnlineOptions {
+                minutes: 5,
+                increment: 3,
+                days: None,
+                variant,
+                fen: fen.map(str::to_string),
+                color: ChallengeColor::White,
+                rated: false,
+                target: None,
+                account: None,
+            };
+            let body = game_body(&options);
+            let found = body
+                .iter()
+                .find(|(key, _)| *key == "variant")
+                .map(|(_, value)| value.as_str());
+            assert_eq!(found, sent, "{variant:?} from {fen:?}");
+            assert_eq!(body[0], ("rated", "false".to_string()));
+            assert_eq!(body[1], ("color", "white".to_string()));
+        }
+    }
+}

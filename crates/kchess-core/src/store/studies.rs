@@ -1079,4 +1079,117 @@ mod tests {
         .expect("remove");
         assert_eq!(study(&db, &local)["cloud"]["structureChanged"], json!(true));
     }
+
+    /// A download replaces only the study of the same account and the same cloud study: another
+    /// cloud study of the account, or the same one of another account, is a study of its own.
+    #[test]
+    fn a_cloud_copy_belongs_to_its_account_and_cloud_study() {
+        let db = database();
+        let chapters = json!([{ "name": "One", "pgn": "1. e4 *" }]);
+        let download = |account: &str, remote: &str| -> String {
+            let remote = json!({ "id": remote, "name": format!("{account} {remote}") });
+            run(
+                &db,
+                json!({ "op": "offline", "account": account, "remote": remote, "chapters": chapters }),
+            )
+            .expect("offline")["id"]
+                .as_str()
+                .expect("id")
+                .to_string()
+        };
+        let first = download("Alice", "abcdEFGH");
+        let other_study = download("Alice", "wxyzWXYZ");
+        let other_account = download("Bob", "abcdEFGH");
+        assert_ne!(other_study, first);
+        assert_ne!(other_account, first);
+        assert_ne!(other_account, other_study);
+        let mut names: Vec<Value> = all(&db).iter().map(|s| s["name"].clone()).collect();
+        names.sort_by_key(|name| name.to_string());
+        assert_eq!(
+            names,
+            [
+                json!("Alice abcdEFGH"),
+                json!("Alice wxyzWXYZ"),
+                json!("Bob abcdEFGH")
+            ]
+        );
+    }
+
+    /// A command that reads every study writes back only the studies it changed: another
+    /// study's row keeps its text as it was stored.
+    #[test]
+    fn a_full_read_writes_back_only_the_changed_study() {
+        let db = database();
+        let kept = create(&db, "Kept", "1. e4 *");
+        let renamed = create(&db, "Renamed", "1. d4 *");
+        let body = |id: &str| -> String {
+            db.query_row(
+                "SELECT body FROM studies WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .expect("body")
+        };
+        // The same study, stored with other spacing than the core writes.
+        let parsed: Value = serde_json::from_str(&body(&kept)).expect("json");
+        let spaced = serde_json::to_string_pretty(&parsed).expect("text");
+        db.execute(
+            "UPDATE studies SET body = ?1 WHERE id = ?2",
+            params![spaced, kept],
+        )
+        .expect("respace");
+        let command: StudyCommand =
+            serde_json::from_value(json!({ "op": "rename", "id": renamed, "name": "Other" }))
+                .expect("command");
+        study_command(&db, &command, 5.0, false).expect("rename");
+        assert_eq!(body(&kept), spaced);
+        assert_eq!(study(&db, &renamed)["name"], json!("Other"));
+    }
+
+    /// The studies are one document of at most `MAX_DOCUMENT` text units, their separators and
+    /// brackets included: a save that fills it exactly is kept, one unit more is refused.
+    #[test]
+    fn the_library_fills_its_document_to_the_last_unit() {
+        let db = database();
+        let big = create(&db, "Big", "1. e4 *");
+        let small = create(&db, "Small", "1. d4 *");
+        let units = |id: &str| -> usize {
+            db.query_row(
+                "SELECT textUnits FROM studies WHERE id = ?1",
+                params![id],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("units") as usize
+        };
+        // Linking a study to the cloud is the one change the library's own (lower) limit does
+        // not check first; each link here stores a baseline of the same length.
+        let link = |baseline: &str| {
+            run(
+                &db,
+                json!({ "op": "markCloud", "id": small, "account": "Alice", "remoteId": "wxyzWXYZ", "baseline": baseline }),
+            )
+        };
+        link("Small 1").expect("link");
+        // The big study is not read by a change of the other: its stored size counts.
+        let overhead = utf16_len("{\"version\":2,\"items\":}");
+        let fits = MAX_DOCUMENT - overhead - 3 - units(&small);
+        for (size, kept) in [(fits, true), (fits + 1, false)] {
+            db.execute(
+                "UPDATE studies SET textUnits = ?1 WHERE id = ?2",
+                params![size as i64, big],
+            )
+            .expect("size");
+            let answer = link(if kept { "Small 2" } else { "Small 3" });
+            match answer {
+                Ok(_) => assert!(kept, "{size} units are past the document"),
+                Err(cause) => {
+                    assert!(!kept, "{size} units fit: {}", cause.message);
+                    assert_eq!(
+                        cause.message,
+                        "This study is too large to save automatically. Export a PGN copy."
+                    );
+                }
+            }
+        }
+    }
 }

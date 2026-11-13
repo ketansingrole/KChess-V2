@@ -428,4 +428,24 @@ mod tests {
         );
         assert!(popularity(&json!({}), &child).is_empty());
     }
+
+    /// A line is at most 200 legal moves: the 200th is kept, a 201st or an illegal move refused.
+    #[test]
+    fn a_line_is_at_most_two_hundred_legal_moves() {
+        let shuffle = |count: usize| -> Vec<String> {
+            ["g1f3", "g8f6", "f3g1", "f6g8"]
+                .iter()
+                .cycle()
+                .take(count)
+                .map(|step| step.to_string())
+                .collect()
+        };
+        let longest = shuffle(200);
+        assert_eq!(legal_line(&longest).ok(), Some(longest.as_slice()));
+        let refused = |moves: &[String]| legal_line(moves).err().map(|cause| cause.message);
+        let not_legal = Some("That line is not legal.".to_string());
+        assert_eq!(refused(&shuffle(201)), not_legal);
+        assert_eq!(refused(&["e2e5".to_string()]), not_legal);
+        assert_eq!(refused(&[]), None);
+    }
 }

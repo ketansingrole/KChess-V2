@@ -54,6 +54,21 @@ async fn rejects_an_ignored_readiness_request() {
     assert!(error.message.contains("timed out"), "{}", error.message);
 }
 
+/// A line longer than the limit is not read in pieces as if each were a line: the engine fails
+/// with invalid output, though a valid `uciok` follows it.
+#[tokio::test]
+async fn fails_an_engine_whose_line_runs_past_the_limit() {
+    let host = support::host();
+    let hub = support::hub(&host);
+    let engine = UciController::start(&hub, support::fake("long-line", None), HANDSHAKE)
+        .expect("spawn the fake engine");
+    let error = engine.ready().await.unwrap_err();
+    assert_eq!(error.message, "Invalid engine output.");
+    tokio::time::timeout(Duration::from_secs(5), engine.closed())
+        .await
+        .expect("the failed engine process exits");
+}
+
 #[tokio::test]
 async fn cancels_an_active_search_after_the_stop_acknowledgment() {
     let host = support::host();

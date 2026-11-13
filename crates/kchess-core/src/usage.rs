@@ -280,6 +280,26 @@ mod tests {
         assert!(report["dbBytes"].as_u64().is_some());
     }
 
+    /// Each account's cached responses add up to its cache storage, keyed by the account before
+    /// the key's first colon.
+    #[tokio::test]
+    async fn cached_responses_add_up_per_account() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let batch = batch(dir.path());
+        batch
+            .database
+            .write(|ctx| {
+                // Stored as JSON text: 5, 3 and 2 bytes.
+                store::games::write_api_cache(ctx.db, "alice:profile", &json!("abc"))?;
+                store::games::write_api_cache(ctx.db, "alice:games", &json!([1]))?;
+                store::games::write_api_cache(ctx.db, "bob:games", &json!(12))
+            })
+            .expect("cache rows");
+        let report = json!(batch.report().await.expect("report"));
+        assert_eq!(report["storage"]["alice"]["cacheBytes"], json!(8));
+        assert_eq!(report["storage"]["bob"]["cacheBytes"], json!(2));
+    }
+
     /// Forgetting an account drops what is still pending for the account, and nothing else.
     #[tokio::test]
     async fn forgetting_an_account_drops_its_pending_counts() {
