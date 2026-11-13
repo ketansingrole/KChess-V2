@@ -370,23 +370,31 @@ pub fn run(args: &[String]) -> Result {
 /// one package at a time, as cargo-mutants builds each mutant's package, so the features each is
 /// built with are the ones a mutant of it asks for (CI's mutants cache).
 fn warm() -> Result {
-    for package in crate::check::members()? {
-        if package == APP {
-            continue;
-        }
-        crate::util::run(
-            "cargo",
-            &[
+    for args in warm_commands(&crate::check::members()?) {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        crate::util::run("cargo", &args)?;
+    }
+    Ok(())
+}
+
+/// What `--warm` runs for the workspace's `members`: a build of each one's tests but the app's.
+fn warm_commands(members: &[String]) -> Vec<Vec<String>> {
+    members
+        .iter()
+        .filter(|package| *package != APP)
+        .map(|package| {
+            [
                 "nextest",
                 "run",
                 "--no-run",
                 "--locked",
                 "--package",
-                &package,
-            ],
-        )?;
-    }
-    Ok(())
+                package,
+            ]
+            .map(String::from)
+            .to_vec()
+        })
+        .collect()
 }
 
 /// What a run tests: the mutants of the lines changed since a base, or (`--all`) every mutant
@@ -463,6 +471,33 @@ pub(crate) fn run_in(repo: &Path, cargo: &str, args: &[String]) -> Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `--warm` builds each member's tests on its own, all but the app's.
+    #[test]
+    fn warming_builds_every_package_but_the_app() {
+        let commands = warm_commands(&strings(&["kchess-core", APP, "xtask"]));
+        assert_eq!(
+            commands,
+            [
+                strings(&[
+                    "nextest",
+                    "run",
+                    "--no-run",
+                    "--locked",
+                    "--package",
+                    "kchess-core"
+                ]),
+                strings(&[
+                    "nextest",
+                    "run",
+                    "--no-run",
+                    "--locked",
+                    "--package",
+                    "xtask"
+                ]),
+            ]
+        );
+    }
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| item.to_string()).collect()

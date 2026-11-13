@@ -123,7 +123,7 @@ const COMMANDS: &[Command] = &[
              2 h, idle 3 days, or any while under 50 GB is free; refuses below 15 GB free; \
              --dry-run says how much would go. CARGO_TARGET_DIR picks the build",
         )],
-        run: |rest| sweep::build_folder(rest.iter().any(|arg| arg == "--dry-run")),
+        run: |rest| sweep::build_folder(has_flag(rest, "--dry-run")),
     },
     Command {
         name: "mutants",
@@ -260,7 +260,7 @@ const COMMANDS: &[Command] = &[
             "Write the icons the app names (or check they match)",
         )],
         run: |rest| {
-            if rest.iter().any(|arg| arg == "--check") {
+            if has_flag(rest, "--check") {
                 icons::check()
             } else {
                 icons::write()
@@ -349,9 +349,20 @@ const COMMANDS: &[Command] = &[
 const COLUMN: usize = 24;
 const WIDTH: usize = 100;
 
+/// Whether the command line `rest` holds `flag`.
+fn has_flag(rest: &[String], flag: &str) -> bool {
+    rest.iter().any(|arg| arg == flag)
+}
+
 fn help() -> String {
+    help_of(COMMANDS)
+}
+
+/// The help for `commands`: each form's call, then what it does wrapped at `WIDTH` in the column
+/// from `COLUMN`, or on a line of its own below a call that reaches the column.
+fn help_of(commands: &[Command]) -> String {
     let mut out = String::from("cargo xtask <command>\n\n");
-    for command in COMMANDS {
+    for command in commands {
         for (usage, about) in command.forms {
             let call = format!("  {} {usage}", command.name);
             let call = call.trim_end();
@@ -446,6 +457,68 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_flag_is_one_whole_argument() {
+        let rest = ["--dry-run".to_string(), "x".to_string()];
+        assert!(has_flag(&rest, "--dry-run"));
+        assert!(!has_flag(&rest, "--check"));
+        assert!(!has_flag(&[], "--check"));
+        assert!(!has_flag(&["--checked".to_string()], "--check"));
+    }
+
+    /// A short call takes the column; one that reaches it goes on a line of its own. What it
+    /// does fills lines up to `WIDTH` exactly, and a word that would pass it starts the next.
+    #[test]
+    fn the_help_lays_out_calls_and_wraps_at_its_width() {
+        fn none(_: &[String]) -> util::Result {
+            Ok(())
+        }
+        // 76 letters fill the column's line from 24 to 100.
+        const FULL: &str =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const TABLE: &[Command] = &[
+            Command {
+                name: "short",
+                forms: &[("", "one two")],
+                run: none,
+            },
+            // "  x " and 20 more: exactly the column's 24.
+            Command {
+                name: "x",
+                forms: &[("12345678901234567890", "fits")],
+                run: none,
+            },
+            Command {
+                name: "y",
+                forms: &[("", FULL)],
+                run: none,
+            },
+            // 40 and 35 letters with their space end at 100; the third word wraps.
+            Command {
+                name: "z",
+                forms: &[(
+                    "",
+                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ccccccccccccccccccccccccccccccccccc d",
+                )],
+                run: none,
+            },
+        ];
+        let column = " ".repeat(COLUMN);
+        let expected = [
+            "cargo xtask <command>".to_string(),
+            String::new(),
+            format!("{:COLUMN$}one two", "  short"),
+            "  x 12345678901234567890".to_string(),
+            format!("{column}fits"),
+            format!("{:COLUMN$}{FULL}", "  y"),
+            format!("{:COLUMN$}{} {}", "  z", "b".repeat(40), "c".repeat(35)),
+            format!("{column}d"),
+        ];
+        let help = help_of(TABLE);
+        assert_eq!(help, format!("{}\n", expected.join("\n")));
+        assert!(help.lines().all(|line| line.len() <= WIDTH));
+    }
 
     #[test]
     fn the_help_shows_every_command_once_within_its_width() {

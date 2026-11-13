@@ -262,6 +262,9 @@ mod tests {
             ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
         );
         assert!(platforms("").is_empty());
+        // Only the platforms' list is read, not a list before it.
+        let config = "hakari-package = \"kchess-hack\"\nexcludes = [\n    \"x\",\n]\nplatforms = [\n    \"aarch64-apple-darwin\",\n]\n";
+        assert_eq!(platforms(config), ["aarch64-apple-darwin"]);
     }
 
     #[test]

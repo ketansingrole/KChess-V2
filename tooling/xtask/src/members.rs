@@ -85,6 +85,16 @@ mod tests {
         assert!(!headless(APP) && !headless("xtask") && !headless("kchess-hack"));
     }
 
+    /// The app and this tooling are outside the coverage totals; the programs ship.
+    #[test]
+    fn the_app_and_tooling_are_uncovered() {
+        assert_eq!(uncovered().collect::<Vec<_>>(), [APP, "xtask"]);
+        assert_eq!(
+            shipped().collect::<Vec<_>>(),
+            [APP, "kchess-service", "kchess-cli", "kchess-voice"]
+        );
+    }
+
     #[test]
     fn the_app_sources_are_the_apps() {
         let manifest = crate::util::root()

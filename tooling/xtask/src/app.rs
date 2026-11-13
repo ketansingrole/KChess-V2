@@ -178,12 +178,22 @@ fn stop_outdated_service(profile: &Path, binary: &Path) -> Result {
 }
 
 fn check_startable(profile: &Path) -> Result {
-    if let Some(pid) = running() {
+    startable(profile, running(), |name| std::env::var_os(name))
+}
+
+/// Whether the app may start on `profile`, made if missing: not while one already runs as
+/// `running`, nor on the real profile (`var` reads the environment).
+fn startable(
+    profile: &Path,
+    running: Option<u32>,
+    var: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Result {
+    if let Some(pid) = running {
         return Err(format!(
             "KChess already runs (pid {pid}); `cargo xtask app --stop` first."
         ));
     }
-    if is_real_profile(profile, |name| std::env::var_os(name)) {
+    if is_real_profile(profile, var) {
         return Err(format!(
             "{} is a real profile; development runs use a scratch one.",
             profile.display()
@@ -461,5 +471,33 @@ mod tests {
         };
         assert!(is_real_profile(Path::new(real), env));
         assert!(!is_real_profile(Path::new("/repo/.data/gpui-profile"), env));
+    }
+
+    /// The app starts on a scratch profile, made if missing, and refuses while one runs or on the
+    /// real profile.
+    #[test]
+    fn the_app_starts_only_once_and_only_on_a_scratch_profile() {
+        let scratch = tempfile::tempdir().unwrap();
+        let home = scratch.path().join("home");
+        let env = |name: &str| {
+            [
+                ("HOME", &home),
+                ("XDG_CONFIG_HOME", &home),
+                ("APPDATA", &home),
+            ]
+            .into_iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value.clone().into_os_string())
+        };
+        let profile = scratch.path().join("profile");
+        let running = startable(&profile, Some(42), env).unwrap_err();
+        assert!(running.contains("pid 42"), "{running}");
+        assert!(!profile.exists());
+        startable(&profile, None, env).unwrap();
+        assert!(profile.is_dir());
+        let real = kchess_delta::installed::own_profile(env);
+        let refused = startable(&real, None, env).unwrap_err();
+        assert!(refused.contains("is a real profile"), "{refused}");
+        assert!(!real.exists());
     }
 }

@@ -173,7 +173,13 @@ fn forget_installation() -> Result {
             .status()
             .is_ok_and(|status| status.success())
     };
-    if reg(&["delete", &key, "/f"]) || !reg(&["query", &key]) {
+    // Queried only when the delete failed.
+    forgotten(&key, reg(&["delete", &key, "/f"]), || reg(&["query", &key]))
+}
+
+/// Whether the installation `key` is forgotten: deleted, or not there to delete.
+fn forgotten(key: &str, deleted: bool, present: impl FnOnce() -> bool) -> Result {
+    if deleted || !present() {
         Ok(())
     } else {
         Err(format!(
@@ -432,6 +438,16 @@ pub fn run(args: &[String]) -> Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An installation is forgotten once deleted or when there was none; one still recorded is
+    /// refused. The record is looked up only when the delete failed.
+    #[test]
+    fn an_installation_still_recorded_is_refused() {
+        assert_eq!(forgotten("K", true, || panic!("not queried")), Ok(()));
+        assert_eq!(forgotten("K", false, || false), Ok(()));
+        let refused = forgotten("K", false, || true).unwrap_err();
+        assert!(refused.starts_with("Could not delete K:"), "{refused}");
+    }
 
     /// `--apply` stages a Windows patch as the updater does: the files, and the update installer
     /// beside them.
