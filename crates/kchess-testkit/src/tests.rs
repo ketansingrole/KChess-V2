@@ -81,7 +81,19 @@ fn heads_name_their_status_length_and_chunks() {
     assert!(chunked_head(200, "application/x-ndjson").contains("Transfer-Encoding: chunked\r\n"));
     assert_eq!(chunk("ab\n"), "3\r\nab\n\r\n");
     assert_eq!(chunk(""), "0\r\n\r\n");
-    assert_eq!(status_text(429), "Too Many Requests");
+    for (status, text) in [
+        (200, "OK"),
+        (206, "Partial Content"),
+        (400, "Bad Request"),
+        (401, "Unauthorized"),
+        (403, "Forbidden"),
+        (404, "Not Found"),
+        (429, "Too Many Requests"),
+        (500, "Internal Server Error"),
+        (503, "Service Unavailable"),
+    ] {
+        assert_eq!(status_text(status), text);
+    }
     assert_eq!(status_text(299), "Status");
 }
 
@@ -127,4 +139,30 @@ fn a_stream_sends_its_lines_then_keep_alives_until_it_closes() {
         body,
         "f\r\n{\"first\":true}\n\r\nd\r\n{\"second\":1}\n\r\n1\r\n\n\r\n1\r\n\n\r\n1\r\n\n\r\n0\r\n"
     );
+}
+
+/// `answered` returns only once the client has hung up, so a response is never cut short.
+#[test]
+fn an_answer_waits_for_the_client_to_hang_up() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (mut accepted, _) = listener.accept().unwrap();
+    let (done, finished) = std::sync::mpsc::channel();
+    let waiter = std::thread::spawn(move || done.send(answered(&mut accepted).is_ok()));
+    assert!(
+        finished.recv_timeout(Duration::from_millis(200)).is_err(),
+        "answered before the client hung up"
+    );
+    drop(client);
+    assert_eq!(finished.recv_timeout(HANG_UP_WAIT), Ok(true));
+    waiter.join().unwrap().unwrap();
+}
+
+/// A dropped server stops listening.
+#[test]
+fn a_dropped_server_stops_listening() {
+    let server = Server::start(|_, out| json(out, 200, &json!({}))).unwrap();
+    let address = server.base().trim_start_matches("http://").to_owned();
+    drop(server);
+    assert!(TcpStream::connect(&address).is_err());
 }
