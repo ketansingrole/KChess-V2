@@ -243,7 +243,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(scratch.join("bin/COMMIT")).unwrap(),
-            stamp_of(COMMIT)
+            format!("{COMMIT} macOS {}", crate::package::MACOS_MINIMUM)
         );
         assert!(!scratch.join("work").exists(), "the work folder was kept");
         assert_eq!(
