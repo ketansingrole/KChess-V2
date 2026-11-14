@@ -1084,35 +1084,39 @@ mod tests {
     /// cloud study of the account, or the same one of another account, is a study of its own.
     #[test]
     fn a_cloud_copy_belongs_to_its_account_and_cloud_study() {
-        let db = database();
-        let chapters = json!([{ "name": "One", "pgn": "1. e4 *" }]);
-        let download = |account: &str, remote: &str| -> String {
-            let remote = json!({ "id": remote, "name": format!("{account} {remote}") });
-            run(
-                &db,
-                json!({ "op": "offline", "account": account, "remote": remote, "chapters": chapters }),
-            )
-            .expect("offline")["id"]
-                .as_str()
-                .expect("id")
-                .to_string()
-        };
-        let first = download("Alice", "abcdEFGH");
-        let other_study = download("Alice", "wxyzWXYZ");
-        let other_account = download("Bob", "abcdEFGH");
-        assert_ne!(other_study, first);
-        assert_ne!(other_account, first);
-        assert_ne!(other_account, other_study);
-        let mut names: Vec<Value> = all(&db).iter().map(|s| s["name"].clone()).collect();
-        names.sort_by_key(|name| name.to_string());
-        assert_eq!(
-            names,
-            [
-                json!("Alice abcdEFGH"),
-                json!("Alice wxyzWXYZ"),
-                json!("Bob abcdEFGH")
-            ]
-        );
+        // Both when the command reads only the study it is about and when it reads them all.
+        for incremental in [true, false] {
+            let db = database();
+            let chapters = json!([{ "name": "One", "pgn": "1. e4 *" }]);
+            let download = |account: &str, remote: &str| -> String {
+                let remote = json!({ "id": remote, "name": format!("{account} {remote}") });
+                let command: StudyCommand = serde_json::from_value(
+                    json!({ "op": "offline", "account": account, "remote": remote, "chapters": chapters }),
+                )
+                .expect("command");
+                study_command(&db, &command, 5.0, incremental)
+                    .expect("offline")
+                    .id
+                    .expect("id")
+            };
+            let first = download("Alice", "abcdEFGH");
+            let other_study = download("Alice", "wxyzWXYZ");
+            let other_account = download("Bob", "abcdEFGH");
+            assert_ne!(other_study, first, "{incremental}");
+            assert_ne!(other_account, first, "{incremental}");
+            assert_ne!(other_account, other_study, "{incremental}");
+            let mut names: Vec<Value> = all(&db).iter().map(|s| s["name"].clone()).collect();
+            names.sort_by_key(|name| name.to_string());
+            assert_eq!(
+                names,
+                [
+                    json!("Alice abcdEFGH"),
+                    json!("Alice wxyzWXYZ"),
+                    json!("Bob abcdEFGH")
+                ],
+                "{incremental}"
+            );
+        }
     }
 
     /// A command that reads every study writes back only the studies it changed: another
