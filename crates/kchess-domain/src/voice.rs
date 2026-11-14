@@ -58,6 +58,8 @@ const ANALYSIS_COMMANDS: [(&str, &str); 18] = [
     ("engine on", "engine"),
     ("engine off", "engine"),
 ];
+/// What a finished puzzle takes besides moves.
+const PUZZLE_COMMANDS: [(&str, &str); 2] = [("next", "next"), ("next puzzle", "next")];
 const EDITOR_PHRASE_KEYS: [&str; 15] = [
     "clear board",
     "empty board",
@@ -95,17 +97,20 @@ pub enum Grammar {
     Editor,
     /// Moves and the analysis board's commands.
     Analysis,
+    /// Moves and going on to the next puzzle.
+    Puzzle,
 }
 
 /// The words a grammar listens for, built once.
 pub fn grammar(grammar: Grammar) -> &'static [String] {
-    static LISTS: [OnceLock<Vec<String>>; 5] = [const { OnceLock::new() }; 5];
+    static LISTS: [OnceLock<Vec<String>>; 6] = [const { OnceLock::new() }; 6];
     let (index, build): (usize, fn() -> Vec<String>) = match grammar {
         Grammar::Coordinate => (0, coordinate_grammar),
         Grammar::Move => (1, move_grammar),
         Grammar::Game => (2, game_grammar),
         Grammar::Editor => (3, editor_grammar),
         Grammar::Analysis => (4, analysis_grammar),
+        Grammar::Puzzle => (5, puzzle_grammar),
     };
     LISTS[index].get_or_init(build)
 }
@@ -185,6 +190,12 @@ fn analysis_grammar() -> Vec<String> {
             .iter()
             .map(|(phrase, _)| phrase.to_string()),
     );
+    out
+}
+
+fn puzzle_grammar() -> Vec<String> {
+    let mut out = move_grammar();
+    out.extend(PUZZLE_COMMANDS.iter().map(|(phrase, _)| phrase.to_string()));
     out
 }
 
@@ -333,6 +344,15 @@ pub fn analysis_command(text: &str) -> Option<&'static str> {
         key = "take back".into();
     }
     ANALYSIS_COMMANDS
+        .iter()
+        .find(|(phrase, _)| *phrase == key)
+        .map(|(_, command)| *command)
+}
+
+/// A puzzle command said aloud: `next`.
+pub fn puzzle_command(text: &str) -> Option<&'static str> {
+    let key = phrase(&split_words(text));
+    PUZZLE_COMMANDS
         .iter()
         .find(|(phrase, _)| *phrase == key)
         .map(|(_, command)| *command)
@@ -891,6 +911,20 @@ mod tests {
         let moves = grammar(Grammar::Move);
         assert!(moves.contains(&"e four".to_string()) && moves.contains(&"knight".to_string()));
         assert!(grammar(Grammar::Game).contains(&"take back".to_string()));
+        let puzzle = grammar(Grammar::Puzzle);
+        assert!(
+            puzzle.contains(&"next puzzle".to_string()) && puzzle.contains(&"e four".to_string())
+        );
+        assert!(!moves.contains(&"next".to_string()));
+    }
+
+    #[test]
+    fn next_goes_on_to_the_next_puzzle() {
+        use super::puzzle_command;
+        assert_eq!(puzzle_command("next"), Some("next"));
+        assert_eq!(puzzle_command("  Next Puzzle "), Some("next"));
+        assert_eq!(puzzle_command("e four"), None);
+        assert_eq!(puzzle_command("next move"), None);
     }
 
     /// Silence is no move and no cancel; a cancel word is a cancel, and a square a move.

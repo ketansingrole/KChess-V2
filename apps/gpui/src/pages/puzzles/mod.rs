@@ -318,7 +318,11 @@ impl PuzzlesPage {
             window,
             cx,
         );
-        let puzzle = cx.new(|cx| PuzzleBoard::new(true, window, cx));
+        let puzzle = cx.new(|cx| {
+            let mut board = PuzzleBoard::new(true, window, cx);
+            board.take_next();
+            board
+        });
         let puzzle_db = cx.global::<PuzzleDbHandle>().0.clone();
         let account_select = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
         let subscriptions = vec![
@@ -344,6 +348,7 @@ impl PuzzlesPage {
                     }
                     PuzzleBoardEvent::Outcome { win, detail } => this.report(*win, *detail, cx),
                     PuzzleBoardEvent::Done => this.done(cx),
+                    PuzzleBoardEvent::Next => this.act(Action::Next, cx),
                 },
             ),
             cx.subscribe(
@@ -1711,6 +1716,12 @@ impl PuzzlesPage {
     }
 
     /// The puzzle board of the tab shown, while it shows a puzzle, and whether it is Train's.
+    /// The Train tab's board.
+    #[cfg(test)]
+    pub(crate) fn board(&self) -> Entity<PuzzleBoard> {
+        self.puzzle.clone()
+    }
+
     /// The puzzle on the Train tab, told apart from the one before it.
     #[cfg(test)]
     pub(crate) fn puzzle_key(&self) -> u64 {

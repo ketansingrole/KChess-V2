@@ -114,7 +114,11 @@ pub struct Mistakes {
 
 impl Mistakes {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Mistakes {
-        let puzzle = cx.new(|cx| PuzzleBoard::new(false, window, cx));
+        let puzzle = cx.new(|cx| {
+            let mut board = PuzzleBoard::new(false, window, cx);
+            board.take_next();
+            board
+        });
         let trainer = cx.entity().downgrade();
         let subscriptions = vec![
             cx.subscribe(
@@ -129,6 +133,7 @@ impl Mistakes {
                         this.done = true;
                         cx.notify();
                     }
+                    PuzzleBoardEvent::Next => this.act(MistakeAction::Next, cx),
                     PuzzleBoardEvent::Move { .. } => {}
                 },
             ),

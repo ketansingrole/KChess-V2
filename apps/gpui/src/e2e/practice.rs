@@ -504,6 +504,62 @@ fn return_goes_on_to_the_next_due_mistake(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
+/// Once a mistake is solved, “next” said goes on to the next due one, as Return does: voice no
+/// longer goes quiet on the solved drill.
+#[gpui_kit::test]
+fn next_said_goes_on_to_the_next_due_mistake(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Mistakes);
+    app.find("review-a-game");
+    let mistakes = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).mistakes())
+            .expect("the mistakes trainer")
+    });
+    let mate = |id: &str| {
+        serde_json::json!({
+            "id": id,
+            "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+            "solution": ["h5f7"],
+            "dueAt": 0,
+        })
+    };
+    app.cx.update(|cx| {
+        mistakes.update(cx, |mistakes, cx| {
+            mistakes.seed(vec![mate("first"), mate("second")], cx)
+        })
+    });
+    app.click("practice-due");
+    let board = app.cx.update(|cx| mistakes.read(cx).board().clone());
+    app.click_square("h5", true);
+    app.click_square("f7", true);
+    app.wait_for("the mate to solve the drill", |_, cx| {
+        board.read(cx).status() == PuzzleStatus::Solved
+    });
+    app.wait_for("the answer to be saved", |_, cx| {
+        !mistakes
+            .read(cx)
+            .actions()
+            .contains(&crate::pages::practice::mistakes::MistakeAction::Next)
+    });
+    // With nothing due, “next” leaves the solved drill.
+    app.cx
+        .update(|cx| board.update(cx, |board, cx| board.hear("next", cx)));
+    app.cx.run_until_parked();
+    assert_eq!(
+        app.cx.update(|cx| board.read(cx).status()),
+        PuzzleStatus::Solved
+    );
+    assert!(app.cx.update(|cx| board.read(cx).voice_listening()));
+    app.cx
+        .update(|cx| mistakes.update(cx, |mistakes, cx| mistakes.seed(vec![mate("second")], cx)));
+    app.cx
+        .update(|cx| board.update(cx, |board, cx| board.hear("next", cx)));
+    app.wait_for("the next mistake", |_, cx| {
+        board.read(cx).status() == PuzzleStatus::Playing
+    });
+}
+
 /// Return goes on through a lesson: past a step to read, and past a step once it is passed, but
 /// not while it is being played.
 #[gpui_kit::test]
