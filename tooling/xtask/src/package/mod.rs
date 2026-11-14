@@ -32,6 +32,9 @@ use kchess_delta::{Asset, installed};
 
 use crate::util::{Result, root, run_with, say};
 
+/// The oldest macOS KChess runs on: the bundle's `LSMinimumSystemVersion`, and the target the
+/// programs built beside it (Fairy-Stockfish) are compiled for.
+pub const MACOS_MINIMUM: &str = "12.0";
 pub const AUTHOR: &str = "Ketan Singrole";
 pub const COPYRIGHT: &str = "Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.";
 #[cfg(unix)]
