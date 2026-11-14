@@ -21,10 +21,11 @@ async fn a_failed_puzzle_operation_is_logged_once() {
             .message
             .starts_with("Download the puzzle database first")
     );
+    // The lines that report this failure: a loaded runner may also warn of a slow storage call.
     let warned: Vec<String> = host
         .logs()
         .into_iter()
-        .filter(|line| line.starts_with("warn [puzzles]"))
+        .filter(|line| line.contains(&refused.message))
         .collect();
     assert_eq!(
         warned,
