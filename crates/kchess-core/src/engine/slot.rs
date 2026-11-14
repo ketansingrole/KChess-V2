@@ -200,4 +200,22 @@ mod tests {
         .expect("the idle engine closed");
         slot.close();
     }
+
+    #[tokio::test]
+    async fn an_engine_that_stopped_is_not_healthy() {
+        let slot = slot(Duration::from_secs(60));
+        open(&slot).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while slot.healthy() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the engine that ended is not healthy");
+        assert!(
+            engine_open(&slot),
+            "the stopped engine is still the open one"
+        );
+        slot.close();
+    }
 }
