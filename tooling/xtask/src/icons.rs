@@ -1,4 +1,5 @@
-//! The icons the app names (`icon("name")` in apps/gpui/src), as SVG files in
+//! The icons the app names (`icon("name")` in apps/gpui/src, or a table's `"name"` that is in
+//! `ICONS`), as SVG files in
 //! `apps/gpui/assets/icons`: Microsoft's Fluent UI System Icons (MIT, `THIRD_PARTY_NOTICES.md`),
 //! each drawn for its own sizes on that size's pixel grid, and KChess's own drawings in
 //! `tooling/xtask/icons` for what Fluent has no icon for (chess pieces, swords, variants), drawn
@@ -172,7 +173,6 @@ const ICONS: &[(&str, Option<&str>)] = &[
     ("square", Some("square")),
     ("square-arrow-out-up-right", Some("open")),
     ("sun", Some("weather_sunny")),
-    ("sun-moon", Some("brightness_high")),
     ("swatch-book", Some("paint_brush")),
     ("swords", None),
     ("target", Some("target")),
@@ -236,13 +236,22 @@ pub fn named(text: &str) -> BTreeSet<String> {
     names
 }
 
+/// The `ICONS` names `text` writes as a whole string literal: the tables that keep an icon's
+/// name beside its label (`("Sound", "volume-2", …)`) and hand it to `icon` later.
+pub fn listed(text: &str) -> BTreeSet<String> {
+    text.split('"')
+        .filter(|piece| ICONS.iter().any(|(name, _)| name == piece))
+        .map(str::to_string)
+        .collect()
+}
+
 fn wanted() -> BTreeSet<String> {
     let mut files = Vec::new();
     sources(&root().join("apps/gpui/src"), &mut files);
     files
         .iter()
         .filter_map(|path| std::fs::read_to_string(path).ok())
-        .flat_map(|text| named(&text))
+        .flat_map(|text| named(&text).into_iter().chain(listed(&text)))
         .collect()
 }
 
@@ -396,7 +405,7 @@ pub fn write() -> Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{icon_of, named};
+    use super::{icon_of, listed, named};
 
     #[test]
     fn finds_icon_names_written_as_literals() {
@@ -404,6 +413,13 @@ mod tests {
             r#"icon("circle-dot"); crate::assets::icon("x2"); my_icon("not-this"); icon(name)"#;
         let names: Vec<String> = named(text).into_iter().collect();
         assert_eq!(names, ["circle-dot", "x2"]);
+    }
+
+    #[test]
+    fn finds_icon_names_kept_in_tables() {
+        let text = r#"("Sound", "volume-2", G::Interface), quick("x", "hand", "gesture"), "sound""#;
+        let names: Vec<String> = listed(text).into_iter().collect();
+        assert_eq!(names, ["hand", "volume-2", "x"]);
     }
 
     #[test]
