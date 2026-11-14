@@ -407,6 +407,9 @@ impl PuzzleBoard {
             });
         }
         if !correct {
+            // The board lands a dragged or clicked piece at once and waits for the next position;
+            // a wrong move leaves the position as it was, so only this puts the piece back.
+            self.board.update(cx, |board, cx| board.undo_move(cx));
             self.mistakes += 1;
             self.feedback = Feedback::Wrong;
             self.flash = true;
