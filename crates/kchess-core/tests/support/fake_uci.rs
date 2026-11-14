@@ -233,10 +233,7 @@ fn main() {
         started_as_copy.then(|| exe.with_extension("log").display().to_string())
     });
     let searching = matches!(mode.as_str(), "search" | "review" | "stall");
-    let state = Mutex::new(Search {
-        multipv: 1,
-        ..Search::default()
-    });
+    let state = Mutex::new(Search::default());
 
     #[cfg(unix)]
     if mode == "ignore-term" && std::env::var_os(TERM_IGNORED).is_none() {

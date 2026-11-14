@@ -154,7 +154,7 @@ async fn a_game_described_without_its_position_is_shown_from_the_next_one() {
             json!({ "fen": italian, "wc": 600, "bc": 600 }),
             json!({
                 "fen": "r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 1 2",
-                "lm": "f8c5", "wc": 600, "bc": 598
+                "lm": "f8c5", "wc": 590, "bc": 598
             }),
         ] {
             tx.send(format!("{record}\n")).unwrap();
@@ -190,6 +190,7 @@ async fn a_game_described_without_its_position_is_shown_from_the_next_one() {
     let last = frames.last().unwrap();
     assert!(last.fen.starts_with("r1bqk1nr/pppp1ppp/2n5/2b1p3/"));
     assert_eq!(last.last_move.as_deref(), Some("f8c5"));
+    assert_eq!(last.white_clock, Some(590.));
     assert_eq!(last.black_clock, Some(598.));
     assert_eq!(last.game_id, "VuAqDosj");
     spectator.stop();
@@ -467,6 +468,8 @@ async fn a_tv_feed_adds_its_moves_once_the_delayed_export_lines_up() {
         last.moves,
         Some(vec!["e2e4".to_string(), "e7e5".to_string()])
     );
+    assert_eq!(last.last_move.as_deref(), Some("e7e5"));
+    assert_eq!(last.white_clock, Some(599.0));
     assert_eq!(last.black_clock, Some(580.0));
     // A stopped watch reports nothing more.
     spectator.stop();

@@ -1253,3 +1253,13 @@ async fn a_pinned_release_must_answer_its_own_tag() {
     );
     assert_eq!(*hits.lock().unwrap(), ["/release"]);
 }
+
+/// The shipped engine is fetched by its own tag and held to its pinned digests, not the latest
+/// release's.
+#[test]
+fn the_shipped_engine_is_fetched_by_its_tag_and_pinned() {
+    let shipped = super::ManagedLocation::shipped(std::env::temp_dir().join("shipped"));
+    assert_eq!(shipped.release_url, super::tag_url(super::SHIPPED.tag));
+    assert_ne!(shipped.release_url, super::RELEASE_URL);
+    assert_eq!(shipped.pinned.map(|pin| pin.tag), Some(super::SHIPPED.tag));
+}

@@ -287,6 +287,15 @@ async fn automatic_reviews_ask_lichess_first_and_review_variants_by_their_rules(
         perf: "chess960".into(),
         created_at: now - 2,
     });
+    // Older than the recent games reviewed: neither reviewed nor looked up.
+    rig.store.add_game(GameRow {
+        id: "old1".into(),
+        account: "tester".into(),
+        moves: "d4 d5".into(),
+        pgn: None,
+        perf: "blitz".into(),
+        created_at: now - 40 * 86_400_000,
+    });
     // A game from a set position, which is not reviewed: Lichess is not asked for it either.
     rig.store.add_game(GameRow {
         id: "setup1".into(),
@@ -774,6 +783,37 @@ async fn a_computer_move_takes_the_engine_from_a_running_review() {
 }
 
 /// A review of these moves as an earlier session stored it.
+/// A game whose moves were reviewed already, on the analysis board without the game, is linked
+/// to that review instead of being reviewed again.
+#[tokio::test]
+async fn a_game_already_reviewed_without_it_is_linked_to_the_review() {
+    let rig = rig("review", "linked", false, "all", true);
+    let key = key_of(START, &["e2e4", "e7e5"]);
+    rig.store.put(stored(
+        &["e2e4", "e7e5"],
+        kchess_contracts::types::ReviewSource::Local,
+    ));
+    rig.store.add_game(GameRow {
+        id: "done2".into(),
+        account: "tester".into(),
+        moves: "e4 e5".into(),
+        pgn: None,
+        perf: "blitz".into(),
+        created_at: now_ms(),
+    });
+    rig.reviews.reviews_changed();
+    wait_until(WAIT, "the game linked to its review", || {
+        rig.store.linked("done2", &key).then_some(())
+    })
+    .await;
+    assert_eq!(
+        rig.store.review(&key).and_then(|review| review.game_id),
+        Some("done2".to_string())
+    );
+    assert!(updates_of(&rig).is_empty(), "nothing is reviewed again");
+    rig.reviews.stop_reviews().await;
+}
+
 fn stored(list: &[&str], source: kchess_contracts::types::ReviewSource) -> StoredReview {
     StoredReview {
         key: key_of(START, list),

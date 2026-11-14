@@ -673,17 +673,18 @@ async fn background_block(s: &Arc<Shared>) -> Result<Option<Pause>> {
     Ok(None)
 }
 
-/// The next synced game to review automatically, looking it up on Lichess first.
+/// The next synced game to review automatically, looking it up on Lichess first. Stopping clears
+/// the host and moves the epoch together, so an unchanged epoch says the pass is still wanted.
 async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
     let current_epoch = |s: &Shared| lock(&s.state).review_epoch;
     loop {
         let epoch = current_epoch(s);
-        let current = || epoch == current_epoch(s) && host_of(s).is_some();
+        let current = || epoch == current_epoch(s);
         let Some(host) = host_of(s) else {
             return Ok(None);
         };
         let settings = host.settings().await?;
-        if host_of(s).is_none() || epoch != current_epoch(s) {
+        if epoch != current_epoch(s) {
             return Ok(None);
         }
         let accounts = host.accounts().await?;

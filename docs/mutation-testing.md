@@ -31,10 +31,11 @@ survives or times out. Mutants that were already missed in untouched code are th
 so a change never has to pay off the whole backlog at once.
 
 CI first counts a pull request's mutants (`cargo xtask mutants --plan`, which builds nothing),
-then splits them over a runner per 15, up to 8 (`--shard k/n`), one at a time on each, in the
-checkout itself (`--in-place`), built incrementally from the crates.io dependencies each push to
-`main` keeps built, and gives each runner half an hour: a change whose mutants take longer is
-too large for one pull request. A change with no mutants starts no runner. The app's mutants (`apps/gpui`) each rebuild the app, so
+then splits them over a runner per 15, up to 20, as many as the account runs at once
+(`--shard k/n`), one at a time on each, in the checkout itself (`--in-place`), built
+incrementally from the crates.io dependencies each push to `main` keeps built, and gives each
+runner up to six hours, GitHub's limit, so a large refactor's mutants are tested too. A change
+with no mutants starts no runner. The app's mutants (`apps/gpui`) each rebuild the app, so
 `cargo xtask mutants` leaves them out of a run of changed lines (pull requests, the pre-push hook);
 `--app` tests the app's alone, as the weekly run's `gpui` job does for the lines the past week
 changed in the app.

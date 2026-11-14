@@ -112,6 +112,8 @@ const FEED_PANICKED: &str = "The feed stopped after an internal error. Retry to 
 #[derive(Default)]
 struct Control {
     session: u64,
+    /// The running session's token, cancelled whenever `session` moves on, in the same lock: a
+    /// cancelled token is a session no longer current.
     cancel: Option<CancellationToken>,
     /// Earlier games per TV channel, kept for the app's lifetime.
     past: HashMap<String, Vec<TvPastGame>>,
@@ -743,7 +745,8 @@ impl Inner {
             .lines(
                 || {},
                 |line| {
-                    if token.is_cancelled() || !self.is_current(session) {
+                    // Its token is cancelled as its session stops being current (`Control`).
+                    if token.is_cancelled() {
                         return Ok(());
                     }
                     // A malformed record ends the game as it arrives.

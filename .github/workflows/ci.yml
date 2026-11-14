@@ -441,8 +441,9 @@ jobs:
       contents: read
       # The drop-caches action.
       actions: write
-    # A change whose mutants take longer than this is too large to review in one pull request.
-    timeout-minutes: 30
+    # GitHub's limit for a hosted job: a refactor's thousands of mutants, spread over the shards,
+    # fit in it. A single mutant that hangs is stopped by cargo-mutants' own timeout long before.
+    timeout-minutes: 360
     env:
       # A push to main keeps the mutants' dependencies built for the pull requests after it.
       WARM: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}

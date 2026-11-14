@@ -290,9 +290,10 @@ fn write_diff(repo: &Path, base: &str) -> Result<bool> {
 /// rebuilds the core and runs its tests), less for the lighter packages.
 const PER_SHARD: usize = 15;
 
-/// The most shards a pull request's mutants take: each holds a runner, and the account runs
-/// about twenty jobs at once.
-const MAX_SHARDS: usize = 8;
+/// The most shards a pull request's mutants take: as many as the account runs at once (twenty,
+/// GitHub's limit for a free account). More would only wait for a runner, each paying its own
+/// setup and baseline build; a refactor's thousands of mutants fill each shard's six hours instead.
+const MAX_SHARDS: usize = 20;
 
 /// How many CI shards `count` mutants need: none for none.
 fn shards_for(count: usize) -> usize {
@@ -527,13 +528,15 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_takes_a_shard_per_fifteen_mutants_up_to_eight() {
+    fn a_plan_takes_a_shard_per_fifteen_mutants_up_to_twenty() {
         assert_eq!(shards_for(0), 0);
         assert_eq!(shards_for(1), 1);
         assert_eq!(shards_for(15), 1);
         assert_eq!(shards_for(16), 2);
         assert_eq!(shards_for(120), 8);
-        assert_eq!(shards_for(665), 8);
+        assert_eq!(shards_for(300), 20);
+        assert_eq!(shards_for(301), 20);
+        assert_eq!(shards_for(5300), 20);
         assert_eq!(plan_outputs(0), "count=0\nshards=[]\ntotal=0\n");
         assert_eq!(plan_outputs(23), "count=23\nshards=[0,1]\ntotal=2\n");
     }
