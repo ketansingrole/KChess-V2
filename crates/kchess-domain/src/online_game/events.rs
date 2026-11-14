@@ -69,6 +69,20 @@ impl Run<'_> {
             self.m.online_status = "No game in progress.".into();
             self.clock_pause();
         }
+        // A check for a game in progress failed with no game known: nothing to reconnect to. The
+        // check's answer leaves the page idle; this report, arriving after that answer, put the
+        // page back to Disconnected (Reconnect, no game, no way to start one).
+        if report.lane == Lane::Game
+            && report.phase == OnlinePhase::Disconnected
+            && self.m.online_id.is_empty()
+            && matches!(
+                self.m.online_phase,
+                GamePhase::Idle | GamePhase::Disconnected
+            )
+        {
+            self.m.online_phase = GamePhase::Idle;
+            return;
+        }
         if report.unreachable() {
             self.m.online_phase = GamePhase::Disconnected;
             self.m.online_status = report.message.clone().unwrap_or_else(|| {
@@ -524,6 +538,45 @@ mod tests {
         assert!(berserked(91_000.0));
         assert!(!berserked(91_001.0));
         assert!(!berserked(180_000.0));
+    }
+
+    /// 2026-11-14, Linux CI (`a_seek_after_a_failed_check_for_a_game_shows`): a failed check
+    /// for a game in progress is reported twice, by the call's error (the page goes idle) and by
+    /// the core's Disconnected report with no game. When the report came second, the page went
+    /// back to Disconnected: a Reconnect card with no game, and no way to start one. Either
+    /// order now leaves it idle; a report naming a game still asks to reconnect to it.
+    #[test]
+    fn a_failed_check_with_no_game_leaves_the_page_idle() {
+        let ctx = Ctx::default();
+        let failed = |game: &str| OnlineConnection {
+            session: Number::from(0),
+            account: "tester".into(),
+            game_id: game.into(),
+            lane: Lane::Game,
+            phase: OnlinePhase::Disconnected,
+            message: Some("Unavailable".into()),
+            kind: None,
+        };
+        // The report while the check still stands, and after its answer made the page idle.
+        for answered in [false, true] {
+            let mut model = Model::idle();
+            Run::new(&mut model, &ctx).checking();
+            if answered {
+                model.online_phase = GamePhase::Idle;
+            }
+            Run::new(&mut model, &ctx).read_connection(&failed(""));
+            assert_eq!(model.online_phase, GamePhase::Idle, "answered: {answered}");
+        }
+        let mut model = Model::idle();
+        Run::new(&mut model, &ctx).checking();
+        Run::new(&mut model, &ctx).read_connection(&failed("AbCd1234"));
+        assert_eq!(model.online_phase, GamePhase::Disconnected);
+        assert_eq!(model.online_id, "AbCd1234");
+        // A seek under way is not a failed check's to end.
+        let mut model = Model::idle();
+        model.online_phase = GamePhase::Seeking;
+        Run::new(&mut model, &ctx).read_connection(&failed(""));
+        assert_eq!(model.online_phase, GamePhase::Disconnected);
     }
 
     /// The board's own checking report carries the epoch it holds, and -1 when it holds none.
