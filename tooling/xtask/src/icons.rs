@@ -405,7 +405,7 @@ pub fn write() -> Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{icon_of, listed, named};
+    use super::{icon_of, listed, named, wanted};
 
     #[test]
     fn finds_icon_names_written_as_literals() {
@@ -420,6 +420,15 @@ mod tests {
         let text = r#"("Sound", "volume-2", G::Interface), quick("x", "hand", "gesture"), "sound""#;
         let names: Vec<String> = listed(text).into_iter().collect();
         assert_eq!(names, ["hand", "volume-2", "x"]);
+    }
+
+    /// The app's own sources: an icon named by `icon("…")` and one only a table names.
+    #[test]
+    fn the_app_wants_the_icons_it_calls_and_the_ones_its_tables_name() {
+        let wanted = wanted();
+        assert!(wanted.contains("refresh-cw"), "{wanted:?}");
+        assert!(wanted.contains("swatch-book"), "{wanted:?}");
+        assert!(!wanted.contains(""), "{wanted:?}");
     }
 
     #[test]
