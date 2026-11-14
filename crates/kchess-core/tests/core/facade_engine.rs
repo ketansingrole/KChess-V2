@@ -133,18 +133,7 @@ async fn stopping_an_analysis_closes_its_engine_only_when_asked() {
     core.call("stopAnalysis", vec![json!(true)]).await.unwrap();
     assert_eq!(ended(&host, &id).await, json!("interrupted"));
     analysing(&core, &host).await;
-    // Waited for rather than read once: on a Windows runner the count read 1 here once. A new
-    // process must still start; failing, the message shows what each engine received.
-    let started = std::time::Instant::now();
-    while starts(&engine) < 2 {
-        assert!(
-            started.elapsed() < WAIT,
-            "the engine was closed, so another starts: {:?}",
-            support::received(&support::copy_log(&engine))
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert_eq!(starts(&engine), 2, "one engine more, not several");
+    assert_eq!(starts(&engine), 2, "the engine was closed");
     core.close().await;
 }
 

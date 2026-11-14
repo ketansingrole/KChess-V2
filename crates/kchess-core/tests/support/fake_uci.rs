@@ -259,7 +259,11 @@ fn main() {
                 .append(true)
                 .open(path)
                 .expect("open the fake engine's command log");
-            writeln!(file, "{line}").expect("write the fake engine's command log");
+            // One write per line: `writeln!` on an unbuffered file writes the line and its newline
+            // separately, and an engine closing as the next starts wrote "stop" and "uci" as
+            // "stopuci".
+            file.write_all(format!("{line}\n").as_bytes())
+                .expect("write the fake engine's command log");
         }
         if line == "quit" {
             break;

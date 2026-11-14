@@ -64,7 +64,9 @@ fn main() {
             Request::Final => 'F',
             Request::Invalid(_) => '?',
         };
-        writeln!(log, "{tag}").expect("log line");
+        // One write per line, so a helper starting as another stops cannot split it.
+        log.write_all(format!("{tag}\n").as_bytes())
+            .expect("log line");
         match request {
             Request::Grammar(_) => {
                 if mode == "slow-grammar" {
