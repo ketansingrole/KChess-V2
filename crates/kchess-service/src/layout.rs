@@ -132,13 +132,12 @@ impl Layout {
                             .join(installed::program(installed::VOICE_HELPER)),
                     )
                 }),
-            legacy_database_path: (cfg!(target_os = "macos") && !isolated)
-                .then(|| home.join(".kchess/kchess.db")),
+            legacy_database_path: legacy_database(&home, isolated, cfg!(target_os = "macos")),
             system_credentials,
             test: TestSwitches::from_vars(self.dev, |name| {
                 self.var(name).and_then(|value| value.into_string().ok())
             }),
-            ..Config::new(profile.to_path_buf())
+            data_dir: profile.to_path_buf(),
         }
     }
 
@@ -161,6 +160,12 @@ impl Layout {
             _ => Ok(service.unwrap_or(Mode::Embedded)),
         }
     }
+}
+
+/// The database a macOS release before the profile folders kept, imported once into the person's
+/// own profile; an isolated profile imports nothing.
+fn legacy_database(home: &Path, isolated: bool, macos: bool) -> Option<PathBuf> {
+    (macos && !isolated).then(|| home.join(".kchess/kchess.db"))
 }
 
 #[cfg(test)]
@@ -236,6 +241,24 @@ mod tests {
             own.legacy_database_path,
             cfg!(target_os = "macos").then(|| home().join(".kchess/kchess.db"))
         );
+    }
+
+    /// Only macOS releases kept an earlier database, and only the person's own profile imports it.
+    #[test]
+    fn only_a_macos_profile_of_ones_own_imports_the_earlier_database() {
+        let home = home();
+        for (isolated, macos, wanted) in [
+            (false, true, Some(home.join(".kchess/kchess.db"))),
+            (true, true, None),
+            (false, false, None),
+            (true, false, None),
+        ] {
+            assert_eq!(
+                legacy_database(&home, isolated, macos),
+                wanted,
+                "isolated {isolated}, macOS {macos}"
+            );
+        }
     }
 
     /// The development overrides win; a packaged build ignores every one of them.
