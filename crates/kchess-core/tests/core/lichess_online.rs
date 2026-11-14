@@ -1226,6 +1226,136 @@ async fn recovery_goes_on_past_an_account_whose_check_failed() {
     online.close();
 }
 
+/// A recovery after the connection dropped from Alice's live game: the first finds it, a cancel
+/// leaves it protected, and the second checks Alice first, each account answering `second`.
+async fn recovering_from_a_protected_game(
+    accounts: &[(&str, bool)],
+    second: fn(&str) -> Reply,
+) -> (
+    Arc<Recording>,
+    fixtures::Fixture,
+    OnlineSession,
+    CoreResult<Option<Resumed>>,
+) {
+    let again = Arc::new(AtomicBool::new(false));
+    let answering = Arc::clone(&again);
+    let fixture = serve(move |seen| {
+        let account = seen
+            .header("Authorization")
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .and_then(|token| token.strip_suffix("-token"))
+            .unwrap_or_default()
+            .to_string();
+        match seen.path() {
+            "/api/account/playing" if answering.load(Ordering::SeqCst) => second(&account),
+            "/api/account/playing" if account == "Alice" => Reply::Json(
+                200,
+                json!({ "nowPlaying": [{ "gameId": "AbCd1234", "speed": "rapid" }] }).to_string(),
+            ),
+            "/api/account/playing" => Reply::Json(200, json!({ "nowPlaying": [] }).to_string()),
+            _ => Reply::Hang,
+        }
+    })
+    .await;
+    let (host, store, tokens) = rig(accounts);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let first = online.resume().await.unwrap();
+    assert_eq!(first.map(|found| found.account), Some("Alice".to_string()));
+    online.cancel();
+    assert!(online.playing(), "the left game stays protected");
+    again.store(true, Ordering::SeqCst);
+    let second = online.resume().await;
+    (host, fixture, online, second)
+}
+
+/// The protected game's account failing its check ends the recovery: another account's game is
+/// not opened over it.
+#[tokio::test]
+async fn the_protected_accounts_failed_check_ends_the_recovery() {
+    let (host, fixture, online, second) = recovering_from_a_protected_game(
+        &[("Alice", true), ("Bob", true)],
+        |account| match account {
+            "Alice" => Reply::Json(404, json!({ "error": "Gone" }).to_string()),
+            _ => Reply::Json(
+                200,
+                json!({ "nowPlaying": [{ "gameId": "Bob12345", "speed": "rapid" }] }).to_string(),
+            ),
+        },
+    )
+    .await;
+    assert!(second.is_err(), "{second:?}");
+    let bob = fixture
+        .to("/api/account/playing")
+        .into_iter()
+        .filter(|seen| seen.header("Authorization") == Some("Bearer Bob-token"))
+        .count();
+    assert_eq!(
+        bob, 0,
+        "the first recovery found Alice's game, and the second stops at her"
+    );
+    assert!(!host.logged().contains("Game recovery check failed: Alice"));
+    online.close();
+}
+
+/// Another account failing its check while a game is protected does not end the recovery.
+#[tokio::test]
+async fn another_accounts_failed_check_does_not_end_a_protected_recovery() {
+    let (host, _fixture, online, second) = recovering_from_a_protected_game(
+        &[("Alice", true), ("Bob", true), ("Carol", true)],
+        |account| match account {
+            "Bob" => Reply::Json(404, json!({ "error": "Gone" }).to_string()),
+            "Carol" => Reply::Json(
+                200,
+                json!({ "nowPlaying": [{ "gameId": "Carol123", "speed": "rapid" }] }).to_string(),
+            ),
+            _ => Reply::Json(200, json!({ "nowPlaying": [] }).to_string()),
+        },
+    )
+    .await;
+    assert_eq!(
+        second.unwrap(),
+        Some(Resumed {
+            id: "Carol123".into(),
+            account: "Carol".into()
+        })
+    );
+    assert!(host.logged().contains("Game recovery check failed: Bob"));
+    online.close();
+}
+
+/// An account's check that fails after the recovery was cancelled ends it there: no other
+/// account is checked, and no failure is logged for a check nobody waits for.
+#[tokio::test]
+async fn a_check_that_fails_after_the_cancel_ends_the_recovery() {
+    let (gate_tx, gate) = watch::channel(false);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/account/playing" if seen.header("Authorization") == Some("Bearer Alice-token") => {
+            Reply::Gated(
+                gate.clone(),
+                Box::new(Reply::Json(404, json!({ "error": "Gone" }).to_string())),
+            )
+        }
+        "/api/account/playing" => Reply::Json(
+            200,
+            json!({ "nowPlaying": [{ "gameId": "AbCd1234", "speed": "rapid" }] }).to_string(),
+        ),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true), ("Bob", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let resuming = online.clone();
+    let result = tokio::spawn(async move { resuming.resume().await });
+    fixture.requested("/api/account/playing", 1).await;
+    online.cancel();
+    let _ = gate_tx.send(true);
+    let outcome = result.await.unwrap();
+    assert!(outcome.is_err(), "{outcome:?}");
+    assert_eq!(fixture.to("/api/account/playing").len(), 1);
+    assert!(!host.logged().contains("Game recovery check failed"));
+    online.close();
+}
+
 #[tokio::test]
 async fn reattaches_to_the_live_game_not_a_correspondence_one() {
     let (_host, fixture, online) = playing(|_| None).await;

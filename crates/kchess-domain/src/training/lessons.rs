@@ -744,7 +744,9 @@ mod tests {
     #[test]
     fn a_repetition_or_a_loss_of_material_is_kept_past_later_moves() {
         let fen = "7k/8/8/8/8/8/8/R5K1 w - - 0 1";
-        let task = Task::Mate { within: 20 };
+        // One move more than White plays here: a status that missed the repetition searches the
+        // defence to a mate in what is left, and a deeper one takes minutes.
+        let task = Task::Mate { within: 6 };
         let shuffle = ["a1a2", "h8g8", "a2a1", "g8h8"].repeat(2);
         let mut moves = m(&shuffle);
         moves.push("a1a2".into());

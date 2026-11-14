@@ -208,7 +208,12 @@ async fn the_token_is_sent_as_a_bearer_header_and_never_logged() {
     let host = Arc::new(Recording::default());
     let client = client_for(&fixture.base, Arc::clone(&host));
     let auth = nobody(&client).with_token("lip_secret_token_value");
-    assert!(!format!("{auth:?}").contains("lip_secret"));
+    let shown = format!("{auth:?}");
+    assert!(!shown.contains("lip_secret"), "{shown}");
+    assert!(
+        shown.starts_with("Auth {") && shown.contains("signed_in: true"),
+        "{shown}"
+    );
     let rejected = client
         .get("/api/account", &auth)
         .read_json::<Value>()
