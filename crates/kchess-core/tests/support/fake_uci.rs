@@ -274,6 +274,10 @@ fn main() {
             search_command(&mode, &line, &state);
             continue;
         }
+        // `long-line`: a line past the controller's limit (a million bytes) before `uciok`.
+        if mode == "long-line" && line == "uci" {
+            emit(&"x".repeat(1_000_001));
+        }
         let reply = match (mode.as_str(), line.as_str()) {
             ("silent", _) => None,
             ("no-readyok", "uci") => Some("uciok"),

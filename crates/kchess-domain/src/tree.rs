@@ -630,6 +630,73 @@ mod tests {
 
     use super::*;
 
+    /// A tree far deeper than the rules build is dropped a level at a time: dropped node by node
+    /// it would overflow a small stack.
+    #[test]
+    fn a_very_deep_tree_drops_on_a_small_stack() {
+        let small = std::thread::Builder::new().stack_size(128 * 1024);
+        small
+            .spawn(|| {
+                let mut tree = TreeNode::default();
+                for _ in 0..200_000 {
+                    let mut parent = TreeNode::default();
+                    parent.children.push(tree);
+                    tree = parent;
+                }
+                drop(tree);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    /// The analysis board's edits through paths: adding, following, finding, promoting and
+    /// deleting moves.
+    #[test]
+    fn a_tree_is_edited_by_path() {
+        let mut tree = TreeNode::from_pgn("1. e4 e5 (1... c5 2. Nf3) 2. Nf3 *").unwrap();
+        assert_eq!(tree.children[0].children.len(), 2);
+        assert_eq!(tree.existing_path("e2e4 e7e5 b1c3 b8c6"), "e2e4 e7e5");
+        assert_eq!(tree.existing_path("d2d4"), "");
+        assert_eq!(tree.line_end(""), "e2e4 e7e5 g1f3");
+        assert_eq!(tree.line_end("e2e4 c7c5"), "e2e4 c7c5 g1f3");
+
+        assert!(tree.on_mainline("e2e4 e7e5 g1f3"));
+        assert!(!tree.on_mainline("e2e4 c7c5"));
+        assert_eq!(tree.fork_before("e2e4 e7e5 g1f3"), None);
+        assert_eq!(tree.fork_before("e2e4 c7c5 g1f3"), Some("e2e4".into()));
+        assert_eq!(tree.indices_along("e2e4 c7c5 g1f3"), vec![0, 1, 0]);
+
+        // A move already tried is re-used; a new one is added; an illegal one is refused.
+        assert_eq!(tree.add_move("e2e4", "e7e5").as_deref(), Some("e2e4 e7e5"));
+        assert_eq!(tree.children[0].children.len(), 2);
+        assert_eq!(tree.add_move("e2e4", "d7d5").as_deref(), Some("e2e4 d7d5"));
+        assert_eq!(tree.children[0].children[2].san, "d5");
+        assert_eq!(tree.add_move("e2e4", "e2e4"), None);
+
+        tree.promote("e2e4 c7c5 g1f3");
+        let sans: Vec<&str> = tree.children[0]
+            .children
+            .iter()
+            .map(|child| child.san.as_str())
+            .collect();
+        assert_eq!(sans, ["c5", "e5", "d5"]);
+        assert!(tree.on_mainline("e2e4 c7c5 g1f3"));
+
+        assert_eq!(tree.delete_at("e2e4 e7e5"), "e2e4");
+        assert_eq!(tree.existing_path("e2e4 e7e5"), "e2e4");
+        assert_eq!(tree.children[0].children.len(), 2);
+    }
+
+    /// A tree is played in its Variant header's variant, standard without one.
+    #[test]
+    fn a_tree_reads_its_variant_from_its_headers() {
+        let tree = TreeNode::from_pgn("[Variant \"Atomic\"]\n\n1. e4 *").unwrap();
+        assert_eq!(tree.variant(), Variant::Atomic);
+        assert_eq!(TreeNode::new(None).variant(), Variant::Standard);
+        assert!(TreeNode::from_pgn("1. e5 *").is_none());
+    }
+
     #[test]
     fn a_crazyhouse_tree_starts_with_pockets_and_keeps_its_drops() {
         let tree =

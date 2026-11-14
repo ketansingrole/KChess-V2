@@ -173,6 +173,12 @@ fn stage_with(runtime: &Runtime<impl Fn(&str, &Path) -> Result>, profile: &str) 
 mod tests {
     use super::*;
 
+    /// The helper is staged in the build folder, where the app's debug build looks for it.
+    #[test]
+    fn the_helper_is_staged_in_the_build_folder() {
+        assert_eq!(staged(), root().join("target/voice-runtime"));
+    }
+
     /// The helper is staged again only when none is, or the build is newer than what is.
     #[test]
     fn only_an_older_or_missing_helper_is_staged_again() {

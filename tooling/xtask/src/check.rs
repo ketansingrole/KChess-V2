@@ -228,7 +228,7 @@ fn coverage() -> Result {
 /// `check [--without-app-tests]`: everything a push to main must pass. CI's check job leaves the
 /// app's tests to its `gpui` job, which runs them on Linux beside it.
 pub fn check(args: &[String]) -> Result {
-    let app = !args.iter().any(|arg| arg == "--without-app-tests");
+    let app = with_app_tests(args);
     crate::sweep::build_folder(false)?;
     step("format and lints", lints)?;
     step("notices", crate::licenses::check_notices)?;
@@ -239,6 +239,11 @@ pub fn check(args: &[String]) -> Result {
     step("tests", || tests(app))?;
     say("`check` passed.");
     Ok(())
+}
+
+/// Whether `check` runs the app's tests: unless `--without-app-tests` says another job does.
+fn with_app_tests(args: &[String]) -> bool {
+    !args.iter().any(|arg| arg == "--without-app-tests")
 }
 
 /// The fuzz targets (`fuzz/`), their own workspace, which nothing else builds: they call the
@@ -428,19 +433,20 @@ fn steps_for(files: &[String], selection: &Selection) -> Vec<(&'static str, Chec
 
 /// The files changed since `base`: committed, and with `uncommitted` also those in the working
 /// tree, untracked ones included.
-fn changed_files(base: &str, uncommitted: bool) -> Result<Vec<String>> {
+fn changed_files(repo: &Path, base: &str, uncommitted: bool) -> Result<Vec<String>> {
     let range = if uncommitted {
         base.to_string()
     } else {
         format!("{base}..HEAD")
     };
-    let mut files: Vec<String> = output("git", &["diff", "--name-only", &range])?
+    let git = |args: &[&str]| crate::util::git(repo, args, &[0]);
+    let mut files: Vec<String> = git(&["diff", "--name-only", &range])?
         .lines()
         .map(str::to_string)
         .collect();
     if uncommitted {
         files.extend(
-            output("git", &["ls-files", "--others", "--exclude-standard"])?
+            git(&["ls-files", "--others", "--exclude-standard"])?
                 .lines()
                 .map(str::to_string),
         );
@@ -453,7 +459,7 @@ fn changed_files(base: &str, uncommitted: bool) -> Result<Vec<String>> {
 pub fn fast() -> Result {
     crate::sweep::build_folder(false)?;
     let base = crate::util::merge_base(&root())?;
-    let files = changed_files(&base, true)?;
+    let files = changed_files(&root(), &base, true)?;
     let scopes: Vec<Scope> = files
         .iter()
         .map(|file| scope_of(file, package_of(file)))
@@ -864,12 +870,17 @@ pub fn scope(args: &[String]) -> Result {
     let base = args
         .first()
         .ok_or("scope needs the commit to compare with.")?;
-    let files = changed_files(base, false)?;
-    let modules = packaging_modules(&root())?;
+    print!("{}", scope_report(&root(), base)?);
+    Ok(())
+}
+
+/// What `scope` prints for the commits of `repo` since `base`.
+fn scope_report(repo: &Path, base: &str) -> Result<String> {
+    let files = changed_files(repo, base, false)?;
+    let modules = packaging_modules(repo)?;
     let code = files.iter().any(|file| !is_document(file));
     let packaging = files.iter().any(|file| is_packaging(file, &modules));
-    println!("code={code}\npackaging={packaging}");
-    Ok(())
+    Ok(format!("code={code}\npackaging={packaging}\n"))
 }
 
 #[cfg(test)]
@@ -1299,6 +1310,160 @@ mod tests {
         assert_eq!(
             select(&scopes, &packages),
             Selection::Packages(vec![APP.to_string()])
+        );
+    }
+
+    #[test]
+    fn check_runs_the_app_tests_unless_told_another_job_does() {
+        assert!(with_app_tests(&[]));
+        assert!(with_app_tests(&["--other".to_string()]));
+        assert!(!with_app_tests(&["--without-app-tests".to_string()]));
+    }
+
+    /// One clippy run denies `unwrap` in every shipped program but the app's.
+    #[test]
+    fn the_shipped_programs_but_the_app_are_linted_for_unwrap() {
+        let args = shipped_bins_args();
+        let packages: Vec<&str> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "-p")
+            .map(|pair| pair[1])
+            .collect();
+        assert_eq!(packages, ["kchess-service", "kchess-cli", "kchess-voice"]);
+        assert_eq!(args[0], "clippy");
+        assert!(args.ends_with(&["-D", "clippy::unwrap_used", "-D", "clippy::expect_used"]));
+    }
+
+    /// The members outside coverage run their tests on their own, the app's only when asked.
+    #[test]
+    fn the_uncovered_members_test_the_app_only_when_asked() {
+        assert_eq!(uncovered(true), [APP, "xtask"]);
+        assert_eq!(uncovered(false), ["xtask"]);
+    }
+
+    #[test]
+    fn coverage_leaves_out_the_uncovered_members() {
+        let args = coverage_args(true, "summary.json");
+        assert_eq!(args[..3], ["llvm-cov", "nextest", "--workspace"]);
+        for package in [APP, "xtask"] {
+            assert!(
+                args.windows(2).any(|pair| pair == ["--exclude", package]),
+                "{args:?}"
+            );
+        }
+        assert!(
+            args.ends_with(&["--output-path", "summary.json"]),
+            "{args:?}"
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--failure-mode", "all"])
+        );
+        let plain = coverage_args(false, "r.json");
+        assert_eq!(plain[..2], ["llvm-cov", "--workspace"]);
+    }
+
+    /// A scratch repository with xtask's packaging sources: `package/` names a module by path,
+    /// in a list, the package itself and a type that is no module.
+    fn scratch_repository() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("tooling/xtask/src");
+        std::fs::create_dir_all(src.join("package")).unwrap();
+        let write = |path: &str, text: &str| std::fs::write(src.join(path), text).unwrap();
+        write(
+            "package/mod.rs",
+            "use crate::package::mac;\nuse crate::{util::run, Result};\nfn f() { crate::helper::go() }\n",
+        );
+        write("deltas.rs", "use crate::sums;\n");
+        write("util.rs", "use crate::Result;\n");
+        write("helper.rs", "use crate::util;\n");
+        write("sums.rs", "\n");
+        write("unrelated.rs", "\n");
+        dir
+    }
+
+    fn git_in(dir: &Path, args: &[&str]) -> String {
+        crate::util::git(dir, args, &[0]).unwrap()
+    }
+
+    fn commit(dir: &Path, message: &str) {
+        git_in(dir, &["add", "-A"]);
+        git_in(
+            dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                message,
+            ],
+        );
+    }
+
+    #[test]
+    fn packaging_modules_follow_what_packaging_names() {
+        let repo = scratch_repository();
+        assert_eq!(
+            packaging_modules(repo.path()).unwrap(),
+            ["deltas", "helper", "sums", "util"]
+        );
+    }
+
+    /// The files changed since a commit, committed or not, and what `scope` says of them.
+    #[test]
+    fn changes_since_a_commit_are_read_from_git() {
+        let repo = scratch_repository();
+        let dir = repo.path();
+        git_in(dir, &["init", "-q"]);
+        commit(dir, "first");
+        let base = git_in(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        assert_eq!(
+            changed_files(dir, &base, false).unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            scope_report(dir, &base).unwrap(),
+            "code=false\npackaging=false\n"
+        );
+
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("docs/a.md"), "a\n").unwrap();
+        commit(dir, "docs");
+        assert_eq!(changed_files(dir, &base, false).unwrap(), ["docs/a.md"]);
+        assert_eq!(
+            scope_report(dir, &base).unwrap(),
+            "code=false\npackaging=false\n"
+        );
+
+        std::fs::write(dir.join("tooling/xtask/src/unrelated.rs"), "fn a() {}\n").unwrap();
+        commit(dir, "code");
+        assert_eq!(
+            scope_report(dir, &base).unwrap(),
+            "code=true\npackaging=false\n"
+        );
+
+        std::fs::write(dir.join("tooling/xtask/src/helper.rs"), "fn b() {}\n").unwrap();
+        commit(dir, "packaging");
+        assert_eq!(
+            scope_report(dir, &base).unwrap(),
+            "code=true\npackaging=true\n"
+        );
+
+        // Uncommitted: an edit and a new file, beside the commits.
+        let head = git_in(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        std::fs::write(dir.join("tooling/xtask/src/sums.rs"), "fn c() {}\n").unwrap();
+        std::fs::write(dir.join("new.rs"), "\n").unwrap();
+        assert_eq!(
+            changed_files(dir, &head, true).unwrap(),
+            ["tooling/xtask/src/sums.rs", "new.rs"]
+        );
+        assert_eq!(
+            changed_files(dir, &head, false).unwrap(),
+            Vec::<String>::new()
         );
     }
 }

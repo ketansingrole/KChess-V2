@@ -469,6 +469,29 @@ mod tests {
         core.close().await;
     }
 
+    /// An embedded core's log lines reach the frontend's log.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_embedded_core_logs_through_its_frontend() {
+        let profile = tempfile::tempdir().expect("profile");
+        let lines: Arc<Mutex<Vec<String>>> = Arc::default();
+        let mut options = embedded(profile.path(), None);
+        options.log = {
+            let lines = Arc::clone(&lines);
+            Arc::new(move |_, scope, message| lock(&lines).push(format!("{scope}: {message}")))
+        };
+        let (core, _events) = CoreHandle::open(options).await.expect("opens");
+        let refused = core.call("library", vec![json!("extra")]).await;
+        assert!(refused.is_err());
+        let lines = lock(&lines).clone();
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("core: Invalid method arguments: library")),
+            "{lines:?}"
+        );
+        core.close().await;
+    }
+
     /// Without an answer, a host request is an event, and `reply` answers it.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn host_requests_are_events_without_an_answer() {

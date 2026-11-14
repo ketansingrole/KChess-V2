@@ -188,4 +188,19 @@ mod tests {
                 .all(|pin| pin.version == shipped::SHIPPED.tag)
         );
     }
+
+    /// Every pin is listed with the file it is kept in, the Stockfish ones with the core's.
+    #[test]
+    fn all_lists_every_pin_where_it_is_kept() {
+        let all = all();
+        let names: Vec<&str> = all.iter().map(|(pin, _)| pin.name).collect();
+        for pin in [APPIMAGETOOL, FAIRY_STOCKFISH, VOSK_MACOS] {
+            assert!(names.contains(&pin.name), "{names:?}");
+        }
+        assert_eq!(all.len(), 6 + stockfish().len());
+        assert!(all.iter().any(|(pin, file)| pin.name == "Stockfish"
+            && *file == "crates/kchess-core/src/engine/managed/shipped.rs"));
+        assert!(stockfish_tag().starts_with("sf_"), "{}", stockfish_tag());
+        assert_eq!(stockfish_tag(), shipped::SHIPPED.tag);
+    }
 }

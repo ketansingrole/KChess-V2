@@ -425,6 +425,26 @@ mod tests {
         assert_eq!(archived["result"], "1-0");
     }
 
+    /// What the clock views read: the clocks chosen, whether the game is timed and paused.
+    #[test]
+    fn a_game_reports_its_clocks_and_pause() {
+        let mut game = LocalGame::resume(None, 0.).unwrap();
+        assert_eq!(game.clock(), None);
+        assert!(!game.timed());
+        let clocks = LocalClock {
+            white: clock(5., 3.),
+            black: clock(3., 2.),
+        };
+        game.start(Setup::standard(), Some(clocks), 0.).unwrap();
+        assert_eq!(game.clock(), Some(clocks));
+        assert!(game.timed());
+        assert!(game.paused());
+        game.play("e2e4", 1.);
+        assert!(!game.paused());
+        assert!(!game.toggle_pause(2.));
+        assert!(game.paused());
+    }
+
     #[test]
     fn a_clock_runs_from_the_first_move_and_pauses() {
         let mut game = LocalGame::resume(None, 0.).unwrap();

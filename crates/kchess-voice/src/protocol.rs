@@ -228,6 +228,22 @@ mod tests {
         assert!(super::frame(Tag::Audio, &vec![0; MAX_PAYLOAD + 1]).is_none());
     }
 
+    /// The answer for the longest phrase a grammar may hold, one word per letter, fits in the
+    /// line the core reads.
+    #[test]
+    fn the_longest_answer_fits_a_line() {
+        let text = "a ".repeat(MAX_PHRASE_CHARS / 2);
+        let words = text
+            .split_whitespace()
+            .map(|word| Word {
+                word: word.into(),
+                conf: 0.123_456_789,
+            })
+            .collect();
+        let line = Answer::Result(Recognized { text, words }).line();
+        assert!(line.len() as u64 <= MAX_LINE, "{}", line.len());
+    }
+
     #[test]
     fn answers_read_back_as_written() {
         for answer in [

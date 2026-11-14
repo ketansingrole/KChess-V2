@@ -892,4 +892,32 @@ mod tests {
         assert!(moves.contains(&"e four".to_string()) && moves.contains(&"knight".to_string()));
         assert!(grammar(Grammar::Game).contains(&"take back".to_string()));
     }
+
+    /// Silence is no move and no cancel; a cancel word is a cancel, and a square a move.
+    #[test]
+    fn silence_is_not_a_cancel() {
+        use super::{SpokenMove, spoken_move};
+        let start = crate::rules::default_position(shakmaty::variant::Variant::Chess);
+        assert_eq!(spoken_move("", &start), SpokenMove::Invalid);
+        assert_eq!(spoken_move("cancel", &start), SpokenMove::Cancel);
+        assert!(matches!(
+            spoken_move("e four", &start),
+            SpokenMove::Move { choices } if choices[0].uci == "e2e4"
+        ));
+    }
+
+    /// "Pawn to e5" heard as "pawn two e five": no Black pawn leaves the second rank, so the
+    /// "two" was the "to".
+    #[test]
+    fn a_lone_two_that_fits_no_move_was_a_to() {
+        use super::{SpokenMove, spoken_move};
+        let after_e4 = crate::rules::standard_from_fen(
+            "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+        )
+        .unwrap();
+        assert!(matches!(
+            spoken_move("pawn two e five", &after_e4),
+            SpokenMove::Move { choices } if choices.len() == 1 && choices[0].uci == "e7e5"
+        ));
+    }
 }

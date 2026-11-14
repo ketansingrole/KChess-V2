@@ -320,6 +320,167 @@ async fn aborts_an_outstanding_challenge_and_sends_no_more_once_cancelled() {
     online.close();
 }
 
+/// A challenge whose creation fails after the player cancelled it ends as cancelled, with nothing
+/// to show.
+#[tokio::test]
+async fn a_challenge_that_fails_after_the_cancel_ends_as_cancelled() {
+    let (gate_tx, gate) = watch::channel(false);
+    let fixture = serve(move |seen| match (seen.method.as_str(), seen.path()) {
+        ("POST", "/api/challenge/Bob") => Reply::Gated(
+            gate.clone(),
+            Box::new(Reply::Json(400, json!({ "error": "No" }).to_string())),
+        ),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let starting = online.clone();
+    let result = tokio::spawn(async move { starting.start(&seek_options(Some("Bob"))).await });
+    fixture.requested("/api/challenge/Bob", 1).await;
+    online.cancel();
+    let _ = gate_tx.send(true);
+    let outcome = result.await.unwrap();
+    assert!(
+        outcome.as_ref().is_err_and(|cause| cause.aborted),
+        "{outcome:?}"
+    );
+    online.close();
+}
+
+/// What a game may be is checked before anything is asked of Lichess: a position only for a
+/// casual challenge, Blitz and up for a challenge, Rapid and up for a seek, any clock by
+/// correspondence. What passes is asked for as a challenge, a seek or a correspondence game.
+#[tokio::test]
+async fn a_game_is_checked_before_it_is_asked_for() {
+    let fixture = serve(|seen| match (seen.method.as_str(), seen.path()) {
+        ("POST", "/api/challenge/Bob") => Reply::Json(
+            200,
+            json!({ "id": "Chal1234", "url": "https://lichess.org/Chal1234" }).to_string(),
+        ),
+        ("POST", "/api/board/seek") if field(seen, "days").is_some() => Reply::Json(
+            200,
+            json!({ "id": "Corr1234", "url": "https://lichess.org/Corr1234" }).to_string(),
+        ),
+        _ => Reply::Hang,
+    })
+    .await;
+    const FEN: &str = "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1";
+    let clock = |minutes: u32, target: Option<&str>| OnlineOptions {
+        minutes,
+        ..seek_options(target)
+    };
+    let by_post = |options: OnlineOptions| OnlineOptions {
+        days: Some(3),
+        ..options
+    };
+    // What was asked for (the challenge's id, a seek, a correspondence game), or the refusal.
+    let cases: Vec<(OnlineOptions, Result<&str, &str>)> = vec![
+        (
+            OnlineOptions {
+                fen: Some(String::new()),
+                ..clock(10, None)
+            },
+            Ok("seek"),
+        ),
+        (
+            OnlineOptions {
+                fen: Some(FEN.into()),
+                ..clock(10, Some("Bob"))
+            },
+            Ok("Chal1234"),
+        ),
+        (clock(1, Some("Bob")), Err("even for direct challenges")),
+        (clock(3, Some("Bob")), Ok("Chal1234")),
+        (by_post(clock(1, Some("Bob"))), Ok("correspondence")),
+        (clock(1, None), Err("for public seeks")),
+        (clock(3, None), Err("for public seeks")),
+        (by_post(clock(1, None)), Ok("correspondence")),
+        (clock(10, None), Ok("seek")),
+    ];
+    for (options, expected) in cases {
+        let (host, store, tokens) = rig(&[("Alice", true)]);
+        let online = session(&fixture.base, &host, &store, &tokens);
+        let asked = fixture.to("/api/challenge/Bob").len() + fixture.to("/api/board/seek").len();
+        let started = online.start(&options).await;
+        let answer = match &started {
+            Ok(result) if result.correspondence == Some(true) => Ok("correspondence"),
+            Ok(result) if result.seeking == Some(true) => Ok("seek"),
+            Ok(result) => Ok(result.id.as_deref().unwrap_or("")),
+            Err(cause) => Err(cause.message.as_str()),
+        };
+        match expected {
+            Ok(wanted) => assert_eq!(answer, Ok(wanted), "{options:?}"),
+            Err(part) => {
+                assert!(
+                    answer.is_err_and(|message| message.contains(part)),
+                    "{options:?}: {answer:?}"
+                );
+                let now =
+                    fixture.to("/api/challenge/Bob").len() + fixture.to("/api/board/seek").len();
+                assert_eq!(now, asked, "a refused game asks nothing: {options:?}");
+            }
+        }
+        online.cancel();
+        online.close();
+    }
+}
+
+/// A refused challenge explains the Board API's limits for challenges with Lichess's reason.
+#[tokio::test]
+async fn a_refused_challenge_explains_the_board_api_limits() {
+    let fixture = serve(|seen| match (seen.method.as_str(), seen.path()) {
+        ("POST", "/api/challenge/Bob") => Reply::Json(
+            400,
+            json!({ "error": "Bob takes no challenges" }).to_string(),
+        ),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let options = OnlineOptions {
+        minutes: 3,
+        ..seek_options(Some("Bob"))
+    };
+    let error = online.start(&options).await.unwrap_err();
+    assert!(!error.aborted);
+    assert!(
+        error
+            .message
+            .starts_with("Lichess rejected this Blitz (3+0) challenge: Bob takes no challenges."),
+        "{}",
+        error.message
+    );
+    online.close();
+}
+
+/// A correspondence game asked for leaves nothing waiting: the account's idle stream opens again
+/// to hear when it is accepted.
+#[tokio::test]
+async fn a_correspondence_game_asked_for_reopens_the_idle_stream() {
+    let fixture = serve(|seen| match (seen.method.as_str(), seen.path()) {
+        ("POST", "/api/board/seek") => Reply::Json(
+            200,
+            json!({ "id": "Corr1234", "url": "https://lichess.org/Corr1234" }).to_string(),
+        ),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.stay_connected("Alice");
+    fixture.requested("/api/stream/event", 1).await;
+    let options = OnlineOptions {
+        days: Some(3),
+        ..seek_options(None)
+    };
+    let started = online.start(&options).await.unwrap();
+    assert_eq!(started.correspondence, Some(true));
+    fixture.requested("/api/stream/event", 2).await;
+    online.close();
+}
+
 /// Leaving a correspondence game on the board lets go of its protection: unlike a real-time
 /// game, nothing is lost by stepping away from it, so it keeps nothing else off the board.
 #[tokio::test]
@@ -362,6 +523,12 @@ async fn leaving_a_correspondence_game_lets_go_of_its_protection() {
     })
     .await;
     assert!(online.playing());
+    // A real-time game may be looked for while it is on the board.
+    let started = online
+        .start(&seek_options(None))
+        .await
+        .expect("a seek beside a correspondence game");
+    assert_eq!(started.seeking, Some(true));
     online.cancel();
     assert!(!online.playing());
     online.close();
@@ -467,6 +634,70 @@ async fn a_refused_public_seek_explains_the_board_api_limits() {
         })
     })
     .await;
+    online.close();
+}
+
+/// A seek that fails for another reason than a refusal shows that reason, not the matchmaking
+/// limits.
+#[tokio::test]
+async fn a_seek_that_fails_otherwise_shows_its_own_reason() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/board/seek" => Reply::Json(404, json!({ "error": "No seeks today" }).to_string()),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.start(&seek_options(None)).await.unwrap();
+    until("the failure is shown", || {
+        !emitted(&host, "online:error").is_empty()
+    })
+    .await;
+    assert_eq!(
+        emitted(&host, "online:error"),
+        [json!("No seeks today.")],
+        "shown once, as Lichess said it"
+    );
+    online.close();
+}
+
+/// A game stream that keeps failing gives up after its reconnects: the game's page offers to
+/// reconnect, and the player is told the connection is lost.
+#[tokio::test]
+async fn a_game_stream_that_keeps_failing_is_reported_lost() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/account/playing" => Reply::Json(
+            200,
+            json!({ "nowPlaying": [{ "gameId": "AbCd1234", "speed": "rapid" }] }).to_string(),
+        ),
+        "/api/board/game/stream/AbCd1234" => {
+            Reply::Json(500, json!({ "error": "Down" }).to_string())
+        }
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let backoff = Backoff {
+        first: Duration::from_millis(1),
+        most: Duration::from_millis(1),
+    };
+    let online = session_with(&fixture.base, &host, &store, &tokens, backoff);
+    online.resume().await.unwrap();
+    until("the connection is reported lost", || {
+        !emitted(&host, "online:error").is_empty()
+    })
+    .await;
+    assert_eq!(
+        emitted(&host, "online:error"),
+        [json!(
+            "Lost connection to Lichess. Check your network and reopen the game."
+        )]
+    );
+    assert!(states(&host).iter().any(|state| {
+        state["phase"] == "disconnected"
+            && state["gameId"] == "AbCd1234"
+            && state["message"] == "Lost connection to Lichess. Reconnect to recover the game."
+    }));
     online.close();
 }
 
@@ -965,6 +1196,36 @@ async fn playing(
     (host, fixture, online)
 }
 
+/// One account's failed check does not end recovery: the next account's live game is found.
+#[tokio::test]
+async fn recovery_goes_on_past_an_account_whose_check_failed() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/account/playing" if seen.header("Authorization") == Some("Bearer Alice-token") => {
+            Reply::Json(404, json!({ "error": "Gone" }).to_string())
+        }
+        "/api/account/playing" => Reply::Json(
+            200,
+            json!({ "nowPlaying": [{ "gameId": "AbCd1234", "speed": "rapid" }] }).to_string(),
+        ),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true), ("Bob", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let resumed = online.resume().await.unwrap();
+    assert_eq!(
+        resumed,
+        Some(Resumed {
+            id: "AbCd1234".into(),
+            account: "Bob".into()
+        })
+    );
+    assert_eq!(fixture.to("/api/account/playing").len(), 2);
+    assert!(host.logged().contains("Game recovery check failed: Alice"));
+    online.cancel();
+    online.close();
+}
+
 #[tokio::test]
 async fn reattaches_to_the_live_game_not_a_correspondence_one() {
     let (_host, fixture, online) = playing(|_| None).await;
@@ -1183,6 +1444,65 @@ async fn hands_challenge_events_on_the_idle_stream_to_the_inbox_and_opens_accept
     assert!(online.playing());
     // Accepted elsewhere, the challenge became this game: Lichess sends nothing else for it.
     assert!(online.challenges().list().is_empty());
+    online.close();
+}
+
+/// The start of the game a challenge asked for reaches the window once, however often the
+/// event stream repeats it.
+#[tokio::test]
+async fn an_accepted_challenge_is_announced_once() {
+    let streams: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
+        Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&streams);
+    let fixture = serve(move |seen| match (seen.method.as_str(), seen.path()) {
+        ("GET", "/api/stream/event") => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            *slot.lock().unwrap() = Some(tx);
+            Reply::Stream(rx)
+        }
+        ("POST", "/api/challenge/Bob") => Reply::Json(
+            200,
+            json!({ "id": "Chal1234", "url": "https://lichess.org/Chal1234" }).to_string(),
+        ),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let options = OnlineOptions {
+        minutes: 3,
+        ..seek_options(Some("Bob"))
+    };
+    online.start(&options).await.unwrap();
+    fixture.requested("/api/stream/event", 1).await;
+    let sender = streams.lock().unwrap().clone().unwrap();
+    let start = json!({ "type": "gameStart", "game": { "gameId": "Chal1234", "speed": "blitz" } });
+    let starts = |host: &Recording| {
+        emitted(host, "online:event")
+            .iter()
+            .filter(|event| event["type"] == "gameStart")
+            .count()
+    };
+    sender.send(format!("{start}\n")).unwrap();
+    until("the start reaches the window", || starts(&host) == 1).await;
+    fixture
+        .requested("/api/board/game/stream/Chal1234", 1)
+        .await;
+    // Repeated, then a finish that arrives after it.
+    sender.send(format!("{start}\n")).unwrap();
+    let finish = json!({
+        "type": "gameFinish",
+        "game": { "gameId": "Chal1234", "status": { "name": "resign" }, "winner": "black" }
+    });
+    sender.send(format!("{finish}\n")).unwrap();
+    until("the finish reaches the window", || {
+        emitted(&host, "online:event")
+            .iter()
+            .any(|event| event["type"] == "gameFinish")
+    })
+    .await;
+    assert_eq!(starts(&host), 1);
+    online.cancel();
     online.close();
 }
 
@@ -1607,6 +1927,31 @@ async fn lists_the_challenges_of_accounts_without_an_open_event_stream() {
     *pending.lock().unwrap() = false;
     online.ongoing().await.unwrap();
     assert!(online.challenges().list().is_empty());
+    online.close();
+}
+
+/// A challenge listing Lichess refuses leaves the inbox as it was and is logged with its account.
+#[tokio::test]
+async fn a_refused_challenge_listing_is_logged() {
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/stream/event" => Reply::Hang,
+        "/api/account/playing" => Reply::Json(200, json!({ "nowPlaying": [] }).to_string()),
+        "/api/challenge" => Reply::Json(400, json!({ "error": "Not now" }).to_string()),
+        _ => refuse(seen),
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true), ("Bob", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.stay_connected("Alice");
+    fixture.requested("/api/stream/event", 1).await;
+    online.ongoing().await.unwrap();
+    assert_eq!(fixture.to("/api/challenge").len(), 1);
+    assert!(online.challenges().list().is_empty());
+    assert!(
+        host.logged().contains("Could not load challenges: Bob"),
+        "{}",
+        host.logged()
+    );
     online.close();
 }
 

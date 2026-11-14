@@ -560,6 +560,30 @@ mod tests {
         );
     }
 
+    /// Another variant's FEN may run past a standard one's 100 characters, up to 120: a full
+    /// Crazyhouse board with full pockets is kept, and a standard FEN that long is not read.
+    #[test]
+    fn a_variant_fen_may_run_longer_than_a_standard_one() {
+        let decoded = |variant: &str, fen: &str| {
+            let raw = serde_json::json!({
+                "version": 2,
+                "setup": { "variant": variant, "fen": fen },
+                "moves": [],
+                "level": "club",
+                "color": "white",
+            });
+            decode_computer(&crate::misc::from_json(&raw)).map(J::into_value)
+        };
+        let zh = "r1b1k1n1/p1p1p1p1/1p1p1p1p/n1b1q1r1/N1B1Q1R1/1P1P1P1P/P1P1P1P1/R1B1K1N1\
+                  [PPPPPPPPNNBBRRQQppppppppnnbbrrqq] w - - 0 1";
+        assert!((101..=120).contains(&zh.len()), "{}", zh.len());
+        let kept = decoded("crazyhouse", zh).expect("a long Crazyhouse FEN is kept");
+        assert_eq!(kept["setup"]["fen"], zh);
+        let long = "x".repeat(110);
+        let kept = decoded("standard", &long).expect("read from the usual start");
+        assert_eq!(kept["setup"]["fen"], crate::rules::INITIAL_FEN);
+    }
+
     #[test]
     fn js_order_puts_index_keys_first() {
         let order = js_key_order(vec![

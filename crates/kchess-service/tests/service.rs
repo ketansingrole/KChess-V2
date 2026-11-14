@@ -444,6 +444,58 @@ async fn a_cancelled_call_is_answered_as_cancelled() {
     service.abort();
 }
 
+/// A window that says it has none open stops what it started: the game it watched is no longer
+/// streamed from Lichess.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_suspended_window_stops_watching() {
+    let (ended, mut feeds_ended) = tokio::sync::mpsc::unbounded_channel();
+    let (opened, mut feeds_opened) = tokio::sync::mpsc::unbounded_channel();
+    let ended = std::sync::Mutex::new(ended);
+    let opened = std::sync::Mutex::new(opened);
+    // Every request is a feed that stays open, with no moves, until KChess hangs up.
+    let lichess = kchess_testkit::Server::start(move |request, out| {
+        let _ = opened
+            .lock()
+            .expect("opened")
+            .send(request.path().to_owned());
+        let streamed = kchess_testkit::ndjson_stream(
+            out,
+            Vec::new(),
+            Duration::from_secs(1),
+            || true,
+            |_| None,
+        );
+        let _ = ended.lock().expect("ended").send(());
+        streamed
+    })
+    .expect("a stand-in Lichess");
+    let profile = tempfile::tempdir().expect("profile");
+    let mut config = Config::new(profile.path().to_path_buf());
+    config.test = Some(kchess_core::TestSwitches {
+        lichess_origin: Some(lichess.base().to_owned()),
+        ..Default::default()
+    });
+    let service = tokio::spawn(serve(ServeOptions {
+        config,
+        idle: Duration::from_secs(30),
+    }));
+    let (gpui, _events) = connect(profile.path(), "gpui").await;
+    gpui.call("watch", vec![json!({ "gameId": "Game0001" })])
+        .await
+        .expect("watching");
+    tokio::time::timeout(WAIT, feeds_opened.recv())
+        .await
+        .expect("the game is streamed")
+        .expect("a feed");
+    assert!(feeds_ended.try_recv().is_err(), "the feed is open");
+    gpui.suspend();
+    tokio::time::timeout(WAIT, feeds_ended.recv())
+        .await
+        .expect("the feed ends once the window is suspended")
+        .expect("ended");
+    service.abort();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_window_that_joins_learns_which_window_alerts() {
     let profile = tempfile::tempdir().expect("profile");

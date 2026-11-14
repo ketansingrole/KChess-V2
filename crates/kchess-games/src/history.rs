@@ -262,6 +262,16 @@ mod tests {
         assert_eq!(games, [played("b")]);
     }
 
+    /// Saving a game replaces the entry with its id, moved to the end, and keeps the others.
+    #[test]
+    fn a_saved_game_replaces_its_own_entry_only() {
+        let mut games = vec![played("a"), played("b")];
+        let mut longer = played("a");
+        longer.moves.push("e7e5".into());
+        apply_to(&mut games, &[Write::SaveGame(Box::new(longer.clone()))]);
+        assert_eq!(games, [played("b"), longer]);
+    }
+
     /// An unfinished game with one move, saved as `id`.
     fn played(id: &str) -> PlayedGame {
         PlayedGame {

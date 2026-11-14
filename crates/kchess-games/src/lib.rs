@@ -55,6 +55,32 @@ pub fn typed_uci(variant: Variant, fen: &str, text: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// A Chess960 start is any of the 960, drawn afresh each time.
+    #[test]
+    fn a_chess960_start_is_drawn_from_all_960() {
+        let draws: Vec<i64> = (0..64).map(|_| random_chess960().unwrap()).collect();
+        assert!(
+            draws.iter().all(|draw| (0..960).contains(draw)),
+            "{draws:?}"
+        );
+        let mut distinct = draws.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert!(distinct.len() > 8, "{draws:?}");
+        assert!(draws.iter().any(|&draw| draw > 1), "{draws:?}");
+    }
+
+    /// The clock reads milliseconds since the epoch, as the system clock does.
+    #[test]
+    fn now_is_milliseconds_since_the_epoch() {
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as f64;
+        let now = now_ms();
+        assert!(now >= before && now < before + 60_000., "{now} vs {before}");
+    }
+
     /// A typed move is read as UCI when it looks like one, and as SAN otherwise, in the
     /// position given; anything illegal there is none.
     #[test]

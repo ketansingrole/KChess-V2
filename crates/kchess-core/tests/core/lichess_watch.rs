@@ -321,6 +321,67 @@ async fn a_tv_frame_plays_standard_chess_or_its_channels_variant_before_the_expo
     }
 }
 
+/// A TV frame names each player by their color and turns the board as the feed says; once the
+/// channel moves on, the game it left is listed among the channel's past games.
+#[tokio::test]
+async fn a_tv_frame_seats_its_players_and_keeps_the_game_the_channel_left() {
+    let (feed_tx, feed_rx) = mpsc::unbounded_channel::<String>();
+    let feed_rx = Mutex::new(Some(feed_rx));
+    let fixture = serve(move |seen: &Request| {
+        if seen.path() == "/api/tv/rapid/feed"
+            && let Some(rx) = feed_rx.lock().unwrap().take()
+        {
+            return Reply::Stream(rx);
+        }
+        Reply::Hang
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let sink = Arc::new(Sink::default());
+    let spectator = Spectator::new(
+        service(&fixture.base, &host),
+        Arc::clone(&sink) as Arc<dyn WatchSink>,
+    );
+    spectator.watch(WatchTarget::Channel("rapid".into()));
+    // Black is listed first, and the board is turned for Black.
+    let turned = json!({ "t": "featured", "d": {
+        "id": "firstgame001", "fen": INITIAL, "orientation": "black",
+        "players": [
+            { "color": "black", "seconds": 590, "user": { "name": "Bob" } },
+            { "color": "white", "seconds": 600, "user": { "name": "Alice" } }
+        ]
+    } });
+    feed_tx.send(format!("{turned}\n")).unwrap();
+    feed_tx.send(tv_frame("secondgame02", INITIAL)).unwrap();
+    until("both games' frames", || {
+        sink.frames.lock().unwrap().len() >= 2
+    })
+    .await;
+    let frames = sink.frames.lock().unwrap().clone();
+    spectator.stop();
+    let (first, second) = (&frames[0], &frames[1]);
+    assert_eq!(first.game_id, "firstgame001");
+    assert_eq!(first.white.name, "Alice");
+    assert_eq!(first.black.name, "Bob");
+    assert_eq!(first.white_clock, Some(600.0));
+    assert_eq!(first.orientation, kchess_domain::color::Color::Black);
+    assert_eq!(first.previous, None);
+    assert_eq!(second.game_id, "secondgame02");
+    assert_eq!(second.orientation, kchess_domain::color::Color::White);
+    let previous = second.previous.clone().unwrap_or_default();
+    let left: Vec<(&str, &str, &str)> = previous
+        .iter()
+        .map(|game| {
+            (
+                game.game_id.as_str(),
+                game.white.name.as_str(),
+                game.black.name.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(left, [("firstgame001", "Alice", "Bob")]);
+}
+
 #[tokio::test]
 async fn a_tv_feed_adds_its_moves_once_the_delayed_export_lines_up() {
     let after_e4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";

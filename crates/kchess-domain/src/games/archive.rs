@@ -189,3 +189,124 @@ impl State {
         fx
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snapshot(source: HistoryKind, moves: &[&str], result: &str, reason: &str) -> Snapshot {
+        Snapshot {
+            source,
+            setup: Setup::standard(),
+            moves: moves.iter().map(|m| m.to_string()).collect(),
+            white: "You".into(),
+            black: "Stockfish".into(),
+            result: result.into(),
+            reason: reason.into(),
+            time_control: "-".into(),
+            clock_summary: None,
+        }
+    }
+
+    /// The entry history holds for `latest`'s game, saved earlier under another name.
+    fn stored(latest: &Snapshot, moves: &[&str], result: &str, reason: &str) -> PlayedGame {
+        PlayedGame {
+            id: "game".into(),
+            source: latest.source,
+            started_at: 1.,
+            updated_at: 2.,
+            white: "Earlier".into(),
+            black: latest.black.clone(),
+            result: result.into(),
+            reason: reason.into(),
+            finished: false,
+            setup: latest.setup.clone(),
+            moves: moves.iter().map(|m| m.to_string()).collect(),
+            time_control: latest.time_control.clone(),
+            clock_summary: None,
+        }
+    }
+
+    /// What a reset saves of the game `latest` when history holds `previous`.
+    fn reset(previous: PlayedGame, latest: &Snapshot) -> PlayedGame {
+        let games = [previous];
+        let host = Host {
+            has_play: true,
+            source: Some(latest),
+            games: &games,
+            now: 10.,
+            new_id: "next".into(),
+        };
+        let mut state = State {
+            identity: Identity {
+                id: "game".into(),
+                started_at: 1.,
+            },
+            had_play: true,
+        };
+        let mut effects = state.reset(&host);
+        assert_eq!(state.identity.id, "next");
+        match effects.pop() {
+            Some(Effect::Save(game)) if effects.is_empty() => *game,
+            other => panic!("{other:?} {effects:?}"),
+        }
+    }
+
+    /// A reset closes the entry of the game as it stands: an entry with the same moves keeps its
+    /// own details and takes the result the game reached since, or keeps the result it had; an
+    /// unfinished game is "stopped" except on the clock, which has no result of its own.
+    #[test]
+    fn a_reset_closes_the_entry_with_the_games_result() {
+        let moves = ["e2e4", "e7e5"];
+        let cases = [
+            // (source, stored result and reason, the game's, what is saved)
+            (
+                HistoryKind::Computer,
+                ("*", "In progress"),
+                ("1-0", "Checkmate"),
+                ("1-0", "Checkmate"),
+            ),
+            (
+                HistoryKind::Computer,
+                ("0-1", "You resigned"),
+                ("*", "In progress"),
+                ("0-1", "You resigned"),
+            ),
+            (
+                HistoryKind::Computer,
+                ("*", "In progress"),
+                ("*", "In progress"),
+                ("*", STOPPED),
+            ),
+            (
+                HistoryKind::Clock,
+                ("*", "Clock"),
+                ("*", "Clock stopped"),
+                ("*", "Clock stopped"),
+            ),
+        ];
+        for (source, (was, was_why), (now, now_why), (result, reason)) in cases {
+            let latest = snapshot(source, &moves, now, now_why);
+            let saved = reset(stored(&latest, &moves, was, was_why), &latest);
+            let expected = PlayedGame {
+                result: result.into(),
+                reason: reason.into(),
+                finished: true,
+                ..stored(&latest, &moves, was, was_why)
+            };
+            assert_eq!(saved, expected, "{source:?} {was} {now}");
+        }
+    }
+
+    /// An entry whose moves differ from the game's is saved afresh from the game.
+    #[test]
+    fn a_reset_saves_a_changed_game_from_the_game() {
+        let latest = snapshot(HistoryKind::Computer, &["d2d4"], "*", "In progress");
+        let saved = reset(stored(&latest, &["e2e4"], "*", "In progress"), &latest);
+        assert_eq!(saved.moves, ["d2d4"]);
+        assert_eq!(saved.white, "You");
+        assert_eq!(saved.reason, STOPPED);
+        assert_eq!(saved.updated_at, 10.);
+        assert!(saved.finished);
+    }
+}

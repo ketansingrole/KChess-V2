@@ -470,3 +470,86 @@ pub(crate) fn outcome_line(winner: Option<&str>, reason: &str, ours: Color) -> S
         format!("{result} {how}")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::super::model::{Ctx, Model};
+    use super::*;
+
+    fn event(value: serde_json::Value) -> ServerEvent {
+        ServerEvent::read(&value)
+    }
+
+    /// A game state for another game than the one followed is ignored; one for it is read.
+    #[test]
+    fn a_state_of_another_game_is_ignored() {
+        let ctx = Ctx::default();
+        let mut model = Model::idle();
+        model.online_id = "AbCd1234".into();
+        let mut run = Run::new(&mut model, &ctx);
+        run.read_event(&event(
+            json!({ "type": "gameState", "id": "Other123", "moves": "e2e4" }),
+        ));
+        assert!(run.m.online_moves.is_empty());
+        run.read_event(&event(
+            json!({ "type": "gameState", "id": "AbCd1234", "moves": "e2e4" }),
+        ));
+        assert_eq!(run.m.online_moves, ["e2e4"]);
+    }
+
+    /// Berserking in a tournament halves the player's clock: a first state with at most half the
+    /// time (and a second's grace) left before the player's first move marks it; a full clock
+    /// does not.
+    #[test]
+    fn a_halved_clock_before_the_first_move_is_a_berserk() {
+        let berserked = |wtime: f64| {
+            let ctx = Ctx::default();
+            let mut model = Model::idle();
+            model.online_id = "AbCd1234".into();
+            model.online_tournament = "arena".into();
+            model.online_clock_config = Some(ClockConfig {
+                initial: 180.0,
+                increment: 0.0,
+            });
+            let mut run = Run::new(&mut model, &ctx);
+            run.read_event(&event(json!({
+                "type": "gameState", "id": "AbCd1234", "moves": "",
+                "wtime": wtime, "btime": 180_000, "status": "started",
+            })));
+            model.berserked
+        };
+        assert!(berserked(90_000.0));
+        assert!(berserked(91_000.0));
+        assert!(!berserked(91_001.0));
+        assert!(!berserked(180_000.0));
+    }
+
+    /// The board's own checking report carries the epoch it holds, and -1 when it holds none.
+    #[test]
+    fn a_checking_report_carries_the_epoch() {
+        let ctx = Ctx::default();
+        let mut model = Model::idle();
+        model.state_epoch = f64::NAN;
+        Run::new(&mut model, &ctx).checking();
+        let report = model.online_connection.clone().unwrap();
+        assert_eq!(report.session, serde_json::Number::from(-1));
+        assert_eq!(model.online_phase, GamePhase::Disconnected);
+        model.state_epoch = 7.0;
+        Run::new(&mut model, &ctx).checking();
+        assert_eq!(model.online_connection.unwrap().epoch(), 7.0);
+    }
+
+    /// A chat line is the players' unless it was said in the spectators' room.
+    #[test]
+    fn a_chat_line_names_its_room() {
+        let line = |room| ChatEntry {
+            user: None,
+            text: None,
+            room,
+        };
+        assert!(line(ChatRoom::Player).players());
+        assert!(!line(ChatRoom::Spectator).players());
+    }
+}

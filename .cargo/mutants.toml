@@ -60,9 +60,11 @@ exclude_re = [
     # Makes the installers with makensis, which only the Windows package jobs have (the Windows
     # upgrade workflow installs and checks what it makes); the scripts it runs are tested.
     'xtask/src/package/windows\.rs:.*: (replace package -> Result<Vec<PathBuf>> with .*|replace / with [%*] in package)$',
-    # Forgets a Windows installation in the registry; elsewhere it does nothing, so a run on Linux
-    # cannot tell it from nothing. The Windows upgrade workflow's patch step needs it.
-    'tooling/xtask/src/deltas\.rs:.*: replace forget_installation with \(\)$',
+    # Forgets a Windows installation in the registry; elsewhere it does nothing (and without its
+    # `cfg!(windows)` guard, finds no `reg` and nothing recorded), so a run on Linux or macOS
+    # cannot tell it from nothing. What it decides is `forgotten`, tested. The Windows upgrade
+    # workflow's patch step needs it.
+    'tooling/xtask/src/deltas\.rs:.*: (replace forget_installation with \(\)|replace forget_installation -> Result with .*|delete ! in forget_installation)$',
     # `appimage` only binds the real pins, cache and download to `appimage_with`, which its test
     # runs whole with a stand-in appimagetool; the binding itself downloads from GitHub and runs
     # the real tool, so it is seen only by `cargo xtask package` on Linux (CI's package job).
@@ -84,6 +86,9 @@ exclude_re = [
     'tooling/xtask/src/voice\.rs:.*: replace stage_if_outdated -> Result<\(\)> with ',
     'tooling/xtask/src/engines\.rs:.*: replace (stockfish -> Result<PathBuf>|run -> Result) with ',
     'tooling/xtask/src/app\.rs:.*: replace engine -> Result<PathBuf> with ',
+    # `check_startable` binds the PID file's running app and the environment to `startable`,
+    # tested; only `cargo xtask app` sees the binding.
+    'tooling/xtask/src/app\.rs:.*: replace check_startable -> Result with ',
     'tooling/xtask/src/update_key\.rs:.*: replace sign -> Result with ',
     'tooling/xtask/src/release\.rs:.*: replace (verify -> Result|tag_build -> Option<String>) with ',
     # Stops the profile's running core service by its process ID; which one is outdated is
@@ -92,8 +97,10 @@ exclude_re = [
     # Run cargo fmt, clippy and the test suites over the whole workspace, so a test of them
     # would run `check` inside `check`; what they decide is tested (`test_commands`,
     # `coverage_args`, `with_dependents`, `scope_of`, `select`, `merge_base`). CI's check job
-    # runs them and its log shows each step. `fast` only runs what `select` chose.
-    'tooling/xtask/src/check\.rs:.*: replace (format|clippy_workspace|lints|tests|fast|full|full_with|check) -> Result with ',
+    # runs them and its log shows each step. `fast` only runs what `select` chose. Likewise
+    # `fuzz_targets`, which runs `cargo check` over the fuzz workspace, and `scope`, which prints
+    # `scope_report`'s answer for the repository (tested on a scratch one) for CI's changes job.
+    'tooling/xtask/src/check\.rs:.*: replace (format|clippy_workspace|lints|tests|fast|full|full_with|check|fuzz_targets|scope) -> Result with ',
     # Commands over the repository's own files and `cargo metadata`, which pass there, so a test
     # sees the same `Ok` from them as from their mutants; what they decide is tested: the hack's
     # `dependencies`, `outside` and `packages`, the notices' `direct_dependencies` and `names`,
@@ -101,9 +108,9 @@ exclude_re = [
     'tooling/xtask/src/hack\.rs:.*: replace check -> Result with ',
     'tooling/xtask/src/licenses\.rs:.*: replace (check_notices|write) -> Result with ',
     'tooling/xtask/src/check\.rs:.*: .* in fast$',
-    # `check`'s entry and its tests without cargo-llvm-cov: whether it leaves out the app's tests
-    # is `without_app_tests` and `uncovered`, tested; CI's check job runs the rest.
-    'tooling/xtask/src/check\.rs:.*: (delete ! in check|replace != with == in tests)$',
+    # `check`'s tests without cargo-llvm-cov: whether it leaves out the app's tests is
+    # `with_app_tests` and `uncovered`, tested; CI's check job runs the rest.
+    'tooling/xtask/src/check\.rs:.*: replace != with == in tests$',
     # The Git pre-push hook: reads the push from standard input and runs `check` or cargo-mutants
     # on the working tree, so a test of it would run them inside the tests; what it decides is
     # tested (`main_pushes`, `push_problem`, `head_push`, `mutants_base`, `jobs_for`,
@@ -113,8 +120,9 @@ exclude_re = [
     # `mutants`' entry and its plan: they run cargo-mutants on the repository itself, so a test of
     # them would run it inside the tests; what the plan decides is tested (`shards_for`,
     # `plan_outputs`, `count_since`, `count_listed`), and CI's mutants-plan job runs it on every
-    # pull request.
-    'tooling/xtask/src/mutants\.rs:.*: (replace (plan|run) -> Result with |.* in (plan|run)$)',
+    # pull request. `warm` builds every member's tests, as `warm_commands` (tested) says, for CI's
+    # mutants cache.
+    'tooling/xtask/src/mutants\.rs:.*: (replace (plan|run|warm) -> Result with |.* in (plan|run)$)',
     # Talk to GitHub through gh: the Electron step's download and manifests, the release check of
     # a commit's CI, the draft upload and the Snap download. What they decide is tested
     # (`check_step`, `check_sums`, `matches`, `manifest_text`, `ci_verdict`, `needs_ci`,
@@ -122,6 +130,10 @@ exclude_re = [
     'tooling/xtask/src/electron_step\.rs:.*: replace (download -> Result<Vec<u8>>|write -> Result) with ',
     'tooling/xtask/src/release\.rs:.*: replace (verify_release|attach_draft|download_snap) -> Result with ',
     'tooling/xtask/src/release\.rs:.*: delete ! in verify_release$',
+    # `release-version`: fetches origin's tags and rewrites the repository's Cargo.toml, notes and
+    # Cargo.lock, so only a real release run sees it; what it writes is decided by `next_version`,
+    # `date_notes` and `with_version`, tested.
+    'tooling/xtask/src/release\.rs:.*: replace next -> Result with ',
     # Package with platform tools absent where mutants run: snapcraft (the Snap build workflow),
     # codesign, ditto, hdiutil, notarytool and productbuild (macOS), and the whole `package`
     # command over a release build. The scripts, plists, bundle layout and checks they use are
