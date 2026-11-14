@@ -834,6 +834,8 @@ mod tests {
             verify(dir.path(), &marker("missing")).expect("checked"),
             None
         );
-        assert!(verify(dir.path(), &marker("file/inside")).is_err());
+        // A name the system cannot even look up: the same error on every platform, where
+        // `file/inside` is "not a directory" on Unix and "not found" on Windows.
+        assert!(verify(dir.path(), &marker("bad\0name")).is_err());
     }
 }
