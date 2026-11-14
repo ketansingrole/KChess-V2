@@ -292,14 +292,23 @@ pub fn pcm_base64(audio: &[f32]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-/// How loud a chunk is, 0 to 1, for the level meter.
+/// The quietest level the meter shows (a quiet room), and the loudness that fills it, in dBFS.
+const METER_FLOOR_DB: f32 = -60.;
+const METER_FULL_DB: f32 = -20.;
+
+/// How loud a chunk is, 0 to 1, for the level meter: in decibels, as the ear hears it. Speech
+/// into a laptop's microphone is about -35 to -25 dBFS RMS (0.02 to 0.06), which a linear scale
+/// showed as a sliver; here it fills most of the meter, and a quiet room barely moves it.
 pub fn level(audio: &[f32]) -> f32 {
     if audio.is_empty() {
         return 0.;
     }
     let power: f32 = audio.iter().map(|s| s * s).sum::<f32>() / audio.len() as f32;
-    // Speech rarely passes 0.2 RMS; scaled so normal speaking fills most of the meter.
-    (power.sqrt() * 5.).min(1.)
+    if power <= 0. {
+        return 0.;
+    }
+    let db = 10. * power.log10();
+    ((db - METER_FLOOR_DB) / (METER_FULL_DB - METER_FLOOR_DB)).clamp(0., 1.)
 }
 
 #[cfg(test)]
@@ -359,6 +368,16 @@ mod tests {
         // 0 and the loudest positive sample, as the core decodes them.
         assert_eq!(pcm_base64(&[0., 1.]), "AAD/fw==");
         assert_eq!(level(&[]), 0.);
+        assert_eq!(level(&[0.; 10]), 0.);
         assert!((level(&[0.2; 10]) - 1.).abs() < 1e-6);
+        // Normal speech into a laptop microphone (-30 dBFS) filled 16% of the meter; now most.
+        let speech = level(&[0.0316; 10]);
+        assert!((speech - 0.75).abs() < 0.01, "{speech}");
+        // A quiet room (-55 dBFS) barely moves it, and quieter shows nothing.
+        let room = level(&[0.00178; 10]);
+        assert!((room - 0.125).abs() < 0.01, "{room}");
+        assert_eq!(level(&[0.0005; 10]), 0.);
+        // Louder is fuller.
+        assert!(level(&[0.01; 10]) < speech && speech < level(&[0.08; 10]));
     }
 }
