@@ -905,4 +905,19 @@ mod tests {
             SpokenMove::Move { choices } if choices[0].uci == "e2e4"
         ));
     }
+
+    /// "Pawn to e5" heard as "pawn two e five": no Black pawn leaves the second rank, so the
+    /// "two" was the "to".
+    #[test]
+    fn a_lone_two_that_fits_no_move_was_a_to() {
+        use super::{SpokenMove, spoken_move};
+        let after_e4 = crate::rules::standard_from_fen(
+            "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+        )
+        .unwrap();
+        assert!(matches!(
+            spoken_move("pawn two e five", &after_e4),
+            SpokenMove::Move { choices } if choices.len() == 1 && choices[0].uci == "e7e5"
+        ));
+    }
 }
