@@ -117,7 +117,7 @@ impl PuzzleRush {
                 |this, _, event: &PuzzleBoardEvent, cx| match event {
                     PuzzleBoardEvent::Move { correct, .. } => this.on_move(*correct, cx),
                     PuzzleBoardEvent::Done => this.on_done(cx),
-                    PuzzleBoardEvent::Outcome { .. } => {}
+                    PuzzleBoardEvent::Outcome { .. } | PuzzleBoardEvent::Next => {}
                 },
             ),
             cx.observe(&board, |_, _, cx| cx.notify()),

@@ -343,6 +343,72 @@ fn return_goes_on_to_the_next_puzzle(cx: &mut gpui_kit::TestAppContext) {
     assert_ne!(key(&mut app), second);
 }
 
+/// Voice went quiet once a training puzzle was solved, and “next” was no command: going on
+/// took a click. Now voice keeps listening on the finished puzzle and “next” goes on to the next
+/// one; said mid-puzzle it does not throw the puzzle away.
+#[gpui_kit::test]
+fn next_said_goes_on_to_the_next_puzzle(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = Harness::start(cx);
+    app.cx.update(|cx| {
+        crate::prefs::set(
+            cx,
+            "kchess:puzzle-angle",
+            super::fake_lichess::TRAINED_THEME,
+        );
+        crate::settings::change(cx, |settings| settings.frontend.puzzle_auto_next = false);
+    });
+    app.open("Puzzles");
+    let page = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view::<crate::pages::puzzles::PuzzlesPage>(cx).expect("the page")
+        })
+    };
+    let key = |app: &mut Harness| {
+        let page = page(app);
+        app.cx.update(|cx| page.read(cx).puzzle_key())
+    };
+    let board = {
+        let page = page(&mut app);
+        app.cx.update(|cx| page.read(cx).board())
+    };
+    let say = |app: &mut Harness, text: &str| {
+        app.cx
+            .update(|cx| board.update(cx, |board, cx| board.hear(text, cx)));
+        app.cx.run_until_parked();
+    };
+    app.wait_for("the puzzle to be playable", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_some_and(|hint| hint.disabled() != Some(true))
+    });
+    let first = key(&mut app);
+    say(&mut app, "next");
+    assert_eq!(key(&mut app), first, "a puzzle being solved is kept");
+    assert_eq!(
+        app.cx
+            .update(|cx| board.read(cx).voice_feedback())
+            .as_deref(),
+        Some("Finish this puzzle first")
+    );
+    say(&mut app, "queen takes f seven");
+    say(&mut app, "confirm");
+    app.wait_for("the puzzle to be solved", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_none_or(|hint| hint.disabled() == Some(true))
+    });
+    assert!(app.cx.update(|cx| board.read(cx).voice_listening()));
+    assert_eq!(key(&mut app), first);
+    say(&mut app, "next puzzle");
+    app.wait_for("the next puzzle", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_some_and(|hint| hint.disabled() != Some(true))
+    });
+    assert_ne!(key(&mut app), first);
+}
+
 /// Once a puzzle is over its moves step back and forth with the arrows, Home and End, as a game's
 /// do; while it is being solved they do nothing to the board.
 #[gpui_kit::test]
