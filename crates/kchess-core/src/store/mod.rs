@@ -28,7 +28,7 @@ use std::future::Future;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::host::{Config, Host, Level};
+use crate::host::{Config, Host};
 use crate::tasks::lock;
 use kchess_contracts::error::Result;
 use kchess_contracts::types::GameLibraryOverview;
@@ -305,6 +305,7 @@ pub fn open(path: &Path, host: &dyn Host) -> Result<Connection> {
 /// the database is restricted, and SQLite gives them the database's mode as it was then.
 #[cfg(unix)]
 pub(crate) fn restrict_database(path: &Path, host: &dyn Host, tag: &str) {
+    use crate::host::Level;
     use std::os::unix::fs::PermissionsExt;
     let mut files = vec![path.to_path_buf()];
     for suffix in ["-wal", "-shm"] {
