@@ -594,6 +594,36 @@ fn puzzle_history_rows_fit_every_window(cx: &mut gpui_kit::TestAppContext) {
     }
 }
 
+/// A wrong move dragged on the board goes back, so the right one can be tried at once. The piece
+/// stayed where it was dropped: the position had not changed, so nothing put it back, and the
+/// board showed the opponent to move with no way to go on.
+#[gpui_kit::test]
+fn a_wrong_move_goes_back_and_the_right_one_still_plays(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.cx.update(|cx| {
+        crate::prefs::set(
+            cx,
+            "kchess:puzzle-angle",
+            super::fake_lichess::TRAINED_THEME,
+        );
+    });
+    app.open("Puzzles");
+    app.wait_for("the puzzle to be playable", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_some_and(|hint| hint.disabled() != Some(true))
+    });
+    // Bxf7+ is legal but not the solution (Qxf7#).
+    app.drag_square("c4", "f7", true);
+    assert_eq!(app.square_name("c4"), "c4, white bishop");
+    assert_eq!(app.square_name("f7"), "f7, black pawn");
+    app.drag_square("h5", "f7", true);
+    assert_eq!(app.square_name("f7"), "f7, white queen");
+    assert_eq!(app.square_name("h5"), "h5, empty");
+}
+
 /// A puzzle failed and left unfinished when the app quits is still in the history.
 #[gpui_kit::test]
 fn a_puzzle_failed_before_quitting_is_kept(cx: &mut gpui_kit::TestAppContext) {
