@@ -1,14 +1,12 @@
-//! The reader of a challenge event from an account's event stream (`readChallengeEvent`,
-//! the challenges service of the TypeScript core), a pure rule beside `validateOnlineEvent`.
+//! The reader of a challenge event from an account's event stream, a pure rule beside
+//! `online::validate`.
 //!
-//! The reader keeps the TypeScript schema's rules (valibot): unknown keys pass, an optional key
-//! may be absent but not null, lengths count UTF-16 units, and a malformed event is not a
-//! challenge at all. The variant mapping comes from `crate::online_game`.
+//! Unknown keys pass, an optional key may be absent but not null, lengths count UTF-16 units,
+//! and a malformed event is not a challenge at all. The variant mapping comes from
+//! `crate::online_game`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
-
-use super::{Out, arg};
 
 /// A Lichess game id: `^[a-zA-Z0-9]{8,12}$`.
 fn is_game_id(text: &str) -> bool {
@@ -30,7 +28,6 @@ pub struct PlayerRef {
     pub online: Option<bool>,
 }
 
-/// `ChallengeTimeControl`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum TimeControl {
@@ -39,15 +36,22 @@ pub enum TimeControl {
     Unlimited,
 }
 
-/// `ChallengeInfo`: a pending challenge to or from one of the connected accounts.
+crate::union!(
+    /// Whether a challenge was received or sent.
+    ChallengeDirection {
+        In = "in",
+        Out = "out",
+    }
+);
+
+/// A pending challenge to or from one of the connected accounts.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChallengeInfo {
     pub id: String,
     /// The connected account it was sent to (incoming) or from (outgoing).
     pub account: String,
-    /// `in` or `out`.
-    pub direction: String,
+    pub direction: ChallengeDirection,
     pub opponent: PlayerRef,
     pub variant: String,
     pub variant_name: String,
@@ -63,7 +67,7 @@ pub struct ChallengeInfo {
     pub playable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub problem: Option<String>,
-    /// Milliseconds since the Unix epoch, as `Date.now()` gives.
+    /// Milliseconds since the Unix epoch.
     pub received_at: i64,
 }
 
@@ -78,12 +82,12 @@ pub struct ChallengeEvent {
 
 type Object = Map<String, Value>;
 
-/// Characters a JavaScript string counts for `maxLength` (UTF-16 code units).
+/// A text's length in UTF-16 code units, as Lichess's limits count it.
 fn units(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
-/// `v.optional(check)` for one key: `Some(None)` when absent, `Some(Some(_))` when it passes,
+/// One optional key: `Some(None)` when absent, `Some(Some(_))` when it passes,
 /// `None` when it is present and fails (null fails too).
 fn optional<'a, T>(
     object: &'a Object,
@@ -96,19 +100,18 @@ fn optional<'a, T>(
     }
 }
 
-/// `v.string()` within `max` UTF-16 units.
+/// A string within `max` UTF-16 units.
 fn text(value: &Value, max: usize) -> Option<&str> {
     value.as_str().filter(|text| units(text) <= max)
 }
 
-/// `v.pipe(v.number(), v.finite(), v.minValue(0))`.
+/// A number, at least 0.
 fn non_negative(value: &Value) -> Option<Number> {
     let number = value.as_number()?;
     number.as_f64().filter(|n| *n >= 0.0)?;
     Some(number.clone())
 }
 
-/// `v.picklist(options)`.
 fn picklist<'a>(value: &'a Value, options: &[&str]) -> Option<&'a str> {
     value.as_str().filter(|text| options.contains(text))
 }
@@ -117,7 +120,6 @@ fn game_id(value: &Value) -> Option<&str> {
     value.as_str().filter(|text| is_game_id(text))
 }
 
-/// `userSchema`.
 struct User {
     id: String,
     name: String,
@@ -132,7 +134,7 @@ fn user(value: &Value) -> Option<User> {
     let id = text(object.get("id")?, 40)?.to_string();
     let name = text(object.get("name")?, 40)?.to_string();
     let rating = optional(object, "rating", non_negative_any)?;
-    // `v.optional(v.nullable(text(8)))`: a null title is read as no title.
+    // A null title is read as no title.
     let title = optional(object, "title", |v| {
         if v.is_null() {
             Some(None)
@@ -153,7 +155,7 @@ fn user(value: &Value) -> Option<User> {
     })
 }
 
-/// A finite number of any sign (`v.pipe(v.number(), v.finite())`).
+/// A finite number of any sign.
 fn non_negative_any(value: &Value) -> Option<Number> {
     value.as_number().cloned()
 }
@@ -179,17 +181,16 @@ struct Challenge {
     speed: String,
     time_control: TimeControl,
     color: Option<String>,
-    direction: Option<String>,
+    direction: Option<ChallengeDirection>,
     initial_fen: Option<String>,
     rematch_of: Option<String>,
 }
 
 const COLORS: &[&str] = &["white", "black", "random"];
-const DIRECTIONS: &[&str] = &["in", "out"];
 
 fn challenge(object: &Object) -> Option<Challenge> {
     let id = game_id(object.get("id")?)?.to_string();
-    // `v.optional(text(20))`: a status is checked for length and otherwise unused.
+    // A status is checked for length and otherwise unused.
     optional(object, "status", |v| text(v, 20))?;
     let challenger = nullable_user(object, "challenger")?;
     let dest_user = nullable_user(object, "destUser")?;
@@ -200,7 +201,9 @@ fn challenge(object: &Object) -> Option<Challenge> {
     let speed = text(object.get("speed")?, 20)?.to_string();
     let time_control = time_control(object.get("timeControl")?)?;
     let color = optional(object, "color", |v| picklist(v, COLORS))?.map(str::to_string);
-    let direction = optional(object, "direction", |v| picklist(v, DIRECTIONS))?.map(str::to_string);
+    let direction = optional(object, "direction", |v| {
+        v.as_str().and_then(ChallengeDirection::from_key)
+    })?;
     let initial_fen = optional(object, "initialFen", |v| text(v, 100))?.map(str::to_string);
     let rematch_of = optional(object, "rematchOf", game_id)?.map(str::to_string);
     Some(Challenge {
@@ -219,7 +222,7 @@ fn challenge(object: &Object) -> Option<Challenge> {
     })
 }
 
-/// `v.variant('type', [clock, correspondence, unlimited])`.
+/// A `clock`, `correspondence` or `unlimited` time control, by its `type`.
 fn time_control(value: &Value) -> Option<TimeControl> {
     let object = value.as_object()?;
     match object.get("type")?.as_str()? {
@@ -242,7 +245,7 @@ fn time_control(value: &Value) -> Option<TimeControl> {
     }
 }
 
-/// `readChallengeEvent(account, raw, now)`: the challenge a stream event carries, seen from
+/// The challenge a stream event carries, seen from
 /// `account`'s side; None when the event is not a challenge event or does not match the schema.
 pub fn read_challenge_event(account: &str, raw: &Value, now: i64) -> Option<ChallengeEvent> {
     let object = raw.as_object()?;
@@ -263,7 +266,7 @@ pub fn read_challenge_event(account: &str, raw: &Value, now: i64) -> Option<Chal
     };
 
     let ours = account.to_lowercase();
-    let outgoing = parsed.direction.as_deref() == Some("out")
+    let outgoing = parsed.direction == Some(ChallengeDirection::Out)
         || (parsed.direction.is_none()
             && parsed
                 .challenger
@@ -280,7 +283,7 @@ pub fn read_challenge_event(account: &str, raw: &Value, now: i64) -> Option<Chal
         .as_deref()
         .unwrap_or(&variant_key)
         .to_owned();
-    let playable_variant = crate::online_game::variant_from_lichess(Some(variant_key.as_str()));
+    let playable_variant = crate::variant::Variant::from_lichess(Some(variant_key.as_str()));
     let problem = if playable_variant.is_none() {
         Some(format!("KChess cannot play {variant_name}."))
     } else if !board_ok {
@@ -304,7 +307,11 @@ pub fn read_challenge_event(account: &str, raw: &Value, now: i64) -> Option<Chal
     let info = ChallengeInfo {
         id: parsed.id,
         account: account.to_string(),
-        direction: if outgoing { "out" } else { "in" }.to_string(),
+        direction: if outgoing {
+            ChallengeDirection::Out
+        } else {
+            ChallengeDirection::In
+        },
         opponent,
         variant: variant_key,
         variant_name,
@@ -319,24 +326,6 @@ pub fn read_challenge_event(account: &str, raw: &Value, now: i64) -> Option<Chal
         received_at: now,
     };
     Some(ChallengeEvent { kind, info })
-}
-
-/// This module's methods for `records::call`; None when the method is not one of them.
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    Some(match method {
-        "readChallengeEvent" => {
-            let account = arg(args, 0).and_then(Value::as_str).unwrap_or_default();
-            let now = arg(args, 2).and_then(Value::as_i64).unwrap_or(0);
-            match arg(args, 1) {
-                None => Ok(Value::Null),
-                Some(raw) => Ok(match read_challenge_event(account, raw, now) {
-                    Some(event) => serde_json::to_value(event).unwrap_or(Value::Null),
-                    None => Value::Null,
-                }),
-            }
-        }
-        _ => return None,
-    })
 }
 
 #[cfg(test)]
@@ -365,7 +354,7 @@ mod tests {
     #[test]
     fn reads_incoming_and_outgoing_challenges_from_either_accounts_point_of_view() {
         let incoming = read_challenge_event("Alice", &challenge(json!({})), 1000).unwrap();
-        assert_eq!(incoming.info.direction, "in");
+        assert_eq!(incoming.info.direction, ChallengeDirection::In);
         assert_eq!(incoming.info.opponent.name, "Bob");
         assert_eq!(incoming.info.opponent.rating, Some(Number::from(1700)));
         assert_eq!(
@@ -381,7 +370,7 @@ mod tests {
                 .unwrap()
                 .info
                 .direction,
-            "out"
+            ChallengeDirection::Out
         );
         assert!(read_challenge_event("Alice", &json!({ "type": "gameStart" }), 0).is_none());
     }

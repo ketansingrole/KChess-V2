@@ -21,21 +21,12 @@ fn editor(cx: &mut gpui_kit::TestAppContext) -> Harness {
     app
 }
 
-/// Let animations run their course: a dialog that is closing is gone after this.
-pub(super) fn settle(app: &mut Harness) {
-    let mut frames = 0;
-    app.wait_for("the window to settle", |_, _| {
-        frames += 1;
-        frames > 80
-    });
-}
-
 /// Import a FEN or PGN through the analysis board's dialog, and let it close if it will.
 pub(super) fn import(app: &mut Harness, text: &str) {
     app.click("analysis-import");
     app.fill_in_dialog("FEN, PGN or Lichess link", text);
     app.click("import-run");
-    settle(app);
+    app.settle();
 }
 
 fn selected(app: &mut Harness, path: &str) -> Option<bool> {
@@ -246,7 +237,7 @@ fn an_import_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
         "rnbqkbnr/pppppppp/8/8/3q4/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
     );
     app.click("import-run");
-    settle(&mut app);
+    app.settle();
     assert!(app.shows("import-run"));
     assert!(!app.shows("tree-e2e4"));
 
@@ -323,19 +314,13 @@ fn edits_are_undone_and_redone(cx: &mut gpui_kit::TestAppContext) {
     app.find("tree-e2e4 e7e5 f1c4");
     assert_eq!(selected(&mut app, "e2e4 e7e5 f1c4"), Some(true));
     assert!(app.with_window(|_, cx| {
-        crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
-            crate::pages::Page::Analysis,
-            cx,
-        )
-        .is_some_and(|page| page.read(cx).pgn().contains("2. Bc4 ( 2. Nf3 )"))
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .is_some_and(|page| page.read(cx).pgn().contains("2. Bc4 ( 2. Nf3 )"))
     }));
     undo(&mut app);
     assert!(app.with_window(|_, cx| {
-        crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
-            crate::pages::Page::Analysis,
-            cx,
-        )
-        .is_some_and(|page| page.read(cx).pgn().contains("2. Nf3 ( 2. Bc4 )"))
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .is_some_and(|page| page.read(cx).pgn().contains("2. Nf3 ( 2. Bc4 )"))
     }));
     redo(&mut app);
     redo(&mut app);
@@ -532,25 +517,6 @@ fn the_editor_undoes_and_redoes_its_changes(cx: &mut gpui_kit::TestAppContext) {
     wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
 }
 
-/// F turns the editor's board, as its button does.
-#[gpui_kit::test]
-fn f_flips_the_editors_board(cx: &mut gpui_kit::TestAppContext) {
-    let mut app = editor(cx);
-    let orientation = |app: &mut Harness| {
-        app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::editor::EditorPage>(
-                crate::pages::Page::Editor,
-                cx,
-            )
-            .map(|page| page.read(cx).orientation())
-        })
-    };
-    let before = orientation(&mut app).expect("the page");
-    app.click(("editor-turn", 0usize));
-    app.press("f");
-    assert_eq!(orientation(&mut app), Some(!before));
-}
-
 /// The editor sets up positions in the other variants: Horde's start, read by Horde's rules and
 /// analysed as a Horde game; a pasted Crazyhouse FEN brings its variant and keeps its pockets.
 #[gpui_kit::test]
@@ -571,11 +537,7 @@ fn the_editor_sets_up_a_variant_position(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(app.status(), "Ready to analyse");
     app.click("analyse-position");
     app.wait_for("the Horde game on the analysis board", |_, cx| {
-        crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
-            crate::pages::Page::Analysis,
-            cx,
-        )
-        .is_some_and(|page| {
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx).is_some_and(|page| {
             let page = page.read(cx);
             page.header("Variant") == "Horde"
                 && page.shown_fen().starts_with("rnbqkbnr/pppppppp/8/1PP2PP1")
@@ -595,10 +557,13 @@ fn the_editor_sets_up_a_variant_position(cx: &mut gpui_kit::TestAppContext) {
     );
     assert_eq!(app.status(), "Ready to analyse");
     let variant = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::editor::EditorPage>(crate::pages::Page::Editor, cx)
+        crate::shell::view::<crate::pages::editor::EditorPage>(cx)
             .map(|page| page.read(cx).game_setup())
     });
-    assert_eq!(variant.expect("the editor")["variant"], "crazyhouse");
+    assert_eq!(
+        variant.expect("the editor").variant,
+        kchess_domain::variant::Variant::Crazyhouse
+    );
 }
 
 /// The spare pieces are buttons a screen reader names, chosen as the tools beside them are.
@@ -780,11 +745,7 @@ fn the_position_can_be_played_over_the_board(cx: &mut gpui_kit::TestAppContext) 
 fn export(app: &mut Harness, label: &str, file: &str) -> Vec<u8> {
     app.click("analysis-export");
     app.click_label(label);
-    let started = std::time::Instant::now();
-    while !app.cx.did_prompt_for_new_path() {
-        assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
-        app.tick();
-    }
+    app.wait_for_save_dialog();
     let folder = tempfile::tempdir().expect("a folder to save in");
     let path = folder.path().join(file);
     let chosen = path.clone();
@@ -861,10 +822,10 @@ fn a_cancelled_link_import_leaves_the_board_alone(cx: &mut gpui_kit::TestAppCont
         HELD_GAME_ASKED.load(Ordering::SeqCst)
     });
     app.click("import-cancel");
-    settle(&mut app);
+    app.settle();
     HELD_GAME_RELEASED.store(true, Ordering::SeqCst);
-    settle(&mut app);
-    settle(&mut app);
+    app.settle();
+    app.settle();
     app.find("tree-d2d4 d7d5");
     assert!(!app.shows("tree-e2e4"), "the late game replaced the board");
 }
@@ -872,11 +833,8 @@ fn a_cancelled_link_import_leaves_the_board_alone(cx: &mut gpui_kit::TestAppCont
 /// The FEN of the position the analysis board shows.
 fn shown_fen(app: &mut Harness) -> String {
     app.with_window(|_, cx| {
-        let page = crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
-            crate::pages::Page::Analysis,
-            cx,
-        )
-        .expect("the analysis board");
+        let page = crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .expect("the analysis board");
         page.read(cx).shown_fen()
     })
 }
@@ -885,11 +843,8 @@ fn shown_fen(app: &mut Harness) -> String {
 /// sent without its variant) shows an error instead.
 fn wait_for_search(app: &mut Harness) {
     app.wait_for("the engine to search", |_, cx| {
-        crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
-            crate::pages::Page::Analysis,
-            cx,
-        )
-        .is_some_and(|page| page.read(cx).engine_text(cx).starts_with("Depth "))
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .is_some_and(|page| page.read(cx).engine_text(cx).starts_with("Depth "))
     });
 }
 
@@ -955,13 +910,9 @@ fn a_crazyhouse_drop_is_played_from_the_pocket(cx: &mut gpui_kit::TestAppContext
     });
     app.click_label("Play Stockfish from here");
     app.wait_for("a Crazyhouse game from the drop", |_, cx| {
-        crate::shell::view_of::<crate::pages::computer::ComputerPage>(
-            crate::pages::Page::Computer,
-            cx,
-        )
-        .is_some_and(|page| {
+        crate::shell::view::<crate::pages::computer::ComputerPage>(cx).is_some_and(|page| {
             let page = page.read(cx);
-            page.setup_variant() == "crazyhouse"
+            page.setup_variant() == kchess_domain::variant::Variant::Crazyhouse
                 && page
                     .setup_fen()
                     .starts_with("rnb1kbnr/ppp1pppp/8/3q4/8/4P3/PPPP1PPP/")
@@ -1047,14 +998,14 @@ fn the_editors_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
         app.type_text(&format!(">{label}"));
         super::palette::wait_for_first(app, label);
         app.press("enter");
-        settle(app);
+        app.settle();
     };
     run(&mut app, "Clear board");
     wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
     // No kings: nothing can be played or analysed from here.
     app.press("secondary-k");
     app.type_text(">Analyse this position");
-    settle(&mut app);
+    app.settle();
     let listed: Vec<String> = app.with_window(|window, _| {
         (0..10usize)
             .filter_map(|index| window.try_find(("palette-item", index)))
@@ -1066,7 +1017,7 @@ fn the_editors_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
         "{listed:?}"
     );
     app.press("escape");
-    settle(&mut app);
+    app.settle();
     run(&mut app, "Starting position");
     wait_for_fen(&mut app, START_FEN);
 }
@@ -1074,7 +1025,7 @@ fn the_editors_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
 /// Drop `name` holding `text` on the window, and let it open.
 fn drop_file(app: &mut Harness, name: &str, text: &str) -> tempfile::TempDir {
     let folder = app.drop_file(name, text.as_bytes());
-    settle(app);
+    app.settle();
     folder
 }
 
@@ -1094,7 +1045,7 @@ fn a_dropped_pgn_file_opens_on_the_analysis_board(cx: &mut gpui_kit::TestAppCont
     // The board now holds unsaved moves: another file asks before replacing them.
     let _file = drop_file(&mut app, "other.PGN", "1. d4 d5 *");
     app.click("ok");
-    settle(&mut app);
+    app.settle();
     app.find("tree-d2d4 d7d5");
     assert!(!app.shows("tree-e2e4"));
     assert!(!app.shows("import-run"));
@@ -1111,7 +1062,7 @@ fn a_dropped_file_that_is_no_game_is_refused(cx: &mut gpui_kit::TestAppContext) 
     let _file = drop_file(&mut app, "notes.txt", "not a game");
     app.find("import-error");
     app.click("import-cancel");
-    settle(&mut app);
+    app.settle();
     let _file = drop_file(&mut app, "board.png", "png");
     assert!(!app.shows("import-run"));
     // A PGN over the import's 2 MB is refused before it is read, from any page.
@@ -1134,14 +1085,10 @@ fn the_import_opens_a_pgn_file(cx: &mut gpui_kit::TestAppContext) {
     std::fs::write(&path, "1. c4 e5 *").expect("the file");
     app.click("analysis-import");
     app.click("import-file");
-    let started = std::time::Instant::now();
-    while !app.cx.did_prompt_for_paths() {
-        assert!(started.elapsed() < super::TIMEOUT, "no open dialog");
-        app.tick();
-    }
+    app.wait_for_open_dialog();
     app.cx
         .simulate_path_prompt_response(move |_| Some(vec![path]));
-    settle(&mut app);
+    app.settle();
     app.find("tree-c2c4 e7e5");
     assert!(!app.shows("import-run"));
 }
@@ -1169,12 +1116,12 @@ fn a_dragged_file_shows_where_it_will_open(cx: &mut gpui_kit::TestAppContext) {
             cx,
         );
     });
-    settle(&mut app);
+    app.settle();
     assert!(app.shows("drop-zone"));
     app.with_window(|window, cx| {
         window.dispatch_event(gpui_kit::FileDropEvent::Exited.to_platform_input(), cx)
     });
-    settle(&mut app);
+    app.settle();
     assert!(!app.shows("drop-zone"));
 }
 
@@ -1186,11 +1133,8 @@ fn x_shows_the_threat(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
     let page = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
-                crate::pages::Page::Analysis,
-                cx,
-            )
-            .expect("the analysis board")
+            crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+                .expect("the analysis board")
         })
     };
     app.click_square("e2", true);
@@ -1217,7 +1161,7 @@ fn x_shows_the_threat(cx: &mut gpui_kit::TestAppContext) {
     });
     // Space plays the best move of the position shown, never the threat's.
     app.press("space");
-    settle(&mut app);
+    app.settle();
     assert!(!app.shows("tree-e2e4 e7e5"));
     assert_eq!(
         app.cx.update(|cx| analysis.read(cx).shown_fen()),
@@ -1323,4 +1267,76 @@ fn a_second_click_on_a_piece_puts_it_down(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(app.find(e2).selected(), Some(false));
     app.click_square("e2", true);
     assert_eq!(app.find(e2).selected(), Some(true));
+}
+
+/// How the profile holds the analysis board's session: `"blob"` for the unreadable one this test
+/// writes, `"text"` once the app saves one.
+fn stored_session(app: &Harness) -> rusqlite::Connection {
+    let profile = app.profile.as_ref().expect("the profile").path();
+    let db = rusqlite::Connection::open(profile.join("kchess.db")).expect("the profile's database");
+    db.busy_timeout(super::TIMEOUT).expect("a busy timeout");
+    db
+}
+
+fn session_type(db: &rusqlite::Connection) -> String {
+    db.query_row(
+        "SELECT typeof(body) FROM documents WHERE key = 'session:analysis'",
+        [],
+        |row| row.get(0),
+    )
+    .expect("the session is stored")
+}
+
+/// A session the profile holds but the core cannot read is not an empty board: the page says
+/// so, and its moves are not saved over that session, which the analysis board once did after
+/// taking the failed read for no session at all. A new board is the player's own and is saved.
+#[gpui_kit::test]
+fn a_session_that_cannot_be_read_is_not_saved_over(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let db = stored_session(&app);
+    // Bytes where the core keeps text: its read of the session fails.
+    db.execute(
+        "INSERT INTO documents (key, body, updatedAt) VALUES ('session:analysis', X'7B7D', 0)
+         ON CONFLICT(key) DO UPDATE SET body = excluded.body",
+        [],
+    )
+    .expect("the unreadable session is written");
+    app.open("Analysis board");
+    app.wait_for("the failed read to show", |window, _| {
+        window
+            .try_find(("analysis-problem", 0usize))
+            .and_then(|problem| problem.label().map(str::to_string))
+            .is_some_and(|label| label.starts_with("Your unfinished game could not be read"))
+    });
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    assert_eq!(selected(&mut app, "e2e4"), Some(true));
+    // Past the delay a save waits for more changes, then past every write sent.
+    for _ in 0..(crate::game::session::SAVE_DELAY.as_millis() / 5 * 2) {
+        app.tick();
+    }
+    let flushed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let done = flushed.clone();
+    app.cx.update(|cx| {
+        let writes = cx
+            .global::<crate::played::PlayedHandle>()
+            .0
+            .read(cx)
+            .flushed();
+        cx.spawn(async move |_| {
+            let _ = writes.await;
+            done.set(true);
+        })
+        .detach();
+    });
+    app.wait_for("the writes to be done", |_, _| flushed.get());
+    assert_eq!(session_type(&db), "blob", "the session was saved over");
+
+    app.press("secondary-n");
+    app.click_label("Replace");
+    app.wait_gone("tree-e2e4");
+    app.wait_for("the new board to be saved", |_, _| {
+        session_type(&db) == "text"
+    });
+    assert!(!app.shows(("analysis-problem", 0usize)));
 }

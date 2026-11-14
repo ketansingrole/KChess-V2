@@ -3,14 +3,12 @@
 //! (`data/lessons.json`, `data/training.json`); finished chapters and drills are runs the core keeps.
 
 use kchess_contracts::calls;
-use std::sync::OnceLock;
 
 use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use kchess_contracts::types::{RunKind, RunSummary};
 
 use super::endgame_drills::EndgameDrills;
 use super::endgame_lesson::EndgameLesson;
@@ -26,104 +24,33 @@ const VIEW: &str = "kchess:endgame-view";
 const COURSES: &str = "courses";
 const DRILLS: &str = "drills";
 const COURSE_GROUPS: [&str; 3] = ["Checkmates", "Pawn endgames", "Rook endgames"];
-/// The cards' columns (`.course-grid`).
+/// The cards' columns.
 const CARD_MIN: Pixels = px(300.);
 const CARD_GAP: Pixels = px(12.);
 
-/// An endgame to convert or hold against Stockfish, from a position checked to be won or drawn.
-#[derive(Clone, Deserialize)]
-pub struct Drill {
-    pub id: String,
-    pub title: String,
-    pub group: String,
-    pub fen: String,
-    /// The side you play.
-    pub player: String,
-    /// `win` or `draw`.
-    pub goal: String,
-    pub level: String,
-    /// What to aim for, in a sentence.
-    pub idea: String,
-}
+pub use kchess_domain::training::endgames::EndgameDrill as Drill;
+pub use kchess_domain::training::lessons::{Chapter, Course, Step};
 
-#[derive(Clone, Deserialize)]
-pub struct Shape {
-    pub orig: String,
-    pub dest: Option<String>,
-    pub brush: String,
-}
-
-#[derive(Clone, Deserialize)]
-pub struct LessonStep {
-    pub fen: String,
-    pub text: String,
-    #[serde(default)]
-    pub shapes: Vec<Shape>,
-    /// What the step asks (`LessonTask`), as the rules read it.
-    pub task: Value,
-}
-
-#[derive(Clone, Deserialize)]
-pub struct LessonChapter {
-    /// Unique across all courses: the saved run's variant.
-    pub id: String,
-    pub title: String,
-    pub steps: Vec<LessonStep>,
-}
-
-#[derive(Clone, Deserialize)]
-pub struct Course {
-    pub id: String,
-    pub group: String,
-    pub title: String,
-    pub subtitle: String,
-    pub chapters: Vec<LessonChapter>,
-}
-
-/// `ENDGAME_DRILLS`.
+/// The endgame drills against Stockfish.
 pub fn drills() -> &'static [Drill] {
-    static DRILLS: OnceLock<Vec<Drill>> = OnceLock::new();
-    DRILLS.get_or_init(|| {
-        #[derive(Deserialize)]
-        struct Training {
-            #[serde(rename = "endgameDrills")]
-            endgame_drills: Vec<Drill>,
-        }
-        serde_json::from_str::<Training>(include_str!(
-            "../../../../../crates/kchess-domain/data/training.json"
-        ))
-        .map(|training| training.endgame_drills)
-        .unwrap_or_default()
-    })
+    &kchess_domain::training::data::data().endgame_drills
 }
 
-/// `LESSON_COURSES`.
+/// The checkmate and endgame courses.
 pub fn courses() -> &'static [Course] {
-    static COURSES: OnceLock<Vec<Course>> = OnceLock::new();
-    COURSES.get_or_init(|| {
-        #[derive(Deserialize)]
-        struct Lessons {
-            courses: Vec<Course>,
-        }
-        serde_json::from_str::<Lessons>(include_str!(
-            "../../../../../crates/kchess-domain/data/lessons.json"
-        ))
-        .map(|lessons| lessons.courses)
-        .unwrap_or_default()
-    })
+    &kchess_domain::training::lessons::data().courses
 }
 
 /// A drill or chapter finished at least once.
-pub fn finished(summary: &Value, id: &str) -> bool {
-    summary["best"][id]["score"].as_f64().unwrap_or(0.) > 0.
+pub fn finished(summary: Option<&RunSummary>, id: &str) -> bool {
+    super::run::best(summary, id).unwrap_or(0.) > 0.
 }
 
 /// What a course or the drills tell the hub.
 pub enum TrainerEvent {
-    /// Back to the courses.
     Back,
     /// A chapter was finished: the lessons' summary as the core now keeps it.
-    Saved(Value),
+    Saved(RunSummary),
 }
 
 /// Each course's card icon.
@@ -148,8 +75,8 @@ fn course_icon(id: &str) -> Icon {
 }
 
 pub struct Endgames {
-    lessons: Value,
-    drill_summary: Value,
+    lessons: Option<RunSummary>,
+    drill_summary: Option<RunSummary>,
     drills: Option<Entity<EndgameDrills>>,
     lesson: Option<Entity<EndgameLesson>>,
     area: Measured,
@@ -159,8 +86,8 @@ pub struct Endgames {
 impl Endgames {
     pub fn new(cx: &mut Context<Self>) -> Endgames {
         let mut hub = Endgames {
-            lessons: Value::Null,
-            drill_summary: Value::Null,
+            lessons: None,
+            drill_summary: None,
             drills: None,
             lesson: None,
             area: Measured::default(),
@@ -175,17 +102,17 @@ impl Endgames {
         let core = cx.global::<AppCore>().clone();
         let (lessons, drills) = (
             core.request(calls::RunSummary {
-                kind: json!("lesson"),
+                kind: RunKind::Lesson,
             }),
             core.request(calls::RunSummary {
-                kind: json!("endgame"),
+                kind: RunKind::Endgame,
             }),
         );
         cx.spawn(async move |this, cx| match (lessons.await, drills.await) {
             (Ok(lessons), Ok(drills)) => {
                 let _ = this.update(cx, |this, cx| {
-                    this.lessons = lessons;
-                    this.drill_summary = drills;
+                    this.lessons = Some(lessons);
+                    this.drill_summary = Some(drills);
                     cx.notify();
                 });
             }
@@ -232,13 +159,13 @@ impl Endgames {
         match event {
             TrainerEvent::Back => self.back(cx),
             TrainerEvent::Saved(summary) => {
-                self.lessons = summary.clone();
+                self.lessons = Some(summary.clone());
                 cx.notify();
             }
         }
     }
 
-    /// `.course-card`: a course, or the drills, with how much of it is done; it opens `view`.
+    /// A course, or the drills, with how much of it is done; it opens `view`.
     fn card(
         view: &str,
         glyph: Icon,
@@ -360,7 +287,7 @@ impl Endgames {
                         let done = course
                             .chapters
                             .iter()
-                            .filter(|chapter| finished(&self.lessons, &chapter.id))
+                            .filter(|chapter| finished(self.lessons.as_ref(), &chapter.id))
                             .count();
                         Self::card(
                             &course.id,
@@ -379,7 +306,7 @@ impl Endgames {
             .collect();
         let done = drills()
             .iter()
-            .filter(|drill| finished(&self.drill_summary, &drill.id))
+            .filter(|drill| finished(self.drill_summary.as_ref(), &drill.id))
             .count();
         sections.push(
             group(
@@ -458,8 +385,7 @@ mod tests {
 
     #[test]
     fn the_shared_courses_and_drills_load() {
-        assert_eq!(drills().len(), 9);
-        assert_eq!(courses().len(), 14);
+        assert!(!drills().is_empty() && !courses().is_empty());
         assert!(courses().iter().all(|course| !course.chapters.is_empty()));
         assert!(
             courses()

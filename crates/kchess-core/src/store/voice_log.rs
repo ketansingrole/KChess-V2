@@ -1,134 +1,73 @@
 //! What voice input heard and what came of it, kept to see which
 //! words it mishears. Oldest entries beyond `MAX_ENTRIES` are dropped.
 
+use kchess_contracts::types::{VoiceAttempt, VoiceAttemptInput, VoiceUpdate, VoiceWord};
 use rusqlite::{Connection, params};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
-use super::StoreContext;
-use super::library::{db_err, js_json, now_ms, object};
-use crate::error::{CoreError, Result};
+use super::library::js_json;
+use super::sql::Sql as _;
 use crate::host::{Host, Level};
+use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result};
 
 /// Oldest entries beyond this are dropped; enough to study, small enough to never matter on disk.
 const MAX_ENTRIES: i64 = 5000;
 
-/// This module's storage methods; None when the method is not one of them.
-pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
-    let db = ctx.db;
-    let host = ctx.host;
-    let result = match method {
-        "store.voiceLog.saveVoiceAttempt" => {
-            save_voice_attempt(db, args.first().unwrap_or(&Value::Null)).map(|id| json!(id))
-        }
-        "store.voiceLog.updateVoiceAttempt" => {
-            let id = args.first().and_then(Value::as_i64);
-            match id {
-                Some(id) => update_voice_attempt(db, id, args.get(1).unwrap_or(&Value::Null))
-                    .map(|()| Value::Null),
-                None => Err(CoreError::new("id must be a number")),
-            }
-        }
-        "store.voiceLog.voiceHistory" => match args.first().and_then(Value::as_i64) {
-            Some(limit) => voice_history(host, db, limit).map(Value::Array),
-            None => Err(CoreError::new("limit must be a number")),
-        },
-        "store.voiceLog.clearVoiceHistory" => db
-            .execute("DELETE FROM voice_log", [])
-            .map(|_| Value::Null)
-            .map_err(db_err),
-        "store.voiceLog.voiceHistoryDocument" => {
-            voice_history_document(host, db).map(Value::String)
-        }
-        _ => return None,
-    };
-    Some(result)
-}
-
-/// `saveVoiceAttempt(attempt)`: the new entry's id.
-fn save_voice_attempt(db: &Connection, attempt: &Value) -> Result<i64> {
-    let attempt = object(attempt, "voice attempt")?;
-    let text = |key: &str| attempt.get(key).cloned().unwrap_or(Value::Null);
-    let optional = |key: &str| -> Option<String> {
-        attempt
-            .get(key)
-            .filter(|v| !v.is_null())
-            .and_then(Value::as_str)
-            .map(str::to_string)
-    };
-    let source = attempt
-        .get("source")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let heard = attempt
-        .get("heard")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let confidence = attempt
-        .get("confidence")
-        .and_then(Value::as_f64)
-        .unwrap_or(f64::NAN);
-    let outcome = attempt
-        .get("outcome")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+/// The new entry's id.
+pub fn save_voice_attempt(db: &Connection, attempt: &VoiceAttemptInput) -> Result<i64> {
+    let words =
+        serde_json::to_value(&attempt.words).map_err(|cause| CoreError::new(cause.to_string()))?;
     db.execute(
         "INSERT INTO voice_log (at, source, heard, confidence, words, outcome, parsed, expected, fen, retryOf)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
-            now_ms()? as i64,
-            source,
-            heard,
-            confidence,
-            js_json(&text("words")),
-            outcome,
-            optional("parsed"),
-            optional("expected"),
-            optional("fen"),
-            attempt.get("retryOf").and_then(Value::as_i64),
+            now_ms(),
+            attempt.source.as_str(),
+            attempt.heard,
+            attempt.confidence,
+            js_json(&words),
+            attempt.outcome.as_str(),
+            attempt.parsed,
+            attempt.expected,
+            attempt.fen,
+            attempt.retry_of,
         ],
     )
-    .map_err(db_err)?;
+    .sql()?;
     let id = db.last_insert_rowid();
     db.execute(
         "DELETE FROM voice_log WHERE id NOT IN (SELECT id FROM voice_log ORDER BY id DESC LIMIT ?1)",
         params![MAX_ENTRIES],
     )
-    .map_err(db_err)?;
+    .sql()?;
     Ok(id)
 }
 
-/// `updateVoiceAttempt(id, update)`: a new outcome and expected move, when given.
-fn update_voice_attempt(db: &Connection, id: i64, update: &Value) -> Result<()> {
-    if let Some(outcome) = update
-        .get("outcome")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-    {
+/// A new outcome and expected move, when given.
+pub fn update_voice_attempt(db: &Connection, id: i64, update: &VoiceUpdate) -> Result<()> {
+    if let Some(outcome) = update.outcome {
         db.execute(
             "UPDATE voice_log SET outcome = ?1 WHERE id = ?2",
-            params![outcome, id],
+            params![outcome.as_str(), id],
         )
-        .map_err(db_err)?;
+        .sql()?;
     }
-    if let Some(expected) = update
-        .get("expected")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(expected) = update.expected.as_deref().filter(|s| !s.is_empty()) {
         db.execute(
             "UPDATE voice_log SET expected = ?1 WHERE id = ?2",
             params![expected, id],
         )
-        .map_err(db_err)?;
+        .sql()?;
     }
     Ok(())
 }
 
-/// `voiceHistory(limit)`: the newest entries first.
-fn voice_history(host: &dyn Host, db: &Connection, limit: i64) -> Result<Vec<Value>> {
+/// The newest entries first.
+pub fn voice_history(host: &dyn Host, db: &Connection, limit: u32) -> Result<Vec<VoiceAttempt>> {
     let mut statement = db
         .prepare("SELECT * FROM voice_log ORDER BY id DESC LIMIT ?1")
-        .map_err(db_err)?;
+        .sql()?;
     let rows = statement
         .query_map(params![limit], |row| {
             Ok((
@@ -145,13 +84,13 @@ fn voice_history(host: &dyn Host, db: &Connection, limit: i64) -> Result<Vec<Val
                 row.get::<_, Option<i64>>(10)?,
             ))
         })
-        .map_err(db_err)?;
+        .sql()?;
     let mut entries = Vec::new();
     for row in rows {
         let (id, at, source, heard, confidence, words, outcome, parsed, expected, fen, retry_of) =
-            row.map_err(db_err)?;
+            row.sql()?;
         // Words that are not JSON read as none.
-        let words = match serde_json::from_str::<Value>(&words) {
+        let words = match serde_json::from_str::<Vec<VoiceWord>>(&words) {
             Ok(words) => words,
             Err(cause) => {
                 host.log(
@@ -159,49 +98,67 @@ fn voice_history(host: &dyn Host, db: &Connection, limit: i64) -> Result<Vec<Val
                     "voice",
                     &format!("Voice log row has invalid words JSON: {cause}"),
                 );
-                json!([])
+                Vec::new()
             }
         };
-        let mut entry = Map::new();
-        entry.insert("id".into(), json!(id));
-        entry.insert("at".into(), json!(at));
-        entry.insert("source".into(), json!(source));
-        entry.insert("heard".into(), json!(heard));
-        entry.insert("confidence".into(), json!(confidence));
-        entry.insert("words".into(), words);
-        entry.insert("outcome".into(), json!(outcome));
-        for (key, value) in [("parsed", parsed), ("expected", expected), ("fen", fen)] {
-            if let Some(value) = value {
-                entry.insert(key.into(), json!(value));
+        // A source or outcome no build of KChess writes leaves the row out.
+        let named = serde_json::from_value(json!(source))
+            .and_then(|source| Ok((source, serde_json::from_value(json!(outcome))?)));
+        let (source, outcome) = match named {
+            Ok(named) => named,
+            Err(cause) => {
+                host.log(
+                    Level::Debug,
+                    "voice",
+                    &format!("Voice log row {id} is not readable: {cause}"),
+                );
+                continue;
             }
-        }
-        if let Some(retry) = retry_of {
-            entry.insert("retryOf".into(), json!(retry));
-        }
-        entries.push(Value::Object(entry));
+        };
+        entries.push(VoiceAttempt {
+            id,
+            at,
+            input: VoiceAttemptInput {
+                source,
+                heard,
+                confidence,
+                words,
+                outcome,
+                parsed,
+                expected,
+                fen,
+                retry_of,
+            },
+        });
     }
     Ok(entries)
 }
 
-/// `voiceHistoryDocument()`: the whole log as an indented JSON document for export.
-fn voice_history_document(host: &dyn Host, db: &Connection) -> Result<String> {
+/// The whole log as an indented JSON document for export.
+pub fn clear_voice_history(db: &Connection) -> Result<()> {
+    db.execute("DELETE FROM voice_log", []).sql()?;
+    Ok(())
+}
+
+pub fn voice_history_document(host: &dyn Host, db: &Connection) -> Result<String> {
     let mut entries = Vec::new();
-    for mut entry in voice_history(host, db, MAX_ENTRIES)? {
-        let at = entry.get("at").and_then(Value::as_f64).unwrap_or(f64::NAN);
-        let time = iso_time(at)?;
+    for attempt in voice_history(host, db, MAX_ENTRIES as u32)? {
+        let time = iso_time(attempt.at as f64)?;
+        let mut entry =
+            serde_json::to_value(attempt).map_err(|cause| CoreError::new(cause.to_string()))?;
         if let Value::Object(map) = &mut entry {
             map.insert("time".into(), json!(time));
         }
         entries.push(entry);
     }
-    let document = json!({ "exportedAt": now_ms()?, "entries": entries });
+    let document = json!({ "exportedAt": now_ms(), "entries": entries });
     let mut out = String::new();
     write_pretty(&document, 0, &mut out);
     out.push('\n');
     Ok(out)
 }
 
-/// `JSON.stringify(value, null, 2)`.
+/// JSON indented by two spaces.
 fn write_pretty(value: &Value, depth: usize, out: &mut String) {
     let indent = |out: &mut String, level: usize| out.push_str(&"  ".repeat(level));
     match value {
@@ -243,6 +200,8 @@ fn iso_time(ms: f64) -> Result<String> {
 mod tests {
     use super::*;
 
+    use crate::test_host::TestHost;
+
     #[test]
     fn dates_read_as_javascript_reads_them() {
         assert_eq!(iso_time(0.0).expect("epoch"), "1970-01-01T00:00:00.000Z");
@@ -262,45 +221,34 @@ mod tests {
         assert_eq!(out, "{\n  \"a\": [\n    1,\n    {}\n  ],\n  \"b\": []\n}");
     }
 
-    struct Logged(std::sync::Mutex<Vec<String>>);
-    impl Host for Logged {
-        fn log(&self, _: Level, scope: &str, message: &str) {
-            self.0
-                .lock()
-                .expect("log")
-                .push(format!("{scope}: {message}"));
-        }
-        fn emit(&self, _: &str, _: Value) {}
-    }
-
     fn database() -> Connection {
         let db = Connection::open_in_memory().expect("database");
         crate::store::migrations::migrate(&db).expect("migrate");
         db
     }
 
-    fn run(db: &Connection, host: &Logged, method: &str, args: &[Value]) -> Result<Value> {
-        let config = crate::host::Config::new(std::path::PathBuf::new());
-        let cache = crate::store::StoreCache::default();
-        let ctx = StoreContext {
-            db,
-            host,
-            config: &config,
-            cache: &cache,
-        };
-        call(&ctx, method, args).expect("a voice log method")
+    fn save(db: &Connection, sent: Value) -> i64 {
+        let attempt: VoiceAttemptInput = serde_json::from_value(sent).expect("attempt");
+        save_voice_attempt(db, &attempt).expect("save")
+    }
+
+    fn update(db: &Connection, id: i64, sent: Value) {
+        let update: VoiceUpdate = serde_json::from_value(sent).expect("update");
+        update_voice_attempt(db, id, &update).expect("update");
+    }
+
+    fn history(host: &TestHost, db: &Connection, limit: u32) -> Value {
+        json!(voice_history(host, db, limit).expect("history"))
     }
 
     #[test]
     fn attempts_are_saved_corrected_and_listed_newest_first() {
         let db = database();
-        let host = Logged(Default::default());
-        let first = run(
+        let host = TestHost::default();
+        let first = save(
             &db,
-            &host,
-            "store.voiceLog.saveVoiceAttempt",
-            &[json!({
-                "source": "vosk",
+            json!({
+                "source": "computer",
                 "heard": "night f three",
                 "confidence": 0.75,
                 "words": [{ "word": "night", "conf": 0.5 }],
@@ -308,43 +256,24 @@ mod tests {
                 "parsed": "Nf3",
                 "fen": "8/8/8/8/8/8/8/8 w - - 0 1",
                 "expected": null,
-            })],
-        )
-        .expect("save");
-        let retry = run(
+            }),
+        );
+        let retry = save(
             &db,
-            &host,
-            "store.voiceLog.saveVoiceAttempt",
-            &[json!({ "source": "vosk", "heard": "knight", "confidence": 1, "outcome": "unclear", "retryOf": first })],
-        )
-        .expect("save");
-        assert_eq!(retry.as_i64(), first.as_i64().map(|id| id + 1));
-        run(
-            &db,
-            &host,
-            "store.voiceLog.updateVoiceAttempt",
-            &[
-                first.clone(),
-                json!({ "outcome": "wrong", "expected": "Nc3" }),
-            ],
-        )
-        .expect("update");
-        // Empty fields leave the entry as it was.
-        run(
-            &db,
-            &host,
-            "store.voiceLog.updateVoiceAttempt",
-            &[first.clone(), json!({ "outcome": "", "expected": "" })],
-        )
-        .expect("update");
+            json!({ "source": "computer", "heard": "knight", "confidence": 1, "words": [], "outcome": "unclear", "retryOf": first }),
+        );
+        assert_eq!(retry, first + 1);
+        update(&db, first, json!({ "outcome": "wrong", "expected": "Nc3" }));
+        // An empty expected move, or no outcome, leaves the entry as it was.
+        update(&db, first, json!({ "expected": "" }));
 
-        let history =
-            run(&db, &host, "store.voiceLog.voiceHistory", &[json!(10)]).expect("history");
-        let entries = history.as_array().expect("entries");
+        let listed = history(&host, &db, 10);
+        let entries = listed.as_array().expect("entries");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0]["id"], retry);
         assert_eq!(entries[0]["retryOf"], first);
-        assert_eq!(entries[0]["words"], json!(null));
+        assert_eq!(entries[0]["confidence"], json!(1.0));
+        assert_eq!(entries[0]["words"], json!([]));
         assert!(entries[0].get("parsed").is_none());
         assert_eq!(entries[1]["outcome"], json!("wrong"));
         assert_eq!(entries[1]["expected"], json!("Nc3"));
@@ -356,33 +285,26 @@ mod tests {
         );
         assert!(entries[1].get("retryOf").is_none());
 
-        let limited = run(&db, &host, "store.voiceLog.voiceHistory", &[json!(1)]).expect("history");
-        assert_eq!(limited.as_array().map(Vec::len), Some(1));
+        let limited = voice_history(&host, &db, 1).expect("history");
+        assert_eq!(limited.len(), 1);
 
-        run(&db, &host, "store.voiceLog.clearVoiceHistory", &[]).expect("clear");
-        assert_eq!(
-            run(&db, &host, "store.voiceLog.voiceHistory", &[json!(10)]).expect("history"),
-            json!([])
-        );
+        clear_voice_history(&db).expect("clear");
+        assert_eq!(history(&host, &db, 10), json!([]));
     }
 
     #[test]
     fn the_log_keeps_only_the_newest_entries() {
         let db = database();
-        let host = Logged(Default::default());
         db.execute_batch(&format!(
             "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {MAX_ENTRIES})
              INSERT INTO voice_log (at, source, heard, confidence, words, outcome)
              SELECT i, 'vosk', 'e4', 1, '[]', 'played' FROM n"
         ))
         .expect("seed");
-        let id = run(
+        let id = save(
             &db,
-            &host,
-            "store.voiceLog.saveVoiceAttempt",
-            &[json!({ "heard": "e5", "confidence": 1 })],
-        )
-        .expect("save");
+            json!({ "source": "local", "heard": "e5", "confidence": 1, "words": [], "outcome": "played" }),
+        );
         let (count, oldest): (i64, i64) = db
             .query_row("SELECT COUNT(*), MIN(id) FROM voice_log", [], |row| {
                 Ok((row.get(0)?, row.get(1)?))
@@ -390,22 +312,22 @@ mod tests {
             .expect("count");
         assert_eq!(count, MAX_ENTRIES);
         assert_eq!(oldest, 2);
-        assert_eq!(id, json!(MAX_ENTRIES + 1));
+        assert_eq!(id, MAX_ENTRIES + 1);
     }
 
     #[test]
     fn the_export_dates_every_entry_and_reads_bad_words_as_none() {
         let db = database();
-        let host = Logged(Default::default());
+        let host = TestHost::default();
         db.execute(
             "INSERT INTO voice_log (at, source, heard, confidence, words, outcome)
-             VALUES (1700000000123, 'vosk', 'e4', 0.5, 'not json', 'played')",
+             VALUES (1700000000123, 'local', 'e4', 0.5, 'not json', 'played'),
+                    (1700000000124, 'vosk', 'e5', 0.5, '[]', 'played')",
             [],
         )
         .expect("seed");
-        let document =
-            run(&db, &host, "store.voiceLog.voiceHistoryDocument", &[]).expect("document");
-        let text = document.as_str().expect("text");
+        let document = voice_history_document(&host, &db).expect("document");
+        let text = document.as_str();
         assert!(text.ends_with("}\n"));
         assert!(text.contains("\n  \"entries\": [\n    {\n"));
         let parsed: Value = serde_json::from_str(text).expect("json");
@@ -415,33 +337,46 @@ mod tests {
         );
         assert_eq!(parsed["entries"][0]["words"], json!([]));
         assert!(parsed["exportedAt"].as_f64().is_some());
-        let logged = host.0.lock().expect("log");
-        assert!(logged[0].starts_with("voice: Voice log row has invalid words JSON"));
+        assert_eq!(parsed["entries"].as_array().map(Vec::len), Some(1));
+        let logged = host.logs();
+        assert!(logged[0].contains("[voice] Voice log row 2 is not readable"));
+        assert!(logged[1].contains("[voice] Voice log row has invalid words JSON"));
     }
 
+    /// The row a saved phrase leaves, as earlier builds wrote it: whole confidences without a
+    /// fraction in the words, absent fields as NULL.
     #[test]
-    fn bad_arguments_are_refused_and_other_methods_are_not_this_modules() {
+    fn a_saved_phrase_is_stored_as_before() {
         let db = database();
-        let host = Logged(Default::default());
-        assert!(run(&db, &host, "store.voiceLog.saveVoiceAttempt", &[]).is_err());
-        assert!(
-            run(
-                &db,
-                &host,
-                "store.voiceLog.updateVoiceAttempt",
-                &[json!("1")]
-            )
-            .is_err()
+        save(
+            &db,
+            json!({ "source": "computer", "heard": "e four", "confidence": 1, "outcome": "played",
+                    "words": [{ "word": "e", "conf": 1 }, { "word": "four", "conf": 0.5 }] }),
         );
-        assert!(run(&db, &host, "store.voiceLog.voiceHistory", &[]).is_err());
-        let config = crate::host::Config::new(std::path::PathBuf::new());
-        let cache = crate::store::StoreCache::default();
-        let ctx = StoreContext {
-            db: &db,
-            host: &host,
-            config: &config,
-            cache: &cache,
-        };
-        assert!(call(&ctx, "store.runs.runSummary", &[]).is_none());
+        let row: (String, f64, String, Option<String>, Option<i64>) = db
+            .query_row(
+                "SELECT source, confidence, words, parsed, retryOf FROM voice_log",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("row");
+        assert_eq!(
+            row,
+            (
+                "computer".into(),
+                1.0,
+                r#"[{"word":"e","conf":1},{"word":"four","conf":0.5}]"#.into(),
+                None,
+                None
+            )
+        );
     }
 }

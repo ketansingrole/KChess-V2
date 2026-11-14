@@ -1,60 +1,61 @@
-//! The facade's settings and the saved settings (`run_facade` arms, moved without changes).
+//! The settings and the stored data.
 
-use super::args::{arg, normal};
-use super::core_settings;
-use crate::core::Core;
-use crate::error::{CoreError, Result};
+use kchess_contracts::check::check;
+use kchess_contracts::core_api::SettingsApi;
+use kchess_contracts::types::{AppData, CoreSettings, Settings};
+use kchess_domain::misc::value::J;
 use serde_json::Value;
 
-impl Core {
-    /// Answers the facade's settings methods.
-    pub(crate) async fn run_settings(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "loadData" => self.load_data().await,
-            "settings" => Ok(core_settings(&self.get_settings().await?)),
-            "desktopSettings" => self.get_settings().await,
-            "saveSettings" => {
-                let settings = normal("assertCoreSettings", &arg(args, 0))?;
-                let _writing = self.settings_writes.lock().await;
-                let mut merged = self.get_settings().await?;
-                if let (Some(target), Some(changes)) =
-                    (merged.as_object_mut(), settings.as_object())
-                {
-                    for (key, value) in changes {
-                        target.insert(key.clone(), value.clone());
+use crate::core::Core;
+use kchess_contracts::error::{CoreError, Result};
+
+fn untyped(settings: &Settings) -> Result<Value> {
+    serde_json::to_value(settings).map_err(|cause| CoreError::wrap("settings", cause))
+}
+
+impl SettingsApi for Core {
+    async fn load_data(&self) -> Result<AppData> {
+        self.app_data().await
+    }
+
+    async fn stored_settings(&self) -> Result<CoreSettings> {
+        Ok(self.get_settings().await?.core)
+    }
+
+    async fn desktop_settings(&self) -> Result<Settings> {
+        self.get_settings().await
+    }
+
+    async fn save_settings(&self, settings: CoreSettings) -> Result<CoreSettings> {
+        let _writing = self.settings_writes.lock().await;
+        let mut merged = self.get_settings().await?;
+        merged.core = settings;
+        Ok(self.persist_settings(merged).await?.core)
+    }
+
+    // With `base`, the settings the window's edits started from, only what the window changed
+    // is written: another window's changes to other settings stay.
+    async fn save_desktop_settings(
+        &self,
+        settings: Settings,
+        base: Option<Settings>,
+    ) -> Result<Settings> {
+        let _writing = self.settings_writes.lock().await;
+        let settings = match base {
+            Some(base) => {
+                let (edited, base) = (untyped(&settings)?, untyped(&base)?);
+                let mut merged = untyped(&self.get_settings().await?)?;
+                if let (Some(target), Some(edited)) = (merged.as_object_mut(), edited.as_object()) {
+                    for (key, value) in edited {
+                        if base.get(key) != Some(value) {
+                            target.insert(key.clone(), value.clone());
+                        }
                     }
                 }
-                let saved = self.persist_settings(merged).await?;
-                Ok(core_settings(&saved))
+                check::<Settings>(J::from(&merged)).map_err(CoreError::new)?
             }
-            // With `base`, the settings the window's edits started from, only what the window
-            // changed is written: another window's changes to other settings stay.
-            "saveDesktopSettings" => {
-                let settings = normal("assertSettings", &arg(args, 0))?;
-                let base = match args.get(1) {
-                    None | Some(Value::Null) => None,
-                    Some(base) => Some(normal("assertSettings", base)?),
-                };
-                let _writing = self.settings_writes.lock().await;
-                let settings = match base {
-                    Some(base) => {
-                        let mut merged = self.get_settings().await?;
-                        if let (Some(target), Some(edited)) =
-                            (merged.as_object_mut(), settings.as_object())
-                        {
-                            for (key, value) in edited {
-                                if base.get(key) != Some(value) {
-                                    target.insert(key.clone(), value.clone());
-                                }
-                            }
-                        }
-                        normal("assertSettings", &merged)?
-                    }
-                    None => settings,
-                };
-                self.persist_settings(settings).await
-            }
-            _ => Err(CoreError::new(format!("Unknown core method {method}."))),
-        }
+            None => settings,
+        };
+        self.persist_settings(settings).await
     }
 }

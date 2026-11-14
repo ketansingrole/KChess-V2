@@ -30,7 +30,7 @@ impl SettingsPage {
             return self.stop_mic_test(cx);
         }
         self.mic_error = None;
-        match capture::start() {
+        match capture::start(cx) {
             Ok((capture, mut chunks)) => {
                 let pump = cx.spawn(async move |this, cx| {
                     while let Some(chunk) = chunks.next().await {
@@ -74,7 +74,7 @@ impl SettingsPage {
         }
     }
 
-    /// The system's own request for access (`askForMediaAccess`).
+    /// The system's own request for access.
     fn ask_microphone(&mut self, cx: &mut Context<Self>) {
         self.mic_asking = true;
         let (sender, answer) = futures::channel::oneshot::channel();
@@ -106,7 +106,6 @@ impl SettingsPage {
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> Div {
-        let (frontend, core) = (&settings.frontend, &settings.core);
         let test = self.mic_test.as_ref();
         let status: Option<SharedString> = match (&self.mic_error, test) {
             (Some(error), _) => Some(error.clone()),
@@ -227,33 +226,9 @@ impl SettingsPage {
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_mic_test(cx))),
                 ),
             )
-            .switch(
-                "voice-confirm",
-                "Confirm spoken moves",
-                Some("Say “confirm” before playing the move"),
-                frontend.voice_confirm_moves,
-                true,
-                |s, on| s.frontend.voice_confirm_moves = on,
-                palette,
-            )
-            .switch(
-                "voice-push-to-talk",
-                "Hold to speak",
-                Some("Hold Space or the on-screen button"),
-                frontend.voice_push_to_talk,
-                true,
-                |s, on| s.frontend.voice_push_to_talk = on,
-                palette,
-            )
-            .switch(
-                "voice-history",
-                "Keep voice history",
-                Some("Saves recognized text on this device; no audio"),
-                core.voice_history,
-                true,
-                |s, on| s.core.voice_history = on,
-                palette,
-            )
+            .switch("voice-confirm", settings, true, palette)
+            .switch("voice-push-to-talk", settings, true, palette)
+            .switch("voice-history", settings, true, palette)
             .card(palette)
             .when_some(self.voice_history.clone(), |column, history| {
                 v_flex().gap(px(16.)).child(column).child(history)

@@ -2,34 +2,57 @@
 //! and print each side's accuracy and the moves Stockfish faults.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::ReviewKey;
+use kchess_contracts::types::{ReviewRequest, ReviewStatus, StoredReview};
 use kchess_domain::pgn::parse_pgn;
-use kchess_domain::review::{analyse_review, san_to_uci};
+use kchess_domain::review::{analyse, san_to_uci};
+use kchess_domain::variant::Variant;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::core::{CoreClient, Event};
+use crate::core::{ClientEvent, CoreClient, CoreEvent};
+use crate::wait::{Next, Wait};
 
-const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
-/// A game read for review: where it starts, its main line in SAN and in UCI, and the Lichess key
-/// of its variant when Fairy-Stockfish reviews it (not standard chess or Chess960).
+/// A game read for review: where it starts, its main line in SAN and in UCI, and its variant when
+/// Fairy-Stockfish reviews it (not standard chess or Chess960).
 #[derive(Debug, PartialEq)]
 pub struct Line {
     pub fen: String,
     pub sans: Vec<String>,
     pub moves: Vec<String>,
-    pub variant: Option<&'static str>,
+    pub variant: Option<Variant>,
 }
 
-/// The Lichess key of a PGN `Variant` header's variant.
-pub fn variant_key(name: &str) -> Result<&'static str, String> {
-    let variant = kchess_domain::rules::pgn_variant(Some(name))
-        .ok_or_else(|| format!("Unknown variant {name}."))?;
-    kchess_domain::misc::constants::VARIANTS
-        .iter()
-        .copied()
-        .find(|key| kchess_domain::rules::lichess_variant(key) == Some(variant))
-        .ok_or_else(|| format!("Unknown variant {name}."))
+impl Line {
+    /// Whether `review` is this line's: the core keys a review by its own reading of the start
+    /// position, so it is recognised by its moves and the position's pieces and turn.
+    fn reviewed_in(&self, review: &StoredReview) -> bool {
+        let start = |fen: &str| fen.split(' ').take(2).collect::<Vec<_>>().join(" ");
+        review.moves == self.moves && start(&review.fen) == start(&self.fen)
+    }
+}
+
+/// Why the review keyed `key` failed, when `status` reports that.
+fn failure(status: ReviewStatus, key: &str) -> Option<String> {
+    status
+        .failed
+        .filter(|failed| failed.key == key)
+        .map(|failed| format!("The review failed: {}", failed.message))
+}
+
+/// The variant a PGN `Variant` header names.
+pub fn pgn_variant(name: &str) -> Result<Variant, String> {
+    Variant::from_pgn_name(Some(name)).ok_or_else(|| format!("Unknown variant {name}."))
+}
+
+/// The number of the move `ply` half-moves after `fen`, as the game numbers it.
+fn move_number(fen: &str, ply: usize) -> usize {
+    let fields: Vec<&str> = fen.split(' ').collect();
+    let first: usize = fields
+        .get(5)
+        .and_then(|number| number.parse().ok())
+        .unwrap_or(1);
+    first + (ply + usize::from(fields.get(1) == Some(&"b"))) / 2
 }
 
 /// The main line of the first game in `pgn`, read by its variant's rules.
@@ -39,51 +62,35 @@ pub fn main_line(pgn: &str) -> Result<Line, String> {
         .next()
         .ok_or("No game could be read from that PGN.")?;
     let variant = match game.header("Variant") {
-        Some(name) => {
-            Some(variant_key(name)?).filter(|key| !matches!(*key, "standard" | "chess960"))
-        }
+        Some(name) => Some(pgn_variant(name)?).filter(|variant| !variant.standard_rules()),
         None => None,
     };
-    let mut sans = Vec::new();
-    let mut node = 0;
-    while let Some(next) = game.children(node).next() {
-        sans.push(game.node(next).san.as_str().to_string());
-        node = next;
-    }
+    let sans = game.main_line_sans();
     if sans.is_empty() {
         return Err("That game has no moves to review.".into());
     }
     let (fen, moves) = match variant {
         // Read by the variant's rules, up to the first move that is not legal.
         Some(_) => {
-            let line = kchess_domain::position::pgn_mainline(pgn, sans.len());
-            let fen = line["start"]
-                .as_str()
+            let line = kchess_domain::position::pgn_mainline(pgn, sans.len())
                 .ok_or("No game could be read from that PGN.")?;
-            let moves = line["moves"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|entry| entry["uci"].as_str().map(str::to_string))
-                .collect();
-            (fen.to_string(), moves)
+            let fen = line.start.ok_or("No game could be read from that PGN.")?;
+            let moves = line.moves.into_iter().map(|entry| entry.uci).collect();
+            (fen, moves)
         }
         None => {
-            let fen = game.header("FEN").unwrap_or(START).to_string();
+            let fen = game
+                .header("FEN")
+                .unwrap_or(kchess_domain::rules::INITIAL_FEN)
+                .to_string();
             let moves = san_to_uci(&fen, &sans);
             (fen, moves)
         }
     };
     if moves.len() < sans.len() {
-        let fields: Vec<&str> = fen.split(' ').collect();
-        let first: usize = fields
-            .get(5)
-            .and_then(|number| number.parse().ok())
-            .unwrap_or(1);
-        let half = moves.len() + usize::from(fields.get(1) == Some(&"b"));
         return Err(format!(
             "Move {} ({}) is not legal there.",
-            first + half / 2,
+            move_number(&fen, moves.len()),
             sans[moves.len()]
         ));
     }
@@ -96,102 +103,133 @@ pub fn main_line(pgn: &str) -> Result<Line, String> {
 }
 
 /// Each side's figures and the faulted moves, numbered as in the game.
-pub fn report(line: &Line, review: &Value) -> Option<Value> {
-    let analysis = analyse_review(review)?;
-    let white_first = line.fen.split(' ').nth(1) != Some("b");
-    let first_number: usize = line
-        .fen
-        .split(' ')
-        .nth(5)
-        .and_then(|number| number.parse().ok())
-        .unwrap_or(1);
-    let faults: Vec<Value> = analysis["moves"]
-        .as_array()?
+pub fn report(line: &Line, review: &StoredReview) -> Result<Value, String> {
+    let analysis =
+        analyse(review).map_err(|reason| format!("The review could not be read: {reason}."))?;
+    let faults: Vec<Value> = analysis
+        .moves
         .iter()
         .zip(&line.sans)
         .enumerate()
-        .filter_map(|(ply, (entry, san))| {
-            let judgment = entry["judgment"].as_str()?;
-            let half = ply + usize::from(!white_first);
+        .filter_map(|(ply, (verdict, san))| {
+            let judgment = verdict.judgment?;
             Some(json!({
-                "move": first_number + half / 2,
-                "color": entry["color"],
+                "move": move_number(&line.fen, ply),
+                "color": kchess_domain::color::name(verdict.color),
                 "san": san,
                 "judgment": judgment,
             }))
         })
         .collect();
-    Some(json!({
-        "white": analysis["white"],
-        "black": analysis["black"],
+    Ok(json!({
+        "white": analysis.white,
+        "black": analysis.black,
         "faults": faults,
     }))
 }
 
 pub async fn run(
     core: &CoreClient,
-    events: &mut UnboundedReceiver<Event>,
+    events: &mut UnboundedReceiver<ClientEvent>,
     pgn: &str,
 ) -> Result<Value, String> {
     let line = main_line(pgn)?;
     core.request(calls::ResumeOnline {}).await?;
-    // A queued request answers null; the finished review arrives as an update. The core keys it
-    // by its own reading of the start position, so it is recognised by its moves and position.
-    let mut request = json!({ "fen": line.fen, "moves": line.moves });
-    // Fairy-Stockfish reviews the other variants.
-    if let Some(variant) = line.variant {
-        request["variant"] = json!(variant);
-    }
-    let mut stored = core.request(calls::ReviewRequest { request }).await?;
-    let start = |fen: &str| fen.split(' ').take(2).collect::<Vec<_>>().join(" ");
-    let ours = |review: &Value| {
-        review["moves"] == json!(line.moves)
-            && review["fen"]
-                .as_str()
-                .is_some_and(|fen| start(fen) == start(&line.fen))
+    // A queued request answers null; the finished review arrives as an update.
+    let request = ReviewRequest {
+        fen: line.fen.clone(),
+        moves: line.moves.clone(),
+        variant: line.variant.map(|variant| variant.key().to_string()),
+        game_id: None,
+        account: None,
     };
+    let mut stored = core.request(calls::ReviewRequest { request }).await?;
+    let ours = |review: &StoredReview| line.reviewed_in(review);
     // The key the core gives the review, so a failure reported for it ends the wait.
-    let mut key_args = vec![json!(line.fen), json!(line.moves)];
-    key_args.extend(line.variant.map(|variant| json!(variant)));
-    let key = kchess_domain::api::call_value("reviewKey", &key_args)
-        .ok()
-        .and_then(|key| key.as_str().map(str::to_string));
-    let interrupted = tokio::signal::ctrl_c();
-    tokio::pin!(interrupted);
-    while !(ours(&stored) && stored["complete"] == json!(true)) {
-        tokio::select! {
-            _ = &mut interrupted => {
-                if let Some(key) = stored["key"].as_str().or(key.as_deref()) {
-                    let _ = core.request(calls::ReviewCancel { key: json!(key) }).await;
-                }
+    let key = kchess_domain::records::review::review_key(&line.fen, &line.moves, line.variant);
+    let mut wait = Wait::new(events);
+    let done = |stored: &Option<StoredReview>| {
+        stored
+            .as_ref()
+            .is_some_and(|review| ours(review) && review.complete)
+    };
+    while !done(&stored) {
+        let key = stored
+            .as_ref()
+            .map_or(key.as_str(), |review| review.key.as_str());
+        match wait.next().await {
+            Next::Interrupted | Next::InputEnded => {
+                crate::told_if_failed(
+                    "Cancelling the review",
+                    core.request(calls::ReviewCancel {
+                        key: ReviewKey(key.to_string()),
+                    })
+                    .await,
+                );
                 return Err("Review cancelled.".into());
             }
-            event = events.recv() => match event {
-                None => return Err("The core closed.".into()),
-                Some(event) if event.name == "core:closed" => return Err("The core closed.".into()),
-                Some(event) if event.name == "host:request" => core.answer(&event.payload).await,
-                Some(event) if event.name == "review:update" && ours(&event.payload["review"]) => {
-                    stored = event.payload["review"].clone();
+            Next::Closed => return Err("The core closed.".into()),
+            Next::Event(CoreEvent::ReviewUpdate(update)) => {
+                if ours(&update.review) {
+                    stored = Some(update.review);
                 }
-                Some(event) if event.name == "review:status"
-                    && event.payload["failed"]["key"].as_str().is_some_and(|failed| {
-                        Some(failed) == stored["key"].as_str().or(key.as_deref())
-                    }) =>
-                {
-                    let message = event.payload["failed"]["message"].as_str().unwrap_or_default();
-                    return Err(format!("The review failed: {message}"));
+            }
+            Next::Event(CoreEvent::ReviewStatus(status)) => {
+                if let Some(failed) = failure(status, key) {
+                    return Err(failed);
                 }
-                Some(_) => {}
-            },
+            }
+            Next::Event(_) | Next::Line(_) | Next::Tick => {}
         }
     }
-    report(&line, &stored).ok_or_else(|| "The review could not be read.".into())
+    let stored = stored.ok_or("The review did not arrive.")?;
+    report(&line, &stored)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{main_line, report};
+    use super::{ReviewStatus, StoredReview, Variant, failure, main_line, report};
     use serde_json::json;
+
+    /// A review is the line's when its moves and its start's pieces and turn are the line's; the
+    /// clocks of the start may differ.
+    #[test]
+    fn a_review_is_recognised_by_its_moves_and_start() {
+        let line = main_line("1. e4 e5 *").expect("a game");
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let review = |fen: &str, moves: &[&str]| -> StoredReview {
+            serde_json::from_value(json!({
+                "key": "k", "fen": fen, "moves": moves, "source": "local", "evals": [],
+                "depth": 20, "complete": true, "updatedAt": 0,
+            }))
+            .expect("a review")
+        };
+        assert!(line.reviewed_in(&review(start, &["e2e4", "e7e5"])));
+        assert!(line.reviewed_in(&review(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 3 9",
+            &["e2e4", "e7e5"]
+        )));
+        assert!(!line.reviewed_in(&review(start, &["e2e4"])));
+        assert!(!line.reviewed_in(&review(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1",
+            &["e2e4", "e7e5"]
+        )));
+    }
+
+    #[test]
+    fn only_this_review_s_failure_ends_it() {
+        let status = |key: &str| -> ReviewStatus {
+            serde_json::from_value(json!({
+                "waiting": 0, "failed": { "key": key, "message": "No engine." },
+            }))
+            .expect("a status")
+        };
+        assert_eq!(
+            failure(status("k1"), "k1"),
+            Some("The review failed: No engine.".into())
+        );
+        assert_eq!(failure(status("k2"), "k1"), None);
+    }
 
     #[test]
     fn the_main_line_is_read_in_its_variant() {
@@ -203,7 +241,7 @@ mod tests {
         // Another variant's moves are read by its rules: a drop is a move in Crazyhouse.
         let zh = main_line("[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 3. P@e3 *")
             .expect("a Crazyhouse game");
-        assert_eq!(zh.variant, Some("crazyhouse"));
+        assert_eq!(zh.variant, Some(Variant::Crazyhouse));
         assert_eq!(zh.moves, ["e2e4", "d7d5", "e4d5", "d8d5", "P@e3"]);
         assert!(zh.fen.contains('['), "{}", zh.fen);
         assert_eq!(
@@ -245,11 +283,12 @@ mod tests {
             "[FEN \"rnb1kbnr/pppp1ppp/8/4p1q1/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 10\"]\n\n10... Qg4 11. Qxg4 *",
         )
         .expect("a game");
-        let review = json!({
-            "fen": line.fen, "moves": line.moves, "source": "local", "depth": 18,
-            "complete": true,
+        let review = serde_json::from_value(json!({
+            "key": "k", "fen": line.fen, "moves": line.moves, "source": "local", "depth": 18,
+            "complete": true, "updatedAt": 0,
             "evals": [{"cp": 0, "depth": 18}, {"cp": 900, "depth": 18}, {"cp": 900, "depth": 18}],
-        });
+        }))
+        .expect("a stored review");
         let report = report(&line, &review).expect("a report");
         assert_eq!(
             report["faults"],

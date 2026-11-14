@@ -2,19 +2,34 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use kchess_contracts::types::OnlinePhase;
+use kchess_domain::variant::Variant;
 use serde_json::Value;
 
 use super::state::{Lane, OnlineOptions};
+use crate::lichess::client::Auth;
 
-/// One request of a stream: the method, the path, the query, the `Authorization` header value
-/// and a form body (for the seek).
+/// One request of a stream: the method, the path, the query, who makes it, and a form body (for
+/// the seek).
 #[derive(Clone)]
 pub(crate) struct StreamRequest {
     pub(crate) method: reqwest::Method,
     pub(crate) path: String,
     pub(crate) query: Vec<(&'static str, String)>,
-    pub(crate) auth: Option<String>,
+    pub(crate) auth: Auth,
     pub(crate) form: Option<Vec<(&'static str, String)>>,
+}
+
+impl StreamRequest {
+    /// A GET stream of `path` as `auth`.
+    pub(crate) fn get(path: impl Into<String>, auth: &Auth) -> StreamRequest {
+        StreamRequest {
+            method: reqwest::Method::GET,
+            path: path.into(),
+            query: Vec::new(),
+            auth: auth.clone(),
+            form: None,
+        }
+    }
 }
 
 pub(crate) type Emitter = Arc<dyn Fn(Value) + Send + Sync>;
@@ -32,28 +47,22 @@ pub(crate) struct Listen {
     pub(crate) session: u64,
     pub(crate) account: String,
     pub(crate) game_id: String,
+    /// What the player is told when Lichess refuses the request (the seek's rules).
+    pub(crate) refused: Option<&'static str>,
 }
 
-/// The body of a Lichess error response, as `throwLichessErrors` reads it.
-pub(crate) fn body_value(text: &str) -> Option<Value> {
-    if text.is_empty() {
-        return None;
-    }
-    Some(serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_string())))
-}
-
-/// `gameBody(options)`: the form fields of a seek or challenge.
+/// The form fields of a seek or challenge.
 pub(crate) fn game_body(options: &OnlineOptions) -> Vec<(&'static str, String)> {
     let has_fen = options.fen.as_deref().is_some_and(|fen| !fen.is_empty());
-    let variant = if has_fen && options.variant.as_deref() != Some("chess960") {
+    let variant = if has_fen && options.variant != Some(Variant::Chess960) {
         Some("fromPosition")
     } else {
-        options.variant.as_deref()
+        options.variant.map(Variant::key)
     };
     let variant = variant.filter(|variant| !variant.is_empty() && *variant != "standard");
     let mut body = vec![
         ("rated", options.rated.to_string()),
-        ("color", options.color.clone()),
+        ("color", options.color.as_str().to_string()),
     ];
     if let Some(variant) = variant {
         body.push(("variant", variant.to_string()));
@@ -64,8 +73,46 @@ pub(crate) fn game_body(options: &OnlineOptions) -> Vec<(&'static str, String)> 
     body
 }
 
-pub(crate) fn refs<'a>(form: &'a [(&'static str, String)]) -> Vec<(&'a str, &'a str)> {
-    form.iter()
-        .map(|(key, value)| (*key, value.as_str()))
-        .collect()
+#[cfg(test)]
+mod tests {
+    use kchess_contracts::types::ChallengeColor;
+
+    use super::*;
+
+    /// The variant field a seek or challenge sends: none for standard chess, the variant's key,
+    /// and `fromPosition` for a position unless the game is Chess960 (whose position it is).
+    #[test]
+    fn the_variant_sent_follows_the_variant_and_the_position() {
+        const FEN: &str = "4k3/8/8/8/8/8/8/4K3 w - - 0 1";
+        let cases: [(Option<Variant>, Option<&str>, Option<&str>); 7] = [
+            (None, None, None),
+            (Some(Variant::Standard), None, None),
+            (Some(Variant::Atomic), None, Some("atomic")),
+            (Some(Variant::Chess960), None, Some("chess960")),
+            (Some(Variant::Chess960), Some(FEN), Some("chess960")),
+            (Some(Variant::Standard), Some(FEN), Some("fromPosition")),
+            (None, Some(""), None),
+        ];
+        for (variant, fen, sent) in cases {
+            let options = OnlineOptions {
+                minutes: 5,
+                increment: 3,
+                days: None,
+                variant,
+                fen: fen.map(str::to_string),
+                color: ChallengeColor::White,
+                rated: false,
+                target: None,
+                account: None,
+            };
+            let body = game_body(&options);
+            let found = body
+                .iter()
+                .find(|(key, _)| *key == "variant")
+                .map(|(_, value)| value.as_str());
+            assert_eq!(found, sent, "{variant:?} from {fen:?}");
+            assert_eq!(body[0], ("rated", "false".to_string()));
+            assert_eq!(body[1], ("color", "white".to_string()));
+        }
+    }
 }

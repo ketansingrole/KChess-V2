@@ -1,22 +1,22 @@
-//! Library document decoders: semantic validation before a
-//! document reaches the library or a board. Each accepts and rejects exactly what the
-//! TypeScript decoder does and produces the same normalized value.
+//! Library document decoders: semantic validation before a document reaches the library or a
+//! board. Each returns the document normalized.
 
-use serde_json::{Map, Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::js::{self, finite, integer, string, text};
+use crate::misc::constants::HistoryKind;
 use crate::replay;
-use crate::rules;
 use crate::tree;
 
 pub const MAX_STUDIES: usize = 50;
 pub const MAX_CHAPTERS: usize = 64;
 pub const MAX_MISTAKES: usize = 500;
 
-use crate::misc::constants::VARIANTS;
+use crate::variant::{Setup, Variant};
 
-fn is_variant(v: Option<&Value>) -> Option<&str> {
-    string(v).filter(|s| VARIANTS.contains(s))
+fn is_variant(v: Option<&Value>) -> Option<Variant> {
+    string(v).and_then(Variant::from_key)
 }
 
 fn object(v: Option<&Value>) -> Option<&Map<String, Value>> {
@@ -26,23 +26,61 @@ fn object(v: Option<&Value>) -> Option<&Map<String, Value>> {
     }
 }
 
-fn number(n: f64) -> Value {
-    serde_json::Number::from_f64(n).map_or(Value::Null, Value::Number)
-}
-
 /* ── Studies ── */
 
-fn decode_chapters(raw: Option<&Value>, fallback: Value) -> Option<Vec<Value>> {
-    let owned;
+/// A study's chapter: its id, name and PGN.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(expecting = "an object")]
+pub struct StudyChapter {
+    pub id: String,
+    pub name: String,
+    pub pgn: String,
+}
+
+/// The Lichess study a local one is a copy of, and the PGN as it was downloaded.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StudyCloud {
+    pub account: String,
+    pub id: String,
+    pub downloaded_pgn: String,
+    /// Chapters were added, removed or moved since the download.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub structure_changed: bool,
+}
+
+/// A study as the library keeps it. Its `pgn` is its first chapter's.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Study {
+    pub id: String,
+    pub name: String,
+    pub pgn: String,
+    pub chapters: Vec<StudyChapter>,
+    /// In milliseconds since the epoch, in the form it was written: whole when a command wrote
+    /// it, fractional when read back from the profile.
+    pub updated_at: serde_json::Number,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<StudyCloud>,
+}
+
+impl Study {
+    pub fn chapter(&self, id: &str) -> Option<&StudyChapter> {
+        self.chapters.iter().find(|chapter| chapter.id == id)
+    }
+
+    pub fn updated_at_ms(&self) -> f64 {
+        self.updated_at.as_f64().unwrap_or_default()
+    }
+}
+
+fn decode_chapters(raw: Option<&Value>, fallback: StudyChapter) -> Option<Vec<StudyChapter>> {
     let chapters = match raw {
         None | Some(Value::Null) => {
-            owned = Value::Array(vec![fallback]);
-            &owned
+            return tree::valid_pgn(&fallback.pgn).then(|| vec![fallback]);
         }
-        Some(value) => value,
-    };
-    let Value::Array(chapters) = chapters else {
-        return None;
+        Some(Value::Array(chapters)) => chapters,
+        Some(_) => return None,
     };
     if chapters.is_empty() || chapters.len() > MAX_CHAPTERS {
         return None;
@@ -56,7 +94,11 @@ fn decode_chapters(raw: Option<&Value>, fallback: Value) -> Option<Vec<Value>> {
                 string(c.get("name"))?,
                 string(c.get("pgn"))?,
             );
-            tree::valid_pgn(pgn).then(|| json!({ "id": id, "name": name, "pgn": pgn }))
+            tree::valid_pgn(pgn).then(|| StudyChapter {
+                id: id.into(),
+                name: name.into(),
+                pgn: pgn.into(),
+            })
         })
         .collect()
 }
@@ -65,8 +107,9 @@ fn cloud_id(s: &str) -> bool {
     s.len() == 8 && s.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
-/// `decodeStudy`
-pub fn decode_study(raw: &Value) -> Option<Value> {
+/// A stored or sent study, checked: every chapter's PGN valid. A study from before chapters is
+/// its one chapter, and a broken cloud link is dropped.
+pub fn decode_study(raw: &Value) -> Option<Study> {
     let item = object(Some(raw))?;
     let id = string(item.get("id"))?;
     let name = string(item.get("name"))?;
@@ -74,37 +117,37 @@ pub fn decode_study(raw: &Value) -> Option<Value> {
     let updated_at = finite(item.get("updatedAt"))?;
     let chapters = decode_chapters(
         item.get("chapters"),
-        json!({ "id": id, "name": name, "pgn": pgn }),
+        StudyChapter {
+            id: id.into(),
+            name: name.into(),
+            pgn: pgn.into(),
+        },
     )?;
-    let mut study = Map::new();
-    study.insert("id".into(), id.into());
-    study.insert("name".into(), name.into());
-    study.insert("pgn".into(), chapters[0]["pgn"].clone());
-    study.insert("chapters".into(), Value::Array(chapters));
-    study.insert("updatedAt".into(), number(updated_at));
-    if !js::falsy(item.get("cloud"))
-        && let Some(cloud) = object(item.get("cloud"))
-        && let (Some(account), Some(cid), Some(downloaded)) = (
-            string(cloud.get("account")),
-            string(cloud.get("id")),
-            string(cloud.get("downloadedPgn")),
-        )
-        && cloud_id(cid)
-    {
-        let mut value = Map::new();
-        value.insert("account".into(), account.into());
-        value.insert("id".into(), cid.into());
-        value.insert("downloadedPgn".into(), downloaded.into());
-        if cloud.get("structureChanged") == Some(&Value::Bool(true)) {
-            value.insert("structureChanged".into(), true.into());
-        }
-        study.insert("cloud".into(), Value::Object(value));
-    }
-    Some(Value::Object(study))
+    let cloud = object(item.get("cloud")).and_then(|cloud| {
+        let (account, cid, downloaded) = (
+            string(cloud.get("account"))?,
+            string(cloud.get("id"))?,
+            string(cloud.get("downloadedPgn"))?,
+        );
+        cloud_id(cid).then(|| StudyCloud {
+            account: account.into(),
+            id: cid.into(),
+            downloaded_pgn: downloaded.into(),
+            structure_changed: cloud.get("structureChanged") == Some(&Value::Bool(true)),
+        })
+    });
+    Some(Study {
+        id: id.into(),
+        name: name.into(),
+        pgn: chapters[0].pgn.clone(),
+        chapters,
+        updated_at: float(updated_at),
+        cloud,
+    })
 }
 
-/// `decodeStudies`: invalid studies are left out rather than failing the whole library.
-pub fn decode_studies(raw: &Value) -> Option<Vec<Value>> {
+/// Invalid studies are left out rather than failing the whole library.
+pub fn decode_studies(raw: &Value) -> Option<Vec<Study>> {
     let doc = object(Some(raw))?;
     let version = js::to_number(doc.get("version"));
     if !doc.contains_key("version")
@@ -127,11 +170,79 @@ pub fn decode_studies(raw: &Value) -> Option<Vec<Value>> {
 
 /* ── Played games ── */
 
-/// `decodeArchivedGame`
-pub fn decode_archived_game(raw: &Value) -> Option<Value> {
+/// A game played in KChess as Game history keeps it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayedGame {
+    pub id: String,
+    pub source: HistoryKind,
+    /// When its first move was played, in milliseconds since the epoch.
+    pub started_at: f64,
+    pub updated_at: f64,
+    pub white: String,
+    pub black: String,
+    /// `*` while it is unfinished, else `1-0`, `0-1` or `1/2-1/2`.
+    pub result: String,
+    pub reason: String,
+    /// It will not be played on (a resumed game's entry is open until then).
+    pub finished: bool,
+    pub setup: Setup,
+    /// UCI moves from the setup.
+    pub moves: Vec<String>,
+    pub time_control: String,
+    /// The clocks at the end, for a chess clock game.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock_summary: Option<String>,
+}
+
+impl PlayedGame {
+    /// The player's side in a computer game: the one `computer::players` named
+    /// `computer::PLAYER`. A game at the board or on the clock has none.
+    pub fn player_side(&self) -> Option<shakmaty::Color> {
+        use crate::games::computer::PLAYER;
+        if self.source != HistoryKind::Computer {
+            None
+        } else if self.white == PLAYER {
+            Some(shakmaty::Color::White)
+        } else if self.black == PLAYER {
+            Some(shakmaty::Color::Black)
+        } else {
+            None
+        }
+    }
+
+    /// How the game ended for its player: `win`, `loss` or `draw` for the player's side, the
+    /// winning colour (`white`, `black`) or `draw` at the board; `unfinished`, `ongoing` or
+    /// `clock` when it has no result.
+    pub fn outcome(&self) -> &'static str {
+        if self.source == HistoryKind::Clock {
+            return "clock";
+        }
+        match self.result.as_str() {
+            "*" if !self.finished => "ongoing",
+            "*" => "unfinished",
+            "1/2-1/2" => "draw",
+            result => {
+                let winner = if result == "1-0" {
+                    shakmaty::Color::White
+                } else {
+                    shakmaty::Color::Black
+                };
+                match self.player_side() {
+                    None => crate::color::name(winner),
+                    Some(you) if you == winner => "win",
+                    Some(_) => "loss",
+                }
+            }
+        }
+    }
+}
+
+/// A stored or sent played game, checked: every field in bounds and every move legal.
+pub fn decode_archived_game(raw: &Value) -> Option<PlayedGame> {
     let g = object(Some(raw))?;
     let id = text(g.get("id"), 80)?;
-    let source = string(g.get("source")).filter(|s| ["computer", "board", "clock"].contains(s))?;
+    let source = string(g.get("source")).and_then(HistoryKind::from_key)?;
     let started_at = finite(g.get("startedAt"))?;
     let updated_at = finite(g.get("updatedAt"))?;
     let result = string(g.get("result")).filter(|s| ["*", "1-0", "0-1", "1/2-1/2"].contains(s))?;
@@ -165,31 +276,74 @@ pub fn decode_archived_game(raw: &Value) -> Option<Value> {
     if replay::replay_setup_count(variant, fen, &moves) != Some(moves.len()) {
         return None;
     }
-    let mut game = Map::new();
-    game.insert("id".into(), id.into());
-    game.insert("source".into(), source.into());
-    game.insert("startedAt".into(), number(started_at));
-    game.insert("updatedAt".into(), number(updated_at));
-    game.insert("white".into(), white.into());
-    game.insert("black".into(), black.into());
-    game.insert("result".into(), result.into());
-    game.insert("reason".into(), reason.into());
-    game.insert("finished".into(), (*finished).into());
-    game.insert("setup".into(), json!({ "variant": variant, "fen": fen }));
-    game.insert("moves".into(), moves.into());
-    game.insert("timeControl".into(), time_control.into());
-    if let Some(summary) = clock_summary {
-        game.insert("clockSummary".into(), summary.into());
-    }
-    Some(Value::Object(game))
+    Some(PlayedGame {
+        id: id.into(),
+        source,
+        started_at,
+        updated_at,
+        white: white.into(),
+        black: black.into(),
+        result: result.into(),
+        reason: reason.into(),
+        finished: *finished,
+        setup: Setup {
+            variant,
+            fen: fen.into(),
+        },
+        moves: moves.into_iter().map(String::from).collect(),
+        time_control: time_control.into(),
+        clock_summary: clock_summary.map(String::from),
+    })
 }
 
 pub const MAX_ARCHIVED_GAMES: usize = 500;
 
 /* ── Mistake drills ── */
 
-/// `decodeMistakes`
-pub fn decode_mistakes(raw: &Value) -> Option<Vec<Value>> {
+/// A position from a reviewed game to practise: the move that was missed and the line after it.
+/// Its numbers keep the form they were written in (a drill answered since it was read writes
+/// whole numbers, one read back from the profile fractional ones): the `*_ms`, `streak` and
+/// `attempts` methods read them.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Drill {
+    /// The review's key and the ply, `key:ply`.
+    pub id: String,
+    pub fen: String,
+    /// The best move, then the line after it (UCI).
+    pub solution: Vec<String>,
+    /// `inaccuracy`, `mistake` or `blunder`.
+    pub judgment: String,
+    pub due_at: serde_json::Number,
+    /// Right answers in a row.
+    pub streak: serde_json::Number,
+    pub attempts: serde_json::Number,
+    /// Played by this variant's rules; standard chess when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<Variant>,
+}
+
+impl Drill {
+    /// When it is next due, in milliseconds since the epoch.
+    pub fn due_at_ms(&self) -> f64 {
+        self.due_at.as_f64().unwrap_or_default()
+    }
+
+    pub fn streak(&self) -> f64 {
+        self.streak.as_f64().unwrap_or_default()
+    }
+
+    pub fn attempts(&self) -> f64 {
+        self.attempts.as_f64().unwrap_or_default()
+    }
+}
+
+/// A finite number, written as `serde_json` writes an `f64` (with a fraction).
+fn float(n: f64) -> serde_json::Number {
+    serde_json::Number::from_f64(n).unwrap_or_else(|| 0.into())
+}
+
+pub fn decode_mistakes(raw: &Value) -> Option<Vec<Drill>> {
     let doc = object(Some(raw))?;
     if finite(doc.get("version")) != Some(1.0) {
         return None;
@@ -218,7 +372,7 @@ pub fn decode_mistakes(raw: &Value) -> Option<Vec<Value>> {
                 // A drill from a variant game is played by that variant's rules.
                 let variant = match item.get("variant") {
                     None | Some(Value::Null) => None,
-                    Some(variant) => Some(string(Some(variant)).filter(|v| known_variant(v))?),
+                    Some(variant) => Some(string(Some(variant)).and_then(Variant::from_key)?),
                 };
                 let playable = match variant {
                     Some(variant) => replay::replay_setup_count(variant, fen, &solution)? + 1,
@@ -230,32 +384,25 @@ pub fn decode_mistakes(raw: &Value) -> Option<Vec<Value>> {
                 let due_at = finite(item.get("dueAt"))?;
                 let streak = integer(item.get("streak"))?;
                 let attempts = integer(item.get("attempts"))?;
-                let mut drill = json!({
-                    "id": id,
-                    "fen": fen,
-                    "solution": solution,
-                    "judgment": js::to_string(item.get("judgment")),
-                    "dueAt": number(due_at),
-                    "streak": number(streak),
-                    "attempts": number(attempts),
-                });
-                if let Some(variant) = variant {
-                    drill["variant"] = json!(variant);
-                }
-                Some(drill)
+                Some(Drill {
+                    id: id.into(),
+                    fen: fen.into(),
+                    solution: solution.into_iter().map(String::from).collect(),
+                    judgment: js::to_string(item.get("judgment")),
+                    due_at: float(due_at),
+                    streak: float(streak),
+                    attempts: float(attempts),
+                    variant,
+                })
             })
             .collect(),
     )
 }
 
-/// Whether a variant key is one KChess can play.
-pub fn known_variant(key: &str) -> bool {
-    rules::lichess_variant(key).is_some()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -265,6 +412,41 @@ mod tests {
             "white": "A", "black": "B", "result": "*", "reason": "", "finished": false,
             "setup": { "variant": "standard", "fen": START }, "moves": moves, "timeControl": "-",
         })
+    }
+
+    #[test]
+    fn played_games_end_for_their_player_or_by_colour() {
+        let computer = |white: &str, black: &str, result: &str| {
+            let mut game = decode_archived_game(&game(&[])).unwrap();
+            game.source = HistoryKind::Computer;
+            (game.white, game.black, game.result) = (white.into(), black.into(), result.into());
+            game.finished = true;
+            game
+        };
+        assert_eq!(computer("You", "Stockfish", "1-0").outcome(), "win");
+        assert_eq!(computer("You", "Stockfish", "0-1").outcome(), "loss");
+        assert_eq!(computer("Stockfish", "You", "1-0").outcome(), "loss");
+        assert_eq!(computer("Stockfish", "You", "0-1").outcome(), "win");
+        assert_eq!(computer("You", "Stockfish", "1/2-1/2").outcome(), "draw");
+        assert_eq!(computer("White", "Black", "0-1").outcome(), "black");
+        assert_eq!(computer("You", "Stockfish", "*").outcome(), "unfinished");
+        let board = decode_archived_game(&game(&[])).unwrap();
+        assert_eq!(board.outcome(), "ongoing");
+        let clock = PlayedGame {
+            source: HistoryKind::Clock,
+            result: "1-0".into(),
+            ..board
+        };
+        assert_eq!(clock.outcome(), "clock");
+        assert_eq!(
+            computer("White", "You", "*").player_side(),
+            Some(shakmaty::Color::Black)
+        );
+        assert_eq!(computer("White", "Black", "*").player_side(), None);
+        let mut named_at_the_board = computer("You", "Black", "1-0");
+        named_at_the_board.source = HistoryKind::Board;
+        assert_eq!(named_at_the_board.player_side(), None);
+        assert_eq!(named_at_the_board.outcome(), "white");
     }
 
     #[test]
@@ -282,8 +464,23 @@ mod tests {
         ]});
         let studies = decode_studies(&doc).unwrap();
         assert_eq!(studies.len(), 1);
-        assert_eq!(studies[0]["cloud"]["structureChanged"], json!(true));
-        assert_eq!(studies[0]["chapters"][0]["id"], json!("s"));
+        assert!(studies[0].cloud.as_ref().unwrap().structure_changed);
+        assert_eq!(studies[0].chapters[0].id, "s");
+    }
+
+    /// A study from before chapters is its one chapter, read back in the library's key order with
+    /// its time fractional and a link without `structureChanged` written without it; a broken
+    /// link is dropped and the study kept.
+    #[test]
+    fn a_stored_study_reads_back_as_the_library_writes_it() {
+        let stored = json!({ "updatedAt": 7, "pgn": "1. e4 *", "name": "S", "id": "s",
+            "cloud": { "account": "a", "id": "abcdEFGH", "downloadedPgn": "1. e4 *", "structureChanged": false } });
+        assert_eq!(
+            serde_json::to_string(&decode_study(&stored).unwrap()).unwrap(),
+            r#"{"id":"s","name":"S","pgn":"1. e4 *","chapters":[{"id":"s","name":"S","pgn":"1. e4 *"}],"updatedAt":7.0,"cloud":{"account":"a","id":"abcdEFGH","downloadedPgn":"1. e4 *"}}"#
+        );
+        let broken = json!({ "id": "s", "name": "S", "pgn": "*", "updatedAt": 1, "cloud": { "id": "short" } });
+        assert_eq!(decode_study(&broken).unwrap().cloud, None);
     }
 
     #[test]
@@ -294,6 +491,50 @@ mod tests {
         ]});
         let items = decode_mistakes(&doc).unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["judgment"], json!("3"));
+        assert_eq!(items[0].judgment, "3");
+    }
+
+    /// A drill's schedule reads back as the numbers it was stored with.
+    #[test]
+    fn a_drill_reads_its_schedule() {
+        let doc = json!({ "version": 1, "items": [
+            { "id": "m", "fen": START, "solution": ["e2e4"], "dueAt": 1234.5, "streak": 2, "attempts": 3 },
+        ]});
+        let drill = &decode_mistakes(&doc).unwrap()[0];
+        assert_eq!(
+            (drill.due_at_ms(), drill.streak(), drill.attempts()),
+            (1234.5, 2.0, 3.0)
+        );
+    }
+
+    /// A study finds a chapter by its id and keeps when it was last changed.
+    #[test]
+    fn a_study_finds_its_chapters_by_id() {
+        let study = decode_study(
+            &json!({ "id": "s", "name": "S", "pgn": "1. e4 *", "updatedAt": 1234.5,
+            "chapters": [
+                { "id": "c1", "name": "One", "pgn": "1. e4 *" },
+                { "id": "c2", "name": "Two", "pgn": "1. d4 *" },
+            ] }),
+        )
+        .unwrap();
+        assert_eq!(study.updated_at_ms(), 1234.5);
+        assert_eq!(study.chapter("c2").map(|c| c.name.as_str()), Some("Two"));
+        assert_eq!(study.chapter("c1").map(|c| c.name.as_str()), Some("One"));
+        assert_eq!(study.chapter("c3"), None);
+    }
+
+    /// A played game keeps the variant it was played in, and one KChess does not know is
+    /// refused rather than read as standard chess.
+    #[test]
+    fn a_played_game_keeps_its_variant() {
+        let mut atomic = game(&["e2e4"]);
+        atomic["setup"]["variant"] = json!("atomic");
+        assert_eq!(
+            decode_archived_game(&atomic).unwrap().setup.variant,
+            Variant::Atomic
+        );
+        atomic["setup"]["variant"] = json!("shogi");
+        assert!(decode_archived_game(&atomic).is_none());
     }
 }

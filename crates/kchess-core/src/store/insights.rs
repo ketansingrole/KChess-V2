@@ -4,15 +4,21 @@
 //! is sent to Lichess.
 
 use rusqlite::{Connection, params_from_iter, types::Value as Sql};
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 
-use super::StoreContext;
-use super::library::{db_err, now_ms, num, truthy};
-use crate::error::{CoreError, Result};
+use super::sql::Sql as _;
 use crate::host::{Host, Level};
+use kchess_contracts::error::{CoreError, Result};
+use kchess_contracts::types::{
+    AccuracyReport, BandRecord, Blunders, BlundersByTime, ByColor, ClockAt, EndingRecord,
+    GameRecord, InsightsQuery, InsightsReport, Judgment, MistakeRates, OpeningRecord, PhaseTime,
+    SpeedRecord, StoredReview, Streaks, TimeUseReport,
+};
 use kchess_domain::js;
-use kchess_domain::misc::constants::VARIANTS;
+use kchess_domain::js::truthy;
+use kchess_domain::review::MoveVerdict;
 use kchess_domain::time_use::{PHASES, TimeUse, time_use};
+use kchess_domain::variant::{VARIANTS, Variant};
 
 const NEG_INF: f64 = f64::NEG_INFINITY;
 const INF: f64 = f64::INFINITY;
@@ -42,45 +48,17 @@ const CLOCK_LIMIT: i64 = 2_000;
 /// The moves whose clocks are compared with the opponent's.
 const CLOCK_MOVES: [usize; 2] = [20, 40];
 
-/// This module's storage methods; None when the method is not one of them.
-pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
-    let db = ctx.db;
-    let host = ctx.host;
-    let result = match method {
-        "store.insights.insights" => {
-            let query = args.first().unwrap_or(&Value::Null);
-            now_ms().and_then(|now| insights(host, db, query, now))
-        }
-        _ => return None,
-    };
-    Some(result)
-}
-
-/// Win/loss/draw counts.
-#[derive(Default)]
-struct Record {
-    total: i64,
-    win: i64,
-    loss: i64,
-    draw: i64,
-}
-
-impl Record {
-    fn add(&mut self, result: &str) {
-        self.total += 1;
-        match result {
-            "win" => self.win += 1,
-            "loss" => self.loss += 1,
-            _ => self.draw += 1,
-        }
-    }
-
-    fn json(&self) -> Value {
-        json!({ "total": self.total, "win": self.win, "loss": self.loss, "draw": self.draw })
+/// Counts one game's `result` (`win`, `loss` or `draw`).
+fn add(record: &mut GameRecord, result: &str) {
+    record.total += 1;
+    match result {
+        "win" => record.win += 1,
+        "loss" => record.loss += 1,
+        _ => record.draw += 1,
     }
 }
 
-/// First-seen ordered entries with a hash index: the JavaScript `Map` the TypeScript code used.
+/// First-seen ordered entries with a hash index.
 /// A linear scan here made grouping quadratic in the number of distinct speeds, openings or
 /// endings (20k distinct opening names took hundreds of milliseconds).
 struct Slots<T> {
@@ -111,39 +89,25 @@ impl<T> Slots<T> {
     }
 }
 
-/// `SQL` value of a query argument: text, a number, or null.
-fn sql_of(value: Option<&Value>) -> Sql {
-    match value {
-        Some(Value::String(s)) => Sql::Text(s.clone()),
-        Some(Value::Number(n)) => match n.as_f64() {
-            Some(x) if x.fract() == 0.0 && x.abs() < 9.0e15 => Sql::Integer(x as i64),
-            Some(x) => Sql::Real(x),
-            None => Sql::Null,
-        },
-        _ => Sql::Null,
-    }
-}
-
 /// The filter clauses on `games`, optionally qualified (`g.`) for the review join.
-fn clauses(query: &Value, prefix: &str, now: f64) -> Result<(Vec<String>, Vec<Sql>)> {
+fn clauses(query: &InsightsQuery, prefix: &str, now: f64) -> Result<(Vec<String>, Vec<Sql>)> {
     let mut clauses = vec![format!("{prefix}account = ?")];
-    let mut params = vec![sql_of(query.get("account"))];
-    if truthy(query.get("speed")) {
+    let mut params = vec![Sql::Text(query.account.clone())];
+    if let Some(speed) = query.speed {
         clauses.push(format!("{prefix}speed = ?"));
-        params.push(sql_of(query.get("speed")));
+        params.push(Sql::Text(speed.as_str().to_string()));
     }
-    if let Some(rated) = query.get("rated") {
+    if let Some(rated) = query.rated {
         clauses.push(format!("{prefix}rated = ?"));
-        params.push(Sql::Integer(i64::from(truthy(Some(rated)))));
+        params.push(Sql::Integer(i64::from(rated)));
     }
-    if truthy(query.get("days")) {
-        let days = js::to_number(query.get("days"));
+    if let Some(days) = query.days.filter(|days| *days > 0) {
         clauses.push(format!("{prefix}createdAt >= ?"));
-        params.push(Sql::Real(now - days * DAY_MS));
+        params.push(Sql::Real(now - days as f64 * DAY_MS));
     }
     // Lichess files a variant game under the variant (`perf`): standard chess, by default, leaves
     // them out, so their results and openings do not mix into it.
-    match query.get("variant").and_then(Value::as_str) {
+    match query.variant.map(Variant::key) {
         Some(variant) if variant != "standard" => {
             clauses.push(format!("{prefix}perf = ?"));
             params.push(Sql::Text(variant.to_string()));
@@ -161,27 +125,33 @@ fn clauses(query: &Value, prefix: &str, now: f64) -> Result<(Vec<String>, Vec<Sq
 }
 
 /// The variants other than standard the account has finished games in, in KChess's order.
-fn played_variants(db: &Connection, query: &Value) -> Result<Vec<&'static str>> {
+fn played_variants(db: &Connection, query: &InsightsQuery) -> Result<Vec<Variant>> {
     let mut statement = db
         .prepare(
             "SELECT DISTINCT perf FROM games
              WHERE account = ? AND status NOT IN ('created', 'started')",
         )
-        .map_err(db_err)?;
+        .sql()?;
     let played: Vec<String> = statement
-        .query_map([sql_of(query.get("account"))], |row| row.get(0))
-        .map_err(db_err)?
+        .query_map([&query.account], |row| row.get(0))
+        .sql()?
         .collect::<std::result::Result<_, _>>()
-        .map_err(db_err)?;
+        .sql()?;
     Ok(VARIANTS[1..]
         .iter()
         .copied()
         .filter(|key| played.iter().any(|perf| perf == key))
+        .filter_map(Variant::from_key)
         .collect())
 }
 
 /// `insights(query)`.
-fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result<Value> {
+pub fn insights(
+    host: &dyn Host,
+    db: &Connection,
+    query: &InsightsQuery,
+    now: f64,
+) -> Result<InsightsReport> {
     let (clauses, params) = clauses(query, "", now)?;
     let where_sql = clauses.join(" AND ");
     let sql = format!(
@@ -191,7 +161,7 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
           CASE WHEN moves = '' THEN 0 ELSE LENGTH(moves) - LENGTH(REPLACE(moves, ' ', '')) + 1 END AS plies
          FROM games WHERE {where_sql} ORDER BY createdAt DESC LIMIT {ROW_LIMIT}"
     );
-    let mut statement = db.prepare(&sql).map_err(db_err)?;
+    let mut statement = db.prepare(&sql).sql()?;
     let rows = statement
         .query_map(params_from_iter(params.iter()), |row| {
             let dayhour: Option<String> = row.get(9)?;
@@ -217,53 +187,55 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
                 status: row.get(3)?,
             })
         })
-        .map_err(db_err)?;
+        .sql()?;
     let mut rows_out = Vec::new();
     for row in rows {
-        rows_out.push(row.map_err(db_err)?);
+        rows_out.push(row.sql()?);
     }
 
-    let mut record = Record::default();
-    let mut by_color = [Record::default(), Record::default()];
-    let mut speeds: Slots<Record> = Slots::new();
-    let mut openings: Slots<(Record, i64)> = Slots::new();
-    let mut weekdays: Vec<Record> = (0..7).map(|_| Record::default()).collect();
-    let mut hours: Vec<Record> = (0..24).map(|_| Record::default()).collect();
-    let mut opponents: Vec<Record> = RATING_BANDS.iter().map(|_| Record::default()).collect();
-    let mut lengths: Vec<Record> = LENGTH_BANDS.iter().map(|_| Record::default()).collect();
-    let mut endings: Slots<Record> = Slots::new();
+    let mut record = GameRecord::default();
+    let mut by_color = [GameRecord::default(), GameRecord::default()];
+    let mut speeds: Slots<GameRecord> = Slots::new();
+    let mut openings: Slots<(GameRecord, i64)> = Slots::new();
+    let mut weekdays: Vec<GameRecord> = (0..7).map(|_| GameRecord::default()).collect();
+    let mut hours: Vec<GameRecord> = (0..24).map(|_| GameRecord::default()).collect();
+    let mut opponents: Vec<GameRecord> =
+        RATING_BANDS.iter().map(|_| GameRecord::default()).collect();
+    let mut lengths: Vec<GameRecord> = LENGTH_BANDS.iter().map(|_| GameRecord::default()).collect();
+    let mut endings: Slots<GameRecord> = Slots::new();
     let mut longest_win = 0;
     let mut longest_loss = 0;
     let mut run = 0;
     let mut run_kind = String::new();
     // Rows are newest first; streaks are counted oldest first.
     for row in rows_out.iter().rev() {
-        record.add(&row.result);
+        add(&mut record, &row.result);
         let side = match row.color.as_str() {
             "white" => 0,
             "black" => 1,
             _ => {
-                return Err(CoreError::new(
-                    "Cannot read properties of undefined (reading 'record')",
-                ));
+                return Err(CoreError::new(format!(
+                    "A saved game was played as \"{}\", which is neither white nor black.",
+                    row.color
+                )));
             }
         };
-        by_color[side].add(&row.result);
-        speeds.slot(&row.speed, Record::default).add(&row.result);
+        add(&mut by_color[side], &row.result);
+        add(speeds.slot(&row.speed, GameRecord::default), &row.result);
         if let Some(opening) = row.opening.as_deref().filter(|o| !o.is_empty()) {
             // Group variations under their opening family: "Sicilian Defense: Najdorf" → "Sicilian Defense".
             let family = js::trim(opening.split(':').next().unwrap_or_default());
-            let entry = openings.slot(family, || (Record::default(), 0));
-            entry.0.add(&row.result);
+            let entry = openings.slot(family, || (GameRecord::default(), 0));
+            add(&mut entry.0, &row.result);
             if row.color == "white" {
                 entry.1 += 1;
             }
         }
         if (0..7).contains(&row.weekday) {
-            weekdays[row.weekday as usize].add(&row.result);
+            add(&mut weekdays[row.weekday as usize], &row.result);
         }
         if (0..24).contains(&row.hour) {
-            hours[row.hour as usize].add(&row.result);
+            add(&mut hours[row.hour as usize], &row.result);
         }
         if let (Some(opponent), Some(player)) = (row.opponent_rating, row.player_rating)
             && opponent != 0.0
@@ -274,16 +246,16 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
                 .iter()
                 .position(|(_, low, high)| diff >= *low && diff <= *high)
             {
-                opponents[band].add(&row.result);
+                add(&mut opponents[band], &row.result);
             }
         }
         if let Some(band) = LENGTH_BANDS
             .iter()
             .position(|(_, low, high)| row.plies as f64 >= *low && row.plies as f64 <= *high)
         {
-            lengths[band].add(&row.result);
+            add(&mut lengths[band], &row.result);
         }
-        endings.slot(&row.status, Record::default).add(&row.result);
+        add(endings.slot(&row.status, GameRecord::default), &row.result);
         if row.result == run_kind {
             run += 1;
         } else {
@@ -305,7 +277,7 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
 
     let mut by_speed = speeds.into_items();
     by_speed.sort_by_key(|a| std::cmp::Reverse(a.1.total));
-    let mut by_opening: Vec<(String, (Record, i64))> = openings
+    let mut by_opening: Vec<(String, (GameRecord, i64))> = openings
         .into_items()
         .into_iter()
         .filter(|(_, (record, _))| record.total >= 2)
@@ -315,86 +287,55 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
     let mut by_ending = endings.into_items();
     by_ending.sort_by_key(|a| std::cmp::Reverse(a.1.total));
 
-    let mut report = Map::new();
-    report.insert(
-        "account".into(),
-        query.get("account").cloned().unwrap_or(Value::Null),
-    );
-    report.insert("total".into(), json!(rows_out.len()));
-    report.insert("record".into(), record.json());
-    report.insert(
-        "byColor".into(),
-        json!({ "white": by_color[0].json(), "black": by_color[1].json() }),
-    );
-    report.insert(
-        "bySpeed".into(),
-        Value::Array(
-            by_speed
-                .iter()
-                .map(|(speed, record)| json!({ "speed": speed, "record": record.json() }))
-                .collect(),
-        ),
-    );
-    report.insert(
-        "byOpening".into(),
-        Value::Array(
-            by_opening
-                .iter()
-                .map(|(name, (record, as_white))| {
-                    json!({ "name": name, "record": record.json(), "asWhite": as_white })
-                })
-                .collect(),
-        ),
-    );
-    report.insert(
-        "byWeekday".into(),
-        Value::Array(weekdays.iter().map(Record::json).collect()),
-    );
-    report.insert(
-        "byHour".into(),
-        Value::Array(hours.iter().map(Record::json).collect()),
-    );
-    report.insert(
-        "byOpponent".into(),
-        Value::Array(
-            RATING_BANDS
-                .iter()
-                .zip(opponents.iter())
-                .map(|((label, _, _), record)| json!({ "label": label, "record": record.json() }))
-                .collect(),
-        ),
-    );
-    report.insert(
-        "byLength".into(),
-        Value::Array(
-            LENGTH_BANDS
-                .iter()
-                .zip(lengths.iter())
-                .map(|((label, _, _), record)| json!({ "label": label, "record": record.json() }))
-                .collect(),
-        ),
-    );
-    report.insert(
-        "endings".into(),
-        Value::Array(
-            by_ending
-                .iter()
-                .map(|(status, record)| json!({ "status": status, "record": record.json() }))
-                .collect(),
-        ),
-    );
-    report.insert(
-        "streaks".into(),
-        json!({ "longestWin": longest_win, "longestLoss": longest_loss, "current": current }),
-    );
-    if let Some(accuracy) = accuracy_report(host, db, query, now)? {
-        report.insert("accuracy".into(), accuracy);
-    }
-    if let Some(time_use) = time_use_report(host, db, query, now)? {
-        report.insert("timeUse".into(), time_use);
-    }
-    report.insert("variants".into(), json!(played_variants(db, query)?));
-    Ok(Value::Object(report))
+    let band = |(label, _, _): &(&str, f64, f64), record: &GameRecord| BandRecord {
+        label: (*label).to_string(),
+        record: *record,
+    };
+    Ok(InsightsReport {
+        account: query.account.clone(),
+        total: rows_out.len() as i64,
+        record,
+        by_color: ByColor {
+            white: by_color[0],
+            black: by_color[1],
+        },
+        by_speed: by_speed
+            .into_iter()
+            .map(|(speed, record)| SpeedRecord { speed, record })
+            .collect(),
+        by_opening: by_opening
+            .into_iter()
+            .map(|(name, (record, as_white))| OpeningRecord {
+                name,
+                record,
+                as_white,
+            })
+            .collect(),
+        by_weekday: weekdays,
+        by_hour: hours,
+        by_opponent: RATING_BANDS
+            .iter()
+            .zip(&opponents)
+            .map(|(b, r)| band(b, r))
+            .collect(),
+        by_length: LENGTH_BANDS
+            .iter()
+            .zip(&lengths)
+            .map(|(b, r)| band(b, r))
+            .collect(),
+        endings: by_ending
+            .into_iter()
+            .map(|(status, record)| EndingRecord { status, record })
+            .collect(),
+        streaks: Streaks {
+            longest_win,
+            longest_loss,
+            current,
+        },
+        accuracy: accuracy_report(host, db, query, now)?,
+        time_use: time_use_report(host, db, query, now)?,
+        variants: played_variants(db, query)?,
+    })
 }
 
 /// One game row of the main query.
@@ -416,9 +357,9 @@ struct Row {
 fn accuracy_report(
     host: &dyn Host,
     db: &Connection,
-    query: &Value,
+    query: &InsightsQuery,
     now: f64,
-) -> Result<Option<Value>> {
+) -> Result<Option<AccuracyReport>> {
     let (clauses, params) = clauses(query, "g.", now)?;
     let where_sql = clauses.join(" AND ");
     let sql = format!(
@@ -428,15 +369,15 @@ fn accuracy_report(
          WHERE {where_sql} AND r.complete = 1
          ORDER BY g.createdAt DESC LIMIT {REVIEW_LIMIT}"
     );
-    let mut statement = db.prepare(&sql).map_err(db_err)?;
+    let mut statement = db.prepare(&sql).sql()?;
     let rows = statement
         .query_map(params_from_iter(params.iter()), |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
-        .map_err(db_err)?;
+        .sql()?;
     let mut reviewed = Vec::new();
     for row in rows {
-        reviewed.push(row.map_err(db_err)?);
+        reviewed.push(row.sql()?);
     }
     if reviewed.is_empty() {
         return Ok(None);
@@ -447,8 +388,12 @@ fn accuracy_report(
     let mut acpl_games = 0;
     let (mut inaccuracy, mut mistake, mut blunder) = (0.0, 0.0, 0.0);
     for (color, text) in &reviewed {
-        // A summary that is not JSON is left out; one that is null fails the side lookup, as before.
+        // A summary that is not JSON, or is empty, is left out.
         let summary = match serde_json::from_str::<Value>(text) {
+            Ok(Value::Null) => {
+                host.log(Level::Debug, "insights", "Review summary is empty");
+                continue;
+            }
             Ok(summary) => summary,
             Err(cause) => {
                 host.log(
@@ -459,11 +404,6 @@ fn accuracy_report(
                 continue;
             }
         };
-        if summary.is_null() {
-            return Err(CoreError::new(format!(
-                "Cannot read properties of null (reading '{color}')"
-            )));
-        }
         let Some(side) = summary.get(color.as_str()).filter(|s| truthy(Some(s))) else {
             continue;
         };
@@ -480,39 +420,16 @@ fn accuracy_report(
         blunder += count_of(side.get("blunder"));
     }
     let games = reviewed.len() as f64;
-    let mut accuracy = Map::new();
-    accuracy.insert("games".into(), json!(reviewed.len()));
-    if accuracy_games > 0 {
-        accuracy.insert(
-            "average".into(),
-            num(accuracy_sum / f64::from(accuracy_games)),
-        );
-    }
-    if acpl_games > 0 {
-        accuracy.insert("acpl".into(), num(acpl_sum / f64::from(acpl_games)));
-    }
-    accuracy.insert(
-        "perGame".into(),
-        json!({
-            "inaccuracy": inaccuracy / games,
-            "mistake": mistake / games,
-            "blunder": blunder / games,
-        }),
-    );
-    Ok(Some(Value::Object(accuracy)))
-}
-
-/// Moves played and how many of them were blunders.
-#[derive(Default)]
-struct Blunders {
-    moves: i64,
-    blunders: i64,
-}
-
-impl Blunders {
-    fn json(&self) -> Value {
-        json!({ "moves": self.moves, "blunders": self.blunders })
-    }
+    Ok(Some(AccuracyReport {
+        games: reviewed.len() as i64,
+        average: (accuracy_games > 0).then(|| accuracy_sum / f64::from(accuracy_games)),
+        acpl: (acpl_games > 0).then(|| acpl_sum / f64::from(acpl_games)),
+        per_game: MistakeRates {
+            inaccuracy: inaccuracy / games,
+            mistake: mistake / games,
+            blunder: blunder / games,
+        },
+    }))
 }
 
 /// Time use across the clocked games.
@@ -520,8 +437,8 @@ impl Blunders {
 struct Clocks {
     games: i64,
     /// Results of games where the player's clock fell under a tenth of its start, and of the rest.
-    trouble: Record,
-    spare: Record,
+    trouble: GameRecord,
+    spare: GameRecord,
     /// The player's moves and seconds in each phase.
     phase_moves: [i64; 3],
     phase_seconds: [f64; 3],
@@ -536,7 +453,7 @@ struct Clocks {
 
 impl Clocks {
     /// One game: the player's side, its result, its clock and its review's move labels.
-    fn add(&mut self, white: bool, result: &str, time: &TimeUse, judgments: Option<&[Value]>) {
+    fn add(&mut self, white: bool, result: &str, time: &TimeUse, verdicts: Option<&[MoveVerdict]>) {
         self.games += 1;
         let mine = |ply: usize| time.white(ply) == white;
         let plies = time.clocks.len();
@@ -544,9 +461,9 @@ impl Clocks {
             .filter(|&ply| mine(ply))
             .any(|ply| time.clocks[ply].is_some_and(|clock| clock < time.initial / 10.0));
         if short {
-            self.trouble.add(result);
+            add(&mut self.trouble, result);
         } else {
-            self.spare.add(result);
+            add(&mut self.spare, result);
         }
         for ply in (0..plies).filter(|&ply| mine(ply)) {
             if let Some(spent) = time.spent(ply) {
@@ -566,9 +483,9 @@ impl Clocks {
                 slot.2 += 100.0 * other / time.initial;
             }
         }
-        if let Some(judgments) = judgments {
+        if let Some(verdicts) = verdicts {
             self.reviewed += 1;
-            for ply in (0..plies.min(judgments.len())).filter(|&ply| mine(ply)) {
+            for ply in (0..plies.min(verdicts.len())).filter(|&ply| mine(ply)) {
                 let Some(short) = time.short_before(ply) else {
                     continue;
                 };
@@ -578,66 +495,49 @@ impl Clocks {
                     &mut self.blunders_spare
                 };
                 bucket.moves += 1;
-                if judgments[ply].get("judgment").and_then(Value::as_str) == Some("blunder") {
+                if verdicts[ply].judgment == Some(Judgment::Blunder) {
                     bucket.blunders += 1;
                 }
             }
         }
     }
 
-    fn json(&self) -> Value {
+    fn report(&self) -> TimeUseReport {
         let total: f64 = self.phase_seconds.iter().sum();
-        let phases: Vec<Value> = PHASES
+        let phases = PHASES
             .iter()
             .enumerate()
             .filter(|&(phase, _)| self.phase_moves[phase] > 0)
-            .map(|(phase, name)| {
-                let mut entry = Map::new();
-                entry.insert("phase".into(), json!(name));
-                entry.insert("moves".into(), json!(self.phase_moves[phase]));
-                entry.insert(
-                    "seconds".into(),
-                    num(self.phase_seconds[phase] / self.phase_moves[phase] as f64),
-                );
-                if total > 0.0 {
-                    entry.insert(
-                        "share".into(),
-                        num(100.0 * self.phase_seconds[phase] / total),
-                    );
-                }
-                Value::Object(entry)
+            .map(|(phase, name)| PhaseTime {
+                phase: (*name).to_string(),
+                moves: self.phase_moves[phase],
+                seconds: self.phase_seconds[phase] / self.phase_moves[phase] as f64,
+                share: (total > 0.0).then(|| 100.0 * self.phase_seconds[phase] / total),
             })
             .collect();
-        let clock_at: Vec<Value> = CLOCK_MOVES
+        let clock_at = CLOCK_MOVES
             .iter()
             .zip(self.clock_at.iter())
             .filter(|(_, (games, _, _))| *games > 0)
-            .map(|(n, (games, own, other))| {
-                json!({
-                    "move": n,
-                    "games": games,
-                    "player": num(own / *games as f64),
-                    "opponent": num(other / *games as f64),
-                })
+            .map(|(n, (games, own, other))| ClockAt {
+                at_move: *n as i64,
+                games: *games,
+                player: own / *games as f64,
+                opponent: other / *games as f64,
             })
             .collect();
-        let mut out = Map::new();
-        out.insert("games".into(), json!(self.games));
-        out.insert("trouble".into(), self.trouble.json());
-        out.insert("spare".into(), self.spare.json());
-        out.insert("phases".into(), Value::Array(phases));
-        out.insert("clockAt".into(), Value::Array(clock_at));
-        if self.reviewed > 0 {
-            out.insert(
-                "blunders".into(),
-                json!({
-                    "games": self.reviewed,
-                    "short": self.blunders_short.json(),
-                    "spare": self.blunders_spare.json(),
-                }),
-            );
+        TimeUseReport {
+            games: self.games,
+            trouble: self.trouble,
+            spare: self.spare,
+            phases,
+            clock_at,
+            blunders: (self.reviewed > 0).then_some(BlundersByTime {
+                games: self.reviewed,
+                short: self.blunders_short,
+                spare: self.blunders_spare,
+            }),
         }
-        Value::Object(out)
     }
 }
 
@@ -647,9 +547,9 @@ impl Clocks {
 fn time_use_report(
     host: &dyn Host,
     db: &Connection,
-    query: &Value,
+    query: &InsightsQuery,
     now: f64,
-) -> Result<Option<Value>> {
+) -> Result<Option<TimeUseReport>> {
     let (clauses, params) = clauses(query, "g.", now)?;
     let where_sql = clauses.join(" AND ");
     let sql = format!(
@@ -661,7 +561,7 @@ fn time_use_report(
          WHERE {where_sql} AND g.pgn LIKE '%[%clk %' AND g.speed != 'correspondence'
          ORDER BY g.createdAt DESC LIMIT {CLOCK_LIMIT}"
     );
-    let mut statement = db.prepare(&sql).map_err(db_err)?;
+    let mut statement = db.prepare(&sql).sql()?;
     let rows = statement
         .query_map(params_from_iter(params.iter()), |row| {
             Ok((
@@ -671,16 +571,16 @@ fn time_use_report(
                 row.get::<_, Option<String>>(3)?,
             ))
         })
-        .map_err(db_err)?;
+        .sql()?;
     let mut clocks = Clocks::default();
     for row in rows {
-        let (color, pgn, result, review) = row.map_err(db_err)?;
+        let (color, pgn, result, review) = row.sql()?;
         let Some(time) = time_use(&pgn) else {
             continue;
         };
         // A review that cannot be read or analysed leaves the game's moves unlabelled.
         let analysed = review
-            .and_then(|data| serde_json::from_str::<Value>(&data).ok())
+            .and_then(|data| serde_json::from_str::<StoredReview>(&data).ok())
             .and_then(|data| match super::reviews::analyse_stored(&data) {
                 Ok(analysis) => Some(analysis),
                 Err(cause) => {
@@ -692,16 +592,13 @@ fn time_use_report(
                     None
                 }
             });
-        let judgments = analysed
-            .as_ref()
-            .and_then(|analysis| analysis["moves"].as_array())
-            .map(Vec::as_slice);
-        clocks.add(color == "white", &result, &time, judgments);
+        let verdicts = analysed.as_ref().map(|analysis| analysis.moves.as_slice());
+        clocks.add(color == "white", &result, &time, verdicts);
     }
-    Ok((clocks.games > 0).then(|| clocks.json()))
+    Ok((clocks.games > 0).then(|| clocks.report()))
 }
 
-/// `side.x ?? 0` as a count.
+/// A count; absent or null is 0.
 fn count_of(value: Option<&Value>) -> f64 {
     match value {
         None | Some(Value::Null) => 0.0,

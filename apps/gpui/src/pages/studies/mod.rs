@@ -3,6 +3,8 @@
 //! them. Lichess's own studies are a tab of their own when an account is connected.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::{ChapterName, LichessId, PgnText, StudyId, Username};
+use kchess_contracts::types::{Reply, StudyExport, StudySyncRequest};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -17,6 +19,8 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_contracts::types::{ChapterInput, Study, StudyCommand, StudyCommandResult};
+use kchess_domain::records::studies::StudySummary;
 use serde_json::{Value, json};
 use shakmaty::Color;
 
@@ -27,10 +31,10 @@ use crate::core::AppCore;
 use crate::game::tree::TreeNode;
 use crate::name_dialog::NameDialog;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
-use crate::studies::{
-    MAX_CHAPTERS, MAX_STUDIES, StudyHandle, StudyLibrary, document_pgn, now, time_ago,
-};
+use crate::studies::{MAX_CHAPTERS, MAX_STUDIES, StudyHandle, StudyLibrary, document_pgn};
 use crate::theme::Palette;
+use crate::widgets::time_ago;
+use kchess_games::now_ms;
 mod lichess;
 
 use crate::widgets::{self, Pill};
@@ -38,15 +42,16 @@ use crate::widgets::{self, Pill};
 const TAB: &str = "kchess:studies-tab";
 const SORT: &str = "kchess:studies-sort";
 const SORTS: [(&str, &str); 2] = [("recent", "Recently edited"), ("name", "Name")];
-/// The cards' columns (`.card-grid`).
+/// The cards' columns.
 const CARD_MIN: Pixels = px(210.);
 const CARD_GAP: Pixels = px(16.);
 /// "Edited 2 min ago" is redrawn this often.
 const CLOCK: Duration = Duration::from_secs(60);
 
-/// What a study's card shows of it (`summarizeStudy`): its final position, players and event.
-fn summary(pgn: &str) -> Value {
-    crate::game::rules("summarizeStudy", &[json!(pgn)]).unwrap_or(Value::Null)
+/// What a study's card shows of it: its final position, players and event; none for a PGN that
+/// cannot be imported.
+fn summary(pgn: &str) -> Option<StudySummary> {
+    kchess_domain::records::studies::summarize_study(pgn)
 }
 
 /// The rows' heights as laid out at one width of card: at another, a card's text wraps
@@ -149,7 +154,7 @@ fn rows_in_view(
     (first..last, above, below)
 }
 
-/// `localeCompare` with numbers read as numbers ("Study 2" before "Study 10"), ignoring case.
+/// Alphabetical, with numbers read as numbers ("Study 2" before "Study 10"), ignoring case.
 fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let (mut a, mut b) = (a.chars().peekable(), b.chars().peekable());
     loop {
@@ -188,23 +193,21 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 const INVALID_IMPORT: &str = "Paste valid PGN with up to 64 chapters";
 const VARIANT_IMPORT: &str = "A chapter is in a variant KChess doesn't play";
 
-/// An import's chapters (`pgnGames`): each game named by its `ChapterName`, or numbered.
+/// An import's chapters: each game named by its `ChapterName`, or numbered.
 fn import_chapters(text: &str) -> Result<Vec<(String, String)>, &'static str> {
-    let games = crate::game::rules("pgnGames", &[json!(text)]).map_err(|_| INVALID_IMPORT)?;
-    let chapters: Vec<(String, String)> = games
-        .as_array()
-        .ok_or(INVALID_IMPORT)?
-        .iter()
+    let chapters: Vec<(String, String)> = kchess_domain::position::pgn_games(text)
+        .into_iter()
         .enumerate()
         .map(|(index, game)| {
-            let name = game["headers"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|pair| pair[0] == json!("ChapterName"))
-                .and_then(|pair| pair[1].as_str())
-                .map_or_else(|| format!("Chapter {}", index + 1), str::to_string);
-            (name, game["pgn"].as_str().unwrap_or_default().to_string())
+            let name = game
+                .headers
+                .iter()
+                .find(|(name, _)| name == "ChapterName")
+                .map_or_else(
+                    || format!("Chapter {}", index + 1),
+                    |(_, value)| value.clone(),
+                );
+            (name, game.pgn)
         })
         .collect();
     // A game read under rules other than its own would show positions it never had.
@@ -228,7 +231,10 @@ fn import_chapters(text: &str) -> Result<Vec<(String, String)>, &'static str> {
 
 /// An imported study's name when none is given: its players, else its event.
 fn import_name(first: &str) -> Option<String> {
-    let headers = TreeNode::from_pgn(first)?.headers.unwrap_or_default();
+    let headers = TreeNode::from_pgn(first)?
+        .headers
+        .take()
+        .unwrap_or_default();
     let header = |key: &str| {
         headers
             .get(key)
@@ -259,7 +265,7 @@ pub struct StudiesPage {
     row_heights: std::rc::Rc<std::cell::RefCell<RowHeights>>,
     /// Each listed study's summary by its PGN: reading it parses the study and plays it out, and
     /// every frame of the page asks for each study's twice.
-    summaries: std::cell::RefCell<HashMap<String, Value>>,
+    summaries: std::cell::RefCell<HashMap<String, Option<StudySummary>>>,
     area: Measured,
     focus: FocusHandle,
     _clock: Task<()>,
@@ -318,14 +324,7 @@ impl StudiesPage {
             cx.observe(&crate::accounts::handle(cx), |_, _, cx| cx.notify()),
         ];
         subscriptions.extend(lichess_subscriptions);
-        let clock = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(CLOCK).await;
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
-                    break;
-                }
-            }
-        });
+        let clock = crate::timer::redraw_every(CLOCK, cx);
         let mut page = StudiesPage {
             search,
             sort,
@@ -372,8 +371,11 @@ impl StudiesPage {
         self.previews
             .entry(fen.to_string())
             .or_insert_with(|| {
-                let position =
-                    kchess_domain::rules::setup_start("standard", fen).unwrap_or_default();
+                let position = kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    fen,
+                )
+                .unwrap_or_default();
                 let mut state = BoardState::of(&position, Color::White, None, None);
                 state.preview = true;
                 cx.new(|_| ChessBoard::new(state))
@@ -385,27 +387,30 @@ impl StudiesPage {
 
     /// Show a study on the analysis board; never silently throw away an unsaved board.
     fn open(id: String, window: &mut Window, cx: &mut App) {
-        let shown = crate::shell::analysis_board(window, cx)
-            .is_some_and(|analysis| analysis.read(cx).study_id() == id);
-        if shown {
-            crate::shell::open(Page::Analysis, window, cx);
-            return;
-        }
-        crate::shell::replace_analysis(window, cx, move |analysis, window, cx| {
-            match analysis.open_study(&id, None, cx) {
-                Ok(()) => true,
-                Err(cause) => {
-                    window.push_notification(Notification::error(cause), cx);
-                    false
-                }
+        crate::pages::analysis::when_read(window, cx, move |analysis, window, cx| {
+            if analysis.read(cx).study_id() == id {
+                crate::shell::open(Page::Analysis, window, cx);
+                return;
             }
+            crate::pages::analysis::replace_read(
+                analysis,
+                window,
+                cx,
+                move |analysis, window, cx| match analysis.open_study(&id, None, cx) {
+                    Ok(()) => true,
+                    Err(cause) => {
+                        window.push_notification(Notification::error(cause), cx);
+                        false
+                    }
+                },
+            );
         });
     }
 
     /// `New study`: an empty board, kept as a study at once.
     pub(crate) fn create(window: &mut Window, cx: &mut App) {
         let name = Self::library(cx).read(cx).fresh_name("Untitled study");
-        crate::shell::replace_analysis(window, cx, move |analysis, window, cx| {
+        crate::pages::analysis::replace(window, cx, move |analysis, window, cx| {
             analysis.load(None, cx);
             let saved = analysis.save_as_study(name.clone(), cx);
             window
@@ -428,17 +433,15 @@ impl StudiesPage {
 
     /// Practice → Repertoire on this study.
     fn drill(id: String, window: &mut Window, cx: &mut App) {
-        crate::prefs::set(cx, "kchess:repertoire-study", id);
-        crate::prefs::set(cx, "kchess:practice-tab", "openings");
-        crate::shell::open(Page::Practice, window, cx);
+        crate::pages::practice::repertoire::train_study(id, window, cx);
     }
 
     /// Send a command and show its answer; a failure is a notification.
     fn run(
-        command: Value,
+        command: StudyCommand,
         window: &mut Window,
         cx: &mut App,
-        then: impl FnOnce(Value, &mut Window, &mut App) + 'static,
+        then: impl FnOnce(StudyCommandResult, &mut Window, &mut App) + 'static,
     ) {
         let library = Self::library(cx);
         let answer = library.read(cx).command(command);
@@ -459,19 +462,20 @@ impl StudiesPage {
             .detach();
     }
 
-    fn rename(study: &Value, window: &mut Window, cx: &mut App) {
-        let id = study["id"].clone();
+    fn rename(study: &Study, window: &mut Window, cx: &mut App) {
+        let id = study.id.clone();
         let library = Self::library(cx);
         NameDialog::open(
             "Rename study",
-            study["name"].as_str().unwrap_or_default(),
+            &study.name,
             "Rename",
             window,
             cx,
             move |name, dialog, window, cx| {
-                let answer = library
-                    .read(cx)
-                    .command(json!({ "op": "rename", "id": id, "name": name }));
+                let answer = library.read(cx).command(StudyCommand::Rename {
+                    id: id.clone(),
+                    name,
+                });
                 let library = library.clone();
                 window
                     .spawn(cx, async move |cx| {
@@ -493,17 +497,16 @@ impl StudiesPage {
     }
 
     /// Delete a study (or its offline copy); Undo brings it back.
-    fn remove(id: Value, window: &mut Window, cx: &mut App) {
+    fn remove(id: String, window: &mut Window, cx: &mut App) {
         Self::run(
-            json!({ "op": "remove", "id": id }),
+            StudyCommand::Remove { id },
             window,
             cx,
             |result, window, cx| {
-                let removed = result["removed"].clone();
-                if removed.is_null() {
+                let Some(removed) = result.removed else {
                     return;
-                }
-                let name = removed["name"].as_str().unwrap_or_default().to_string();
+                };
+                let name = removed.name.clone();
                 window.push_notification(
                     widgets::action_notification(
                         Notification::new().title(format!("Deleted “{name}”")),
@@ -511,7 +514,9 @@ impl StudiesPage {
                         "Undo",
                         move |window, cx| {
                             Self::run(
-                                json!({ "op": "restore", "study": removed.clone() }),
+                                StudyCommand::Restore {
+                                    study: json!(removed),
+                                },
                                 window,
                                 cx,
                                 |_, _, _| {},
@@ -524,16 +529,15 @@ impl StudiesPage {
         );
     }
 
-    fn copy_pgn(study: &Value, window: &mut Window, cx: &mut App) {
+    fn copy_pgn(study: &Study, window: &mut Window, cx: &mut App) {
         cx.write_to_clipboard(ClipboardItem::new_string(document_pgn(study)));
         window.push_notification("PGN copied", cx);
     }
 
     /// Save a study's PGN, every chapter, as a file where the player picks.
-    fn save_pgn(study: &Value, window: &mut Window, cx: &mut App) {
-        let name: String = study["name"]
-            .as_str()
-            .unwrap_or("study")
+    fn save_pgn(study: &Study, window: &mut Window, cx: &mut App) {
+        let name: String = study
+            .name
             .chars()
             .filter(|c| c.is_alphanumeric() || " _.()+-".contains(*c))
             .take(80)
@@ -574,9 +578,12 @@ impl StudiesPage {
         let Some(study) = library.read(cx).study(&id).cloned() else {
             return;
         };
-        let cloud = study["cloud"].clone();
-        let cloud_account = cloud["account"].as_str().unwrap_or_default();
-        if !copy && !cloud.is_null() && !cloud_account.eq_ignore_ascii_case(&account) {
+        if let Some(cloud) = study
+            .cloud
+            .as_ref()
+            .filter(|cloud| !copy && !cloud.account.eq_ignore_ascii_case(&account))
+        {
+            let cloud_account = &cloud.account;
             window.push_notification(
                 Notification::warning(format!(
                     "Switch to @{cloud_account} to upload changes to this study"
@@ -588,7 +595,7 @@ impl StudiesPage {
         self.uploading = Some(id.clone());
         cx.notify();
         // The board's last edits first, when it shows this study.
-        let flushed = crate::shell::analysis_board(window, cx)
+        let flushed = crate::pages::analysis::board(window, cx)
             .map(|analysis| analysis.update(cx, |analysis, cx| analysis.flush_study(cx)));
         let core = cx.global::<AppCore>().clone();
         cx.spawn_in(window, async move |this, cx| {
@@ -602,76 +609,74 @@ impl StudiesPage {
                     .flatten()
                     .ok_or("The study is gone")?;
                 let pgn = document_pgn(&study);
-                let cloud = study["cloud"].clone();
-                let linked = !copy
-                    && !cloud.is_null()
-                    && cloud["structureChanged"] != json!(true)
-                    && cloud["account"]
-                        .as_str()
-                        .is_some_and(|owner| owner.eq_ignore_ascii_case(&account));
-                let result = if linked {
-                    core.request(calls::SyncLichessStudy {
-                        request: json!({
-                            "account": account,
-                            "studyId": cloud["id"],
-                            "baseline": cloud["downloadedPgn"],
-                            "pgn": pgn,
-                        }),
-                    })
-                    .await
+                let linked = study.cloud.as_ref().filter(|cloud| {
+                    !copy
+                        && !cloud.structure_changed
+                        && cloud.account.eq_ignore_ascii_case(&account)
+                });
+                let reconnect = || format!("Connect @{account} again to allow study access.");
+                let (remote, synced) = if let Some(cloud) = linked {
+                    let remote = cloud.id.clone();
+                    let synced = core
+                        .request(calls::SyncLichessStudy {
+                            request: StudySyncRequest {
+                                account: account.clone(),
+                                study_id: remote.clone(),
+                                baseline: cloud.downloaded_pgn.clone(),
+                                pgn,
+                            },
+                        })
+                        .await
+                        .map_err(|cause| cause.message)?;
+                    match synced {
+                        Reply::Done(chapters) => (remote, Some(chapters)),
+                        Reply::NeedsReconnect => return Err(reconnect()),
+                    }
                 } else {
-                    let name: String = study["name"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .chars()
-                        .take(100)
-                        .collect();
-                    core.request(calls::ExportToLichessStudy {
-                        account: json!(account),
-                        study_id: json!(""),
-                        name: json!(name),
-                        pgn: json!(pgn),
-                    })
-                    .await
-                }
-                .map_err(|cause| cause.message)?;
-                if result.get("needsReconnect").is_some() {
-                    return Err(format!("Connect @{account} again to allow study access."));
-                }
-                let remote = if linked {
-                    cloud["id"].as_str().unwrap_or_default().to_string()
-                } else {
-                    result["id"].as_str().unwrap_or_default().to_string()
+                    let name: String = study.name.chars().take(100).collect();
+                    let exported = core
+                        .request(calls::ExportToLichessStudy {
+                            account: Username(account.clone()),
+                            study_id: StudyId::default(),
+                            name: ChapterName(name),
+                            pgn: PgnText(pgn),
+                        })
+                        .await
+                        .map_err(|cause| cause.message)?;
+                    match exported {
+                        Reply::Done(StudyExport { id }) => (id, None),
+                        Reply::NeedsReconnect => return Err(reconnect()),
+                    }
                 };
-                let chapters = if result.is_array() {
-                    result
-                } else {
-                    core.request(calls::LichessStudyChapters {
-                        account: json!(account),
-                        id: json!(remote),
-                    })
-                    .await
-                    .map_err(|cause| cause.message)?
+                let chapters = match synced {
+                    Some(chapters) => chapters,
+                    None => match core
+                        .request(calls::LichessStudyChapters {
+                            account: Username(account.clone()),
+                            id: LichessId(remote.clone()),
+                        })
+                        .await
+                        .map_err(|cause| cause.message)?
+                    {
+                        Reply::Done(chapters) => chapters,
+                        Reply::NeedsReconnect => {
+                            return Err("Uploaded, but study access needs reconnection".into());
+                        }
+                    },
                 };
-                if chapters.get("needsReconnect").is_some() {
-                    return Err("Uploaded, but study access needs reconnection".into());
-                }
                 let baseline = chapters
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|chapter| chapter["pgn"].as_str())
+                    .iter()
+                    .map(|chapter| chapter.pgn.as_str())
                     .collect::<Vec<_>>()
                     .join("\n\n");
                 let marked = this
                     .update(cx, |_, cx| {
-                        library.read(cx).command(json!({
-                            "op": "markCloud",
-                            "id": id,
-                            "account": account,
-                            "remoteId": remote,
-                            "baseline": baseline,
-                        }))
+                        library.read(cx).command(StudyCommand::MarkCloud {
+                            id: id.clone(),
+                            account: account.clone(),
+                            remote_id: remote.clone(),
+                            baseline: baseline.clone(),
+                        })
                     })
                     .map_err(|_| "The page closed".to_string())?;
                 let result = marked.await?;
@@ -748,11 +753,14 @@ impl StudiesPage {
             )
     }
 
-    fn menu(&self, study: &Value) -> impl IntoElement {
-        let id = study["id"].as_str().unwrap_or_default().to_string();
-        let name = study["name"].as_str().unwrap_or_default().to_string();
-        let cloud = !study["cloud"].is_null();
-        let can_copy = cloud && study["cloud"]["structureChanged"] != json!(true);
+    fn menu(&self, study: &Study) -> impl IntoElement {
+        let id = study.id.clone();
+        let name = study.name.clone();
+        let cloud = study.cloud.is_some();
+        let can_copy = study
+            .cloud
+            .as_ref()
+            .is_some_and(|cloud| !cloud.structure_changed);
         let busy = self.uploading.is_some();
         let study = study.clone();
         Button::new(SharedString::from(format!("study-menu-{id}")))
@@ -791,7 +799,9 @@ impl StudiesPage {
                     .item(PopupMenuItem::new("Duplicate").icon(icon("copy")).on_click(
                         move |_, window, cx| {
                             Self::run(
-                                json!({ "op": "duplicate", "id": duplicate }),
+                                StudyCommand::Duplicate {
+                                    id: duplicate.clone(),
+                                },
                                 window,
                                 cx,
                                 |_, _, _| {},
@@ -814,9 +824,7 @@ impl StudiesPage {
                             .icon(icon("cloud-upload"))
                             .disabled(busy)
                             .on_click(move |_, window, cx| {
-                                if let Some(page) =
-                                    crate::shell::view_of::<StudiesPage>(Page::Studies, cx)
-                                {
+                                if let Some(page) = crate::shell::view::<StudiesPage>(cx) {
                                     let id = upload.clone();
                                     page.update(cx, |page, cx| page.upload(id, true, window, cx));
                                 }
@@ -832,7 +840,7 @@ impl StudiesPage {
                         "Delete"
                     })
                     .icon(icon("trash-2"))
-                    .on_click(move |_, window, cx| Self::remove(json!(remove.clone()), window, cx)),
+                    .on_click(move |_, window, cx| Self::remove(remove.clone(), window, cx)),
                 )
             })
     }
@@ -861,8 +869,8 @@ impl StudiesPage {
         kept
     }
 
-    /// A study's summary (`summarizeStudy`), kept while the study is listed.
-    fn summary(&self, pgn: &str) -> Value {
+    /// A study's summary, kept while the study is listed.
+    fn summary(&self, pgn: &str) -> Option<StudySummary> {
         if let Some(kept) = self.summaries.borrow().get(pgn) {
             return kept.clone();
         }
@@ -875,21 +883,18 @@ impl StudiesPage {
 
     fn render_cards(
         &mut self,
-        studies: Vec<Value>,
+        studies: Vec<Study>,
         width: Pixels,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let (count, card_width) = widgets::columns(width, CARD_MIN, CARD_GAP);
-        let now = now();
+        let now = now_ms();
         // Pictures of studies no longer listed (edited, removed, filtered out) are let go; those
         // of listed studies scrolled out of view are kept for when they come back.
         let listed: std::collections::HashSet<String> = studies
             .iter()
-            .filter_map(|study| {
-                let summary = self.summary(study["pgn"].as_str().unwrap_or_default());
-                summary["fen"].as_str().map(str::to_string)
-            })
+            .filter_map(|study| self.summary(&study.pgn).map(|summary| summary.fen))
             .collect();
         self.previews.retain(|fen, _| listed.contains(fen));
         let rows = studies.len().div_ceil(count);
@@ -911,24 +916,27 @@ impl StudiesPage {
                 .skip(row * count)
                 .take(count)
                 .map(|study| {
-                    let id = study["id"].as_str().unwrap_or_default().to_string();
-                    let name = study["name"].as_str().unwrap_or_default().to_string();
-                    let summary = self.summary(study["pgn"].as_str().unwrap_or_default());
-                    let board = summary["fen"]
-                        .as_str()
-                        .map(|fen| self.preview(fen, cx).into());
-                    let event = summary["event"].as_str().filter(|event| *event != name);
-                    let description = [summary["players"].as_str(), event]
+                    let (id, name) = (study.id.clone(), study.name.clone());
+                    let summary = self.summary(&study.pgn);
+                    let board = summary
+                        .as_ref()
+                        .map(|summary| self.preview(&summary.fen, cx).into());
+                    let event = summary
+                        .as_ref()
+                        .map(|summary| summary.event.as_str())
+                        .filter(|event| *event != name);
+                    let players = summary.as_ref().map(|summary| summary.players.as_str());
+                    let description = [players, event]
                         .into_iter()
                         .flatten()
                         .filter(|part| !part.is_empty())
                         .collect::<Vec<_>>()
                         .join(" · ");
-                    let chapters = study["chapters"].as_array().map_or(0, Vec::len);
-                    let cloud = &study["cloud"];
+                    let chapters = study.chapters.len();
+                    let cloud = study.cloud.as_ref();
                     let location = format!(
                         "{}{}",
-                        if cloud.is_null() {
+                        if cloud.is_none() {
                             "On this device"
                         } else {
                             "Offline · Lichess"
@@ -942,9 +950,9 @@ impl StudiesPage {
                             String::new()
                         }
                     );
-                    let upload_label = if cloud["structureChanged"] == json!(true) {
+                    let upload_label = if cloud.is_some_and(|cloud| cloud.structure_changed) {
                         "Upload as new cloud study"
-                    } else if cloud.is_null() {
+                    } else if cloud.is_none() {
                         "Upload to Lichess"
                     } else {
                         "Upload changes"
@@ -959,8 +967,7 @@ impl StudiesPage {
                         board,
                         location,
                         description: (!description.is_empty()).then_some(description),
-                        edited: study["updatedAt"]
-                            .as_f64()
+                        edited: Some(study.updated_at_ms())
                             .filter(|at| *at > 0.)
                             .map(|at| format!("Edited {}", time_ago(at, now))),
                         rows: 3,
@@ -1085,22 +1092,24 @@ impl StudiesPage {
         let words: Vec<&str> = query.split_whitespace().collect();
         let by_name = crate::prefs::get::<String>(cx, SORT, "recent".into()) == "name";
         // Summaries of studies no longer in the library (edited, removed) are let go.
-        let listed: std::collections::HashSet<&str> = items
-            .iter()
-            .filter_map(|study| study["pgn"].as_str())
-            .collect();
+        let listed: std::collections::HashSet<&str> =
+            items.iter().map(|study| study.pgn.as_str()).collect();
         self.summaries
             .borrow_mut()
             .retain(|pgn, _| listed.contains(pgn.as_str()));
-        let mut studies: Vec<Value> = items
+        let mut studies: Vec<Study> = items
             .iter()
             .filter(|study| {
-                let summary = self.summary(study["pgn"].as_str().unwrap_or_default());
+                let summary = self.summary(&study.pgn);
                 let text = format!(
                     "{} {} {}",
-                    study["name"].as_str().unwrap_or_default(),
-                    summary["players"].as_str().unwrap_or_default(),
-                    summary["event"].as_str().unwrap_or_default()
+                    study.name,
+                    summary
+                        .as_ref()
+                        .map_or("", |summary| summary.players.as_str()),
+                    summary
+                        .as_ref()
+                        .map_or("", |summary| summary.event.as_str())
                 )
                 .to_lowercase();
                 words.iter().all(|word| text.contains(word))
@@ -1108,19 +1117,9 @@ impl StudiesPage {
             .cloned()
             .collect();
         if by_name {
-            studies.sort_by(|a, b| {
-                natural_cmp(
-                    a["name"].as_str().unwrap_or_default(),
-                    b["name"].as_str().unwrap_or_default(),
-                )
-            });
+            studies.sort_by(|a, b| natural_cmp(&a.name, &b.name));
         } else {
-            studies.sort_by(|a, b| {
-                b["updatedAt"]
-                    .as_f64()
-                    .unwrap_or(0.)
-                    .total_cmp(&a["updatedAt"].as_f64().unwrap_or(0.))
-            });
+            studies.sort_by(|a, b| b.updated_at_ms().total_cmp(&a.updated_at_ms()));
         }
         let toolbar = h_flex()
             .flex_wrap()
@@ -1292,14 +1291,17 @@ impl ImportStudy {
         } else {
             given
         };
-        let answer = library.read(cx).command(json!({
-            "op": "saveChapters",
-            "name": name,
-            "chapters": chapters
+        let answer = library.read(cx).command(StudyCommand::SaveChapters {
+            name,
+            chapters: chapters
                 .iter()
-                .map(|(name, pgn)| json!({ "name": name, "pgn": pgn }))
-                .collect::<Vec<_>>(),
-        }));
+                .map(|(name, pgn)| ChapterInput {
+                    name: name.clone(),
+                    pgn: pgn.clone(),
+                })
+                .collect(),
+            id: None,
+        });
         cx.spawn_in(window, async move |this, cx| {
             let result = answer.await;
             let _ = this.update_in(cx, |this, window, cx| match result {
@@ -1309,7 +1311,7 @@ impl ImportStudy {
                         cx.notify();
                     });
                     window.close_dialog(cx);
-                    let id = result["id"].as_str().unwrap_or_default().to_string();
+                    let id = result.id.unwrap_or_default();
                     window.push_notification(
                         widgets::action_notification(
                             Notification::success("Study imported"),
@@ -1500,4 +1502,70 @@ mod tests {
         );
         assert!(import_chapters("[Variant \"Chess960\"]\n[FEN \"bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1\"]\n\n1. e4 *").is_ok());
     }
+}
+
+/// The Studies page's header actions.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Action {
+    New,
+    Import,
+}
+
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::{ActionInfo, ActionRole};
+        match self {
+            Action::New => ActionInfo::new("studies:new", "New study", "plus", "create chapter")
+                .role(ActionRole::New),
+            Action::Import => ActionInfo::new(
+                "studies:import",
+                "Import PGN",
+                "import",
+                "paste games study",
+            ),
+        }
+    }
+}
+
+impl crate::pages::PageView for StudiesPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Studies,
+        label: "Studies",
+        short: "Studies",
+        icon: "library-big",
+        group: Some(crate::pages::NavGroup::Review),
+        keywords: "pgn chapters notes",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        StudiesPage::new(window, cx)
+    }
+
+    fn shown(this: &Entity<Self>, _again: bool, _window: &mut Window, cx: &mut App) {
+        this.update(cx, |studies, cx| studies.shown(cx));
+    }
+
+    fn search_fields(&self) -> Vec<Entity<InputState>> {
+        StudiesPage::search_fields(self)
+    }
+
+    fn actions(&self, _: &App) -> Vec<Action> {
+        vec![Action::New, Action::Import]
+    }
+
+    fn act(_this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        match action {
+            Action::New => StudiesPage::create(window, cx),
+            Action::Import => StudiesPage::open_import(window, cx),
+        }
+    }
+}
+
+/// Studies at its Lichess tab: the connected account's own studies.
+pub fn open_lichess(window: &mut Window, cx: &mut App) {
+    crate::shell::show::<StudiesPage>(window, cx, |studies, window, cx| {
+        studies.show_lichess(window, cx)
+    });
 }

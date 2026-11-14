@@ -2,10 +2,9 @@
 //! have run.
 
 use rusqlite::Connection;
-use serde_json::Value;
 
-use super::StoreContext;
-use crate::error::{CoreError, Result};
+use super::sql::{Sql as _, transaction};
+use kchess_contracts::error::{CoreError, Result};
 
 /// Ordered schema migrations. Append only: an earlier entry is never edited.
 pub const MIGRATIONS: &[&str] = &[
@@ -262,28 +261,17 @@ pub const MIGRATIONS: &[&str] = &[
     color, winner, rated, opening);"#,
 ];
 
-fn storage_error(cause: rusqlite::Error) -> CoreError {
-    CoreError::new(cause.to_string())
-}
-
-/// Migrations expose no storage methods; None for every method.
-pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
-    let db = ctx.db;
-    let _ = (db, method, args);
-    None
-}
-
 /// Apply every migration newer than the database's `user_version`, each in its own transaction.
 pub fn migrate(db: &Connection) -> Result<()> {
     migrate_to(db, MIGRATIONS.len())
 }
 
 /// Apply the migrations up to `steps` (the first `steps` of the list), as an earlier release
-/// would have left the database. Test-only callers pass fewer than all of them.
-pub fn migrate_to(db: &Connection, steps: usize) -> Result<()> {
+/// would have left the database.
+fn migrate_to(db: &Connection, steps: usize) -> Result<()> {
     let current: i64 = db
         .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(storage_error)?;
+        .sql()?;
     let start = usize::try_from(current).unwrap_or(0);
     // A newer release migrated this profile: its tables have columns this one would drop or
     // reset on its next save, so it is not opened at all (docs/shared-core.md).
@@ -293,19 +281,12 @@ pub fn migrate_to(db: &Connection, steps: usize) -> Result<()> {
         ));
     }
     for (index, sql) in MIGRATIONS.iter().enumerate().take(steps).skip(start) {
-        db.execute_batch("BEGIN IMMEDIATE").map_err(storage_error)?;
-        // `index` is a loop counter, not user input: PRAGMA takes no bound parameters.
-        let applied = db
-            .execute_batch(sql)
-            .and_then(|()| db.execute_batch(&format!("PRAGMA user_version = {}", index + 1)))
-            .and_then(|()| db.execute_batch("COMMIT"));
-        if let Err(cause) = applied {
-            let error = storage_error(cause);
-            return Err(match db.execute_batch("ROLLBACK") {
-                Ok(()) => error,
-                Err(rollback) => error.with_rollback_failure(rollback),
-            });
-        }
+        transaction(db, || {
+            db.execute_batch(sql).sql()?;
+            // `index` is a loop counter, not user input: PRAGMA takes no bound parameters.
+            db.execute_batch(&format!("PRAGMA user_version = {}", index + 1))
+                .sql()
+        })?;
     }
     Ok(())
 }

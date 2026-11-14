@@ -1,0 +1,22 @@
+name: Engines
+description: >-
+  The official Stockfish, so the tests that need a real engine run (`tests/support`), and
+  Fairy-Stockfish, built from its pinned source, so the variant-analysis tests run too; both named
+  in the job's environment (KCHESS_ENGINE_PATH, KCHESS_VARIANT_ENGINE_PATH). Kept between runs,
+  keyed by their pins: fetching them built the fetcher and Fairy-Stockfish anew each time
+  (2026-11-09: 70 s of `check` and of each mutants shard). `cargo xtask engines` answers kept
+  ones without building either.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ${{ runner.temp }}/stockfish
+          target/fairy-stockfish/bin
+        key: engines-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/kchess-core/src/engine/managed/shipped.rs', 'tooling/xtask/src/pinned.rs') }}
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: cargo xtask engines --github-env "$RUNNER_TEMP/stockfish"

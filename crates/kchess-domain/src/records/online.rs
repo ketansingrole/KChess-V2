@@ -1,12 +1,10 @@
-//! Validation of Lichess board-API events. The schema is the
-//! one valibot applied: an object is anything with the keys (arrays included, as valibot reads
-//! them), unknown keys pass through, an optional key may be absent but not null, and the event
-//! type picks the schema like valibot's `variant`.
+//! Validation of Lichess board-API events. The schema: an object is anything with the keys (arrays
+//! included, their indices as keys), unknown keys pass through, an optional key may be absent but
+//! not null, and the event's `type` picks the schema.
 
 use serde_json::{Map, Value};
 
-use super::{Out, arg};
-use crate::js;
+use crate::{js, rules};
 
 const UNREADABLE: &str = "Lichess sent an unreadable game event. Reconnect to refresh the board.";
 const INVALID_MOVES: &str = "Lichess sent an invalid move list.";
@@ -24,7 +22,7 @@ const TYPES: &[&str] = &[
     "challengeDeclined",
 ];
 
-/// One valibot schema: what a value must be.
+/// What a value must be.
 enum Check {
     /// A string of at most this many UTF-16 units.
     Str(usize),
@@ -91,7 +89,7 @@ const EXPIRATION: &[Field] = &[
     req("millisToMove", Check::Clock),
 ];
 
-/// `stateFields`: the game state, with or without its `type`.
+/// The game state, with or without its `type`.
 const STATE: &[Field] = &[
     req("moves", Check::Str(10_000)),
     req("status", Check::Str(usize::MAX)),
@@ -150,7 +148,7 @@ fn entries_of_type(kind: &str) -> Option<&'static [Field]> {
     })
 }
 
-/// valibot's view of an object: an object, or an array with its indices as keys.
+/// An object, or an array with its indices as keys.
 fn entries(input: &Value) -> Option<Map<String, Value>> {
     match input {
         Value::Object(map) => Some(map.clone()),
@@ -213,7 +211,7 @@ fn check(value: &Value, schema: &Check) -> Option<Value> {
     }
 }
 
-/// `validateOnlineEvent`: the event, or None when it is not one this client reads (no `type`,
+/// The event, or None when it is not one this client reads (no `type`,
 /// or an unknown one); an error when a recognized event is malformed.
 pub fn validate(raw: &Value) -> Result<Option<Value>, String> {
     let Value::Object(map) = raw else {
@@ -252,47 +250,12 @@ fn moves_are_valid(moves: &str) -> bool {
         && trimmed
             .split(js::is_space)
             .filter(|token| !token.is_empty())
-            .all(|token| is_uci(token) || is_drop(token))
+            .all(|token| rules::is_uci_text(token) || rules::is_drop_text(token))
 }
 
-fn is_file(b: u8) -> bool {
-    (b'a'..=b'h').contains(&b)
-}
-
-fn is_rank(b: u8) -> bool {
-    (b'1'..=b'8').contains(&b)
-}
-
-/// `UCI_MOVE`: `e2e4`, `e7e8q`.
-fn is_uci(token: &str) -> bool {
-    let b = token.as_bytes();
-    (b.len() == 4 || b.len() == 5)
-        && is_file(b[0])
-        && is_rank(b[1])
-        && is_file(b[2])
-        && is_rank(b[3])
-        && (b.len() == 4 || b"qrbn".contains(&b[4]))
-}
-
-/// `DROP`: `P@e4`.
-fn is_drop(token: &str) -> bool {
-    let b = token.as_bytes();
-    b.len() == 4 && b"PNBRQ".contains(&b[0]) && b[1] == b'@' && is_file(b[2]) && is_rank(b[3])
-}
-
-/// `GAME_ID`: 8 to 12 letters and digits.
+/// 8 to 12 letters and digits.
 fn is_game_id(text: &str) -> bool {
     (8..=12).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_alphanumeric())
-}
-
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    Some(match method {
-        "validateOnlineEvent" => match arg(args, 0) {
-            None => Ok(Value::Null),
-            Some(raw) => validate(raw).map(|event| event.unwrap_or(Value::Null)),
-        },
-        _ => return None,
-    })
 }
 
 #[cfg(test)]

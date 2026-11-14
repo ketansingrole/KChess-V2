@@ -8,24 +8,28 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::board::{BoardEvent, ChessBoard};
 use crate::export::Exporter;
-use crate::game::rules;
 use crate::online::{OnlineHandle, OnlineState, Phase};
 use crate::pages::Page;
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
+use kchess_contracts::types::ChatRoom;
+use kchess_domain::misc::constants::CORRESPONDENCE_DAYS;
+use kchess_domain::records::time_control::{
+    can_direct_challenge, can_play_online, perf_for, total_seconds,
+};
+use kchess_domain::variant::Variant;
 
 mod chat;
 pub(crate) mod game;
 pub(crate) mod lists;
 
-/// The time controls offered (`timeControls`).
+/// The time controls offered.
 const TIME_CONTROLS: [(f64, &str); 6] = [
     (3., "Blitz"),
     (5., "Blitz"),
@@ -35,20 +39,11 @@ const TIME_CONTROLS: [(f64, &str); 6] = [
     (60., "Classical"),
 ];
 const INCREMENTS: [f64; 7] = [0., 1., 2., 3., 5., 10., 20.];
-/// `CORRESPONDENCE_DAYS`.
-const DAYS: [f64; 7] = [1., 2., 3., 5., 7., 10., 14.];
-
-/// `data/variants.json`: each variant's key, name and what sets it apart.
-fn time_rule(name: &str, minutes: f64, increment: f64, extra: Option<bool>) -> Value {
-    let mut args = vec![json!(minutes), json!(increment)];
-    args.extend(extra.map(|value| json!(value)));
-    rules(name, &args).unwrap_or(Value::Null)
-}
 
 /// "5+3 · Rapid · Casual", or "3 days per move · Casual" (`summary`).
 pub fn summary(form: &crate::online::Form, variant_label: Option<&str>) -> String {
     let variant = variant_label
-        .filter(|_| form.variant != "standard")
+        .filter(|_| form.variant != Variant::Standard)
         .map(|label| format!("{label} · "))
         .unwrap_or_default();
     let mode = if form.rated { "Rated" } else { "Casual" };
@@ -59,12 +54,11 @@ pub fn summary(form: &crate::online::Form, variant_label: Option<&str>) -> Strin
             if form.days == 1. { "day" } else { "days" }
         )
     } else {
-        let perf = time_rule("perfFor", form.minutes, form.increment, None);
         format!(
             "{variant}{}+{} · {} · {mode}",
             form.minutes,
             form.increment,
-            perf.as_str().unwrap_or_default()
+            perf_for(form.minutes, form.increment)
         )
     }
 }
@@ -113,7 +107,7 @@ impl OnlinePage {
         let board = cx.new(|_| {
             ChessBoard::new(crate::board::BoardState::shown(
                 "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w",
-                "standard",
+                kchess_domain::variant::Variant::Standard,
                 shakmaty::Color::White,
                 None,
             ))
@@ -126,9 +120,9 @@ impl OnlinePage {
         });
         let variant_select = cx.new(|cx| {
             SelectState::new(
-                crate::game::variants()
+                Variant::ALL
                     .iter()
-                    .map(|text| Choice::new(text.key.clone(), text.label.clone()))
+                    .map(|variant| Choice::new(variant.key(), variant.label()))
                     .collect(),
                 None,
                 window,
@@ -136,7 +130,7 @@ impl OnlinePage {
             )
         });
         variant_select.update(cx, |select, cx| {
-            select.set_selected_value(&SharedString::from(form.variant.clone()), window, cx)
+            select.set_selected_value(&SharedString::from(form.variant.key()), window, cx)
         });
         let account_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
         let chat_input =
@@ -172,8 +166,9 @@ impl OnlinePage {
             cx.subscribe(
                 &variant_select,
                 |_, _, event: &SelectEvent<Vec<Choice>>, cx| {
-                    if let SelectEvent::Confirm(Some(variant)) = event {
-                        let variant = variant.to_string();
+                    if let SelectEvent::Confirm(Some(variant)) = event
+                        && let Some(variant) = Variant::from_key(variant)
+                    {
                         crate::online::handle(cx).update(cx, |online, cx| {
                             online.form.variant = variant;
                             cx.notify();
@@ -232,16 +227,27 @@ impl OnlinePage {
         crate::online::handle(cx).update(cx, |online, cx| online.refresh_ongoing(cx));
     }
 
-    /// Challenge a player casually (`challengeFriend`).
+    /// Challenge a player casually.
     pub fn challenge(&mut self, username: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.challenge_rated(username, false, window, cx);
+    }
+
+    /// Challenge a player, rated or casual.
+    pub fn challenge_rated(
+        &mut self,
+        username: &str,
+        rated: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         crate::online::handle(cx).update(cx, |online, cx| {
-            online.form.rated = false;
+            online.form.rated = rated;
             cx.notify();
         });
         self.challenge_keeping_rated(username, window, cx);
     }
 
-    /// Send the form's game, rated or not as it is set, to `username` (`challengeFriend`).
+    /// Send the form's game, rated or not as it is set, to `username`.
     pub fn challenge_keeping_rated(
         &mut self,
         username: &str,
@@ -256,8 +262,7 @@ impl OnlinePage {
         let username = username.to_string();
         online.update(cx, |online, cx| {
             let form = &mut online.form;
-            let fits =
-                time_rule("canPlayOnline", form.minutes, form.increment, Some(true)) == json!(true);
+            let fits = can_play_online(form.minutes, form.increment, true);
             if !fits {
                 form.minutes = 10.;
                 form.increment = 0.;
@@ -269,7 +274,7 @@ impl OnlinePage {
         });
         self.target
             .update(cx, |input, cx| input.set_value(username, window, cx));
-        // The challenge goes out at once, as `challengeFriend` sends it.
+        // The challenge goes out at once.
         online.update(cx, |online, cx| online.start(None, cx));
     }
 
@@ -350,7 +355,7 @@ impl OnlinePage {
                 self.pending = None;
                 return;
             }
-            let setup = online.setup();
+            let setup = online.setup().clone();
             let mut moves = online.moves();
             let mut ply = online.ply();
             let can_play = game::can_play(online);
@@ -412,8 +417,9 @@ impl OnlinePage {
         if text.trim().is_empty() {
             return;
         }
-        let sent =
-            crate::online::handle(cx).update(cx, |online, cx| online.send_chat(text, "player", cx));
+        let sent = crate::online::handle(cx).update(cx, |online, cx| {
+            online.send_chat(text, ChatRoom::Player, cx)
+        });
         let input = self.chat_input.clone();
         cx.spawn_in(window, async move |_, cx| {
             if sent.await && typed {
@@ -425,7 +431,7 @@ impl OnlinePage {
         .detach();
     }
 
-    /// The find-a-game form (`.online-form`).
+    /// The find-a-game form.
     fn form(&self, online: &OnlineState, cx: &App, palette: &Palette) -> Div {
         let form = online.form.clone();
         let connected = crate::accounts::handle(cx).read(cx).connected();
@@ -434,29 +440,14 @@ impl OnlinePage {
             .active(cx)
             .unwrap_or_default();
         let targeted = !form.target.trim().is_empty();
-        let allowed = form.correspondence
-            || time_rule(
-                "canPlayOnline",
-                form.minutes,
-                form.increment,
-                Some(targeted),
-            ) == json!(true);
+        let allowed =
+            form.correspondence || can_play_online(form.minutes, form.increment, targeted);
         let blitz_needs_target = !targeted
-            && time_rule("canPlayOnline", form.minutes, form.increment, Some(false)) != json!(true)
-            && time_rule("canDirectChallenge", form.minutes, form.increment, None) == json!(true);
-        let perf = time_rule("perfFor", form.minutes, form.increment, None)
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let (variant_label, variant_hint) = crate::game::variants()
-            .iter()
-            .find(|text| text.key == form.variant)
-            .map(|text| (text.label.clone(), text.hint.clone()))
-            .unwrap_or_default();
-        let estimated = time_rule("totalSeconds", form.minutes, form.increment, None)
-            .as_f64()
-            .unwrap_or_default()
-            / 60.;
+            && !can_play_online(form.minutes, form.increment, false)
+            && can_direct_challenge(form.minutes, form.increment);
+        let perf = perf_for(form.minutes, form.increment);
+        let (variant_label, variant_hint) = (form.variant.label(), form.variant.hint());
+        let estimated = total_seconds(form.minutes, form.increment) / 60.;
         let set = |change: fn(&mut crate::online::Form, f64), value: f64| {
             move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
                 crate::online::handle(cx).update(cx, |online, cx| {
@@ -509,14 +500,13 @@ impl OnlinePage {
                 )
                 .child(control)
         };
-        // `.tc-grid`: the six presets in rows of three (the form's card is never under 340px).
+        // The six presets in rows of three (the form's card is never under 340px).
         let columns = 3;
         let cells: Vec<AnyElement> = TIME_CONTROLS
             .iter()
             .enumerate()
             .map(|(index, (minutes, label))| {
                 let chosen = form.minutes == *minutes;
-                // `.tc-option`.
                 v_flex()
                     .id(("time-control", index))
                     .role(Role::Button)
@@ -597,7 +587,7 @@ impl OnlinePage {
             ))
             .child(field(
                 "Variant",
-                Some(variant_hint),
+                Some(variant_hint.to_string()),
                 Select::new(&self.variant_select)
                     .accessibility_label("Variant")
                     .into_any_element(),
@@ -608,7 +598,8 @@ impl OnlinePage {
                 None,
                 pills(
                     "online-days",
-                    DAYS.iter()
+                    CORRESPONDENCE_DAYS
+                        .iter()
                         .map(|days| {
                             (
                                 None,
@@ -616,8 +607,11 @@ impl OnlinePage {
                             )
                         })
                         .collect(),
-                    DAYS.iter().position(|days| *days == form.days).unwrap_or(2),
-                    |form, index| form.days = DAYS[index],
+                    CORRESPONDENCE_DAYS
+                        .iter()
+                        .position(|days| *days == form.days)
+                        .unwrap_or(2),
+                    |form, index| form.days = CORRESPONDENCE_DAYS[index],
                 )
                 .into_any_element(),
             ));
@@ -695,7 +689,7 @@ impl OnlinePage {
             card = card.child(widgets::StatusBanner::new(widgets::Tone::Plain, icon("info"), "A public correspondence seek stays open on Lichess".into()).detail("Lichess has no way for apps to withdraw it; it closes when someone joins. Add a username to send a challenge you can withdraw instead.".into()));
         }
         let downloaded = crate::accounts::handle(cx).read(cx).downloaded(&active);
-        let summary_line = summary(&form, Some(variant_label.as_str()));
+        let summary_line = summary(&form, Some(variant_label));
         card.child(
             h_flex()
                 .justify_between()
@@ -752,15 +746,11 @@ impl OnlinePage {
     }
 
     fn seeking(&self, online: &OnlineState, palette: &Palette) -> Div {
-        let status = online.model()["onlineStatus"]
-            .as_str()
+        let status = Some(online.model().online_status.as_str())
             .filter(|status| !status.is_empty())
             .unwrap_or("Looking for an opponent…")
             .to_string();
-        let label = crate::game::variants()
-            .iter()
-            .find(|text| text.key == online.form.variant)
-            .map(|text| text.label.clone());
+        let label = Some(online.form.variant.label());
         h_flex().flex_1().items_center().justify_center().child(
             widgets::card(palette)
                 .w(px(420.))
@@ -768,10 +758,7 @@ impl OnlinePage {
                 .gap(px(12.))
                 .child(widgets::spinner(px(28.)).color(palette.primary))
                 .child(widgets::heading(status, palette))
-                .child(widgets::hint(
-                    summary(&online.form, label.as_deref()),
-                    palette,
-                ))
+                .child(widgets::hint(summary(&online.form, label), palette))
                 .child(
                     Button::new("online-cancel")
                         .outline()
@@ -862,10 +849,135 @@ impl Render for OnlinePage {
     }
 }
 
+impl crate::pages::PageAction for game::LiveAction {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::{ActionInfo, ActionRole};
+        use game::LiveAction;
+        let (id, label, glyph, keywords) = match self {
+            LiveAction::Berserk => ("berserk", "Berserk", "flame", "arena half time"),
+            LiveAction::Takeback => ("takeback", "Takeback", "undo-2", "undo take back"),
+            LiveAction::OfferDraw => ("draw", "Offer draw", "handshake", "agree"),
+            LiveAction::Resign => ("resign", "Resign", "flag", "give up"),
+            LiveAction::Abort => ("abort", "Abort", "ban", "cancel"),
+            LiveAction::Rematch => ("rematch", "Rematch", "repeat", "again"),
+            LiveAction::NewOpponent => (
+                "new-opponent",
+                "New opponent",
+                "users",
+                "seek again same time control",
+            ),
+            LiveAction::Analyse => ("analyse", "Analyse", "microscope", "analysis review"),
+            LiveAction::NewGame => ("new-game", "New game", "plus", "another seek"),
+            LiveAction::CancelSeek => ("cancel-seek", "Cancel seek", "x", "stop waiting"),
+            LiveAction::Flip => return ActionInfo::flip("online:flip"),
+        };
+        let info = ActionInfo::new(format!("online:{id}"), label, glyph, keywords);
+        match self {
+            LiveAction::NewGame => info.role(ActionRole::New),
+            _ => info,
+        }
+    }
+}
+
+/// The page shows a game: one being played, or just over, with an account to play it.
+fn shows_game(cx: &App) -> bool {
+    let online = crate::online::handle(cx).read(cx);
+    matches!(
+        online.phase,
+        Phase::Playing | Phase::Finished | Phase::Disconnected
+    ) && !crate::accounts::handle(cx).read(cx).connected().is_empty()
+}
+
+impl crate::pages::PageView for OnlinePage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: Page::Online,
+        label: "Play on Lichess",
+        short: "Play",
+        icon: "globe-2",
+        group: Some(crate::pages::NavGroup::Lichess),
+        keywords: "lichess seek pairing",
+    };
+
+    type Action = game::LiveAction;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        OnlinePage::new(window, cx)
+    }
+
+    fn shown(this: &Entity<Self>, again: bool, _window: &mut Window, cx: &mut App) {
+        if !again {
+            this.update(cx, |online, cx| online.shown(cx));
+        }
+    }
+
+    /// Zen mode leaves the game and its panel, as on the other game pages.
+    fn zen(&self, cx: &App) -> bool {
+        shows_game(cx)
+    }
+
+    /// The live game's actions, as its buttons offer them.
+    fn actions(&self, cx: &App) -> Vec<game::LiveAction> {
+        game::live_actions(crate::online::handle(cx).read(cx))
+    }
+
+    fn act(_this: &Entity<Self>, action: game::LiveAction, window: &mut Window, cx: &mut App) {
+        game::run_live_action(action, window, cx);
+    }
+}
+
+/// A live Lichess game of the account's on Play on Lichess.
+pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
+    let online = crate::online::handle(cx);
+    let (shown, account) = {
+        let online = online.read(cx);
+        (
+            online.id() == id && online.phase == Phase::Playing,
+            crate::accounts::handle(cx)
+                .read(cx)
+                .active(cx)
+                .unwrap_or_default(),
+        )
+    };
+    // The game already on the board needs no new stream.
+    if !shown {
+        let id = id.to_string();
+        online.update(cx, |online, cx| online.open(&account, &id, cx));
+    }
+    crate::shell::open(Page::Online, window, cx);
+}
+
+/// Look for a real-time game on Lichess, from Quick Pick.
+pub fn play(minutes: f64, increment: f64, rated: bool, window: &mut Window, cx: &mut App) {
+    crate::shell::open(Page::Online, window, cx);
+    let online = crate::online::handle(cx);
+    if online.read(cx).busy_with_game() {
+        crate::online::notice(cx, "Finish or cancel your game before starting another");
+        return;
+    }
+    online.update(cx, |online, cx| online.seek(minutes, increment, rated, cx));
+}
+
+/// Challenge a player to a casual game on Lichess.
+pub fn challenge(username: &str, window: &mut Window, cx: &mut App) {
+    let username = username.to_string();
+    crate::shell::show::<OnlinePage>(window, cx, move |page, window, cx| {
+        page.challenge(&username, window, cx)
+    });
+}
+
+/// Challenge a player, rated or casual.
+pub fn challenge_rated(username: &str, rated: bool, window: &mut Window, cx: &mut App) {
+    let username = username.to_string();
+    crate::shell::show::<OnlinePage>(window, cx, move |page, window, cx| {
+        page.challenge_rated(&username, rated, window, cx)
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::summary;
     use crate::online::Form;
+    use kchess_domain::variant::Variant;
 
     #[test]
     fn the_summary_names_the_game() {
@@ -874,7 +986,7 @@ mod tests {
         form.correspondence = true;
         form.rated = true;
         form.days = 1.;
-        form.variant = "atomic".into();
+        form.variant = Variant::Atomic;
         assert_eq!(
             summary(&form, Some("Atomic")),
             "Atomic · 1 day per move · Rated"

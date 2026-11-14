@@ -6,38 +6,62 @@ use gpui_kit::*;
 
 use crate::theme::Palette;
 
-/// Cmd on macOS, Ctrl elsewhere, as the menus bind `secondary-`.
-const MOD: &str = if cfg!(target_os = "macos") {
-    "⌘"
-} else {
-    "Ctrl"
-};
+/// A key a page takes while no text field has the keys: the key names it matches, how the
+/// shortcuts list shows them, and what it does there.
+pub(crate) struct PageKey<A> {
+    pub action: A,
+    pub keys: &'static [&'static str],
+    pub shown: &'static str,
+    pub does: &'static str,
+}
 
-/// Each group's heading and its rows: what a key does, and the keys (space-separated chips).
-pub(crate) fn groups() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
-    let (back, forward, run_command, redo, sidebar) = if cfg!(target_os = "macos") {
-        ("⌘ [", "⌘ ]", "⇧ ⌘ P", "⇧ ⌘ Z", "⌃ ⌘ S")
-    } else {
-        ("Alt ←", "Alt →", "Ctrl ⇧ P", "Ctrl Y", "Ctrl B")
-    };
+/// The action of `key` among a page's `keys`.
+pub(crate) fn page_key<A: Copy>(keys: &[PageKey<A>], key: &str) -> Option<A> {
+    keys.iter()
+        .find(|entry| entry.keys.contains(&key))
+        .map(|entry| entry.action)
+}
+
+/// A page's keys as the list's rows.
+fn rows<A>(keys: &[PageKey<A>]) -> impl Iterator<Item = (&'static str, String)> + '_ {
+    keys.iter()
+        .map(|entry| (entry.does, entry.shown.to_string()))
+}
+
+/// Each group's heading and its rows: what a key does, and the keys (space-separated chips). The
+/// app's keys read from their bindings; the boards' own keys are their pages'.
+pub(crate) fn groups(cx: &App) -> Vec<(&'static str, Vec<(&'static str, String)>)> {
+    use crate::menu::{self, *};
+    use gpui_kit::component::input::{Copy, Paste, Redo, Undo};
+    let keys = |action: &dyn Action| menu::keys(action, cx).unwrap_or_default();
     vec![
         (
             "App",
             vec![
-                ("Search", format!("{MOD} K")),
-                ("Search this page", format!("{MOD} F")),
-                ("New game, study or analysis", format!("{MOD} N")),
-                ("Run a command", run_command.to_string()),
-                ("Open a copied game, FEN or link", format!("{MOD} V")),
-                ("Copy the board's game or position", format!("{MOD} C")),
-                ("Settings", format!("{MOD} ,")),
-                ("Back", back.to_string()),
-                ("Forward", forward.to_string()),
-                ("Show / hide the sidebar", sidebar.to_string()),
+                ("Search", keys(&Search)),
+                ("Search this page", keys(&Find)),
+                ("New game, study or analysis", keys(&New)),
+                ("Run a command", keys(&Commands)),
+                ("Open a copied game, FEN or link", keys(&Paste)),
+                ("Copy the board's game or position", keys(&Copy)),
+                ("Settings", keys(&OpenSettings)),
+                ("Back", keys(&GoBack)),
+                ("Forward", keys(&GoForward)),
+                ("Show / hide the sidebar", keys(&ToggleSidebar)),
                 ("Back to the list", "Esc".to_string()),
-                ("Zoom in / out", format!("{MOD} + −")),
-                ("Actual size", format!("{MOD} 0")),
-                ("Keyboard shortcuts", format!("{MOD} / ?")),
+                (
+                    "Zoom in / out",
+                    format!(
+                        "{} {}",
+                        keys(&ZoomIn),
+                        menu::key_alone(&ZoomOut, cx).unwrap_or_default()
+                    ),
+                ),
+                ("Actual size", keys(&ActualSize)),
+                (
+                    "Keyboard shortcuts",
+                    menu::all_keys(&ShowShortcuts, cx).join(" "),
+                ),
             ],
         ),
         (
@@ -45,34 +69,28 @@ pub(crate) fn groups() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
             vec![
                 ("Previous / next move", "← →".to_string()),
                 ("First / last move", "Home End".to_string()),
-                ("Flip board", "F".to_string()),
+                ("Flip board", keys(&FlipBoard)),
                 (
                     "After Tab to the board: move, pick up or put down, let go",
                     "← ↑ → ↓ Enter Esc".to_string(),
                 ),
                 (
                     "Take back, against the computer or over the board",
-                    format!("{MOD} Z"),
+                    keys(&Undo),
                 ),
-                ("Zen mode", "Z".to_string()),
+                ("Zen mode", keys(&ToggleZen)),
                 (
                     "Undo an edit, on the analysis board or in the editor",
-                    format!("{MOD} Z"),
+                    keys(&Undo),
                 ),
-                ("Redo", redo.to_string()),
+                ("Redo", keys(&Redo)),
             ],
         ),
         (
             "Analysis board",
-            vec![
-                ("Into / out of a variation", "⇧ → ⇧ ←".to_string()),
-                ("Engine on or off", "L".to_string()),
-                ("Show threat", "X".to_string()),
-                ("Play the best move", "Space".to_string()),
-                ("Comment", "C".to_string()),
-                ("Explorer", "E".to_string()),
-                ("Delete from the move shown", "Delete".to_string()),
-            ],
+            std::iter::once(("Into / out of a variation", "⇧ → ⇧ ←".to_string()))
+                .chain(rows(crate::pages::analysis::KEYS))
+                .collect(),
         ),
         (
             "Lichess games",
@@ -95,10 +113,7 @@ pub(crate) fn groups() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
         ),
         (
             "Chess clock",
-            vec![
-                ("Press the clock", "Space".to_string()),
-                ("Pause", "P".to_string()),
-            ],
+            rows(crate::pages::local::CLOCK_KEYS).collect(),
         ),
     ]
 }
@@ -112,18 +127,18 @@ pub fn open(window: &mut Window, cx: &mut App) {
         dialog
             .title("Keyboard shortcuts")
             .w(px(420.))
-            .child(list(&palette, room))
+            .child(list(&palette, room, cx))
     });
 }
 
-fn list(palette: &Palette, height: Pixels) -> impl IntoElement {
+fn list(palette: &Palette, height: Pixels, cx: &App) -> impl IntoElement {
     v_flex()
         .id("shortcuts")
         .test_support()
         .max_h(height)
         .overflow_y_scroll()
         .gap(px(12.))
-        .children(groups().into_iter().map(|(heading, rows)| {
+        .children(groups(cx).into_iter().map(|(heading, rows)| {
             v_flex()
                 .gap(px(4.))
                 .child(
@@ -148,11 +163,33 @@ fn list(palette: &Palette, height: Pixels) -> impl IntoElement {
 mod tests {
     use super::groups;
 
-    /// Every shortcut names what it does and its keys, once.
-    #[test]
-    fn every_shortcut_has_its_keys() {
+    /// Every shortcut names what it does and its keys, once, and the app's keys read as their
+    /// bindings do.
+    #[gpui_kit::test]
+    fn every_shortcut_has_its_keys(cx: &mut gpui_kit::TestAppContext) {
+        let groups = cx.update(|cx| {
+            crate::menu::init(cx);
+            groups(cx)
+        });
+        let app = &groups[0].1;
+        let row = |name: &str| {
+            app.iter()
+                .find(|(action, _)| *action == name)
+                .map(|(_, keys)| keys.as_str())
+        };
+        if cfg!(target_os = "macos") {
+            assert_eq!(row("Run a command"), Some("⇧ ⌘ P"));
+            assert_eq!(row("Zoom in / out"), Some("⌘ + −"));
+            assert_eq!(row("Keyboard shortcuts"), Some("⌘ / ?"));
+            assert_eq!(row("Show / hide the sidebar"), Some("⌃ ⌘ S"));
+            assert_eq!(row("Back"), Some("⌘ ["));
+        } else {
+            assert_eq!(row("Run a command"), Some("Ctrl ⇧ P"));
+            assert_eq!(row("Zoom in / out"), Some("Ctrl + −"));
+            assert_eq!(row("Back"), Some("Alt ←"));
+        }
         let mut seen = std::collections::HashSet::new();
-        for (heading, rows) in groups() {
+        for (heading, rows) in groups {
             assert!(!rows.is_empty(), "{heading}");
             for (action, keys) in rows {
                 assert!(!keys.trim().is_empty(), "{action}");

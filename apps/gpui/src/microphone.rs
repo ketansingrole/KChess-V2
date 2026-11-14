@@ -168,7 +168,7 @@ mod mac {
         }
     }
 
-    /// Show the system's request when it has not asked yet (`askForMediaAccess`); `done` hears
+    /// Show the system's request when it has not asked yet; `done` hears
     /// the status after it closes, on another thread.
     pub fn request(done: impl FnOnce(Access) + Send + 'static) {
         if status() != Access::NotDetermined {

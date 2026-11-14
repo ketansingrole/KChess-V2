@@ -15,22 +15,67 @@ use std::num::NonZeroU32;
 
 use crate::js;
 
-/// The Lichess variant keys KChess can play.
-pub fn lichess_variant(key: &str) -> Option<Variant> {
-    Some(match key {
-        "standard" | "chess960" => Variant::Chess,
-        "kingOfTheHill" => Variant::KingOfTheHill,
-        "threeCheck" => Variant::ThreeCheck,
-        "antichess" => Variant::Antichess,
-        "atomic" => Variant::Atomic,
-        "horde" => Variant::Horde,
-        "racingKings" => Variant::RacingKings,
-        "crazyhouse" => Variant::Crazyhouse,
-        _ => return None,
-    })
+pub const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+/// The first four FEN fields: what makes positions the same for repetition.
+pub fn repetition_key(fen: &str) -> &str {
+    let mut seen = 0;
+    for (index, byte) in fen.bytes().enumerate() {
+        if byte == b' ' {
+            seen += 1;
+            if seen == 4 {
+                return &fen[..index];
+            }
+        }
+    }
+    fen
 }
 
-/// `parseVariant`, for the PGN `Variant` header.
+/// The positions a game has reached, counted as repetition counts them (`repetition_key`).
+pub struct Repetitions(std::collections::HashMap<String, u32>);
+
+impl Repetitions {
+    /// The count of a game starting at `fen`, which counts once.
+    pub fn starting_at(fen: &str) -> Repetitions {
+        let mut repetitions = Repetitions(std::collections::HashMap::new());
+        repetitions.reached(fen);
+        repetitions
+    }
+
+    /// `fen` is reached: whether it has now been on the board three times.
+    pub fn reached(&mut self, fen: &str) -> bool {
+        let count = self.0.entry(repetition_key(fen).to_string()).or_insert(0);
+        *count += 1;
+        *count >= 3
+    }
+}
+
+/// Half-moves since the game's start: 0 is White's first move still to play.
+pub fn ply_of<P: Position>(pos: &P) -> u32 {
+    (pos.fullmoves().get() - 1) * 2 + u32::from(!pos.turn().is_white())
+}
+
+fn is_square_text(file: u8, rank: u8) -> bool {
+    (b'a'..=b'h').contains(&file) && (b'1'..=b'8').contains(&rank)
+}
+
+/// A move written square to square in UCI, lower case: `e2e4`, `e7e8q`.
+pub fn is_uci_text(token: &str) -> bool {
+    match *token.as_bytes() {
+        [f1, r1, f2, r2] => is_square_text(f1, r1) && is_square_text(f2, r2),
+        [f1, r1, f2, r2, promotion] => {
+            is_square_text(f1, r1) && is_square_text(f2, r2) && b"qrbn".contains(&promotion)
+        }
+        _ => false,
+    }
+}
+
+/// A Crazyhouse drop in UCI: `P@e4`.
+pub fn is_drop_text(token: &str) -> bool {
+    matches!(*token.as_bytes(), [role, b'@', file, rank] if b"PNBRQ".contains(&role) && is_square_text(file, rank))
+}
+
+/// The variant a PGN `Variant` header names.
 pub fn pgn_variant(name: Option<&str>) -> Option<Variant> {
     Some(match name.unwrap_or("chess").to_lowercase().as_str() {
         "chess" | "chess960" | "chess 960" | "standard" | "from position" | "classical"
@@ -175,7 +220,7 @@ fn parse_remaining_checks(part: &str) -> Option<ByColor<RemainingChecks>> {
     })
 }
 
-/// `parseFen`: lenient about missing fields, strict about everything present.
+/// Lenient about missing fields, strict about everything present.
 pub fn parse_fen(fen: &str) -> Option<Setup> {
     let mut parts = split_fen(fen).into_iter();
     let board_part = parts.next().unwrap_or("");
@@ -241,8 +286,8 @@ pub fn parse_fen(fen: &str) -> Option<Setup> {
     Some(setup)
 }
 
-/// `fen.split(/[\s_]+/)`
-fn split_fen(fen: &str) -> Vec<&str> {
+/// A FEN's fields, separated by runs of whitespace or `_`.
+pub(crate) fn split_fen(fen: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;
     let mut in_sep = false;
@@ -260,7 +305,7 @@ fn split_fen(fen: &str) -> Vec<&str> {
     parts
 }
 
-/// `parseSquare`: exactly two characters, lowercase file.
+/// Exactly two characters, lowercase file.
 pub fn parse_square(s: &str) -> Option<Square> {
     let b = s.as_bytes();
     if s.chars().count() != 2 || b.len() != 2 {
@@ -272,7 +317,7 @@ pub fn parse_square(s: &str) -> Option<Square> {
         .then(|| Square::from_coords(File::new(file.into()), Rank::new(rank.into())))
 }
 
-/// `setupPosition` under the given rules: the position, or None when not legal.
+/// The position under the given rules, or None when not legal.
 pub fn setup_position(variant: Variant, setup: Setup) -> Option<VariantPosition> {
     let ep = setup.ep_square;
     let mut setup = setup;
@@ -389,17 +434,17 @@ fn valid_ep_square(setup: &Setup, square: Square) -> bool {
     }
 }
 
-/// A FEN text as a position under a Lichess variant key (`setupStart`).
-pub fn setup_start(variant: &str, fen: &str) -> Option<VariantPosition> {
-    setup_position(lichess_variant(variant)?, parse_fen(fen)?)
+/// A FEN text as a position of `variant`; none when it is not a legal one there.
+pub fn setup_start(variant: crate::variant::Variant, fen: &str) -> Option<VariantPosition> {
+    setup_position(variant.rules(), parse_fen(fen)?)
 }
 
-/// `Chess.fromSetup(parseFen(fen))`: standard rules.
+/// A FEN's position under standard rules.
 pub fn standard_from_fen(fen: &str) -> Option<VariantPosition> {
     setup_position(Variant::Chess, parse_fen(fen)?)
 }
 
-/// `makeFen(pos.toSetup())`: the legal en passant square and at most 150 halfmoves.
+/// The legal en passant square and at most 150 halfmoves.
 pub fn make_fen(pos: &VariantPosition) -> String {
     write_fen(&FenParts {
         board: pos.board(),
@@ -414,7 +459,7 @@ pub fn make_fen(pos: &VariantPosition) -> String {
     })
 }
 
-/// `makeFen(setup)` for a parsed, not yet validated, setup: everything as written.
+/// The FEN of a parsed, not yet validated, setup: everything as written.
 pub fn make_setup_fen(setup: &Setup) -> String {
     write_fen(&FenParts {
         board: &setup.board,
@@ -528,7 +573,6 @@ pub enum UciMove {
     },
 }
 
-/// `parseUci`.
 pub fn parse_uci(s: &str) -> Option<UciMove> {
     let chars: Vec<char> = s.chars().collect();
     let len = utf16_len_chars(&chars);
@@ -567,7 +611,6 @@ pub(crate) fn dest(m: &Move) -> Option<Square> {
     }
 }
 
-/// `makeUci` for a legal move.
 pub fn make_uci(m: &Move) -> String {
     let mut s = String::with_capacity(5);
     if let Move::Put { role, to } = *m {
@@ -605,7 +648,8 @@ fn reaching(pos: &VariantPosition, role: Role, to: Square) -> MoveList {
     moves
 }
 
-/// The legal move to play for `normalizeMove(pos, uci)` when `isLegal` accepts it.
+/// The legal move `uci` names, or None when it is not legal. Castling may name the king's square or
+/// the rook's.
 pub fn legal_move(pos: &VariantPosition, uci: UciMove) -> Option<Move> {
     let (from, to, promotion) = match uci {
         UciMove::Drop { role, to } => return legal_drop(pos, role, to),
@@ -626,7 +670,7 @@ pub fn legal_move(pos: &VariantPosition, uci: UciMove) -> Option<Move> {
         return None;
     }
     let role = board.role_at(from).filter(|_| pos.us().contains(from))?;
-    // castlingSide/normalizeMove: a king moving two files or onto its own piece castles.
+    // A king moving two files or onto its own piece castles.
     let delta = to as i32 - from as i32;
     if role == Role::King && (delta.abs() == 2 || pos.us().contains(to)) {
         let side = if delta > 0 {
@@ -645,7 +689,7 @@ pub fn legal_move(pos: &VariantPosition, uci: UciMove) -> Option<Move> {
         .find(|m| m.from() == Some(from) && m.promotion() == promotion)
 }
 
-/// `isLegal` for a drop: in the pocket, no pawn on a back rank, an allowed square.
+/// A legal drop: in the pocket, no pawn on a back rank, an allowed square.
 fn legal_drop(pos: &VariantPosition, role: Role, to: Square) -> Option<Move> {
     let pockets = pos.pockets()?;
     if *pockets.get(pos.turn()).get(role) == 0 || (role == Role::Pawn && backranks().contains(to)) {
@@ -656,7 +700,7 @@ fn legal_drop(pos: &VariantPosition, role: Role, to: Square) -> Option<Move> {
         .find(|m| *m == Move::Put { role, to })
 }
 
-/// `makeSanWithoutSuffix`, except that a pawn drop names its pawn (`P@e4`), as Lichess writes it.
+/// SAN without `+`/`#`; a pawn drop names its pawn (`P@e4`), as Lichess writes it.
 fn san_without_suffix(pos: &VariantPosition, m: &Move) -> String {
     let board = pos.board();
     if let Move::Put { role, to } = *m {
@@ -733,7 +777,7 @@ fn san_without_suffix(pos: &VariantPosition, m: &Move) -> String {
     san
 }
 
-/// `makeSanAndPlay`: plays the move and returns its SAN with `+`/`#`.
+/// Plays the move and returns its SAN with `+`/`#`.
 pub fn san_and_play(pos: &mut VariantPosition, m: Move) -> String {
     let mut san = san_without_suffix(pos, &m);
     pos.play_unchecked(m);
@@ -754,7 +798,6 @@ pub fn san_and_play(pos: &mut VariantPosition, m: Move) -> String {
     san
 }
 
-/// `parseSan`.
 pub fn parse_san(pos: &VariantPosition, san: &str) -> Option<Move> {
     let Some(parsed) = SanPattern::parse(san) else {
         let side = match san {
@@ -950,10 +993,6 @@ impl SanPattern {
 
 pub fn variant_of(pos: &VariantPosition) -> Variant {
     pos.variant()
-}
-
-pub fn turn_name(color: Color) -> &'static str {
-    if color.is_white() { "white" } else { "black" }
 }
 
 pub fn default_position(variant: Variant) -> VariantPosition {

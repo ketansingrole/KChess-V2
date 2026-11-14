@@ -5,80 +5,38 @@
 //! Every cloud call runs through `Lichess::as_account`, so a missing or refused login answers
 //! `Reply::NeedsReconnect` instead of failing. A failed mutation is never retried.
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::accounts::{Lichess, Reply, path_segment};
-use super::client::{Failure, Ndjson, TextLimit, authorize};
-use crate::error::{CoreError, Result as CoreResult};
+use super::client::TextLimit;
+use kchess_contracts::error::{CoreError, Result as CoreResult};
+use kchess_contracts::types::{ChapterInput, LichessStudy, StudySyncRequest, UsageKind};
 use kchess_domain::{js, position};
 
-/// `MAX_STUDY_PGN`: the most UTF-16 units of a study export that are read.
-const MAX_STUDY_PGN: usize = 4_000_000;
+/// The most of a study export that is read, in UTF-16 units.
+const STUDY_PGN_LIMIT: TextLimit<'static> = TextLimit {
+    utf16_units: 4_000_000,
+    message: "That study is too large to import.",
+};
 /// Most chapters a study sync or import handles.
 const MAX_CHAPTERS: usize = 64;
 /// Most studies listed for an account.
 const MAX_STUDIES: usize = 300;
 
-/// A study the account owns or belongs to (`LichessStudy`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LichessStudy {
-    pub id: String,
-    pub name: String,
-    pub updated_at: i64,
-}
-
-/// A chapter of a study, with its PGN (`LichessStudyChapter`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LichessStudyChapter {
-    pub name: String,
-    pub pgn: String,
-}
-
-/// The upload a user makes of their edits to a linked study (`StudySyncRequest`).
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StudySyncRequest {
-    pub account: String,
-    pub study_id: String,
-    pub baseline: String,
-    pub pgn: String,
-}
-
-/// `lichessStudies(account)`: the studies the account owns or belongs to (private ones too, with
+/// The studies the account owns or belongs to (private ones too, with
 /// `study:read`), most recently updated first.
 pub async fn lichess_studies(
     lichess: &Lichess,
     account: &str,
 ) -> CoreResult<Reply<Vec<LichessStudy>>> {
-    let cancel = lichess.lifetime().clone();
     lichess
-        .as_account(account, "study", |token| async move {
-            let auth = authorize(&token);
+        .as_account(account, UsageKind::Study, |auth| async move {
             let path = format!("/api/study/by/{}", path_segment(account));
             // Each record is read as it arrives: a malformed one ends the listing at once.
-            let mut studies = Vec::new();
-            lichess
+            let mut studies = lichess
                 .client()
-                .ndjson(
-                    Ndjson {
-                        method: reqwest::Method::GET,
-                        path: &path,
-                        query: &[],
-                        body: None,
-                        auth: Some(auth.as_str()),
-                    },
-                    &cancel,
-                    |line| {
-                        if let Some(study) = study_metadata(line)?
-                            && studies.len() < MAX_STUDIES
-                        {
-                            studies.push(study);
-                        }
-                        Ok(())
-                    },
-                )
+                .get(&path, &auth)
+                .records("study", MAX_STUDIES, |raw: Value| study_metadata(&raw))
                 .await?;
             studies.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
             Ok(studies)
@@ -87,12 +45,7 @@ pub async fn lichess_studies(
 }
 
 /// A study's metadata line, when it has a valid id and name (`metadata` of the schema).
-fn study_metadata(line: &str) -> Result<Option<LichessStudy>, Failure> {
-    let raw: Value = serde_json::from_str(line).map_err(|cause| {
-        Failure::Core(CoreError::new(format!(
-            "Lichess sent an unreadable study record: {cause}"
-        )))
-    })?;
+fn study_metadata(raw: &Value) -> Option<LichessStudy> {
     let id = raw.get("id").and_then(Value::as_str);
     let name = raw.get("name").and_then(Value::as_str);
     let optional_number = |key: &str| -> Option<Option<i64>> {
@@ -107,27 +60,25 @@ fn study_metadata(line: &str) -> Result<Option<LichessStudy>, Failure> {
         }
     };
     let (Some(id), Some(name)) = (id, name) else {
-        return Ok(None);
+        return None;
     };
-    let valid = id.len() == 8
-        && id.bytes().all(|b| b.is_ascii_alphanumeric())
-        && js::utf16_len(name) <= 200;
+    let valid = super::is_lichess_id(id) && js::utf16_len(name) <= 200;
     let (Some(created), Some(updated)) =
         (optional_number("createdAt"), optional_number("updatedAt"))
     else {
-        return Ok(None);
+        return None;
     };
     if !valid {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(LichessStudy {
+    Some(LichessStudy {
         id: id.to_string(),
         name: name.to_string(),
         updated_at: updated.or(created).unwrap_or(0),
-    }))
+    })
 }
 
-/// `splitPgn(text)`: a multi-game PGN split into games. Lichess separates games with blank lines
+/// A multi-game PGN split into games. Lichess separates games with blank lines
 /// before a tag; each part is trimmed and kept only when it starts with a tag.
 pub fn split_pgn(text: &str) -> Vec<String> {
     let text = text.replace("\r\n", "\n");
@@ -181,32 +132,15 @@ fn tag_value(pgn: &str, name: &str) -> Option<String> {
     }
 }
 
-/// The first `units` UTF-16 units of `text` (JavaScript's `slice(0, units)`).
-fn take_utf16(text: &str, units: usize) -> String {
-    let mut used = 0;
-    let mut out = String::new();
-    for c in text.chars() {
-        let width = c.len_utf16();
-        if used + width > units {
-            break;
-        }
-        used += width;
-        out.push(c);
-    }
-    out
-}
-
-/// `lichessStudyChapters(account, id)`: every chapter of a study, with variations, comments and
+/// Every chapter of a study, with variations, comments and
 /// NAGs, ready for the analysis board.
 pub async fn lichess_study_chapters(
     lichess: &Lichess,
     account: &str,
     id: &str,
-) -> CoreResult<Reply<Vec<LichessStudyChapter>>> {
-    let cancel = lichess.lifetime().clone();
+) -> CoreResult<Reply<Vec<ChapterInput>>> {
     lichess
-        .as_account(account, "study", |token| async move {
-            let auth = authorize(&token);
+        .as_account(account, UsageKind::Study, |auth| async move {
             let path = format!("/api/study/{}.pgn", path_segment(id));
             let query = [
                 ("comments", "true".to_string()),
@@ -216,17 +150,10 @@ pub async fn lichess_study_chapters(
             ];
             let text = lichess
                 .client()
-                .get_text(
-                    &path,
-                    &query,
-                    "application/x-chess-pgn",
-                    Some(auth.as_str()),
-                    &cancel,
-                    Some(TextLimit {
-                        utf16_units: MAX_STUDY_PGN,
-                        message: "That study is too large to import.",
-                    }),
-                )
+                .get(&path, &auth)
+                .query(&query)
+                .accept("application/x-chess-pgn")
+                .read_text(Some(STUDY_PGN_LIMIT))
                 .await?;
             Ok(split_pgn(&text)
                 .into_iter()
@@ -236,8 +163,8 @@ pub async fn lichess_study_chapters(
                     let name = tag_value(&pgn, "ChapterName")
                         .or_else(|| tag_value(&pgn, "Event"))
                         .unwrap_or_else(|| format!("Chapter {}", index + 1));
-                    LichessStudyChapter {
-                        name: take_utf16(&name, 120),
+                    ChapterInput {
+                        name: js::slice_utf16(&name, 120).to_string(),
                         pgn,
                     }
                 })
@@ -246,14 +173,13 @@ pub async fn lichess_study_chapters(
         .await
 }
 
-/// `lichessStudyChapter(id, chapter)`: one chapter of a public study, as a study link names it
+/// One chapter of a public study, as a study link names it
 /// (its first when `chapter` is empty), with variations, comments and NAGs; no login needed.
 pub async fn public_study_chapter(
     lichess: &Lichess,
     id: &str,
     chapter: &str,
-) -> CoreResult<LichessStudyChapter> {
-    let cancel = lichess.lifetime().clone();
+) -> CoreResult<ChapterInput> {
     let path = if chapter.is_empty() {
         format!("/api/study/{}.pgn", path_segment(id))
     } else {
@@ -271,23 +197,10 @@ pub async fn public_study_chapter(
     ];
     let text = lichess
         .client()
-        .policy()
-        .with_usage("", "study", async {
-            lichess
-                .client()
-                .get_text(
-                    &path,
-                    &query,
-                    "application/x-chess-pgn",
-                    None,
-                    &cancel,
-                    Some(TextLimit {
-                        utf16_units: MAX_STUDY_PGN,
-                        message: "That study is too large to import.",
-                    }),
-                )
-                .await
-        })
+        .get(&path, &lichess.anonymous(UsageKind::Study))
+        .query(&query)
+        .accept("application/x-chess-pgn")
+        .read_text(Some(STUDY_PGN_LIMIT))
         .await?;
     let pgn = split_pgn(&text)
         .into_iter()
@@ -296,13 +209,13 @@ pub async fn public_study_chapter(
     let name = tag_value(&pgn, "ChapterName")
         .or_else(|| tag_value(&pgn, "Event"))
         .unwrap_or_else(|| "Chapter 1".into());
-    Ok(LichessStudyChapter {
-        name: take_utf16(&name, 120),
+    Ok(ChapterInput {
+        name: js::slice_utf16(&name, 120).to_string(),
         pgn,
     })
 }
 
-/// `exportToLichessStudy(account, studyId, name, pgn)`: adds a game to a Lichess study as new
+/// Adds a game to a Lichess study as new
 /// chapters, or to a new private study when `study_id` is empty. Returns the study id once
 /// Lichess reports a chapter for every game: a full study answers success yet adds none.
 pub async fn export_to_lichess_study(
@@ -312,28 +225,23 @@ pub async fn export_to_lichess_study(
     name: &str,
     pgn: &str,
 ) -> CoreResult<Reply<String>> {
-    let cancel = lichess.lifetime().clone();
     lichess
-        .as_account(account, "study", |token| async move {
-            let auth = authorize(&token);
+        .as_account(account, UsageKind::Study, |auth| async move {
             let mut id = study_id.to_string();
             if id.is_empty() {
                 let created: Value = lichess
                     .client()
-                    .post_form(
-                        "/api/study",
-                        &[
-                            ("name", name),
-                            ("visibility", "private"),
-                            ("computer", "everyone"),
-                            ("explorer", "everyone"),
-                            ("cloneable", "owner"),
-                            ("shareable", "owner"),
-                            ("chat", "member"),
-                        ],
-                        Some(auth.as_str()),
-                        &cancel,
-                    )
+                    .post("/api/study", &auth)
+                    .form(&[
+                        ("name", name),
+                        ("visibility", "private"),
+                        ("computer", "everyone"),
+                        ("explorer", "everyone"),
+                        ("cloneable", "owner"),
+                        ("shareable", "owner"),
+                        ("chat", "member"),
+                    ])
+                    .read_json()
                     .await?;
                 id = created
                     .get("id")
@@ -345,12 +253,9 @@ pub async fn export_to_lichess_study(
             let path = format!("/api/study/{}/import-pgn", path_segment(&id));
             let imported: Value = lichess
                 .client()
-                .post_form(
-                    &path,
-                    &[("pgn", pgn), ("name", name)],
-                    Some(auth.as_str()),
-                    &cancel,
-                )
+                .post(&path, &auth)
+                .form(&[("pgn", pgn), ("name", name)])
+                .read_json()
                 .await?;
             imported_all(&imported, split_pgn(pgn).len().max(1))?;
             Ok(id)
@@ -378,7 +283,7 @@ fn imported_all(imported: &Value, games: usize) -> CoreResult<()> {
     Ok(())
 }
 
-/// `syncLichessStudy(request)`: uploads edits to a linked study. The cloud copy must still match
+/// Uploads edits to a linked study. The cloud copy must still match
 /// the baseline the user downloaded; otherwise nothing is written and the user is told so. Only
 /// changed chapters are updated, and new chapters are appended. Returns the study's chapters
 /// after the upload, once Lichess holds every chapter of the edit; an upload Lichess accepted
@@ -386,7 +291,7 @@ fn imported_all(imported: &Value, games: usize) -> CoreResult<()> {
 pub async fn sync_lichess_study(
     lichess: &Lichess,
     request: &StudySyncRequest,
-) -> CoreResult<Reply<Vec<LichessStudyChapter>>> {
+) -> CoreResult<Reply<Vec<ChapterInput>>> {
     let before = valid_chapters(&request.baseline)?;
     let after = valid_chapters(&request.pgn)?;
     let wanted = after.len();
@@ -439,10 +344,8 @@ pub async fn sync_lichess_study(
             }
         }
     }
-    let cancel = lichess.lifetime().clone();
     let result = lichess
-        .as_account(&request.account, "study", |token| async move {
-            let auth = authorize(&token);
+        .as_account(&request.account, UsageKind::Study, |auth| async move {
             for (index, expected) in before.iter().enumerate() {
                 let game = &after[index];
                 if game.pgn == expected.pgn || pending[index] == Pending::Nothing {
@@ -457,12 +360,9 @@ pub async fn sync_lichess_study(
                 if pending[index] == Pending::Chapter {
                     let _: Value = lichess
                         .client()
-                        .post_form(
-                            &format!("{base}/moves"),
-                            &[("pgn", game.pgn.as_str())],
-                            Some(auth.as_str()),
-                            &cancel,
-                        )
+                        .post(&format!("{base}/moves"), &auth)
+                        .form(&[("pgn", game.pgn.as_str())])
+                        .read_json()
                         .await?;
                 }
                 let mut tags = game.headers.clone();
@@ -485,12 +385,9 @@ pub async fn sync_lichess_study(
                     .join("\n");
                 let _: Value = lichess
                     .client()
-                    .post_form(
-                        &format!("{base}/tags"),
-                        &[("pgn", tags_pgn.as_str())],
-                        Some(auth.as_str()),
-                        &cancel,
-                    )
+                    .post(&format!("{base}/tags"), &auth)
+                    .form(&[("pgn", tags_pgn.as_str())])
+                    .read_json()
                     .await?;
             }
             for game in after.iter().skip(before.len() + appended) {
@@ -501,12 +398,9 @@ pub async fn sync_lichess_study(
                 let path = format!("/api/study/{}/import-pgn", path_segment(&request.study_id));
                 let imported: Value = lichess
                     .client()
-                    .post_form(
-                        &path,
-                        &[("pgn", game.pgn.as_str()), ("name", name.as_str())],
-                        Some(auth.as_str()),
-                        &cancel,
-                    )
+                    .post(&path, &auth)
+                    .form(&[("pgn", game.pgn.as_str()), ("name", name.as_str())])
+                    .read_json()
                     .await?;
                 imported_all(&imported, 1)?;
             }
@@ -607,8 +501,7 @@ fn study_chapter_id(site: &str) -> Option<(String, String)> {
         };
         let tail = &rest[8..];
         let tail_ok = tail.is_empty() || tail.starts_with('?') || tail.starts_with('#');
-        let ids_ok = study.bytes().all(|b| b.is_ascii_alphanumeric())
-            && chapter.bytes().all(|b| b.is_ascii_alphanumeric());
+        let ids_ok = super::is_lichess_id(study) && super::is_lichess_id(chapter);
         if ids_ok && tail_ok {
             return Some((study.to_string(), chapter.to_string()));
         }
@@ -616,55 +509,33 @@ fn study_chapter_id(site: &str) -> Option<(String, String)> {
     None
 }
 
-/// A chapter with its headers as a JavaScript `Map` keeps them (first key order, last value).
+/// A chapter with its headers (first key order, last value).
 #[derive(Clone, Debug, PartialEq)]
 struct Chapter {
     headers: Vec<(String, String)>,
     pgn: String,
 }
 
-/// `validChapters(pgn)`: the games of a PGN, each replayable from its start and with legal moves.
+/// The games of a PGN, each replayable from its start and with legal moves.
 fn valid_chapters(pgn: &str) -> CoreResult<Vec<Chapter>> {
-    let Some(games) = position::pgn_games(pgn).as_array().cloned() else {
-        return Err(CoreError::new("Use up to 64 valid chapters."));
-    };
+    let games = position::pgn_games(pgn);
     if games.is_empty() || games.len() > MAX_CHAPTERS {
         return Err(CoreError::new("Use up to 64 valid chapters."));
     }
     let mut chapters = Vec::with_capacity(games.len());
-    for game in &games {
-        match game.get("problem").and_then(Value::as_str) {
+    for game in games {
+        match game.problem {
             Some("start") => return Err(CoreError::new("Invalid chapter starting position.")),
             Some("move") => return Err(CoreError::new("The chapter contains an illegal move.")),
             _ => {}
         }
-        let pairs = game
-            .get("headers")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|pair| {
-                        let pair = pair.as_array()?;
-                        Some((
-                            pair.first()?.as_str()?.to_string(),
-                            pair.get(1)?.as_str()?.to_string(),
-                        ))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
         let mut headers = Vec::new();
-        for (key, value) in pairs {
-            map_set(&mut headers, &key, &value);
+        for (key, value) in &game.headers {
+            map_set(&mut headers, key, value);
         }
         chapters.push(Chapter {
             headers,
-            pgn: game
-                .get("pgn")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
+            pgn: game.pgn,
         });
     }
     Ok(chapters)
@@ -707,22 +578,27 @@ mod tests {
             Some(("Study001".into(), "Chapter1".into()))
         );
         assert_eq!(study_chapter_id("https://lichess.org/study/Study001"), None);
+        // Both ids must be ids, and nothing but a query or fragment may follow.
+        for site in [
+            "https://lichess.org/study/Study-01/Chapter1",
+            "https://lichess.org/study/Study001/Chapter-",
+            "https://lichess.org/study/Study001/Chapter12",
+        ] {
+            assert_eq!(study_chapter_id(site), None, "{site}");
+        }
     }
 
     #[test]
     fn lists_studies_with_the_contract_field_names() {
-        let study =
-            study_metadata(r#"{"id":"Study001","name":"Cloud","createdAt":1,"updatedAt":2}"#)
-                .ok()
-                .flatten()
-                .expect("a valid study record");
+        let study = study_metadata(
+            &serde_json::json!({ "id": "Study001", "name": "Cloud", "createdAt": 1, "updatedAt": 2 }),
+        )
+        .expect("a valid study record");
         assert_eq!(
             serde_json::to_value(&study).expect("serializable"),
             serde_json::json!({ "id": "Study001", "name": "Cloud", "updatedAt": 2 })
         );
-        let undated = study_metadata(r#"{"id":"Study002","name":"Undated"}"#)
-            .ok()
-            .flatten()
+        let undated = study_metadata(&serde_json::json!({ "id": "Study002", "name": "Undated" }))
             .expect("a record without timestamps");
         assert_eq!(undated.updated_at, 0);
     }

@@ -1,0 +1,1 @@
+{"games":[{"id":"game0001","account":"Alice","createdAt":1600000000000,"lastMoveAt":1600000001000,"rated":true,"speed":"blitz","perf":"blitz","status":"mate","winner":"white","color":"white","opponent":"Bob","opponentRating":1400,"playerRating":1500,"ratingDiff":8,"opening":"Sicilian","moves":"e4 c5"}],"total":1}

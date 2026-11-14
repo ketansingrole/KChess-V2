@@ -2,9 +2,8 @@
 //! the official prebuilt libvosk beside it and their notices, staged in `target/voice-runtime`
 //! for development and packaging (the app looks there in a build of this repository).
 //!
-//! libvosk comes from the Vosk project's own release archives, pinned by SHA-256 and cached in
-//! `target/vosk`. A digest mismatch stops the build. The newest prebuilt libraries are 0.3.45
-//! (Linux and Windows, Dec 2022) and 0.3.42 (macOS, May 2022).
+//! libvosk comes from the Vosk project's own release archives, pinned by SHA-256 (`pinned.rs`)
+//! and cached in `target/vosk`. A digest mismatch stops the build.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -12,33 +11,31 @@ use std::time::SystemTime;
 
 use crate::util::{Result, download, pinned, root, run, say};
 
-const RELEASES: &str = "https://github.com/alphacep/vosk-api/releases/download";
+use crate::pinned::{self, VOSK_LINUX_X64, VOSK_MACOS, VOSK_WINDOWS_X64};
 
+/// This machine's libvosk archive.
 struct Pin {
-    archive: &'static str,
-    sha256: &'static str,
+    archive: pinned::Pin,
     /// Archive member → staged name.
     files: &'static [(&'static str, &'static str)],
 }
 
 fn pin() -> Result<Pin> {
+    use kchess_voice::LIBRARY;
     Ok(match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", _) => Pin {
-            archive: "v0.3.42/vosk-osx-0.3.42.zip",
-            sha256: "65395f196c9d0583d79949142b25560acaf9c295f36284e18433097f3adb0ea1",
-            files: &[("vosk-osx-0.3.42/libvosk.dylib", "libvosk.dylib")],
+            archive: VOSK_MACOS,
+            files: &[("vosk-osx-0.3.42/libvosk.dylib", LIBRARY)],
         },
         ("linux", "x86_64") => Pin {
-            archive: "v0.3.45/vosk-linux-x86_64-0.3.45.zip",
-            sha256: "bbdc8ed85c43979f6443142889770ea95cbfbc56cffb5c5dcd73afa875c5fbb2",
-            files: &[("vosk-linux-x86_64-0.3.45/libvosk.so", "libvosk.so")],
+            archive: VOSK_LINUX_X64,
+            files: &[("vosk-linux-x86_64-0.3.45/libvosk.so", LIBRARY)],
         },
         // libvosk is built with MinGW and needs its C++ runtime beside it.
         ("windows", "x86_64") => Pin {
-            archive: "v0.3.45/vosk-win64-0.3.45.zip",
-            sha256: "f1dcc9cca460630f81ea8f71794f69c80bed6556d2a4e6237b5785e1d2dff34b",
+            archive: VOSK_WINDOWS_X64,
             files: &[
-                ("vosk-win64-0.3.45/libvosk.dll", "libvosk.dll"),
+                ("vosk-win64-0.3.45/libvosk.dll", LIBRARY),
                 ("vosk-win64-0.3.45/libstdc++-6.dll", "libstdc++-6.dll"),
                 ("vosk-win64-0.3.45/libgcc_s_seh-1.dll", "libgcc_s_seh-1.dll"),
                 (
@@ -51,16 +48,17 @@ fn pin() -> Result<Pin> {
     })
 }
 
-/// Where the runtime is staged.
 pub fn staged() -> PathBuf {
-    root().join("target/voice-runtime")
+    root()
+        .join("target")
+        .join(kchess_delta::installed::BUILT_VOICE)
 }
 
 /// Stage the helper built for `profile` unless what is staged is already as new. Staging replaces
 /// the folder, so a running helper is left alone when nothing changed.
 pub fn stage_if_outdated(profile: &str) -> Result<()> {
     use crate::util::modified;
-    let executable = crate::util::exe("kchess-voice");
+    let executable = kchess_delta::installed::program(kchess_delta::installed::VOICE_HELPER);
     let built = modified(&root().join("target").join(profile).join(&executable));
     if outdated(modified(&staged().join(&executable)), built) {
         stage(profile)?;
@@ -110,16 +108,21 @@ fn stage_with(runtime: &Runtime<impl Fn(&str, &Path) -> Result>, profile: &str) 
         target,
         fetch,
     } = runtime;
-    let name = pin.archive.rsplit('/').next().unwrap_or(pin.archive);
-    let cache = cache.join(name);
-    let url = format!("{RELEASES}/{}", pin.archive);
-    pinned(&format!("libvosk ({url})"), &url, pin.sha256, &cache, fetch)?;
+    let cache = cache.join(pin.archive.file);
+    let url = pin.archive.url();
+    pinned(
+        &format!("libvosk ({url})"),
+        &url,
+        pin.archive.sha256,
+        &cache,
+        fetch,
+    )?;
     let mut archive =
         zip::ZipArchive::new(std::fs::File::open(&cache).map_err(|cause| cause.to_string())?)
             .map_err(|cause| cause.to_string())?;
     let _ = std::fs::remove_dir_all(target);
     std::fs::create_dir_all(target).map_err(|cause| cause.to_string())?;
-    let executable = crate::util::exe("kchess-voice");
+    let executable = kchess_delta::installed::program(kchess_delta::installed::VOICE_HELPER);
     let helper = built.join(&executable);
     if !helper.exists() {
         return Err(format!(
@@ -169,6 +172,12 @@ fn stage_with(runtime: &Runtime<impl Fn(&str, &Path) -> Result>, profile: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The helper is staged in the build folder, where the app's debug build looks for it.
+    #[test]
+    fn the_helper_is_staged_in_the_build_folder() {
+        assert_eq!(staged(), root().join("target/voice-runtime"));
+    }
 
     /// The helper is staged again only when none is, or the build is newer than what is.
     #[test]
@@ -221,7 +230,7 @@ mod tests {
             zip.write_all(&archived(bytes)).unwrap();
         }
         let archive = zip.finish().unwrap().into_inner();
-        let executable = crate::util::exe("kchess-voice");
+        let executable = kchess_delta::installed::program(kchess_delta::installed::VOICE_HELPER);
         let built = scratch.join("built");
         let licenses = scratch.join("licenses");
         for (dir, name, text) in [
@@ -237,8 +246,12 @@ mod tests {
         let fetched = std::cell::RefCell::new(Vec::new());
         let runtime = Runtime {
             pin: Pin {
-                archive: "v0.1/vosk-0.1.zip",
-                sha256: kchess_delta::digest(&archive).leak(),
+                archive: pinned::Pin {
+                    version: "v0.1",
+                    file: "vosk-0.1.zip",
+                    sha256: kchess_delta::digest(&archive).leak(),
+                    ..VOSK_LINUX_X64
+                },
                 files: &[
                     ("vosk-0.1/libvosk", "libvosk.so"),
                     ("vosk-0.1/runtime", "libc.so"),
@@ -257,7 +270,10 @@ mod tests {
 
         assert_eq!(stage_with(&runtime, "debug").unwrap(), target);
 
-        assert_eq!(*fetched.borrow(), [format!("{RELEASES}/v0.1/vosk-0.1.zip")]);
+        assert_eq!(
+            *fetched.borrow(),
+            ["https://github.com/alphacep/vosk-api/releases/download/v0.1/vosk-0.1.zip"]
+        );
         assert!(scratch.join("cache/vosk-0.1.zip").exists());
         let mut staged: Vec<_> = std::fs::read_dir(&target)
             .unwrap()

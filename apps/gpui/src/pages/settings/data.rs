@@ -7,7 +7,8 @@ use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
-use serde_json::{Value, json};
+use kchess_contracts::types::{Account, UsageCell, UsageReport};
+use serde_json::json;
 
 use super::{Section, SettingsPage};
 use crate::assets::icon;
@@ -29,48 +30,44 @@ pub struct DataRow {
 
 /// One row per account with anything to report, most data first; removed accounts stay listed
 /// so past downloads are not hidden, and requests tied to no account have their own row.
-pub fn data_rows(accounts: &[Value], usage: &Value) -> Vec<DataRow> {
+pub fn data_rows(accounts: &[Account], usage: &UsageReport) -> Vec<DataRow> {
     let known = |name: &str| {
-        accounts.iter().find(|account| {
-            account["username"]
-                .as_str()
-                .is_some_and(|username| username.to_lowercase() == name)
-        })
+        accounts
+            .iter()
+            .find(|account| account.username.to_lowercase() == name)
     };
     let mut names: Vec<String> = accounts
         .iter()
-        .filter_map(|account| account["username"].as_str().map(str::to_lowercase))
+        .map(|account| account.username.to_lowercase())
         .collect();
-    for key in ["accounts", "storage"] {
-        for name in usage[key]
-            .as_object()
-            .into_iter()
-            .flat_map(|map| map.keys())
-        {
-            if !names.contains(name) {
-                names.push(name.clone());
-            }
+    let counted = usage.accounts.iter().map(|(name, _)| name);
+    for name in counted.chain(usage.storage.iter().map(|(name, _)| name)) {
+        if !names.iter().any(|known| known == name) {
+            names.push(name.to_string());
         }
     }
-    let number = |value: &Value| value.as_f64().unwrap_or_default();
     let mut rows: Vec<(bool, DataRow)> = names
         .into_iter()
         .map(|name| {
             let account = known(&name);
-            let used = &usage["accounts"][&name]["total"];
-            let kept = &usage["storage"][&name];
+            let used = usage
+                .accounts
+                .get(&name)
+                .map(|used| used.total)
+                .unwrap_or_default();
+            let kept = usage.storage.get(&name).copied().unwrap_or_default();
             let label = if name.is_empty() {
                 "App (no account)".to_string()
             } else {
                 format!(
                     "@{}",
                     account
-                        .and_then(|account| account["username"].as_str())
+                        .map(|account| account.username.as_str())
                         .unwrap_or(&name)
                 )
             };
             let badge = match account {
-                Some(account) if account["connected"] == json!(true) => Some("Connected"),
+                Some(account) if account.connected => Some("Connected"),
                 Some(_) => Some("Friend"),
                 None if !name.is_empty() => Some("Removed"),
                 None => None,
@@ -83,10 +80,10 @@ pub fn data_rows(accounts: &[Value], usage: &Value) -> Vec<DataRow> {
                     detail: name
                         .is_empty()
                         .then_some("Sign-in and other requests not tied to one account"),
-                    stored: number(&kept["bytes"]) + number(&kept["cacheBytes"]),
-                    games: number(&kept["games"]),
-                    downloaded: number(&used["bytesIn"]),
-                    requests: number(&used["requests"]),
+                    stored: (kept.bytes + kept.cache_bytes) as f64,
+                    games: kept.games as f64,
+                    downloaded: used.bytes_in as f64,
+                    requests: used.requests as f64,
                 },
             )
         })
@@ -98,24 +95,12 @@ pub fn data_rows(accounts: &[Value], usage: &Value) -> Vec<DataRow> {
     rows.into_iter().map(|(_, row)| row).collect()
 }
 
-/// Every account's total of one of `usage.accounts`' numbers, or of `usage.storage`'s.
-fn total(usage: &Value, key: &str, fields: &[&str]) -> f64 {
-    usage[key]
-        .as_object()
-        .into_iter()
-        .flat_map(|map| map.values())
-        .map(|entry| {
-            fields
-                .iter()
-                .map(|field| {
-                    field
-                        .split('.')
-                        .fold(entry, |value, part| &value[part])
-                        .as_f64()
-                        .unwrap_or_default()
-                })
-                .sum::<f64>()
-        })
+/// Every account's total of one of `usage.accounts`' numbers.
+fn total(usage: &UsageReport, field: fn(&UsageCell) -> i64) -> f64 {
+    usage
+        .accounts
+        .iter()
+        .map(|(_, used)| field(&used.total) as f64)
         .sum()
 }
 
@@ -192,8 +177,7 @@ impl SettingsPage {
         .detach();
     }
 
-    /// The redacted logs and this build's facts, saved where the player chooses
-    /// (`exportDiagnostics`).
+    /// The redacted logs and this build's facts, saved where the player chooses.
     fn export_diagnostics(&mut self, cx: &mut Context<Self>) {
         self.exporting = true;
         self.diagnostics_note = None;
@@ -241,15 +225,19 @@ impl SettingsPage {
             let accounts = crate::accounts::handle(cx);
             let accounts = accounts.read(cx);
             (
-                data_rows(&accounts.all(), &accounts.usage),
+                data_rows(accounts.all(), &accounts.usage),
                 accounts.usage.clone(),
             )
         };
-        let downloaded = total(&usage, "accounts", &["total.bytesIn"]);
-        let requests = total(&usage, "accounts", &["total.requests"]);
-        let stored = total(&usage, "storage", &["bytes", "cacheBytes"]);
-        let since = usage["since"]
-            .as_f64()
+        let downloaded = total(&usage, |used| used.bytes_in);
+        let requests = total(&usage, |used| used.requests);
+        let stored: f64 = usage
+            .storage
+            .iter()
+            .map(|(_, kept)| (kept.bytes + kept.cache_bytes) as f64)
+            .sum();
+        let since = usage
+            .since
             .and_then(|millis| chrono::DateTime::from_timestamp_millis(millis as i64))
             .map(|date| {
                 format!(
@@ -264,7 +252,7 @@ impl SettingsPage {
                 .text_color(palette.text_muted)
                 .child(text)
         };
-        // `.data-totals > div`: a bordered tile, at least 200px.
+        // A bordered tile, at least 200px.
         let tile = |label: &'static str, value: String, note: Option<String>| {
             v_flex()
                 .flex_1()
@@ -334,7 +322,7 @@ impl SettingsPage {
                     .child(tile("Stored games & profiles", format_bytes(stored), None))
                     .child(tile(
                         "Database file",
-                        format_bytes(usage["dbBytes"].as_f64().unwrap_or_default()),
+                        format_bytes(usage.db_bytes as f64),
                         None,
                     )),
             )
@@ -445,24 +433,29 @@ impl SettingsPage {
 #[cfg(test)]
 mod tests {
     use super::data_rows;
+    use kchess_contracts::types::Account;
     use serde_json::json;
 
     #[test]
     fn every_account_with_data_gets_a_row_most_first() {
-        let accounts = vec![
-            json!({ "username": "Me", "connected": true }),
-            json!({ "username": "Friend" }),
-        ];
+        let account = |username: &str, connected| Account {
+            username: username.into(),
+            connected,
+            last_synced_at: None,
+            synced_play_time: None,
+        };
+        let accounts = vec![account("Me", true), account("Friend", false)];
         let usage = json!({
             "accounts": {
-                "me": { "total": { "bytesIn": 100, "requests": 3 } },
-                "gone": { "total": { "bytesIn": 5000, "requests": 1 } },
-                "": { "total": { "bytesIn": 10, "requests": 2 } },
-                "quiet": { "total": { "bytesIn": 0, "requests": 0 } },
+                "me": { "total": { "bytesIn": 100, "requests": 3 }, "byKind": {} },
+                "gone": { "total": { "bytesIn": 5000, "requests": 1 }, "byKind": {} },
+                "": { "total": { "bytesIn": 10, "requests": 2 }, "byKind": {} },
+                "quiet": { "total": { "bytesIn": 0, "requests": 0 }, "byKind": {} },
             },
             "storage": { "friend": { "games": 4, "bytes": 300, "cacheBytes": 20 } },
+            "dbBytes": 0,
         });
-        let rows = data_rows(&accounts, &usage);
+        let rows = data_rows(&accounts, &serde_json::from_value(usage).expect("a report"));
         let labels: Vec<&str> = rows.iter().map(|row| row.label.as_str()).collect();
         assert_eq!(labels, ["@gone", "@Friend", "@Me", "App (no account)"]);
         assert_eq!(rows[0].badge, Some("Removed"));

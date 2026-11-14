@@ -1,0 +1,1 @@
+{"kind":"masters","fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1","fetchedAt":1000,"total":20,"games":[{"id":"AbCdEfGh","white":"Carlsen","black":"Caruana","whiteRating":2850.0,"blackRating":2800.0,"winner":"white","year":2019,"san":"e4"}],"moves":[{"uci":"e2e4","san":"e4","white":10,"draws":5,"black":5}],"cached":false,"stale":false}

@@ -1,75 +1,49 @@
-//! Game review helpers, ratings,
-//! studies, game results, time controls, accounts, Lichess events and errors, OAuth looks and
-//! analysis contexts. Reached through `api::call`.
+//! Game review keys, ratings, studies, game results, time controls, accounts, Lichess events and
+//! errors, OAuth looks and analysis contexts.
 
-mod accounts;
+pub mod accounts;
 pub mod challenge;
-mod context;
-mod games;
-mod lichess;
+pub mod context;
+pub mod games;
+pub mod lichess;
 pub mod oauth;
-mod online;
-mod ratings;
-mod review;
-mod studies;
-mod time_control;
+pub mod online;
+pub mod ratings;
+pub mod review;
+pub mod studies;
+pub mod time_control;
 
-/// The label of each rating category (`RATING_DISPLAY_NAMES`).
+/// The label of each rating category.
 pub use ratings::DISPLAY_NAMES as RATING_DISPLAY_NAMES;
 
-use serde_json::Value;
-use shakmaty::variant::VariantPosition;
+#[cfg(test)]
+mod tests {
+    use super::{ratings, review};
+    use crate::rules::INITIAL_FEN;
+    use crate::variant::Variant;
 
-use crate::js;
-use crate::rules;
+    /// A review is kept by its moves and start; a variant not played by standard rules makes the
+    /// same moves another game, and Chess960 (standard rules) does not.
+    #[test]
+    fn a_review_key_names_a_variant_only_when_its_rules_differ() {
+        let key = |variant| review::review_key(INITIAL_FEN, &["e2e4", "e7e5"], variant);
+        let standard = key(None);
+        assert_eq!(key(Some(Variant::Standard)), standard);
+        assert_eq!(key(Some(Variant::Chess960)), standard);
+        let atomic = key(Some(Variant::Atomic));
+        assert_ne!(atomic, standard);
+        assert_ne!(key(Some(Variant::Crazyhouse)), atomic);
+        assert_ne!(review::review_key(INITIAL_FEN, &["e2e4"], None), standard);
+    }
 
-type Out = Result<Value, String>;
-
-/// Argument `i`; JSON null stands for an argument that was not given.
-fn arg(args: &[Value], i: usize) -> Option<&Value> {
-    args.get(i).filter(|v| !v.is_null())
-}
-
-/// Argument `i` as a list.
-fn list<'a>(args: &'a [Value], i: usize, name: &str) -> Result<&'a [Value], String> {
-    arg(args, i)
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .ok_or_else(|| format!("{name} must be a list"))
-}
-
-/// A `{ variant, fen }` setup as the legal position it describes.
-fn setup_position(value: Option<&Value>) -> Result<VariantPosition, String> {
-    let setup = value
-        .and_then(Value::as_object)
-        .ok_or("setup must be an object")?;
-    let variant = setup
-        .get("variant")
-        .and_then(Value::as_str)
-        .ok_or("setup.variant")?;
-    let fen = setup
-        .get("fen")
-        .and_then(Value::as_str)
-        .ok_or("setup.fen")?;
-    rules::setup_start(variant, fen).ok_or_else(|| "setup is not a legal position".into())
-}
-
-/// This module's methods for `api::call`; None when the method is not one of them.
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    review::call(method, args)
-        .or_else(|| ratings::call(method, args))
-        .or_else(|| studies::call(method, args))
-        .or_else(|| games::call(method, args))
-        .or_else(|| time_control::call(method, args))
-        .or_else(|| accounts::call(method, args))
-        .or_else(|| online::call(method, args))
-        .or_else(|| challenge::call(method, args))
-        .or_else(|| lichess::call(method, args))
-        .or_else(|| oauth::call(method, args))
-        .or_else(|| context::call(method, args))
-}
-
-/// `js::to_string` of an argument, for the TypeScript template strings that take any value.
-fn text_of(args: &[Value], i: usize) -> String {
-    js::to_string(arg(args, i))
+    /// A rating category's label by its key; none for a key that is not one.
+    #[test]
+    fn a_rating_category_is_labelled_by_its_key() {
+        for (key, label) in ratings::DISPLAY_NAMES {
+            assert_eq!(ratings::perf_label(key), Some(*label));
+        }
+        assert_eq!(ratings::perf_label("blitz"), Some("Blitz"));
+        assert_eq!(ratings::perf_label("puzzle"), Some("Puzzles"));
+        assert_eq!(ratings::perf_label("bughouse"), None);
+    }
 }

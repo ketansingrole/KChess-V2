@@ -1,8 +1,8 @@
-//! Helpers shared by the engine integration tests.
+//! Helpers shared by the integration tests.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use kchess_core::engine::EngineContext;
@@ -10,47 +10,18 @@ use kchess_core::engine::managed::Target;
 use kchess_core::engine::scheduler::Scheduler;
 use kchess_core::engine::status::EngineLocations;
 use kchess_core::engine::uci::EngineHub;
-use kchess_core::host::{Host, Level};
+use kchess_core::test_host::TestHost;
 use tokio::process::Command;
 
-pub mod review_store;
+pub mod reviews;
 pub mod store;
+pub mod wire;
 
-/// Keeps every log line so a test can assert on what the controller reported.
-#[derive(Default)]
-pub struct Recording {
-    pub lines: Mutex<Vec<String>>,
-    pub events: Mutex<Vec<(String, serde_json::Value)>>,
-}
-
-impl Host for Recording {
-    fn log(&self, level: Level, scope: &str, message: &str) {
-        self.lines
-            .lock()
-            .expect("log lock")
-            .push(format!("{} [{scope}] {message}", level.name()));
-    }
-
-    fn emit(&self, event: &str, payload: serde_json::Value) {
-        self.events
-            .lock()
-            .expect("event lock")
-            .push((event.to_string(), payload));
-    }
-}
-
-impl Recording {
-    pub fn contains(&self, needle: &str) -> bool {
-        self.lines
-            .lock()
-            .expect("log lock")
-            .iter()
-            .any(|line| line.contains(needle))
-    }
-}
+/// The engine tests' host: it keeps every log line and event.
+pub type Recording = TestHost;
 
 pub fn host() -> Arc<Recording> {
-    Arc::new(Recording::default())
+    TestHost::new()
 }
 
 pub fn hub(host: &Arc<Recording>) -> EngineHub {
@@ -81,6 +52,24 @@ pub fn engine_copy(dir: &Path, mode: &str) -> String {
     let path = dir.join(format!("engine-{mode}{}", std::env::consts::EXE_SUFFIX));
     std::fs::copy(fake_path(), &path).expect("the engine copy");
     path.display().to_string()
+}
+
+/// The command log of an `engine_copy`: every line the engine received, once it has started.
+pub fn copy_log(engine: &str) -> PathBuf {
+    Path::new(engine).with_extension("log")
+}
+
+/// Saves `path` as the engine executable in the core's settings, as the settings page does.
+pub fn save_engine_path(core: &kchess_core::Core, path: &str) {
+    use kchess_core::store::games;
+    let database = core.database_for_tests();
+    let mut settings = database
+        .read(|c| games::get_settings(c.db))
+        .expect("settings");
+    settings.core.engine_path = path.to_string();
+    database
+        .write(|c| games::save_settings(c.db, &settings))
+        .expect("save settings");
 }
 
 /// The lines the fake engine has received so far, in order.
@@ -158,36 +147,31 @@ pub async fn wait_until<T>(
     }
 }
 
-/// Fairy-Stockfish for the tests that analyse a variant with it: `KCHESS_VARIANT_ENGINE_PATH`
-/// (`cargo xtask fairy-stockfish` builds it in `target/fairy-stockfish/bin`). None, with a note,
-/// when it is not set, so the test is skipped.
-#[allow(dead_code)]
-pub fn fairy_stockfish() -> Option<PathBuf> {
-    let path = std::env::var_os("KCHESS_VARIANT_ENGINE_PATH")
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from);
-    match path {
-        Some(path) if path.is_file() => Some(path),
-        _ => {
-            eprintln!("skipping: set KCHESS_VARIANT_ENGINE_PATH to Fairy-Stockfish");
-            None
-        }
-    }
+/// The first connection to `listener`, once the code under test has made it: the work that
+/// connects has started. The stream is returned to keep it open.
+pub async fn accepted(listener: &std::net::TcpListener) -> std::net::TcpStream {
+    listener
+        .set_nonblocking(true)
+        .expect("a nonblocking listener");
+    wait_until(Duration::from_secs(20), "a connection", || {
+        listener.accept().ok().map(|(stream, _)| stream)
+    })
+    .await
 }
 
-/// A native Stockfish for the tests that need a real engine: `KCHESS_ENGINE_PATH` (CI fetches the
-/// official build with `cargo run -p kchess-core --example fetch_stockfish`). None, with a note,
-/// when it is not set, so the test is skipped.
-#[allow(dead_code)]
-pub fn stockfish() -> Option<PathBuf> {
-    let path = std::env::var_os("KCHESS_ENGINE_PATH")
+/// The engine at `variable`'s path: Stockfish (`KCHESS_ENGINE_PATH`, which CI fetches with `cargo
+/// run -p kchess-core --example fetch_stockfish`) or Fairy-Stockfish
+/// (`KCHESS_VARIANT_ENGINE_PATH`). The tests that call it are ignored unless the variable was set
+/// when they were built (`build.rs`); set to a missing file, the test fails.
+pub fn engine(variable: &str) -> PathBuf {
+    let path = std::env::var_os(variable)
         .filter(|path| !path.is_empty())
-        .map(PathBuf::from);
-    match path {
-        Some(path) if path.is_file() => Some(path),
-        _ => {
-            eprintln!("skipping: set KCHESS_ENGINE_PATH to a native Stockfish");
-            None
-        }
-    }
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panic!("set {variable} to the engine"));
+    assert!(
+        path.is_file(),
+        "{variable} names no file: {}",
+        path.display()
+    );
+    path
 }

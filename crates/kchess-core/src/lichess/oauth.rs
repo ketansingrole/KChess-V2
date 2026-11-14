@@ -1,4 +1,4 @@
-//! Lichess sign-in (`connectLichess`): PKCE with S256, a
+//! Lichess sign-in: PKCE with S256, a
 //! random state, a loopback callback server on 127.0.0.1 that serves only `/callback` with the
 //! right `state` and only once, the page the browser lands on, the token exchange, the account
 //! check and the save of the login.
@@ -15,9 +15,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 
 use super::accounts::Lichess;
-use super::client::authorize;
-use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
+use kchess_contracts::error::{CoreError, Result as CoreResult};
+use kchess_contracts::types::UsageKind;
 
 /// The OAuth client id KChess sends to Lichess.
 pub const OAUTH_CLIENT_ID: &str = "kchess-desktop";
@@ -60,7 +60,7 @@ fn random_bytes<const N: usize>() -> CoreResult<[u8; N]> {
     Ok(bytes)
 }
 
-/// `randomBytes(32).toString('base64url')` as the verifier, and its SHA-256 as the challenge.
+/// 32 random bytes in unpadded base64url as the verifier, and its SHA-256 as the challenge.
 pub fn new_pkce() -> CoreResult<Pkce> {
     let verifier = URL_SAFE_NO_PAD.encode(random_bytes::<32>()?);
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
@@ -70,7 +70,7 @@ pub fn new_pkce() -> CoreResult<Pkce> {
     })
 }
 
-/// The state that ties the callback to this login (`randomBytes(24)`).
+/// The state that ties the callback to this login.
 pub fn new_state() -> CoreResult<String> {
     Ok(URL_SAFE_NO_PAD.encode(random_bytes::<24>()?))
 }
@@ -95,15 +95,7 @@ pub fn authorize_url(
     Ok(url.into())
 }
 
-/// The OAuth look used until the app sends its own colours (`DEFAULT_OAUTH_LOOK`).
-pub fn default_look() -> Value {
-    match kchess_domain::records::call("oauthLookDefault", &[]) {
-        Some(Ok(look)) => look,
-        _ => Value::Null,
-    }
-}
-
-pub use kchess_domain::records::oauth::callback_page;
+pub use kchess_domain::records::oauth::{callback_page, default_look};
 
 /// A callback request's target, parsed: its path and first value of `state` and `code`.
 pub struct Callback {
@@ -156,7 +148,7 @@ fn not_found() -> &'static [u8] {
     b"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
 }
 
-/// The callback response: the page, with the headers `connectLichess` sets.
+/// The callback response: the page, with its headers.
 fn page_response(status: u16, body: &str) -> Vec<u8> {
     let reason = if status == 200 { "OK" } else { "Bad Request" };
     format!(
@@ -313,7 +305,7 @@ pub struct Connected {
 }
 
 impl Lichess {
-    /// `connectLichess`: signs an account in through the browser.
+    /// Signs an account in through the browser.
     pub async fn connect_lichess(
         &self,
         look: Option<&Value>,
@@ -323,7 +315,7 @@ impl Lichess {
             .await
     }
 
-    /// `connectLichess` with a callback deadline of `timeout` (`CALLBACK_TIMEOUT` in the app).
+    /// Signs an account in with a callback deadline of `timeout`.
     pub async fn connect_lichess_within(
         &self,
         look: Option<&Value>,
@@ -370,29 +362,28 @@ impl Lichess {
                 &format!("Could not bring KChess forward: {}", cause.message),
             );
         }
+        let anonymous = self.anonymous(UsageKind::Other);
         let token: TokenResponse = self
             .client()
-            .post_form(
-                "/api/token",
-                &[
-                    ("grant_type", "authorization_code"),
-                    ("code", code.as_str()),
-                    ("redirect_uri", redirect.as_str()),
-                    ("client_id", OAUTH_CLIENT_ID),
-                    ("code_verifier", pkce.verifier.as_str()),
-                ],
-                None,
-                &cancel,
-            )
+            .post("/api/token", &anonymous)
+            .form(&[
+                ("grant_type", "authorization_code"),
+                ("code", code.as_str()),
+                ("redirect_uri", redirect.as_str()),
+                ("client_id", OAUTH_CLIENT_ID),
+                ("code_verifier", pkce.verifier.as_str()),
+            ])
+            .cancel(&cancel)
+            .read_json()
             .await?;
         let account: AccountResponse = self
             .client()
-            .get_json(
+            .get(
                 "/api/account",
-                &[],
-                Some(&authorize(&token.access_token)),
-                &cancel,
+                &anonymous.with_token(token.access_token.as_str()),
             )
+            .cancel(&cancel)
+            .read_json()
             .await?;
         self.save_login(&account.username, &token.access_token, epoch)
             .await?;
@@ -401,7 +392,7 @@ impl Lichess {
         })
     }
 
-    /// `saveLogin`: the token is encrypted by the host's credential store and saved with the
+    /// The token is encrypted by the host's credential store and saved with the
     /// account, unless a logout ran since the login began.
     async fn save_login(&self, username: &str, token: &str, epoch: u64) -> CoreResult<()> {
         if epoch != self.login_epoch() {

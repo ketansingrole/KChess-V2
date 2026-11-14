@@ -2,58 +2,20 @@
 //! position; the summary beside it (accuracy and counts per side) is what the game list shows.
 
 use rusqlite::{Connection, OptionalExtension, params, types::Value as Sql};
-use serde_json::{Map, Value, json};
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 
-use super::StoreContext;
-use super::library::{
-    db_err, js_json, now_arg, now_ms, num, str_arg, string_list, transaction, truthy,
-};
-use crate::error::{CoreError, Result};
+use super::library::js_json;
+use super::sql::{Sql as _, transaction};
 use crate::host::{Host, Level};
-
-const GAMES_TO_REVIEW_LIMIT: f64 = 300.0;
-
-/// This module's storage methods; None when the method is not one of them.
-pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
-    let db = ctx.db;
-    let result = match method {
-        "store.reviewStore.readReview" => {
-            str_arg(args, 0, "key").and_then(|key| read_review(ctx.host, db, key).map(or_null))
-        }
-        "store.reviewStore.writeReview" => {
-            write_review(ctx.host, db, args.first().unwrap_or(&Value::Null))
-        }
-        "store.reviewStore.writeReviews" => {
-            let reviews = args.first().cloned().unwrap_or(Value::Null);
-            write_reviews(ctx.host, db, &reviews)
-        }
-        "store.reviewStore.reviewSummaries" => {
-            review_summaries(ctx.host, db, &string_list(args.first()))
-        }
-        "store.reviewStore.hasAccount" => str_arg(args, 0, "username")
-            .and_then(|name| has_account(db, name))
-            .map(Value::Bool),
-        "store.reviewStore.markChecked" => now_arg(args, 1)
-            .and_then(|at| mark_checked(db, &string_list(args.first()), at).map(|()| Value::Null)),
-        "store.reviewStore.gamesToReview" => {
-            let since = args.get(1).and_then(Value::as_f64).unwrap_or(0.0);
-            let limit = args
-                .get(2)
-                .and_then(Value::as_f64)
-                .unwrap_or(GAMES_TO_REVIEW_LIMIT);
-            games_to_review(db, &string_list(args.first()), since, limit)
-        }
-        _ => return None,
-    };
-    Some(result)
-}
-
-fn or_null(value: Option<Value>) -> Value {
-    value.unwrap_or(Value::Null)
-}
+use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result};
+use kchess_contracts::types::{Keyed, ReviewSource, ReviewSummary, ReviewUpdate, StoredReview};
+use kchess_domain::js::truthy;
+use kchess_domain::review::GameAnalysis;
 
 /// `parse` for a stored review or summary: a failure is logged.
-fn parse_logged(host: &dyn Host, text: &str) -> Option<Value> {
+fn parse_logged<T: DeserializeOwned>(host: &dyn Host, text: &str) -> Option<T> {
     match serde_json::from_str(text) {
         Ok(value) => Some(value),
         Err(cause) => {
@@ -69,8 +31,8 @@ fn parse_logged(host: &dyn Host, text: &str) -> Option<Value> {
 
 /// A stored review's row: the review, and its summary when one is stored.
 struct Stored {
-    review: Value,
-    summary: Option<Value>,
+    review: StoredReview,
+    summary: Option<ReviewSummary>,
 }
 
 fn read_stored(host: &dyn Host, db: &Connection, key: &str) -> Result<Option<Stored>> {
@@ -81,148 +43,92 @@ fn read_stored(host: &dyn Host, db: &Connection, key: &str) -> Result<Option<Sto
             |row| Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
         )
         .optional()
-        .map_err(db_err)?;
+        .sql()?;
     let Some((data, summary)) = row else {
         return Ok(None);
     };
-    // A review that is not JSON, or is a falsy value, reads as no review (`!review`).
-    let Some(review) = parse_logged(host, &data).filter(|review| truthy(Some(review))) else {
+    // A row that is not a review reads as none: a review written over it replaces it.
+    let Some(review) = parse_logged(host, &data) else {
         return Ok(None);
     };
-    let summary = parse_logged(host, &summary).filter(|s| !s.is_null());
+    // A summary that cannot be read is worked out again.
+    let summary = parse_logged::<Option<ReviewSummary>>(host, &summary).flatten();
     Ok(Some(Stored { review, summary }))
 }
 
-/// `readReview(key)`: the stored review, or None.
-pub fn read_review(host: &dyn Host, db: &Connection, key: &str) -> Result<Option<Value>> {
+/// The stored review, or None.
+pub fn read_review(host: &dyn Host, db: &Connection, key: &str) -> Result<Option<StoredReview>> {
     Ok(read_stored(host, db, key)?.map(|stored| stored.review))
 }
 
 /// Which review to keep: Lichess's own beats ours, a finished one beats one in progress.
-fn rank(review: &Value) -> i64 {
-    let complete = if truthy(review.get("complete")) { 2 } else { 0 };
-    let lichess = i64::from(review.get("source").and_then(Value::as_str) == Some("lichess"));
-    complete + lichess
+fn rank(review: &StoredReview) -> u8 {
+    2 * u8::from(review.complete) + u8::from(review.source == ReviewSource::Lichess)
 }
 
-/// `a ?? b` for an optional JSON value: null and absent fall through to `b`.
-fn coalesce(a: Option<&Value>, b: Option<&Value>) -> Option<Value> {
-    match a {
-        Some(value) if !value.is_null() => Some(value.clone()),
-        _ => b.cloned(),
-    }
+/// The scores a review keeps for the game list, which fails for a review the core could not
+/// have written.
+pub fn summarize_stored(review: &StoredReview) -> Result<ReviewSummary> {
+    kchess_domain::review::summarize(review).map_err(cannot_analyse)
 }
 
-/// `{ ...review, gameId }`: an absent game id is left out, as `JSON.stringify` leaves out undefined.
-fn with_game_id(review: &Value, game_id: Option<Value>) -> Result<Map<String, Value>> {
-    let mut merged = review
-        .as_object()
-        .cloned()
-        .ok_or_else(|| CoreError::new("review must be an object"))?;
-    match game_id {
-        Some(value) => {
-            merged.insert("gameId".into(), value);
-        }
-        None => {
-            merged.shift_remove("gameId");
-        }
-    }
-    Ok(merged)
+/// Labels, accuracy and chances for every move of a stored review.
+pub fn analyse_stored(review: &StoredReview) -> Result<GameAnalysis> {
+    kchess_domain::review::analyse(review).map_err(cannot_analyse)
 }
 
-/// The scores a review keeps for the game list (`summarize`), which fails for a review the
-/// core could not have written.
-pub fn summarize_stored(review: &Value) -> Result<Value> {
-    let input = review_input(review)?;
-    kchess_domain::review::summarize(&input)
-        .ok_or_else(|| CoreError::new("This review cannot be analysed."))
+fn cannot_analyse(reason: String) -> CoreError {
+    CoreError::new(format!("This review cannot be analysed: {reason}."))
 }
 
-/// `analyseReview`: labels, accuracy and chances for every move of a stored review.
-pub fn analyse_stored(review: &Value) -> Result<Value> {
-    let input = review_input(review)?;
-    kchess_domain::review::analyse_review(&input)
-        .ok_or_else(|| CoreError::new("This review cannot be analysed."))
+fn to_text(value: &impl serde::Serialize) -> Result<String> {
+    serde_json::to_value(value)
+        .map(|value| js_json(&value))
+        .map_err(|cause| CoreError::new(cause.to_string()))
 }
 
-/// `reviewInput`: the fields the review analysis reads (scores without engine lines).
-fn review_input(review: &Value) -> Result<Value> {
-    let mut out = Map::new();
-    // `variant`: a variant game's moves replay by its own rules.
-    for key in ["key", "source", "complete", "fen", "moves", "variant"] {
-        if let Some(value) = review.get(key) {
-            out.insert(key.into(), value.clone());
-        }
-    }
-    let evals = review
-        .get("evals")
-        .and_then(Value::as_array)
-        .ok_or_else(|| CoreError::new("Cannot read properties of undefined (reading 'map')"))?;
-    let scores: Vec<Value> = evals
-        .iter()
-        .map(|e| {
-            if let Some(object) = e.as_object() {
-                let mut score = Map::new();
-                for key in ["cp", "mate"] {
-                    if let Some(value) = object.get(key) {
-                        score.insert(key.into(), value.clone());
-                    }
-                }
-                Value::Object(score)
-            } else {
-                e.clone()
-            }
-        })
-        .collect();
-    out.insert("evals".into(), Value::Array(scores));
-    for key in ["judgments", "accuracy"] {
-        if let Some(value) = review.get(key) {
-            out.insert(key.into(), value.clone());
-        }
-    }
-    Ok(Value::Object(out))
-}
-
-/// `writeReview(review)`: save `review` unless a better one is stored; returns what is stored.
-pub fn write_review(host: &dyn Host, db: &Connection, input: &Value) -> Result<Value> {
-    let key = input
-        .get("key")
-        .and_then(Value::as_str)
-        .ok_or_else(|| CoreError::new("key must be a string"))?
-        .to_string();
-    let input_game = input.get("gameId").filter(|v| truthy(Some(v))).cloned();
+/// Save `review` unless a better one is stored; returns what is stored.
+pub fn write_review(
+    host: &dyn Host,
+    db: &Connection,
+    review: StoredReview,
+) -> Result<ReviewUpdate> {
+    let key = review.key.clone();
+    let input_game = review.game_id.clone().filter(|game| !game.is_empty());
     let link = |db: &Connection| -> Result<()> {
-        if let Some(game) = input_game.as_ref().and_then(Value::as_str) {
+        if let Some(game) = &input_game {
             db.execute(
                 "INSERT OR IGNORE INTO game_reviews (gameId, reviewKey) VALUES (?1, ?2)",
                 params![game, key],
             )
-            .map_err(db_err)?;
+            .sql()?;
         }
         Ok(())
     };
     let existing = read_stored(host, db, &key)?;
-    if let Some(existing) = existing.as_ref().filter(|e| rank(&e.review) > rank(input)) {
+    if let Some(existing) = existing
+        .as_ref()
+        .filter(|e| rank(&e.review) > rank(&review))
+    {
         link(db)?;
-        let game_id = coalesce(input.get("gameId"), existing.review.get("gameId"));
-        let review = with_game_id(&existing.review, game_id)?;
+        let mut kept = existing.review.clone();
+        kept.game_id = review.game_id.or(kept.game_id);
         let summary = match &existing.summary {
             Some(summary) => summary.clone(),
             None => summarize_stored(&existing.review)?,
         };
-        return Ok(json!({ "review": review, "summary": summary }));
+        return Ok(ReviewUpdate {
+            review: kept,
+            summary,
+        });
     }
-    let existing_game = existing
-        .as_ref()
-        .and_then(|e| e.review.get("gameId"))
-        .cloned();
-    let game_id = coalesce(input.get("gameId"), existing_game.as_ref());
-    let mut merged = with_game_id(input, game_id.clone())?;
-    merged.insert("updatedAt".into(), num(now_ms()?));
-    let merged = Value::Object(merged);
+    let mut merged = review;
+    merged.game_id = merged
+        .game_id
+        .take()
+        .or_else(|| existing.and_then(|e| e.review.game_id));
+    merged.updated_at = now_ms();
     let summary = summarize_stored(&merged)?;
-    let data = js_json(&merged);
-    let summary_text = js_json(&summary);
     db.execute(
         "INSERT INTO reviews (key, gameId, source, complete, depth, data, summary, updatedAt)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -231,79 +137,81 @@ pub fn write_review(host: &dyn Host, db: &Connection, input: &Value) -> Result<V
            summary=excluded.summary, updatedAt=excluded.updatedAt",
         params![
             key,
-            game_id.as_ref().and_then(Value::as_str),
-            merged
-                .get("source")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            i64::from(truthy(merged.get("complete"))),
-            sql_number(merged.get("depth")),
-            data,
-            summary_text,
-            merged
-                .get("updatedAt")
-                .and_then(Value::as_f64)
-                .unwrap_or_default() as i64,
+            merged.game_id.as_deref(),
+            merged.source.as_str(),
+            i64::from(merged.complete),
+            merged.depth,
+            to_text(&merged)?,
+            to_text(&summary)?,
+            merged.updated_at,
         ],
     )
-    .map_err(db_err)?;
+    .sql()?;
     link(db)?;
-    Ok(json!({ "review": merged, "summary": summary }))
+    Ok(ReviewUpdate {
+        review: merged,
+        summary,
+    })
 }
 
-/// `writeReviews(reviews)`: save a batch atomically; a failure or cancellation
-/// keeps the previous batch. Callers that need per-review cancellability keep
-/// using `writeReview`.
-fn write_reviews(host: &dyn Host, db: &Connection, reviews: &Value) -> Result<Value> {
-    use super::library::transaction;
-    let list = reviews.as_array().cloned().unwrap_or_default();
+/// Save a batch atomically; a failure or cancellation keeps the previous batch.
+pub fn write_reviews(
+    host: &dyn Host,
+    db: &Connection,
+    reviews: &[StoredReview],
+) -> Result<Vec<StoredReview>> {
     transaction(db, || {
-        let mut stored = Vec::with_capacity(list.len());
-        for review in &list {
-            let written = write_review(host, db, review)?;
-            stored.push(written.get("review").cloned().unwrap_or(Value::Null));
-        }
-        Ok(Value::Array(stored))
+        reviews
+            .iter()
+            .map(|review| Ok(write_review(host, db, review.clone())?.review))
+            .collect()
     })
 }
 
 /// A JSON number as a SQLite value (integers stay integers).
-fn sql_number(value: Option<&Value>) -> Sql {
-    match value.and_then(Value::as_f64) {
-        Some(n) if n.fract() == 0.0 && n.abs() < 9.0e15 => Sql::Integer(n as i64),
-        Some(n) => Sql::Real(n),
-        None => Sql::Null,
-    }
-}
+use super::sql::number as sql_number;
 
-/// `reviewSummaries(ids)`: the summaries of these Lichess games' reviews, by game id.
-pub fn review_summaries(host: &dyn Host, db: &Connection, ids: &[String]) -> Result<Value> {
+/// The summaries of these Lichess games' reviews, by game id.
+pub fn review_summaries(
+    host: &dyn Host,
+    db: &Connection,
+    ids: &[String],
+) -> Result<Keyed<ReviewSummary>> {
+    let mut result = Keyed::default();
     if ids.is_empty() {
-        return Ok(json!({}));
+        return Ok(result);
     }
     let marks = vec!["?"; ids.len()].join(", ");
     let sql = format!(
         "SELECT gr.gameId, r.summary FROM game_reviews gr JOIN reviews r ON r.key=gr.reviewKey
          WHERE gr.gameId IN ({marks}) ORDER BY r.complete, r.updatedAt"
     );
-    let mut statement = db.prepare(&sql).map_err(db_err)?;
+    let mut statement = db.prepare(&sql).sql()?;
     let rows = statement
         .query_map(rusqlite::params_from_iter(ids.iter()), |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
-        .map_err(db_err)?;
-    let mut result = Map::new();
+        .sql()?;
     for row in rows {
-        let (game, summary) = row.map_err(db_err)?;
-        if let Some(summary) = parse_logged(host, &summary).filter(|s| truthy(Some(s))) {
-            result.insert(game, summary);
+        let (game, summary) = row.sql()?;
+        let Some(summary) = parse_logged::<Value>(host, &summary).filter(|s| truthy(Some(s)))
+        else {
+            continue;
+        };
+        match serde_json::from_value(summary) {
+            Ok(summary) => result.insert(game, summary),
+            Err(cause) => host.log(
+                Level::Warn,
+                "reviews",
+                &format!("Unreadable review summary of {game}: {cause}"),
+            ),
         }
     }
-    Ok(Value::Object(result))
+    Ok(result)
 }
 
 /// Whether this account is still on this device.
-fn has_account(db: &Connection, username: &str) -> Result<bool> {
+pub fn has_account(db: &Connection, username: &str) -> Result<bool> {
     let row = db
         .query_row(
             "SELECT 1 FROM accounts WHERE username = ?1 COLLATE NOCASE",
@@ -311,12 +219,12 @@ fn has_account(db: &Connection, username: &str) -> Result<bool> {
             |_| Ok(()),
         )
         .optional()
-        .map_err(db_err)?;
+        .sql()?;
     Ok(row.is_some())
 }
 
 /// Remember that Lichess was asked for these games' analysis.
-fn mark_checked(db: &Connection, ids: &[String], at: f64) -> Result<()> {
+pub fn mark_checked(db: &Connection, ids: &[String], at: f64) -> Result<()> {
     if ids.is_empty() {
         return Ok(());
     }
@@ -326,14 +234,19 @@ fn mark_checked(db: &Connection, ids: &[String], at: f64) -> Result<()> {
                 "INSERT OR REPLACE INTO lichess_review_checks (id, checkedAt) VALUES (?1, ?2)",
                 params![id, sql_number(Some(&json!(at)))],
             )
-            .map_err(db_err)?;
+            .sql()?;
         }
         Ok(())
     })
 }
 
 /// The accounts' finished games with no finished review, newest first.
-fn games_to_review(db: &Connection, accounts: &[String], since: f64, limit: f64) -> Result<Value> {
+pub fn games_to_review(
+    db: &Connection,
+    accounts: &[String],
+    since: f64,
+    limit: f64,
+) -> Result<Value> {
     if accounts.is_empty() {
         return Ok(json!([]));
     }
@@ -355,7 +268,7 @@ fn games_to_review(db: &Connection, accounts: &[String], since: f64, limit: f64)
     let mut params_list: Vec<Sql> = accounts.iter().map(|a| Sql::Text(a.clone())).collect();
     params_list.push(sql_number(Some(&json!(since))));
     params_list.push(sql_number(Some(&json!(limit))));
-    let mut statement = db.prepare(&sql).map_err(db_err)?;
+    let mut statement = db.prepare(&sql).sql()?;
     let rows = statement
         .query_map(rusqlite::params_from_iter(params_list.iter()), |row| {
             Ok(json!({
@@ -370,10 +283,10 @@ fn games_to_review(db: &Connection, accounts: &[String], since: f64, limit: f64)
                 "checked": row.get::<_, i64>(6)? == 1,
             }))
         })
-        .map_err(db_err)?;
+        .sql()?;
     let mut out = Vec::new();
     for row in rows {
-        out.push(row.map_err(db_err)?);
+        out.push(row.sql()?);
     }
     Ok(Value::Array(out))
 }

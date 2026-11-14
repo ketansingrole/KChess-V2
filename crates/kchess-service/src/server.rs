@@ -7,11 +7,11 @@ use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
+use kchess_contracts::CoreEvent;
 use kchess_core::connection::ClientInfo;
 use kchess_core::{Config, Core, Host, Level};
-use serde_json::Value;
 use tokio::sync::{Notify, Semaphore, mpsc};
 use tokio::task::JoinHandle;
 
@@ -27,15 +27,6 @@ const HELLO_DEADLINE: Duration = Duration::from_secs(5);
 const HANDSHAKES: usize = 32;
 /// Frames waiting for a client that reads slowly.
 const QUEUE: usize = 1024;
-/// Progress events a slow client may miss: the next one carries the whole state. Their last,
-/// terminal update (`terminal`) is never dropped. The voice model's download has none: its
-/// method's answer ends it.
-const COALESCED: [&str; 4] = [
-    "engine:analysis",
-    "watch:frame",
-    "puzzledb:progress",
-    "voicemodel:progress",
-];
 /// How long a leaving client's queued frames may take to flush.
 const FLUSH_DEADLINE: Duration = Duration::from_secs(2);
 /// The service log is started afresh beyond this size.
@@ -104,13 +95,22 @@ impl ServiceHost {
         }
     }
 
-    /// Queues an event for one client. A full queue drops a progress event; for any other event,
-    /// a terminal update included, the client is cut off, and reconnects to read the state afresh.
-    fn send(&self, connection: u64, sender: &mpsc::Sender<Frame>, event: &str, payload: Value) {
-        let droppable = COALESCED.contains(&event) && !terminal(event, &payload);
-        let frame = Frame::Event {
-            name: event.to_string(),
-            payload,
+    /// Queues an event for one client. A full queue drops a progress event
+    /// (`CoreEvent::coalesced`); for any other event, a terminal update included, the client is
+    /// cut off, and reconnects to read the state afresh.
+    fn send(&self, connection: u64, sender: &mpsc::Sender<Frame>, event: CoreEvent) {
+        let droppable = event.coalesced();
+        let name = event.name();
+        let frame = match frame(event) {
+            Ok(frame) => frame,
+            Err(cause) => {
+                self.log(
+                    Level::Error,
+                    "service",
+                    &format!("Could not send {name}: {cause}"),
+                );
+                return;
+            }
         };
         if let Err(mpsc::error::TrySendError::Full(_)) = sender.try_send(frame)
             && !droppable
@@ -118,23 +118,19 @@ impl ServiceHost {
             self.log(
                 Level::Warn,
                 "service",
-                &format!("Client {connection} fell behind on {event}; disconnecting it."),
+                &format!("Client {connection} fell behind on {name}; disconnecting it."),
             );
             self.cut_off(connection);
         }
     }
 }
 
-/// The last update of a progress event: no later one follows to carry the state.
-fn terminal(event: &str, payload: &Value) -> bool {
-    match event {
-        "engine:analysis" => payload["done"].as_bool().unwrap_or(false),
-        "puzzledb:progress" => matches!(
-            payload["phase"].as_str(),
-            Some("done" | "cancelled" | "failed")
-        ),
-        _ => false,
-    }
+/// The frame an event crosses as, or why its payload could not be written as JSON.
+fn frame(event: CoreEvent) -> serde_json::Result<Frame> {
+    Ok(Frame::Event {
+        name: event.name().to_string(),
+        payload: event.into_payload()?,
+    })
 }
 
 impl Host for ServiceHost {
@@ -142,17 +138,15 @@ impl Host for ServiceHost {
         if let Ok(mut log) = self.log.lock()
             && let Some(file) = log.as_mut()
         {
-            let at = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |since| since.as_millis());
-            let message = kchess_core::redact::redact(message);
+            let at = kchess_core::time::now_ms();
+            let message = kchess_host::redact(message);
             // One write per line: `writeln!` on an unbuffered file writes each piece separately.
             let line = format!("{at} {} [{scope}] {message}\n", level.name());
             let _ = file.write_all(line.as_bytes());
         }
     }
 
-    fn emit(&self, event: &str, payload: Value) {
+    fn emit(&self, event: CoreEvent) {
         let clients: Vec<(u64, mpsc::Sender<Frame>)> = self
             .clients
             .lock()
@@ -164,30 +158,28 @@ impl Host for ServiceHost {
             })
             .unwrap_or_default();
         for (connection, sender) in clients {
-            self.send(connection, &sender, event, payload.clone());
+            self.send(connection, &sender, event.clone());
         }
     }
 
-    fn emit_to(&self, connection: u64, event: &str, payload: Value) {
+    fn emit_to(&self, connection: u64, event: CoreEvent) {
         let sender = self
             .clients
             .lock()
             .ok()
             .and_then(|clients| clients.get(&connection).map(|(tx, _)| tx.clone()));
         if let Some(sender) = sender {
-            self.send(connection, &sender, event, payload);
+            self.send(connection, &sender, event);
         }
     }
 }
 
-/// What every connection shares.
 struct State {
     core: Arc<Core>,
     host: Arc<ServiceHost>,
     token: String,
     release: String,
     protocol: String,
-    /// Connected clients.
     active: AtomicUsize,
     /// Room for connections still in their handshake (`HANDSHAKES`).
     handshakes: Semaphore,
@@ -197,14 +189,6 @@ struct State {
     /// Set, under its lock, when a sole client of another release closes this core: admission
     /// takes the same lock, so no client is welcomed into a core that is closing.
     closing: Mutex<bool>,
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-        })
 }
 
 /// Opens the profile's core and serves it until it has been idle for `options.idle`. Fails when
@@ -235,7 +219,7 @@ pub async fn serve(options: ServeOptions) -> Result<(), String> {
         socket: socket.to_string_lossy().to_string(),
         release: protocol::release(),
         protocol: protocol::protocol(),
-        started_at: now_ms(),
+        started_at: u64::try_from(kchess_core::time::now_ms()).unwrap_or(0),
     };
     let text = serde_json::to_vec_pretty(&info).map_err(|error| error.to_string())?;
     discovery::write_private(&profile.join(discovery::INFO_FILE), &text)
@@ -435,7 +419,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         let connection = state.core.connect(ClientInfo {
             kind,
             release,
-            capabilities: capabilities.into_iter().map(Into::into).collect(),
+            capabilities,
         });
         // Counted before the lock is let go, so an idle check that follows sees this client.
         state.active.fetch_add(1, Ordering::SeqCst);
@@ -451,10 +435,14 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         protocol: state.protocol.clone(),
     });
     state.core.with_alert_owner(|owner| {
-        let _ = sender.try_send(Frame::Event {
-            name: "alerts:owner".into(),
-            payload: owner,
-        });
+        match frame(owner) {
+            Ok(frame) => drop(sender.try_send(frame)),
+            Err(cause) => state.host.log(
+                Level::Error,
+                "service",
+                &format!("Could not send the alert owner: {cause}"),
+            ),
+        }
         state.host.add(connection, sender.clone(), Arc::clone(&cut));
     });
     state.changed.notify_one();
@@ -466,17 +454,6 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         }
     });
 
-    // The connection's own answers; a client too far behind to take one is cut off.
-    let reply = |id: u64| {
-        sender
-            .try_send(Frame::Result {
-                id,
-                value: Some(Value::Null),
-                error: None,
-                kind: None,
-            })
-            .is_ok()
-    };
     let calls: Arc<Mutex<HashMap<u64, JoinHandle<()>>>> = Arc::default();
     // Why the loop ended: a cut-off client's queue is not flushed, and a writer that failed is done.
     let (mut behind, mut written) = (false, false);
@@ -496,21 +473,6 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
             }
         };
         match frame {
-            // A client without a window stops only its own work, not the other clients'.
-            Frame::Call { id, method, .. } if method == "suspend" => {
-                state.core.suspend_connection(connection);
-                if !reply(id) {
-                    behind = true;
-                    break;
-                }
-            }
-            // The shared core closes on its own once idle: no client closes it for everyone.
-            Frame::Call { id, method, .. } if method == "close" => {
-                if !reply(id) {
-                    behind = true;
-                    break;
-                }
-            }
             Frame::Call { id, method, args } => {
                 let (core, sender, running) =
                     (Arc::clone(&state.core), sender.clone(), Arc::clone(&calls));
@@ -521,7 +483,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                     break;
                 };
                 let task = tokio::spawn(async move {
-                    let answer = core.call_client(connection, &method, args).await;
+                    let answer = core.call_as(connection, &method, args).await;
                     let still_ours = running
                         .lock()
                         .is_ok_and(|mut running| running.remove(&id).is_some());
@@ -570,6 +532,8 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                 }
             }
             Frame::Focus { focused } => state.core.focus(connection, focused),
+            // A client without a window stops only its own work, not the other clients'.
+            Frame::Suspend => state.core.suspend_connection(connection),
             _ => {}
         }
     }
@@ -658,26 +622,22 @@ mod tests {
         let connected = |host: &ServiceHost| host.clients.lock().expect("clients").contains_key(&1);
         let (sender, _queue) = mpsc::channel(1);
         host.add(1, sender.clone(), Arc::new(Notify::new()));
-        host.send(1, &sender, "watch:frame", json!({}));
-        host.send(1, &sender, "watch:frame", json!({}));
+        let frame: Box<kchess_contracts::types::WatchFrame> = serde_json::from_value(json!({
+            "session": 1, "source": "tv", "gameId": "g", "white": { "name": "A" },
+            "black": { "name": "B" }, "orientation": "white", "fen": "8/8/8/8/8/8/8/8 w - - 0 1",
+            "variant": "standard", "finished": false,
+        }))
+        .expect("a watch frame");
+        host.send(1, &sender, CoreEvent::WatchFrame(frame.clone()));
+        host.send(1, &sender, CoreEvent::WatchFrame(frame));
         assert!(connected(&host), "a progress frame is dropped");
-        host.send(1, &sender, "engine:analysis", json!({ "done": true }));
+        let last = serde_json::from_value(json!({
+            "id": 1, "fen": "8/8/8/8/8/8/8/8 w - - 0 1", "depth": 1.0, "lines": [],
+            "done": true, "context": "", "engine": "stockfish",
+        }))
+        .expect("an analysis update");
+        host.send(1, &sender, CoreEvent::Analysis(last));
         assert!(!connected(&host), "a terminal update is never dropped");
-    }
-
-    #[test]
-    fn a_progress_events_last_update_is_terminal() {
-        assert!(!terminal("engine:analysis", &json!({ "done": false })));
-        assert!(terminal(
-            "engine:analysis",
-            &json!({ "done": true, "state": "interrupted" })
-        ));
-        assert!(!terminal(
-            "puzzledb:progress",
-            &json!({ "phase": "importing" })
-        ));
-        assert!(terminal("puzzledb:progress", &json!({ "phase": "failed" })));
-        assert!(!terminal("watch:frame", &json!({})));
     }
 
     /// A call in the middle of a step when its connection goes finishes that step before the

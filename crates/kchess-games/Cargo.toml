@@ -1,6 +1,6 @@
 [package]
 name = "kchess-games"
-description = "Computer, over-the-board and Game history sessions as the KChess frontends drive the domain's transitions."
+description = "What KChess frontends share around the rules: Game history writes, a puzzle on the board, broadcast rounds, randomness and the clock."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+kchess-contracts = { path = "../kchess-contracts" }
 kchess-domain = { path = "../kchess-domain" }
 serde.workspace = true
 shakmaty.workspace = true

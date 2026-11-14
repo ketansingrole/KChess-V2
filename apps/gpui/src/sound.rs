@@ -108,7 +108,7 @@ fn decode(sound: Sound) -> Option<SamplesBuffer> {
     ))
 }
 
-/// The clip for a move: a capture sounds different from a quiet move (`playMoveSound`).
+/// The clip for a move: a capture sounds different from a quiet move.
 pub fn move_sound(san: &str, cx: &mut App) {
     play(
         if san.contains('x') {

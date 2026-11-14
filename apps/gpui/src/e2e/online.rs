@@ -13,10 +13,6 @@ fn open(cx: &mut gpui_kit::TestAppContext, label: &str, online: bool) -> Harness
     app
 }
 
-fn page(app: &mut Harness) -> Option<Page> {
-    app.cx.update(|cx| crate::shell::current_page(cx))
-}
-
 /// Wait until the element's accessible label is `label`.
 fn wait_for_label(app: &mut Harness, id: &'static str, label: &str) {
     use gpui_kit::test::TestWindowExt as _;
@@ -52,7 +48,7 @@ fn play_online_asks_to_connect_and_offers_the_computer(cx: &mut gpui_kit::TestAp
     let mut app = open(cx, "Play on Lichess", true);
     assert!(app.enabled("online-connect"));
     app.click("online-computer");
-    assert_eq!(page(&mut app), Some(Page::Computer));
+    app.wait_for_page(Page::Computer);
 }
 
 #[gpui_kit::test]
@@ -101,7 +97,11 @@ fn watch_shows_its_feed_failing_and_the_following_and_broadcast_tabs(
     cx: &mut gpui_kit::TestAppContext,
 ) {
     let mut app = open(cx, "Watch", true);
-    assert_eq!(app.find(("watch-tabs", 0usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab("watch-tabs", crate::pages::watch::Tab::Tv))
+            .selected(),
+        Some(true)
+    );
     // Neither the channels nor the feed load: the page says so once, and can be asked again.
     assert!(app.enabled("watch-try-again"));
     assert!(!app.shows("watch-retry"));
@@ -109,19 +109,33 @@ fn watch_shows_its_feed_failing_and_the_following_and_broadcast_tabs(
     app.click("watch-try-again");
     app.find("watch-try-again");
 
-    app.click(("watch-tabs", 1usize));
-    assert_eq!(app.find(("watch-tabs", 1usize)).selected(), Some(true));
+    app.click(super::tab("watch-tabs", crate::pages::watch::Tab::Friends));
+    assert_eq!(
+        app.find(super::tab("watch-tabs", crate::pages::watch::Tab::Friends))
+            .selected(),
+        Some(true)
+    );
     assert!(app.enabled("watch-friends-refresh"));
     // Nobody is followed: the header says where to follow players, and nothing more.
     assert!(!app.shows("watch-friends-none"));
 
-    app.click(("watch-tabs", 2usize));
-    assert_eq!(app.find(("watch-tabs", 2usize)).selected(), Some(true));
+    app.click(super::tab(
+        "watch-tabs",
+        crate::pages::watch::Tab::Broadcasts,
+    ));
+    assert_eq!(
+        app.find(super::tab(
+            "watch-tabs",
+            crate::pages::watch::Tab::Broadcasts
+        ))
+        .selected(),
+        Some(true)
+    );
     assert!(app.enabled("broadcasts-retry"));
     // TV's failure stays on TV: Broadcasts says only its own.
     assert!(!app.shows("watch-error"));
 
-    app.click(("watch-tabs", 0usize));
+    app.click(super::tab("watch-tabs", crate::pages::watch::Tab::Tv));
     assert!(app.enabled("watch-try-again"));
 }
 
@@ -302,7 +316,7 @@ fn following_works_while_games_sync(cx: &mut gpui_kit::TestAppContext) {
             .read(cx)
             .tracked()
             .iter()
-            .any(|friend| friend["username"].as_str() == Some("dana"))
+            .any(|friend| friend.username == "dana")
     });
     app.wait_for("Sync all to wait for the sync", |window, _| {
         use gpui_kit::test::TestWindowExt as _;
@@ -330,7 +344,7 @@ fn players_with_games_to_sync_are_marked(cx: &mut gpui_kit::TestAppContext) {
             && accounts
                 .tracked()
                 .iter()
-                .any(|friend| friend["syncedPlayTime"].is_number())
+                .any(|friend| friend.synced_play_time.is_some())
     });
     assert!(!app.shows(new_games), "the sync downloaded everything");
     assert_eq!(app.find("friends-sync").label(), Some("Sync all"));
@@ -356,10 +370,10 @@ fn insights_without_games_lead_to_following_or_analysis(cx: &mut gpui_kit::TestA
         window.try_find_by_label("Speed").is_none()
     }));
     app.click("insights-analyse");
-    assert_eq!(page(&mut app), Some(Page::Analysis));
+    app.wait_for_page(Page::Analysis);
     app.open("Insights");
     app.click("insights-follow");
-    assert_eq!(page(&mut app), Some(Page::Friends));
+    app.wait_for_page(Page::Friends);
 }
 
 /// A saved title the leaderboard lacks says so and offers everyone back; then titles have their
@@ -401,11 +415,8 @@ fn a_player_is_messaged_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     app.open("Players");
     app.find("players-lookup");
     app.cx.update(|cx| {
-        let page = crate::shell::view_of::<crate::pages::players::PlayersPage>(
-            crate::pages::Page::Players,
-            cx,
-        )
-        .expect("the Players page");
+        let page =
+            crate::shell::view::<crate::pages::players::PlayersPage>(cx).expect("the Players page");
         page.update(cx, |page, cx| {
             page.show_profile(
                 serde_json::json!({ "id": "rival", "username": "Rival", "count": { "all": 3 } }),
@@ -441,8 +452,12 @@ fn watch_says_when_no_followed_player_is_playing(cx: &mut gpui_kit::TestAppConte
     });
     // The follow's toasts are still up; they leave the page's tabs in reach.
     app.open("Watch");
-    app.click(("watch-tabs", 1usize));
-    assert_eq!(app.find(("watch-tabs", 1usize)).selected(), Some(true));
+    app.click(super::tab("watch-tabs", crate::pages::watch::Tab::Friends));
+    assert_eq!(
+        app.find(super::tab("watch-tabs", crate::pages::watch::Tab::Friends))
+            .selected(),
+        Some(true)
+    );
     app.find("watch-friends-none");
 }
 
@@ -479,18 +494,12 @@ fn follow(app: &mut Harness, name: &str) {
 /// not dropped as older than the previous core's.
 #[gpui_kit::test]
 fn a_restarted_core_is_followed_from_its_first_session(cx: &mut gpui_kit::TestAppContext) {
-    use crate::core::{AppCore, CoreEvent, RECONNECTED};
-    use serde_json::{Value, json};
+    use crate::core::{AppCore, ClientEvent, CoreEvent};
     let mut app = Harness::start(cx);
-    let send = |app: &mut Harness, name: &str, payload: Value| {
+    let send = |app: &mut Harness, event: ClientEvent| {
         app.cx.update(|cx| {
             let events = cx.global::<AppCore>().events.clone();
-            events.update(cx, |_, cx| {
-                cx.emit(CoreEvent {
-                    name: name.into(),
-                    payload,
-                })
-            });
+            events.update(cx, |_, cx| cx.emit(event));
         });
         app.cx.run_until_parked();
     };
@@ -498,10 +507,22 @@ fn a_restarted_core_is_followed_from_its_first_session(cx: &mut gpui_kit::TestAp
         app.cx
             .update(|cx| crate::online::handle(cx).read(cx).state_epoch())
     };
-    let report = |session: u64| json!({ "session": session, "account": "", "lane": "events", "phase": "connected" });
-    send(&mut app, "online:state", report(40));
+    let state = |session: u64| {
+        ClientEvent::Event(CoreEvent::OnlineState(
+            kchess_contracts::types::OnlineConnection {
+                session: session.into(),
+                account: String::new(),
+                game_id: String::new(),
+                lane: kchess_contracts::types::Lane::Events,
+                phase: kchess_contracts::types::OnlinePhase::Connected,
+                message: None,
+                kind: None,
+            },
+        ))
+    };
+    send(&mut app, state(40));
     assert_eq!(epoch(&mut app), 40.);
-    send(&mut app, RECONNECTED, Value::Null);
-    send(&mut app, "online:state", report(39));
+    send(&mut app, ClientEvent::Reconnected);
+    send(&mut app, state(39));
     assert_eq!(epoch(&mut app), 39., "the new core's report is followed");
 }

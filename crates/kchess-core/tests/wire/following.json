@@ -1,0 +1,1 @@
+{"users":[{"username":"Bob","title":"FM","ratings":{"blitz":1500,"rapid":1600},"followedBy":["Alice"],"alreadyAdded":true,"dismissed":false},{"username":"Frank","ratings":{},"followedBy":["Alice"],"alreadyAdded":false,"dismissed":false}],"problems":[]}

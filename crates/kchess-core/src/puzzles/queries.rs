@@ -1,16 +1,20 @@
 //! Queries over the offline puzzle database: and its schema. Only the puzzle database's single owner
 //! calls these; they take the connection, never open one.
 //!
-//! Randomness: the TypeScript uses `Math.random()`. Here the caller supplies the generator as
+//! Randomness: the caller supplies the generator as
 //! `random`, a function returning values in `[0, 1)` (the worker supplies a real one, tests a
 //! seeded one). No SQL `RANDOM()` is used, so the indexed plans stay the same.
 
+use crate::time::now_ms;
 use std::collections::HashSet;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use kchess_contracts::types::{LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleDbStatus};
 use rusqlite::{Connection, OptionalExtension, Statement, ToSql, params};
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
+use crate::store::sql::{Sql as _, transaction};
+use kchess_contracts::error::{CoreError, Result};
+use kchess_domain::variant::Variant;
 use kchess_domain::{position, rules};
 
 /// A row of the puzzle table as the importer hands it over.
@@ -32,96 +36,13 @@ pub struct DbPuzzle {
     pub game_id: String,
 }
 
-/// One puzzle, whichever source it came from (`Puzzle`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Puzzle {
-    pub id: String,
-    pub fen: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_move: Option<String>,
-    pub solution: Vec<String>,
-    #[serde(serialize_with = "serialize_js_number")]
-    pub rating: f64,
-    pub themes: Vec<String>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_js_number_opt"
-    )]
-    pub plays: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub game_id: Option<String>,
-}
-
-/// `PuzzleDbStatus`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PuzzleDbStatus {
-    pub installed: bool,
-    /// Approximate size on disk.
-    pub count: i64,
-    pub bytes: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub imported_at: Option<i64>,
-    /// True while a download runs; its progress arrives as events.
-    pub busy: bool,
-}
-
-/// `LocalPuzzleQuery`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LocalPuzzleQuery {
-    /// A theme or, as Lichess's puzzle angles allow, an opening key.
-    #[serde(default)]
-    pub theme: Option<String>,
-    #[serde(default)]
-    pub min_rating: Option<f64>,
-    #[serde(default)]
-    pub max_rating: Option<f64>,
-    pub count: f64,
-}
-
-/// `LocalLadderQuery`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LocalLadderQuery {
-    pub from: f64,
-    pub to: f64,
-    pub count: f64,
-}
-
-/// JavaScript prints whole numbers without a fraction; match that in the JSON.
-fn serialize_js_number<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
-    const MAX_SAFE: f64 = 9_007_199_254_740_991.0;
-    if value.is_finite() && value.fract() == 0.0 && value.abs() <= MAX_SAFE {
-        if *value < 0.0 {
-            serializer.serialize_i64(*value as i64)
-        } else {
-            serializer.serialize_u64(*value as u64)
-        }
-    } else {
-        serializer.serialize_f64(*value)
-    }
-}
-
-fn serialize_js_number_opt<S: Serializer>(
-    value: &Option<f64>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    match value {
-        Some(number) => serialize_js_number(number, serializer),
-        None => serializer.serialize_none(),
-    }
-}
-
 const COLUMNS: &str =
     "SELECT id, fen, moves, rating, plays, themes, openings, game_id FROM puzzles";
 /// A row's angles, padded for whole-token `LIKE` matching: its themes and its opening keys.
 const ANGLES: &str = "(' ' || themes || ' ' || openings || ' ')";
 
 /// The `CREATE` statements and PRAGMAs, run in this order.
-pub fn create_schema(db: &Connection) -> Result<(), String> {
+pub fn create_schema(db: &Connection) -> Result<()> {
     db.execute_batch(
         "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;
 CREATE TABLE IF NOT EXISTS puzzles (id TEXT PRIMARY KEY, fen TEXT NOT NULL, moves TEXT NOT NULL, rating INTEGER NOT NULL, plays INTEGER NOT NULL DEFAULT 0, themes TEXT NOT NULL);
@@ -129,33 +50,29 @@ CREATE INDEX IF NOT EXISTS idx_puzzles_rating ON puzzles(rating);
 CREATE TABLE IF NOT EXISTS puzzle_meta (id INTEGER PRIMARY KEY CHECK(id = 1), importedAt INTEGER NOT NULL, count INTEGER NOT NULL, bytes INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS worker_meta (id INTEGER PRIMARY KEY CHECK(id = 1));",
     )
-    .map_err(|cause| cause.to_string())?;
+    .sql()?;
     // Appended migration: the opening keys of each puzzle, filled by the next download.
     let has_openings = db
         .prepare("SELECT 1 FROM pragma_table_info('puzzles') WHERE name = 'openings'")
         .and_then(|mut statement| statement.exists([]))
-        .map_err(|cause| cause.to_string())?;
+        .sql()?;
     if !has_openings {
         db.execute_batch("ALTER TABLE puzzles ADD COLUMN openings TEXT NOT NULL DEFAULT ''")
-            .map_err(|cause| cause.to_string())?;
+            .sql()?;
     }
     // Appended migration: each puzzle's source game, filled by the next download.
     let has_game = db
         .prepare("SELECT 1 FROM pragma_table_info('puzzles') WHERE name = 'game_id'")
         .and_then(|mut statement| statement.exists([]))
-        .map_err(|cause| cause.to_string())?;
+        .sql()?;
     if !has_game {
         db.execute_batch("ALTER TABLE puzzles ADD COLUMN game_id TEXT NOT NULL DEFAULT ''")
-            .map_err(|cause| cause.to_string())?;
+            .sql()?;
     }
     Ok(())
 }
 
-fn sql_error(cause: rusqlite::Error) -> String {
-    cause.to_string()
-}
-
-pub fn read_status(db: &Connection, busy: bool) -> Result<PuzzleDbStatus, String> {
+pub fn read_status(db: &Connection, busy: bool) -> Result<PuzzleDbStatus> {
     struct Meta {
         imported_at: i64,
         count: i64,
@@ -163,7 +80,7 @@ pub fn read_status(db: &Connection, busy: bool) -> Result<PuzzleDbStatus, String
     }
     let mut statement = db
         .prepare("SELECT importedAt, count, bytes FROM puzzle_meta WHERE id = 1")
-        .map_err(sql_error)?;
+        .sql()?;
     let meta = statement
         .query_row([], |row| {
             Ok(Meta {
@@ -173,7 +90,7 @@ pub fn read_status(db: &Connection, busy: bool) -> Result<PuzzleDbStatus, String
             })
         })
         .optional()
-        .map_err(sql_error)?;
+        .sql()?;
     Ok(PuzzleDbStatus {
         installed: meta.as_ref().is_some_and(|meta| meta.count > 0),
         count: meta.as_ref().map_or(0, |meta| meta.count),
@@ -183,34 +100,18 @@ pub fn read_status(db: &Connection, busy: bool) -> Result<PuzzleDbStatus, String
     })
 }
 
-pub(crate) fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
-        })
-}
-
 /// Replace the stored puzzles with `rows` in one transaction; a failure keeps the old ones.
 pub fn store_sample(
     db: &Connection,
     rows: &[DbPuzzle],
     cancelled: &dyn Fn() -> bool,
-) -> Result<usize, String> {
+) -> Result<usize> {
     let mut insert = db
         .prepare(
             "INSERT OR IGNORE INTO puzzles (id, fen, moves, rating, plays, themes, openings, game_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .map_err(sql_error)?;
-    db.execute_batch("BEGIN IMMEDIATE").map_err(sql_error)?;
-    match write_sample(db, &mut insert, rows, cancelled) {
-        Ok(count) => Ok(count),
-        Err(cause) => {
-            // A failing ROLLBACK replaces the cause, as it would throw in the TypeScript.
-            db.execute_batch("ROLLBACK").map_err(sql_error)?;
-            Err(cause)
-        }
-    }
+        .sql()?;
+    transaction(db, || write_sample(db, &mut insert, rows, cancelled))
 }
 
 fn write_sample(
@@ -218,8 +119,8 @@ fn write_sample(
     insert: &mut Statement<'_>,
     rows: &[DbPuzzle],
     cancelled: &dyn Fn() -> bool,
-) -> Result<usize, String> {
-    db.execute_batch("DELETE FROM puzzles").map_err(sql_error)?;
+) -> Result<usize> {
+    db.execute_batch("DELETE FROM puzzles").sql()?;
     let mut count: usize = 0;
     let mut bytes: i64 = 0;
     for row in rows {
@@ -228,7 +129,7 @@ fn write_sample(
             continue;
         }
         if cancelled() {
-            return Err("Puzzle import cancelled.".to_string());
+            return Err(CoreError::new("Puzzle import cancelled."));
         }
         let changes = insert
             .execute(params![
@@ -241,10 +142,10 @@ fn write_sample(
                 row.openings,
                 row.game_id
             ])
-            .map_err(sql_error)?;
+            .sql()?;
         count += changes;
         if changes > 0 {
-            // Buffer.byteLength of the concatenation is the sum of the UTF-8 lengths.
+            // The UTF-8 bytes of the stored text.
             let length = row.id.len()
                 + row.fen.len()
                 + row.moves.len()
@@ -255,58 +156,50 @@ fn write_sample(
         }
     }
     if count == 0 {
-        return Err("The downloaded file held no usable puzzles.".to_string());
+        return Err(CoreError::new(
+            "The downloaded file held no usable puzzles.",
+        ));
     }
     if cancelled() {
-        return Err("Puzzle import cancelled.".to_string());
+        return Err(CoreError::new("Puzzle import cancelled."));
     }
     db.execute(
         "INSERT OR REPLACE INTO puzzle_meta (id, importedAt, count, bytes) VALUES (1, ?, ?, ?)",
         params![now_ms(), i64::try_from(count).unwrap_or(i64::MAX), bytes],
     )
-    .map_err(sql_error)?;
-    db.execute_batch("COMMIT").map_err(sql_error)?;
+    .sql()?;
     Ok(count)
 }
 
-pub fn clear_stored(db: &Connection) -> Result<(), String> {
+pub fn clear_stored(db: &Connection) -> Result<()> {
     // One transaction: puzzles gone with their metadata left would still count as installed.
-    db.execute_batch("BEGIN IMMEDIATE; DELETE FROM puzzles; DELETE FROM puzzle_meta; COMMIT;")
-        .map_err(|cause| {
-            let error = sql_error(cause);
-            if db.is_autocommit() {
-                return error;
-            }
-            match db.execute_batch("ROLLBACK") {
-                Ok(()) => error,
-                Err(rollback) => format!("{error}; rollback failed: {rollback}"),
-            }
-        })?;
+    transaction(db, || {
+        db.execute_batch("DELETE FROM puzzles; DELETE FROM puzzle_meta;")
+            .sql()
+    })?;
     // Give the space back to the file rather than leave it for reuse.
-    db.execute_batch("VACUUM").map_err(sql_error)
+    db.execute_batch("VACUUM").sql()
 }
 
-fn require_installed(db: &Connection) -> Result<(), String> {
+fn require_installed(db: &Connection) -> Result<()> {
     let mut statement = db
         .prepare("SELECT count FROM puzzle_meta WHERE id = 1 AND count > 0")
-        .map_err(sql_error)?;
-    let found = statement
-        .query_row([], |_| Ok(()))
-        .optional()
-        .map_err(sql_error)?;
+        .sql()?;
+    let found = statement.query_row([], |_| Ok(())).optional().sql()?;
     found.ok_or_else(|| {
-        "Download the puzzle database first (Settings → Offline downloads, or the Rush tab)."
-            .to_string()
+        CoreError::new(
+            "Download the puzzle database first (Settings → Offline downloads, or the Rush tab).",
+        )
     })
 }
 
-/// `puzzleFromDb`: the first move of `moves` is the opponent's, played from `fen`; the rest is
+/// The first move of `moves` is the opponent's, played from `fen`; the rest is
 /// the solution. Rows the rules cannot play are dropped.
 fn puzzle_from_db(row: &DbPuzzle) -> Option<Puzzle> {
     let mut tokens = row.moves.split(' ').filter(|token| !token.is_empty());
     let first = tokens.next()?;
     let solution: Vec<String> = tokens.map(str::to_string).collect();
-    // Position.fromFen re-derives the position from its normalized FEN before playing.
+    // The position is read again from its normalized FEN before playing.
     let start = rules::standard_from_fen(&row.fen)?;
     let normalized = rules::make_fen(&start);
     let position = rules::standard_from_fen(&normalized)?;
@@ -328,6 +221,7 @@ fn puzzle_from_db(row: &DbPuzzle) -> Option<Puzzle> {
             .collect(),
         plays: row.plays,
         game_id: Some(row.game_id.clone()).filter(|id| !id.is_empty()),
+        variant: Variant::Standard,
     })
 }
 
@@ -335,8 +229,8 @@ fn to_puzzles(rows: &[DbPuzzle]) -> Vec<Puzzle> {
     rows.iter().filter_map(puzzle_from_db).collect()
 }
 
-fn fetch(db: &Connection, sql: &str, params: &[&dyn ToSql]) -> Result<Vec<DbPuzzle>, String> {
-    let mut statement = db.prepare(sql).map_err(sql_error)?;
+fn fetch(db: &Connection, sql: &str, params: &[&dyn ToSql]) -> Result<Vec<DbPuzzle>> {
+    let mut statement = db.prepare(sql).sql()?;
     let rows = statement
         .query_map(params, |row| {
             Ok(DbPuzzle {
@@ -350,16 +244,15 @@ fn fetch(db: &Connection, sql: &str, params: &[&dyn ToSql]) -> Result<Vec<DbPuzz
                 game_id: row.get(7)?,
             })
         })
-        .map_err(sql_error)?;
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(sql_error)
+        .sql()?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().sql()
 }
 
 /// Indexed candidate pool (no sort): the rating index answers the range, randomness happens here.
 const CANDIDATE_CAP: i64 = 5_000;
 
 /// Partial Fisher-Yates over `items` (reordered in place), keeping `count` (clamped to the length,
-/// truncated like `Array.prototype.slice`).
+/// fractions dropped).
 fn take_random<T: Clone>(items: &mut [T], count: f64, random: &mut dyn FnMut() -> f64) -> Vec<T> {
     let length = items.len();
     let keep = count.min(length as f64).max(0.0);
@@ -386,7 +279,7 @@ fn pick_window(
     max: f64,
     used: &HashSet<String>,
     random: &mut dyn FnMut() -> f64,
-) -> Result<Vec<Puzzle>, String> {
+) -> Result<Vec<Puzzle>> {
     if min > max {
         return Ok(Vec::new());
     }
@@ -422,11 +315,11 @@ pub fn query_puzzles(
     db: &Connection,
     query: &LocalPuzzleQuery,
     random: &mut dyn FnMut() -> f64,
-) -> Result<Vec<Puzzle>, String> {
+) -> Result<Vec<Puzzle>> {
     require_installed(db)?;
-    let min = query.min_rating.unwrap_or(0.0);
-    let max = query.max_rating.unwrap_or(4000.0);
-    let count = query.count.max(0.0);
+    let min = query.min_rating.map_or(0.0, f64::from);
+    let max = query.max_rating.map_or(4000.0, f64::from);
+    let count = f64::from(query.count);
     if count == 0.0 {
         return Ok(Vec::new());
     }
@@ -510,7 +403,7 @@ pub fn query_puzzles(
     Ok(to_puzzles(&picked))
 }
 
-/// JavaScript's `Math.round`: halves round up, also for negative numbers.
+/// Halves round up, also for negative numbers.
 fn js_round(value: f64) -> f64 {
     (value + 0.5).floor()
 }
@@ -520,14 +413,18 @@ pub fn query_ladder(
     db: &Connection,
     query: &LocalLadderQuery,
     random: &mut dyn FnMut() -> f64,
-) -> Result<Vec<Puzzle>, String> {
+) -> Result<Vec<Puzzle>> {
     require_installed(db)?;
     let mut used: HashSet<String> = HashSet::new();
     let mut ladder: Vec<Puzzle> = Vec::new();
+    let (from, to, count) = (
+        f64::from(query.from),
+        f64::from(query.to),
+        f64::from(query.count),
+    );
     let mut step = 0.0_f64;
-    while step < query.count {
-        let target =
-            js_round(query.from + ((query.to - query.from) * step) / (query.count - 1.0).max(1.0));
+    while step < count {
+        let target = js_round(from + ((to - from) * step) / (count - 1.0).max(1.0));
         // Widen the window until something unused turns up (the sample is thin at the extremes).
         for reach in [30.0, 80.0, 200.0, 500.0] {
             let pick = pick_window(db, target - reach, target + reach, &used, random)?
@@ -550,7 +447,7 @@ mod tests {
 
     const FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-    /// A seeded stand-in for `Math.random` (a 64-bit LCG, top 53 bits).
+    /// A seeded generator of [0, 1) (a 64-bit LCG, top 53 bits).
     fn seeded(seed: u64) -> impl FnMut() -> f64 {
         let mut state = seed;
         move || {
@@ -650,7 +547,7 @@ mod tests {
                 theme: Some("Kings_Gambit_Accepted".into()),
                 min_rating: None,
                 max_rating: None,
-                count: 20.0,
+                count: 20,
             },
             &mut random,
         )
@@ -670,9 +567,9 @@ mod tests {
             &db,
             &LocalPuzzleQuery {
                 theme: None,
-                min_rating: Some(1000.0),
-                max_rating: Some(1500.0),
-                count: 20.0,
+                min_rating: Some(1000),
+                max_rating: Some(1500),
+                count: 20,
             },
             &mut random,
         )
@@ -694,9 +591,9 @@ mod tests {
             &db,
             &LocalPuzzleQuery {
                 theme: Some("mate".to_string()),
-                min_rating: Some(0.0),
-                max_rating: Some(4000.0),
-                count: 30.0,
+                min_rating: Some(0),
+                max_rating: Some(4000),
+                count: 30,
             },
             &mut random,
         )
@@ -710,9 +607,9 @@ mod tests {
             &db,
             &LocalPuzzleQuery {
                 theme: Some("mateIn".to_string()),
-                min_rating: Some(0.0),
-                max_rating: Some(4000.0),
-                count: 10.0,
+                min_rating: Some(0),
+                max_rating: Some(4000),
+                count: 10,
             },
             &mut random,
         )
@@ -747,9 +644,9 @@ mod tests {
         let ladder = query_ladder(
             &db,
             &LocalLadderQuery {
-                from: 900.0,
-                to: 2000.0,
-                count: 6.0,
+                from: 900,
+                to: 2000,
+                count: 6,
             },
             &mut random,
         )
@@ -783,13 +680,13 @@ mod tests {
                 theme: None,
                 min_rating: None,
                 max_rating: None,
-                count: 1.0,
+                count: 1,
             },
             &mut random,
         )
         .expect_err("not installed");
         assert_eq!(
-            error,
+            error.message,
             "Download the puzzle database first (Settings → Offline downloads, or the Rush tab)."
         );
     }
@@ -815,6 +712,51 @@ mod tests {
         );
     }
 
+    /// A repeated id is stored once, and its bytes are counted once.
+    #[test]
+    fn store_sample_counts_a_repeated_id_once() {
+        let db = Connection::open_in_memory().expect("in-memory database");
+        create_schema(&db).expect("schema");
+        let good = row("good", 1200.0, "mate");
+        let count = store_sample(&db, &[good.clone(), good.clone()], &|| false).expect("store");
+        assert_eq!(count, 1);
+        assert_eq!(
+            read_status(&db, false).expect("status").bytes,
+            (good.id.len() + good.fen.len() + good.moves.len() + good.themes.len() + 24) as i64
+        );
+    }
+
+    /// Each step's puzzle is the one at that step's rating, among puzzles every 50 points from the
+    /// first step to the last and many easier ones.
+    #[test]
+    fn a_ladder_steps_evenly_from_its_first_rating_to_its_last() {
+        let db = Connection::open_in_memory().expect("in-memory database");
+        create_schema(&db).expect("schema");
+        let steps = [1000.0, 1200.0, 1400.0, 1600.0, 1800.0, 2000.0];
+        let rows: Vec<DbPuzzle> = (0..21)
+            .map(|i| 1000.0 + f64::from(i) * 50.0)
+            .chain((0..60).map(|i| 100.0 + f64::from(i) * 10.0))
+            .enumerate()
+            .map(|(i, rating)| row(&format!("r{i:03}"), rating, "fork"))
+            .collect();
+        store_sample(&db, &rows, &|| false).expect("store sample");
+        for seed in 0..8 {
+            let mut random = seeded(seed);
+            let ladder = query_ladder(
+                &db,
+                &LocalLadderQuery {
+                    from: 1000,
+                    to: 2000,
+                    count: 6,
+                },
+                &mut random,
+            )
+            .expect("ladder");
+            let ratings: Vec<f64> = ladder.iter().map(|p| p.rating).collect();
+            assert_eq!(ratings, steps, "seed {seed}");
+        }
+    }
+
     #[test]
     fn store_sample_keeps_the_old_puzzles_when_cancelled() {
         let db = setup(50);
@@ -823,7 +765,7 @@ mod tests {
             .map(|i| row(&format!("new{i}"), 1200.0, "mate"))
             .collect();
         let error = store_sample(&db, &rows, &|| true).expect_err("cancelled");
-        assert_eq!(error, "Puzzle import cancelled.");
+        assert_eq!(error.message, "Puzzle import cancelled.");
         assert_eq!(read_status(&db, false).expect("status").count, before);
     }
 
@@ -847,7 +789,7 @@ mod tests {
                 theme: None,
                 min_rating: None,
                 max_rating: None,
-                count: 1.0,
+                count: 1,
             },
             &mut random,
         )

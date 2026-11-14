@@ -22,7 +22,8 @@ use crate::settings::{SettingsChanged, SettingsHandle};
 
 mod patch;
 
-const REPOSITORY: &str = "ketansingrole/KChess-V2";
+use kchess_delta::{PREFIX, REPOSITORY, Version, sums};
+
 const FEED: &str = "https://api.github.com";
 /// How long a download waits for the server's next bytes before it counts as stopped.
 const IDLE: Duration = if cfg!(test) {
@@ -30,10 +31,8 @@ const IDLE: Duration = if cfg!(test) {
 } else {
     Duration::from_secs(30)
 };
-/// `checkAutomatically`: on startup and every six hours.
+/// On startup and every six hours.
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
-/// The name KChess's packages carry.
-const PREFIX: &str = "KChess";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -135,14 +134,9 @@ pub struct UpdatesHandle(pub Entity<Updates>);
 
 impl Global for UpdatesHandle {}
 
-/// `vYYYY.M.C` or `YYYY.M.C` as numbers, to compare releases.
-pub fn parse_version(text: &str) -> Option<[u64; 3]> {
-    let mut parts = text.trim().trim_start_matches('v').split('.');
-    let mut out = [0; 3];
-    for slot in &mut out {
-        *slot = parts.next()?.parse().ok()?;
-    }
-    parts.next().is_none().then_some(out)
+/// `vYYYY.M.C` or `YYYY.M.C` as a release, to compare releases.
+pub fn parse_version(text: &str) -> Option<Version> {
+    Version::of_tag(text)
 }
 
 /// This app's name in version labels, so a report says which KChess app it came from.
@@ -171,40 +165,20 @@ pub fn asset_name(version: &str, package: Package) -> Option<String> {
     Some(asset.name(version, kchess_delta::Arch::current()?))
 }
 
-/// The release key's public half (`update-key.pub`): its one line that is not a comment, the
-/// base64 of a 32-byte Ed25519 key. `None` until a key is made (`cargo xtask update-key`).
+/// The release key's public half (`update-key.pub`). `None` until a key is made
+/// (`cargo xtask update-key`).
 pub fn update_key() -> Option<Vec<u8>> {
-    parse_update_key(include_str!("../update-key.pub"))
+    sums::parse_key(include_str!("../update-key.pub"))
 }
 
-pub fn parse_update_key(file: &str) -> Option<Vec<u8>> {
-    use base64::Engine as _;
-    let line = file
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with('#'))?;
-    base64::engine::general_purpose::STANDARD
-        .decode(line)
-        .ok()
-        .filter(|key| key.len() == 32)
-}
-
-/// Whether `signature` (base64, `SHA256SUMS.txt.sig`) is `key`'s Ed25519 signature of `sums`.
+/// Whether `signature` is `key`'s signature of the release's checksums `sums`.
 pub fn sums_signed_by(key: &[u8], sums: &[u8], signature: &str) -> Result<(), String> {
-    use base64::Engine as _;
-    let signature = base64::engine::general_purpose::STANDARD
-        .decode(signature.trim())
-        .map_err(|_| "The release's checksum signature could not be read")?;
-    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key)
-        .verify(sums, &signature)
-        .map_err(|_| "The release's checksums are not signed by KChess".to_string())
-}
-
-/// The SHA-256 a `SHA256SUMS.txt` lists for `name`.
-pub fn digest_for(sums: &str, name: &str) -> Option<String> {
-    sums.lines().find_map(|line| {
-        let (digest, file) = line.split_once(char::is_whitespace)?;
-        (file.trim().trim_start_matches('*') == name).then(|| digest.to_ascii_lowercase())
+    sums::verify(key, sums, signature).map_err(|unsigned| {
+        match unsigned {
+            sums::Unsigned::Unreadable => "The release's checksum signature could not be read",
+            sums::Unsigned::NotTheKeys => "The release's checksums are not signed by KChess",
+        }
+        .to_string()
     })
 }
 
@@ -264,7 +238,7 @@ fn rename_bridge_folder(bundle: &Path) -> std::io::Result<Option<PathBuf>> {
     if bundle.file_name() != Some(BRIDGE_FOLDER.as_ref()) {
         return Ok(None);
     }
-    let target = bundle.with_file_name("KChess.app");
+    let target = bundle.with_file_name(kchess_delta::installed::MAC_BUNDLE);
     if target.exists() {
         return Ok(None);
     }
@@ -534,25 +508,7 @@ impl Part {
     /// The SHA-256 of everything written, once it is on disk.
     fn finish(&mut self) -> std::io::Result<String> {
         std::io::Write::flush(&mut self.file)?;
-        Ok(hex(&self.hasher.clone().finalize()))
-    }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// The SHA-256 of the file at `path`, if it can be read.
-fn file_digest(path: &Path) -> Option<String> {
-    use std::io::Read as _;
-    let mut file = std::fs::File::open(path).ok()?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; 1 << 20];
-    loop {
-        match file.read(&mut buffer).ok()? {
-            0 => return Some(hex(&hasher.finalize())),
-            read => hasher.update(&buffer[..read]),
-        }
+        Ok(kchess_delta::hex(&self.hasher.clone().finalize()))
     }
 }
 
@@ -673,7 +629,7 @@ fn kept_folder(root: &Path, version: &str) -> PathBuf {
 
 /// Remove the kept downloads `stale` names (by version), except one another KChess is still
 /// downloading into (its folder's lock is held).
-fn prune_kept(root: &Path, stale: impl Fn(Option<[u64; 3]>) -> bool) {
+fn prune_kept(root: &Path, stale: impl Fn(Option<Version>) -> bool) {
     let Ok(entries) = std::fs::read_dir(root.join(KEPT)) else {
         return;
     };
@@ -737,7 +693,7 @@ async fn download_signed(
     let sums = small_file(
         &client,
         &release,
-        "SHA256SUMS.txt",
+        sums::FILE,
         "The release lists no checksums",
         "Could not download the checksums",
     )
@@ -746,15 +702,15 @@ async fn download_signed(
         let signature = small_file(
             &client,
             &release,
-            "SHA256SUMS.txt.sig",
+            sums::SIGNATURE,
             "The release's checksums are not signed",
             "Could not download the checksum signature",
         )
         .await?;
         sums_signed_by(&key, sums.as_bytes(), &signature)?;
     }
-    let expected =
-        digest_for(&sums, &asset.name).ok_or("The release lists no checksum for this package")?;
+    let expected = sums::digest_of(&sums, &asset.name)
+        .ok_or("The release lists no checksum for this package")?;
     let fail = |cause: std::io::Error| cause.to_string();
     std::fs::create_dir_all(&folder).map_err(fail)?;
     // One download of a version at a time: another KChess downloading it is waited for, and its
@@ -767,7 +723,7 @@ async fn download_signed(
         .map_err(fail)?;
     lock.lock().map_err(fail)?;
     let file_path = folder.join(&asset.name);
-    if file_digest(&file_path).is_some_and(|digest| digest == expected) {
+    if kchess_delta::file_digest(&file_path).is_ok_and(|digest| digest == expected) {
         log(&format!("{} was already downloaded", asset.name));
         let size = std::fs::metadata(&file_path).map_or(asset.size, |meta| meta.len());
         let _ = progress.unbounded_send((size, size));
@@ -1554,7 +1510,7 @@ fn last_install_error(install: Option<&Install>, root: Option<&Path>) -> Option<
 }
 
 pub fn init(cx: &mut App) {
-    let store = kchess_core::app_store();
+    let store = kchess_host::app_store();
     let install = (!cfg!(debug_assertions) && !store)
         .then(installed)
         .flatten();
@@ -1569,7 +1525,7 @@ pub fn init(cx: &mut App) {
         }
     }
     let failed = last_install_error(install.as_ref(), root.as_deref());
-    let feed = kchess_core::dev_override("KCHESS_UPDATE_FEED")
+    let feed = kchess_host::dev_override("KCHESS_UPDATE_FEED")
         .map(|feed| feed.to_string_lossy().into_owned())
         .filter(|_| !store)
         .or_else(|| install.is_some().then(|| FEED.to_string()));
@@ -1616,7 +1572,7 @@ pub fn init(cx: &mut App) {
     // An update downloaded and waiting goes in when KChess quits, if the settings say so (or to
     // restart into it): only after every document is saved, since the installer closes the app.
     let quitting = updates.clone();
-    crate::core::after_quit(cx, move |cx| {
+    crate::quit::after_quit(cx, move |cx| {
         let on_quit = cx
             .global::<SettingsHandle>()
             .0
@@ -1671,13 +1627,10 @@ impl Updates {
         if self._timer.is_some() {
             return;
         }
-        self._timer = Some(cx.spawn(async move |this, cx| {
-            loop {
-                if this.update(cx, |this, cx| this.check(true, cx)).is_err() {
-                    return;
-                }
-                cx.background_executor().timer(CHECK_EVERY).await;
-            }
+        self.check(true, cx);
+        self._timer = Some(crate::timer::every(CHECK_EVERY, cx, |this, cx| {
+            this.check(true, cx);
+            true
         }));
     }
 
@@ -1859,7 +1812,7 @@ impl Updates {
         let (saved, cancelled) = (cx.entity().downgrade(), cx.entity().downgrade());
         // Every document reaches the profile first, as on any quit: the installer may close
         // the app.
-        crate::core::prepare_quit(
+        crate::quit::prepare_quit(
             cx,
             "Restart without saving",
             move |cx| {
@@ -1882,7 +1835,7 @@ impl Updates {
         if install.package == Package::WindowsInstaller {
             // The installer closes this app: it starts as the app quits, after the core closes.
             self.restart = true;
-            return crate::core::quit_saved(cx);
+            return crate::quit::quit_saved(cx);
         }
         self.staged = None;
         // Off the UI thread: the package manager may wait for a password.

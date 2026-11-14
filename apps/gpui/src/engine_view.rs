@@ -6,7 +6,7 @@ use std::rc::Rc;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::Value;
+use kchess_contracts::types::EngineLine;
 use shakmaty::Color;
 
 use crate::game::tree::{format_eval, pv_san, winning_chances};
@@ -24,7 +24,7 @@ pub type PlayLine = Rc<dyn Fn(&[String], usize, &mut Window, &mut App)>;
 
 /// The evaluation bar: White's share fills from White's side of the board; stripes until there is
 /// something to show.
-pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) -> Canvas<()> {
+pub fn eval_bar(line: Option<&EngineLine>, orientation: Color, result: Option<&str>) -> Canvas<()> {
     let known = line.is_some() || result.is_some();
     let white = match result {
         Some("1-0") => 1.,
@@ -38,7 +38,7 @@ pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) 
             let dark = rgb(0x403d39);
             window.paint_quad(fill(bounds, dark).corner_radii(radii::XS));
             if !known {
-                // `repeating-linear-gradient(135deg, …)`: light stripes over the dark bar.
+                // Light stripes over the dark bar.
                 let step = 8.;
                 let height = bounds.size.height.as_f32();
                 let width = bounds.size.width.as_f32();
@@ -102,13 +102,13 @@ pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) 
     .flex_none()
 }
 
-/// What the engine panel lists (`engine_lines`): the `lines` searched from `fen` (in `variant`, a
-/// Lichess key), how many rows wait for lines still to come (`pending`), and, when there is
-/// nothing to search, why (`ended`).
+/// What the engine panel lists (`engine_lines`): the `lines` searched from `fen` in `variant`, how
+/// many rows wait for lines still to come (`pending`), and, when there is nothing to search, why
+/// (`ended`).
 pub struct EngineLines<'a> {
     pub fen: &'a str,
-    pub variant: &'a str,
-    pub lines: &'a [Value],
+    pub variant: kchess_domain::variant::Variant,
+    pub lines: &'a [EngineLine],
     pub pending: usize,
     pub ended: Option<&'static str>,
 }
@@ -139,7 +139,7 @@ pub fn engine_lines(
         );
     } else {
         for (index, line) in lines.iter().enumerate() {
-            let pv: Vec<String> = serde_json::from_value(line["pv"].clone()).unwrap_or_default();
+            let pv = line.pv.clone();
             let moves = pv_san(fen, &pv, 12, variant);
             let eval_pv = pv.clone();
             rows.push(

@@ -3,7 +3,14 @@
 //! connected accounts have fared against them, and their synced games — with follow, import
 //! from Lichess, sync, clear and remove.
 
+use crate::loading::Epoch;
 use kchess_contracts::calls;
+use kchess_contracts::check::{FriendList, PresenceUsers, Username};
+use kchess_contracts::types::{
+    Account, FollowedUser, FollowingProblem, FollowingReport, GameRecord, TimelineEntry,
+    UserPresence,
+};
+use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
@@ -15,7 +22,7 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::accounts::{Accounts, AccountsHandle};
 use crate::assets::icon;
@@ -54,21 +61,21 @@ fn sync_all(window: &mut Window, cx: &mut App) {
 
 pub struct FriendsPage {
     input: Entity<InputState>,
-    /// Profiles by lowercase name (`LichessUser`), and presence (`UserPresence`).
+    /// Profiles by lowercase name, and presence (`UserPresence`).
     profiles: HashMap<String, Value>,
     /// When every profile was last asked for.
     profiles_asked: Option<std::time::Instant>,
-    status: HashMap<String, Value>,
+    status: HashMap<String, UserPresence>,
     loading: bool,
     /// `gameLibraryOverview().versus`: the connected accounts' record against each player.
-    versus: Value,
+    versus: BTreeMap<String, GameRecord>,
     /// How many players were followed at the last look.
     followed: usize,
     importer: Option<Entity<ImportDialog>>,
     /// What the players on the list did lately (`TimelineEntry`s), once read.
-    timeline: Option<Vec<Value>>,
+    timeline: Option<Vec<TimelineEntry>>,
     timeline_error: Option<SharedString>,
-    timeline_epoch: u64,
+    timeline_epoch: Epoch,
     /// How many of its lines the timeline shows.
     timeline_shown: usize,
     focus: FocusHandle,
@@ -84,12 +91,12 @@ impl Focusable for FriendsPage {
 
 /// Whether Lichess has games of the player that the last sync did not download: their play time
 /// grows with every finished game, so a profile with more than the sync saved has new ones.
-fn has_new_games(friend: &Value, profile: &Value) -> bool {
+fn has_new_games(friend: &Account, profile: &Value) -> bool {
     match (
-        friend["syncedPlayTime"].as_f64(),
+        friend.synced_play_time,
         profile["playTime"]["total"].as_f64(),
     ) {
-        (Some(synced), Some(now)) => now > synced,
+        (Some(synced), Some(now)) => now > synced as f64,
         _ => false,
     }
 }
@@ -98,9 +105,9 @@ fn key(name: &str) -> String {
     name.to_lowercase()
 }
 
-/// "5 minutes ago", for last seen and last synced.
+/// "5 min ago", for last seen and last synced.
 fn ago(millis: f64) -> String {
-    crate::studies::time_ago(millis, crate::studies::now())
+    crate::widgets::time_ago(millis, kchess_games::now_ms())
 }
 
 impl FriendsPage {
@@ -130,13 +137,9 @@ impl FriendsPage {
                 }),
             ];
         // Cheap (one small request for everyone), and stops with the page.
-        let poll = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(PRESENCE_EVERY).await;
-                if this.update(cx, |this, cx| this.refresh_status(cx)).is_err() {
-                    return;
-                }
-            }
+        let poll = crate::timer::every(PRESENCE_EVERY, cx, |this, cx| {
+            this.refresh_status(cx);
+            true
         });
         let mut page = FriendsPage {
             input,
@@ -144,12 +147,12 @@ impl FriendsPage {
             profiles_asked: None,
             status: HashMap::new(),
             loading: false,
-            versus: Value::Null,
+            versus: BTreeMap::new(),
             followed: 0,
             importer: None,
             timeline: None,
             timeline_error: None,
-            timeline_epoch: 0,
+            timeline_epoch: Epoch::default(),
             timeline_shown: TIMELINE_FIRST,
             focus: cx.focus_handle(),
             _poll: poll,
@@ -159,7 +162,7 @@ impl FriendsPage {
         page
     }
 
-    fn friends(cx: &App) -> Vec<Value> {
+    fn friends(cx: &App) -> Vec<Account> {
         crate::accounts::handle(cx).read(cx).tracked()
     }
 
@@ -174,8 +177,7 @@ impl FriendsPage {
 
     /// What the players on the list did lately, from their Lichess activity.
     fn load_timeline(&mut self, cx: &mut Context<Self>) {
-        self.timeline_epoch += 1;
-        let epoch = self.timeline_epoch;
+        let epoch = self.timeline_epoch.next();
         self.timeline_error = None;
         if Self::friends(cx).is_empty() || !crate::network::online(cx) {
             self.timeline = None;
@@ -185,15 +187,11 @@ impl FriendsPage {
         cx.spawn(async move |this, cx| {
             let answer = timeline.await;
             let _ = this.update(cx, |this, cx| {
-                if this.timeline_epoch != epoch {
+                if !this.timeline_epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
-                    Ok(Value::Array(entries)) => this.timeline = Some(entries),
-                    // Anything else is not a timeline, so it is not "Nothing new" either.
-                    Ok(_) => {
-                        this.timeline_error = Some("Lichess sent an unexpected timeline.".into())
-                    }
+                    Ok(entries) => this.timeline = Some(entries),
                     Err(cause) => this.timeline_error = Some(cause.message.into()),
                 }
                 cx.notify();
@@ -206,23 +204,17 @@ impl FriendsPage {
         let overview = cx
             .global::<AppCore>()
             .request(calls::GameLibraryOverview {});
-        cx.spawn(async move |this, cx| {
-            if let Ok(overview) = overview.await {
-                let _ = this.update(cx, |this, cx| {
-                    this.versus = overview["versus"].clone();
-                    cx.notify();
-                });
-            }
-        })
-        .detach();
+        crate::loading::fetch(cx, "friends", overview, |this, overview, _| {
+            this.versus = overview.versus;
+        });
     }
 
-    /// `loadProfiles`: saved profiles at once, the rest in one request per thousand players; every
+    /// Saved profiles at once, the rest in one request per thousand players; every
     /// few minutes the rest is everyone, so a play time that grew shows as new games.
     fn load_profiles(&mut self, cx: &mut Context<Self>) {
         let names: Vec<String> = Self::friends(cx)
-            .iter()
-            .filter_map(|friend| friend["username"].as_str().map(str::to_string))
+            .into_iter()
+            .map(|friend| friend.username)
             .collect();
         if names.is_empty() {
             return;
@@ -241,21 +233,19 @@ impl FriendsPage {
             for name in &names {
                 if let Ok(saved) = core
                     .request(calls::CachedProfile {
-                        username: json!(name),
+                        username: Username(name.clone()),
                     })
                     .await
-                    && saved["profile"].is_object()
+                    && let Some(profile) = saved.profile.filter(Value::is_object)
                 {
-                    let recent = saved["profileFetchedAt"]
-                        .as_f64()
-                        .is_some_and(|at| crate::studies::now() - at < PROFILE_FRESH_MS);
+                    let recent = saved
+                        .profile_fetched_at
+                        .is_some_and(|at| kchess_games::now_ms() - (at as f64) < PROFILE_FRESH_MS);
                     if recent && !everyone {
                         fresh.insert(key(name));
                     }
                     let _ = this.update(cx, |this, cx| {
-                        this.profiles
-                            .entry(key(name))
-                            .or_insert(saved["profile"].clone());
+                        this.profiles.entry(key(name)).or_insert(profile);
                         cx.notify();
                     });
                 }
@@ -266,9 +256,9 @@ impl FriendsPage {
                 .cloned()
                 .collect();
             for chunk in stale.chunks(PROFILES_CHUNK) {
-                if let Ok(Value::Array(users)) = core
+                if let Ok(users) = core
                     .request(calls::Profiles {
-                        usernames: json!(chunk),
+                        usernames: FriendList(chunk.to_vec()),
                     })
                     .await
                 {
@@ -291,35 +281,26 @@ impl FriendsPage {
         .detach();
     }
 
-    /// `refreshStatus`: who is online or playing, fifty names a request.
+    /// Who is online or playing, fifty names a request.
     fn refresh_status(&mut self, cx: &mut Context<Self>) {
         let names: Vec<String> = Self::friends(cx)
-            .iter()
-            .filter_map(|friend| friend["username"].as_str().map(str::to_string))
+            .into_iter()
+            .map(|friend| friend.username)
             .collect();
         let core = cx.global::<AppCore>().clone();
         for chunk in names.chunks(PRESENCE_CHUNK) {
             let presence = core.request(calls::Presence {
-                usernames: json!(chunk),
+                usernames: PresenceUsers(chunk.to_vec()),
             });
-            cx.spawn(async move |this, cx| {
-                if let Ok(report) = presence.await
-                    && let Some(users) = report["users"].as_object()
-                {
-                    let users = users.clone();
-                    let _ = this.update(cx, |this, cx| {
-                        for (name, presence) in users {
-                            this.status.insert(key(&name), presence);
-                        }
-                        cx.notify();
-                    });
+            crate::loading::fetch(cx, "friends", presence, |this, report, _| {
+                for (name, presence) in report.users {
+                    this.status.insert(key(&name), presence);
                 }
-            })
-            .detach();
+            });
         }
     }
 
-    /// `addAccount`: follow the player typed and download their games.
+    /// Follow the player typed and download their games.
     fn follow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.input.read(cx).value().trim().to_string();
         if name.is_empty() {
@@ -432,12 +413,12 @@ impl FriendsPage {
     /// One followed player's row.
     fn row(
         &self,
-        friend: &Value,
+        friend: &Account,
         accounts: &Accounts,
         index: usize,
         palette: &Palette,
     ) -> AnyElement {
-        let name = friend["username"].as_str().unwrap_or_default().to_string();
+        let name = friend.username.clone();
         let profile = self
             .profiles
             .get(&key(&name))
@@ -447,15 +428,13 @@ impl FriendsPage {
         let (games, stored) = accounts.stored(&name);
         let (label, dot) = match &presence {
             None => ("Status unknown", palette.text_muted),
-            Some(presence) if presence["playing"] == json!(true) => {
-                ("Playing now", palette.success)
-            }
-            Some(presence) if presence["online"] == json!(true) => ("Online", palette.success),
+            Some(presence) if presence.playing => ("Playing now", palette.success),
+            Some(presence) if presence.online => ("Online", palette.success),
             Some(_) => ("Offline", palette.border_accented),
         };
         let seen = presence
             .as_ref()
-            .filter(|presence| presence["online"] != json!(true))
+            .filter(|presence| !presence.online)
             .and(profile["seenAt"].as_f64())
             .map(|seen| format!(" · seen {}", ago(seen)));
         let rating = |perf: &str| {
@@ -463,18 +442,14 @@ impl FriendsPage {
                 .as_f64()
                 .map_or_else(|| "—".to_string(), |rating| rating.to_string())
         };
-        let versus = &self.versus[key(&name)];
-        let versus = versus["win"].as_f64().map(|win| {
-            format!(
-                "{win}W {}L {}D",
-                versus["loss"].as_f64().unwrap_or_default(),
-                versus["draw"].as_f64().unwrap_or_default()
-            )
-        });
+        let versus = self
+            .versus
+            .get(&key(&name))
+            .map(|versus| format!("{}W {}L {}D", versus.win, versus.loss, versus.draw));
         let playing_id = presence
             .as_ref()
-            .and_then(|presence| presence["playingId"].as_str().map(str::to_string));
-        let synced = friend["lastSyncedAt"].as_f64();
+            .and_then(|presence| presence.playing_id.clone());
+        let synced = friend.last_synced_at.map(|at| at as f64);
         // Lichess has games the last sync did not download.
         let mut new_badge = has_new_games(friend, &profile).then(|| {
             div()
@@ -528,7 +503,9 @@ impl FriendsPage {
                                             .on_click({
                                                 let name = name.clone();
                                                 move |_, window, cx| {
-                                                    crate::shell::open_player(&name, window, cx)
+                                                    crate::pages::players::open_player(
+                                                        &name, window, cx,
+                                                    )
                                                 }
                                             })
                                             .child(format!("@{name}")),
@@ -621,7 +598,7 @@ impl FriendsPage {
                             .icon(icon("tv"))
                             .label("Watch")
                             .on_click(move |_, window, cx| {
-                                crate::shell::watch_game(&id, window, cx)
+                                crate::pages::watch::watch_game(&id, window, cx)
                             })
                     }))
                     .child(
@@ -631,7 +608,7 @@ impl FriendsPage {
                             .icon(icon("swords"))
                             .label("Challenge")
                             .on_click(move |_, window, cx| {
-                                crate::shell::challenge(&challenge_name, window, cx)
+                                crate::pages::online::challenge(&challenge_name, window, cx)
                             }),
                     )
                     .child(
@@ -642,7 +619,7 @@ impl FriendsPage {
                             .label("Games")
                             .disabled(games <= 0.)
                             .on_click(move |_, window, cx| {
-                                crate::shell::open_history_account(&games_name, window, cx)
+                                crate::pages::history::open_account(&games_name, window, cx)
                             }),
                     )
                     .child(
@@ -709,13 +686,11 @@ impl Render for FriendsPage {
         let handle = cx.global::<AccountsHandle>().0.clone();
         let accounts = handle.read(cx);
         let mut friends = accounts.tracked();
-        let rank = |friend: &Value, status: &HashMap<String, Value>| {
-            let presence = friend["username"]
-                .as_str()
-                .and_then(|name| status.get(&key(name)));
+        let rank = |friend: &Account, status: &HashMap<String, UserPresence>| {
+            let presence = status.get(&key(&friend.username));
             match presence {
-                Some(presence) if presence["playing"] == json!(true) => 0,
-                Some(presence) if presence["online"] == json!(true) => 1,
+                Some(presence) if presence.playing => 0,
+                Some(presence) if presence.online => 1,
                 _ => 2,
             }
         };
@@ -728,7 +703,7 @@ impl Render for FriendsPage {
         let (stored, downloaded) = friends
             .iter()
             .fold((0., 0.), |(stored, downloaded), friend| {
-                let name = friend["username"].as_str().unwrap_or_default();
+                let name = friend.username.as_str();
                 (
                     stored + accounts.stored(name).1,
                     downloaded + accounts.downloaded(name),
@@ -739,9 +714,8 @@ impl Render for FriendsPage {
         let new_games = friends
             .iter()
             .filter(|friend| {
-                let name = friend["username"].as_str().unwrap_or_default();
                 self.profiles
-                    .get(&key(name))
+                    .get(&key(&friend.username))
                     .is_some_and(|profile| has_new_games(friend, profile))
             })
             .count();
@@ -749,7 +723,7 @@ impl Render for FriendsPage {
         let header = h_flex()
             .flex_wrap()
             .gap(px(8.))
-            // `.friends-add-input`: 10rem to 22rem, with its user-plus icon.
+            // 10rem to 22rem, with its user-plus icon.
             .child(
                 div().flex_1().min_w(px(160.)).max_w(px(352.)).child(
                     Input::new(&self.input)
@@ -839,7 +813,7 @@ impl Render for FriendsPage {
                                 .gap(px(12.))
                                 .px(px(12.))
                                 .py(px(8.))
-                                // `.friends-table thead th`: 12px, medium, as written.
+                                // 12px, medium, as written.
                                 .text_size(px(12.))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(palette.text_muted)
@@ -938,7 +912,7 @@ impl FriendsPage {
 
 /// The players the connected accounts follow on Lichess, to add.
 pub struct ImportDialog {
-    report: Option<Value>,
+    report: Option<FollowingReport>,
     loading: bool,
     error: Option<String>,
     selected: HashSet<String>,
@@ -968,7 +942,7 @@ impl ImportDialog {
         dialog
     }
 
-    /// `loadFollowing`: ask Lichess afresh each time.
+    /// Ask Lichess afresh each time.
     fn load(&mut self, cx: &mut Context<Self>) {
         self.loading = true;
         self.error = None;
@@ -988,21 +962,14 @@ impl ImportDialog {
         .detach();
     }
 
-    fn candidates(&self, cx: &App) -> Vec<Value> {
+    fn candidates(&self, cx: &App) -> Vec<FollowedUser> {
         let needle = self.filter.read(cx).value().trim().to_lowercase();
         self.report
-            .as_ref()
-            .and_then(|report| report["users"].as_array())
-            .into_iter()
-            .flatten()
-            .filter(|user| user["alreadyAdded"] != json!(true))
-            .filter(|user| self.show_removed || user["dismissed"] != json!(true))
-            .filter(|user| {
-                needle.is_empty()
-                    || user["username"]
-                        .as_str()
-                        .is_some_and(|name| name.to_lowercase().contains(&needle))
-            })
+            .iter()
+            .flat_map(|report| &report.users)
+            .filter(|user| !user.already_added)
+            .filter(|user| self.show_removed || !user.dismissed)
+            .filter(|user| needle.is_empty() || user.username.to_lowercase().contains(&needle))
             .cloned()
             .collect()
     }
@@ -1011,193 +978,184 @@ impl ImportDialog {
 impl Render for ImportDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let users: Vec<Value> = self
+        let users: Vec<FollowedUser> = self
             .report
             .as_ref()
-            .and_then(|report| report["users"].as_array().cloned())
+            .map(|report| report.users.clone())
             .unwrap_or_default();
         let candidates = self.candidates(cx);
-        let already = users
-            .iter()
-            .filter(|user| user["alreadyAdded"] == json!(true))
-            .count();
+        let already = users.iter().filter(|user| user.already_added).count();
         let removed = users
             .iter()
-            .filter(|user| user["dismissed"] == json!(true) && user["alreadyAdded"] != json!(true))
+            .filter(|user| user.dismissed && !user.already_added)
             .count();
         let all_selected = !candidates.is_empty()
-            && candidates.iter().all(|user| {
-                user["username"]
-                    .as_str()
-                    .is_some_and(|name| self.selected.contains(name))
-            });
+            && candidates
+                .iter()
+                .all(|user| self.selected.contains(&user.username));
         let several = crate::accounts::handle(cx).read(cx).connected().len() > 1;
-        let problems: Vec<Value> = self
+        let problems: Vec<FollowingProblem> = self
             .report
             .as_ref()
-            .and_then(|report| report["problems"].as_array().cloned())
+            .map(|report| report.problems.clone())
             .unwrap_or_default();
         let count = self.selected.len();
-        let body: AnyElement = if self.loading {
-            h_flex()
-                .gap(px(8.))
-                .text_color(palette.text_muted)
-                .child(crate::widgets::spinner(px(14.)))
-                .child("Asking Lichess…")
-                .into_any_element()
-        } else if self.report.is_some() {
-            v_flex()
-                .gap(px(8.))
-                .child(
-                    h_flex()
-                        .gap(px(8.))
-                        .child(
-                            div().flex_1().child(
-                                Input::new(&self.filter).aria_label("Filter followed players"),
-                            ),
-                        )
-                        .child(
-                            Button::new("import-all")
-                                .outline()
-                                .label(if all_selected { "Clear" } else { "Select all" })
-                                .disabled(candidates.is_empty())
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    let names: Vec<String> = this
-                                        .candidates(cx)
-                                        .iter()
-                                        .filter_map(|user| {
-                                            user["username"].as_str().map(str::to_string)
-                                        })
-                                        .collect();
-                                    if all_selected {
-                                        this.selected.clear();
-                                    } else {
-                                        this.selected.extend(names);
-                                    }
-                                    cx.notify();
-                                })),
-                        ),
-                )
-                .child(if candidates.is_empty() {
-                    widgets::empty_state(
-                        icon("users"),
-                        if users.is_empty() {
-                            "No followed players found"
-                        } else {
-                            "Nobody new to add"
-                        },
-                        Some(
-                            if users.is_empty() {
-                                "Follow players on lichess.org and they will show up here"
-                            } else {
-                                "Everyone they follow is already in Following"
-                            }
-                            .into(),
-                        ),
-                        &palette,
-                    )
+        let body: AnyElement =
+            if self.loading {
+                h_flex()
+                    .gap(px(8.))
+                    .text_color(palette.text_muted)
+                    .child(crate::widgets::spinner(px(14.)))
+                    .child("Asking Lichess…")
                     .into_any_element()
-                } else {
-                    v_flex()
-                        .id("import-list")
-                        .max_h(px(320.))
-                        .overflow_y_scroll()
-                        .children(candidates.iter().enumerate().map(|(index, user)| {
-                            let name = user["username"].as_str().unwrap_or_default().to_string();
-                            let checked = self.selected.contains(&name);
-                            let mut ratings = Vec::new();
-                            if let Some(blitz) = user["ratings"]["blitz"].as_f64() {
-                                ratings.push(format!("Blitz {blitz}"));
-                            }
-                            if let Some(rapid) = user["ratings"]["rapid"].as_f64() {
-                                ratings.push(format!("Rapid {rapid}"));
-                            }
-                            let via: Vec<String> = user["followedBy"]
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .filter_map(|name| name.as_str().map(|name| format!("@{name}")))
-                                .collect();
-                            let toggled = name.clone();
-                            h_flex()
-                                .gap(px(8.))
-                                .py(px(6.))
-                                .child(
-                                    Checkbox::new(("import-user", index))
-                                        .checked(checked)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            if !this.selected.remove(&toggled) {
-                                                this.selected.insert(toggled.clone());
-                                            }
-                                            cx.notify();
-                                        })),
-                                )
-                                .child(
-                                    div()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .child(format!("@{name}")),
-                                )
-                                .children(user["title"].as_str().map(|title| {
-                                    widgets::badge(title.to_string(), Look::Primary, &palette)
-                                }))
-                                .when(user["dismissed"] == json!(true), |row| {
-                                    row.child(widgets::badge(
-                                        "Removed before",
-                                        Look::NeutralSoft,
-                                        &palette,
-                                    ))
-                                })
-                                .child(div().flex_1())
-                                .child(
-                                    div()
-                                        .text_size(px(12.))
-                                        .text_color(palette.text_muted)
-                                        .child(ratings.join(" · ")),
-                                )
-                                .when(several, |row| {
-                                    row.child(
+            } else if self.report.is_some() {
+                v_flex()
+                    .gap(px(8.))
+                    .child(
+                        h_flex()
+                            .gap(px(8.))
+                            .child(div().flex_1().child(
+                                Input::new(&self.filter).aria_label("Filter followed players"),
+                            ))
+                            .child(
+                                Button::new("import-all")
+                                    .outline()
+                                    .label(if all_selected { "Clear" } else { "Select all" })
+                                    .disabled(candidates.is_empty())
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        let names: Vec<String> = this
+                                            .candidates(cx)
+                                            .into_iter()
+                                            .map(|user| user.username)
+                                            .collect();
+                                        if all_selected {
+                                            this.selected.clear();
+                                        } else {
+                                            this.selected.extend(names);
+                                        }
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(if candidates.is_empty() {
+                        widgets::empty_state(
+                            icon("users"),
+                            if users.is_empty() {
+                                "No followed players found"
+                            } else {
+                                "Nobody new to add"
+                            },
+                            Some(
+                                if users.is_empty() {
+                                    "Follow players on lichess.org and they will show up here"
+                                } else {
+                                    "Everyone they follow is already in Following"
+                                }
+                                .into(),
+                            ),
+                            &palette,
+                        )
+                        .into_any_element()
+                    } else {
+                        v_flex()
+                            .id("import-list")
+                            .max_h(px(320.))
+                            .overflow_y_scroll()
+                            .children(candidates.iter().enumerate().map(|(index, user)| {
+                                let name = user.username.clone();
+                                let checked = self.selected.contains(&name);
+                                let mut ratings = Vec::new();
+                                if let Some(blitz) = user.ratings.blitz {
+                                    ratings.push(format!("Blitz {blitz}"));
+                                }
+                                if let Some(rapid) = user.ratings.rapid {
+                                    ratings.push(format!("Rapid {rapid}"));
+                                }
+                                let via: Vec<String> = user
+                                    .followed_by
+                                    .iter()
+                                    .map(|name| format!("@{name}"))
+                                    .collect();
+                                let toggled = name.clone();
+                                h_flex()
+                                    .gap(px(8.))
+                                    .py(px(6.))
+                                    .child(
+                                        Checkbox::new(("import-user", index))
+                                            .checked(checked)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                if !this.selected.remove(&toggled) {
+                                                    this.selected.insert(toggled.clone());
+                                                }
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(format!("@{name}")),
+                                    )
+                                    .children(user.title.clone().map(|title| {
+                                        widgets::badge(title, Look::Primary, &palette)
+                                    }))
+                                    .when(user.dismissed, |row| {
+                                        row.child(widgets::badge(
+                                            "Removed before",
+                                            Look::NeutralSoft,
+                                            &palette,
+                                        ))
+                                    })
+                                    .child(div().flex_1())
+                                    .child(
                                         div()
                                             .text_size(px(12.))
                                             .text_color(palette.text_muted)
-                                            .child(format!("via {}", via.join(", "))),
+                                            .child(ratings.join(" · ")),
                                     )
-                                })
-                        }))
-                        .into_any_element()
-                })
-                .child(
-                    h_flex()
-                        .gap(px(4.))
-                        .text_size(px(12.))
-                        .text_color(palette.text_muted)
-                        .child(format!("{already} already added"))
-                        .when(removed > 0, |row| {
-                            row.child(
-                                div()
-                                    .id("import-removed")
-                                    .role(Role::Button)
-                                    .keyboard_focus(palette.primary)
-                                    .aria_label(format!(
-                                        "{} {removed} you removed earlier",
-                                        if self.show_removed { "Hide" } else { "Show" }
-                                    ))
-                                    .underline()
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.show_removed = !this.show_removed;
-                                        cx.notify();
-                                    }))
-                                    .child(format!(
-                                        "{} {removed} you removed earlier",
-                                        if self.show_removed { "Hide" } else { "Show" }
-                                    )),
-                            )
-                        }),
-                )
-                .into_any_element()
-        } else {
-            div().into_any_element()
-        };
+                                    .when(several, |row| {
+                                        row.child(
+                                            div()
+                                                .text_size(px(12.))
+                                                .text_color(palette.text_muted)
+                                                .child(format!("via {}", via.join(", "))),
+                                        )
+                                    })
+                            }))
+                            .into_any_element()
+                    })
+                    .child(
+                        h_flex()
+                            .gap(px(4.))
+                            .text_size(px(12.))
+                            .text_color(palette.text_muted)
+                            .child(format!("{already} already added"))
+                            .when(removed > 0, |row| {
+                                row.child(
+                                    div()
+                                        .id("import-removed")
+                                        .role(Role::Button)
+                                        .keyboard_focus(palette.primary)
+                                        .aria_label(format!(
+                                            "{} {removed} you removed earlier",
+                                            if self.show_removed { "Hide" } else { "Show" }
+                                        ))
+                                        .underline()
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.show_removed = !this.show_removed;
+                                            cx.notify();
+                                        }))
+                                        .child(format!(
+                                            "{} {removed} you removed earlier",
+                                            if self.show_removed { "Hide" } else { "Show" }
+                                        )),
+                                )
+                            }),
+                    )
+                    .into_any_element()
+            } else {
+                div().into_any_element()
+            };
         v_flex()
             .gap(px(12.))
             .child(widgets::hint(
@@ -1214,8 +1172,7 @@ impl Render for ImportDialog {
                     .child(icon("triangle-alert").size(px(14.)))
                     .child(format!(
                         "@{}: couldn't read who it follows. {}",
-                        problem["account"].as_str().unwrap_or_default(),
-                        problem["message"].as_str().unwrap_or_default()
+                        problem.account, problem.message
                     ))
             }))
             .children(self.error.clone().map(|error| {
@@ -1260,14 +1217,66 @@ impl Render for ImportDialog {
     }
 }
 
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::ActionInfo;
+        match self {
+            Action::Follow => {
+                ActionInfo::new("following:follow", "Follow player", "plus", "friend add")
+            }
+            Action::Import => ActionInfo::new(
+                "following:import",
+                "Import from Lichess",
+                "download",
+                "followed players",
+            ),
+            Action::Sync => {
+                ActionInfo::new("following:sync", "Sync all", "refresh-cw", "games download")
+            }
+        }
+    }
+}
+
+impl crate::pages::PageView for FriendsPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Friends,
+        label: "Following",
+        short: "Following",
+        icon: "users",
+        group: Some(crate::pages::NavGroup::Lichess),
+        keywords: "following players",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        FriendsPage::new(window, cx)
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        FriendsPage::actions(self, cx)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.act(action, window, cx));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::has_new_games;
+    use kchess_contracts::types::Account;
     use serde_json::json;
 
     #[test]
     fn a_longer_play_time_than_at_the_sync_means_new_games() {
-        let synced = json!({ "syncedPlayTime": 1000 });
+        let friend = |synced_play_time| Account {
+            username: "dana".into(),
+            connected: false,
+            last_synced_at: None,
+            synced_play_time,
+        };
+        let synced = friend(Some(1000));
         assert!(has_new_games(
             &synced,
             &json!({ "playTime": { "total": 1300 } })
@@ -1278,7 +1287,7 @@ mod tests {
         ));
         // Without a play time saved at a sync, or in the profile, nothing is claimed.
         assert!(!has_new_games(
-            &json!({}),
+            &friend(None),
             &json!({ "playTime": { "total": 1300 } })
         ));
         assert!(!has_new_games(&synced, &json!({})));

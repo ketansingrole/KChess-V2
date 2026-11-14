@@ -25,7 +25,6 @@ pub struct Tree {
 }
 
 impl Tree {
-    /// Its build folder.
     pub fn target(&self) -> PathBuf {
         self.path.join("target")
     }

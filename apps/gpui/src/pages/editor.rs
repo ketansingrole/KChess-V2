@@ -14,13 +14,14 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use serde_json::json;
 use shakmaty::{ByColor, ByRole, Color, Piece, RemainingChecks, Role};
 
 use crate::assets::icon;
 use crate::board::looks;
 use crate::board::{BoardEvent, BoardState, ChessBoard, EditTool, PieceGhost, SparePiece};
-use crate::game::{STANDARD_FEN, editor_setup, position_problem, rules, standard_rules, variants};
+use crate::game::surface::TakesKeys as _;
+use crate::game::{STANDARD_FEN, position_problem};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii, tint};
@@ -28,6 +29,9 @@ use crate::voice::control::{BarSpec, Control};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill, Tone};
+use kchess_domain::editor::{self, EditorSetup};
+use kchess_domain::variant::{Setup, Variant};
+use kchess_domain::voice::{self, EditorAction};
 
 const EMPTY_BOARD: &str = "8/8/8/8/8/8/8/8";
 /// The spare rows above and below the board, and the voice bar, take this much of its height.
@@ -48,28 +52,10 @@ const CASTLING: [(&str, &str); 4] = [
     ("q", "Black O-O-O"),
 ];
 
-/// `START_SETUP`.
-fn start_setup() -> Value {
-    json!({
-        "board": STANDARD_FEN.split(' ').next().unwrap_or_default(),
-        "turn": "white",
-        "castling": { "K": true, "Q": true, "k": true, "q": true },
-        "ep": "",
-    })
-}
-
-/// `setupFen`: the position as a FEN, with only the castling rights the pieces allow.
-fn setup_fen(setup: &Value) -> String {
-    rules("setupFen", std::slice::from_ref(setup))
-        .ok()
-        .and_then(|fen| fen.as_str().map(str::to_string))
-        .unwrap_or_default()
-}
-
 /// The FEN of `fen` (the editor's standard one) in `variant`: Crazyhouse adds the pockets and
 /// Three-check the checks left, as pasted (empty pockets, three checks each, otherwise).
 fn variant_fen(
-    variant: &str,
+    variant: Variant,
     fen: &str,
     pockets: Option<ByColor<ByRole<u8>>>,
     checks: Option<ByColor<RemainingChecks>>,
@@ -78,8 +64,8 @@ fn variant_fen(
         return fen.to_string();
     };
     match variant {
-        "crazyhouse" => setup.pockets = Some(pockets.unwrap_or_default()),
-        "threeCheck" => setup.remaining_checks = Some(checks.unwrap_or_default()),
+        Variant::Crazyhouse => setup.pockets = Some(pockets.unwrap_or_default()),
+        Variant::ThreeCheck => setup.remaining_checks = Some(checks.unwrap_or_default()),
         _ => return fen.to_string(),
     }
     kchess_domain::rules::make_setup_fen(&setup)
@@ -152,9 +138,9 @@ pub(crate) enum Action {
 }
 
 pub struct EditorPage {
-    setup: Value,
-    /// The variant the position is played in (a Lichess key).
-    variant: String,
+    setup: EditorSetup,
+    /// The variant the position is played in.
+    variant: Variant,
     variant_select: Entity<SelectState<Vec<SharedString>>>,
     /// A Crazyhouse position's pockets and a Three-check one's checks left, from its FEN.
     pockets: Option<ByColor<ByRole<u8>>>,
@@ -176,10 +162,10 @@ pub struct EditorPage {
     /// A piece said without a colour takes the colour said last.
     last_color: &'static str,
     /// Undo and redo: each position as `(variant, FEN)`, the one shown last of `undone`.
-    edits: Vec<(String, String)>,
-    undone: Vec<(String, String)>,
+    edits: Vec<(Variant, String)>,
+    undone: Vec<(Variant, String)>,
     /// The position as last recorded, which the next change is undone to.
-    shown: (String, String),
+    shown: (Variant, String),
     _subscriptions: Vec<Subscription>,
 }
 
@@ -193,7 +179,11 @@ impl EditorPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> EditorPage {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 None,
                 None,
@@ -203,9 +193,9 @@ impl EditorPage {
         let ep_select = cx.new(|cx| SelectState::new(Vec::<SharedString>::new(), None, window, cx));
         let variant_select = cx.new(|cx| {
             SelectState::new(
-                variants()
+                Variant::ALL
                     .iter()
-                    .map(|text| SharedString::from(text.label.clone()))
+                    .map(|variant| SharedString::from(variant.label()))
                     .collect(),
                 Some(IndexPath::new(0)),
                 window,
@@ -216,7 +206,7 @@ impl EditorPage {
         let subscriptions = vec![
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
                 if let BoardEvent::Edited(placement) = event {
-                    this.set_board(json!(placement), cx);
+                    this.set_board(placement.clone(), cx);
                 }
             }),
             cx.subscribe_in(&fen_input, window, |this, _, event: &InputEvent, _, cx| {
@@ -236,7 +226,7 @@ impl EditorPage {
                         .and_then(|index| this.ep_squares.get(index))
                         .cloned()
                         .unwrap_or_default();
-                    this.setup["ep"] = json!(ep);
+                    this.setup.ep = ep;
                     this.changed(cx);
                 },
             ),
@@ -247,10 +237,10 @@ impl EditorPage {
                         .read(cx)
                         .selected_index(cx)
                         .map_or(0, |index| index.row);
-                    if let Some(text) = variants().get(row)
-                        && text.key != this.variant
+                    if let Some(&variant) = Variant::ALL.get(row)
+                        && variant != this.variant
                     {
-                        this.variant = text.key.clone();
+                        this.variant = variant;
                         this.changed(cx);
                     }
                 },
@@ -266,8 +256,8 @@ impl EditorPage {
             cx.observe(&crate::voice::handle(cx), |_, _, cx| cx.notify()),
         ];
         let mut page = EditorPage {
-            setup: start_setup(),
-            variant: "standard".into(),
+            setup: EditorSetup::start(),
+            variant: Variant::Standard,
             variant_select,
             pockets: None,
             checks: None,
@@ -285,7 +275,7 @@ impl EditorPage {
             last_color: "white",
             edits: Vec::new(),
             undone: Vec::new(),
-            shown: (String::new(), String::new()),
+            shown: (Variant::Standard, String::new()),
             _subscriptions: subscriptions,
         };
         page.shown = page.snapshot();
@@ -293,22 +283,20 @@ impl EditorPage {
         page
     }
 
-    /// `editPosition`: the editor on a position (the analysis board's, in its variant), facing
+    /// The editor on a position (the analysis board's, in its variant), facing
     /// the same way.
     pub fn set_position(
         &mut self,
-        variant: &str,
+        variant: Variant,
         fen: &str,
         orientation: Color,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !self.read_fen(fen) {
-            self.setup = start_setup();
+            self.setup = EditorSetup::start();
         }
-        if kchess_domain::rules::lichess_variant(variant).is_some() {
-            self.variant = variant.to_string();
-        }
+        self.variant = variant;
         self.orientation = orientation;
         self.changed(cx);
     }
@@ -320,36 +308,35 @@ impl EditorPage {
             return false;
         };
         let (pockets, checks) = (parsed.pockets.take(), parsed.remaining_checks.take());
-        let Some(setup) = editor_setup(&kchess_domain::rules::make_setup_fen(&parsed)) else {
+        let Some(setup) = EditorSetup::from_fen(&kchess_domain::rules::make_setup_fen(&parsed))
+        else {
             return false;
         };
         self.setup = setup;
         self.pockets = pockets;
         self.checks = checks;
         if pockets.is_some() {
-            self.variant = "crazyhouse".into();
+            self.variant = Variant::Crazyhouse;
         } else if checks.is_some() {
-            self.variant = "threeCheck".into();
+            self.variant = Variant::ThreeCheck;
         }
         true
     }
 
     /// The position's FEN, in its variant.
     fn fen(&self) -> String {
-        variant_fen(
-            &self.variant,
-            &setup_fen(&self.setup),
-            self.pockets,
-            self.checks,
-        )
+        variant_fen(self.variant, &self.setup.fen(), self.pockets, self.checks)
     }
 
-    /// The position as a game starts from it (`{ variant, fen }`).
-    pub(crate) fn game_setup(&self) -> Value {
-        if standard_rules(&self.variant) {
+    /// The position as a game starts from it.
+    pub(crate) fn game_setup(&self) -> Setup {
+        if self.variant.standard_rules() {
             crate::game::setup_from_fen(&self.fen())
         } else {
-            json!({ "variant": self.variant, "fen": self.fen() })
+            Setup {
+                variant: self.variant,
+                fen: self.fen(),
+            }
         }
     }
 
@@ -357,40 +344,38 @@ impl EditorPage {
     /// rules refusing it.
     fn problem(&self) -> Option<String> {
         let fen = self.fen();
-        if standard_rules(&self.variant) {
+        if self.variant.standard_rules() {
             return position_problem(&fen).map(str::to_string);
         }
-        kchess_domain::rules::setup_start(&self.variant, &fen)
+        kchess_domain::rules::setup_start(self.variant, &fen)
             .is_none()
-            .then(|| {
-                format!(
-                    "Not a legal {} position",
-                    crate::game::variant_label(&self.variant)
-                )
-            })
-    }
-
-    fn turn(&self) -> Color {
-        if self.setup["turn"] == json!("black") {
-            Color::Black
-        } else {
-            Color::White
-        }
+            .then(|| format!("Not a legal {} position", self.variant.label()))
     }
 
     /// A piece placed, moved or removed. A castling right whose king or rook now stands
     /// elsewhere than the standard start is unticked: Chess960 castling is ticked on purpose, or
     /// comes with a pasted FEN.
-    fn set_board(&mut self, board: Value, cx: &mut Context<Self>) {
-        let before = self.setup["board"].as_str().unwrap_or_default().to_string();
-        let after = board.as_str().unwrap_or_default();
+    /// `square` holding `piece` (its colour and role), or emptied.
+    fn put_piece(&mut self, square: &str, piece: Option<(&str, &str)>, cx: &mut Context<Self>) {
+        match editor::with_piece(&self.setup.board, square, piece) {
+            Ok(board) => self.set_board(board, cx),
+            Err(cause) => crate::log::write(
+                kchess_contracts::Level::Warn,
+                "editor",
+                &format!("could not put a piece on {square}: {cause}"),
+            ),
+        }
+    }
+
+    fn set_board(&mut self, board: String, cx: &mut Context<Self>) {
         for key in ["K", "Q", "k", "q"] {
-            let (was, now) = (castling_pieces(&before, key), castling_pieces(after, key));
+            let was = castling_pieces(&self.setup.board, key);
+            let now = castling_pieces(&board, key);
             if was != now && now != standard_castling_pieces(key) {
-                self.setup["castling"][key] = json!(false);
+                self.setup.castling.set(key, false);
             }
         }
-        self.setup["board"] = board;
+        self.setup.board = board;
         self.changed(cx);
     }
 
@@ -412,11 +397,11 @@ impl EditorPage {
     }
 
     /// The position as Undo keeps it: its variant and FEN.
-    fn snapshot(&self) -> (String, String) {
-        (self.variant.clone(), self.fen())
+    fn snapshot(&self) -> (Variant, String) {
+        (self.variant, self.fen())
     }
 
-    fn restore(&mut self, (variant, fen): (String, String), cx: &mut Context<Self>) {
+    fn restore(&mut self, (variant, fen): (Variant, String), cx: &mut Context<Self>) {
         if self.read_fen(&fen) {
             self.variant = variant;
         }
@@ -442,13 +427,17 @@ impl EditorPage {
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
         let mut state = BoardState::of(
-            &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),
+            &kchess_domain::rules::setup_start(
+                kchess_domain::variant::Variant::Standard,
+                STANDARD_FEN,
+            )
+            .unwrap_or_default(),
             self.orientation,
             None,
             None,
         );
         // An unfinished position is no legal one: the board draws the pieces as they stand.
-        state.fen = setup_fen(&self.setup);
+        state.fen = self.setup.fen();
         state.edit = Some(self.tool);
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
@@ -473,27 +462,21 @@ impl EditorPage {
         let fen = self.fen();
         self.fen_input
             .update(cx, |input, cx| input.set_value(fen, window, cx));
-        let board = self.setup["board"].clone();
-        let turn = self.setup["turn"].clone();
-        self.ep_squares = rules("enPassantSquares", &[board, turn])
-            .ok()
-            .and_then(|squares| serde_json::from_value(squares).ok())
-            .unwrap_or_default();
+        self.ep_squares = editor::en_passant_squares(&self.setup.board, self.setup.turn);
         let items: Vec<SharedString> = std::iter::once(SharedString::from("None"))
             .chain(self.ep_squares.iter().map(|square| square.clone().into()))
             .collect();
-        let row = variants()
+        let row = Variant::ALL
             .iter()
-            .position(|text| text.key == self.variant)
+            .position(|variant| *variant == self.variant)
             .unwrap_or(0);
         self.variant_select.update(cx, |select, cx| {
             select.set_selected_index(Some(IndexPath::new(row)), window, cx)
         });
-        let chosen = self.setup["ep"].as_str().unwrap_or_default();
         let index = self
             .ep_squares
             .iter()
-            .position(|square| square == chosen)
+            .position(|square| *square == self.setup.ep)
             .map_or(0, |index| index + 1);
         self.ep_select.update(cx, |select, cx| {
             select.set_items(items, window, cx);
@@ -507,12 +490,8 @@ impl EditorPage {
     }
 
     fn set_turn(&mut self, turn: Color, cx: &mut Context<Self>) {
-        self.setup["turn"] = json!(if turn == Color::White {
-            "white"
-        } else {
-            "black"
-        });
-        self.setup["ep"] = json!("");
+        self.setup.turn = turn;
+        self.setup.ep.clear();
         self.changed(cx);
     }
 
@@ -542,9 +521,9 @@ impl EditorPage {
             Action::CopyFen => self.copy_fen(window, cx),
             Action::Analyse => self.analyse(window, cx),
             Action::PlayStockfish => {
-                crate::shell::play_computer_from(self.game_setup(), window, cx)
+                crate::pages::computer::play_from(self.game_setup(), window, cx)
             }
-            Action::PlayFriend => crate::shell::play_local_from(self.game_setup(), window, cx),
+            Action::PlayFriend => crate::pages::local::play_from(self.game_setup(), window, cx),
         }
     }
 
@@ -555,13 +534,10 @@ impl EditorPage {
 
     /// The variant's usual start (Horde's, Racing Kings'), or standard chess's.
     fn start_position(&mut self, cx: &mut Context<Self>) {
-        let usual = (!standard_rules(&self.variant))
-            .then(|| rules("defaultFen", &[json!(self.variant)]).ok())
-            .flatten()
-            .and_then(|fen| fen.as_str().map(str::to_string));
-        let variant = self.variant.clone();
+        let usual = (!self.variant.standard_rules()).then(|| self.variant.default_fen());
+        let variant = self.variant;
         if !usual.is_some_and(|fen| self.read_fen(&fen)) {
-            self.setup = start_setup();
+            self.setup = EditorSetup::start();
             self.pockets = None;
             self.checks = None;
         }
@@ -570,14 +546,9 @@ impl EditorPage {
     }
 
     fn clear_board(&mut self, cx: &mut Context<Self>) {
-        self.setup["board"] = json!(EMPTY_BOARD);
-        self.setup["ep"] = json!("");
+        self.setup.board = EMPTY_BOARD.into();
+        self.setup.ep.clear();
         self.changed(cx);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn orientation(&self) -> Color {
-        self.orientation
     }
 
     fn flip(&mut self, cx: &mut Context<Self>) {
@@ -590,7 +561,7 @@ impl EditorPage {
             return;
         }
         let (setup, orientation) = (self.game_setup(), self.orientation);
-        crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+        crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
             analysis.analyse_setup(&setup, orientation, cx)
         });
     }
@@ -614,14 +585,13 @@ impl EditorPage {
             }
             VoiceEvent::Heard { heard, .. } => heard,
         };
-        let action = rules("spokenEdit", &[json!(heard.text), json!(self.last_color)])
-            .unwrap_or(Value::Null);
+        let action = voice::spoken_edit(&heard.text, self.last_color);
         let fen = self.problem().is_none().then(|| self.fen());
-        let parsed = action.is_object().then(|| action.to_string());
+        let parsed = action.as_ref().map(|action| json!(action).to_string());
         let attempt = Attempt {
             source: "editor",
             heard,
-            outcome: if action.is_object() {
+            outcome: if action.is_some() {
                 "command"
             } else if heard.unclear {
                 "unclear"
@@ -633,37 +603,30 @@ impl EditorPage {
             fen: fen.as_deref(),
         };
         crate::voice::log(&attempt, None, cx);
-        let text = |key: &str| action[key].as_str().unwrap_or_default().to_string();
         let side = |color: &str| if color == "white" { "White" } else { "Black" };
-        let feedback = match action["kind"].as_str() {
-            Some("place") => {
-                let (square, color, role) = (text("square"), text("color"), text("role"));
+        let feedback = match action {
+            Some(EditorAction::Place {
+                square,
+                color,
+                role,
+            }) => {
                 self.last_color = if color == "white" { "white" } else { "black" };
-                let piece = json!({ "color": color, "role": role });
-                let board = self.setup["board"].clone();
-                if let Ok(board) = rules("withPiece", &[board, json!(square), piece]) {
-                    self.set_board(board, cx);
-                }
+                self.put_piece(&square, Some((color.as_str(), role)), cx);
                 format!("{} {role} on {}", side(&color), square.to_uppercase())
             }
-            Some("remove") => {
-                let square = text("square");
-                let board = self.setup["board"].clone();
-                if let Ok(board) = rules("withPiece", &[board, json!(square), Value::Null]) {
-                    self.set_board(board, cx);
-                }
+            Some(EditorAction::Remove { square }) => {
+                self.put_piece(&square, None, cx);
                 format!("Cleared {}", square.to_uppercase())
             }
-            Some("clear") => {
+            Some(EditorAction::Clear) => {
                 self.clear_board(cx);
                 "Board cleared".into()
             }
-            Some("start") => {
+            Some(EditorAction::Start) => {
                 self.start_position(cx);
                 "Starting position".into()
             }
-            Some("turn") => {
-                let color = text("color");
+            Some(EditorAction::Turn { color }) => {
                 self.set_turn(
                     if color == "white" {
                         Color::White
@@ -674,11 +637,11 @@ impl EditorPage {
                 );
                 format!("{} to move", side(&color))
             }
-            Some("flip") => {
+            Some(EditorAction::Flip) => {
                 self.flip(cx);
                 "Board flipped".into()
             }
-            Some("analyze") => match self.problem() {
+            Some(EditorAction::Analyze) => match self.problem() {
                 Some(problem) => format!("Can’t analyse yet: {problem}"),
                 None => {
                     self.analyse(window, cx);
@@ -704,7 +667,7 @@ impl EditorPage {
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> impl IntoElement {
-        // `.spare`: eight cells across the row (4px padding and gaps, a 1px border), square up to
+        // Eight cells across the row (4px padding and gaps, a 1px border), square up to
         // 56px tall.
         let across = (width - px(10.) - px(4.) * 7.) / 8.;
         let cell = across.min(SPARE_ROWS);
@@ -800,7 +763,7 @@ impl EditorPage {
                 })
                 .child(
                     // A stable light square keeps both piece colors legible in every theme.
-                    // `.spare-piece`: 86% of the cell, the piece contained in it.
+                    // 86% of the cell, the piece contained in it.
                     h_flex()
                         .w(across * 0.86)
                         .h(cell * 0.86)
@@ -852,9 +815,8 @@ impl Render for EditorPage {
         )
         .to_string();
         let problem = self.problem();
-        let turn = self.turn();
-        let available: Value =
-            rules("castlingAvailable", &[self.setup["board"].clone()]).unwrap_or(Value::Null);
+        let turn = self.setup.turn;
+        let available = editor::castling_available(&self.setup.board);
         let board_size = self
             .layout
             .board_size_in(px(0.), SPARE_ROWS + VOICE_BAR, window);
@@ -871,17 +833,24 @@ impl Render for EditorPage {
             .child(crate::board::cached(&self.board))
             .child(self.render_spares(bottom, &set, board_size, cx, &palette))
             // Voice sits at the end of its row.
-            .child(h_flex().justify_end().child(self.voice.bar(
-                cx.entity().downgrade(),
-                |this: &mut Self| &mut this.voice,
-                BarSpec {
-                    id: "editor-voice",
-                    hint: "Say “white knight F three”, “remove E four” or “clear board”",
-                    active: true,
-                    grammar: crate::voice::grammar("EDITOR_GRAMMAR"),
-                },
-                cx,
-            )));
+            .child(
+                h_flex().justify_end().child(
+                    self.voice.bar(
+                        cx.entity().downgrade(),
+                        |this: &mut Self| &mut this.voice,
+                        BarSpec {
+                            id: "editor-voice",
+                            hint: "Say “white knight F three”, “remove E four” or “clear board”",
+                            active: true,
+                            grammar: kchess_domain::voice::grammar(
+                                kchess_domain::voice::Grammar::Editor,
+                            )
+                            .to_vec(),
+                        },
+                        cx,
+                    ),
+                ),
+            );
         let label = |text: &'static str| {
             div()
                 .text_size(px(12.))
@@ -890,18 +859,18 @@ impl Render for EditorPage {
                 .child(text)
         };
         let castling = CASTLING.map(|(key, text)| {
-            let allowed = available[key] == json!(true);
+            let allowed = available.has(key);
             Checkbox::new(SharedString::from(format!("castling-{key}")))
                 .label(text)
                 .min_h(px(24.))
                 .items_center()
-                .checked(self.setup["castling"][key] == json!(true) && allowed)
+                .checked(self.setup.castling.has(key) && allowed)
                 .disabled(!allowed)
                 .when(!allowed, |checkbox| {
                     checkbox.tooltip("Needs the king on its back rank and a rook on that side")
                 })
                 .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                    this.setup["castling"][key] = json!(*checked);
+                    this.setup.castling.set(key, *checked);
                     this.changed(cx);
                 }))
                 .into_any_element()
@@ -915,7 +884,7 @@ impl Render for EditorPage {
                     .gap(px(8.))
                     .child(
                         div().flex_1().min_w_0().child(
-                            // `.fen-input`: 12px monospace, set on the input, whose size
+                            // 12px monospace, set on the input, whose size
                             // would otherwise make it 14px.
                             Input::new(&self.fen_input)
                                 .small()
@@ -1115,7 +1084,7 @@ impl Render for EditorPage {
                                     .label("Play Stockfish")
                                     .disabled(problem.is_some())
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        crate::shell::play_computer_from(
+                                        crate::pages::computer::play_from(
                                             crate::game::setup_from_fen(&this.fen()),
                                             window,
                                             cx,
@@ -1130,7 +1099,7 @@ impl Render for EditorPage {
                                     .label("Play a friend here")
                                     .disabled(problem.is_some())
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        crate::shell::play_local_from(
+                                        crate::pages::local::play_from(
                                             crate::game::setup_from_fen(&this.fen()),
                                             window,
                                             cx,
@@ -1142,25 +1111,10 @@ impl Render for EditorPage {
         div()
             .size_full()
             .track_focus(&self.focus)
-            // F turns the board, as its button does, while no text field has the keys.
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if crate::board::page_has_keys(&this.focus, window, cx)
-                    && !event.keystroke.modifiers.modified()
-                    && event.keystroke.key == "f"
-                {
-                    this.flip(cx);
-                    cx.stop_propagation();
-                }
-            }))
             // The FEN box takes these for its own text first.
             .on_action(cx.listener(|this, _: &Undo, _, cx| this.undo(cx)))
             .on_action(cx.listener(|this, _: &Redo, _, cx| this.redo(cx)))
-            // A click gives the keys back to the page, before a text field (the FEN) takes them.
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
+            .takes_keys(&self.focus)
             .child(
                 self.layout
                     .render("editor", board_column, panel, window, cx),
@@ -1168,23 +1122,81 @@ impl Render for EditorPage {
     }
 }
 
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::{ActionInfo, ActionRole};
+        match self {
+            Action::StartPosition => {
+                ActionInfo::new("editor:start", "Starting position", "rotate-ccw", "reset")
+            }
+            Action::ClearBoard => ActionInfo::new("editor:clear", "Clear board", "eraser", "empty"),
+            Action::Flip => ActionInfo::flip("editor:flip"),
+            Action::CopyFen => {
+                ActionInfo::new("editor:copy-fen", "Copy FEN", "copy", "position clipboard")
+                    .role(ActionRole::Copy)
+            }
+            Action::Analyse => ActionInfo::new(
+                "editor:analyse",
+                "Analyse this position",
+                "microscope",
+                "analysis",
+            ),
+            Action::PlayStockfish => {
+                ActionInfo::new("editor:stockfish", "Play Stockfish", "cpu", "computer")
+            }
+            Action::PlayFriend => ActionInfo::new(
+                "editor:friend",
+                "Play a friend here",
+                "users-round",
+                "over the board local",
+            ),
+        }
+    }
+}
+
+impl crate::pages::PageView for EditorPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Editor,
+        label: "Board editor",
+        short: "Board editor",
+        icon: "pencil-ruler",
+        group: Some(crate::pages::NavGroup::Review),
+        keywords: "setup position fen",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        EditorPage::new(window, cx)
+    }
+
+    fn actions(&self, _: &App) -> Vec<Action> {
+        EditorPage::actions(self)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.act(action, window, cx));
+    }
+}
+
+/// The board editor on a setup's position.
+pub fn edit_position(
+    setup: Setup,
+    orientation: shakmaty::Color,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if let Some(editor) = crate::shell::made::<EditorPage>(window, cx) {
+        editor.update(cx, |editor, cx| {
+            editor.set_position(setup.variant, &setup.fen, orientation, window, cx)
+        });
+    }
+    crate::shell::open(crate::pages::Page::Editor, window, cx);
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{castling_pieces, setup_fen, standard_castling_pieces, start_setup};
-    use serde_json::json;
-
-    #[test]
-    fn a_setup_reads_as_its_fen() {
-        assert_eq!(
-            setup_fen(&start_setup()),
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-        );
-        // Castling rights the pieces no longer allow are left out.
-        let mut setup = start_setup();
-        setup["board"] = json!("4k3/8/8/8/8/8/8/4K3");
-        setup["turn"] = json!("black");
-        assert_eq!(setup_fen(&setup), "4k3/8/8/8/8/8/8/4K3 b - - 0 1");
-    }
+    use super::{castling_pieces, standard_castling_pieces};
 
     /// What a castling right names: the king's file and the outermost rook's on that side.
     #[test]

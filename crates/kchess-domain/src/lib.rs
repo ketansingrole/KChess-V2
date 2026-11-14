@@ -1,18 +1,20 @@
 //! KChess rules shared by every frontend through the core: chess rules,
 //! PGN, the analysis tree, game replay and library document decoding.
 
-pub mod api;
 pub mod calendar;
 pub mod chesscom;
 pub mod coach;
-pub mod error;
-pub use error::DomainError;
+pub mod color;
+pub mod editor;
+pub mod embedded;
 pub mod games;
 pub mod js;
+pub mod keyed;
 pub mod library;
 pub mod links;
 pub mod misc;
 pub mod online_game;
+pub mod perf;
 pub mod pgn;
 pub mod position;
 pub mod puzzle;
@@ -26,4 +28,6 @@ pub mod time_use;
 pub mod trainer;
 pub mod training;
 pub mod tree;
+pub mod variant;
 pub mod voice;
+mod wire;

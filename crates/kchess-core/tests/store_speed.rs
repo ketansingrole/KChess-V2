@@ -3,21 +3,17 @@
 //! newest to the oldest. Not part of `check`; it prints the figures:
 //! `cargo test --release -p kchess-core --test store_speed -- --ignored --nocapture`
 
+use kchess_contracts::types::GamePageQuery;
 use std::time::{Duration, Instant};
 
-use kchess_core::store::{self, StoreCache, StoreContext};
-use kchess_core::{Config, Host, Level};
+use kchess_contracts::CoreError;
+use kchess_core::Config;
+use kchess_core::store::{self, StoreCache, StoreContext, games, library};
+use kchess_core::test_host::QUIET;
 use rusqlite::{Connection, params};
-use serde_json::{Value, json};
+use serde_json::json;
 use shakmaty::uci::UciMove;
 use shakmaty::{CastlingMode, Chess, Position};
-
-struct Quiet;
-
-impl Host for Quiet {
-    fn log(&self, _: Level, _: &str, _: &str) {}
-    fn emit(&self, _: &str, _: Value) {}
-}
 
 /// xorshift64: the same games on every run.
 struct Rng(u64);
@@ -47,15 +43,19 @@ fn random_game(rng: &mut Rng, plies: usize) -> Vec<String> {
     moves
 }
 
-fn run(db: &Connection, cache: &StoreCache, method: &str, args: &[Value]) -> Value {
+fn run<T>(
+    db: &Connection,
+    cache: &StoreCache,
+    work: impl FnOnce(&StoreContext) -> Result<T, CoreError>,
+) -> T {
     let config = Config::new(std::path::PathBuf::new());
     let ctx = StoreContext {
         db,
-        host: &Quiet,
+        host: &QUIET,
         config: &config,
         cache,
     };
-    store::call(&ctx, method, args).unwrap_or_else(|cause| panic!("{method}: {cause:?}"))
+    work(&ctx).unwrap_or_else(|cause| panic!("{cause:?}"))
 }
 
 /// The median of `runs` timings of `f`.
@@ -86,7 +86,12 @@ fn full_library(db: &Connection, cache: &StoreCache, games: usize, studies: usiz
             "setup": { "variant": "standard", "fen": shakmaty::fen::Fen::from_position(&Chess::default(), shakmaty::EnPassantMode::Legal).to_string() },
             "moves": random_game(&mut rng, 80),
         });
-        run(db, cache, "store.library.saveArchivedGame", &[game]);
+        run(db, cache, |c| {
+            library::write_game(
+                c.db,
+                &kchess_domain::library::decode_archived_game(&game).expect("a played game"),
+            )
+        });
     }
     for n in 0..studies {
         let moves = random_game(&mut rng, 60);
@@ -105,13 +110,15 @@ fn full_library(db: &Connection, cache: &StoreCache, games: usize, studies: usiz
             pos.play_unchecked(m);
         }
         pgn.push('*');
-        let command = json!({ "op": "save", "name": format!("Study {n}"), "pgn": pgn });
-        run(
-            db,
-            cache,
-            "store.library.studyCommand",
-            &[command, json!(n), Value::Null],
-        );
+        let command = kchess_contracts::types::StudyCommand::Save {
+            name: format!("Study {n}"),
+            pgn,
+            id: None,
+            chapter_id: None,
+        };
+        run(db, cache, |c| {
+            library::run_study_command(c.db, command, n as f64, false, None)
+        });
     }
 }
 
@@ -124,25 +131,22 @@ fn library_read_over_a_full_profile() {
         ("studies only", 0, 50),
     ] {
         let dir = tempfile::tempdir().expect("dir");
-        let db = store::open(&dir.path().join("kchess.db"), &Quiet).expect("open");
+        let db = store::open(&dir.path().join("kchess.db"), &QUIET).expect("open");
         let cache = StoreCache::default();
         full_library(&db, &cache, games, studies);
-        let library = run(&db, &cache, "store.library.library", &[json!(0)]);
-        assert_eq!(library["games"].as_array().map(Vec::len), Some(games));
-        let bytes = library.to_string().len();
+        let library = run(&db, &cache, |c| library::cached_library(c, 0.0));
+        assert_eq!(library.games.len(), games);
+        let bytes = serde_json::to_string(&library).expect("json").len();
         // A fresh cache each time: what a first read (or one after a write) costs.
         let first = median(15, || {
-            run(
-                &db,
-                &StoreCache::default(),
-                "store.library.library",
-                &[json!(0)],
-            );
+            run(&db, &StoreCache::default(), |c| {
+                library::cached_library(c, 0.0)
+            });
         });
         // What every later read costs, written as JSON as the service sends it.
         let again = median(15, || {
-            let value = run(&db, &cache, "store.library.library", &[json!(0)]);
-            std::hint::black_box(value.to_string());
+            let value = run(&db, &cache, |c| library::cached_library(c, 0.0));
+            std::hint::black_box(serde_json::to_string(&value).expect("json"));
         });
         println!(
             "library, {label} ({} KiB): first read {}, read again (and as JSON) {}",
@@ -157,7 +161,7 @@ fn library_read_over_a_full_profile() {
 #[ignore = "a benchmark: run with --ignored --nocapture"]
 fn game_pages_from_newest_to_oldest() {
     let dir = tempfile::tempdir().expect("dir");
-    let db = store::open(&dir.path().join("kchess.db"), &Quiet).expect("open");
+    let db = store::open(&dir.path().join("kchess.db"), &QUIET).expect("open");
     let cache = StoreCache::default();
     let total = 50_000;
     let mut rng = Rng(7);
@@ -183,13 +187,15 @@ fn game_pages_from_newest_to_oldest() {
     for (label, account) in [("every account", None), ("one account", Some("alice"))] {
         let mut figures = Vec::new();
         for page in [0, 100, 500, 999] {
-            let mut query = json!({ "offset": page * size, "limit": size });
-            if let Some(account) = account {
-                query["account"] = json!(account);
-            }
+            let query = GamePageQuery {
+                account: account.map(str::to_string),
+                offset: (page * size) as u64,
+                limit: size as u64,
+                ..GamePageQuery::default()
+            };
             let time = median(15, || {
-                let answer = run(&db, &cache, "store.games.gamePage", &[query.clone()]);
-                assert_eq!(answer["games"].as_array().map(Vec::len), Some(size));
+                let answer = run(&db, &cache, |c| games::game_page(c, &query));
+                assert_eq!(answer.games.len(), size);
             });
             figures.push(format!("page {page}: {}", ms(time)));
         }

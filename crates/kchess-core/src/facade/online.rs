@@ -1,167 +1,122 @@
-//! The facade's online play, challenges and Lichess players (`run_facade` arms, moved without changes).
+//! Online play and challenges.
 
-use super::args::{arg, normal};
+use kchess_contracts::check::{ChatText, FullFen, GameId, PresenceUsers, Uci, Username};
+use kchess_contracts::core_api::OnlineApi;
+use kchess_contracts::types::{
+    ChallengeInfo, ChatLine, ChatRoom, DeclineReason, OngoingGame, OnlineAction, OnlineOptions,
+    PresenceReport, Resumed, StartResult,
+};
+
 use crate::core::Core;
-use crate::error::{CoreError, Result};
-use serde_json::{Value, json};
+use kchess_contracts::error::{CoreError, Result};
 
 impl Core {
-    /// Answers the facade's online methods.
-    pub(crate) async fn run_online(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "startOnline" => {
-                let options = normal("assertOnlineOptions", &arg(args, 0))?;
-                self.inner("online.start", vec![options]).await
-            }
-            "resumeOnline" => self.inner("online.resume", vec![]).await,
-            "cancelOnline" => self.inner("online.cancel", vec![]).await,
-            "playOnline" => {
-                let id = normal("assertGameId", &arg(args, 0))?;
-                let uci = normal("assertUci", &arg(args, 1))?;
-                self.inner("online.move", vec![id, uci]).await
-            }
-            "playCorrespondence" => {
-                let account = normal("assertUsername", &arg(args, 0))?;
-                let id = normal("assertGameId", &arg(args, 1))?;
-                let fen = normal("assertFen", &arg(args, 2))?;
-                let uci = normal("assertUci", &arg(args, 3))?;
-                self.inner("online.moveCorrespondence", vec![account, id, fen, uci])
-                    .await
-            }
-            "onlineAction" => {
-                let id = normal("assertGameId", &arg(args, 0))?;
-                let action = normal("assertAction", &arg(args, 1))?;
-                self.inner("online.action", vec![id, action]).await
-            }
-            "presence" => {
-                let usernames = normal("assertUsernames", &arg(args, 0))?;
-                self.inner("online.presence", vec![usernames]).await
-            }
-            "onlineChat" => {
-                let id = normal("assertGameId", &arg(args, 0))?;
-                self.inner("online.chat", vec![id]).await
-            }
-            "sendChat" => {
-                let id = normal("assertGameId", &arg(args, 0))?;
-                let room = normal("assertChatRoom", &arg(args, 1))?;
-                let text = normal("assertChatText", &arg(args, 2))?;
-                self.inner("online.sendChat", vec![id, room, text]).await
-            }
-            _ => self.run_challenges(method, args).await,
-        }
+    /// The open challenge `id`, or the error it is no longer open.
+    fn known_challenge(&self, id: &str) -> Result<ChallengeInfo> {
+        let found = self.services.online().challenges().get(id);
+        found.ok_or_else(|| CoreError::new("That challenge is no longer open."))
+    }
+}
+
+impl OnlineApi for Core {
+    async fn start_online(&self, options: OnlineOptions) -> Result<StartResult> {
+        self.services.online().start(&options).await
     }
 
-    /// Answers the facade's challenge methods.
-    async fn run_challenges(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "challenges" => self.inner("challenges.list", vec![]).await,
-            "acceptChallenge" => {
-                let id = normal("assertGameId", &arg(args, 0))?;
-                let challenge = self.known_challenge(&id).await?;
-                if challenge["direction"].as_str() != Some("in")
-                    || challenge["playable"].as_bool() != Some(true)
-                {
-                    let problem = challenge["problem"]
-                        .as_str()
-                        .unwrap_or("Only challenges sent to you can be accepted.");
-                    return Err(CoreError::new(problem));
-                }
-                self.inner("online.acceptChallenge", vec![challenge])
-                    .await?;
-                self.inner("challenges.remove", vec![id]).await?;
-                Ok(Value::Null)
-            }
-            "declineChallenge" => {
-                let id = normal("assertGameId", &arg(args, 0))?;
-                let challenge = self.known_challenge(&id).await?;
-                if challenge["direction"].as_str() != Some("in") {
-                    return Err(CoreError::new("Withdraw your own challenge instead."));
-                }
-                let reason = normal("assertDeclineReason", &arg(args, 1))?;
-                self.inner("online.declineChallenge", vec![challenge, reason])
-                    .await?;
-                self.inner("challenges.remove", vec![id]).await?;
-                Ok(Value::Null)
-            }
-            "cancelChallenge" => {
-                let id = normal("assertGameId", &arg(args, 0))?;
-                let challenge = self.known_challenge(&id).await?;
-                if challenge["direction"].as_str() != Some("out") {
-                    return Err(CoreError::new("Decline a challenge sent to you instead."));
-                }
-                self.inner("online.withdrawChallenge", vec![challenge])
-                    .await?;
-                self.inner("challenges.remove", vec![id]).await?;
-                Ok(Value::Null)
-            }
-            "ongoingGames" => self.inner("online.ongoing", vec![]).await,
-            "openGame" => {
-                let account = normal("assertUsername", &arg(args, 0))?;
-                let id = normal("assertGameId", &arg(args, 1))?;
-                self.inner("online.open", vec![account, id]).await
-            }
-            _ => self.run_players(method, args).await,
-        }
+    async fn resume_online(&self) -> Result<Option<Resumed>> {
+        self.services.online().resume().await
     }
 
-    /// Answers the facade's Lichess player methods.
-    async fn run_players(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "playerPerf" => {
-                let name = normal("assertUsername", &arg(args, 0))?;
-                let perf = normal("assertPerfType", &arg(args, 1))?;
-                self.inner("lichess.playerPerf", vec![name, perf]).await
-            }
-            "crosstable" => {
-                let a = normal("assertUsername", &arg(args, 0))?;
-                let b = normal("assertUsername", &arg(args, 1))?;
-                self.inner("lichess.crosstable", vec![a, b]).await
-            }
-            "recentGames" => {
-                let name = normal("assertUsername", &arg(args, 0))?;
-                let rated = arg(args, 1).as_bool() == Some(true);
-                self.inner("lichess.recentGames", vec![name, json!(rated)])
-                    .await
-            }
-            "sendMessage" => {
-                let account = normal("assertUsername", &arg(args, 0))?;
-                let username = normal("assertUsername", &arg(args, 1))?;
-                let text = normal("assertMessageText", &arg(args, 2))?;
-                self.inner("lichess.sendMessage", vec![account, username, text])
-                    .await
-            }
-            "relation" => {
-                let account = normal("assertUsername", &arg(args, 0))?;
-                let username = normal("assertUsername", &arg(args, 1))?;
-                self.inner("lichess.relation", vec![account, username])
-                    .await
-            }
-            "timeline" => self.inner("lichess.timeline", Vec::new()).await,
-            "bookmarkedGames" | "activity" | "searchPlayers" => {
-                let name = normal("assertUsername", &arg(args, 0))?;
-                self.inner(&format!("lichess.{method}"), vec![name]).await
-            }
-            "setRelation" => {
-                let account = normal("assertUsername", &arg(args, 0))?;
-                let username = normal("assertUsername", &arg(args, 1))?;
-                let action = normal("assertRelationAction", &arg(args, 2))?;
-                self.inner("lichess.setRelation", vec![account, username, action])
-                    .await
-            }
-            "profiles" => {
-                let names = normal("assertFriendList", &arg(args, 0))?;
-                self.inner("lichess.profiles", vec![names]).await
-            }
-            "leaderboard" => {
-                let perf = normal("assertPerfType", &arg(args, 0))?;
-                self.inner("lichess.leaderboard", vec![perf]).await
-            }
-            "importGame" => {
-                let account = normal("assertOptionalAccount", &arg(args, 0))?;
-                let pgn = normal("assertPgnText", &arg(args, 1))?;
-                self.inner("lichess.importGame", vec![account, pgn]).await
-            }
-            _ => Err(CoreError::new(format!("Unknown core method {method}."))),
+    async fn cancel_online(&self) -> Result<()> {
+        self.services.online().cancel();
+        Ok(())
+    }
+
+    async fn play_online(&self, id: GameId, r#move: Uci) -> Result<()> {
+        self.services.online().move_uci(&id.0, &r#move.0).await
+    }
+
+    async fn play_correspondence(
+        &self,
+        account: Username,
+        id: GameId,
+        fen: FullFen,
+        r#move: Uci,
+    ) -> Result<()> {
+        let online = self.services.online();
+        online
+            .move_correspondence(&account.0, &id.0, &fen.0, &r#move.0)
+            .await
+    }
+
+    async fn online_action(&self, id: GameId, action: OnlineAction) -> Result<()> {
+        self.services.online().action(&id.0, action).await
+    }
+
+    async fn online_chat(&self, id: GameId) -> Result<Vec<ChatLine>> {
+        self.services.online().chat(&id.0).await
+    }
+
+    async fn send_chat(&self, id: GameId, room: ChatRoom, text: ChatText) -> Result<()> {
+        let online = self.services.online();
+        online.send_chat(&id.0, room.as_str(), &text.0).await
+    }
+
+    async fn presence(&self, usernames: PresenceUsers) -> Result<PresenceReport> {
+        self.services.online().presence(&usernames.0).await
+    }
+
+    async fn challenges(&self) -> Result<Vec<ChallengeInfo>> {
+        Ok(self.services.online().challenges().list())
+    }
+
+    async fn accept_challenge(&self, id: GameId) -> Result<()> {
+        let challenge = self.known_challenge(&id.0)?;
+        if challenge.direction != kchess_contracts::types::ChallengeDirection::In
+            || !challenge.playable
+        {
+            let problem = challenge
+                .problem
+                .as_deref()
+                .unwrap_or("Only challenges sent to you can be accepted.");
+            return Err(CoreError::new(problem));
         }
+        self.services.online().accept_challenge(&challenge).await?;
+        self.services.online().challenges().remove(&id.0);
+        Ok(())
+    }
+
+    async fn decline_challenge(&self, id: GameId, reason: DeclineReason) -> Result<()> {
+        let challenge = self.known_challenge(&id.0)?;
+        if challenge.direction != kchess_contracts::types::ChallengeDirection::In {
+            return Err(CoreError::new("Withdraw your own challenge instead."));
+        }
+        let online = self.services.online();
+        online
+            .decline_challenge(&challenge, reason.as_str())
+            .await?;
+        online.challenges().remove(&id.0);
+        Ok(())
+    }
+
+    async fn cancel_challenge(&self, id: GameId) -> Result<()> {
+        let challenge = self.known_challenge(&id.0)?;
+        if challenge.direction != kchess_contracts::types::ChallengeDirection::Out {
+            return Err(CoreError::new("Decline a challenge sent to you instead."));
+        }
+        self.services
+            .online()
+            .withdraw_challenge(&challenge)
+            .await?;
+        self.services.online().challenges().remove(&id.0);
+        Ok(())
+    }
+
+    async fn ongoing_games(&self) -> Result<Vec<OngoingGame>> {
+        self.services.online().ongoing().await
+    }
+
+    async fn open_game(&self, account: Username, id: GameId) -> Result<()> {
+        self.services.online().open(&account.0, &id.0).await
     }
 }

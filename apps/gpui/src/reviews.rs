@@ -7,9 +7,10 @@ use std::collections::VecDeque;
 
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Subscription};
 use kchess_contracts::Level;
-use serde_json::{Value, json};
+use kchess_contracts::check::{Fen, Moves};
+use kchess_contracts::types::{ReviewCurrent, ReviewSide, ReviewStatus, StoredReview};
 
-use crate::core::{AppCore, CoreEvent};
+use crate::core::{AppCore, ClientEvent, CoreEvent};
 
 /// Full reviews kept in memory, least recently seen dropped first; the core keeps them all.
 const CACHE_SIZE: usize = 24;
@@ -18,29 +19,23 @@ const CACHE_SIZE: usize = 24;
 /// come in.
 #[derive(Default)]
 pub struct ReviewCache {
-    reviews: VecDeque<Value>,
+    reviews: VecDeque<StoredReview>,
     pinned: String,
 }
 
 impl ReviewCache {
-    pub fn get(&self, key: &str) -> Option<&Value> {
-        self.reviews
-            .iter()
-            .find(|review| review["key"] == json!(key))
+    pub fn get(&self, key: &str) -> Option<&StoredReview> {
+        self.reviews.iter().find(|review| review.key == key)
     }
 
-    pub fn remember(&mut self, review: Value) {
-        if review.is_null() {
-            return;
-        }
-        let key = review["key"].clone();
-        self.reviews.retain(|known| known["key"] != key);
+    pub fn remember(&mut self, review: StoredReview) {
+        self.reviews.retain(|known| known.key != review.key);
         self.reviews.push_back(review);
         while self.reviews.len() > CACHE_SIZE {
             let Some(index) = self
                 .reviews
                 .iter()
-                .position(|known| known["key"] != json!(self.pinned))
+                .position(|known| known.key != self.pinned)
             else {
                 break;
             };
@@ -52,7 +47,7 @@ impl ReviewCache {
 pub struct ReviewStore {
     pub cache: ReviewCache,
     /// `ReviewStatus`: the review being worked on, the queue, the last failure.
-    pub status: Value,
+    pub status: ReviewStatus,
     /// Status events received, so a status read never replaces one that streamed in meanwhile.
     status_events: u64,
     _events: Subscription,
@@ -68,21 +63,21 @@ pub fn init(cx: &mut App) {
     let events = cx.global::<AppCore>().events.clone();
     let store = cx.new(|cx: &mut Context<ReviewStore>| ReviewStore {
         cache: ReviewCache::default(),
-        status: json!({ "waiting": 0 }),
+        status: ReviewStatus::default(),
         status_events: 0,
-        _events: cx.subscribe(&events, |this, _, event: &CoreEvent, cx| {
-            match event.name.as_str() {
-                "review:update" => {
-                    this.cache.remember(event.payload["review"].clone());
+        _events: cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
+            match event {
+                ClientEvent::Event(CoreEvent::ReviewUpdate(update)) => {
+                    this.cache.remember(update.review.clone());
                     cx.notify();
                 }
-                "review:status" => {
+                ClientEvent::Event(CoreEvent::ReviewStatus(status)) => {
                     this.status_events += 1;
-                    this.status = event.payload.clone();
+                    this.status = status.clone();
                     cx.notify();
                 }
                 // The events missed meanwhile are not sent again.
-                crate::core::RECONNECTED => this.resynchronize(cx),
+                ClientEvent::Reconnected => this.resynchronize(cx),
                 _ => {}
             }
         }),
@@ -121,20 +116,20 @@ impl ReviewStore {
         let Some(review) = self.cache.get(&self.cache.pinned).cloned() else {
             return;
         };
-        if review["complete"].as_bool() == Some(true) {
+        if review.complete {
             return;
         }
         let found = cx.global::<AppCore>().request(calls::ReviewGet {
-            fen: review["fen"].clone(),
-            moves: review["moves"].clone(),
+            fen: Fen(review.fen.clone()),
+            moves: Moves(review.moves.clone()),
             variant: None,
         });
         cx.spawn(async move |this, cx| match found.await {
-            Ok(found) if !found.is_null() => {
+            Ok(Some(found)) => {
                 let _ = this.update(cx, |store, cx| {
                     // A review that streamed in meanwhile is at least as new.
-                    let known = store.cache.get(found["key"].as_str().unwrap_or_default());
-                    if known.is_none_or(|known| known["updatedAt"] == review["updatedAt"]) {
+                    let known = store.cache.get(&found.key);
+                    if known.is_none_or(|known| known.updated_at == review.updated_at) {
                         store.cache.remember(found);
                         cx.notify();
                     }
@@ -150,7 +145,7 @@ impl ReviewStore {
         .detach();
     }
 
-    pub fn get(&self, key: &str) -> Option<&Value> {
+    pub fn get(&self, key: &str) -> Option<&StoredReview> {
         self.cache.get(key)
     }
 
@@ -160,36 +155,38 @@ impl ReviewStore {
     }
 
     /// The review being worked on (`current`), when it is this one.
-    pub fn progress(&self, key: &str) -> Option<&Value> {
-        let current = &self.status["current"];
-        (current["key"] == json!(key)).then_some(current)
+    pub fn progress(&self, key: &str) -> Option<&ReviewCurrent> {
+        self.status
+            .current
+            .as_ref()
+            .filter(|current| current.key == key)
     }
 
     /// Why the review asked for could not be done, when it is this one.
     pub fn failure(&self, key: &str) -> Option<String> {
-        let failed = &self.status["failed"];
-        (failed["key"] == json!(key))
-            .then(|| failed["message"].as_str().unwrap_or_default().to_string())
+        self.status
+            .failed
+            .as_ref()
+            .filter(|failed| failed.key == key)
+            .map(|failed| failed.message.clone())
     }
 }
 
-/// `judgmentCounts`: "2 blunders", worst first, leaving out the kinds that did not happen, from a
-/// side's counts (`ReviewSide`: `blunder`, `mistake`, `inaccuracy`).
-pub fn judgment_counts(side: &Value) -> Vec<(&'static str, String)> {
+/// "2 blunders", worst first, leaving out the kinds that did not happen, from a
+/// side's counts.
+pub fn judgment_counts(side: &ReviewSide) -> Vec<(&'static str, String)> {
     [
-        ("blunder", "blunders"),
-        ("mistake", "mistakes"),
-        ("inaccuracy", "inaccuracies"),
+        ("blunder", "blunders", side.blunder),
+        ("mistake", "mistakes", side.mistake),
+        ("inaccuracy", "inaccuracies", side.inaccuracy),
     ]
     .into_iter()
-    .filter_map(|(judgment, plural)| {
-        let count = side[judgment].as_u64().unwrap_or_default();
-        (count > 0).then(|| {
-            (
-                judgment,
-                format!("{count} {}", if count == 1 { judgment } else { plural }),
-            )
-        })
+    .filter(|(_, _, count)| *count > 0)
+    .map(|(judgment, plural, count)| {
+        (
+            judgment,
+            format!("{count} {}", if count == 1 { judgment } else { plural }),
+        )
     })
     .collect()
 }
@@ -200,7 +197,11 @@ mod tests {
 
     #[test]
     fn judgments_are_counted_worst_first() {
-        let counts = judgment_counts(&json!({ "blunder": 1, "mistake": 0, "inaccuracy": 3 }));
+        let counts = judgment_counts(&ReviewSide {
+            blunder: 1,
+            inaccuracy: 3,
+            ..ReviewSide::default()
+        });
         assert_eq!(
             counts,
             vec![
@@ -209,7 +210,26 @@ mod tests {
             ]
         );
     }
-    use serde_json::json;
+    use kchess_contracts::types::{ReviewSide, ReviewSource, StoredReview};
+
+    fn review(key: &str, complete: bool) -> StoredReview {
+        StoredReview {
+            key: key.into(),
+            fen: String::new(),
+            moves: Vec::new(),
+            source: ReviewSource::Local,
+            engine: None,
+            evals: Vec::new(),
+            depth: 0,
+            complete,
+            updated_at: 0,
+            game_id: None,
+            judgments: None,
+            accuracy: None,
+            variant: None,
+            rest: serde_json::Map::new(),
+        }
+    }
 
     #[test]
     fn the_pinned_review_outlasts_the_cache() {
@@ -218,14 +238,14 @@ mod tests {
             ..ReviewCache::default()
         };
         for index in 0..30 {
-            cache.remember(json!({ "key": format!("k{index}") }));
+            cache.remember(review(&format!("k{index}"), false));
         }
         assert_eq!(cache.reviews.len(), CACHE_SIZE);
         assert!(cache.get("k0").is_some());
         assert!(cache.get("k1").is_none());
         assert!(cache.get("k29").is_some());
         // Seen again, a review moves to the newest end.
-        cache.remember(json!({ "key": "k10", "complete": true }));
-        assert_eq!(cache.get("k10").unwrap()["complete"], json!(true));
+        cache.remember(review("k10", true));
+        assert!(cache.get("k10").is_some_and(|review| review.complete));
     }
 }

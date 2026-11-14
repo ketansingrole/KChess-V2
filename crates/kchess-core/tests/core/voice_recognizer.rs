@@ -4,27 +4,13 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use kchess_core::host::{Host, Level};
-use kchess_core::voice::recognizer::{Heard, Recognized, VoiceRecognizer, Word};
-
-#[derive(Default)]
-struct Logs(Mutex<Vec<String>>);
-
-impl Host for Logs {
-    fn log(&self, level: Level, scope: &str, message: &str) {
-        self.0
-            .lock()
-            .expect("log lock")
-            .push(format!("{} [{scope}] {message}", level.name()));
-    }
-
-    fn emit(&self, _event: &str, _payload: serde_json::Value) {}
-}
+use kchess_core::test_host::TestHost;
+use kchess_core::voice::recognizer::{Heard, Utterance, VoiceRecognizer, VoiceWord};
 
 fn helper() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_kchess-fake-voice"))
@@ -36,8 +22,8 @@ fn model(mode: &str) -> tempfile::TempDir {
     folder
 }
 
-fn recognizer(folder: &Path) -> (VoiceRecognizer, Arc<Logs>) {
-    let logs = Arc::new(Logs::default());
+fn recognizer(folder: &Path) -> (VoiceRecognizer, Arc<TestHost>) {
+    let logs = TestHost::new();
     let recognizer = VoiceRecognizer::new(logs.clone(), Some(helper()), folder.to_path_buf())
         // A healthy answer is a pipe round trip; a second is ample even on a loaded runner, and
         // still short enough that the hung-helper case stays quick.
@@ -70,25 +56,29 @@ async fn recognizes_in_order_and_reuses_one_helper() {
     let folder = model("normal");
     let (voice, _) = recognizer(folder.path());
     voice.start(&grammar(), 16_000.0).await.expect("start");
+    let silence = voice.accept(&pcm(&[0; 160])).await.expect("silence");
+    crate::support::wire::assert_wire("voiceAccept.partial", &silence);
     assert_eq!(
-        voice.accept(&pcm(&[0; 160])).await.expect("silence"),
+        silence,
         Heard {
             partial: Some("e".into()),
             result: None
         }
     );
+    let speech = voice.accept(&pcm(&[0, 1200, -800])).await.expect("speech");
+    crate::support::wire::assert_wire("voiceAccept.result", &speech);
     assert_eq!(
-        voice.accept(&pcm(&[0, 1200, -800])).await.expect("speech"),
+        speech,
         Heard {
             partial: None,
-            result: Some(Recognized {
+            result: Some(Utterance {
                 text: "e four".into(),
                 words: vec![
-                    Word {
+                    VoiceWord {
                         word: "e".into(),
                         conf: 0.9
                     },
-                    Word {
+                    VoiceWord {
                         word: "four".into(),
                         conf: 0.8
                     },
@@ -97,6 +87,7 @@ async fn recognizes_in_order_and_reuses_one_helper() {
         }
     );
     let finished = voice.finish().await.expect("finish");
+    crate::support::wire::assert_wire("voiceFinish.empty", &finished);
     assert_eq!(
         finished.result.map(|result| result.text),
         Some(String::new())
@@ -109,7 +100,7 @@ async fn recognizes_in_order_and_reuses_one_helper() {
 #[tokio::test]
 async fn refuses_without_a_helper_a_model_or_a_valid_chunk() {
     let folder = model("normal");
-    let logs = Arc::new(Logs::default());
+    let logs = TestHost::new();
     let none = VoiceRecognizer::new(logs.clone(), None, folder.path().to_path_buf());
     assert_eq!(
         none.start(&grammar(), 16_000.0)
@@ -189,9 +180,7 @@ async fn reports_a_helper_that_cannot_load_the_model() {
         "The offline voice model couldn’t load. Try again."
     );
     assert!(
-        logs.0
-            .lock()
-            .expect("logs")
+        logs.logs()
             .iter()
             .any(|line| line.starts_with("warn [voice] Voice helper refused to start"))
     );
@@ -205,7 +194,13 @@ async fn reports_a_helper_that_cannot_load_the_model() {
 async fn a_helper_slow_to_take_its_grammar_is_still_starting() {
     let folder = model("slow-grammar");
     let (voice, _) = recognizer(folder.path());
+    let started = std::time::Instant::now();
     voice.start(&grammar(), 16_000.0).await.expect("start");
+    // The grammar took longer than an audio chunk may (a second, `recognizer`).
+    assert!(
+        started.elapsed() > Duration::from_secs(1),
+        "the helper was slow"
+    );
     assert!(
         voice
             .accept(&pcm(&[5]))

@@ -3,23 +3,13 @@
 use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
 
 use super::Harness;
-use crate::pages::Page;
 use crate::pages::studies::StudiesPage;
 use gpui_kit::{InputEvent as _, px};
-
-/// Let animations run their course: a dialog that is closing is gone after this.
-fn settle(app: &mut Harness) {
-    let mut frames = 0;
-    app.wait_for("the window to settle", |_, _| {
-        frames += 1;
-        frames > 80
-    });
-}
 
 /// Choose the chapter at `row` (from 0) in the open study's chapter select, by keyboard.
 fn choose_chapter(app: &mut Harness, row: usize) {
     app.click_label("Study chapter");
-    settle(app);
+    app.settle();
     for _ in 0..row {
         app.press("down");
     }
@@ -164,10 +154,10 @@ fn a_pgn_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     app.click("empty-import");
     app.fill_in_dialog("PGN", "1. e4 e5 2. Ke5 *");
     app.click("import-run");
-    settle(&mut app);
+    app.settle();
     assert!(app.shows("import-run"), "the dialog stays for a correction");
     app.click("import-cancel");
-    settle(&mut app);
+    app.settle();
     assert!(app.shows("empty-new-study"), "no study was made");
 }
 
@@ -187,7 +177,7 @@ fn an_annotated_study_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCo
     app.click_label("Game details…");
     app.fill_in_dialog("White", "Alice");
     app.press("escape");
-    settle(&mut app);
+    app.settle();
 
     let mut app = app.restart();
     app.open("Studies");
@@ -246,14 +236,14 @@ fn an_edited_study_is_summarized_again(cx: &mut gpui_kit::TestAppContext) {
     wait_for_listed(&mut app, &["Alpha"]);
     let kept = |app: &mut Harness| {
         app.with_window(|_, cx| {
-            let page = crate::shell::view_of::<StudiesPage>(Page::Studies, cx).expect("the page");
+            let page = crate::shell::view::<StudiesPage>(cx).expect("the page");
             let pgns: Vec<String> = cx
                 .global::<crate::studies::StudyHandle>()
                 .0
                 .read(cx)
                 .items()
                 .iter()
-                .filter_map(|study| study["pgn"].as_str().map(str::to_string))
+                .map(|study| study.pgn.clone())
                 .collect();
             (page.read(cx).kept_summaries(), pgns)
         })
@@ -264,10 +254,9 @@ fn an_edited_study_is_summarized_again(cx: &mut gpui_kit::TestAppContext) {
         cx.global::<crate::studies::StudyHandle>()
             .0
             .read(cx)
-            .items()[0]["id"]
-            .as_str()
-            .expect("id")
-            .to_string()
+            .items()[0]
+            .id
+            .clone()
     });
     let saved = std::rc::Rc::new(std::cell::Cell::new(false));
     app.cx.update(|cx| {
@@ -275,10 +264,12 @@ fn an_edited_study_is_summarized_again(cx: &mut gpui_kit::TestAppContext) {
             .global::<crate::studies::StudyHandle>()
             .0
             .read(cx)
-            .command(serde_json::json!({
-                "op": "save", "id": id, "name": "Alpha",
-                "pgn": "[Event \"New event\"]\n\n1. d4 d5 *",
-            }));
+            .command(kchess_contracts::types::StudyCommand::Save {
+                name: "Alpha".into(),
+                pgn: "[Event \"New event\"]\n\n1. d4 d5 *".into(),
+                id: Some(id.clone()),
+                chapter_id: None,
+            });
         let saved = saved.clone();
         cx.spawn(async move |_| {
             save.await.expect("the save");
@@ -289,7 +280,7 @@ fn an_edited_study_is_summarized_again(cx: &mut gpui_kit::TestAppContext) {
     app.wait_for("the save", |_, _| saved.get());
     app.wait_for("the study's new summary", |window, cx| {
         window.draw(cx).clear(cx);
-        let Some(page) = crate::shell::view_of::<StudiesPage>(Page::Studies, cx) else {
+        let Some(page) = crate::shell::view::<StudiesPage>(cx) else {
             return false;
         };
         let kept = page.read(cx).kept_summaries();
@@ -310,9 +301,16 @@ fn only_the_studies_in_view_are_made(cx: &mut gpui_kit::TestAppContext) {
     let saved = std::rc::Rc::new(std::cell::Cell::new(0));
     app.cx.update(|cx| {
         for n in 0..50 {
-            let save = cx.global::<crate::studies::StudyHandle>().0.read(cx).command(
-                serde_json::json!({ "op": "save", "name": format!("Study {n:02}"), "pgn": "1. e4 *" }),
-            );
+            let save = cx
+                .global::<crate::studies::StudyHandle>()
+                .0
+                .read(cx)
+                .command(kchess_contracts::types::StudyCommand::Save {
+                    name: format!("Study {n:02}"),
+                    pgn: "1. e4 *".into(),
+                    id: None,
+                    chapter_id: None,
+                });
             let saved = saved.clone();
             cx.spawn(async move |_| {
                 save.await.expect("the save");
@@ -355,7 +353,7 @@ fn only_the_studies_in_view_are_made(cx: &mut gpui_kit::TestAppContext) {
     // is as tall as every row, made or not, and the gaps between them.
     let grid = |app: &mut Harness| {
         app.with_window(|_, cx| {
-            crate::shell::view_of::<StudiesPage>(Page::Studies, cx)
+            crate::shell::view::<StudiesPage>(cx)
                 .expect("the page")
                 .read(cx)
                 .grid_layout()
@@ -414,7 +412,7 @@ fn only_the_studies_in_view_are_made(cx: &mut gpui_kit::TestAppContext) {
     );
 
     app.cx.update(|cx| {
-        crate::shell::view_of::<StudiesPage>(Page::Studies, cx)
+        crate::shell::view::<StudiesPage>(cx)
             .expect("the page")
             .read(cx)
             .scroll_to_top();
@@ -473,7 +471,7 @@ fn opening_a_study_asks_before_replacing_an_unsaved_analysis(cx: &mut gpui_kit::
     app.click_label("Actions for Untitled study");
     app.click_label("Open");
     app.click("cancel");
-    settle(&mut app);
+    app.settle();
     assert!(app.shows("new-study"), "still on the Studies page");
 
     app.click_label("Actions for Untitled study");
@@ -540,23 +538,25 @@ fn refused_save_then_another_chapter(cx: &mut gpui_kit::TestAppContext, autosavi
     app.find("tree-e2e4 e7e5");
     // Another window writes the chapter (this connection's own write is not shown here).
     let (study, chapter) = app.cx.update(|cx| {
-        let page = crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
-            crate::pages::Page::Analysis,
-            cx,
-        )
-        .expect("the analysis board");
+        let page = crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .expect("the analysis board");
         let page = page.read(cx);
         (page.study_id().to_string(), page.chapter_id().to_string())
     });
     let written = std::rc::Rc::new(std::cell::Cell::new(false));
     app.cx.update(|cx| {
-        let save = cx.global::<crate::core::AppCore>().call(
-            "studyCommand",
-            vec![serde_json::json!({
-                "op": "save", "id": study, "chapterId": chapter,
-                "name": "Pawn openings", "pgn": "1. c4 *",
-            })],
-        );
+        let save =
+            cx.global::<crate::core::AppCore>()
+                .request(kchess_contracts::calls::StudyCommand {
+                    command: kchess_contracts::types::StudyCommand::Save {
+                        name: "Pawn openings".into(),
+                        pgn: "1. c4 *".into(),
+                        id: Some(study.clone()),
+                        chapter_id: Some(chapter.clone()),
+                    },
+                    incremental: None,
+                    based_on: None,
+                });
         let written = written.clone();
         cx.spawn(async move |_| {
             save.await.expect("the other window's save");
@@ -567,17 +567,14 @@ fn refused_save_then_another_chapter(cx: &mut gpui_kit::TestAppContext, autosavi
     app.wait_for("the other window's save", |_, _| written.get());
     // The edit and the chapter switch come before the edit's own delayed save.
     app.with_window(|_, cx| {
-        let page = crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
-            crate::pages::Page::Analysis,
-            cx,
-        )
-        .expect("the analysis board");
+        let page = crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .expect("the analysis board");
         let next = cx
             .global::<crate::studies::StudyHandle>()
             .0
             .read(cx)
             .study(&study)
-            .and_then(|found| found["chapters"][1]["id"].as_str().map(str::to_string))
+            .and_then(|found| Some(found.chapters.get(1)?.id.clone()))
             .expect("the second chapter");
         assert!(page.update(cx, |page, cx| page.play_for_test("g1f3", cx)));
         if autosaving {
@@ -586,7 +583,7 @@ fn refused_save_then_another_chapter(cx: &mut gpui_kit::TestAppContext, autosavi
         let bar = page.read(cx).study_bar();
         bar.update(cx, |bar, cx| bar.select_chapter(next, cx));
     });
-    settle(&mut app);
+    app.settle();
     app.find("tree-g1f3");
     assert!(
         !app.shows("tree-d2d4"),
@@ -618,17 +615,22 @@ fn a_position_opened_while_a_study_closes_stays_on_the_board(cx: &mut gpui_kit::
     import_study(&mut app, "Pawn openings", TWO_CHAPTERS);
     app.click("open-imported");
     app.find("tree-e2e4");
+    let closed = std::rc::Rc::new(std::cell::Cell::new(None));
     let opened = app.with_window(|_, cx| {
-        let page = crate::shell::view_of::<AnalysisPage>(crate::pages::Page::Analysis, cx)
-            .expect("the analysis board");
+        let page = crate::shell::view::<AnalysisPage>(cx).expect("the analysis board");
         page.update(cx, |page, cx| {
-            page.close_study(cx).detach();
+            let close = page.close_study(cx);
+            let closed = closed.clone();
+            cx.spawn(async move |_, _| closed.set(Some(close.await)))
+                .detach();
             page.load(Some("8/8/8/4k3/8/8/4K3/8 w - - 0 1"), cx);
             page.shown_fen()
         })
     });
+    app.wait_for("the study to close", |_, _| closed.get().is_some());
+    assert_eq!(closed.get(), Some(true), "the close went through");
     let shown = app.with_window(|_, cx| {
-        crate::shell::view_of::<AnalysisPage>(crate::pages::Page::Analysis, cx)
+        crate::shell::view::<AnalysisPage>(cx)
             .expect("the analysis board")
             .read(cx)
             .shown_fen()
@@ -671,7 +673,7 @@ fn quick_pick_makes_and_imports_studies(cx: &mut gpui_kit::TestAppContext) {
     app.press("enter");
     app.find("import-run");
     app.click("import-cancel");
-    settle(&mut app);
+    app.settle();
 
     app.press("secondary-k");
     app.type_text(">New study");
@@ -709,7 +711,6 @@ fn quick_pick_saves_a_study_adds_a_chapter_and_closes_it(cx: &mut gpui_kit::Test
     assert!(!app.shows("chapter-actions"));
 }
 
-/// With an account, Studies' Lichess tab opens from Quick Pick.
 #[gpui_kit::test]
 fn lichess_studies_open_from_quick_pick_with_an_account(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _lichess) = Harness::signed_in(cx, false);
@@ -802,11 +803,7 @@ fn a_study_is_saved_as_a_pgn_file(cx: &mut gpui_kit::TestAppContext) {
     wait_for_listed(&mut app, &["Pawn openings"]);
     app.click_label("Actions for Pawn openings");
     app.click_label("Save PGN…");
-    let started = std::time::Instant::now();
-    while !app.cx.did_prompt_for_new_path() {
-        assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
-        app.tick();
-    }
+    app.wait_for_save_dialog();
     let folder = tempfile::tempdir().expect("a folder to save in");
     let path = folder.path().join("Pawn openings.pgn");
     let chosen = path.clone();

@@ -11,6 +11,7 @@ use super::Harness;
 fn clock(cx: &mut gpui_kit::TestAppContext) -> Harness {
     let mut app = Harness::start(cx);
     app.open("Over the board");
+    super::local::wait_resumed(&mut app);
     app.find("chess-board");
     app.click(("local-mode", 1usize));
     // Turned for the players across the table: each face is drawn as a picture.
@@ -26,10 +27,9 @@ fn press(app: &mut Harness, n: usize) {
 
 /// The pictures of the turned faces as the page draws them now.
 fn faces(app: &mut Harness) -> Vec<std::sync::Arc<gpui_kit::RenderImage>> {
-    use crate::pages::Page;
     use crate::pages::local::LocalPage;
     app.with_window(|_, cx| {
-        crate::shell::view_of::<LocalPage>(Page::Local, cx)
+        crate::shell::view::<LocalPage>(cx)
             .expect("the page")
             .read(cx)
             .turned_faces()
@@ -102,6 +102,7 @@ fn piece_sizes_a_resize_left_behind_are_released(cx: &mut gpui_kit::TestAppConte
     use gpui_kit::{px, size};
     let mut app = Harness::start(cx);
     app.open("Over the board");
+    super::local::wait_resumed(&mut app);
     let pixels = |app: &mut Harness| {
         let side = app.find("chess-board").bounds().size.width.as_f32() / 8.;
         let scale = app.with_window(|window, _| window.scale_factor());

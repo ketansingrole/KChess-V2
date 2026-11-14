@@ -8,20 +8,20 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{IndexPath, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
-use kchess_contracts::types::CoordinateMode;
-use serde_json::{Value, json};
+use kchess_contracts::types::{CoordinateMode, RunKind};
+use serde_json::json;
 use shakmaty::{Color, Square};
 
-use super::run::{self, RunClock};
+use super::run::{self, Drill, DrillRun, Stage};
 use crate::assets::icon;
 use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
-use crate::game::{random_unit, rules};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets::{self, Tone};
+use kchess_games::random_unit;
 
 const DEFAULT_SECONDS: u32 = 60;
 const LENGTH: &str = "kchess:knight-length";
@@ -35,34 +35,23 @@ const LEVELS: [(&str, &str, u32, u32); 3] = [
     ("hard", "Hard · 4–6 jumps", 4, 6),
 ];
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Stage {
-    Idle,
-    Running,
-    Over,
-}
+use kchess_domain::voice::knight_moves;
 
-fn knight_moves(square: &str) -> Vec<String> {
-    rules("knightMoves", &[json!(square)])
-        .ok()
-        .and_then(|moves| serde_json::from_value(moves).ok())
-        .unwrap_or_default()
-}
-
-/// `knightChallenge`: a start, a goal and the shortest path between them, from random draws.
+/// A start, a goal and the shortest path between them, from random draws.
 fn knight_challenge(min: u32, max: u32) -> (String, String, u32) {
     let mut draws: Vec<f64> = Vec::new();
     for _ in 0..64 {
-        draws.push(random_unit());
-        draws.push(random_unit());
-        if let Ok(found) = rules("knightChallenge", &[json!(min), json!(max), json!(draws)])
-            && !found.is_null()
+        let (Some(first), Some(second)) = (
+            crate::game::drawn(random_unit()),
+            crate::game::drawn(random_unit()),
+        ) else {
+            break;
+        };
+        draws.extend([first, second]);
+        if let Some(found) =
+            kchess_domain::voice::knight_challenge(f64::from(min), f64::from(max), &draws)
         {
-            return (
-                found["from"].as_str().unwrap_or("e4").to_string(),
-                found["to"].as_str().unwrap_or("e4").to_string(),
-                crate::game::whole(&found["best"]) as u32,
-            );
+            return (found.from, found.to, found.best.unwrap_or(0));
         }
     }
     ("b1".into(), "c3".into(), 1)
@@ -70,7 +59,7 @@ fn knight_challenge(min: u32, max: u32) -> (String, String, u32) {
 
 pub struct KnightPaths {
     level: usize,
-    stage: Stage,
+    run: DrillRun,
     knight: String,
     goal: String,
     best: u32,
@@ -79,13 +68,9 @@ pub struct KnightPaths {
     reached: u32,
     missed: u32,
     notice: Option<String>,
-    clock: RunClock,
-    summary: Value,
-    saved: Value,
     level_select: Entity<SelectState<Vec<SharedString>>>,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
-    ticker: Option<Task<()>>,
     advance: Option<Task<()>>,
     /// The square to jump to, said aloud.
     voice: Control,
@@ -101,8 +86,11 @@ impl KnightPaths {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> KnightPaths {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", crate::game::STANDARD_FEN)
-                    .unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    crate::game::STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 None,
                 None,
@@ -148,13 +136,10 @@ impl KnightPaths {
                 },
             ),
         ];
-        run::load_summary("knightPath", cx, |this, summary, cx| {
-            this.summary = summary;
-            cx.notify();
-        });
+        DrillRun::load(RunKind::KnightPath, cx);
         let mut drill = KnightPaths {
             level: 1,
-            stage: Stage::Idle,
+            run: DrillRun::default(),
             // The idle board: a knight in the centre.
             knight: "e4".into(),
             goal: "e4".into(),
@@ -164,13 +149,9 @@ impl KnightPaths {
             reached: 0,
             missed: 0,
             notice: None,
-            clock: RunClock::default(),
-            summary: Value::Null,
-            saved: Value::Null,
             level_select,
             board,
             layout: PlayLayout::default(),
-            ticker: None,
             advance: None,
             voice: Control::new(false, cx),
             voice_log: DrillLog::default(),
@@ -204,9 +185,7 @@ impl KnightPaths {
 
     fn start(&mut self, cx: &mut Context<Self>) {
         // The microphone and model are ready before the clock starts, as in Coordinates.
-        if self.stage == Stage::Running
-            || (self.voice.enabled && !self.voice.gate(&mut self.starting, cx))
-        {
+        if self.run.running() || (self.voice.enabled && !self.voice.gate(&mut self.starting, cx)) {
             cx.notify();
             return;
         }
@@ -215,27 +194,13 @@ impl KnightPaths {
         self.reached = 0;
         self.missed = 0;
         self.notice = None;
-        self.saved = Value::Null;
         self.next_round(cx);
-        self.stage = Stage::Running;
-        self.clock.start(Self::length(cx));
-        self.ticker = Some(run::ticker(cx, |this, cx| {
-            if this.stage != Stage::Running {
-                return false;
-            }
-            if this.clock.expired() {
-                this.finish(cx);
-                return false;
-            }
-            cx.notify();
-            true
-        }));
+        self.run.begin(Self::length(cx), cx);
         self.redraw(cx);
     }
 
-    /// Take the jump when it is one.
     fn jump(&mut self, to: &str, cx: &mut Context<Self>) {
-        if self.stage != Stage::Running
+        if !self.run.running()
             || self.knight == self.goal
             || !knight_moves(&self.knight).iter().any(|square| square == to)
         {
@@ -267,7 +232,7 @@ impl KnightPaths {
 
     /// A spoken square is where the knight jumps to.
     fn voice_heard(&mut self, event: &VoiceEvent, cx: &mut Context<Self>) {
-        if !self.voice.owns(event) || self.stage != Stage::Running {
+        if !self.voice.owns(event) || !self.run.running() {
             return;
         }
         let (heard, missed) = match event {
@@ -293,9 +258,7 @@ impl KnightPaths {
         if self.knight == self.goal {
             return;
         }
-        let square = rules("spokenSquare", &[json!(heard.text)])
-            .ok()
-            .and_then(|square| square.as_str().map(str::to_string));
+        let square = kchess_domain::voice::spoken_square(&heard.text);
         let feedback = match square {
             None => {
                 log(self, "invalid", None, cx);
@@ -327,41 +290,19 @@ impl KnightPaths {
         self.next_round(cx);
     }
 
-    fn finish(&mut self, cx: &mut Context<Self>) {
-        if self.stage != Stage::Running {
-            return;
-        }
-        self.advance = None;
-        self.clock.stop();
-        self.stage = Stage::Over;
-        self.redraw(cx);
-        // An untimed score only grows with time, so it is never a record.
-        if self.clock.untimed {
-            return;
-        }
-        let run = json!({
-            "kind": "knightPath",
-            "variant": self.record_variant(cx),
-            "score": self.optimal,
-            "detail": { "reached": self.reached, "skipped": self.missed },
-        });
-        run::save_run(run, cx, |this, saved, cx| {
-            this.summary = saved["summary"].clone();
-            this.saved = saved;
-            cx.notify();
-        });
-    }
-
     fn redraw(&mut self, cx: &mut Context<Self>) {
-        let running = self.stage == Stage::Running;
-        self.voice
-            .sync(crate::voice::grammar("COORDINATE_GRAMMAR"), running, cx);
-        let fen = rules("knightFen", &[json!(self.knight)])
-            .ok()
-            .and_then(|fen| fen.as_str().map(str::to_string))
-            .unwrap_or_default();
-        let position = kchess_domain::rules::setup_start("standard", crate::game::STANDARD_FEN)
-            .unwrap_or_default();
+        let running = self.run.running();
+        self.voice.sync(
+            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Coordinate).to_vec(),
+            running,
+            cx,
+        );
+        let fen = kchess_domain::voice::knight_fen(&self.knight);
+        let position = kchess_domain::rules::setup_start(
+            kchess_domain::variant::Variant::Standard,
+            crate::game::STANDARD_FEN,
+        )
+        .unwrap_or_default();
         let movable = running && self.knight != self.goal;
         let mut state = BoardState::of(&position, Color::White, None, None);
         // A lone knight is no legal position: the board draws the FEN's pieces.
@@ -400,10 +341,35 @@ impl KnightPaths {
     }
 }
 
+impl Drill for KnightPaths {
+    fn run(&mut self) -> &mut DrillRun {
+        &mut self.run
+    }
+
+    fn finish(&mut self, cx: &mut Context<Self>) {
+        if !self.run.end() {
+            return;
+        }
+        self.advance = None;
+        self.redraw(cx);
+        // An untimed score only grows with time, so it is never a record.
+        if self.run.clock.untimed {
+            return;
+        }
+        let run = run::input(
+            RunKind::KnightPath,
+            self.record_variant(cx),
+            f64::from(self.optimal),
+            json!({ "reached": self.reached, "skipped": self.missed }),
+        );
+        DrillRun::save(run, cx);
+    }
+}
+
 impl Render for KnightPaths {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let running = self.stage == Stage::Running;
+        let running = self.run.running();
         let target = format!(
             "Reach {} in {} {}",
             self.goal,
@@ -411,13 +377,6 @@ impl Render for KnightPaths {
             if self.best == 1 { "jump" } else { "jumps" }
         );
         let board_size = self.layout.board_size(window);
-        let frontend = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
         let length = Self::length(cx);
         let mut panel = widgets::side_panel(&palette)
             .h(self.layout.panel_height(board_size))
@@ -435,7 +394,7 @@ impl Render for KnightPaths {
                             .text_color(palette.text_muted)
                             .child("Reach the green square in the fewest moves"),
                     )
-                    .child(widgets::view_toggles(frontend.blindfold, frontend.zen_mode)),
+                    .child(widgets::view_toggles(cx)),
             )
             .child(run::field(
                 "Difficulty",
@@ -452,22 +411,27 @@ impl Render for KnightPaths {
                 move |seconds, _, cx| crate::prefs::set(cx, LENGTH, seconds),
                 &palette,
             ))
-            .child(self.voice.bar(
-                cx.entity().downgrade(),
-                |this: &mut Self| &mut this.voice,
-                BarSpec {
-                    id: "knight-voice",
-                    hint: "Say the square to jump to, such as “F three”",
-                    active: running,
-                    grammar: crate::voice::grammar("COORDINATE_GRAMMAR"),
-                },
-                cx,
-            ))
+            .child(
+                self.voice.bar(
+                    cx.entity().downgrade(),
+                    |this: &mut Self| &mut this.voice,
+                    BarSpec {
+                        id: "knight-voice",
+                        hint: "Say the square to jump to, such as “F three”",
+                        active: running,
+                        grammar: kchess_domain::voice::grammar(
+                            kchess_domain::voice::Grammar::Coordinate,
+                        )
+                        .to_vec(),
+                    },
+                    cx,
+                ),
+            )
             .child(div().h(px(1.)).bg(palette.border));
         if running {
             panel = panel
                 .child(run::hud(
-                    &self.clock,
+                    &self.run.clock,
                     f64::from(self.optimal),
                     "shortest paths",
                     &palette,
@@ -516,9 +480,9 @@ impl Render for KnightPaths {
                         .on_click(cx.listener(|this, _, _, cx| this.finish(cx))),
                 );
         } else {
-            let best = run::best(&self.summary, &self.record_variant(cx));
-            if self.stage == Stage::Over {
-                let is_best = !self.clock.untimed && self.saved["isBest"] == json!(true);
+            let best = self.run.best(&self.record_variant(cx));
+            if self.run.stage == Stage::Over {
+                let is_best = !self.run.clock.untimed && self.run.is_best;
                 panel = panel.child(
                     widgets::StatusBanner::new(
                         if is_best { Tone::Win } else { Tone::Plain },
@@ -532,8 +496,8 @@ impl Render for KnightPaths {
                     )
                     .announce()
                     .detail(
-                        if self.clock.untimed {
-                            format!("in {}", self.clock.text())
+                        if self.run.clock.untimed {
+                            format!("in {}", self.run.clock.text())
                         } else if is_best {
                             "New personal best".to_string()
                         } else {
@@ -561,7 +525,7 @@ impl Render for KnightPaths {
                     .large()
                     .w_full()
                     .icon(icon("play"))
-                    .label(if self.stage == Stage::Over {
+                    .label(if self.run.stage == Stage::Over {
                         "Play again"
                     } else {
                         "Start"

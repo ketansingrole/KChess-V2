@@ -19,8 +19,8 @@ KCHESS_USER_DATA_DIR=/tmp/kchess-dev cargo run -p kchess-gpui
 ```
 
 While editing, `cargo xtask check-fast` checks what changed and what depends on it; run it before
-opening a pull request. CI runs the full check on every pull request, on macOS, Windows and Linux,
-and `main` accepts only pull requests whose CI passed. To run it locally as well:
+opening a pull request. CI runs the full check on every pull request (what runs where is in
+[GUARDRAILS.md](GUARDRAILS.md)), and `main` accepts only pull requests whose CI passed. To run it locally as well:
 
 ```bash
 cargo xtask check
@@ -36,13 +36,15 @@ To reproduce CI's Linux build locally, start Docker (on macOS, `brew install col
 - Match the surrounding code: naming, comment density, and idiom. `cargo fmt` formats it.
 - Put headless features in the core (`crates/kchess-core`) behind `CoreApi` (`kchess-contracts`),
   pure chess or training rules in `crates/kchess-domain`, and views in `apps/gpui`. Documents a
-  user keeps belong in the core's library. Every core method validates its arguments
-  (`crates/kchess-domain/src/misc/contracts.rs`).
-- New settings need three things: the `Settings` type, the `SETTINGS_KEYS` list in
-  `crates/kchess-core/src/store/mod.rs`, and a new entry at the end of `MIGRATIONS` in
-  `crates/kchess-core/src/store/migrations.rs` (never edit an earlier migration).
-- Be gentle with Lichess. Bulk downloads run one request at a time, and requests should be
-  attributed for the data-usage counters (`with_usage` in `crates/kchess-core/src/lichess`).
+  user keeps belong in the core's library. Every core method names a check for each argument in
+  its `core_api!` declaration (`crates/kchess-contracts/src/core_api.rs`).
+- A new setting is a field of the `Settings` type with its default in
+  `crates/kchess-contracts/src/defaults.rs`, its check in `crates/kchess-contracts/src/check/accounts.rs`,
+  and its column: a new entry at the end of `MIGRATIONS` in `crates/kchess-core/src/store/migrations.rs`
+  (never edit an earlier migration). The store reads and writes every field by its name.
+- Be gentle with Lichess. Bulk downloads run one request at a time, and every request names its
+  account and kind for the data-usage counters (`Policy::usage` in
+  `crates/kchess-core/src/lichess/policy.rs`).
 
 ## Licensing of contributions
 

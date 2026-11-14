@@ -2,7 +2,13 @@
 //! online, your record against them, their rating history, their record in a speed, and their
 //! recent games — and follow, challenge, message or watch them.
 
+use crate::loading::{Epoch, Turn};
 use kchess_contracts::calls;
+use kchess_contracts::check::{GameId, LichessId, MessageText, PresenceUsers, StudyId, Username};
+use kchess_contracts::types::{
+    ActivityDay, Crosstable, LeaderboardEntry, LichessGame, LichessRelation, PerfResult, PerfStats,
+    PerfType, PlayerSuggestion, RelationAction, Reply, UserPresence,
+};
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -12,10 +18,13 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_domain::perf::{Perf, Speed};
 use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::core::AppCore;
+use crate::game::played::GameOrigin;
+use crate::pages::analysis::Opening;
 use crate::pages::history::lichess::{RowDetail, game_row};
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::rating_history::{Retry, has_points};
@@ -37,49 +46,35 @@ const TITLES: [&str; 11] = [
 ];
 /// How long typing settles before names are searched.
 pub(crate) const SEARCH_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
-/// Rating categories with a Lichess leaderboard, in the order offered.
-const BOARD_PERFS: [&str; 13] = [
-    "bullet",
-    "blitz",
-    "rapid",
-    "classical",
-    "ultraBullet",
-    "chess960",
-    "crazyhouse",
-    "antichess",
-    "atomic",
-    "horde",
-    "kingOfTheHill",
-    "racingKings",
-    "threeCheck",
-];
+/// Rating categories with a Lichess leaderboard: every one but correspondence.
+fn board_perfs() -> impl Iterator<Item = Perf> {
+    Perf::ALL
+        .into_iter()
+        .filter(|perf| *perf != Perf::Speed(Speed::Correspondence))
+}
 
-/// `PERF_LABELS`, in `PERF_TYPES` order.
-const PERFS: [(&str, &str); 14] = [
-    ("ultraBullet", "UltraBullet"),
-    ("bullet", "Bullet"),
-    ("blitz", "Blitz"),
-    ("rapid", "Rapid"),
-    ("classical", "Classical"),
-    ("correspondence", "Correspondence"),
-    ("chess960", "Chess960"),
-    ("kingOfTheHill", "King of the Hill"),
-    ("threeCheck", "Three-check"),
-    ("antichess", "Antichess"),
-    ("atomic", "Atomic"),
-    ("horde", "Horde"),
-    ("racingKings", "Racing Kings"),
-    ("crazyhouse", "Crazyhouse"),
-];
+/// The rating categories with their names, in `PERF_TYPES` order.
+fn perfs() -> impl Iterator<Item = (&'static str, &'static str)> {
+    use kchess_domain::misc::constants::PERF_TYPES;
+    use kchess_domain::records::ratings::perf_label;
+    PERF_TYPES
+        .iter()
+        .map(|key| (*key, perf_label(key).unwrap_or(key)))
+}
 
-/// `playedPerfs`: the speeds a player has games in, most played first.
-fn played_perfs(profile: &Value) -> Vec<(&'static str, &'static str)> {
-    let games = |key: &str| profile["perfs"][key]["games"].as_f64().unwrap_or_default();
-    let mut perfs: Vec<_> = PERFS
+/// The rating category a key of `PERF_TYPES` (or of the leaderboard) names; blitz for any other.
+fn perf_type(key: &str) -> PerfType {
+    PerfType::ALL
         .iter()
         .copied()
-        .filter(|(key, _)| games(key) > 0.)
-        .collect();
+        .find(|perf| perf.as_str() == key)
+        .unwrap_or(PerfType::Blitz)
+}
+
+/// The speeds a player has games in, most played first.
+fn played_perfs(profile: &Value) -> Vec<(&'static str, &'static str)> {
+    let games = |key: &str| profile["perfs"][key]["games"].as_f64().unwrap_or_default();
+    let mut perfs: Vec<_> = perfs().filter(|(key, _)| games(key) > 0.).collect();
     perfs.sort_by(|a, b| games(b.0).total_cmp(&games(a.0)));
     perfs
 }
@@ -237,46 +232,46 @@ pub struct PlayersPage {
     input: Entity<InputState>,
     profile: Option<Value>,
     /// `UserPresence`, once known.
-    status: Option<Value>,
+    status: Option<UserPresence>,
     perf: String,
     perf_select: Entity<SelectState<Vec<Choice>>>,
-    stats: Option<Value>,
+    stats: Option<PerfStats>,
     stats_error: Option<SharedString>,
     /// `Crosstable` between the active account and the player.
-    record: Option<Value>,
+    record: Option<Crosstable>,
     /// What could not be read beside the profile, so "none" is not implied.
     extras_failed: Vec<&'static str>,
-    games: Option<Vec<Value>>,
+    games: Option<Vec<LichessGame>>,
     games_error: bool,
     history: Entity<RatingSpeeds>,
     /// `ActivityDay`s, once Lichess sent them.
-    days: Option<Vec<Value>>,
+    days: Option<Vec<ActivityDay>>,
     days_error: bool,
     /// `LichessRelation` of the online account with the player; None without one to ask.
-    relation: Option<Value>,
+    relation: Option<LichessRelation>,
     /// The online account `record` and `relation` were read as, so switching accounts reads them
     /// again rather than showing another account's.
     extras_account: Option<String>,
     /// Each read of `record` and `relation`; answers to an older one are dropped.
-    account_epoch: u64,
+    account_epoch: Epoch,
     /// The leaderboard shown while no player is open.
-    board: Option<Vec<Value>>,
+    board: Option<Vec<LeaderboardEntry>>,
     board_error: Option<SharedString>,
     board_perf: String,
     board_select: Entity<SelectState<Vec<Choice>>>,
-    board_epoch: u64,
+    board_epoch: Epoch,
     board_title: String,
     title_select: Entity<SelectState<Vec<Choice>>>,
     /// The `board_epoch` whose titles `title_select` offers.
-    title_choices_for: Option<u64>,
+    title_choices_for: Option<Turn>,
     /// `PlayerSuggestion`s for what is typed.
-    matches: Vec<Value>,
-    search_epoch: u64,
+    matches: Vec<PlayerSuggestion>,
+    search_epoch: Epoch,
     error: Option<SharedString>,
     loading: bool,
     /// Each lookup; answers to an older one are dropped.
-    epoch: u64,
-    stats_epoch: u64,
+    epoch: Epoch,
+    stats_epoch: Epoch,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -299,15 +294,8 @@ impl PlayersPage {
         let history = cx.new(|cx| RatingSpeeds::new("Built from the last 200 rated games", cx));
         let accounts = crate::accounts::handle(cx);
         let board_perf: String = crate::prefs::get(cx, BOARD_PERF_KEY, "blitz".to_string());
-        let board_items: Vec<Choice> = BOARD_PERFS
-            .iter()
-            .map(|key| {
-                let label = PERFS
-                    .iter()
-                    .find(|(k, _)| k == key)
-                    .map_or(*key, |(_, l)| l);
-                Choice::new(*key, label)
-            })
+        let board_items: Vec<Choice> = board_perfs()
+            .map(|perf| Choice::new(perf.key(), perf.label()))
             .collect();
         let chosen = SharedString::from(board_perf.clone());
         let board_select = cx.new(|cx| {
@@ -382,21 +370,21 @@ impl PlayersPage {
             days_error: false,
             relation: None,
             extras_account: None,
-            account_epoch: 0,
+            account_epoch: Epoch::default(),
             board: None,
             board_error: None,
             board_perf,
             board_select,
-            board_epoch: 0,
+            board_epoch: Epoch::default(),
             board_title,
             title_select,
             title_choices_for: None,
             matches: Vec::new(),
-            search_epoch: 0,
+            search_epoch: Epoch::default(),
             error: None,
             loading: false,
-            epoch: 0,
-            stats_epoch: 0,
+            epoch: Epoch::default(),
+            stats_epoch: Epoch::default(),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
@@ -410,24 +398,21 @@ impl PlayersPage {
 
     /// The leaderboard of the chosen category, while no player is open.
     fn load_board(&mut self, cx: &mut Context<Self>) {
-        self.board_epoch += 1;
-        let epoch = self.board_epoch;
+        let epoch = self.board_epoch.next();
         self.board = None;
         self.board_error = None;
         cx.notify();
         let board = cx.global::<AppCore>().request(calls::Leaderboard {
-            perf: json!(self.board_perf),
+            perf: perf_type(&self.board_perf),
         });
         cx.spawn(async move |this, cx| {
             let answer = board.await;
             let _ = this.update(cx, |this, cx| {
-                if this.board_epoch != epoch {
+                if !this.board_epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
-                    Ok(entries) => {
-                        this.board = Some(entries.as_array().cloned().unwrap_or_default())
-                    }
+                    Ok(entries) => this.board = Some(entries),
                     Err(cause) => this.board_error = Some(message_of(&cause)),
                 }
                 cx.notify();
@@ -452,10 +437,10 @@ impl PlayersPage {
         let Some(board) = &self.board else {
             return;
         };
-        if self.title_choices_for == Some(self.board_epoch) {
+        if self.title_choices_for == Some(self.board_epoch.current()) {
             return;
         }
-        self.title_choices_for = Some(self.board_epoch);
+        self.title_choices_for = Some(self.board_epoch.current());
         let items = title_choices(board, &self.board_title);
         let chosen = SharedString::from(self.board_title.clone());
         self.title_select.update(cx, |select, cx| {
@@ -466,8 +451,7 @@ impl PlayersPage {
 
     /// Players whose names start with what is typed, once typing settles.
     fn search_names(&mut self, cx: &mut Context<Self>) {
-        self.search_epoch += 1;
-        let epoch = self.search_epoch;
+        let epoch = self.search_epoch.next();
         let term = self.input.read(cx).value().trim().to_string();
         let shown = self
             .username()
@@ -485,20 +469,22 @@ impl PlayersPage {
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SEARCH_WAIT).await;
             let current = this
-                .read_with(cx, |this, _| this.search_epoch == epoch)
+                .read_with(cx, |this, _| this.search_epoch.is_current(epoch))
                 .unwrap_or(false);
             if !current {
                 return;
             }
             let found = core
-                .request(calls::SearchPlayers { term: json!(term) })
+                .request(calls::SearchPlayers {
+                    term: Username(term),
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                if this.search_epoch != epoch {
+                if !this.search_epoch.is_current(epoch) {
                     return;
                 }
                 if let Ok(found) = found {
-                    this.matches = found.as_array().cloned().unwrap_or_default();
+                    this.matches = found;
                     this.matches.truncate(SUGGESTED);
                 }
                 cx.notify();
@@ -529,7 +515,7 @@ impl PlayersPage {
         if !crate::game::is_username(&name) {
             // This search replaces one still on its way: its answer would show that profile
             // under this error and put its name back in the box over what was typed.
-            self.epoch += 1;
+            self.epoch.invalidate();
             self.loading = false;
             self.error = Some(if name.is_empty() {
                 "Enter a Lichess username".into()
@@ -539,9 +525,9 @@ impl PlayersPage {
             cx.notify();
             return;
         }
-        self.epoch += 1;
-        self.stats_epoch += 1;
-        let epoch = self.epoch;
+        self.epoch.invalidate();
+        self.stats_epoch.invalidate();
+        let epoch = self.epoch.current();
         self.loading = true;
         self.error = None;
         self.stats = None;
@@ -554,7 +540,7 @@ impl PlayersPage {
         self.days = None;
         self.days_error = false;
         self.relation = None;
-        self.account_epoch += 1;
+        self.account_epoch.invalidate();
         self.matches.clear();
         self.history.update(cx, |history, cx| {
             history.set(Value::Null, Value::Null, cx);
@@ -562,12 +548,12 @@ impl PlayersPage {
         });
         cx.notify();
         let profile = cx.global::<AppCore>().request(calls::Profile {
-            username: json!(name),
+            username: Username(name.clone()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let found = profile.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 this.loading = false;
@@ -618,18 +604,18 @@ impl PlayersPage {
 
     /// What the player did lately on Lichess.
     fn load_days(&mut self, username: &str, cx: &mut Context<Self>) {
-        let epoch = self.epoch;
+        let epoch = self.epoch.current();
         let days = cx.global::<AppCore>().request(calls::Activity {
-            username: json!(username),
+            username: Username(username.to_string()),
         });
         cx.spawn(async move |this, cx| {
             let answer = days.await;
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
-                    Ok(days) => this.days = Some(days.as_array().cloned().unwrap_or_default()),
+                    Ok(days) => this.days = Some(days),
                     Err(_) => this.days_error = true,
                 }
                 cx.notify();
@@ -640,30 +626,36 @@ impl PlayersPage {
 
     /// Block or unblock the player as the online account; blocking asks first.
     fn toggle_block(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(username), Some(relation)) = (self.username(), self.relation.clone()) else {
+        let (Some(username), Some(relation)) = (self.username(), self.relation) else {
             return;
         };
-        let blocking = relation["blocking"] != json!(true);
-        let account_epoch = self.account_epoch;
+        let blocking = !relation.blocking;
+        let account_epoch = self.account_epoch.current();
         let page = cx.entity().downgrade();
         let apply = move |window: &mut Window, cx: &mut App| {
-            let (page, relation) = (page.clone(), relation.clone());
+            let page = page.clone();
             crate::accounts::handle(cx).update(cx, |accounts, cx| {
                 accounts.set_relation(
                     username.clone(),
-                    if blocking { "block" } else { "unblock" },
+                    if blocking {
+                        RelationAction::Block
+                    } else {
+                        RelationAction::Unblock
+                    },
                     window,
                     cx,
                     move |took, _, cx| {
                         if took {
                             let _ = page.update(cx, |page, cx| {
                                 // Another account or player since: its relation is read anew.
-                                if page.account_epoch != account_epoch {
+                                if !page.account_epoch.is_current(account_epoch) {
                                     return;
                                 }
-                                let following = !blocking && relation["following"] == json!(true);
-                                page.relation =
-                                    Some(json!({ "following": following, "blocking": blocking }));
+                                let following = !blocking && relation.following;
+                                page.relation = Some(LichessRelation {
+                                    following,
+                                    blocking,
+                                });
                                 cx.notify();
                             });
                         }
@@ -702,23 +694,21 @@ impl PlayersPage {
 
     /// Your record against them, and whether they are online.
     fn load_extras(&mut self, username: &str, cx: &mut Context<Self>) {
-        let epoch = self.epoch;
+        let epoch = self.epoch.current();
         let core = cx.global::<AppCore>().clone();
         self.load_account_extras(username, cx);
         let presence = core.request(calls::Presence {
-            usernames: json!([username]),
+            usernames: PresenceUsers(vec![username.to_string()]),
         });
         let key = username.to_lowercase();
         cx.spawn(async move |this, cx| {
             let answer = presence.await;
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
-                    Ok(report) => {
-                        this.status = Some(report["users"][&key].clone()).filter(Value::is_object)
-                    }
+                    Ok(report) => this.status = report.users.get(&key).cloned(),
                     Err(_) => this.extras_failed.push("online status"),
                 }
                 cx.notify();
@@ -746,8 +736,7 @@ impl PlayersPage {
 
     /// The online account's record against the player and how it stands with them on Lichess.
     fn load_account_extras(&mut self, username: &str, cx: &mut Context<Self>) {
-        self.account_epoch += 1;
-        let account_epoch = self.account_epoch;
+        let account_epoch = self.account_epoch.next();
         self.record = None;
         self.relation = None;
         self.extras_failed.retain(|failed| *failed != "your record");
@@ -761,15 +750,14 @@ impl PlayersPage {
         };
         let core = cx.global::<AppCore>().clone();
         let relation = core.request(calls::Relation {
-            account: json!(me),
-            username: json!(username),
+            account: Username(me.clone()),
+            username: Username(username.to_string()),
         });
         cx.spawn(async move |this, cx| {
             let answer = relation.await;
             let _ = this.update(cx, |this, cx| {
-                if this.account_epoch == account_epoch
-                    && let Ok(relation) = answer
-                    && relation.get("needsReconnect").is_none()
+                if this.account_epoch.is_current(account_epoch)
+                    && let Ok(Reply::Done(relation)) = answer
                 {
                     this.relation = Some(relation);
                     cx.notify();
@@ -778,13 +766,13 @@ impl PlayersPage {
         })
         .detach();
         let crosstable = core.request(calls::Crosstable {
-            a: json!(me),
-            b: json!(username),
+            a: Username(me),
+            b: Username(username.to_string()),
         });
         cx.spawn(async move |this, cx| {
             let answer = crosstable.await;
             let _ = this.update(cx, |this, cx| {
-                if this.account_epoch != account_epoch {
+                if !this.account_epoch.is_current(account_epoch) {
                     return;
                 }
                 match answer {
@@ -797,24 +785,23 @@ impl PlayersPage {
         .detach();
     }
 
-    /// `loadStats`: their record in the chosen speed.
+    /// Their record in the chosen speed.
     fn load_stats(&mut self, cx: &mut Context<Self>) {
         let Some(username) = self.username() else {
             return;
         };
-        self.stats_epoch += 1;
-        let stats_epoch = self.stats_epoch;
+        let stats_epoch = self.stats_epoch.next();
         self.stats = None;
         self.stats_error = None;
         cx.notify();
         let stats = cx.global::<AppCore>().request(calls::PlayerPerf {
-            username: json!(username),
-            perf: json!(self.perf),
+            username: Username(username),
+            perf: perf_type(&self.perf),
         });
         cx.spawn(async move |this, cx| {
             let answer = stats.await;
             let _ = this.update(cx, |this, cx| {
-                if this.stats_epoch != stats_epoch {
+                if !this.stats_epoch.is_current(stats_epoch) {
                     return;
                 }
                 match answer {
@@ -827,28 +814,28 @@ impl PlayersPage {
         .detach();
     }
 
-    /// `loadHistory` and `loadGames`: Lichess's rating history (or one rebuilt from their recent
+    /// Lichess's rating history (or one rebuilt from their recent
     /// rated games when it sends none) and their recent games.
     fn load_activity(&mut self, cx: &mut Context<Self>) {
         let Some(username) = self.username() else {
             return;
         };
-        let epoch = self.epoch;
+        let epoch = self.epoch.current();
         self.games = None;
         self.games_error = false;
         let core = cx.global::<AppCore>().clone();
         let games = core.request(calls::RecentGames {
-            username: json!(username),
+            username: Username(username.clone()),
             rated: None,
         });
         cx.spawn(async move |this, cx| {
             let answer = games.await;
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
-                    Ok(games) => this.games = Some(games.as_array().cloned().unwrap_or_default()),
+                    Ok(games) => this.games = Some(games),
                     // Lichess sometimes answers "not found" for every player's games.
                     Err(_) => this.games_error = true,
                 }
@@ -857,7 +844,7 @@ impl PlayersPage {
         })
         .detach();
         let official = core.request(calls::RatingHistory {
-            username: json!(username),
+            username: Username(username.clone()),
         });
         cx.spawn(async move |this, cx| {
             let official = official.await.unwrap_or(json!([]));
@@ -865,14 +852,17 @@ impl PlayersPage {
                 None
             } else {
                 let rated = core.request(calls::RecentGames {
-                    username: json!(username),
-                    rated: Some(json!(true)),
+                    username: Username(username),
+                    rated: Some(true),
                 });
-                let rated = rated.await.unwrap_or(json!([]));
-                Some(crate::game::rules("ratingHistoryFromGames", &[rated]).unwrap_or(json!([])))
+                let rated = json!(rated.await.unwrap_or_default());
+                let games = rated.as_array().map_or(&[][..], Vec::as_slice);
+                Some(kchess_domain::records::ratings::rating_history_from_games(
+                    games,
+                ))
             };
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 let withheld = this.withheld(cx);
@@ -910,27 +900,14 @@ impl PlayersPage {
     }
 
     /// Open one of their games on the analysis board, from their side.
-    pub fn open_game(game: Value, window: &mut Window, cx: &mut App) {
-        let white = game["color"] != json!("black");
-        let (account, opponent) = (game["account"].clone(), game["opponent"].clone());
-        let (white_name, black_name) = if white {
-            (account, opponent)
-        } else {
-            (opponent, account)
+    pub fn open_game(game: LichessGame, window: &mut Window, cx: &mut App) {
+        let (account, opponent) = (json!(game.account), json!(game.opponent));
+        let (white_name, black_name) = match game.color {
+            shakmaty::Color::White => (account, opponent),
+            shakmaty::Color::Black => (opponent, account),
         };
-        let color = if white {
-            shakmaty::Color::White
-        } else {
-            shakmaty::Color::Black
-        };
-        open_exported(
-            game["id"].as_str().unwrap_or_default(),
-            white_name,
-            black_name,
-            color,
-            window,
-            cx,
-        );
+        let color = game.color;
+        open_exported(&game.id, white_name, black_name, color, window, cx);
     }
 
     /// What the open player's buttons can do now.
@@ -939,11 +916,10 @@ impl PlayersPage {
             return Vec::new();
         };
         let accounts = crate::accounts::handle(cx).read(cx);
-        let followed = accounts.all().iter().any(|account| {
-            account["username"]
-                .as_str()
-                .is_some_and(|name| name.eq_ignore_ascii_case(&username))
-        });
+        let followed = accounts
+            .all()
+            .iter()
+            .any(|account| account.username.eq_ignore_ascii_case(&username));
         let not_me = accounts
             .active(cx)
             .as_deref()
@@ -958,7 +934,7 @@ impl PlayersPage {
         if self
             .status
             .as_ref()
-            .is_some_and(|status| status["playingId"].is_string())
+            .is_some_and(|status| status.playing_id.is_some())
         {
             actions.push(Action::Watch);
         }
@@ -975,15 +951,15 @@ impl PlayersPage {
         };
         match action {
             Action::Follow => follow(username, window, cx),
-            Action::Challenge => crate::shell::challenge(&username, window, cx),
+            Action::Challenge => crate::pages::online::challenge(&username, window, cx),
             Action::Message => self.open_message(window, cx),
             Action::Watch => {
                 let playing = self
                     .status
                     .as_ref()
-                    .and_then(|status| status["playingId"].as_str().map(str::to_string));
+                    .and_then(|status| status.playing_id.clone());
                 if let Some(id) = playing {
-                    crate::shell::watch_game(&id, window, cx);
+                    crate::pages::watch::watch_game(&id, window, cx);
                 }
             }
         }
@@ -1083,12 +1059,12 @@ impl PlayersPage {
                 .iter()
                 .enumerate()
                 .map(|(index, found)| {
-                    let name = found["username"].as_str().unwrap_or_default().to_string();
+                    let name = found.username.clone();
                     name_chip(
                         ("players-match", index),
                         &name,
-                        found["title"].as_str(),
-                        found["online"] == json!(true),
+                        found.title.as_deref(),
+                        found.online == Some(true),
                         palette,
                         pick(name.clone()),
                     )
@@ -1144,17 +1120,16 @@ impl PlayersPage {
         let accounts = crate::accounts::handle(cx).read(cx);
         let me = accounts.active(cx);
         let connected = !accounts.connected().is_empty();
-        let followed = accounts.all().iter().any(|account| {
-            account["username"]
-                .as_str()
-                .is_some_and(|name| name.eq_ignore_ascii_case(&username))
-        });
+        let followed = accounts
+            .all()
+            .iter()
+            .any(|account| account.username.eq_ignore_ascii_case(&username));
         let busy = accounts.busy;
         let not_me = me
             .as_deref()
             .is_none_or(|me| !me.eq_ignore_ascii_case(&username));
-        let status = self.status.clone().unwrap_or(Value::Null);
-        let playing_id = status["playingId"].as_str().map(str::to_string);
+        let status = self.status.clone().unwrap_or_default();
+        let playing_id = status.playing_id.clone();
         let title = profile["title"].as_str();
         let mut line = format!(
             "{} games · joined {}",
@@ -1169,25 +1144,20 @@ impl PlayersPage {
             .as_ref()
             .zip(me.as_ref())
             .and_then(|(record, me)| {
-                let games = record["nbGames"].as_f64().filter(|games| *games > 0.)?;
-                let of = |value: &Value, name: &str| {
-                    value["users"][name.to_lowercase()]
-                        .as_f64()
-                        .unwrap_or_default()
+                let games = Some(record.nb_games).filter(|games| *games > 0)?;
+                let of = |users: &std::collections::BTreeMap<String, f64>, name: &str| {
+                    users.get(&name.to_lowercase()).copied().unwrap_or_default()
                 };
                 let mut text = format!(
                     "You (@{me}) {} – {} {username} over {games} games",
-                    of(record, me),
-                    of(record, &username)
+                    of(&record.users, me),
+                    of(&record.users, &username)
                 );
-                if record["matchup"]["nbGames"]
-                    .as_f64()
-                    .is_some_and(|games| games > 0.)
-                {
+                if let Some(matchup) = record.matchup.as_ref().filter(|today| today.nb_games > 0) {
                     text.push_str(&format!(
                         " · today {} – {}",
-                        of(&record["matchup"], me),
-                        of(&record["matchup"], &username)
+                        of(&matchup.users, me),
+                        of(&matchup.users, &username)
                     ));
                 }
                 Some(text)
@@ -1213,13 +1183,9 @@ impl PlayersPage {
                                         widgets::badge(title.to_string(), Look::Primary, palette)
                                     }))
                                     .child(username.clone())
-                                    .when(status["online"] == json!(true), |row| {
+                                    .when(status.online, |row| {
                                         row.child(widgets::badge(
-                                            if status["playing"] == json!(true) {
-                                                "Playing"
-                                            } else {
-                                                "Online"
-                                            },
+                                            if status.playing { "Playing" } else { "Online" },
                                             Look::Success,
                                             palette,
                                         ))
@@ -1252,7 +1218,11 @@ impl PlayersPage {
                                         .icon(icon("swords"))
                                         .label("Challenge")
                                         .on_click(move |_, window, cx| {
-                                            crate::shell::challenge(&challenge_name, window, cx)
+                                            crate::pages::online::challenge(
+                                                &challenge_name,
+                                                window,
+                                                cx,
+                                            )
                                         }),
                                 )
                                 .child(
@@ -1273,11 +1243,11 @@ impl PlayersPage {
                                     .icon(icon("tv"))
                                     .label("Watch")
                                     .on_click(move |_, window, cx| {
-                                        crate::shell::watch_game(&id, window, cx)
+                                        crate::pages::watch::watch_game(&id, window, cx)
                                     })
                             }))
                             .children(self.relation.as_ref().map(|relation| {
-                                let label = if relation["blocking"] == json!(true) {
+                                let label = if relation.blocking {
                                     "Unblock"
                                 } else {
                                     "Block"
@@ -1308,7 +1278,7 @@ impl PlayersPage {
             .when(
                 self.relation
                     .as_ref()
-                    .is_some_and(|relation| relation["blocking"] == json!(true)),
+                    .is_some_and(|relation| relation.blocking),
                 |card| {
                     card.child(widgets::hint(
                         format!("Blocked by @{}", me.clone().unwrap_or_default()),
@@ -1354,13 +1324,13 @@ impl PlayersPage {
                         .child(widgets::heading("Record", palette))
                         .children(self.stats.as_ref().map(|stats| {
                             let mut parts = Vec::new();
-                            if let Some(deviation) = stats["deviation"].as_f64() {
+                            if let Some(deviation) = stats.deviation {
                                 parts.push(format!("± {}", deviation.round()));
                             }
-                            if let Some(rank) = stats["rank"].as_f64() {
+                            if let Some(rank) = stats.rank {
                                 parts.push(format!("rank #{rank}"));
                             }
-                            if let Some(percentile) = stats["percentile"].as_f64() {
+                            if let Some(percentile) = stats.percentile {
                                 parts.push(format!("better than {percentile}% of players"));
                             }
                             h_flex()
@@ -1375,8 +1345,8 @@ impl PlayersPage {
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(palette.highlighted)
                                         .child(
-                                            stats["rating"]
-                                                .as_f64()
+                                            stats
+                                                .rating
                                                 .map_or("–".into(), |r| r.round().to_string()),
                                         ),
                                 )
@@ -1402,25 +1372,19 @@ impl PlayersPage {
         let Some(stats) = &self.stats else {
             return card.child(widgets::loading("Loading…", palette));
         };
-        let count = |key: &str| stats["count"][key].as_f64().unwrap_or_default();
-        let mark = |key: &str| match stats[key]["rating"].as_f64() {
-            Some(rating) => format!(
-                "{rating} · {}",
-                stats[key]["at"]
-                    .as_str()
-                    .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+        let count = |key: &str| stats.count[key].as_f64().unwrap_or_default();
+        let mark = |mark: &Option<kchess_contracts::types::PerfMark>| match mark {
+            Some(mark) => format!(
+                "{} · {}",
+                mark.rating,
+                chrono::DateTime::parse_from_rfc3339(&mark.at)
                     .map(|at| at.format("%-d %b %Y").to_string())
-                    .or_else(|| stats[key]["at"].as_f64().map(local_date))
                     .unwrap_or_default()
             ),
             None => "–".into(),
         };
-        let streak = |key: &str, word: &str| {
-            format!(
-                "{} now · {word} {}",
-                stats[key]["current"].as_f64().unwrap_or_default(),
-                stats[key]["best"].as_f64().unwrap_or_default()
-            )
+        let streak = |streak: kchess_contracts::types::PerfStreak, word: &str| {
+            format!("{} now · {word} {}", streak.current, streak.best)
         };
         let rows = [
             (
@@ -1433,10 +1397,10 @@ impl PlayersPage {
                 "Tournament games",
                 format!("{} · berserked {}", count("tour"), count("berserk")),
             ),
-            ("Highest", mark("highest")),
-            ("Lowest", mark("lowest")),
-            ("Winning streak", streak("winStreak", "best")),
-            ("Losing streak", streak("lossStreak", "worst")),
+            ("Highest", mark(&stats.highest)),
+            ("Lowest", mark(&stats.lowest)),
+            ("Winning streak", streak(stats.win_streak, "best")),
+            ("Losing streak", streak(stats.loss_streak, "worst")),
         ];
         card = card
             .child(widgets::result_row(
@@ -1457,8 +1421,8 @@ impl PlayersPage {
                     .child(value)
             })));
         let opponents =
-            |title: &'static str, list: &Value, none: &'static str, id: &'static str| {
-                let entries = list.as_array().cloned().unwrap_or_default();
+            |title: &'static str, list: &[PerfResult], none: &'static str, id: &'static str| {
+                let entries = list.to_vec();
                 v_flex()
                     .flex_1()
                     .min_w(px(160.))
@@ -1469,17 +1433,15 @@ impl PlayersPage {
                         list.child(div().text_color(palette.text_muted).child(none))
                     })
                     .children(entries.into_iter().enumerate().map(move |(index, entry)| {
-                        let name = entry["opponent"].as_str().unwrap_or("?").to_string();
+                        let name = entry.opponent.clone();
                         h_flex()
                             .justify_between()
                             .gap(px(12.))
                             .child(player_link((id, index), name, palette.primary))
                             .child(
-                                div().text_color(palette.text_muted).child(
-                                    entry["opponentRating"]
-                                        .as_f64()
-                                        .map_or(String::new(), |r| r.to_string()),
-                                ),
+                                div()
+                                    .text_color(palette.text_muted)
+                                    .child(entry.opponent_rating.to_string()),
                             )
                     }))
             };
@@ -1491,13 +1453,13 @@ impl PlayersPage {
                 .mt(px(8.))
                 .child(opponents(
                     "Best rated wins",
-                    &stats["bestWins"],
+                    &stats.best_wins,
                     "None yet",
                     "best-win",
                 ))
                 .child(opponents(
                     "Worst rated losses",
-                    &stats["worstLosses"],
+                    &stats.worst_losses,
                     "None",
                     "worst-loss",
                 )),
@@ -1545,10 +1507,10 @@ impl PlayersPage {
             return card.child(widgets::loading("Loading…", palette));
         };
         let filter = self.board_title.as_str();
-        let shown: Vec<(usize, &Value)> = board
+        let shown: Vec<(usize, &LeaderboardEntry)> = board
             .iter()
             .enumerate()
-            .filter(|(_, entry)| title_shown(filter, entry["title"].as_str()))
+            .filter(|(_, entry)| title_shown(filter, entry.title.as_deref()))
             .collect();
         if shown.is_empty() && !board.is_empty() {
             let none = match filter {
@@ -1583,8 +1545,8 @@ impl PlayersPage {
                 .overflow_y_scroll()
                 .text_size(px(13.))
                 .children(shown.into_iter().map(|(index, entry)| {
-                    let name = entry["username"].as_str().unwrap_or_default().to_string();
-                    let progress = entry["progress"].as_f64().unwrap_or_default();
+                    let name = entry.username.clone();
+                    let progress = entry.progress;
                     // Rank, title, name, rating and change, each in its own column, so the
                     // names and the digits line up down the board.
                     h_flex()
@@ -1607,7 +1569,7 @@ impl PlayersPage {
                                 .flex_none()
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(palette.warning)
-                                .children(entry["title"].as_str().map(str::to_string)),
+                                .children(entry.title.clone()),
                         )
                         .child(
                             div()
@@ -1621,15 +1583,7 @@ impl PlayersPage {
                                     palette.primary,
                                 )),
                         )
-                        .child(
-                            numeric(48.).child(
-                                entry["rating"]
-                                    .as_f64()
-                                    .unwrap_or_default()
-                                    .round()
-                                    .to_string(),
-                            ),
-                        )
+                        .child(numeric(48.).child(entry.rating.round().to_string()))
                         .child(
                             numeric(40.)
                                 .id(("players-board-change", index))
@@ -1747,31 +1701,38 @@ fn open_exported_at(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let export = cx
-        .global::<AppCore>()
-        .request(calls::ExportGame { id: json!(id) });
-    let origin = json!({ "white": white, "black": black, "gameId": id });
+    let export = cx.global::<AppCore>().request(calls::ExportGame {
+        id: GameId(id.to_string()),
+    });
+    let opening = Opening {
+        ply,
+        orientation: Some(orientation),
+        origin: Some(GameOrigin {
+            game_id: Some(id.to_string()),
+            ..GameOrigin::named(&white, &black)
+        }),
+        review: false,
+    };
     let pgn = async move {
         match export.await {
-            Ok(Value::String(pgn)) => Ok(pgn),
-            Ok(_) => Err("That game could not be read".to_string()),
+            Ok(pgn) => Ok(pgn),
             Err(cause) => Err(format!("Could not open the game: {}", cause.message)),
         }
     };
-    open_fetched(pgn, Some(orientation), ply, Some(origin), window, cx);
+    open_fetched(pgn, opening, window, cx);
 }
 
 /// A public Lichess study's chapter (its first when `chapter` is empty), from the side the study
 /// shows it.
 pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App) {
     let fetch = cx.global::<AppCore>().request(calls::LichessStudyChapter {
-        id: json!(study),
-        chapter: json!(chapter),
+        id: LichessId(study.to_string()),
+        chapter: StudyId(chapter.to_string()),
     });
     window
         .spawn(cx, async move |cx| {
             let pgn = match fetch.await {
-                Ok(found) => found["pgn"].as_str().map(str::to_string),
+                Ok(found) => Some(found.pgn),
                 Err(cause) => {
                     let message = format!("Could not open the study: {}", cause.message);
                     let _ = cx.update(|window, cx| window.push_notification(message, cx));
@@ -1782,7 +1743,11 @@ pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App)
                 let orientation = pgn.as_deref().and_then(crate::game::pgn_orientation);
                 let pgn =
                     async move { pgn.ok_or_else(|| "That study could not be read".to_string()) };
-                open_fetched(pgn, orientation, 0, None, window, cx);
+                let opening = Opening {
+                    orientation,
+                    ..Opening::default()
+                };
+                open_fetched(pgn, opening, window, cx);
             });
         })
         .detach();
@@ -1792,9 +1757,7 @@ pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App)
 /// unsaved work), or say why it cannot be opened.
 pub fn open_fetched(
     pgn: impl std::future::Future<Output = Result<String, String>> + 'static,
-    orientation: Option<shakmaty::Color>,
-    ply: usize,
-    origin: Option<Value>,
+    opening: Opening,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -1811,8 +1774,8 @@ pub fn open_fetched(
                     window.push_notification("The analysis board cannot open this game", cx)
                 }
                 Ok(pgn) => {
-                    crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
-                        analysis.open_game(&pgn, ply, orientation, origin.clone(), false, cx)
+                    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
+                        analysis.open_pgn(&pgn, opening.clone(), cx)
                     });
                 }
                 Err(message) => window.push_notification(message, cx),
@@ -1833,11 +1796,11 @@ fn title_shown(filter: &str, title: Option<&str>) -> bool {
 
 /// The leaderboard's title filters: everyone, the titled, and each title its players hold, with
 /// how many; `chosen` is kept even when none hold it.
-fn title_choices(board: &[Value], chosen: &str) -> Vec<Choice> {
+fn title_choices(board: &[LeaderboardEntry], chosen: &str) -> Vec<Choice> {
     let held = |filter: &str| {
         board
             .iter()
-            .filter(|entry| title_shown(filter, entry["title"].as_str()))
+            .filter(|entry| title_shown(filter, entry.title.as_deref()))
             .count()
     };
     let titled = held("titled");
@@ -1865,7 +1828,7 @@ pub fn player_link(id: impl Into<ElementId>, name: String, ring: Hsla) -> Statef
         .on_click(move |_, window, cx| {
             // A name inside a clickable row opens the player, not the row.
             cx.stop_propagation();
-            crate::shell::open_player(&name, window, cx)
+            crate::pages::players::open_player(&name, window, cx)
         })
 }
 
@@ -1875,8 +1838,8 @@ impl Render for PlayersPage {
         let followed: Vec<String> = crate::accounts::handle(cx)
             .read(cx)
             .tracked()
-            .iter()
-            .filter_map(|friend| friend["username"].as_str().map(str::to_string))
+            .into_iter()
+            .map(|friend| friend.username)
             .collect();
         let search = self.search(&followed, cx, &palette);
         let narrow = window.viewport_size().width < px(1060.);
@@ -1983,17 +1946,17 @@ impl MessageDialog {
         self.reconnect = false;
         cx.notify();
         let send = cx.global::<AppCore>().request(calls::SendMessage {
-            account: json!(self.account),
-            username: json!(self.username),
-            text: json!(text),
+            account: Username(self.account.clone()),
+            username: Username(self.username.clone()),
+            text: MessageText(text),
         });
         cx.spawn_in(window, async move |this, cx| {
             let answer = send.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match answer {
-                    Ok(result) if result.get("needsReconnect").is_some() => this.reconnect = true,
-                    Ok(_) => {
+                    Ok(Reply::NeedsReconnect) => this.reconnect = true,
+                    Ok(Reply::Done(_)) => {
                         window.close_dialog(cx);
                         window.push_notification(format!("Message sent to {}", this.username), cx);
                     }
@@ -2073,6 +2036,64 @@ impl Render for MessageDialog {
     }
 }
 
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::ActionInfo;
+        match self {
+            Action::Follow => {
+                ActionInfo::new("players:follow", "Follow player", "user-plus", "friend add")
+            }
+            Action::Challenge => ActionInfo::new(
+                "players:challenge",
+                "Challenge",
+                "swords",
+                "play game invite",
+            ),
+            Action::Message => {
+                ActionInfo::new("players:message", "Message", "message-circle", "send write")
+            }
+            Action::Watch => ActionInfo::new("players:watch", "Watch", "tv", "spectate game"),
+        }
+    }
+}
+
+impl crate::pages::PageView for PlayersPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Players,
+        label: "Players",
+        short: "Players",
+        icon: "user-search",
+        group: Some(crate::pages::NavGroup::Lichess),
+        keywords: "lookup profile user",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        PlayersPage::new(window, cx)
+    }
+
+    fn search_fields(&self) -> Vec<Entity<InputState>> {
+        PlayersPage::search_fields(self)
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        PlayersPage::actions(self, cx)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.act(action, window, cx));
+    }
+}
+
+/// A player's profile on Players.
+pub fn open_player(username: &str, window: &mut Window, cx: &mut App) {
+    let username = username.to_string();
+    crate::shell::show::<PlayersPage>(window, cx, move |players, window, cx| {
+        players.show_player(&username, window, cx)
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::{hours, played_perfs, suggestions, title_choices, title_shown};
@@ -2109,9 +2130,9 @@ mod tests {
             let page = cx.new(|cx| super::PlayersPage::new(window, cx));
             page.update(cx, |page, cx| {
                 page.lookup(Some("Alice".into()), window, cx);
-                let asked = page.epoch;
+                let asked = page.epoch.current();
                 page.lookup(Some("a".into()), window, cx);
-                (page.loading, page.epoch == asked)
+                (page.loading, page.epoch.is_current(asked))
             })
         });
         assert!(!loading && !stale);
@@ -2157,11 +2178,18 @@ mod tests {
 
     #[test]
     fn titles_are_offered_as_the_board_holds_them() {
+        let entry = |title: Option<&str>| kchess_contracts::types::LeaderboardEntry {
+            username: "p".into(),
+            title: title.map(str::to_string),
+            rating: 2500.,
+            progress: 0.,
+            online: None,
+        };
         let board = [
-            json!({ "title": "GM" }),
-            json!({}),
-            json!({ "title": "IM" }),
-            json!({ "title": "GM" }),
+            entry(Some("GM")),
+            entry(None),
+            entry(Some("IM")),
+            entry(Some("GM")),
         ];
         let labels = |chosen: &str| {
             title_choices(&board, chosen)

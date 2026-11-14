@@ -19,7 +19,7 @@ pub fn action_notification(
     })
 }
 
-/// `formatCount`: "100,000".
+/// "100,000".
 pub fn format_count(count: f64) -> String {
     let digits = (count.max(0.).round() as u64).to_string();
     let mut out = String::new();
@@ -38,7 +38,7 @@ pub fn format_counted(count: f64, one: &str, many: &str) -> String {
     format!("{shown} {}", if shown == "1" { one } else { many })
 }
 
-/// `formatBytes`: "312 MB", "1.5 GB".
+/// "312 MB", "1.5 GB".
 pub fn format_bytes(bytes: f64) -> String {
     if !bytes.is_finite() || bytes <= 0. {
         return "0 B".into();
@@ -53,7 +53,37 @@ pub fn format_bytes(bytes: f64) -> String {
     }
 }
 
-/// How a badge is drawn (`UBadge` color and variant).
+/// "just now", "5 min ago", "3 h ago", "2 days ago", else the date.
+pub fn time_ago(timestamp: f64, now: f64) -> String {
+    if timestamp <= 0. {
+        return "never".into();
+    }
+    let seconds = ((now - timestamp) / 1000.).round().max(0.);
+    if seconds < 45. {
+        return "just now".into();
+    }
+    let minutes = (seconds / 60.).round();
+    if minutes < 60. {
+        return format!("{minutes} min ago");
+    }
+    let hours = (minutes / 60.).round();
+    if hours < 24. {
+        return format!("{hours} h ago");
+    }
+    let days = (hours / 24.).round();
+    if days < 31. {
+        return format!("{days} day{} ago", if days == 1. { "" } else { "s" });
+    }
+    // The numeric date, 12/30/2025.
+    use chrono::TimeZone as _;
+    chrono::Local
+        .timestamp_millis_opt(timestamp as i64)
+        .single()
+        .map(|date| date.format("%-m/%-d/%Y").to_string())
+        .unwrap_or_default()
+}
+
+/// How a badge is drawn: its color and fill.
 #[derive(Clone, Copy)]
 pub enum Look {
     Success,
@@ -65,7 +95,7 @@ pub enum Look {
     NeutralSubtle,
 }
 
-/// `UBadge`: a short label in a soft color; callers add an icon, a width or a dot.
+/// A short label in a soft color; callers add an icon, a width or a dot.
 pub fn badge(label: impl Into<SharedString>, look: Look, palette: &Palette) -> Div {
     badge_box(look, palette).child(label.into())
 }
@@ -158,7 +188,7 @@ pub fn result_row(
                         })),
                 )
                 .child(
-                    // `.result-value`: the score at the row's weight, its unit 12px and muted.
+                    // The score at the row's weight, its unit 12px and muted.
                     h_flex()
                         .gap(px(4.))
                         .items_baseline()
@@ -208,4 +238,22 @@ pub fn result_row(
                         })
                 }),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::time_ago;
+
+    #[test]
+    fn edits_read_as_how_long_ago() {
+        let now = 1_000_000_000_000.;
+        assert_eq!(time_ago(now - 10_000., now), "just now");
+        assert_eq!(time_ago(now - 5. * 60_000., now), "5 min ago");
+        assert_eq!(time_ago(now - 3. * 3_600_000., now), "3 h ago");
+        assert_eq!(time_ago(now - 86_400_000., now), "1 day ago");
+        assert_eq!(time_ago(0., now), "never");
+        // Older than a month: the numeric date.
+        let old = time_ago(now - 90. * 86_400_000., now);
+        assert_eq!(old.matches('/').count(), 2, "{old}");
+    }
 }

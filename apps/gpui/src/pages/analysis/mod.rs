@@ -5,17 +5,77 @@
 mod edits;
 mod engine;
 mod import;
+mod load;
 mod notes;
+mod page;
 mod practice;
 mod review;
 mod study;
 mod tree_view;
 
+use crate::game::surface::TakesKeys as _;
+use crate::game::tree::TreePgn as _;
+use crate::shortcuts::{PageKey, page_key};
 use engine::{prefs_lines, stop_analysis};
 use kchess_contracts::calls;
+use kchess_contracts::types::AnalysisUpdate;
 use tree_view::{TreeView, flow};
 
-pub use review::classification_look;
+/// What the analysis board's own keys do.
+#[derive(Clone, Copy)]
+pub(crate) enum AnalysisKey {
+    Engine,
+    Threat,
+    Best,
+    Comment,
+    Explorer,
+    Delete,
+}
+
+/// The analysis board's own keys, which the shortcuts list shows.
+pub(crate) const KEYS: &[PageKey<AnalysisKey>] = &[
+    PageKey {
+        action: AnalysisKey::Engine,
+        keys: &["l"],
+        shown: "L",
+        does: "Engine on or off",
+    },
+    PageKey {
+        action: AnalysisKey::Threat,
+        keys: &["x"],
+        shown: "X",
+        does: "Show threat",
+    },
+    PageKey {
+        action: AnalysisKey::Best,
+        keys: &["space"],
+        shown: "Space",
+        does: "Play the best move",
+    },
+    PageKey {
+        action: AnalysisKey::Comment,
+        keys: &["c"],
+        shown: "C",
+        does: "Comment",
+    },
+    PageKey {
+        action: AnalysisKey::Explorer,
+        keys: &["e"],
+        shown: "E",
+        does: "Explorer",
+    },
+    PageKey {
+        action: AnalysisKey::Delete,
+        keys: &["delete", "backspace"],
+        shown: "Delete",
+        does: "Delete from the move shown",
+    },
+];
+
+pub use load::{
+    analyse_puzzle, board, new_board, open_line, practise_game, replace, replace_read, when_read,
+};
+pub use review::{Opening, classification_look};
 
 use crate::voice::moves::{Access, Action, BoardBar, Reply, Turn, VoiceMoves, board_bar};
 use std::collections::{HashMap, VecDeque};
@@ -37,26 +97,31 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::Level;
+use kchess_contracts::{CoreError, Level};
 use serde_json::{Value, json};
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Color, Position as _, Square};
 
 use crate::assets::icon;
 use crate::board::{Arrow, Badge, BoardEvent, BoardState, ChessBoard, Circle};
-use crate::core::{AppCore, BoxedSave, CoreEvent};
+use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::engine_view::EVAL_BAR;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
-use crate::export::{Exporter, GameExport};
+use crate::export::Exporter;
+use crate::game::played::PlayedGame;
+use crate::game::session::{Resumes, SAVE_DELAY, SessionSaver};
+use crate::game::surface::Steps;
 use crate::game::tree::{
     TreeNode, analysis_context, child_path, comment_text, format_eval, move_glyph, move_number,
     moves_of, path_of, pv_san,
 };
-use crate::game::{STANDARD_FEN, rules, view};
+use crate::game::view::Way;
+use crate::game::{STANDARD_FEN, view};
 use crate::online::OnlineHandle;
 use crate::pages::study_bar::{STUDY_BAR, StudyBar};
 use crate::part::Part;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, panel_style};
+use crate::quit::BoxedSave;
 use crate::reviews::ReviewHandle;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::studies::StudyHandle;
@@ -64,25 +129,30 @@ use crate::theme::{Palette, radii, tint};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
+use kchess_contracts::types::{AnalysisSession, SessionDocument, SessionKind, Sessions};
+use kchess_domain::variant::{Setup, Variant};
 
 /// Why the board left its study: another window changed the chapter it was saving to.
 const STALE_COPY: &str = "This study was changed in another KChess window. Your board is kept as an unsaved copy; save it under a new name or reopen the study.";
 const CONFLICT: &str = "Recovered session differs from the saved study. It is kept as an unsaved copy; save it under a new name or reopen the saved study.";
 
 /// A study write's answer, which the quit and the page's own handling both wait on.
-type StudySave =
-    futures::future::Shared<std::pin::Pin<Box<dyn Future<Output = Result<Value, String>>>>>;
+type StudySave = futures::future::Shared<
+    std::pin::Pin<
+        Box<dyn Future<Output = Result<kchess_contracts::types::StudyCommandResult, CoreError>>>,
+    >,
+>;
 
 /// Evaluations kept per position, so stepping back and forth shows them at once.
 const CACHE_SIZE: usize = 600;
-const SAVE_DELAY: Duration = Duration::from_millis(150);
+/// The profile's unfinished-session kind of the analysis board.
 /// Stepping quickly through a game should not send every position on the way to Lichess.
 const CLOUD_DELAY: Duration = Duration::from_millis(300);
 /// The evaluation bar's gap to the board; without the bar the board keeps its place.
 const EVAL_GAP: Pixels = px(8.);
 const ENGINE_ON: &str = "kchess:analysis-engine";
 const ENGINE_LINES: &str = "kchess:analysis-lines";
-const INFINITE: &str = "kchess:analysis-infinite";
+pub(crate) const INFINITE: &str = "kchess:analysis-infinite";
 const ARROWS: &str = "kchess:analysis-arrows";
 const TOOL: &str = "kchess:analysis-tool";
 
@@ -115,14 +185,14 @@ fn now_square(uci: &str, range: std::ops::Range<usize>) -> Option<Square> {
     uci.get(range)?.parse().ok()
 }
 
-/// A position of the tree, read by its variant's rules (a Lichess key).
-fn position_of(variant: &str, fen: &str) -> Option<VariantPosition> {
+/// A position of the tree, read by its variant's rules.
+fn position_of(variant: Variant, fen: &str) -> Option<VariantPosition> {
     kchess_domain::rules::setup_start(variant, fen)
 }
 
 /// The position with the other side to move (a null move), whose best line is the threat; `None`
 /// in check, where the side to move cannot pass.
-fn threat_fen(variant: &str, fen: &str) -> Option<String> {
+fn threat_fen(variant: Variant, fen: &str) -> Option<String> {
     let position = position_of(variant, fen)?;
     if position.is_check() {
         return None;
@@ -228,28 +298,28 @@ pub struct AnalysisPage {
     attached: bool,
     engine_ready: bool,
     engine_identity: Option<String>,
-    evaluations: HashMap<String, Value>,
+    evaluations: HashMap<String, AnalysisUpdate>,
     /// The cache's keys, oldest first.
     order: VecDeque<String>,
-    live: Option<Value>,
+    live: Option<AnalysisUpdate>,
     engine_error: Option<String>,
     engine_busy: bool,
     /// The position the running search is for, and the request's ids.
     wanted: String,
     client_id: u64,
-    latest_id: f64,
-    cloud: Option<Value>,
+    latest_id: u64,
+    cloud: Option<kchess_contracts::types::CloudEval>,
     cloud_busy: bool,
     cloud_error: Option<String>,
     cloud_request: u64,
     cloud_task: Option<Task<()>>,
-    save: Option<Task<()>>,
+    saver: SessionSaver<AnalysisPage>,
     wheel: crate::game::view::Wheel,
     focus: FocusHandle,
     /// Spoken moves, and “back”, “next”, “best move”, “flip board”.
     voice: VoiceMoves,
     /// Moves tried instead of a studied puzzle's solution, waiting for their reviews to be
-    /// labelled (`usePuzzleAnalysis().label`).
+    /// labelled.
     tried_labels: Vec<Subscription>,
     /// The tried moves already labelled, by path.
     tried_done: Vec<String>,
@@ -262,82 +332,69 @@ impl Focusable for AnalysisPage {
     }
 }
 
+/// The mouse wheel over the board steps along the line shown, as the arrows do; the moves are a
+/// tree, so the page steps by `step_by` alone.
+impl Steps for AnalysisPage {
+    fn steps(&self, _: &App) -> Option<(usize, usize)> {
+        None
+    }
+
+    fn step_to(&mut self, _: usize, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn wheel(&mut self) -> &mut crate::game::view::Wheel {
+        &mut self.wheel
+    }
+
+    fn step_by(&mut self, way: Way, _: &mut Window, cx: &mut Context<Self>) {
+        match way {
+            Way::On => self.forward(cx),
+            Way::Back => self.back(cx),
+        }
+    }
+}
+
+impl Resumes for AnalysisPage {
+    fn saver(&mut self) -> &mut SessionSaver<Self> {
+        &mut self.saver
+    }
+
+    fn snapshot(&mut self, _: &mut Context<Self>) -> SessionDocument {
+        SessionDocument::Analysis(AnalysisSession {
+            pgn: self.root.pgn_text(),
+            path: self.path.clone(),
+            orientation: self.orientation,
+            study: self.study.clone(),
+            chapter: self.chapter.clone(),
+        })
+    }
+
+    /// The board opens as it was left, unless another document took it while the session was
+    /// read: that one is kept, and saved in its place.
+    fn resume(&mut self, saved: Option<Sessions>, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(mut saved) = saved else {
+            return;
+        };
+        let session = saved.analysis.take();
+        if let Some(session) = session.filter(|_| self.navigation == 0) {
+            self.reopen(&session, cx);
+            self.redraw(cx);
+            self.analyse(cx);
+            self.ask_cloud(cx);
+        } else if self.navigation > 0 || !self.root.children.is_empty() {
+            self.schedule_save(cx);
+        }
+    }
+}
+
 impl AnalysisPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> AnalysisPage {
-        // Its session and the drills alone: the whole library replays every played game.
-        let bridge = &cx.global::<AppCore>().bridge;
-        let session = bridge
-            .request_now(calls::Session {
-                kind: json!("analysis"),
-            })
-            .unwrap_or(Value::Null);
-        let mistakes = bridge
-            .request_now(calls::Mistakes {})
-            .ok()
-            .and_then(|mistakes| mistakes.as_array().cloned())
-            .unwrap_or_default();
-        let root = session["pgn"]
-            .as_str()
-            .and_then(TreeNode::from_pgn)
-            .unwrap_or_else(|| TreeNode::new(None));
-        let path = root.existing_path(session["path"].as_str().unwrap_or_default());
-        let orientation = if session["orientation"] == "black" {
-            Color::Black
-        } else {
-            Color::White
-        };
-        // A recovered session that differs from its study stays an unsaved copy; it never
-        // overwrites the library.
         let library = cx.global::<StudyHandle>().0.clone();
-        let linked = library
-            .read(cx)
-            .study(session["study"].as_str().unwrap_or_default())
-            .cloned();
-        let chapter_of = |study: &Value, id: &str| {
-            study["chapters"]
-                .as_array()
-                .and_then(|chapters| chapters.iter().find(|chapter| chapter["id"] == json!(id)))
-                .cloned()
-        };
-        let linked_pgn = linked.as_ref().map(|study| {
-            chapter_of(study, session["chapter"].as_str().unwrap_or_default())
-                .and_then(|chapter| chapter["pgn"].as_str().map(str::to_string))
-                .unwrap_or_else(|| study["pgn"].as_str().unwrap_or_default().to_string())
-        });
-        let conflict = session["pgn"].is_string()
-            && linked_pgn
-                .as_deref()
-                .and_then(TreeNode::from_pgn)
-                .is_some_and(|tree| tree.to_pgn() != root.to_pgn());
-        let study = if conflict || linked.is_none() {
-            String::new()
-        } else {
-            session["study"].as_str().unwrap_or_default().to_string()
-        };
-        let chapter = session["chapter"]
-            .as_str()
-            .filter(|chapter| !chapter.is_empty())
-            .map(str::to_string)
-            .or_else(|| {
-                linked
-                    .as_ref()
-                    .and_then(|study| study["chapters"][0]["id"].as_str().map(str::to_string))
-            })
-            .unwrap_or_default();
-        let study_pgn = if study.is_empty() {
-            String::new()
-        } else {
-            linked_pgn.unwrap_or_default()
-        };
-        if !study.is_empty() {
-            library.read(cx).track(&study, &chapter);
-        }
-        let study_error = conflict.then(|| CONFLICT.to_string());
+        let (root, path, orientation) = (TreeNode::new(None), String::new(), Color::White);
         let page = cx.weak_entity();
         let study_bar = cx.new(|cx| StudyBar::new(page, window, cx));
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &position_of("standard", STANDARD_FEN).unwrap_or_default(),
+                &position_of(Variant::Standard, STANDARD_FEN).unwrap_or_default(),
                 orientation,
                 None,
                 None,
@@ -373,7 +430,8 @@ impl AnalysisPage {
                 .rows(2)
                 .placeholder("What's the idea here?")
         });
-        let explorer = cx.new(|cx| PositionExplorer::new(false, window, cx));
+        let explorer =
+            cx.new(|cx| PositionExplorer::new(crate::explorer::Layout::List, window, cx));
         let subscriptions = vec![
             cx.subscribe(&explorer, |this, _, event: &ExplorerEvent, cx| {
                 let ExplorerEvent::Play(uci) = event;
@@ -446,14 +504,11 @@ impl AnalysisPage {
                     cx.notify();
                 }
             }),
-            cx.subscribe(&events, |this, _, event: &CoreEvent, cx| {
-                if event.name == "engine:analysis" {
-                    this.receive(event.payload.clone(), cx);
-                }
+            cx.subscribe(&events, |this, _, event: &ClientEvent, cx| match event {
+                ClientEvent::Event(CoreEvent::Analysis(update)) => this.receive(update.clone(), cx),
                 // A search on a lost connection ended with it: the board's is started again.
-                if event.name == crate::core::RECONNECTED {
-                    this.analyse(cx);
-                }
+                ClientEvent::Reconnected => this.analyse(cx),
+                _ => {}
             }),
         ];
         let edits = edits::Edits::new(&root, &path);
@@ -464,16 +519,16 @@ impl AnalysisPage {
             typing_comment: None,
             threat: false,
             orientation,
-            study,
-            chapter,
-            study_pgn,
-            study_error,
+            study: String::new(),
+            chapter: String::new(),
+            study_pgn: String::new(),
+            study_error: None,
             study_save: None,
             study_writing: None,
             study_writes: 0,
             navigation: 0,
             study_bar,
-            review: review::ReviewState::new(mistakes),
+            review: review::ReviewState::new(Vec::new()),
             explainer: cx.new(|_| crate::ai::Explainer::new()),
             practice: None,
             paused_for_review: false,
@@ -507,13 +562,13 @@ impl AnalysisPage {
             engine_busy: false,
             wanted: String::new(),
             client_id: 0,
-            latest_id: 0.,
+            latest_id: 0,
             cloud: None,
             cloud_busy: false,
             cloud_error: None,
             cloud_request: 0,
             cloud_task: None,
-            save: None,
+            saver: SessionSaver::start(SessionKind::Analysis, &[], window, cx),
             wheel: Default::default(),
             focus: cx.focus_handle(),
             voice: VoiceMoves::new("analysis", cx),
@@ -522,21 +577,16 @@ impl AnalysisPage {
             _subscriptions: subscriptions,
         };
         page.redraw(cx);
+        page.read_mistakes(cx);
         let weak = cx.entity().downgrade();
-        crate::core::on_quit(cx, move |cx| {
+        // The session is the saver's to save; the open study's chapter is the page's.
+        crate::quit::on_quit(cx, move |cx| {
             let page = weak.upgrade()?;
-            Some(page.update(cx, |page, cx| {
-                let study = page.persist_study(cx);
-                let session = page.save_now(cx);
-                Box::pin(async move {
-                    let study = match study {
-                        Some(study) => study.await.map(|_| ()),
-                        None => Ok(()),
-                    };
-                    // The board's moves are in the session even when the study refused them.
-                    session.await.and(study)
-                }) as BoxedSave
-            }))
+            let study = page.update(cx, |page, cx| page.persist_study(cx))?;
+            Some(
+                Box::pin(async move { study.await.map(|_| ()).map_err(|cause| cause.message) })
+                    as BoxedSave,
+            )
         });
         page
     }
@@ -547,13 +597,11 @@ impl AnalysisPage {
         self.root.node_at(&self.path)
     }
 
-    /// The FEN of the position shown.
     #[cfg(test)]
     pub(crate) fn shown_fen(&self) -> String {
         self.node().fen.clone()
     }
 
-    /// The engine's status line.
     #[cfg(test)]
     pub(crate) fn engine_text(&self, cx: &App) -> String {
         self.engine_status(cx)
@@ -561,10 +609,16 @@ impl AnalysisPage {
 
     /// The review shown, once it covers the whole main line and is finished, with its summary.
     #[cfg(test)]
-    pub(crate) fn finished_review(&self, cx: &App) -> Option<(Value, Value)> {
-        let review = self.review(cx).filter(|review| {
-            review["complete"] == json!(true) && review["key"] == json!(self.mainline_key())
-        })?;
+    pub(crate) fn finished_review(
+        &self,
+        cx: &App,
+    ) -> Option<(
+        kchess_contracts::types::StoredReview,
+        kchess_domain::review::GameAnalysis,
+    )> {
+        let review = self
+            .review(cx)
+            .filter(|review| review.complete && review.key == self.mainline_key())?;
         let (analysis, _) = self.game_analysis(cx)?;
         Some((review, analysis))
     }
@@ -576,21 +630,21 @@ impl AnalysisPage {
     /// Whether the game on the board is played by standard rules (standard chess or Chess960):
     /// cloud evaluation and the editor are theirs.
     fn standard_rules(&self) -> bool {
-        crate::game::standard_rules(self.root.variant())
+        self.root.variant().standard_rules()
     }
 
     /// The position shown, as a game to play from: in the game's variant, or (standard chess)
     /// castling as Chess960 when its rooks need it.
-    fn play_setup(&self) -> Value {
+    fn play_setup(&self) -> Setup {
         let fen = self.node().fen.clone();
         match self.fairy_variant() {
-            Some(variant) => json!({ "variant": variant, "fen": fen }),
+            Some(variant) => Setup { variant, fen },
             None => crate::game::setup_from_fen(&fen),
         }
     }
 
-    /// The Lichess key of the game's variant when Fairy-Stockfish analyses and reviews it.
-    pub(super) fn fairy_variant(&self) -> Option<&'static str> {
+    /// The game's variant when Fairy-Stockfish analyses and reviews it.
+    pub(super) fn fairy_variant(&self) -> Option<Variant> {
         (!self.standard_rules()).then(|| self.root.variant())
     }
 
@@ -615,7 +669,7 @@ impl AnalysisPage {
     /// The engine's search and its cache entry: the threat's position stands on its own.
     fn engine_context(&self) -> String {
         match self.threat_position() {
-            Some(fen) => analysis_context(&fen, &[]),
+            Some(fen) => analysis_context::<&str>(&fen, &[]),
             None => self.context(),
         }
     }
@@ -753,18 +807,16 @@ impl AnalysisPage {
         self.changed(cx);
     }
 
-    /// Analyse a position set up in the board editor, facing as it did there (`analyseSetup`).
-    /// The board editor's position (`{ variant, fen }`), in its variant. False when the board
-    /// cannot take it.
+    /// Analyse a position set up in the board editor, facing as it did there.
+    /// The board editor's position, in its variant. False when the board cannot take it.
     pub fn analyse_setup(
         &mut self,
-        setup: &Value,
+        setup: &Setup,
         orientation: Color,
         cx: &mut Context<Self>,
     ) -> bool {
-        let variant = setup["variant"].as_str().unwrap_or("standard");
-        let fen = setup["fen"].as_str().unwrap_or(STANDARD_FEN);
-        if crate::game::standard_rules(variant) {
+        let fen = setup.fen.as_str();
+        if setup.variant.standard_rules() {
             self.orientation = orientation;
             self.load(Some(fen), cx);
             return true;
@@ -772,7 +824,7 @@ impl AnalysisPage {
         // Another variant opens as a game of it from that position.
         let pgn = format!(
             "[Variant \"{}\"]\n[FEN \"{fen}\"]\n[SetUp \"1\"]\n\n*",
-            crate::game::variant_label(variant)
+            setup.variant.label()
         );
         let loaded = self.load_pgn(&pgn, cx);
         if loaded {
@@ -781,7 +833,7 @@ impl AnalysisPage {
         loaded
     }
 
-    /// Load a game (`loadPgn`), opened at its start; refused for a variant this board cannot play.
+    /// Load a game, opened at its start; refused for a variant this board cannot play.
     fn load_pgn(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
         if !crate::game::pgn_analysable(text) {
             return false;
@@ -797,6 +849,8 @@ impl AnalysisPage {
     /// Another document takes the board: the open study keeps its last edits and is let go.
     fn take_board(&mut self, tree: TreeNode, cx: &mut Context<Self>) {
         self.navigation += 1;
+        // After a session that could not be read, the board's new document is saved.
+        self.saver.open();
         self.persist_study(cx);
         self.root = tree;
         self.path.clear();
@@ -811,9 +865,9 @@ impl AnalysisPage {
 
     /* ── Studies ──────────────────────────────────────────────────────── */
 
-    /// The whole tree as PGN (`analysis.pgn()`).
+    /// The whole tree as PGN.
     pub fn pgn(&self) -> String {
-        self.root.to_pgn()
+        self.root.pgn_text()
     }
 
     /// The bar over the board: the study open, or Save as study.
@@ -831,7 +885,7 @@ impl AnalysisPage {
 
     /// Whether the board holds edits its study has not been sent yet.
     pub fn unsaved_study_edits(&self) -> bool {
-        !self.study.is_empty() && self.root.to_pgn() != self.study_pgn
+        !self.study.is_empty() && self.root.pgn_text() != self.study_pgn
     }
 
     pub fn study_error(&self) -> Option<&str> {
@@ -868,17 +922,15 @@ impl AnalysisPage {
         self.navigation
     }
 
-    /// The board holds moves no study keeps (`useReplaceAnalysis`), so replacing it asks first.
+    /// The board holds moves no study keeps, so replacing it asks first.
     pub fn unsaved(&self) -> bool {
         self.study.is_empty() && !self.root.children.is_empty()
     }
 
     /// Load a line from the starting position, opened at its end (an opening's Analyse).
     pub fn load_line(&mut self, moves: &[String], cx: &mut Context<Self>) {
-        let Ok(pgn) = rules("pgnFromUci", &[json!(moves)]) else {
-            return;
-        };
-        if self.load_pgn(pgn.as_str().unwrap_or_default(), cx) {
+        let pgn = kchess_domain::pgn::pgn_from_uci(moves);
+        if self.load_pgn(&pgn, cx) {
             self.go_to_end(cx);
         }
     }
@@ -894,7 +946,10 @@ impl AnalysisPage {
         if text.is_empty() {
             return;
         }
-        let setup = json!({ "variant": self.root.variant(), "fen": self.node().fen });
+        let setup = Setup {
+            variant: self.root.variant(),
+            fen: self.node().fen.clone(),
+        };
         let typed = self
             .position()
             .and_then(|position| view::typed_uci(&setup, &position, &text));
@@ -933,39 +988,75 @@ impl AnalysisPage {
                 let _ = this.update(cx, |this, cx| this.persist_study(cx));
             }));
         }
-        self.save = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(SAVE_DELAY).await;
-            let save = this.update(cx, |this, cx| this.save_now(cx)).ok();
-            if let Some(save) = save {
-                let _ = save.await;
-            }
-        }));
+        SessionSaver::changed(self, cx);
     }
 
-    /// Save the session now (`persistSession('analysis', …)`).
-    fn save_now(&mut self, cx: &mut Context<Self>) -> BoxedSave {
-        self.save = None;
-        let session = json!({
-            "pgn": self.root.to_pgn(),
-            "path": self.path,
-            "orientation": if self.orientation == Color::White { "white" } else { "black" },
-            "study": self.study,
-            "chapter": self.chapter,
+    /// The board as the profile keeps it, to open as it was left.
+    fn reopen(&mut self, session: &AnalysisSession, cx: &mut Context<Self>) {
+        let root = TreeNode::from_pgn(&session.pgn).unwrap_or_else(|| TreeNode::new(None));
+        self.path = root.existing_path(&session.path);
+        self.root = root;
+        self.orientation = session.orientation;
+        // A recovered session that differs from its study stays an unsaved copy; it never
+        // overwrites the library.
+        let library = cx.global::<StudyHandle>().0.clone();
+        let saved_study = session.study.as_str();
+        let linked = library.read(cx).study(saved_study).cloned();
+        let linked_pgn = linked.as_ref().map(|study| {
+            study
+                .chapter(&session.chapter)
+                .map_or_else(|| study.pgn.clone(), |chapter| chapter.pgn.clone())
         });
-        let save = cx.global::<AppCore>().request(calls::SaveSession {
-            kind: json!("analysis"),
-            session,
-        });
-        Box::pin(async move {
-            save.await.map(|_| ()).map_err(|cause| {
-                crate::log::write(
+        let conflict = linked_pgn
+            .as_deref()
+            .and_then(TreeNode::from_pgn)
+            .is_some_and(|tree| tree.pgn_text() != self.root.pgn_text());
+        self.study = if conflict || linked.is_none() {
+            String::new()
+        } else {
+            saved_study.to_string()
+        };
+        self.chapter = Some(session.chapter.clone())
+            .filter(|chapter| !chapter.is_empty())
+            .or_else(|| {
+                linked
+                    .as_ref()
+                    .and_then(|study| Some(study.chapters.first()?.id.clone()))
+            })
+            .unwrap_or_default();
+        self.study_pgn = if self.study.is_empty() {
+            String::new()
+        } else {
+            linked_pgn.unwrap_or_default()
+        };
+        if !self.study.is_empty() {
+            library.read(cx).track(&self.study, &self.chapter);
+        }
+        self.study_error = conflict.then(|| CONFLICT.to_string());
+        self.edits = edits::Edits::new(&self.root, &self.path);
+        self.clear_evaluations();
+    }
+
+    /// The positions kept for practice, which the review counts its own among.
+    fn read_mistakes(&mut self, cx: &mut Context<Self>) {
+        let read = cx.global::<AppCore>().request(calls::Mistakes {});
+        cx.spawn(async move |this, cx| {
+            let read = read.await;
+            let _ = this.update(cx, |this, cx| match read {
+                // A review that saved mistakes meanwhile holds the newer list.
+                Ok(mistakes) if this.review.mistakes.is_empty() => {
+                    this.review.mistakes = mistakes;
+                    cx.notify();
+                }
+                Ok(_) => {}
+                Err(cause) => crate::log::write(
                     Level::Warn,
                     "library",
-                    &format!("saving session failed: analysis {}", cause.message),
-                );
-                format!("The analysis board could not be saved: {}", cause.message)
-            })
+                    &format!("Reading the mistakes to practise failed: {}", cause.message),
+                ),
+            });
         })
+        .detach();
     }
 
     /// The board shows the position, its last move and the engine's arrows.
@@ -985,11 +1076,13 @@ impl AnalysisPage {
         let mate = state.badge.take();
         state.badge = marks
             .get(&self.path)
-            .and_then(|mark| mark.classification.as_deref())
+            .and_then(|mark| mark.classification)
             .zip(last_move)
             .map(|(classification, (_, to))| {
-                let (_, glyph, color) =
-                    review::classification_look(classification, cx.global::<Palette>().dark);
+                let (_, glyph, color) = review::classification_look(
+                    classification.as_str(),
+                    cx.global::<Palette>().dark,
+                );
                 Badge {
                     square: to,
                     glyph,
@@ -1022,7 +1115,7 @@ impl AnalysisPage {
                 // The threat is the opponent's best move, in red.
                 .take(if threat { 1 } else { usize::MAX })
                 .filter_map(|(rank, line)| {
-                    let uci = line["pv"][0].as_str()?;
+                    let uci = line.pv.first()?;
                     let (from, to) = (now_square(uci, 0..2)?, now_square(uci, 2..4)?);
                     Some(if threat {
                         Arrow::brush("red", from, to)
@@ -1059,29 +1152,32 @@ impl AnalysisPage {
         if modifiers.modified() {
             return;
         }
-        match event.keystroke.key.as_str() {
+        let key = event.keystroke.key.as_str();
+        match key {
             "left" => self.back(cx),
             "right" => self.forward(cx),
             "up" | "home" => self.go_to_start(cx),
             "down" | "end" => self.go_to_end(cx),
-            "f" => self.flip(cx),
-            "l" => self.toggle_engine(cx),
-            "x" => self.toggle_threat(cx),
-            "c" => self.focus_notes(window, cx),
-            "e" => self.toggle_explorer(window, cx),
-            "delete" | "backspace" => self.delete_from_here(window, cx),
-            "space"
-                if !cx
-                    .global::<SettingsHandle>()
-                    .0
-                    .read(cx)
-                    .settings
-                    .frontend
-                    .voice_push_to_talk =>
-            {
-                self.play_best(cx)
-            }
-            _ => return,
+            _ => match page_key(KEYS, key) {
+                Some(AnalysisKey::Engine) => self.toggle_engine(cx),
+                Some(AnalysisKey::Threat) => self.toggle_threat(cx),
+                Some(AnalysisKey::Comment) => self.focus_notes(window, cx),
+                Some(AnalysisKey::Explorer) => self.toggle_explorer(window, cx),
+                Some(AnalysisKey::Delete) => self.delete_from_here(window, cx),
+                // Push to talk holds Space for the microphone.
+                Some(AnalysisKey::Best)
+                    if !cx
+                        .global::<SettingsHandle>()
+                        .0
+                        .read(cx)
+                        .settings
+                        .frontend
+                        .voice_push_to_talk =>
+                {
+                    self.play_best(cx)
+                }
+                _ => return,
+            },
         }
         cx.stop_propagation();
     }
@@ -1101,7 +1197,7 @@ impl AnalysisPage {
         self.voice.sync(
             &context,
             Some(line),
-            crate::voice::grammar("ANALYSIS_GRAMMAR"),
+            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Analysis).to_vec(),
             true,
             cx,
         );
@@ -1119,14 +1215,17 @@ impl AnalysisPage {
             }
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
         };
-        let setup = json!({ "variant": self.root.variant(), "fen": fen });
+        let setup = Setup {
+            variant: self.root.variant(),
+            fen,
+        };
         // The threat's best move is the opponent's: "best move" waits for the position's own.
         let best = (Self::assistance_allowed(cx)
             && !self.hides_engine()
             && self.threat_position().is_none())
         .then(|| self.lines(cx).first().cloned())
         .flatten()
-        .and_then(|line| line["pv"][0].as_str().map(str::to_string));
+        .and_then(|line| line.pv.first().cloned());
         let mut command: Option<String> = None;
         let turn = Turn {
             taking: true,
@@ -1138,8 +1237,7 @@ impl AnalysisPage {
             &setup,
             turn,
             |text| {
-                let said = crate::game::rules("spokenAnalysisCommand", &[json!(text)]).ok()?;
-                let said = said.as_str()?.to_string();
+                let said = kchess_domain::voice::analysis_command(text)?.to_string();
                 let feedback = if said == "best" && best.is_none() {
                     "The engine has no move yet".to_string()
                 } else {
@@ -1180,53 +1278,44 @@ impl AnalysisPage {
         self.engine_changed(cx);
     }
 
-    /// Lichess steps through moves with the mouse wheel over the board.
-    fn scroll(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
-        match self
-            .wheel
-            .turn(event.delta.pixel_delta(window.line_height()))
-        {
-            Some("right") => self.forward(cx),
-            Some(_) => self.back(cx),
-            None => return,
-        }
-        cx.stop_propagation();
-    }
-
     /// The game an Export saves: the document with its variations and comments, its main line
     /// for the GIF, and the position shown (in a variation too) for the PNG.
-    fn game_export(&self) -> GameExport {
+    fn game_export(&self) -> PlayedGame {
         let mainline = self.mainline();
         let depth = if self.path.is_empty() {
             0
         } else {
             self.path.split(' ').count()
         };
-        GameExport {
-            variant: if self.standard_rules() {
-                crate::game::setup_from_fen(&self.root.fen)["variant"]
-                    .as_str()
-                    .unwrap_or("standard")
-                    .into()
+        PlayedGame {
+            setup: if self.standard_rules() {
+                crate::game::setup_from_fen(&self.root.fen)
             } else {
-                self.root.variant().into()
+                Setup {
+                    variant: self.root.variant(),
+                    fen: self.root.fen.clone(),
+                }
             },
-            fen: self.root.fen.clone(),
             ply: Some(depth.min(mainline.len())),
             moves: mainline,
             orientation: self.orientation,
             white: self.player_name(Color::White),
             black: self.player_name(Color::Black),
-            result: Some(self.header("Result")).filter(|result| !result.is_empty()),
+            result: kchess_domain::games::Outcome::from_tag(&self.header("Result")),
+            player: self.review.origin.as_ref().and_then(|origin| origin.player),
+            account: self
+                .review
+                .origin
+                .as_ref()
+                .and_then(|origin| origin.account.clone()),
             // A Chess.com game has no page on Lichess: it is uploaded like any other game.
             lichess_id: self
                 .review
                 .origin
                 .as_ref()
-                .and_then(|origin| origin["gameId"].as_str())
-                .filter(|id| !kchess_domain::chesscom::is_game_id(id))
-                .map(str::to_string),
-            pgn: Some(self.root.to_pgn()),
+                .and_then(|origin| origin.game_id.clone())
+                .filter(|id| !kchess_domain::chesscom::is_game_id(id)),
+            pgn: Some(self.root.pgn_text()),
             shown: Some(moves_of(&self.path)),
         }
     }
@@ -1239,7 +1328,7 @@ impl AnalysisPage {
 
     /// Copy the whole game, its variations and comments with it.
     pub(crate) fn copy_pgn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let pgn = self.root.to_pgn();
+        let pgn = self.root.pgn_text();
         self.copy(pgn, "PGN", window, cx);
     }
 
@@ -1251,7 +1340,7 @@ impl AnalysisPage {
 
     /// Copy the moves from the start to `path` as PGN, without the side lines.
     fn copy_line(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let pgn = self.root.line_to(path).to_pgn();
+        let pgn = self.root.line_to(path).pgn_text();
         self.copy(pgn, "Line", window, cx);
     }
 
@@ -1317,7 +1406,7 @@ impl AnalysisPage {
 /* ── Rendering ────────────────────────────────────────────────────────── */
 
 impl AnalysisPage {
-    /// `.panel-tabs`: the tool under the engine, one at a time.
+    /// The tool under the engine, one at a time.
     fn render_tabs(&self, tool: Tool, palette: &Palette) -> impl IntoElement {
         let tabs = [
             (Tool::Moves, "Moves", icon("list-tree")),
@@ -1409,8 +1498,8 @@ impl AnalysisPage {
             .into_any_element()
     }
 
-    /// The opening the moves up to the one shown reached, as the game pages name it
-    /// (`openingAt`): only in standard chess, and while Settings show opening names.
+    /// The opening the moves up to the one shown reached, as the game pages name it:
+    /// only in standard chess, and while Settings show opening names.
     fn opening(&self, cx: &App) -> Option<String> {
         let shown = cx
             .global::<SettingsHandle>()
@@ -1419,22 +1508,17 @@ impl AnalysisPage {
             .settings
             .frontend
             .show_opening_name;
-        if !shown || self.root.variant() != "standard" {
+        if !shown || self.root.variant() != Variant::Standard {
             return None;
         }
-        let opening = rules(
-            "openingAt",
-            &[
-                json!({ "variant": "standard", "fen": self.root.fen }),
-                json!(moves_of(&self.path)),
-            ],
-        )
-        .ok()?;
-        Some(format!(
-            "{} {}",
-            opening["eco"].as_str()?,
-            opening["name"].as_str()?
-        ))
+        let moves = moves_of(&self.path);
+        let opening = kchess_domain::training::openings::opening_at(
+            "standard",
+            &self.root.fen,
+            &moves,
+            moves.len() as f64,
+        )?;
+        Some(format!("{} {}", opening.eco, opening.name))
     }
 
     /// First, previous, next and last move, flip, import, and the rest in a menu.
@@ -1485,7 +1569,7 @@ impl AnalysisPage {
                     .ghost()
                     .small()
                     .icon(icon("arrow-up-down"))
-                    .tooltip("Flip board (F)")
+                    .tooltip(crate::menu::flip_label(cx))
                     .accessibility_label("Flip board")
                     .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
             )
@@ -1526,7 +1610,7 @@ impl AnalysisPage {
                         // Leaving for another page takes the position and orientation first: the
                         // switch stops this page's engine, which must not happen inside an update
                         // of this page.
-                        let leave = |run: fn(Value, Color, &mut Window, &mut App)| {
+                        let leave = |run: fn(Setup, Color, &mut Window, &mut App)| {
                             let page = page.clone();
                             move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                                 let Some(page) = page.upgrade() else { return };
@@ -1538,7 +1622,7 @@ impl AnalysisPage {
                             }
                         };
                         // The same, with the position's setup: its variant and FEN.
-                        let play = |run: fn(Value, &mut Window, &mut App)| {
+                        let play = |run: fn(Setup, &mut Window, &mut App)| {
                             let page = page.clone();
                             move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                                 let Some(page) = page.upgrade() else { return };
@@ -1603,20 +1687,25 @@ impl AnalysisPage {
                             PopupMenuItem::new("Edit this position")
                                 .icon(icon("pencil-ruler"))
                                 .on_click(leave(|setup, orientation, window, cx| {
-                                    crate::shell::edit_position(setup, orientation, window, cx)
+                                    crate::pages::editor::edit_position(
+                                        setup,
+                                        orientation,
+                                        window,
+                                        cx,
+                                    )
                                 })),
                         )
                         .item(
                             PopupMenuItem::new("Play Stockfish from here")
                                 .icon(icon("cpu"))
                                 .disabled(over)
-                                .on_click(play(crate::shell::play_computer_from)),
+                                .on_click(play(crate::pages::computer::play_from)),
                         )
                         .item(
                             PopupMenuItem::new("Play a friend from here")
                                 .icon(icon("users-round"))
                                 .disabled(over)
-                                .on_click(play(crate::shell::play_local_from)),
+                                .on_click(play(crate::pages::local::play_from)),
                         )
                         .separator()
                         .item(
@@ -1647,7 +1736,7 @@ impl AnalysisPage {
                     div()
                         .id("analysis-moves")
                         .flex_1()
-                        // Under the board the list has a height of its own (`.moves-wrap`).
+                        // Under the board the list has a height of its own.
                         .min_h(if self.layout.is_stacked() {
                             px(240.)
                         } else {
@@ -1670,7 +1759,7 @@ impl AnalysisPage {
                                         .icon(icon("file-text"))
                                         .on_click(move |_, window, cx| {
                                             let _ = page.update(cx, |page, cx| {
-                                                let pgn = page.root.to_pgn();
+                                                let pgn = page.root.pgn_text();
                                                 page.copy(pgn, "PGN", window, cx)
                                             });
                                         }),
@@ -1727,9 +1816,9 @@ impl AnalysisPage {
                         .into_any_element(),
                     None => {
                         let (fen, opened) = (self.node().fen.clone(), !self.explorer_open);
-                        let variant = self.root.variant().to_string();
+                        let variant = self.root.variant();
                         self.explorer.update(cx, |explorer, cx| {
-                            explorer.show(Some(&variant), &fen, None, opened, cx)
+                            explorer.show(variant, &fen, None, opened, cx)
                         });
                         div()
                             .id("analysis-explorer")
@@ -1749,11 +1838,7 @@ impl AnalysisPage {
             // A short window scrolls the panel rather than let the move list cover the controls.
             .id("analysis-panel")
             .overflow_y_scroll()
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
+            .takes_keys(&self.focus)
             .h(self.layout.fixed(self.panel_height(board_size)))
             .flex_1()
             .min_w(PANEL_MIN)
@@ -1801,7 +1886,7 @@ impl Render for AnalysisPage {
             .filter(|position| game_over(Some(position)).is_some())
             .map(result_of);
         // The column always keeps the eval bar's width beside the board.
-        // The column holds the board and the move box under it (`.analysis-surface`).
+        // The column holds the board and the move box under it.
         let board_size = self.board_size(window);
         let entry = widgets::move_entry(&self.move_input, true, &palette);
         let (voice, voice_line) = board_bar(
@@ -1818,7 +1903,8 @@ impl Render for AnalysisPage {
                 hint: "Say a move like “Knight F three”, or “back”, “next”, “best move”",
                 active: true,
                 listening: true,
-                grammar: crate::voice::grammar("ANALYSIS_GRAMMAR"),
+                grammar: kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Analysis)
+                    .to_vec(),
             },
             cx,
         );
@@ -1849,10 +1935,8 @@ impl Render for AnalysisPage {
                     })
                     .when(!show_bar, |row| row.pl(EVAL_BAR))
                     .child(
-                        div()
-                            .id("analysis-board")
+                        crate::game::surface::wheel(div().id("analysis-board"), cx)
                             .w(board_size)
-                            .on_scroll(cx.listener(Self::scroll))
                             // The board takes the keys back from the move box, as a click
                             // outside a text field does in the browser.
                             .on_mouse_down(
@@ -1874,7 +1958,18 @@ impl Render for AnalysisPage {
                             .text_size(px(12.))
                             .text_color(palette.text_muted)
                             .child(message)
-                    })),
+                    }))
+                    .children(self.saver.problems(cx).into_iter().enumerate().map(
+                        |(ix, error)| {
+                            div()
+                                .id(("analysis-problem", ix))
+                                .test_support()
+                                .aria_label(error.clone())
+                                .text_size(px(12.))
+                                .text_color(palette.error)
+                                .child(error)
+                        },
+                    )),
             );
         let panel = if self.layout.is_stacked() {
             self.render_panel(window, cx)

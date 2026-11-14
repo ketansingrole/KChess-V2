@@ -5,10 +5,6 @@ use crate::pages::Page;
 use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
 use serde_json::json;
 
-fn page(app: &mut Harness) -> Option<Page> {
-    app.cx.update(|cx| crate::shell::current_page(cx))
-}
-
 /// Whether a result with this name is listed.
 fn lists(app: &mut Harness, name: &str) -> bool {
     app.with_window(|window, _| {
@@ -34,11 +30,29 @@ pub(super) fn wait_for_first(app: &mut Harness, name: &str) {
     });
 }
 
-/// Wait until the palette is closed.
 pub(super) fn wait_until_closed(app: &mut Harness) {
     app.wait_for("the palette to close", |window, _| {
         window.try_find(("palette-item", 0usize)).is_none()
     });
+}
+
+/// Run a command from Quick Pick, found by its name.
+fn run_command(app: &mut Harness, name: &str) {
+    app.press("secondary-k");
+    app.type_text(&format!(">{name}"));
+    wait_for_first(app, name);
+    app.press("enter");
+    wait_until_closed(app);
+}
+
+/// Watch a Lichess TV channel by pasting its link, and wait for its game.
+fn watch_tv(app: &mut Harness, channel: &str) {
+    app.press("secondary-k");
+    app.type_text(&format!("https://lichess.org/tv/{channel}"));
+    wait_for_first(app, "Watch this TV channel");
+    app.press("enter");
+    wait_until_closed(app);
+    app.find("watch-stop");
 }
 
 #[gpui_kit::test]
@@ -87,7 +101,7 @@ fn a_page_is_found_by_name_and_opened(cx: &mut gpui_kit::TestAppContext) {
     wait_for_first(&mut app, "Puzzles");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Puzzles));
+    app.wait_for_page(Page::Puzzles);
 }
 
 #[gpui_kit::test]
@@ -98,7 +112,7 @@ fn acronyms_and_several_words_find_pages_and_commands(cx: &mut gpui_kit::TestApp
     wait_for_first(&mut app, "Over the board");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Local));
+    app.wait_for_page(Page::Local);
 
     app.press("secondary-k");
     app.type_text("stockfish black");
@@ -136,7 +150,7 @@ fn commands_are_run_from_the_command_mode(cx: &mut gpui_kit::TestAppContext) {
     wait_for_first(&mut app, "New analysis board");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Analysis));
+    app.wait_for_page(Page::Analysis);
 
     // The shortcut opens straight into the commands; Backspace goes back to searching pages.
     app.press("shift-secondary-p");
@@ -181,6 +195,40 @@ fn the_commands_used_last_are_offered_first_and_kept(cx: &mut gpui_kit::TestAppC
     let mut app = app.restart();
     app.press("secondary-k");
     wait_until_listed(&mut app, "New analysis board");
+}
+
+/// The analysis board opens only once it has read its saved session. Quick Pick opened again
+/// before that answer was closed by the board taking the keys as it opened, so the person's
+/// search was lost (`the_commands_used_last_are_offered_first_and_kept` timed out under load).
+#[gpui_kit::test]
+fn a_page_opening_after_its_read_leaves_quick_pick_open(cx: &mut gpui_kit::TestAppContext) {
+    use crate::game::session::{Resumes, SessionSaver};
+    let mut app = Harness::start(cx);
+    let board = app.with_window(|window, cx| {
+        crate::pages::analysis::board(window, cx).expect("the analysis board")
+    });
+    app.wait_for("the board's saved session to be read", |_, cx| {
+        board.update(cx, |page, _| page.saver().loaded())
+    });
+    // As on a slow profile: the read has not answered yet.
+    app.cx
+        .update(|cx| board.update(cx, |page, _| page.saver().forget()));
+
+    run_command(&mut app, "New analysis board");
+    app.press("secondary-k");
+    app.type_text("puz");
+    wait_for_first(&mut app, "Puzzles");
+    app.with_window(|window, cx| {
+        board.update(cx, |page, cx| SessionSaver::answer(page, window, cx))
+    });
+    app.wait_for_page(Page::Analysis);
+    // Still searching: the board opened behind Quick Pick, which keeps the keys.
+    assert!(lists(&mut app, "Puzzles"));
+    app.type_text("zles");
+    wait_for_first(&mut app, "Puzzles");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.wait_for_page(Page::Puzzles);
 }
 
 #[gpui_kit::test]
@@ -236,7 +284,7 @@ fn a_pasted_position_or_game_link_opens_from_quick_pick(cx: &mut gpui_kit::TestA
     assert!(lists(&mut app, "Edit this position"));
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Analysis));
+    app.wait_for_page(Page::Analysis);
     // Only this position's king reaches d2.
     app.click_label("Enter a chess move in SAN or UCI");
     app.type_text("Kd2");
@@ -262,7 +310,7 @@ fn a_pasted_position_or_game_link_opens_from_quick_pick(cx: &mut gpui_kit::TestA
     wait_for_first(&mut app, "Open SomeIm’s profile");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Players));
+    app.wait_for_page(Page::Players);
 
     // Numbered moves open as a game, at its last move.
     app.press("secondary-k");
@@ -283,7 +331,7 @@ fn a_pasted_broadcast_link_opens_its_round(cx: &mut gpui_kit::TestAppContext) {
     let wait_for_round = |app: &mut Harness, wanted: &str| {
         let wanted = wanted.to_string();
         app.wait_for(&format!("round {wanted}"), move |_, cx| {
-            crate::shell::view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx)
+            crate::shell::view::<crate::pages::watch::WatchPage>(cx)
                 .is_some_and(|watch| watch.read(cx).broadcast_round() == wanted)
         });
     };
@@ -296,9 +344,16 @@ fn a_pasted_broadcast_link_opens_its_round(cx: &mut gpui_kit::TestAppContext) {
     wait_for_first(&mut app, "Watch this broadcast");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Watch));
+    app.wait_for_page(Page::Watch);
     wait_for_round(&mut app, BROADCAST_ROUNDS[0]);
-    assert_eq!(app.find(("watch-tabs", 2usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab(
+            "watch-tabs",
+            crate::pages::watch::Tab::Broadcasts
+        ))
+        .selected(),
+        Some(true)
+    );
 
     // The tournament's own link opens it at its live round.
     app.press("secondary-k");
@@ -360,7 +415,7 @@ fn a_broadcast_board_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppConte
     wait_for_first(&mut app, "Analyse");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Analysis));
+    app.wait_for_page(Page::Analysis);
     assert_eq!(app.find("tree-e2e4 e7e5 g1f3").selected(), Some(true));
 }
 
@@ -392,7 +447,7 @@ fn a_pasted_tournament_link_opens_the_event(cx: &mut gpui_kit::TestAppContext) {
     wait_for_first(&mut app, "Open this tournament");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Tournaments));
+    app.wait_for_page(Page::Tournaments);
     app.find("tournament-join");
     // The event's own actions are in Quick Pick too, with the header's.
     app.press("secondary-k");
@@ -424,14 +479,21 @@ fn a_pasted_tournament_link_opens_the_event(cx: &mut gpui_kit::TestAppContext) {
 fn a_pasted_tv_link_watches_its_channel(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
-    app.click(("watch-tabs", 2usize));
+    app.click(super::tab(
+        "watch-tabs",
+        crate::pages::watch::Tab::Broadcasts,
+    ));
     app.press("secondary-k");
     app.type_text("https://lichess.org/tv/racingKings");
     wait_for_first(&mut app, "Watch this TV channel");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Watch));
-    assert_eq!(app.find(("watch-tabs", 0usize)).selected(), Some(true));
+    app.wait_for_page(Page::Watch);
+    assert_eq!(
+        app.find(super::tab("watch-tabs", crate::pages::watch::Tab::Tv))
+            .selected(),
+        Some(true)
+    );
     app.wait_for("the channel to be kept", |_, cx| {
         crate::prefs::get::<String>(cx, crate::pages::watch::CHANNEL_KEY, String::new())
             == "racingKings"
@@ -515,6 +577,7 @@ fn a_computer_game_takes_back_from_quick_pick(cx: &mut gpui_kit::TestAppContext)
 fn a_game_over_the_board_is_drawn_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.open("Over the board");
+    super::local::wait_resumed(&mut app);
     app.find("chess-board");
     let shown = |app: &mut Harness| {
         app.press("secondary-k");
@@ -555,7 +618,6 @@ fn a_game_over_the_board_is_drawn_from_quick_pick(cx: &mut gpui_kit::TestAppCont
 /// While a TV game is watched, Quick Pick offers its panel's actions, and Stop ends it.
 #[gpui_kit::test]
 fn a_watched_game_is_stopped_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::watch::WatchPage;
     let mut app = Harness::start(cx);
     app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
     let listed = |app: &mut Harness| -> Vec<String> {
@@ -575,28 +637,12 @@ fn a_watched_game_is_stopped_from_quick_pick(cx: &mut gpui_kit::TestAppContext) 
         labels
     };
     assert!(!listed(&mut app).contains(&"Stop watching".to_string()));
-    app.with_window(|_, cx| {
-        let page = crate::shell::view_of::<WatchPage>(Page::Watch, cx).expect("Watch");
-        page.update(cx, |page, cx| {
-            page.show_frame(
-                serde_json::json!({
-                    "source": "tv", "channel": "atomic", "variant": "atomic", "gameId": "tv1",
-                    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-                    "white": { "name": "A" }, "black": { "name": "B" },
-                }),
-                cx,
-            )
-        });
-    });
+    watch_tv(&mut app, "atomic");
     // An Atomic game goes to the analysis board too.
     let watching = listed(&mut app);
     assert!(watching.contains(&"Flip board".to_string()), "{watching:?}");
     assert!(watching.contains(&"Analyse".to_string()), "{watching:?}");
-    app.press("secondary-k");
-    app.type_text(">Stop watching");
-    wait_for_first(&mut app, "Stop watching");
-    app.press("enter");
-    wait_until_closed(&mut app);
+    run_command(&mut app, "Stop watching");
     assert!(!listed(&mut app).contains(&"Stop watching".to_string()));
 }
 
@@ -631,9 +677,8 @@ fn zen_mode_is_found_once(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn every_command_has_its_own_id_on_every_page(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _lichess) = Harness::signed_in(cx, false);
-    let labels: Vec<&str> = crate::shell::nav()
-        .iter()
-        .map(|(_, name, _)| *name)
+    let labels: Vec<&str> = crate::pages::Page::in_sidebar()
+        .map(|page| page.info().label)
         .collect();
     let check = |app: &mut Harness, place: &str| {
         let commands = app.cx.update(|cx| crate::palette::command_ids(cx));
@@ -648,9 +693,10 @@ fn every_command_has_its_own_id_on_every_page(cx: &mut gpui_kit::TestAppContext)
         check(&mut app, label);
     }
     app.open("Practice");
-    for tab in 0..6usize {
-        app.click(("practice-tabs", tab));
-        check(&mut app, &format!("Practice tab {tab}"));
+    use crate::pages::PageTab as _;
+    for &tab in crate::pages::practice::Tab::ALL {
+        app.click(super::tab("practice-tabs", tab));
+        check(&mut app, &format!("Practice tab {}", tab.info().label));
     }
 }
 
@@ -666,10 +712,21 @@ fn watch_tabs_open_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
         wait_until_closed(app);
     };
     run(&mut app, "Broadcasts");
-    assert_eq!(page(&mut app), Some(Page::Watch));
-    assert_eq!(app.find(("watch-tabs", 2usize)).selected(), Some(true));
+    app.wait_for_page(Page::Watch);
+    assert_eq!(
+        app.find(super::tab(
+            "watch-tabs",
+            crate::pages::watch::Tab::Broadcasts
+        ))
+        .selected(),
+        Some(true)
+    );
     run(&mut app, "Lichess TV");
-    assert_eq!(app.find(("watch-tabs", 0usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab("watch-tabs", crate::pages::watch::Tab::Tv))
+            .selected(),
+        Some(true)
+    );
 }
 
 /// Watch's TV channels are in Quick Pick, but for the one already on.
@@ -679,13 +736,17 @@ fn a_tv_channel_is_chosen_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
     app.with_window(|_, cx| {
-        let page = crate::shell::view_of::<WatchPage>(Page::Watch, cx).expect("Watch");
+        let page = crate::shell::view::<WatchPage>(cx).expect("Watch");
         page.update(cx, |page, cx| {
             page.show_channels(
-                vec![
-                    serde_json::json!({ "key": "best", "label": "Top rated" }),
-                    serde_json::json!({ "key": "blitz", "label": "Blitz" }),
-                ],
+                [("best", "Top rated"), ("blitz", "Blitz")]
+                    .map(|(key, label)| kchess_contracts::types::TvChannel {
+                        key: key.into(),
+                        label: label.into(),
+                        game_id: None,
+                        player: None,
+                    })
+                    .to_vec(),
                 cx,
             )
         });
@@ -704,29 +765,33 @@ fn a_tv_channel_is_chosen_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     assert!(!lists(&mut app, "Watch Blitz"));
 }
 
+/// The TV channel chosen last is the one watched, however fast the choices come. Each choice
+/// asked the core to start its feed at once, and the core runs one feed at a time: under load the
+/// earlier request could reach it last, so the page waited for a feed that had been replaced,
+/// and the earlier one, stopped as stale, left none (2026.11.11).
+#[gpui_kit::test]
+fn the_tv_channel_chosen_last_is_watched(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    for _ in 0..10 {
+        app.with_window(|window, cx| {
+            crate::pages::watch::open_channel("atomic".into(), window, cx);
+            crate::pages::watch::open_channel("rapid".into(), window, cx);
+        });
+        app.find("watch-stop");
+        // The Rapid game, two moves in.
+        app.find(("move", 1usize));
+    }
+}
+
 /// A watched standard game opens on the analysis board, from its button and from Quick Pick:
 /// leaving Watch tells the Watch page it is hidden, which must not happen while it runs the action.
 #[gpui_kit::test]
 fn a_watched_game_is_analysed_from_its_button_and_quick_pick(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::watch::WatchPage;
     let mut app = Harness::start(cx);
     let watch = |app: &mut Harness| {
-        app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
-        app.with_window(|_, cx| {
-            let page = crate::shell::view_of::<WatchPage>(Page::Watch, cx).expect("Watch");
-            page.update(cx, |page, cx| {
-                page.show_frame(
-                    serde_json::json!({
-                        "source": "tv", "channel": "rapid", "variant": "standard", "gameId": "tv2",
-                        "startFen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-                        "moves": ["e2e4", "c7c5"],
-                        "fen": "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
-                        "white": { "name": "A" }, "black": { "name": "B" },
-                    }),
-                    cx,
-                )
-            });
-        });
+        watch_tv(app, "rapid");
+        // Its moves so far, once Lichess's export of the game has them.
+        app.find(("move", 1usize));
     };
     watch(&mut app);
     app.click("watch-analyse");
@@ -740,9 +805,7 @@ fn a_watched_game_is_analysed_from_its_button_and_quick_pick(cx: &mut gpui_kit::
     wait_until_closed(&mut app);
     // The first game is still on the analysis board, unsaved.
     app.click("ok");
-    app.wait_for("the analysis board", |_, cx| {
-        crate::shell::current_page(cx) == Some(Page::Analysis)
-    });
+    app.wait_for_page(Page::Analysis);
     app.find("tree-e2e4 c7c5");
 }
 
@@ -756,17 +819,14 @@ fn a_copied_game_is_opened_with_paste(cx: &mut gpui_kit::TestAppContext) {
         app.cx
             .write_to_clipboard(gpui_kit::ClipboardItem::new_string(text.to_string()))
     };
-    let page = |app: &mut Harness| app.cx.update(|cx| crate::shell::current_page(cx));
 
     copy(&mut app, "hello");
     app.press("secondary-v");
-    assert_eq!(page(&mut app), Some(crate::pages::Page::Puzzles));
+    app.wait_for_page(crate::pages::Page::Puzzles);
 
     copy(&mut app, "1. e4 e5 2. Nf3");
     app.press("secondary-v");
-    app.wait_for("the moves on the analysis board", |_, cx| {
-        crate::shell::current_page(cx) == Some(crate::pages::Page::Analysis)
-    });
+    app.wait_for_page(crate::pages::Page::Analysis);
     app.find("tree-e2e4 e7e5 g1f3");
 
     // In Quick Pick's field the text is pasted as text.
@@ -869,4 +929,40 @@ fn find_searches_the_page_or_opens_quick_pick(cx: &mut gpui_kit::TestAppContext)
     app.press("secondary-f");
     app.type_text("puzzles");
     wait_for_first(&mut app, "Puzzles");
+}
+
+/// Practice's Guess the move is in Quick Pick with its other trainers, and opens on its tab.
+#[gpui_kit::test]
+fn guess_the_move_opens_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::practice::Tab;
+    let mut app = Harness::start(cx);
+    app.press("secondary-k");
+    app.type_text("Guess the move");
+    wait_for_first(&mut app, "Guess the move");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.wait_for_page(Page::Practice);
+    assert_eq!(
+        app.find(super::tab("practice-tabs", Tab::Guess)).selected(),
+        Some(true)
+    );
+}
+
+/// A setting in Quick Pick is named as its Settings row is: it read "Show legal moves" and "Show
+/// opening name" beside the rows' "Show possible moves" and "Show opening names".
+#[gpui_kit::test]
+fn quick_pick_names_settings_as_their_rows_do(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let commands = app.cx.update(|cx| crate::palette::command_ids(cx));
+    let label = |id: &str| {
+        commands
+            .iter()
+            .find(|(command, _)| command == id)
+            .map(|(_, label)| label.as_str())
+    };
+    assert_eq!(label("setting:showLegalMoves"), Some("Show possible moves"));
+    assert_eq!(label("setting:showOpeningName"), Some("Show opening names"));
+    app.press("secondary-k");
+    app.type_text("#legal moves");
+    wait_for_first(&mut app, "Show possible moves");
 }

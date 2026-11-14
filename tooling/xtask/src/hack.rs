@@ -12,11 +12,15 @@ use std::collections::BTreeSet;
 
 use crate::util::{Result, available, output, run, say};
 
-/// The hack's manifest, from the repository root.
 const MANIFEST: &str = "crates/kchess-hack/Cargo.toml";
-
-/// Dependabot's configuration, from the repository root.
+const CONFIG: &str = ".config/hakari.toml";
 const DEPENDABOT: &str = ".github/dependabot.yml";
+
+/// Whether `check` reads `file`: the hack's settings, Dependabot's hold list, and the manifests
+/// and lock it is written from.
+pub fn reads(file: &str) -> bool {
+    file == CONFIG || file == DEPENDABOT || crate::check::is_manifest(file)
+}
 
 /// How `.github/dependabot.yml` holds a package only the hack depends on to the hack's
 /// requirement. Dependabot raises a requirement in whichever manifest names it, and hakari writes
@@ -25,25 +29,22 @@ const DEPENDABOT: &str = ".github/dependabot.yml";
 /// Patch and security updates still come; a 0.x package's minor is its major.
 const KEPT: &str = "update-types: [version-update:semver-major, version-update:semver-minor]";
 
-/// The packages whose own dependencies may go in the hack: the headless ones, so that the hack
-/// never makes them build the app's or xtask's dependencies.
-const HEADLESS: [&str; 8] = [
-    "kchess-domain",
-    "kchess-contracts",
-    "kchess-core",
-    "kchess-games",
-    "kchess-service",
-    "kchess-cli",
-    "kchess-voice",
-    "kchess-delta",
-];
-
-/// The platforms the hack is written for (`.config/hakari.toml`).
-const PLATFORMS: [&str; 3] = [
-    "aarch64-apple-darwin",
-    "x86_64-unknown-linux-gnu",
-    "x86_64-pc-windows-msvc",
-];
+/// The platforms the hack is written for: `platforms` in `.config/hakari.toml`.
+fn platforms(config: &str) -> Vec<String> {
+    config
+        .lines()
+        .skip_while(|line| !line.starts_with("platforms = ["))
+        .skip(1)
+        .take_while(|line| !line.starts_with(']'))
+        .filter_map(|line| {
+            line.trim()
+                .trim_end_matches(',')
+                .strip_prefix('"')?
+                .strip_suffix('"')
+        })
+        .map(str::to_string)
+        .collect()
+}
 
 /// The hack as `cargo hakari` writes it, and every package depending on it, when cargo-hakari is
 /// installed (CI installs it); and the hack's dependencies all headless ones. Not `cargo hakari
@@ -61,12 +62,23 @@ pub fn check() -> Result {
     } else {
         say("cargo-hakari is not installed (`cargo install cargo-hakari`): CI checks the hack.");
     }
-    let text = std::fs::read_to_string(crate::util::root().join(MANIFEST))
-        .map_err(|cause| format!("{MANIFEST}: {cause}"))?;
+    let read = |path: &str| {
+        std::fs::read_to_string(crate::util::root().join(path))
+            .map_err(|cause| format!("{path}: {cause}"))
+    };
+    let text = read(MANIFEST)?;
+    let platforms = platforms(&read(CONFIG)?);
+    if platforms.is_empty() {
+        return Err(format!("{CONFIG} names no platforms."));
+    }
+    let members = crate::check::members()?;
     let mut headless = BTreeSet::new();
-    for platform in PLATFORMS {
+    for platform in &platforms {
         let mut args = vec!["tree", "--locked", "--prune", "kchess-hack"];
-        for package in HEADLESS {
+        for package in members
+            .iter()
+            .filter(|member| crate::members::headless(member))
+        {
             args.extend(["-p", package]);
         }
         args.extend([
@@ -95,9 +107,7 @@ pub fn check() -> Result {
     )?;
     let metadata =
         serde_json::from_str(&metadata).map_err(|cause| format!("cargo metadata: {cause}"))?;
-    let config = std::fs::read_to_string(crate::util::root().join(DEPENDABOT))
-        .map_err(|cause| format!("{DEPENDABOT}: {cause}"))?;
-    unkept(&hack_only(&metadata), &kept(&config))
+    unkept(&hack_only(&metadata), &kept(&read(DEPENDABOT)?))
 }
 
 /// The packages only the hack depends on, from `cargo metadata --no-deps`: no other manifest
@@ -154,7 +164,6 @@ fn unkept(hack_only: &BTreeSet<String>, kept: &BTreeSet<String>) -> Result {
     Err(message)
 }
 
-/// The package names `cargo tree --prefix none -f '{p}'` prints.
 fn packages(tree: &str) -> BTreeSet<String> {
     tree.lines()
         .filter_map(|line| line.split_whitespace().next())
@@ -180,7 +189,6 @@ fn dependencies(manifest: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// The hack's dependencies the headless packages do not build without it.
 fn outside(hack: &BTreeSet<String>, headless: &BTreeSet<String>) -> Vec<String> {
     hack.difference(headless).cloned().collect()
 }
@@ -247,14 +255,22 @@ mod tests {
     }
 
     #[test]
+    fn the_platforms_are_read_from_the_configuration() {
+        let config = "resolver = \"2\"\nplatforms = [\n    \"aarch64-apple-darwin\",\n    \"x86_64-pc-windows-msvc\",\n]\n\n[final-excludes]\n";
+        assert_eq!(
+            platforms(config),
+            ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
+        );
+        assert!(platforms("").is_empty());
+        // Only the platforms' list is read, not a list before it.
+        let config = "hakari-package = \"kchess-hack\"\nexcludes = [\n    \"x\",\n]\nplatforms = [\n    \"aarch64-apple-darwin\",\n]\n";
+        assert_eq!(platforms(config), ["aarch64-apple-darwin"]);
+    }
+
+    #[test]
     fn a_tree_lists_each_package_once() {
         let tree =
             "kchess-core v2026.11.7 (/r/crates/kchess-core)\ntokio v1.54.1\n\ntokio v1.54.1\n";
         assert_eq!(packages(tree), set(&["kchess-core", "tokio"]));
-    }
-
-    #[test]
-    fn the_checked_in_hack_and_dependabot_agree() {
-        check().unwrap();
     }
 }

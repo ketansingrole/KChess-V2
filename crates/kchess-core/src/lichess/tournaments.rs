@@ -7,262 +7,28 @@
 //! an arena's extras are kept only when all of them read. Eligibility (`playable`, `problem`)
 //! follows the Board API rules in `kchess_domain`.
 
-use serde::{Deserialize, Serialize};
-use serde_json::{Number, Value, json};
-use tokio_util::sync::CancellationToken;
+use serde::Deserialize;
+use serde_json::{Number, Value};
 
 use super::accounts::{Lichess, Reply, path_segment};
-use super::client::{Failure, Ndjson, TokenSource, authorize};
+use super::client::Auth;
 use super::decode::{Millis, Text, present, read};
 use super::online::js_number;
-use crate::error::CoreError;
 use crate::host::Level;
-
-/// `TournamentSystem`: an arena, or a Swiss event.
-pub const ARENA: &str = "arena";
-pub const SWISS: &str = "swiss";
-
-/// The result type of the calls here: a Lichess or core failure.
-pub type Res<T> = std::result::Result<T, Failure>;
-
-/// A tournament's clock: seconds and seconds per move (`clock`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Clock {
-    pub limit: Number,
-    pub increment: Number,
-}
-
-/// A Swiss event's team (`team`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Team {
-    pub id: String,
-    pub name: String,
-}
-
-/// An arena or Swiss tournament in a list (`TournamentSummary`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentSummary {
-    pub id: String,
-    /// `arena` or `swiss`.
-    pub system: String,
-    pub name: String,
-    /// `created`, `started` or `finished`.
-    pub status: String,
-    pub variant: String,
-    pub variant_name: String,
-    pub rated: bool,
-    pub clock: Clock,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub minutes: Option<Number>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub round: Option<Number>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub nb_rounds: Option<Number>,
-    pub nb_players: Number,
-    pub starts_at: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub finishes_at: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub team: Option<Team>,
-    pub playable: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub problem: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub perf: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub freq: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_rating: Option<Number>,
-}
-
-/// The tournaments of the timeline, and notes about what could not be read (`TournamentList`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentList {
-    pub arenas: Vec<TournamentSummary>,
-    pub swiss: Vec<TournamentSummary>,
-    pub problems: Vec<String>,
-}
-
-/// One row of a leaderboard (`TournamentStanding`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Standing {
-    pub rank: Number,
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rating: Option<Number>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub score: Option<Number>,
-    /// Arena score sheet: one digit per game, newest last.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sheet: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fire: Option<bool>,
-}
-
-/// A player in an arena's featured game or a duel (`TournamentGame` side).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RankedPlayer {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rating: Option<Number>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rank: Option<Number>,
-}
-
-/// A game between two tournament players (`TournamentGame`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TournamentGame {
-    pub id: String,
-    pub white: RankedPlayer,
-    pub black: RankedPlayer,
-}
-
-/// Seconds left on each clock.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Clocks {
-    pub white: Number,
-    pub black: Number,
-}
-
-/// An arena's top game (`featured`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Featured {
-    pub id: String,
-    pub fen: String,
-    pub orientation: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_move: Option<String>,
-    pub white: RankedPlayer,
-    pub black: RankedPlayer,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub clocks: Option<Clocks>,
-}
-
-/// An arena's podium entry.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PodiumEntry {
-    pub name: String,
-    pub rank: Number,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rating: Option<Number>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub score: Option<Number>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub performance: Option<Number>,
-}
-
-/// An arena's totals once it has finished (`stats`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Stats {
-    pub games: Number,
-    pub white_wins: Number,
-    pub black_wins: Number,
-    pub draws: Number,
-    pub berserks: Number,
-    pub average_rating: Number,
-}
-
-/// The parts of an arena detail read from the same answer (`arenaExtras`).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ArenaExtras {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub featured: Option<Featured>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub duels: Option<Vec<TournamentGame>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub podium: Option<Vec<PodiumEntry>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stats: Option<Stats>,
-}
-
-/// The account's entry in a tournament (`me`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Me {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rank: Option<Number>,
-    pub withdraw: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub game_id: Option<String>,
-}
-
-/// One entry condition and whether the account meets it (`verdicts.list`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Verdict {
-    pub condition: String,
-    pub verdict: String,
-}
-
-/// Entry conditions and whether the account meets them (`verdicts`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Verdicts {
-    pub accepted: bool,
-    pub list: Vec<Verdict>,
-}
-
-/// One tournament with its leaderboard (`TournamentDetail`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentDetail {
-    #[serde(flatten)]
-    pub summary: TournamentSummary,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seconds_to_start: Option<Number>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seconds_to_finish: Option<Number>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub berserkable: Option<bool>,
-    pub standing: Vec<Standing>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub standing_page: Option<Number>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub me: Option<Me>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub verdicts: Option<Verdicts>,
-    /// Swiss: when the next round starts.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_round_in: Option<Number>,
-    /// Arena: the games being played and, once it has finished, its results.
-    #[serde(flatten)]
-    pub extras: ArenaExtras,
-}
-
-/// What an arena to create asks for (`NewArena`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NewArena {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    pub clock_time: Number,
-    pub clock_increment: Number,
-    pub minutes: Number,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wait_minutes: Option<Number>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_date: Option<i64>,
-    pub variant: String,
-    pub rated: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub password: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-}
+use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
+pub use kchess_contracts::types::{
+    NewArena, TournamentClock, TournamentClocks, TournamentCondition, TournamentDetail,
+    TournamentExtras, TournamentFeatured, TournamentGame, TournamentList, TournamentMe,
+    TournamentPlayer, TournamentPodium, TournamentStanding, TournamentStats, TournamentSummary,
+    TournamentTeam, TournamentVerdicts,
+};
+use kchess_contracts::types::{TournamentStatus, TournamentSystem, UsageKind};
+use kchess_domain::color::Color;
+use kchess_domain::js;
 
 /* ── Lichess's shapes (see `decode` for the key rules) ─────────────────── */
 
-/// `variantField`: a key string, or `{ key, name? }`.
+/// A key string, or `{ key, name? }`.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum RawVariant {
@@ -312,7 +78,7 @@ struct RawArena {
     status: Number,
     variant: RawVariant,
     rated: bool,
-    clock: Clock,
+    clock: TournamentClock,
     #[serde(default, deserialize_with = "present")]
     minutes: Option<Number>,
     nb_players: Number,
@@ -361,14 +127,14 @@ struct RawVerdicts {
     list: Vec<RawVerdict>,
 }
 
-impl From<RawVerdicts> for Verdicts {
-    fn from(raw: RawVerdicts) -> Verdicts {
-        Verdicts {
+impl From<RawVerdicts> for TournamentVerdicts {
+    fn from(raw: RawVerdicts) -> TournamentVerdicts {
+        TournamentVerdicts {
             accepted: raw.accepted,
             list: raw
                 .list
                 .into_iter()
-                .map(|entry| Verdict {
+                .map(|entry| TournamentCondition {
                     condition: entry.condition.into(),
                     verdict: entry.verdict.into(),
                 })
@@ -386,7 +152,7 @@ struct RawSwiss {
     status: SwissStatus,
     variant: RawVariant,
     rated: bool,
-    clock: Clock,
+    clock: TournamentClock,
     #[serde(default, deserialize_with = "present")]
     round: Option<Number>,
     #[serde(default, deserialize_with = "present")]
@@ -427,7 +193,7 @@ struct RawStanding {
     sheet: Option<RawSheet>,
 }
 
-/// `rankedPlayer`: `{ name, rating?, rank? }`.
+/// `{ name, rating?, rank? }`.
 #[derive(Deserialize)]
 struct RawRankedPlayer {
     name: Text<40>,
@@ -437,9 +203,9 @@ struct RawRankedPlayer {
     rank: Option<Number>,
 }
 
-impl From<RawRankedPlayer> for RankedPlayer {
-    fn from(raw: RawRankedPlayer) -> RankedPlayer {
-        RankedPlayer {
+impl From<RawRankedPlayer> for TournamentPlayer {
+    fn from(raw: RawRankedPlayer) -> TournamentPlayer {
+        TournamentPlayer {
             name: raw.name.into(),
             rating: raw.rating,
             rank: raw.rank,
@@ -457,9 +223,9 @@ struct RawDuelSide {
     k: Option<Number>,
 }
 
-impl From<RawDuelSide> for RankedPlayer {
-    fn from(raw: RawDuelSide) -> RankedPlayer {
-        RankedPlayer {
+impl From<RawDuelSide> for TournamentPlayer {
+    fn from(raw: RawDuelSide) -> TournamentPlayer {
+        TournamentPlayer {
             name: raw.n.into(),
             rating: raw.r,
             rank: raw.k,
@@ -492,7 +258,7 @@ struct RawFeatured {
     white: RawRankedPlayer,
     black: RawRankedPlayer,
     #[serde(default, deserialize_with = "present")]
-    c: Option<Clocks>,
+    c: Option<TournamentClocks>,
 }
 
 #[derive(Deserialize)]
@@ -517,22 +283,14 @@ struct RawExtras {
     #[serde(default)]
     podium: Option<Vec<RawPodiumEntry>>,
     #[serde(default)]
-    stats: Option<Stats>,
+    stats: Option<TournamentStats>,
 }
 
 /* ── Eligibility and dates ─────────────────────────────────────────────── */
 
-/// The Board API time-control rules, read through the domain.
-fn board_rule(method: &str, minutes: f64, increment: f64) -> bool {
-    matches!(
-        kchess_domain::records::call(method, &[json!(minutes), json!(increment)]),
-        Some(Ok(Value::Bool(true)))
-    )
-}
-
 /// `compatibility(clock, variant)`: whether KChess can play the games through the Board API.
-fn compatibility(clock: &Clock, variant: &str) -> (bool, Option<String>) {
-    if kchess_domain::online_game::variant_from_lichess(Some(variant)).is_none() {
+fn compatibility(clock: &TournamentClock, variant: &str) -> (bool, Option<String>) {
+    if kchess_domain::variant::Variant::from_lichess(Some(variant)).is_none() {
         return (
             false,
             Some(format!("KChess cannot show {variant} games yet.")),
@@ -540,7 +298,7 @@ fn compatibility(clock: &Clock, variant: &str) -> (bool, Option<String>) {
     }
     let minutes = clock.limit.as_f64().unwrap_or(0.0) / 60.0;
     let increment = clock.increment.as_f64().unwrap_or(0.0);
-    if !board_rule("canBoardSeek", minutes, increment) {
+    if !kchess_domain::records::time_control::can_board_seek(minutes, increment) {
         return (
             false,
             Some(
@@ -561,16 +319,16 @@ pub fn parse_date(text: &str) -> i64 {
 
 /* ── Readers of the Lichess answers ───────────────────────────────────── */
 
-/// `arenaSummary(raw)` of an entry of the arena list, or None when it is not readable.
+/// The summary of an entry of the arena list, or None when it is not readable.
 fn arena_summary(raw: &Value) -> Option<TournamentSummary> {
     let arena: RawArena = read(raw)?;
     let (variant_key, variant_name) = arena.variant.into_parts();
     let (playable, problem) = compatibility(&arena.clock, &variant_key);
     Some(TournamentSummary {
         id: arena.id.into(),
-        system: ARENA.into(),
+        system: TournamentSystem::Arena,
         name: arena.full_name.into(),
-        status: arena_status(&arena.status).into(),
+        status: arena_status(&arena.status),
         variant: variant_key,
         variant_name,
         rated: arena.rated,
@@ -594,11 +352,11 @@ fn arena_summary(raw: &Value) -> Option<TournamentSummary> {
 }
 
 /// `STATUS` of the arena list: Lichess's status numbers (10 created, 20 started, 30 finished).
-fn arena_status(status: &Number) -> &'static str {
+fn arena_status(status: &Number) -> TournamentStatus {
     match status.as_f64() {
-        Some(20.0) => "started",
-        Some(30.0) => "finished",
-        _ => "created",
+        Some(20.0) => TournamentStatus::Started,
+        Some(30.0) => TournamentStatus::Finished,
+        _ => TournamentStatus::Created,
     }
 }
 
@@ -608,8 +366,11 @@ struct SwissExtras {
     next_round: Option<RawNextRound>,
 }
 
-/// `swissSummary(raw, team)` and the Swiss extras, or None when the entry is not readable.
-fn swiss_read(raw: &Value, team: Option<Team>) -> Option<(TournamentSummary, SwissExtras)> {
+/// The summary and the Swiss extras of an entry, or None when the entry is not readable.
+fn swiss_read(
+    raw: &Value,
+    team: Option<TournamentTeam>,
+) -> Option<(TournamentSummary, SwissExtras)> {
     let RawSwiss {
         id,
         name,
@@ -628,14 +389,13 @@ fn swiss_read(raw: &Value, team: Option<Team>) -> Option<(TournamentSummary, Swi
     let (playable, problem) = compatibility(&clock, &variant_key);
     let summary = TournamentSummary {
         id: id.into(),
-        system: SWISS.into(),
+        system: TournamentSystem::Swiss,
         name: name.into(),
         status: match status {
-            SwissStatus::Created => "created",
-            SwissStatus::Started => "started",
-            SwissStatus::Finished => "finished",
-        }
-        .into(),
+            SwissStatus::Created => TournamentStatus::Created,
+            SwissStatus::Started => TournamentStatus::Started,
+            SwissStatus::Finished => TournamentStatus::Finished,
+        },
         variant: variant_key,
         variant_name,
         rated,
@@ -665,18 +425,18 @@ fn swiss_read(raw: &Value, team: Option<Team>) -> Option<(TournamentSummary, Swi
     ))
 }
 
-/// `swissSummary(raw, team)`, or None when the entry is not readable.
-fn swiss_summary(raw: &Value, team: Option<Team>) -> Option<TournamentSummary> {
+/// The summary of a Swiss entry, or None when it is not readable.
+fn swiss_summary(raw: &Value, team: Option<TournamentTeam>) -> Option<TournamentSummary> {
     swiss_read(raw, team).map(|(summary, _)| summary)
 }
 
-/// `standingOf(raw)`: a leaderboard row, or None when it is not readable.
-fn standing_of(raw: &Value) -> Option<Standing> {
+/// A leaderboard row, or None when it is not readable.
+fn standing_of(raw: &Value) -> Option<TournamentStanding> {
     let row: RawStanding = read(raw)?;
     let (scores, fire) = row.sheet.map_or((None, None), |sheet| {
         (sheet.scores.map(String::from), sheet.fire)
     });
-    Some(Standing {
+    Some(TournamentStanding {
         rank: row.rank,
         name: row
             .name
@@ -690,13 +450,13 @@ fn standing_of(raw: &Value) -> Option<Standing> {
     })
 }
 
-/// `arenaExtras(raw)`: the featured game, the games in progress, the podium and the totals of an
+/// The featured game, the games in progress, the podium and the totals of an
 /// arena. The schema is checked as one: when any part is unreadable, none of them is kept.
-pub fn arena_extras(raw: &Value) -> ArenaExtras {
+pub fn arena_extras(raw: &Value) -> TournamentExtras {
     let Some(extras) = read::<RawExtras>(raw) else {
-        return ArenaExtras::default();
+        return TournamentExtras::default();
     };
-    let featured = extras.featured.map(|f| Featured {
+    let featured = extras.featured.map(|f| TournamentFeatured {
         id: f.id.into(),
         // Lichess sends the board and side to move only.
         fen: format!(
@@ -704,16 +464,15 @@ pub fn arena_extras(raw: &Value) -> ArenaExtras {
             f.fen.split(' ').take(2).collect::<Vec<_>>().join(" ")
         ),
         orientation: match f.orientation {
-            Some(Side::Black) => "black",
-            Some(Side::White) | None => "white",
-        }
-        .into(),
+            Some(Side::Black) => Color::Black,
+            Some(Side::White) | None => Color::White,
+        },
         last_move: f.last_move.map(String::from),
         white: f.white.into(),
         black: f.black.into(),
         clocks: f.c,
     });
-    ArenaExtras {
+    TournamentExtras {
         featured,
         duels: extras.duels.map(|duels| {
             duels
@@ -730,7 +489,7 @@ pub fn arena_extras(raw: &Value) -> ArenaExtras {
             entries
                 .into_iter()
                 .take(3)
-                .map(|entry| PodiumEntry {
+                .map(|entry| TournamentPodium {
                     name: entry.name.into(),
                     rank: entry.rank,
                     rating: entry.rating,
@@ -743,56 +502,33 @@ pub fn arena_extras(raw: &Value) -> ArenaExtras {
     }
 }
 
-/// `teamProblem(cause)`: a short reason for the Swiss list, never Lichess's raw response.
-fn team_problem(cause: &Failure) -> &'static str {
-    match cause.status() {
-        Some(401) | Some(403) => ". Connect the account again to allow it.",
-        Some(429) => ". Lichess asked to slow down.",
+/// A short reason for the Swiss list, never Lichess's raw response. Only a refused login asks
+/// to connect again: a 403 for another reason did, and reconnecting changed nothing.
+fn team_problem(cause: &CoreError) -> &'static str {
+    match cause.kind {
+        Some(ErrorKind::Login) => ". Connect the account again to allow it.",
+        Some(ErrorKind::RateLimited) => ". Lichess asked to slow down.",
         _ => ".",
     }
 }
 
-/// JavaScript truthiness of a JSON value (`!!value`).
-fn truthy(value: Option<&Value>) -> bool {
-    match value {
-        None | Some(Value::Null) => false,
-        Some(Value::Bool(flag)) => *flag,
-        Some(Value::Number(number)) => number.as_f64().is_some_and(|n| n != 0.0),
-        Some(Value::String(text)) => !text.is_empty(),
-        Some(_) => true,
-    }
-}
-
-/// `String(value)` for a JSON value.
-fn js_text(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        Value::Null => "null".into(),
-        Value::Bool(flag) => flag.to_string(),
-        Value::Number(number) => number.to_string(),
-        other => other.to_string(),
-    }
-}
-
-fn first_chars(text: &str, max: usize) -> String {
-    text.chars().take(max).collect()
+/// The first `max` UTF-16 units of `text`, as every Lichess text is cut.
+fn first_units(text: &str, max: usize) -> String {
+    js::slice_utf16(text, max).to_string()
 }
 
 /* ── The calls ─────────────────────────────────────────────────────────── */
 
 /// The tournaments of the timeline (`tournaments`). Arenas are listed for everyone; with an
 /// account, its teams' upcoming Swiss events are listed too (signed in).
-pub async fn tournaments(lichess: &Lichess, account: &str) -> Res<TournamentList> {
-    let cancel = lichess.lifetime().clone();
+pub async fn tournaments(lichess: &Lichess, account: &str) -> CoreResult<TournamentList> {
     let raw: Value = lichess
         .client()
-        .policy()
-        .with_usage(account, "tournament", async {
-            lichess
-                .client()
-                .get_json::<Value>("/api/tournament", &[], None, &cancel)
-                .await
-        })
+        .get(
+            "/api/tournament",
+            &lichess.client().counted(account, UsageKind::Tournament),
+        )
+        .read_json()
         .await?;
     let mut arenas: Vec<TournamentSummary> = Vec::new();
     // Recently finished arenas stay on the timeline, faded, for context.
@@ -808,13 +544,13 @@ pub async fn tournaments(lichess: &Lichess, account: &str) -> Res<TournamentList
     let teams = if account.is_empty() {
         Ok(())
     } else {
-        swiss_of_teams(lichess, account, &cancel, &mut swiss, &mut problems).await
+        swiss_of_teams(lichess, account, &mut swiss, &mut problems).await
     };
     if let Err(cause) = teams {
         lichess.host().log(
             Level::Warn,
             "tournaments",
-            &format!("Could not load teams: {account} {}", cause.message()),
+            &format!("Could not load teams: {account} {}", cause.message),
         );
         problems.push(format!(
             "Couldn’t load the teams of @{account}{}",
@@ -835,85 +571,47 @@ pub async fn tournaments(lichess: &Lichess, account: &str) -> Res<TournamentList
 async fn swiss_of_teams(
     lichess: &Lichess,
     account: &str,
-    cancel: &CancellationToken,
     swiss: &mut Vec<TournamentSummary>,
     problems: &mut Vec<String>,
-) -> Res<()> {
+) -> CoreResult<()> {
     // Lichess lists a player's teams only to signed-in apps; a rejected login falls back.
     let path = format!("/api/team/of/{}", path_segment(account));
     let teams: Value = lichess
-        .client()
-        .policy()
-        .with_usage(account, "tournament", async {
-            lichess
-                .as_owner(account, |auth| {
-                    let path = path.clone();
-                    async move {
-                        lichess
-                            .client()
-                            .get_json::<Value>(&path, &[], auth.as_deref(), cancel)
-                            .await
-                    }
-                })
-                .await
+        .as_owner(account, UsageKind::Tournament, |auth| {
+            let path = &path;
+            async move { lichess.client().get(path, &auth).read_json().await }
         })
         .await?;
     let teams = teams
         .as_array()
-        .ok_or_else(|| Failure::Core(CoreError::new("Lichess sent an unreadable team list.")))?;
+        .ok_or_else(|| CoreError::new("Lichess sent an unreadable team list."))?;
     // Lichess asks for one request at a time; a few teams are plenty.
     for raw_team in teams.iter().take(8) {
-        let team = Team {
+        let team = TournamentTeam {
             id: raw_team["id"].as_str().unwrap_or("").to_string(),
             name: raw_team["name"].as_str().unwrap_or("").to_string(),
         };
         let path = format!("/api/team/{}/swiss", path_segment(&team.id));
-        let mut lines: Vec<Value> = Vec::new();
-        // A malformed line fails the team's read as it arrives (`JSON.parse` in `readLines`).
+        // A malformed line fails the team's read as it arrives.
         let outcome = lichess
             .client()
-            .policy()
-            .with_usage(account, "tournament", async {
-                lichess
-                    .client()
-                    .ndjson(
-                        Ndjson {
-                            method: reqwest::Method::GET,
-                            path: &path,
-                            query: &[("max", "10".to_string())],
-                            body: None,
-                            auth: None,
-                        },
-                        cancel,
-                        |line| {
-                            let value = serde_json::from_str::<Value>(line)
-                                .map_err(|cause| CoreError::new(cause.to_string()))?;
-                            lines.push(value);
-                            Ok(())
-                        },
-                    )
-                    .await
+            .get(
+                &path,
+                &lichess.client().counted(account, UsageKind::Tournament),
+            )
+            .query(&[("max", "10")])
+            .records("tournament", usize::MAX, |raw: Value| {
+                swiss_summary(&raw, Some(team.clone()))
+                    .filter(|summary| summary.status != TournamentStatus::Finished)
             })
             .await;
         match outcome {
-            Ok(()) => {
-                for raw in &lines {
-                    if let Some(summary) = swiss_summary(raw, Some(team.clone()))
-                        .filter(|summary| summary.status != "finished")
-                    {
-                        swiss.push(summary);
-                    }
-                }
-            }
+            Ok(summaries) => swiss.extend(summaries),
             Err(cause) => {
                 lichess.host().log(
                     Level::Warn,
                     "tournaments",
-                    &format!(
-                        "Could not load Swiss events: {} {}",
-                        team.id,
-                        cause.message()
-                    ),
+                    &format!("Could not load Swiss events: {} {}", team.id, cause.message),
                 );
                 problems.push(format!(
                     "Couldn’t load Swiss events of {}{}",
@@ -927,66 +625,41 @@ async fn swiss_of_teams(
 }
 
 /// One tournament with its leaderboard (`tournament`). As `account` it also says whether you are
-/// in it, when the account has a login (`tokens`); without one the answer is anonymous.
+/// in it, when the account has a login; without one the answer is anonymous.
 pub async fn tournament(
     lichess: &Lichess,
-    tokens: &dyn TokenSource,
-    system: &str,
+    system: TournamentSystem,
     id: &str,
     account: &str,
     page: u32,
-) -> Res<TournamentDetail> {
-    let token = if account.is_empty() {
-        None
+) -> CoreResult<TournamentDetail> {
+    let auth = lichess.optional_login(account, UsageKind::Tournament).await;
+    if system == TournamentSystem::Arena {
+        arena_detail(lichess, id, page, &auth).await
     } else {
-        match tokens.token(account).await {
-            Ok(token) => token,
-            Err(cause) => {
-                lichess.host().log(
-                    Level::Debug,
-                    "tournaments",
-                    &format!("Stored login is unavailable: {account} {}", cause.message),
-                );
-                None
-            }
-        }
-    };
-    let auth = token.as_deref().map(authorize);
-    let cancel = lichess.lifetime().clone();
-    lichess
-        .client()
-        .policy()
-        .with_usage(account, "tournament", async {
-            if system == ARENA {
-                arena_detail(lichess, id, page, auth.as_deref(), &cancel).await
-            } else {
-                swiss_detail(lichess, id, auth.as_deref(), &cancel).await
-            }
-        })
-        .await
+        swiss_detail(lichess, id, &auth).await
+    }
 }
 
 async fn arena_detail(
     lichess: &Lichess,
     id: &str,
     page: u32,
-    auth: Option<&str>,
-    cancel: &CancellationToken,
-) -> Res<TournamentDetail> {
+    auth: &Auth,
+) -> CoreResult<TournamentDetail> {
     let path = format!("/api/tournament/{}", path_segment(id));
     let raw: Value = lichess
         .client()
-        .get_json(&path, &[("page", page.to_string())], auth, cancel)
+        .get(&path, auth)
+        .query(&[("page", page.to_string())])
+        .read_json()
         .await?;
     let object = raw
         .as_object()
-        .ok_or_else(|| Failure::Core(CoreError::new("Lichess sent an unreadable tournament.")))?;
-    let summary = arena_detail_summary(id, &raw).ok_or_else(|| {
-        Failure::Core(CoreError::new(
-            "Lichess sent an unreadable tournament clock.",
-        ))
-    })?;
-    let standing: Vec<Standing> = object
+        .ok_or_else(|| CoreError::new("Lichess sent an unreadable tournament."))?;
+    let summary = arena_detail_summary(id, &raw)
+        .ok_or_else(|| CoreError::new("Lichess sent an unreadable tournament clock."))?;
+    let standing: Vec<TournamentStanding> = object
         .get("standing")
         .and_then(|standing| standing.get("players"))
         .and_then(Value::as_array)
@@ -995,25 +668,28 @@ async fn arena_detail(
         .filter_map(standing_of)
         .take(50)
         .collect();
-    let me = object.get("me").filter(|me| me.is_object()).map(|me| Me {
-        rank: num_at(me, "rank"),
-        withdraw: me.get("withdraw") == Some(&Value::Bool(true)),
-        game_id: me.get("gameId").and_then(Value::as_str).map(str::to_string),
-    });
+    let me = object
+        .get("me")
+        .filter(|me| me.is_object())
+        .map(|me| TournamentMe {
+            rank: num_at(me, "rank"),
+            withdraw: me.get("withdraw") == Some(&Value::Bool(true)),
+            game_id: me.get("gameId").and_then(Value::as_str).map(str::to_string),
+        });
     let verdicts = object.get("verdicts").and_then(|verdicts| {
         let list = verdicts.get("list")?.as_array()?;
-        Some(Verdicts {
-            accepted: truthy(verdicts.get("accepted")),
+        Some(TournamentVerdicts {
+            accepted: js::truthy(verdicts.get("accepted")),
             list: list
                 .iter()
                 .take(10)
-                .map(|entry| Verdict {
-                    condition: first_chars(
-                        &js_text(entry.get("condition").unwrap_or(&Value::Null)),
+                .map(|entry| TournamentCondition {
+                    condition: first_units(
+                        &js::to_string(Some(entry.get("condition").unwrap_or(&Value::Null))),
                         200,
                     ),
-                    verdict: first_chars(
-                        &js_text(entry.get("verdict").unwrap_or(&Value::Null)),
+                    verdict: first_units(
+                        &js::to_string(Some(entry.get("verdict").unwrap_or(&Value::Null))),
                         200,
                     ),
                 })
@@ -1025,7 +701,7 @@ async fn arena_detail(
         description: object
             .get("description")
             .and_then(Value::as_str)
-            .map(|text| first_chars(text, 2000)),
+            .map(|text| first_units(text, 2000)),
         seconds_to_start: num_at(&raw, "secondsToStart"),
         seconds_to_finish: num_at(&raw, "secondsToFinish"),
         berserkable: Some(object.get("berserkable") == Some(&Value::Bool(true))),
@@ -1043,34 +719,34 @@ async fn arena_detail(
 /// None when its clock is unreadable.
 fn arena_detail_summary(id: &str, raw: &Value) -> Option<TournamentSummary> {
     let object = raw.as_object()?;
-    let clock: Clock = read(object.get("clock")?)?;
+    let clock: TournamentClock = read(object.get("clock")?)?;
     let variant_key = match object.get("variant") {
         Some(Value::String(key)) => key.clone(),
         _ => "standard".to_string(),
     };
-    let status = if truthy(object.get("isFinished")) {
-        "finished"
-    } else if truthy(object.get("secondsToStart")) {
-        "created"
+    let status = if js::truthy(object.get("isFinished")) {
+        TournamentStatus::Finished
+    } else if js::truthy(object.get("secondsToStart")) {
+        TournamentStatus::Created
     } else {
-        "started"
+        TournamentStatus::Started
     };
     let (playable, problem) = compatibility(&clock, &variant_key);
     Some(TournamentSummary {
         id: id.to_string(),
-        system: ARENA.into(),
-        name: first_chars(
+        system: TournamentSystem::Arena,
+        name: first_units(
             &object
                 .get("fullName")
                 .filter(|name| !name.is_null())
-                .map(js_text)
+                .map(|name| js::to_string(Some(name)))
                 .unwrap_or_else(|| id.to_string()),
             120,
         ),
-        status: status.into(),
+        status,
         variant: variant_key.clone(),
         variant_name: variant_key,
-        // `raw.rated !== false`.
+        // Rated unless Lichess says it is not.
         rated: object.get("rated") != Some(&Value::Bool(false)),
         clock,
         minutes: num_at(raw, "minutes"),
@@ -1079,7 +755,7 @@ fn arena_detail_summary(id: &str, raw: &Value) -> Option<TournamentSummary> {
         nb_players: num_at(raw, "nbPlayers").unwrap_or_else(|| Number::from(0)),
         starts_at: object
             .get("startsAt")
-            .map(|value| parse_date(&js_text(value)))
+            .map(|value| parse_date(&js::to_string(Some(value))))
             .unwrap_or(0),
         finishes_at: None,
         team: None,
@@ -1096,41 +772,17 @@ fn num_at(value: &Value, key: &str) -> Option<Number> {
     value.get(key).and_then(Value::as_number).cloned()
 }
 
-async fn swiss_detail(
-    lichess: &Lichess,
-    id: &str,
-    auth: Option<&str>,
-    cancel: &CancellationToken,
-) -> Res<TournamentDetail> {
+async fn swiss_detail(lichess: &Lichess, id: &str, auth: &Auth) -> CoreResult<TournamentDetail> {
     let path = format!("/api/swiss/{}", path_segment(id));
-    let raw: Value = lichess.client().get_json(&path, &[], auth, cancel).await?;
-    let (summary, swiss) = swiss_read(&raw, None).ok_or_else(|| {
-        Failure::Core(CoreError::new(
-            "Lichess sent details KChess could not read.",
-        ))
-    })?;
-    let mut standing: Vec<Standing> = Vec::new();
+    let raw: Value = lichess.client().get(&path, auth).read_json().await?;
+    let (summary, swiss) = swiss_read(&raw, None)
+        .ok_or_else(|| CoreError::new("Lichess sent details KChess could not read."))?;
     let results = format!("/api/swiss/{}/results", path_segment(id));
-    lichess
+    let standing = lichess
         .client()
-        .ndjson(
-            Ndjson {
-                method: reqwest::Method::GET,
-                path: &results,
-                query: &[("nb", "50".to_string())],
-                body: None,
-                auth,
-            },
-            cancel,
-            |line| {
-                let value = serde_json::from_str::<Value>(line)
-                    .map_err(|cause| CoreError::new(cause.to_string()))?;
-                if let Some(row) = standing_of(&value) {
-                    standing.push(row);
-                }
-                Ok(())
-            },
-        )
+        .get(&results, auth)
+        .query(&[("nb", "50")])
+        .records("standing", usize::MAX, |raw: Value| standing_of(&raw))
         .await?;
     Ok(TournamentDetail {
         summary,
@@ -1141,26 +793,25 @@ async fn swiss_detail(
         standing,
         standing_page: None,
         me: None,
-        verdicts: swiss.verdicts.map(Verdicts::from),
+        verdicts: swiss.verdicts.map(TournamentVerdicts::from),
         next_round_in: swiss.next_round.and_then(|next| next.in_seconds),
-        extras: ArenaExtras::default(),
+        extras: TournamentExtras::default(),
     })
 }
 
-/// Joins a tournament as `account` (`joinTournament`). An arena is joined with pairing as soon as
+/// Joins a tournament as `account`. An arena is joined with pairing as soon as
 /// possible; the password is sent only when given. `NeedsReconnect` when the login is missing or
 /// lacks the tournament permission.
 pub async fn join_tournament(
     lichess: &Lichess,
-    system: &str,
+    system: TournamentSystem,
     id: &str,
     account: &str,
     password: Option<&str>,
-) -> Res<Reply<()>> {
-    let cancel = lichess.lifetime().clone();
+) -> CoreResult<Reply<()>> {
     let path = format!(
         "/api/{}/{}/join",
-        if system == ARENA {
+        if system == TournamentSystem::Arena {
             "tournament"
         } else {
             "swiss"
@@ -1170,9 +821,9 @@ pub async fn join_tournament(
     let password = password
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    let pair_me = (system == ARENA).then(|| "true".to_string());
+    let pair_me = (system == TournamentSystem::Arena).then(|| "true".to_string());
     lichess
-        .as_account(account, "tournament", |token| async move {
+        .as_account(account, UsageKind::Tournament, |auth| async move {
             let mut form: Vec<(&str, &str)> = Vec::new();
             if let Some(password) = password.as_deref() {
                 form.push(("password", password));
@@ -1182,25 +833,25 @@ pub async fn join_tournament(
             }
             lichess
                 .client()
-                .post_form::<Value>(&path, &form, Some(&authorize(&token)), &cancel)
+                .post(&path, &auth)
+                .form(&form)
+                .read_json::<Value>()
                 .await
                 .map(|_| ())
         })
         .await
-        .map_err(Failure::from)
 }
 
-/// Withdraws `account` from a tournament (`leaveTournament`).
+/// Withdraws `account` from a tournament.
 pub async fn leave_tournament(
     lichess: &Lichess,
-    system: &str,
+    system: TournamentSystem,
     id: &str,
     account: &str,
-) -> Res<Reply<()>> {
-    let cancel = lichess.lifetime().clone();
+) -> CoreResult<Reply<()>> {
     let path = format!(
         "/api/{}/{}/withdraw",
-        if system == ARENA {
+        if system == TournamentSystem::Arena {
             "tournament"
         } else {
             "swiss"
@@ -1208,42 +859,37 @@ pub async fn leave_tournament(
         path_segment(id)
     );
     lichess
-        .as_account(account, "tournament", |token| async move {
+        .as_account(account, UsageKind::Tournament, |auth| async move {
             lichess
                 .client()
-                .post_form::<Value>(&path, &[], Some(&authorize(&token)), &cancel)
+                .post(&path, &auth)
+                .form::<&str, &str>(&[])
+                .read_json::<Value>()
                 .await
                 .map(|_| ())
         })
         .await
-        .map_err(Failure::from)
 }
 
-/// The form fields of an arena to create (`createTournament`'s body). An unset field is left out,
+/// The form fields of an arena to create. An unset field is left out,
 /// and a start date replaces the wait.
 pub fn arena_form(arena: &NewArena) -> Vec<(&'static str, String)> {
     let mut form: Vec<(&'static str, String)> = Vec::new();
     if let Some(name) = arena.name.as_deref().filter(|name| !name.is_empty()) {
         form.push(("name", name.to_string()));
     }
-    form.push((
-        "clockTime",
-        js_number(arena.clock_time.as_f64().unwrap_or(0.0)),
-    ));
-    form.push((
-        "clockIncrement",
-        js_number(arena.clock_increment.as_f64().unwrap_or(0.0)),
-    ));
-    form.push(("minutes", js_number(arena.minutes.as_f64().unwrap_or(0.0))));
-    // `waitMinutes: startDate ? undefined : waitMinutes`: a non-zero start date is truthy.
+    form.push(("clockTime", js_number(arena.clock_time)));
+    form.push(("clockIncrement", js_number(arena.clock_increment)));
+    form.push(("minutes", js_number(arena.minutes)));
+    // A start date (other than 0) replaces the wait.
     let has_start = arena.start_date.is_some_and(|date| date != 0);
-    if let Some(wait) = arena.wait_minutes.as_ref().filter(|_| !has_start) {
-        form.push(("waitMinutes", js_number(wait.as_f64().unwrap_or(0.0))));
+    if let Some(wait) = arena.wait_minutes.filter(|_| !has_start) {
+        form.push(("waitMinutes", js_number(wait)));
     }
     if let Some(date) = arena.start_date {
         form.push(("startDate", date.to_string()));
     }
-    form.push(("variant", arena.variant.clone()));
+    form.push(("variant", arena.variant.key().to_string()));
     form.push(("rated", arena.rated.to_string()));
     if let Some(password) = arena.password.as_deref().filter(|value| !value.is_empty()) {
         form.push(("password", password.to_string()));
@@ -1258,24 +904,21 @@ pub fn arena_form(arena: &NewArena) -> Vec<(&'static str, String)> {
     form
 }
 
-/// Creates an arena run by `account` (`createTournament`). A login made before tournaments were
+/// Creates an arena run by `account`. A login made before tournaments were
 /// requested must reconnect (`NeedsReconnect`).
 pub async fn create_tournament(
     lichess: &Lichess,
     account: &str,
     arena: &NewArena,
-) -> Res<Reply<TournamentSummary>> {
-    let cancel = lichess.lifetime().clone();
+) -> CoreResult<Reply<TournamentSummary>> {
     let form = arena_form(arena);
     lichess
-        .as_account(account, "tournament", |token| async move {
-            let pairs: Vec<(&str, &str)> = form
-                .iter()
-                .map(|(key, value)| (*key, value.as_str()))
-                .collect();
-            let raw = lichess
+        .as_account(account, UsageKind::Tournament, |auth| async move {
+            let raw: Value = lichess
                 .client()
-                .post_form::<Value>("/api/tournament", &pairs, Some(&authorize(&token)), &cancel)
+                .post("/api/tournament", &auth)
+                .form(&form)
+                .read_json()
                 .await?;
             // Lichess answers with the arena on its own (as `GET /api/tournament/{id}` does), not
             // with an entry of the arena list.
@@ -1291,11 +934,10 @@ pub async fn create_tournament(
                         .flatten()
                 })
                 .ok_or_else(|| {
-                    Failure::Core(CoreError::new(
+                    CoreError::new(
                         "Lichess created the arena but sent details KChess could not read.",
-                    ))
+                    )
                 })
         })
         .await
-        .map_err(Failure::from)
 }

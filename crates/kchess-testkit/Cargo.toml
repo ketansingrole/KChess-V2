@@ -1,0 +1,14 @@
+[package]
+name = "kchess-testkit"
+description = "A loopback HTTP/1.1 server the tests and xtask's stand-ins answer through: request parsing, response heads, chunked streams."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+kchess-hack = { version = "0.1", path = "../kchess-hack" }
+
+[lints]
+workspace = true

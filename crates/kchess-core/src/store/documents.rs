@@ -1,18 +1,17 @@
-//! One bounded JSON document per key (`readDocument`/`writeDocument` in the TypeScript
-//! library): raw text access, parsing, decoding, and the damaged-study guard.
-//! Split from the library store; bodies are unchanged.
+//! One bounded JSON document per key: raw text access, parsing, decoding, and the damaged-study
+//! guard.
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
-use super::json_codec::{js_json, utf16_len};
-use super::library::{db_err, now_ms};
-use super::studies::id_of;
-use crate::error::{CoreError, Result};
+use super::json_codec::js_json;
+use super::sql::Sql as _;
 use crate::host::{Host, Level};
+use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result};
+use kchess_contracts::types::Study;
+use kchess_domain::js::utf16_len;
 use kchess_domain::misc::MAX_DOCUMENT;
-
-/* ── Documents: one bounded JSON value per key ── */
 
 pub(crate) fn read_document_text(db: &Connection, key: &str) -> Result<Option<String>> {
     db.query_row(
@@ -21,10 +20,10 @@ pub(crate) fn read_document_text(db: &Connection, key: &str) -> Result<Option<St
         |row| row.get::<_, String>(0),
     )
     .optional()
-    .map_err(db_err)
+    .sql()
 }
 
-/// The parsed document; None when it is missing or not JSON (`readDocument` in the TypeScript).
+/// The parsed document; None when it is missing or not JSON.
 pub fn read_document(host: &dyn Host, db: &Connection, key: &str) -> Result<Option<Value>> {
     let Some(body) = read_document_text(db, key)? else {
         return Ok(None);
@@ -42,7 +41,7 @@ pub fn read_document(host: &dyn Host, db: &Connection, key: &str) -> Result<Opti
     }
 }
 
-/// `writeDocument`: a document within its size limit, stored with its update time.
+/// A document within its size limit, stored with its update time.
 pub(crate) fn write_document(
     db: &Connection,
     key: &str,
@@ -53,13 +52,13 @@ pub(crate) fn write_document(
     if utf16_len(&body) > MAX_DOCUMENT {
         return Err(CoreError::new(too_large));
     }
-    let now = now_ms()?;
+    let now = now_ms();
     db.execute(
         "INSERT INTO documents (key, body, updatedAt) VALUES (?1, ?2, ?3)
          ON CONFLICT(key) DO UPDATE SET body = excluded.body, updatedAt = excluded.updatedAt",
-        params![key, body, now as i64],
+        params![key, body, now],
     )
-    .map_err(db_err)?;
+    .sql()?;
     Ok(Value::Null)
 }
 
@@ -67,11 +66,11 @@ pub(crate) fn parse_text(text: &str) -> Option<Value> {
     serde_json::from_str(text).ok()
 }
 
-pub(crate) fn decode_mistakes_text(text: &str) -> Option<Vec<Value>> {
+pub(crate) fn decode_mistakes_text(text: &str) -> Option<Vec<kchess_domain::library::Drill>> {
     parse_text(text).and_then(|raw| kchess_domain::library::decode_mistakes(&raw))
 }
 
-pub(crate) fn decode_archived_game_text(text: &str) -> Option<Value> {
+pub(crate) fn decode_archived_game_text(text: &str) -> Option<kchess_domain::library::PlayedGame> {
     parse_text(text).and_then(|raw| kchess_domain::library::decode_archived_game(&raw))
 }
 
@@ -110,7 +109,7 @@ pub(crate) fn assert_replaceable(
 pub(crate) const DAMAGED_STUDIES: &str = "The saved study library is damaged. Its data has been preserved; restore a backup before editing studies.";
 
 /// Stored documents must not silently discard invalid or excess studies on the next mutation.
-pub(crate) fn stored_studies(text: &str) -> Result<Vec<Value>> {
+pub(crate) fn stored_studies(text: &str) -> Result<Vec<Study>> {
     if utf16_len(text) > MAX_DOCUMENT {
         return Err(CoreError::new(DAMAGED_STUDIES));
     }
@@ -122,7 +121,9 @@ pub(crate) fn stored_studies(text: &str) -> Result<Vec<Value>> {
         .and_then(Value::as_array)
         .ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
     let mut ids = std::collections::HashSet::new();
-    if decoded.len() != raw_items.len() || decoded.iter().any(|study| !ids.insert(id_of(study))) {
+    if decoded.len() != raw_items.len()
+        || decoded.iter().any(|study| !ids.insert(study.id.as_str()))
+    {
         return Err(CoreError::new(DAMAGED_STUDIES));
     }
     Ok(decoded)

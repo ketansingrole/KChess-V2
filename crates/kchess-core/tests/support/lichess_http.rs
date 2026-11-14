@@ -2,18 +2,18 @@
 //! (every response closes its connection once the client hangs up; bodies can stream in chunks
 //! or wait on a gate), a host
 //! that records logs and events, and the in-memory store and token source the account code uses.
-#![allow(dead_code)]
 
+use kchess_contracts::{CoreEvent, HostAsk, HostReply, HostRequest};
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
+use kchess_contracts::error::Result as CoreResult;
+use kchess_contracts::types::{LichessGame, StoredReview};
 use kchess_core::capabilities::Capabilities;
-use kchess_core::error::Result as CoreResult;
 use kchess_core::host::{Host, Level};
-use kchess_core::lichess::accounts::{AccountRow, CachedValue, LichessGame, LichessStore};
+use kchess_core::lichess::accounts::{AccountRow, CachedValue, LichessStore};
 use kchess_core::lichess::client::TokenSource;
 use kchess_core::loopback::close_after_client;
 use serde_json::Value;
@@ -22,34 +22,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
 
 /// One request the fixture received.
-#[derive(Clone, Debug)]
-pub struct Seen {
-    pub method: String,
-    pub target: String,
-    pub headers: Vec<(String, String)>,
-    pub body: String,
-}
-
-impl Seen {
-    pub fn path(&self) -> &str {
-        self.target.split('?').next().unwrap_or("")
-    }
-
-    pub fn query(&self, name: &str) -> Option<String> {
-        let query = self.target.split_once('?')?.1;
-        query.split('&').find_map(|pair| {
-            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-            (key == name).then(|| value.to_string())
-        })
-    }
-
-    pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(key, _)| key.eq_ignore_ascii_case(name))
-            .map(|(_, value)| value.as_str())
-    }
-}
+pub use kchess_testkit::Request;
 
 /// How the fixture answers one request.
 pub enum Reply {
@@ -72,7 +45,7 @@ pub enum Reply {
     Hang,
 }
 
-type Handler = Box<dyn FnMut(&Seen) -> Reply + Send>;
+type Handler = Box<dyn FnMut(&Request) -> Reply + Send>;
 
 /// How long a test waits for a request before it fails: a ceiling for a request that never
 /// comes, not a pause, so it can be generous. A loaded Windows runner filtering 127.0.0.1 took
@@ -83,18 +56,18 @@ pub const REQUEST_WAIT: Duration = Duration::from_secs(30);
 pub struct Fixture {
     pub base: String,
     /// Every request so far; a waiter wakes on each one.
-    seen: Arc<watch::Sender<Vec<Seen>>>,
+    seen: Arc<watch::Sender<Vec<Request>>>,
 }
 
 impl Fixture {
-    pub fn requests(&self) -> Vec<Seen> {
+    pub fn requests(&self) -> Vec<Request> {
         self.seen.borrow().clone()
     }
 
     /// Waits until the requests so far satisfy `done`, and returns them. Fails the test after
     /// `REQUEST_WAIT`, naming `what` and the requests that did come, so a test never carries on
     /// in a state it did not set up.
-    pub async fn wait_for(&self, what: &str, done: impl FnMut(&[Seen]) -> bool) -> Vec<Seen> {
+    pub async fn wait_for(&self, what: &str, done: impl FnMut(&[Request]) -> bool) -> Vec<Request> {
         self.wait_for_within(REQUEST_WAIT, what, done).await
     }
 
@@ -103,8 +76,8 @@ impl Fixture {
         &self,
         limit: Duration,
         what: &str,
-        mut done: impl FnMut(&[Seen]) -> bool,
-    ) -> Vec<Seen> {
+        mut done: impl FnMut(&[Request]) -> bool,
+    ) -> Vec<Request> {
         let mut seen = self.seen.subscribe();
         match tokio::time::timeout(limit, seen.wait_for(|requests| done(requests))).await {
             Ok(Ok(requests)) => requests.clone(),
@@ -117,8 +90,8 @@ impl Fixture {
 
     /// Waits until `path` has been requested `count` times, and returns those requests; fails the
     /// test if it never is (see `wait_for`).
-    pub async fn requested(&self, path: &str, count: usize) -> Vec<Seen> {
-        let to = |requests: &[Seen]| -> Vec<Seen> {
+    pub async fn requested(&self, path: &str, count: usize) -> Vec<Request> {
+        let to = |requests: &[Request]| -> Vec<Request> {
             requests
                 .iter()
                 .filter(|seen| seen.path() == path)
@@ -132,7 +105,7 @@ impl Fixture {
     }
 
     /// The requests whose path is `path`.
-    pub fn to(&self, path: &str) -> Vec<Seen> {
+    pub fn to(&self, path: &str) -> Vec<Request> {
         self.requests()
             .into_iter()
             .filter(|seen| seen.path() == path)
@@ -143,7 +116,7 @@ impl Fixture {
 /// Serve `handler` on a free loopback port until the test ends.
 pub async fn serve<F>(handler: F) -> Fixture
 where
-    F: FnMut(&Seen) -> Reply + Send + 'static,
+    F: FnMut(&Request) -> Reply + Send + 'static,
 {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -167,7 +140,7 @@ where
     Fixture { base, seen }
 }
 
-async fn read_request(socket: &mut TcpStream) -> std::io::Result<Option<Seen>> {
+async fn read_request(socket: &mut TcpStream) -> std::io::Result<Option<Request>> {
     let mut buffer = Vec::new();
     let mut chunk = [0u8; 1024];
     let head_end = loop {
@@ -180,21 +153,11 @@ async fn read_request(socket: &mut TcpStream) -> std::io::Result<Option<Seen>> {
         }
         buffer.extend_from_slice(&chunk[..read]);
     };
-    let head = String::from_utf8_lossy(&buffer[..head_end]).to_string();
-    let mut lines = head.split("\r\n");
-    let request_line = lines.next().unwrap_or("");
-    let mut parts = request_line.split_whitespace();
-    let method = parts.next().unwrap_or("").to_string();
-    let target = parts.next().unwrap_or("").to_string();
-    let headers: Vec<(String, String)> = lines
-        .filter_map(|line| line.split_once(':'))
-        .map(|(key, value)| (key.trim().to_string(), value.trim().to_string()))
-        .collect();
-    let length: usize = headers
-        .iter()
-        .find(|(key, _)| key.eq_ignore_ascii_case("content-length"))
-        .and_then(|(_, value)| value.parse().ok())
-        .unwrap_or(0);
+    let Some(mut request) = Request::from_head(&String::from_utf8_lossy(&buffer[..head_end]))
+    else {
+        return Ok(None);
+    };
+    let length = request.content_length();
     let mut body = buffer[head_end + 4..].to_vec();
     while body.len() < length {
         let read = socket.read(&mut chunk).await?;
@@ -204,32 +167,14 @@ async fn read_request(socket: &mut TcpStream) -> std::io::Result<Option<Seen>> {
         body.extend_from_slice(&chunk[..read]);
     }
     body.truncate(length);
-    Ok(Some(Seen {
-        method,
-        target,
-        headers,
-        body: String::from_utf8_lossy(&body).to_string(),
-    }))
-}
-
-fn status_text(status: u16) -> &'static str {
-    match status {
-        200 => "OK",
-        400 => "Bad Request",
-        401 => "Unauthorized",
-        403 => "Forbidden",
-        404 => "Not Found",
-        429 => "Too Many Requests",
-        500 => "Internal Server Error",
-        503 => "Service Unavailable",
-        _ => "Status",
-    }
+    request.body = String::from_utf8_lossy(&body).into_owned();
+    Ok(Some(request))
 }
 
 async fn handle(
     mut socket: TcpStream,
     handler: Arc<Mutex<Handler>>,
-    seen: Arc<watch::Sender<Vec<Seen>>>,
+    seen: Arc<watch::Sender<Vec<Request>>>,
 ) -> std::io::Result<()> {
     let Some(request) = read_request(&mut socket).await? else {
         return Ok(());
@@ -275,18 +220,17 @@ async fn handle(
                 reply = Reply::StreamText(200, "application/x-ndjson", chunks);
             }
             Reply::StreamText(status, content_type, mut chunks) => {
-                let head = format!(
-                    "HTTP/1.1 {status} {}\r\nContent-Type: {content_type}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
-                    status_text(status)
-                );
+                let head = kchess_testkit::chunked_head(status, content_type);
                 socket.write_all(head.as_bytes()).await?;
                 while let Some(piece) = chunks.recv().await {
-                    let frame = format!("{:x}\r\n{}\r\n", piece.len(), piece);
+                    let frame = kchess_testkit::chunk(&piece);
                     if socket.write_all(frame.as_bytes()).await.is_err() {
                         return Ok(());
                     }
                 }
-                socket.write_all(b"0\r\n\r\n").await?;
+                socket
+                    .write_all(kchess_testkit::chunk("").as_bytes())
+                    .await?;
                 close_after_client(&mut socket).await;
                 return Ok(());
             }
@@ -304,14 +248,11 @@ async fn write_sized(
     extra: &[(&str, String)],
     body: &[u8],
 ) -> std::io::Result<()> {
-    let mut head = format!("HTTP/1.1 {status} {}\r\n", status_text(status));
-    for (name, value) in extra {
-        head.push_str(&format!("{name}: {value}\r\n"));
-    }
-    head.push_str(&format!(
-        "Content-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    ));
+    let extra: Vec<(&str, &str)> = extra
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect();
+    let head = kchess_testkit::sized_head(status, &extra, body.len());
     socket.write_all(head.as_bytes()).await?;
     socket.write_all(body).await?;
     close_after_client(socket).await;
@@ -331,6 +272,8 @@ pub type BrowserFn = Box<dyn Fn(String) + Send + Sync>;
 pub struct Recording {
     pub logs: Mutex<Vec<(Level, String, String)>>,
     pub events: Mutex<Vec<(String, Value)>>,
+    /// The traffic counted, as `{ account, category, requests, bytes }`.
+    pub usage: Mutex<Vec<Value>>,
     /// Set once the capabilities exist, so the host can answer them.
     pub capabilities: Mutex<Option<Arc<Capabilities>>>,
     /// Replies to host requests by kind; anything missing gets an error.
@@ -339,7 +282,6 @@ pub struct Recording {
     pub opened: Mutex<Vec<String>>,
     /// Called instead of answering when a sign-in page is opened (to play the browser).
     pub browser: Mutex<Option<BrowserFn>>,
-    pub answer_asynchronously: AtomicBool,
 }
 
 impl Recording {
@@ -354,13 +296,24 @@ impl Recording {
     }
 
     pub fn usage_events(&self) -> Vec<Value> {
-        self.events
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(event, _)| event == "host:usage")
-            .map(|(_, payload)| payload.clone())
-            .collect()
+        self.usage.lock().unwrap().clone()
+    }
+}
+
+impl kchess_core::usage::Meter for Recording {
+    fn count(
+        &self,
+        account: &str,
+        kind: kchess_contracts::types::UsageKind,
+        requests: u64,
+        bytes: u64,
+    ) {
+        self.usage.lock().unwrap().push(serde_json::json!({
+            "account": account,
+            "category": kind,
+            "requests": requests,
+            "bytes": bytes,
+        }));
     }
 }
 
@@ -372,7 +325,8 @@ impl Host for Recording {
             .push((level, scope.to_string(), message.to_string()));
     }
 
-    fn emit(&self, event: &str, payload: Value) {
+    fn emit(&self, event: CoreEvent) {
+        let (event, payload) = (event.name(), event.into_payload().unwrap());
         self.events
             .lock()
             .unwrap()
@@ -380,29 +334,29 @@ impl Host for Recording {
         if event != "host:request" {
             return;
         }
-        let id = payload["id"].as_u64().unwrap_or(0);
-        let kind = payload["kind"].as_str().unwrap_or("").to_string();
-        let argument = payload["payload"].clone();
+        let Ok(ask) = serde_json::from_value::<HostAsk>(payload) else {
+            return;
+        };
         let capabilities = self.capabilities.lock().unwrap().clone();
-        let answer = if kind == "openExternal" {
-            let url = argument.as_str().unwrap_or("").to_string();
-            self.opened.lock().unwrap().push(url.clone());
-            if let Some(browser) = self.browser.lock().unwrap().as_ref() {
-                browser(url);
+        let answer = match ask.request {
+            HostRequest::OpenExternal(url) => {
+                self.opened.lock().unwrap().push(url.clone());
+                if let Some(browser) = self.browser.lock().unwrap().as_ref() {
+                    browser(url);
+                }
+                HostReply::done()
             }
-            serde_json::json!({ "value": null })
-        } else if kind == "secrets.encrypt" {
-            let plain = argument.as_str().unwrap_or("");
-            serde_json::json!({ "value": format!("enc:{plain}") })
-        } else {
-            match self.answers.lock().unwrap().get(&kind) {
-                Some(value) => serde_json::json!({ "value": value }),
-                None => serde_json::json!({ "error": format!("No answer for {kind}.") }),
+            HostRequest::SecretsEncrypt(plain) => {
+                HostReply::Value(Value::from(format!("enc:{plain}")))
             }
+            request => match self.answers.lock().unwrap().get(request.kind()) {
+                Some(value) => HostReply::Value(value.clone()),
+                None => HostReply::Error(format!("No answer for {}.", request.kind())),
+            },
         };
         if let Some(capabilities) = capabilities {
             tokio::spawn(async move {
-                capabilities.reply(id, &answer);
+                capabilities.reply(ask.id, answer);
             });
         }
     }
@@ -448,7 +402,7 @@ pub struct MemoryStore {
     pub logins: Mutex<Vec<(String, String)>>,
     pub dismissed: Mutex<Vec<String>>,
     /// Reviews saved with their pages of games, or on their own (`save_reviews`).
-    pub reviews: Mutex<Vec<Value>>,
+    pub reviews: Mutex<Vec<StoredReview>>,
     /// Games Lichess was asked about (`mark_checked`).
     pub checked: Mutex<Vec<String>>,
 }
@@ -498,12 +452,14 @@ impl LichessStore for MemoryStore {
         &'a self,
         account: &'a str,
         games: &'a [LichessGame],
-        reviews: &'a [Value],
+        reviews: &'a [StoredReview],
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
             if !current() {
-                return Err(kchess_core::error::CoreError::new("Sync was cancelled."));
+                return Err(kchess_contracts::error::CoreError::new(
+                    "Sync was cancelled.",
+                ));
             }
             let mut stored = self.games.lock().unwrap();
             for game in games {
@@ -522,12 +478,14 @@ impl LichessStore for MemoryStore {
     fn save_reviews<'a>(
         &'a self,
         _account: &'a str,
-        reviews: &'a [Value],
+        reviews: &'a [StoredReview],
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<Value>>> {
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<StoredReview>>> {
         Box::pin(async move {
             if !current() {
-                return Err(kchess_core::error::CoreError::new("Sync was cancelled."));
+                return Err(kchess_contracts::error::CoreError::new(
+                    "Sync was cancelled.",
+                ));
             }
             self.reviews.lock().unwrap().extend(reviews.iter().cloned());
             Ok(reviews.to_vec())
@@ -541,7 +499,7 @@ impl LichessStore for MemoryStore {
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
             if !current() {
-                return Err(kchess_core::error::CoreError::aborted(
+                return Err(kchess_contracts::error::CoreError::aborted(
                     "Sync was cancelled.",
                 ));
             }
@@ -558,7 +516,9 @@ impl LichessStore for MemoryStore {
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
             if !current() {
-                return Err(kchess_core::error::CoreError::new("Sync was cancelled."));
+                return Err(kchess_contracts::error::CoreError::new(
+                    "Sync was cancelled.",
+                ));
             }
             self.cursors
                 .lock()
@@ -597,10 +557,9 @@ impl LichessStore for MemoryStore {
                 release.await.expect("release cache write");
             }
 
+            // As the real store: a write a logout overtook is skipped.
             if !current() {
-                return Err(kchess_core::error::CoreError::new(
-                    "Account was logged out.",
-                ));
+                return Ok(());
             }
             self.cache.lock().unwrap().insert(
                 key.to_string(),
@@ -621,7 +580,7 @@ impl LichessStore for MemoryStore {
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
             if !current() {
-                return Err(kchess_core::error::CoreError::aborted(
+                return Err(kchess_contracts::error::CoreError::aborted(
                     "Login was cancelled by logout.",
                 ));
             }
@@ -641,7 +600,7 @@ impl LichessStore for MemoryStore {
     }
 }
 
-/// Tokens by account, as `getToken` would read them (already decrypted).
+/// Tokens by account, already decrypted.
 #[derive(Default)]
 pub struct MemoryTokens {
     pub tokens: Mutex<HashMap<String, String>>,
@@ -712,7 +671,6 @@ pub fn lichess_service(
 }
 
 /// `lichess_service` whose streams count as stalled after `idle` of silence.
-#[allow(dead_code)]
 pub fn lichess_service_with_idle(
     base: &str,
     host: &Arc<Recording>,
@@ -724,18 +682,18 @@ pub fn lichess_service_with_idle(
     use kchess_core::lichess::policy::Policy;
     let policy = Policy::with_timeout(
         Arc::clone(host) as Arc<dyn Host>,
+        Arc::clone(host) as Arc<dyn kchess_core::usage::Meter>,
         http_client(),
         tokio_util::sync::CancellationToken::new(),
         Duration::from_secs(5),
     );
-    let client = LichessClient::with_base(base, policy, http_client()).with_stream_idle(idle);
+    let client = LichessClient::with_base(base, policy).with_stream_idle(idle);
     Arc::new(kchess_core::lichess::accounts::Lichess::new(
         client,
         capabilities_for(host),
         store,
         tokens,
         Arc::clone(host) as Arc<dyn Host>,
-        tokio_util::sync::CancellationToken::new(),
     ))
 }
 

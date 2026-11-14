@@ -1,6 +1,6 @@
-//! The Lichess client over local fixtures: error messages (`lichessError`, `throwLichessErrors`,
-//! `unwrap`), the helpers `authorize` and `urlencoded`, streaming NDJSON with cancellation,
-//! byte accounting and the redaction of tokens from the host log.
+//! The Lichess client over local fixtures: error messages and kinds, `urlencoded`, the request
+//! readers (text, JSON, NDJSON lines) with cancellation and deadlines, byte accounting and the
+//! redaction of tokens from the host log.
 
 use crate::fixtures;
 
@@ -8,67 +8,64 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fixtures::{Recording, Reply, http_client, serve};
-use kchess_core::lichess::client::{Failure, LichessClient, Ndjson, authorize, urlencoded};
-use kchess_core::lichess::policy::{Policy, is_stream};
-use kchess_core::{CoreError, ErrorKind};
+use kchess_contracts::ErrorKind;
+use kchess_contracts::types::UsageKind;
+use kchess_core::lichess::client::{Auth, Lane, LichessClient, LichessError, urlencoded};
+use kchess_core::lichess::policy::Policy;
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-fn client_for(base: &str, host: Arc<Recording>) -> (LichessClient, Arc<Policy>) {
+fn client_for(base: &str, host: Arc<Recording>) -> LichessClient {
+    client_with_timeout(base, host, Duration::from_secs(5))
+}
+
+fn client_with_timeout(base: &str, host: Arc<Recording>, timeout: Duration) -> LichessClient {
     let policy = Policy::with_timeout(
+        host.clone(),
         host,
         http_client(),
         CancellationToken::new(),
-        Duration::from_secs(5),
+        timeout,
     );
-    (
-        LichessClient::with_base(base, Arc::clone(&policy), http_client()),
-        policy,
-    )
+    LichessClient::with_base(base, policy)
+}
+
+fn nobody(client: &LichessClient) -> Auth {
+    client.anonymous(UsageKind::Other)
 }
 
 #[tokio::test]
 async fn an_api_error_is_plain_for_people_and_technical_for_the_log() {
     let fixture = serve(|_| Reply::Json(401, r#"{"error":"No such token"}"#.into())).await;
-    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
-    let failure = client
-        .get_json::<Value>(
-            "/api/account",
-            &[],
-            Some("Bearer lip_x"),
-            &CancellationToken::new(),
-        )
+    let host = Arc::new(Recording::default());
+    let client = client_for(&fixture.base, Arc::clone(&host));
+    let error = client
+        .get("/api/account", &nobody(&client).with_token("lip_x"))
+        .read_json::<Value>()
         .await
         .unwrap_err();
-    assert_eq!(failure.status(), Some(401));
     // A 401 asks for the account to be reconnected, without the status or the endpoint.
     assert_eq!(
-        failure.message(),
+        error.message,
         "Lichess no longer accepts this account’s login. Reconnect it."
     );
-    let Failure::Lichess(error) = &failure else {
-        panic!("Lichess's answer");
-    };
-    assert_eq!(error.kind(), ErrorKind::Login);
-    assert_eq!(
-        error.technical(),
-        r#"Lichess 401 from GET /api/account: {"error":"No such token"}"#
+    assert_eq!(error.kind, Some(ErrorKind::Login));
+    assert!(
+        host.logged()
+            .contains(r#"Lichess 401 from GET /api/account: {"error":"No such token"}"#),
+        "{}",
+        host.logged()
     );
-    assert_eq!(CoreError::from(failure).kind, Some(ErrorKind::Login));
 }
 
-async fn failure_for(status: u16, body: &str) -> Failure {
+async fn failure_for(status: u16, body: &str) -> kchess_contracts::CoreError {
     let body = body.to_string();
     let fixture = serve(move |_| Reply::Json(status, body.clone())).await;
-    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
+    let client = client_for(&fixture.base, Arc::new(Recording::default()));
     client
-        .get_json::<Value>(
-            "/api/board/game/stream/abc",
-            &[],
-            None,
-            &CancellationToken::new(),
-        )
+        .get("/api/board/game/stream/abc", &nobody(&client))
+        .read_json::<Value>()
         .await
         .unwrap_err()
 }
@@ -77,56 +74,64 @@ async fn failure_for(status: u16, body: &str) -> Failure {
 /// `Lichess 400 from GET /api/board/game/stream/…: {"error":…}`.
 #[tokio::test]
 async fn a_board_api_refusal_is_lichess_s_own_sentence() {
-    let failure = failure_for(
+    let error = failure_for(
         400,
         r#"{"error":"This game cannot be played with the Board API."}"#,
     )
     .await;
     assert_eq!(
-        failure.message(),
+        error.message,
         "This game cannot be played with the Board API."
     );
-    let error = CoreError::from(failure);
     assert_eq!(error.kind, Some(ErrorKind::Refused));
-    assert!(!ErrorKind::Refused.retryable());
+}
+
+/// A 403 that is not about the login (a game Lichess will not let this account play) is a
+/// refusal: it never asks the person to reconnect an account that works.
+#[tokio::test]
+async fn a_403_about_the_request_is_a_refusal_and_one_about_the_token_is_a_login() {
+    let refused = failure_for(403, r#"{"error":"You cannot play this game."}"#).await;
+    assert_eq!(refused.kind, Some(ErrorKind::Refused));
+    assert_eq!(refused.message, "You cannot play this game.");
+    let login = failure_for(403, r#"{"error":"Missing scope: board:play"}"#).await;
+    assert_eq!(login.kind, Some(ErrorKind::Login));
 }
 
 #[tokio::test]
 async fn too_many_requests_asks_to_wait() {
-    let failure = failure_for(429, "").await;
+    let error = failure_for(429, "").await;
     assert_eq!(
-        failure.message(),
+        error.message,
         "Lichess asked KChess to slow down. Try again in a minute."
     );
-    assert_eq!(CoreError::from(failure).kind, Some(ErrorKind::RateLimited));
+    assert_eq!(error.kind, Some(ErrorKind::RateLimited));
 }
 
 #[tokio::test]
 async fn a_server_error_shows_no_status_or_body() {
-    let failure = failure_for(502, r#"{"error":"upstream <b>gateway</b>"}"#).await;
-    let message = failure.message();
+    let error = failure_for(502, r#"{"error":"upstream <b>gateway</b>"}"#).await;
     assert_eq!(
-        message,
+        error.message,
         "Lichess isn’t working right now. Try again shortly."
     );
-    assert_eq!(CoreError::from(failure).kind, Some(ErrorKind::Unavailable));
+    assert_eq!(error.kind, Some(ErrorKind::Unavailable));
 }
 
 #[tokio::test]
 async fn an_unreachable_lichess_is_offline() {
-    let (client, _) = client_for("http://127.0.0.1:9", Arc::new(Recording::default()));
-    let failure = client
-        .get_json::<Value>("/api/account", &[], None, &CancellationToken::new())
+    let client = client_for("http://127.0.0.1:9", Arc::new(Recording::default()));
+    let error = client
+        .get("/api/account", &nobody(&client))
+        .read_json::<Value>()
         .await
         .unwrap_err();
-    assert_eq!(failure.message(), "Couldn’t reach Lichess");
-    assert_eq!(CoreError::from(failure).kind, Some(ErrorKind::Offline));
+    assert_eq!(error.message, "Couldn’t reach Lichess");
+    assert_eq!(error.kind, Some(ErrorKind::Offline));
 }
 
 /// No user-visible message carries a status, an endpoint or raw JSON, whatever Lichess answers.
 #[test]
 fn no_message_names_a_status_an_endpoint_or_json() {
-    use kchess_core::lichess::client::LichessError;
     for status in [400, 401, 403, 404, 409, 410, 422, 429, 500, 502, 503] {
         for detail in [
             "",
@@ -164,34 +169,30 @@ async fn a_website_page_is_never_shown_to_the_user() {
         )
     })
     .await;
-    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
-    let failure = client
-        .get_json::<Value>("/api/user/nobody", &[], None, &CancellationToken::new())
+    let client = client_for(&fixture.base, Arc::new(Recording::default()));
+    let error = client
+        .get("/api/user/nobody", &nobody(&client))
+        .read_json::<Value>()
         .await
         .unwrap_err();
-    assert_eq!(failure.message(), "Lichess has no such thing.");
+    assert_eq!(error.message, "Lichess has no such thing.");
+    assert_eq!(error.kind, Some(ErrorKind::NotFound));
 }
 
 #[tokio::test]
-async fn an_empty_success_names_the_path() {
+async fn an_empty_success_is_unavailable() {
     let fixture = serve(|_| Reply::Json(200, String::new())).await;
-    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
-    let failure = client
-        .get_json::<Value>("/api/user/x", &[], None, &CancellationToken::new())
+    let client = client_for(&fixture.base, Arc::new(Recording::default()));
+    let error = client
+        .get("/api/user/x", &nobody(&client))
+        .read_json::<Value>()
         .await
         .unwrap_err();
     assert_eq!(
-        failure,
-        Failure::Lichess(kchess_core::lichess::client::LichessError {
-            status: 200,
-            endpoint: "/api/user/x".into(),
-            detail: "empty response".into(),
-        })
-    );
-    assert_eq!(
-        failure.message(),
+        error.message,
         "Lichess isn’t working right now. Try again shortly."
     );
+    assert_eq!(error.kind, Some(ErrorKind::Unavailable));
 }
 
 #[tokio::test]
@@ -205,39 +206,48 @@ async fn the_token_is_sent_as_a_bearer_header_and_never_logged() {
     })
     .await;
     let host = Arc::new(Recording::default());
-    let (client, _) = client_for(&fixture.base, Arc::clone(&host));
-    let token = "lip_secret_token_value";
+    let client = client_for(&fixture.base, Arc::clone(&host));
+    let auth = nobody(&client).with_token("lip_secret_token_value");
+    let shown = format!("{auth:?}");
+    assert!(!shown.contains("lip_secret"), "{shown}");
+    assert!(
+        shown.starts_with("Auth {") && shown.contains("signed_in: true"),
+        "{shown}"
+    );
     let rejected = client
-        .get_json::<Value>(
-            "/api/account",
-            &[],
-            Some(&authorize(token)),
-            &CancellationToken::new(),
-        )
+        .get("/api/account", &auth)
+        .read_json::<Value>()
         .await
         .unwrap_err();
-    assert_eq!(rejected.status(), Some(401));
+    assert_eq!(rejected.kind, Some(ErrorKind::Login));
     let sent = fixture.to("/api/account");
     assert_eq!(
         sent[0].header("authorization"),
         Some("Bearer lip_secret_token_value")
     );
-    let error_text = rejected.message();
-    assert!(!error_text.contains("lip_secret"));
+    assert!(!rejected.message.contains("lip_secret"));
     assert!(!host.logged().contains("lip_secret"));
+    // Without a login, no header at all.
+    client
+        .get("/api/user/alice", &auth.without_login())
+        .read_json::<Value>()
+        .await
+        .unwrap();
+    assert!(
+        fixture.to("/api/user/alice")[0]
+            .header("authorization")
+            .is_none()
+    );
 }
 
 #[tokio::test]
 async fn a_form_post_sends_urlencoded_text() {
     let fixture = serve(|_| Reply::Json(200, "{}".into())).await;
-    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
+    let client = client_for(&fixture.base, Arc::new(Recording::default()));
     let _: Value = client
-        .post_form(
-            "/inbox/alice",
-            &[("text", "hi there & more")],
-            None,
-            &CancellationToken::new(),
-        )
+        .post("/inbox/alice", &nobody(&client))
+        .form(&[("text", "hi there & more")])
+        .read_json()
         .await
         .unwrap();
     let sent = fixture.requests();
@@ -250,8 +260,7 @@ async fn a_form_post_sends_urlencoded_text() {
 }
 
 #[test]
-fn the_helpers_match_the_typescript_ones() {
-    assert_eq!(authorize("abc"), "Bearer abc");
+fn urlencoded_escapes_as_a_form_does() {
     assert_eq!(urlencoded(&[("text", "a b&c*-._~")]), "text=a+b%26c*-._%7E");
 }
 
@@ -260,29 +269,20 @@ async fn ndjson_lines_reach_the_caller_while_the_stream_is_open() {
     let (send, receive) = mpsc::unbounded_channel::<String>();
     let mut receive = Some(receive);
     let fixture = serve(move |_| Reply::Stream(receive.take().expect("one stream"))).await;
-    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
+    let client = client_for(&fixture.base, Arc::new(Recording::default()));
     let (lines_out, mut lines_in) = mpsc::unbounded_channel::<String>();
-    let cancel = CancellationToken::new();
-    let reading = tokio::spawn({
-        let cancel = cancel.clone();
-        async move {
-            client
-                .ndjson(
-                    Ndjson {
-                        method: reqwest::Method::GET,
-                        path: "/api/stream/event",
-                        query: &[],
-                        body: None,
-                        auth: Some("Bearer lip_x"),
-                    },
-                    &cancel,
-                    |line| {
-                        let _ = lines_out.send(line.to_string());
-                        Ok(())
-                    },
-                )
-                .await
-        }
+    let reading = tokio::spawn(async move {
+        client
+            .get("/api/stream/event", &nobody(&client).with_token("lip_x"))
+            .lane(Lane::Live)
+            .lines(
+                || {},
+                |line| {
+                    let _ = lines_out.send(line.to_string());
+                    Ok(())
+                },
+            )
+            .await
     });
     send.send("{\"type\":\"gameStart\"}\n".into()).unwrap();
     let first = tokio::time::timeout(Duration::from_secs(5), lines_in.recv())
@@ -292,33 +292,29 @@ async fn ndjson_lines_reach_the_caller_while_the_stream_is_open() {
     assert_eq!(first, r#"{"type":"gameStart"}"#);
     drop(send);
     reading.await.unwrap().unwrap();
+    assert_eq!(
+        fixture.requests()[0].header("accept"),
+        Some("application/x-ndjson")
+    );
 }
 
 #[tokio::test]
 async fn an_ndjson_error_is_logged_with_the_request() {
     let fixture = serve(|_| Reply::Text(404, "text/html", "<html>nope</html>".into())).await;
-    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
-    let failure = client
-        .ndjson(
-            Ndjson {
-                method: reqwest::Method::GET,
-                path: "/api/games/user/nobody",
-                query: &[],
-                body: None,
-                auth: None,
-            },
-            &CancellationToken::new(),
-            |_| Ok(()),
-        )
+    let host = Arc::new(Recording::default());
+    let client = client_for(&fixture.base, Arc::clone(&host));
+    let error = client
+        .get("/api/games/user/nobody", &nobody(&client))
+        .lane(Lane::Export)
+        .lines(|| {}, |_| Ok(()))
         .await
         .unwrap_err();
-    assert_eq!(failure.message(), "Lichess has no such thing.");
-    let Failure::Lichess(error) = &failure else {
-        panic!("Lichess's answer");
-    };
-    assert_eq!(
-        error.technical(),
-        "Lichess 404 from GET /api/games/user/nobody: not found"
+    assert_eq!(error.message, "Lichess has no such thing.");
+    assert!(
+        host.logged()
+            .contains("Lichess 404 from GET /api/games/user/nobody: not found"),
+        "{}",
+        host.logged()
     );
 }
 
@@ -327,60 +323,37 @@ async fn cancelling_an_open_stream_ends_the_read_with_an_abort() {
     let (_keep_open, receive) = mpsc::unbounded_channel::<String>();
     let mut receive = Some(receive);
     let fixture = serve(move |_| Reply::Stream(receive.take().expect("one stream"))).await;
-    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
+    let client = client_for(&fixture.base, Arc::new(Recording::default()));
     let cancel = CancellationToken::new();
     let canceller = cancel.clone();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(50)).await;
         canceller.cancel();
     });
-    let failure = client
-        .ndjson(
-            Ndjson {
-                method: reqwest::Method::GET,
-                path: "/api/stream/event",
-                query: &[],
-                body: None,
-                auth: None,
-            },
-            &cancel,
-            |_| Ok(()),
-        )
+    let error = client
+        .get("/api/stream/event", &nobody(&client))
+        .lane(Lane::Live)
+        .cancel(&cancel)
+        .lines(|| {}, |_| Ok(()))
         .await
         .unwrap_err();
-    assert!(failure.is_aborted());
+    assert!(error.aborted);
 }
 
 #[tokio::test]
-async fn streamed_bytes_are_counted_for_the_account_that_read_them() {
+async fn streamed_bytes_are_counted_against_the_account_and_kind_named() {
     let body = "{\"id\":\"abcdefgh\"}\n";
-    let mut sent = Some(body.to_string());
     let (send, receive) = mpsc::unbounded_channel::<String>();
     let mut receive = Some(receive);
     let fixture = serve(move |_| Reply::Stream(receive.take().expect("one stream"))).await;
     let host = Arc::new(Recording::default());
-    let (client, policy) = client_for(&fixture.base, Arc::clone(&host));
-    let cancel = CancellationToken::new();
-    let reading = policy.with_usage("Alice", "games", {
-        let client = client.clone();
-        let cancel = cancel.clone();
-        async move {
-            client
-                .ndjson(
-                    Ndjson {
-                        method: reqwest::Method::GET,
-                        path: "/api/games/user/Alice",
-                        query: &[],
-                        body: None,
-                        auth: None,
-                    },
-                    &cancel,
-                    |_| Ok(()),
-                )
-                .await
-        }
-    });
-    send.send(sent.take().unwrap()).unwrap();
+    let client = client_for(&fixture.base, Arc::clone(&host));
+    let auth = client.counted("Alice", UsageKind::Games);
+    let reading = client
+        .get("/api/games/user/Alice", &auth)
+        .lane(Lane::Export)
+        .lines(|| {}, |_| Ok(()));
+    send.send(body.to_string()).unwrap();
     drop(send);
     reading.await.unwrap();
     let bytes: u64 = host
@@ -392,40 +365,29 @@ async fn streamed_bytes_are_counted_for_the_account_that_read_them() {
     assert_eq!(bytes, body.len() as u64);
 }
 
-/// A short policy deadline bounds headers but must not bound the stream body. The old
-/// 30-second total deadline is covered statically (`is_stream` classifies the TV feed,
-/// `http_client_builder` sets only a connect timeout, and `Policy::send` applies its
-/// deadline to headers while `read_with_deadline` exempts streams), so the live part
-/// only needs to outlive its own fixture deadline.
+/// A short policy deadline bounds headers but must not bound a live stream's body: the stream
+/// only needs to outlive its own fixture deadline and still end when cancelled.
 #[tokio::test]
 async fn active_stream_outlives_its_header_deadline_and_remains_cancellable() {
-    assert!(is_stream("https://lichess.org/api/tv/blitz/feed", None));
     let (send, receive) = mpsc::unbounded_channel::<String>();
     let mut receive = Some(receive);
     let fixture = serve(move |_| Reply::Stream(receive.take().expect("one stream"))).await;
-    let http = http_client();
-    let policy = Policy::with_timeout(
+    let client = client_with_timeout(
+        &fixture.base,
         Arc::new(Recording::default()),
-        http.clone(),
-        CancellationToken::new(),
         Duration::from_millis(500),
     );
-    let client = LichessClient::with_base(&fixture.base, policy, http);
     let cancel = CancellationToken::new();
     let (observed, mut observations) = mpsc::unbounded_channel();
     let reading = tokio::spawn({
         let cancel = cancel.clone();
         async move {
             client
-                .ndjson(
-                    Ndjson {
-                        method: reqwest::Method::GET,
-                        path: "/api/tv/blitz/feed",
-                        query: &[],
-                        body: None,
-                        auth: None,
-                    },
-                    &cancel,
+                .get("/api/tv/blitz/feed", &nobody(&client))
+                .lane(Lane::Live)
+                .cancel(&cancel)
+                .lines(
+                    || {},
                     |line| {
                         observed.send(line.to_string()).expect("observer");
                         Ok(())
@@ -462,7 +424,7 @@ async fn active_stream_outlives_its_header_deadline_and_remains_cancellable() {
         .unwrap()
         .unwrap()
         .unwrap_err();
-    assert!(error.is_aborted());
+    assert!(error.aborted);
 }
 
 #[tokio::test]
@@ -473,37 +435,27 @@ async fn ordinary_and_error_response_bodies_keep_their_deadline() {
         let fixture =
             serve(move |_| Reply::StreamText(status, "application/json", receive.take().unwrap()))
                 .await;
-        let http = http_client();
-        let policy = Policy::with_timeout(
+        let client = client_with_timeout(
+            &fixture.base,
             Arc::new(Recording::default()),
-            http.clone(),
-            CancellationToken::new(),
             Duration::from_millis(100),
         );
-        let client = LichessClient::with_base(&fixture.base, policy, http);
-        let cancel = CancellationToken::new();
         let error = if stream {
             client
-                .ndjson(
-                    Ndjson {
-                        method: reqwest::Method::GET,
-                        path: "/api/stream/event",
-                        query: &[],
-                        body: None,
-                        auth: None,
-                    },
-                    &cancel,
-                    |_| Ok(()),
-                )
+                .get("/api/stream/event", &nobody(&client))
+                .lane(Lane::Live)
+                .lines(|| {}, |_| Ok(()))
                 .await
                 .unwrap_err()
         } else {
             client
-                .get_json::<Value>("/api/account", &[], None, &cancel)
+                .get("/api/account", &nobody(&client))
+                .read_json::<Value>()
                 .await
                 .unwrap_err()
         };
-        assert_eq!(error.message(), "Lichess didn’t answer in time.");
+        assert_eq!(error.message, "Lichess didn’t answer in time.");
+        assert_eq!(error.kind, Some(ErrorKind::TimedOut));
     }
 }
 
@@ -511,38 +463,18 @@ async fn ordinary_and_error_response_bodies_keep_their_deadline() {
 async fn text_limit_counts_utf16_units_while_collecting_chunks() {
     use kchess_core::lichess::client::TextLimit;
     let fixture = serve(|_| Reply::Text(200, "text/plain", "a😀é".into())).await;
-    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
-    let cancel = CancellationToken::new();
-    let text = client
-        .get_text(
-            "/text",
-            &[],
-            "text/plain",
-            None,
-            &cancel,
-            Some(TextLimit {
-                utf16_units: 4,
+    let client = client_for(&fixture.base, Arc::new(Recording::default()));
+    let read = |units| {
+        client
+            .get("/text", &nobody(&client))
+            .accept("text/plain")
+            .read_text(Some(TextLimit {
+                utf16_units: units,
                 message: "too large",
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(text, "a😀é");
-    let error = client
-        .get_text(
-            "/text",
-            &[],
-            "text/plain",
-            None,
-            &cancel,
-            Some(TextLimit {
-                utf16_units: 3,
-                message: "too large",
-            }),
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(error.message(), "too large");
+            }))
+    };
+    assert_eq!(read(4).await.unwrap(), "a😀é");
+    assert_eq!(read(3).await.unwrap_err().message, "too large");
 }
 
 #[tokio::test]
@@ -559,28 +491,23 @@ async fn a_request_redirected_to_a_web_page_fails_instead_of_returning_the_page(
         ),
     })
     .await;
-    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
-    let failure = client
-        .get_text(
-            "/game/export/abcd1234",
-            &[],
-            "application/x-chess-pgn",
-            None,
-            &CancellationToken::new(),
-            None,
-        )
+    let host = Arc::new(Recording::default());
+    let client = client_for(&fixture.base, Arc::clone(&host));
+    let error = client
+        .get("/game/export/abcd1234", &nobody(&client))
+        .accept("application/x-chess-pgn")
+        .read_text(None)
         .await
         .unwrap_err();
     assert_eq!(
-        failure.message(),
+        error.message,
         "Lichess isn’t working right now. Try again shortly."
     );
-    let Failure::Lichess(error) = &failure else {
-        panic!("Lichess's answer");
-    };
-    assert_eq!(
-        error.technical(),
-        "Lichess 200 from GET /game/export/abcd1234: unexpected page response"
+    assert!(
+        host.logged()
+            .contains("Lichess 200 from GET /game/export/abcd1234: unexpected page response"),
+        "{}",
+        host.logged()
     );
 }
 
@@ -595,37 +522,29 @@ async fn one_exported_game_does_not_wait_for_a_running_bulk_export() {
         ),
     })
     .await;
-    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
-    let client = Arc::new(client);
+    let client = Arc::new(client_for(&fixture.base, Arc::new(Recording::default())));
     let sync = CancellationToken::new();
     let syncing = {
         let client = Arc::clone(&client);
         let sync = sync.clone();
         tokio::spawn(async move {
             client
-                .ndjson(
-                    Ndjson {
-                        method: reqwest::Method::GET,
-                        path: "/api/games/user/Alice",
-                        query: &[],
-                        body: None,
-                        auth: None,
-                    },
-                    &sync,
-                    |_| Ok(()),
-                )
+                .get("/api/games/user/Alice", &nobody(&client))
+                .lane(Lane::Export)
+                .cancel(&sync)
+                .lines(|| {}, |_| Ok(()))
                 .await
         })
     };
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // The bulk export holds its lane when the single game is asked for.
+    fixture.requested("/api/games/user/Alice", 1).await;
     let pgn = tokio::time::timeout(
         Duration::from_secs(2),
-        client.export_one(
-            "abcd1234",
-            &[],
-            "application/x-chess-pgn",
-            &CancellationToken::new(),
-        ),
+        client
+            .post("/api/games/export/_ids", &nobody(&client))
+            .accept("application/x-chess-pgn")
+            .text("abcd1234")
+            .read_text(None),
     )
     .await
     .expect("the game waited for the bulk export")
@@ -642,4 +561,46 @@ async fn one_exported_game_does_not_wait_for_a_running_bulk_export() {
     );
     sync.cancel();
     let _ = syncing.await;
+}
+
+/// A web page is refused only when Lichess redirected the request to it: a page at the path asked
+/// for is the answer (a study's or a game's HTML export).
+#[tokio::test]
+async fn a_page_at_the_path_asked_for_is_the_answer() {
+    let fixture = serve(|_| Reply::Text(200, "text/html", "<html>The page</html>".into())).await;
+    let client = client_for(&fixture.base, Arc::new(Recording::default()));
+    let text = client
+        .get("/page", &nobody(&client))
+        .accept("text/html")
+        .read_text(None)
+        .await
+        .unwrap();
+    assert_eq!(text, "<html>The page</html>");
+}
+
+/// NDJSON is read for as long as Lichess keeps sending it, whatever the lane: the deadline of an
+/// ordinary body would cut a long export short.
+#[tokio::test]
+async fn an_ndjson_body_outlives_the_ordinary_deadline() {
+    let (send, receive) = mpsc::unbounded_channel::<String>();
+    let mut receive = Some(receive);
+    let fixture =
+        serve(move |_| Reply::StreamText(200, "application/x-ndjson", receive.take().unwrap()))
+            .await;
+    let client = client_with_timeout(
+        &fixture.base,
+        Arc::new(Recording::default()),
+        Duration::from_millis(100),
+    );
+    let reading = client
+        .get("/api/games/user/alice", &nobody(&client))
+        .read_text(None);
+    let writing = async move {
+        send.send("{\"id\":\"a\"}\n".into()).unwrap();
+        // Three deadlines pass before the export ends.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        send.send("{\"id\":\"b\"}\n".into()).unwrap();
+    };
+    let (text, ()) = tokio::join!(reading, writing);
+    assert_eq!(text.unwrap(), "{\"id\":\"a\"}\n{\"id\":\"b\"}\n");
 }

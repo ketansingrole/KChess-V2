@@ -1,4 +1,4 @@
-//! A client of the shared core (`docs/shared-core.md`): the GPUI app, tools and tests. It finds
+//! A connection to the shared core (`docs/shared-core.md`), under a frontend's `CoreHandle`. It finds
 //! the profile's core through `core.json`, proves itself with `core.token`, and otherwise starts
 //! the core from this release's copy of the service binary (`connect_or_start`).
 
@@ -8,8 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use kchess_core::{Config, CoreError, ErrorKind};
-use serde::{Deserialize, Serialize};
+use kchess_contracts::CoreEvent;
+use kchess_contracts::{CoreError, ErrorKind};
+use kchess_core::Config;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
@@ -40,10 +41,22 @@ pub struct Hello {
 /// What reaches a client without being asked.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClientEvent {
-    /// A core event (`CoreEvents` names, and `host:request`).
-    Event { name: String, payload: Value },
+    Event(CoreEvent),
     /// The connection closed: the core stopped, or cut this client off.
     Closed,
+    /// A frontend that reconnects after `Closed` reached a core again: what it had started on
+    /// the old connection ended with it. The handle reports this once it has reconnected.
+    Reconnected,
+}
+
+impl ClientEvent {
+    /// The core event this is, if it is one.
+    pub fn core(&self) -> Option<&CoreEvent> {
+        match self {
+            ClientEvent::Event(event) => Some(event),
+            _ => None,
+        }
+    }
 }
 
 /// Why a client could not connect.
@@ -208,15 +221,19 @@ impl Client {
                                 let _ = waiting.send(match error {
                                     Some(error) => {
                                         let mut error = CoreError::new(error);
-                                        error.kind = kind.as_deref().and_then(ErrorKind::parse);
+                                        error.kind = kind.as_deref().and_then(ErrorKind::from_key);
                                         Err(error)
                                     }
                                     None => Ok(value.unwrap_or(Value::Null)),
                                 });
                             }
                         }
+                        // The handshake matched the protocol, so every name is known and every
+                        // payload has its event's shape.
                         Frame::Event { name, payload } => {
-                            let _ = events.send(ClientEvent::Event { name, payload });
+                            if let Some(event) = CoreEvent::from_wire(&name, payload) {
+                                let _ = events.send(ClientEvent::Event(event));
+                            }
                         }
                         _ => {}
                     }
@@ -237,17 +254,16 @@ impl Client {
         ))
     }
 
-    /// This client's connection id on the core.
     pub fn connection(&self) -> u64 {
         self.connection
     }
 
-    /// The release of the core it is connected to.
     pub fn release(&self) -> &str {
         &self.release
     }
 
-    /// Runs a core method; the future resolves on any executor.
+    /// Runs a core method; the future resolves on any executor. Dropped before its answer, it
+    /// cancels the call: the core stops the work, not only the reply (`cancel`).
     pub fn call(
         &self,
         method: &str,
@@ -272,49 +288,50 @@ impl Client {
             if !admitted {
                 return Err(STOPPED.into());
             }
-            if sender.send(frame).await.is_err() {
-                if let Ok(mut pending) = pending.lock()
-                    && let Some(pending) = pending.as_mut()
-                {
-                    pending.remove(&id);
-                }
+            let mut call = Unanswered {
+                id,
+                sender,
+                pending,
+                sent: false,
+            };
+            if call.sender.send(frame).await.is_err() {
                 return Err(STOPPED.into());
             }
+            call.sent = true;
             answered.await.unwrap_or_else(|_| Err(STOPPED.into()))
         }
     }
 
-    /// Tells the core this client's window gained or lost focus.
     pub fn focus(&self, focused: bool) {
         let _ = self.sender.try_send(Frame::Focus { focused });
     }
+
+    /// Tells the core this client has no window open: what it started stops.
+    pub fn suspend(&self) {
+        let _ = self.sender.try_send(Frame::Suspend);
+    }
 }
 
-/// The core's configuration, as the starting client passes it to the service.
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ServiceConfig {
-    pub legacy_database_path: Option<PathBuf>,
-    pub bundled_engine_path: Option<PathBuf>,
-    #[serde(default)]
-    pub variant_engine_path: Option<PathBuf>,
-    pub managed_engine_dir: Option<PathBuf>,
-    pub voice_helper_path: Option<PathBuf>,
-    #[serde(default)]
-    pub system_credentials: bool,
+/// A call on its way. Dropped before its answer arrived (which takes it out of `pending`), it
+/// forgets the call and, once sent, tells the core to cancel it.
+struct Unanswered {
+    id: u64,
+    sender: mpsc::Sender<Frame>,
+    pending: Pending,
+    sent: bool,
 }
 
-impl ServiceConfig {
-    /// The core's `Config` for `profile`.
-    pub fn into_config(self, profile: PathBuf) -> Config {
-        Config {
-            legacy_database_path: self.legacy_database_path,
-            bundled_engine_path: self.bundled_engine_path,
-            variant_engine_path: self.variant_engine_path,
-            managed_engine_dir: self.managed_engine_dir,
-            voice_helper_path: self.voice_helper_path,
-            system_credentials: self.system_credentials,
-            ..Config::new(profile)
+impl Drop for Unanswered {
+    fn drop(&mut self) {
+        let waiting = self
+            .pending
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.as_mut().and_then(|p| p.remove(&self.id)));
+        // A full queue means the core is not reading; the connection then ends, and the call
+        // with it.
+        if self.sent && waiting.is_some() {
+            let _ = self.sender.try_send(Frame::Cancel { id: self.id });
         }
     }
 }
@@ -324,7 +341,8 @@ impl ServiceConfig {
 pub struct Start {
     /// The service binary shipped with this app.
     pub binary: PathBuf,
-    pub config: ServiceConfig,
+    /// The core's configuration; the profile is the one connected to.
+    pub config: Config,
 }
 
 /// Connects to the profile's core, starting it when none runs (`docs/shared-core.md`, "Start"):
@@ -393,7 +411,7 @@ fn service_binary(bundled: &Path, sandboxed: bool) -> PathBuf {
 /// closing the window that started it does not stop it. Two clients starting at once are
 /// settled by the profile lock: the second service exits.
 fn launch(profile: &Path, start: &Start) -> Result<(), ConnectError> {
-    let binary = service_binary(&start.binary, kchess_core::app_store());
+    let binary = service_binary(&start.binary, kchess_host::app_store());
     let config = serde_json::to_string(&start.config)
         .map_err(|error| ConnectError::Failed(error.to_string()))?;
     let mut command = std::process::Command::new(binary);
@@ -406,7 +424,7 @@ fn launch(profile: &Path, start: &Start) -> Result<(), ConnectError> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    kchess_core::env::forward(&mut command);
+    kchess_host::env::forward(&mut command);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -432,28 +450,6 @@ fn launch(profile: &Path, start: &Start) -> Result<(), ConnectError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Every path the starting app passes reaches the core.
-    #[test]
-    fn the_service_config_reaches_the_core() {
-        let path = |name: &str| Some(PathBuf::from(name));
-        let config = ServiceConfig {
-            legacy_database_path: path("legacy.db"),
-            bundled_engine_path: path("stockfish"),
-            variant_engine_path: path("fairy-stockfish"),
-            managed_engine_dir: path("engines"),
-            voice_helper_path: path("kchess-voice"),
-            system_credentials: true,
-        }
-        .into_config(PathBuf::from("profile"));
-        assert_eq!(config.data_dir, PathBuf::from("profile"));
-        assert_eq!(config.legacy_database_path, path("legacy.db"));
-        assert_eq!(config.bundled_engine_path, path("stockfish"));
-        assert_eq!(config.variant_engine_path, path("fairy-stockfish"));
-        assert_eq!(config.managed_engine_dir, path("engines"));
-        assert_eq!(config.voice_helper_path, path("kchess-voice"));
-        assert!(config.system_credentials);
-    }
 
     #[test]
     fn the_sandbox_starts_the_service_from_the_bundle() {

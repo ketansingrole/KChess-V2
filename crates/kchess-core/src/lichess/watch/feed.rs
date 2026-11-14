@@ -1,19 +1,20 @@
-//! Decoding the TV and game feeds and broadcast PGN, all pure (moved from `watch.rs` without
-//! changes).
+//! Decoding the TV and game feeds and broadcast PGN, all pure.
 // Feed data is outside input: read it without indexing that can panic.
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use super::{BroadcastGame, MAX_BROADCAST_PGN, VARIANTS, WatchClock, WatchPlayer};
+use super::{BroadcastGame, MAX_BROADCAST_PGN, WatchClock, WatchPlayer};
 use crate::lichess::decode::{Text, present, read};
 use crate::lichess::reviews::split_whitespace;
-use kchess_domain::{api, js, position};
+use kchess_domain::color::Color;
+use kchess_domain::variant::{Setup, Variant};
+use kchess_domain::{js, position, rules};
 
 /* ── Feed decoding (pure) ── */
 
-/// `displayFen(raw)`: the board and side to move only; Crazyhouse pockets and other fields are
+/// The board and side to move only; Crazyhouse pockets and other fields are
 /// dropped. None when the placement is not eight ranks of known squares.
 pub fn display_fen(raw: &str) -> Option<String> {
     let parts: Vec<&str> = split_whitespace(js::trim(raw));
@@ -35,7 +36,7 @@ pub fn display_fen(raw: &str) -> Option<String> {
     ))
 }
 
-/// `/\[[^\]]*\]$/` removed from the end of the placement.
+/// The placement without a trailing bracketed pocket (`[...]`).
 fn strip_trailing_pocket(board: &str) -> &str {
     if let Some(stripped) = board.strip_suffix(']')
         && let Some(open) = stripped.rfind('[')
@@ -143,7 +144,7 @@ struct RawPlayer {
     name: Option<Text<40>>,
 }
 
-/// A player record of the feed (`playerOf`): a name, title and rating, or `?` when unreadable.
+/// A player record of the feed: a name, title and rating, or `?` when unreadable.
 pub(super) fn player_of(raw: Option<&Value>) -> WatchPlayer {
     let Some(player) = raw
         .filter(|value| value.is_object())
@@ -174,7 +175,7 @@ pub(super) fn player_of(raw: Option<&Value>) -> WatchPlayer {
     }
 }
 
-/// The details the TV feed leaves out: rated flag, speed and time control (`parseGameDetails`).
+/// The details the TV feed leaves out: rated flag, speed and time control.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GameDetails {
     pub rated: Option<bool>,
@@ -198,7 +199,7 @@ struct RawDetails {
     clock: Option<RawClock>,
 }
 
-/// `parseGameDetails(raw)`: each field kept when it has the right type; an unreadable clock or
+/// Each field kept when it has the right type; an unreadable clock or
 /// speed drops all details.
 pub fn parse_game_details(raw: &Value) -> GameDetails {
     if !raw.is_object() {
@@ -219,38 +220,10 @@ pub fn parse_game_details(raw: &Value) -> GameDetails {
 pub struct TvGame {
     pub details: GameDetails,
     /// Absent for variants KChess cannot replay.
-    pub setup: Option<GameSetup>,
+    pub setup: Option<Setup>,
     pub san: Vec<String>,
     pub status: Option<String>,
-    pub winner: Option<&'static str>,
-}
-
-/// The rules and the position before the first move (`GameSetup`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GameSetup {
-    pub variant: &'static str,
-    pub fen: String,
-}
-
-/// `variantFromLichess(key)`: the playable variant of a Lichess key; `fromPosition` is standard.
-pub fn variant_from_lichess(key: Option<&str>) -> Option<&'static str> {
-    match key {
-        None | Some("") | Some("fromPosition") => Some("standard"),
-        Some(key) => VARIANTS.iter().copied().find(|variant| *variant == key),
-    }
-}
-
-/// `defaultFen(variant)`: the usual start of a variant.
-fn default_fen(variant: &str) -> Option<String> {
-    domain_call("defaultFen", json!([variant]))?
-        .as_str()
-        .map(str::to_string)
-}
-
-/// Calls a domain method that answers in JSON.
-fn domain_call(method: &str, args: Value) -> Option<Value> {
-    let text = api::call(method, &args.to_string()).ok()?;
-    serde_json::from_str(&text).ok()
+    pub winner: Option<Color>,
 }
 
 #[derive(Deserialize)]
@@ -276,7 +249,7 @@ struct RawTvGame {
     winner: Option<Winner>,
 }
 
-/// `parseTvGame(raw)`: the start, moves and result of a game export. A malformed export keeps
+/// The start, moves and result of a game export. A malformed export keeps
 /// its details and gets no moves.
 pub fn parse_tv_game(raw: &Value) -> TvGame {
     let details = parse_game_details(raw);
@@ -299,16 +272,12 @@ pub fn parse_tv_game(raw: &Value) -> TvGame {
         game.status.as_deref(),
     );
     let winner = game.winner.map(|winner| match winner {
-        Winner::White => "white",
-        Winner::Black => "black",
+        Winner::White => Color::White,
+        Winner::Black => Color::Black,
     });
-    let variant = variant_from_lichess(Some(variant.unwrap_or("standard")));
-    let setup = variant.and_then(|variant| {
-        let fen = match initial {
-            Some(fen) => Some(fen.to_string()),
-            None => default_fen(variant),
-        }?;
-        Some(GameSetup { variant, fen })
+    let setup = Variant::from_lichess(Some(variant.unwrap_or("standard"))).map(|variant| Setup {
+        variant,
+        fen: initial.map_or_else(|| variant.default_fen(), str::to_string),
     });
     TvGame {
         details,
@@ -327,36 +296,27 @@ pub fn parse_tv_game(raw: &Value) -> TvGame {
     }
 }
 
-/// `alignTvMoves(setup, san, feed, live)`: the export's moves joined to the moves the feed sent
+/// The export's moves joined to the moves the feed sent
 /// after it. `feed` holds the positions the feed showed, and `live[i]` is the move from `feed[i]`
 /// to `feed[i + 1]`. Undefined until the export reaches a position the feed sent.
 pub fn align_tv_moves(
-    setup: &GameSetup,
+    setup: &Setup,
     san: &[String],
     feed: &[String],
     live: &[Option<String>],
 ) -> Option<Vec<String>> {
-    let setup_json = json!({ "variant": setup.variant, "fen": setup.fen });
-    let start = domain_call("line", json!([setup_json, [], { "san": true }]))?;
-    let start_fen = start.get("start")?.as_str()?.to_string();
+    let start = rules::setup_start(setup.variant, &setup.fen)?;
+    let start_fen = rules::make_fen(&start);
     if feed.is_empty() {
         return None;
     }
-    let line = domain_call("line", json!([setup_json, san, { "san": true }]))?;
-    let line = line.get("moves")?.as_array()?.clone();
+    let (_, line) = position::line(start, san, true, false);
     if line.len() < san.len() {
         return None;
     }
-    let exported: Vec<String> = line
-        .iter()
-        .filter_map(|move_| move_.get("uci").and_then(Value::as_str).map(str::to_string))
-        .collect();
+    let exported: Vec<String> = line.iter().map(|played| played.uci.clone()).collect();
     let mut keys = vec![position_key(&start_fen)];
-    keys.extend(
-        line.iter()
-            .filter_map(|move_| move_.get("fen").and_then(Value::as_str))
-            .map(position_key),
-    );
+    keys.extend(line.iter().map(|played| position_key(&played.fen)));
     let target = position_key(feed.last()?);
     for (ply, key) in keys.iter().enumerate().rev() {
         let Some(seen) = feed.iter().rposition(|seen| seen == key) else {
@@ -376,18 +336,18 @@ pub fn align_tv_moves(
     None
 }
 
-/// `replaySetup(setup, moves)`: how many UCI moves replay and the position after them.
-fn replay_uci(setup: &GameSetup, moves: &[String]) -> Option<(usize, String)> {
+/// How many UCI moves replay and the position after them.
+fn replay_uci(setup: &Setup, moves: &[String]) -> Option<(usize, String)> {
     let replay = kchess_domain::replay::replay_setup(setup.variant, &setup.fen, moves)?;
     Some((replay.played.len(), replay.fen))
 }
 
-/// `broadcastGame(pgn)`: one broadcast board, with the main line replayed and checked.
+/// One broadcast board, with the main line replayed and checked.
 pub fn broadcast_game(pgn: &str) -> Option<BroadcastGame> {
-    let text = take_utf16(pgn, MAX_BROADCAST_PGN);
-    let game = position::pgn_mainline(&text, 1001);
-    let start_fen = game.get("start")?.as_str()?.to_string();
-    let headers = header_map(game.get("headers"));
+    let text = js::slice_utf16(pgn, MAX_BROADCAST_PGN).to_string();
+    let game = position::pgn_mainline(&text, 1001)?;
+    let start_fen = game.start?;
+    let headers = game.headers;
     let header = |name: &str| {
         headers
             .iter()
@@ -395,19 +355,15 @@ pub fn broadcast_game(pgn: &str) -> Option<BroadcastGame> {
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.as_str())
     };
-    let moves_json = game.get("moves")?.as_array()?;
-    let moves: Vec<String> = moves_json
-        .iter()
-        .filter_map(|entry| entry.get("uci").and_then(Value::as_str).map(str::to_string))
-        .collect();
+    let moves: Vec<String> = game.moves.iter().map(|entry| entry.uci.clone()).collect();
     let mut white_clock = None;
     let mut black_clock = None;
-    for entry in moves_json {
-        let Some(clock) = entry.get("clock").and_then(Value::as_f64) else {
+    for entry in &game.moves {
+        let Some(clock) = entry.clock else {
             continue;
         };
         let rounded = Some(js::round(clock));
-        if entry.get("mover").and_then(Value::as_str) == Some("white") {
+        if entry.mover == "white" {
             white_clock = rounded;
         } else {
             black_clock = rounded;
@@ -424,26 +380,25 @@ pub fn broadcast_game(pgn: &str) -> Option<BroadcastGame> {
             )
         });
     let result = header("Result").unwrap_or("*").to_string();
-    let fen = moves_json
+    let fen = game
+        .moves
         .last()
-        .and_then(|entry| entry.get("fen").and_then(Value::as_str))
-        .unwrap_or(&start_fen)
-        .to_string();
+        .map_or_else(|| start_fen.clone(), |entry| entry.fen.clone());
     let rating = |value: Option<&str>| -> Option<f64> {
-        let number = js_number(value.unwrap_or(""));
+        let number = js::string_to_number(value.unwrap_or(""));
         (number.is_finite() && number > 0.0).then_some(number)
     };
     Some(BroadcastGame {
-        id: take_utf16(&chapter, 64),
-        name: take_utf16(header("Event").unwrap_or(""), 120),
+        id: js::slice_utf16(&chapter, 64).to_string(),
+        name: js::slice_utf16(header("Event").unwrap_or(""), 120).to_string(),
         white: WatchPlayer {
-            name: take_utf16(header("White").unwrap_or("White"), 60),
-            title: header("WhiteTitle").map(|title| take_utf16(title, 8)),
+            name: js::slice_utf16(header("White").unwrap_or("White"), 60).to_string(),
+            title: header("WhiteTitle").map(|title| js::slice_utf16(title, 8).to_string()),
             rating: rating(header("WhiteElo")),
         },
         black: WatchPlayer {
-            name: take_utf16(header("Black").unwrap_or("Black"), 60),
-            title: header("BlackTitle").map(|title| take_utf16(title, 8)),
+            name: js::slice_utf16(header("Black").unwrap_or("Black"), 60).to_string(),
+            title: header("BlackTitle").map(|title| js::slice_utf16(title, 8).to_string()),
             rating: rating(header("BlackElo")),
         },
         ongoing: result == "*",
@@ -454,61 +409,20 @@ pub fn broadcast_game(pgn: &str) -> Option<BroadcastGame> {
         fen,
         white_clock,
         black_clock,
-        pgn: take_utf16(pgn, MAX_BROADCAST_PGN),
+        pgn: js::slice_utf16(pgn, MAX_BROADCAST_PGN).to_string(),
     })
-}
-
-/// `headers` of `pgnMainline` as pairs.
-fn header_map(raw: Option<&Value>) -> Vec<(String, String)> {
-    raw.and_then(Value::as_array)
-        .map(|pairs| {
-            pairs
-                .iter()
-                .filter_map(|pair| {
-                    let pair = pair.as_array()?;
-                    Some((
-                        pair.first()?.as_str()?.to_string(),
-                        pair.get(1)?.as_str()?.to_string(),
-                    ))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 /// `/\/([a-zA-Z0-9]{8})$/` on a broadcast URL: the chapter id.
 fn last_path_id(url: Option<&str>) -> Option<String> {
     let (_, id) = url?.rsplit_once('/')?;
-    (id.len() == 8 && id.bytes().all(|byte| byte.is_ascii_alphanumeric())).then(|| id.to_string())
-}
-
-/// `Number(text)`: JavaScript's conversion (blank is zero, unreadable is NaN).
-fn js_number(text: &str) -> f64 {
-    let trimmed = js::trim(text);
-    if trimmed.is_empty() {
-        return 0.0;
-    }
-    trimmed.parse::<f64>().unwrap_or(f64::NAN)
-}
-
-/// The first `units` UTF-16 units of `text`.
-pub(super) fn take_utf16(text: &str, units: usize) -> String {
-    let mut used = 0;
-    let mut out = String::new();
-    for c in text.chars() {
-        let width = c.len_utf16();
-        if used + width > units {
-            break;
-        }
-        used += width;
-        out.push(c);
-    }
-    out
+    crate::lichess::is_lichess_id(id).then(|| id.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn keeps_only_the_board_and_side_to_move() {
@@ -543,14 +457,5 @@ mod tests {
                 rating: Some(1500.0),
             }
         );
-    }
-
-    #[test]
-    fn variants_follow_the_lichess_keys_kchess_plays() {
-        assert_eq!(variant_from_lichess(None), Some("standard"));
-        assert_eq!(variant_from_lichess(Some("fromPosition")), Some("standard"));
-        assert_eq!(variant_from_lichess(Some("chess960")), Some("chess960"));
-        assert_eq!(variant_from_lichess(Some("crazyhouse")), Some("crazyhouse"));
-        assert_eq!(variant_from_lichess(Some("bughouse")), None);
     }
 }

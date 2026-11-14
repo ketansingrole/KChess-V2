@@ -6,12 +6,9 @@
 //! without an engine) or played out against the engine (`play`, with a goal).
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use shakmaty::{Chess, Color, Move, Position, Role, Square, variant::VariantPosition};
-use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use super::{Out, to_value, value_arg};
 use crate::rules;
 
 const LESSONS_JSON: &str = include_str!("../../data/lessons.json");
@@ -95,14 +92,10 @@ pub struct Data {
     pub courses: Vec<Course>,
 }
 
-/// The courses; an error only if the embedded file is malformed.
-pub fn data() -> Result<&'static Data, String> {
-    static DATA: OnceLock<Result<Data, String>> = OnceLock::new();
-    DATA.get_or_init(|| {
-        serde_json::from_str(LESSONS_JSON).map_err(|e| format!("lesson data is not valid: {e}"))
-    })
-    .as_ref()
-    .map_err(Clone::clone)
+/// The courses.
+pub fn data() -> &'static Data {
+    static DATA: OnceLock<Data> = OnceLock::new();
+    DATA.get_or_init(|| crate::embedded::parse("lessons", LESSONS_JSON))
 }
 
 /// Why a step ended, or what the side to move waits for.
@@ -169,14 +162,6 @@ fn chess(fen: &str) -> Result<Chess, String> {
     }
 }
 
-fn color_name(color: Color) -> &'static str {
-    if color == Color::White {
-        "white"
-    } else {
-        "black"
-    }
-}
-
 fn legal(pos: &Chess, uci: &str) -> Option<Move> {
     let parsed = rules::parse_uci(uci)?;
     rules::legal_move(&VariantPosition::Chess(pos.clone()), parsed)
@@ -212,12 +197,8 @@ fn bare_king_against_major(pos: &Chess, color: Color) -> bool {
     theirs.count() == 1 && !(ours & (board.queens() | board.rooks())).is_empty()
 }
 
-fn repetition_key(pos: &Chess) -> String {
+fn fen_of(pos: &Chess) -> String {
     rules::make_fen(&VariantPosition::Chess(pos.clone()))
-        .split(' ')
-        .take(4)
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 /* ── Forced mate ─────────────────────────────────────────────────────────────────────────── */
@@ -324,7 +305,7 @@ fn replay<S: AsRef<str>>(fen: &str, moves: &[S]) -> Result<Replay, String> {
     let initial_balance = balance(&start);
     let initial_ours = material(&start, player);
     let mut pos = start.clone();
-    let mut seen: HashMap<String, u32> = HashMap::from([(repetition_key(&pos), 1)]);
+    let mut seen = rules::Repetitions::starting_at(&fen_of(&pos));
     let mut out = Replay {
         pos: start,
         player,
@@ -344,10 +325,7 @@ fn replay<S: AsRef<str>>(fen: &str, moves: &[S]) -> Result<Replay, String> {
         if mover == player {
             out.played += 1;
         }
-        let key = repetition_key(&pos);
-        let count = seen.get(&key).copied().unwrap_or(0) + 1;
-        seen.insert(key, count);
-        out.repeated |= count >= 3;
+        out.repeated |= seen.reached(&fen_of(&pos));
         // Judged after your moves, so a capture you take straight back is no loss. Promotions
         // add material, so only a drop below the start counts.
         if mover == player {
@@ -363,7 +341,7 @@ fn finish(success: bool, reason: Reason) -> (bool, Option<bool>, Option<Reason>)
     (true, Some(success), Some(reason))
 }
 
-/// `lessonStatus`: where `task`, from `fen`, stands after `moves` (UCI).
+/// Where `task`, from `fen`, stands after `moves` (UCI).
 pub fn status<S: AsRef<str>>(fen: &str, task: &Task, moves: &[S]) -> Result<Status, String> {
     let r = replay(fen, moves)?;
     let pos = &r.pos;
@@ -439,8 +417,8 @@ pub fn status<S: AsRef<str>>(fen: &str, task: &Task, moves: &[S]) -> Result<Stat
         over,
         success,
         reason,
-        player: color_name(r.player),
-        turn: color_name(turn),
+        player: crate::color::name(r.player),
+        turn: crate::color::name(turn),
         fen: rules::make_fen(&VariantPosition::Chess(pos.clone())),
         check: pos.is_check(),
         played: r.played,
@@ -551,7 +529,7 @@ pub struct Verdict {
     pub uci: Option<String>,
 }
 
-/// `lessonMove`: whether `uci`, your move after `moves`, is one the step accepts. A line wants its
+/// Whether `uci`, your move after `moves`, is one the step accepts. A line wants its
 /// next move (or any mate as its last); a mate task wants a move that keeps a forced mate within
 /// the moves left; play tasks take any legal move.
 pub fn try_move<S: AsRef<str>>(
@@ -596,7 +574,7 @@ pub fn try_move<S: AsRef<str>>(
     })
 }
 
-/// `lessonHint`: the move a line or mate task wants next; None for read and play tasks (the
+/// The move a line or mate task wants next; None for read and play tasks (the
 /// engine hints those) or when it is not your move.
 pub fn hint<S: AsRef<str>>(fen: &str, task: &Task, moves: &[S]) -> Result<Option<String>, String> {
     let r = replay(fen, moves)?;
@@ -727,37 +705,6 @@ fn step_problems(step: &Step) -> Vec<String> {
     out
 }
 
-/* ── Calls ───────────────────────────────────────────────────────────────────────────────── */
-
-fn step_args(args: &[Value]) -> Result<(String, Task, Vec<String>), String> {
-    Ok((
-        value_arg(args, 0, "fen")?,
-        value_arg(args, 1, "task")?,
-        value_arg(args, 2, "moves")?,
-    ))
-}
-
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result = match method {
-        "lessonCourses" => data().and_then(|d| to_value(&d.courses)),
-        "lessonProblems" => data().and_then(|d| to_value(problems(d))),
-        "lessonStatus" => step_args(args)
-            .and_then(|(fen, task, moves)| status(&fen, &task, &moves))
-            .and_then(to_value),
-        "lessonMove" => step_args(args)
-            .and_then(|(fen, task, moves)| {
-                let uci: String = value_arg(args, 3, "uci")?;
-                try_move(&fen, &task, &moves, &uci)
-            })
-            .and_then(to_value),
-        "lessonHint" => step_args(args)
-            .and_then(|(fen, task, moves)| hint(&fen, &task, &moves))
-            .and_then(to_value),
-        _ => return None,
-    };
-    Some(result)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -768,7 +715,7 @@ mod tests {
 
     #[test]
     fn every_course_step_can_be_completed() {
-        let data = data().expect("lesson data parses");
+        let data = data();
         let problems = problems(data);
         assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
@@ -790,6 +737,36 @@ mod tests {
             (true, Some(true), Some(Reason::Checkmate))
         );
         assert_eq!(hint(fen, &task, &m(&[])).unwrap().as_deref(), Some("e2e8"));
+    }
+
+    /// A repetition reached stays reached, and material lost stays lost, whatever is played
+    /// after.
+    #[test]
+    fn a_repetition_or_a_loss_of_material_is_kept_past_later_moves() {
+        let fen = "7k/8/8/8/8/8/8/R5K1 w - - 0 1";
+        // One move more than White plays here: a status that missed the repetition searches the
+        // defence to a mate in what is left, and a deeper one takes minutes.
+        let task = Task::Mate { within: 6 };
+        let shuffle = ["a1a2", "h8g8", "a2a1", "g8h8"].repeat(2);
+        let mut moves = m(&shuffle);
+        moves.push("a1a2".into());
+        let after = status(fen, &task, &moves).unwrap();
+        assert_eq!(
+            (after.over, after.success, after.reason),
+            (true, Some(false), Some(Reason::Repetition))
+        );
+
+        let fen = "r6k/8/8/8/8/8/8/R5K1 w - - 0 1";
+        let task = Task::Play {
+            goal: Goal::Mate,
+            within: 10,
+            squares: Vec::new(),
+        };
+        let after = status(fen, &task, &m(&["a1a7", "a8a7", "g1f2"])).unwrap();
+        assert_eq!(
+            (after.over, after.success, after.reason),
+            (true, Some(false), Some(Reason::MaterialLost))
+        );
     }
 
     #[test]
@@ -874,7 +851,5 @@ mod tests {
     #[test]
     fn invalid_input_is_an_error() {
         assert!(status("nonsense", &Task::Read, &[] as &[String]).is_err());
-        assert!(call("lessonStatus", &[]).unwrap().is_err());
-        assert!(call("lessonCourses", &[]).unwrap().is_ok());
     }
 }

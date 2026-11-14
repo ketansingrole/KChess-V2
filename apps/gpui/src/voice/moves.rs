@@ -7,11 +7,13 @@
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::*;
-use serde_json::{Value, json};
+use kchess_domain::variant::Setup;
 
 use super::control::Control;
 use super::{Entry, Heard, VoiceEvent};
 use crate::assets::icon;
+use kchess_contracts::types::VoiceUpdate;
+use kchess_domain::voice::SpokenMove;
 
 /// What a page made of a phrase it took as a command.
 pub struct Reply {
@@ -66,10 +68,20 @@ pub struct VoiceMoves {
     position_line: Vec<String>,
 }
 
-/// Every legal move the words could be (`spokenMove`): `move` with its choices, `confirm`,
-/// `cancel`, or nothing.
-pub fn spoken_move(text: &str, setup: &Value) -> Value {
-    crate::game::rules("spokenMove", &[json!(text), setup.clone()]).unwrap_or(Value::Null)
+/// Every legal move the words could be in a setup: a move with its choices, confirm, cancel, or
+/// nothing; nothing too when the setup is not a legal position.
+pub fn spoken_move(text: &str, setup: &Setup) -> SpokenMove {
+    match setup.position() {
+        Some(pos) => kchess_domain::voice::spoken_move(text, &pos),
+        None => {
+            crate::log::write(
+                kchess_contracts::Level::Warn,
+                "voice",
+                &format!("a phrase was heard at an illegal position: {}", setup.fen),
+            );
+            SpokenMove::Invalid
+        }
+    }
 }
 
 /// The move played after `before`, when `line` is `before` and one move more.
@@ -134,7 +146,7 @@ impl VoiceMoves {
         self.control.is_on(cx)
     }
 
-    /// Record a phrase in the voice history, when Settings keep one (`logVoice`). `track`: the
+    /// Record a phrase in the voice history, when Settings keep one. `track`: the
     /// phrase was about this position's move, so it learns which move was then played.
     fn record(
         &mut self,
@@ -177,10 +189,10 @@ impl VoiceMoves {
         if !matches!(outcome, "played" | "confirmed" | "picked") {
             self.last_miss = Some(attempt.clone());
         }
-        let mut update = json!({ "outcome": outcome });
-        if let Some(expected) = expected {
-            update["expected"] = json!(expected);
-        }
+        let update = VoiceUpdate {
+            outcome: super::wire(outcome),
+            expected: expected.map(str::to_string),
+        };
         super::amend(attempt, update, cx);
     }
 
@@ -194,7 +206,11 @@ impl VoiceMoves {
             return;
         };
         for entry in entries {
-            super::amend(entry, json!({ "expected": san }), cx);
+            let update = VoiceUpdate {
+                outcome: None,
+                expected: Some(san.to_string()),
+            };
+            super::amend(entry, update, cx);
         }
     }
 
@@ -210,7 +226,7 @@ impl VoiceMoves {
     pub fn hear(
         &mut self,
         heard: &Heard,
-        setup: &Value,
+        setup: &Setup,
         turn: Turn,
         command: impl FnOnce(&str) -> Option<Reply>,
         cx: &mut App,
@@ -223,7 +239,7 @@ impl VoiceMoves {
         if !self.control.enabled {
             return Action::Nothing;
         }
-        let fen = setup["fen"].as_str().unwrap_or_default().to_string();
+        let fen = setup.fen.clone();
         self.control.heard = Some(heard.text.clone().into());
         if let Some(reply) = command(&heard.text) {
             let outcome = if reply.understood {
@@ -245,9 +261,7 @@ impl VoiceMoves {
             self.control.feedback = idle.map(|idle| SharedString::from(idle.to_string()));
             return Action::Nothing;
         }
-        let number = crate::game::rules("spokenChoice", &[json!(heard.text)])
-            .ok()
-            .and_then(|n| n.as_f64());
+        let number = kchess_domain::voice::spoken_choice(&heard.text);
         if let Some(number) = number
             && !self.choices.is_empty()
             && !heard.unclear
@@ -262,7 +276,7 @@ impl VoiceMoves {
             );
             return match self
                 .choices
-                .get((number as usize).saturating_sub(1))
+                .get(usize::from(number).saturating_sub(1))
                 .cloned()
             {
                 Some(choice) => self.choose(choice, "confirmed", cx),
@@ -273,13 +287,13 @@ impl VoiceMoves {
             };
         }
         let parsed = spoken_move(&heard.text, setup);
-        match parsed["kind"].as_str() {
-            Some("cancel") if !heard.unclear => {
+        match parsed {
+            SpokenMove::Cancel if !heard.unclear => {
                 self.record(heard, "command", Some("cancel"), &fen, true, cx);
                 self.cancel(cx);
                 Action::Nothing
             }
-            Some("confirm") if !heard.unclear => {
+            SpokenMove::Confirm if !heard.unclear => {
                 self.record(heard, "command", Some("confirm"), &fen, true, cx);
                 match self.choices.as_slice() {
                     [only] => {
@@ -292,16 +306,12 @@ impl VoiceMoves {
                     }
                 }
             }
-            Some("move") => {
-                let offered: Vec<Choice> = parsed["choices"]
-                    .as_array()
+            SpokenMove::Move { choices } => {
+                let offered: Vec<Choice> = choices
                     .into_iter()
-                    .flatten()
-                    .filter_map(|choice| {
-                        Some(Choice {
-                            uci: choice["uci"].as_str()?.to_string(),
-                            san: choice["san"].as_str()?.to_string(),
-                        })
+                    .map(|choice| Choice {
+                        uci: choice.uci,
+                        san: choice.san,
                     })
                     .collect();
                 self.offer(heard, offered, immediate, &fen, cx)
@@ -540,8 +550,7 @@ pub fn board_bar<V: 'static>(
 
 #[cfg(test)]
 mod tests {
-    use super::{meant, spoken_move};
-    use serde_json::json;
+    use super::{Setup, SpokenMove, meant, spoken_move};
 
     #[test]
     fn phrases_learn_the_move_played_next_and_nothing_else() {
@@ -556,18 +565,17 @@ mod tests {
 
     #[test]
     fn spoken_words_become_legal_moves() {
-        let start = json!({
-            "variant": "standard",
-            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        });
-        let e4 = spoken_move("e four", &start);
-        assert_eq!(e4["kind"], "move");
-        assert_eq!(e4["choices"][0]["uci"], "e2e4");
-        assert_eq!(e4["choices"][0]["san"], "e4");
-        assert_eq!(
-            spoken_move("knight f three", &start)["choices"][0]["uci"],
-            "g1f3"
-        );
-        assert_eq!(spoken_move("confirm", &start)["kind"], "confirm");
+        let start = Setup::standard();
+        let first = |text: &str| match spoken_move(text, &start) {
+            SpokenMove::Move { choices } => choices[0].clone(),
+            other => panic!("{text}: {other:?}"),
+        };
+        assert_eq!(first("e four").uci, "e2e4");
+        assert_eq!(first("e four").san, "e4");
+        assert_eq!(first("knight f three").uci, "g1f3");
+        assert_eq!(spoken_move("confirm", &start), SpokenMove::Confirm);
+        // An illegal setup hears no move.
+        let empty = Setup::standard_at("8/8/8/8/8/8/8/8 w - - 0 1");
+        assert_eq!(spoken_move("e four", &empty), SpokenMove::Invalid);
     }
 }

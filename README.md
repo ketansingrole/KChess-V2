@@ -105,8 +105,7 @@ reuses the release binaries already built. Release packages come from the Releas
 | `cargo test -p kchess-gpui e2e::` | The app's end-to-end tests, headless over a fresh profile        |
 | `cargo xtask help`       | The rest: release versions, notices, licenses, the voice runtime          |
 
-[GUARDRAILS.md](GUARDRAILS.md) describes the verification ladder. CI runs `cargo xtask check`,
-`cargo deny`, and the app's tests and a package on macOS, Windows and Linux.
+[GUARDRAILS.md](GUARDRAILS.md) describes the verification ladder and what CI runs.
 
 ### Voice input
 
@@ -214,17 +213,8 @@ On first launch on macOS, the app imports accounts, game history, settings, and 
 
 ## Structure
 
-- `apps/gpui/` is the app: its pages (`src/pages`), the board (`src/board`), the shell, settings,
-  voice input, the updater and its end-to-end tests (`src/e2e`).
-- `apps/cli/` is the command line.
-- `crates/kchess-core/` is the headless core: chess engines, Lichess, puzzles, reviews and the
-  local library (studies, played games, mistake drills, unfinished sessions), behind `CoreApi`
-  (`crates/kchess-contracts`) and its events. `crates/kchess-service/` serves one core per profile
-  to every KChess window and the command line.
-- `crates/kchess-domain/` holds the pure chess, training and document rules; `crates/kchess-games/`
-  the computer, over-the-board and Game history sessions as frontends drive them;
-  `crates/kchess-voice/` the speech recognition helper.
-- `tooling/xtask/` is the repository's tooling (`cargo xtask`); `fuzz/` the cargo-fuzz targets.
+[ARCHITECTURE.md](ARCHITECTURE.md) maps the workspace: the app, the command line, the headless
+core and the crates beside it.
 
 ## Security notes
 
@@ -241,9 +231,8 @@ KChess is free software, released under the **GNU General Public License v3.0 or
 
 This is required, not just chosen: the app builds on copyleft code and assets from the Lichess and Stockfish projects.
 
-- `@lichess-org/chessground`, `shakmaty` and the parts of `chessops` ported to Rust — GPL-3.0-or-later
-- `stockfish` (the bundled WASM engine) — GPL-3.0
-- `@lichess-org/types` (type definitions only, nothing of it ships at runtime) — AGPL-3.0-or-later
+- `shakmaty` and the parts of `chessops` ported to Rust — GPL-3.0-or-later
+- Stockfish and Fairy-Stockfish (the engines KChess downloads or ships) — GPL-3.0
 - Lichess board themes, sound effects and some piece sets — AGPLv3+ (other piece sets are GPL, MIT, Apache-2.0 or CC0; see the attribution file)
 - The rest are permissively licensed (MIT, ISC, Apache-2.0, BlueOak).
 

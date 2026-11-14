@@ -14,8 +14,8 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{CoreError, Result};
 use crate::lichess::client::http_client_builder;
+use kchess_contracts::error::{CoreError, Result};
 
 const AUTH: &str = "https://auth.openai.com";
 const API: &str = "https://api.openai.com";
@@ -35,31 +35,9 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(90);
 /// More text than any explanation.
 const ANSWER_LIMIT: usize = 16 * 1024;
 
-/// The host id OpenAI accepts for these random bytes: a UUIDv4 URI.
-fn host_id_of(mut bytes: [u8; 16]) -> String {
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex = |range: std::ops::Range<usize>| -> String {
-        bytes[range]
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
-    };
-    format!(
-        "urn:uuid:{}-{}-{}-{}-{}",
-        hex(0..4),
-        hex(4..6),
-        hex(6..8),
-        hex(8..10),
-        hex(10..16)
-    )
-}
-
-/// A new host id, kept for as long as this profile lives.
+/// A new host id, kept for as long as this profile lives: a UUIDv4 URI, the form OpenAI accepts.
 pub fn new_host_id() -> Result<String> {
-    let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).map_err(|cause| CoreError::wrap("host id", cause))?;
-    Ok(host_id_of(bytes))
+    Ok(format!("urn:uuid:{}", crate::ids::random_uuid()?))
 }
 
 /// Whether `id` has the form `new_host_id` gives.
@@ -114,31 +92,7 @@ pub struct Identity {
     pub email: Option<String>,
 }
 
-/// A model on offer, as the picker shows it.
-#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Model {
-    pub slug: String,
-    pub name: String,
-}
-
-/// Why a request came to nothing. Each asks something different of the person.
-#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum Problem {
-    /// Sign in again: the token was refused for good.
-    Connect,
-    /// The plan's or this app's allowance ran out: pause, and offer usage settings.
-    Limit,
-    /// This plan, workspace or region cannot use it.
-    Ineligible,
-    /// The effort asked for is refused by the model; the same body will not work.
-    Unsupported,
-    /// Temporary: the credentials stay.
-    Unavailable,
-    /// The answer named something outside the facts, twice.
-    Unverified,
-}
+pub use kchess_contracts::types::{AiModel as Model, AiProblem as Problem};
 
 /// A failed request: what kind, and the code that said so.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -602,10 +556,6 @@ mod tests {
     /// OpenAI refused a bare random string (`invalid_authorize_request`, `ext_agent_host_id`).
     #[test]
     fn a_host_id_is_a_uuid_uri() {
-        assert_eq!(
-            host_id_of([0xff; 16]),
-            "urn:uuid:ffffffff-ffff-4fff-bfff-ffffffffffff"
-        );
         let id = new_host_id().unwrap();
         assert!(valid_host_id(&id), "{id}");
         assert_ne!(id, new_host_id().unwrap());

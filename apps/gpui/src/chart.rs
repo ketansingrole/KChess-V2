@@ -22,7 +22,7 @@ pub struct ChartPoint {
     pub long: SharedString,
 }
 
-/// `niceTicks`: about `count` round values (1, 2 or 5 × 10ⁿ apart) inside the domain.
+/// About `count` round values (1, 2 or 5 × 10ⁿ apart) inside the domain.
 pub fn nice_ticks((lo, hi): (f64, f64), count: usize) -> Vec<f64> {
     if hi <= lo || count == 0 || !lo.is_finite() || !hi.is_finite() {
         return Vec::new();

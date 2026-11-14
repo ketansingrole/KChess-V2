@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use kchess_service::ServiceConfig;
+use kchess_core::Config;
 use kchess_service::server::{ServeOptions, serve};
 
 /// The default wait after the last client leaves (a window reloading, an app restarting).
@@ -35,7 +35,7 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(2);
         }
     }
-    let (mut profile, mut config, mut idle) = (None, ServiceConfig::default(), IDLE);
+    let (mut profile, mut config, mut idle) = (None, Config::default(), IDLE);
     while let Some(flag) = args.next() {
         let value = args.next();
         match (flag.as_str(), value) {
@@ -64,14 +64,7 @@ fn main() -> std::process::ExitCode {
         eprintln!("kchess-service: --profile is required");
         return std::process::ExitCode::from(2);
     };
-    // The CLI's stack (`apps/cli`): an embedded sign-in overflowed a smaller one in a debug
-    // build, and an overflow here aborts the core for every window and command at once.
-    let runtime = match tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_name("kchess-core")
-        .thread_stack_size(8 * 1024 * 1024)
-        .build()
-    {
+    let runtime = match kchess_service::core_runtime() {
         Ok(runtime) => runtime,
         Err(error) => {
             eprintln!("kchess-service: no runtime: {error}");
@@ -80,7 +73,10 @@ fn main() -> std::process::ExitCode {
     };
     kchess_service::runtime::remove_other_releases();
     let options = ServeOptions {
-        config: config.into_config(profile),
+        config: Config {
+            data_dir: profile,
+            ..config
+        },
         idle,
     };
     match runtime.block_on(serve(options)) {

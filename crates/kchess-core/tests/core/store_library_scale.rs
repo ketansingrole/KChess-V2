@@ -6,9 +6,12 @@ use std::time::{Duration, Instant};
 
 use crate::support;
 
-use kchess_core::store::games::MAX_GAMES;
+use kchess_core::store::{
+    games::{self, MAX_GAMES},
+    insights, reviews, usage,
+};
 use serde_json::{Value, json};
-use support::store::{Store, profile};
+use support::store::{Store, game_page, insights_query, profile};
 
 const ACCOUNTS: [&str; 10] = [
     "Alice", "Bob", "Carol", "Dave", "Erin", "Frank", "Grace", "Heidi", "Ivan", "Judy",
@@ -26,7 +29,9 @@ const SMALL: i64 = 50;
 fn seeded(per_account: i64) -> Store {
     let store = profile();
     // The one-time import runs before the seed, so a later call does not import over it.
-    store.ok("store.games.loadData", vec![]);
+    store
+        .read(|c| games::load_app_data(c.db))
+        .expect("loadData");
     let accounts = ACCOUNTS
         .iter()
         .enumerate()
@@ -76,82 +81,96 @@ fn seeded(per_account: i64) -> Store {
     store
 }
 
-/// A storage call straight to the database (the app's import has already run).
-fn direct(store: &Store, method: &str, args: &[Value]) -> Value {
-    store
-        .db
-        .call(method, args)
-        .unwrap_or_else(|cause| panic!("{method} failed: {cause}"))
-}
+/// A read straight to the database (the app's import has already run).
+type Read = Box<dyn Fn(&Store) -> Value>;
 
-/// The reads the app's pages make of a large library, as (label, method, arguments).
-fn reads() -> Vec<(&'static str, &'static str, Vec<Value>)> {
-    let page = |query: Value| vec![query];
+/// The reads the app's pages make of a large library, as (label, read).
+fn reads() -> Vec<(&'static str, Read)> {
+    let page = |query: Value| -> Read {
+        Box::new(move |store: &Store| {
+            store
+                .read_direct(|c| game_page(c, &query.clone()))
+                .expect("gamePage")
+        })
+    };
     vec![
-        ("loadData", "store.games.loadData", vec![]),
         (
-            "gamePage all",
-            "store.games.gamePage",
-            page(json!({ "offset": 0, "limit": 50 })),
+            "loadData",
+            Box::new(|store: &Store| {
+                store
+                    .read_direct(|c| games::load_app_data(c.db))
+                    .expect("loadData")
+            }),
         ),
+        ("gamePage all", page(json!({ "offset": 0, "limit": 50 }))),
         (
             "gamePage all, deep",
-            "store.games.gamePage",
             page(json!({ "offset": 40_000, "limit": 50 })),
         ),
         (
             "gamePage account+result",
-            "store.games.gamePage",
             page(json!({ "account": "alice", "result": "loss", "offset": 0, "limit": 50 })),
         ),
         (
             "gamePage rated",
-            "store.games.gamePage",
             page(json!({ "rated": true, "offset": 0, "limit": 50 })),
         ),
         (
             "gamePage search",
-            "store.games.gamePage",
             page(json!({ "search": "opponent42", "offset": 0, "limit": 50 })),
         ),
         (
             "gameLibraryOverview",
-            "store.games.gameLibraryOverview",
-            vec![],
+            Box::new(|store: &Store| {
+                store
+                    .read_direct(games::game_library_overview)
+                    .expect("gameLibraryOverview")
+            }),
         ),
         (
             "gameRatingHistory",
-            "store.games.gameRatingHistory",
-            vec![json!("Alice")],
+            Box::new(|store: &Store| {
+                store
+                    .read_direct(|c| games::rating_history(c.db, "Alice"))
+                    .expect("gameRatingHistory")
+            }),
         ),
         (
             "insights",
-            "store.insights.insights",
-            vec![json!({ "account": "Alice" })],
+            Box::new(|store: &Store| {
+                let query = insights_query(&json!({ "account": "Alice" }));
+                store
+                    .read_direct(|c| {
+                        insights::insights(c.host, c.db, &query, kchess_core::time::now_ms() as f64)
+                    })
+                    .expect("insights")
+            }),
         ),
         (
             "gamesToReview",
-            "store.reviewStore.gamesToReview",
-            vec![json!(["Alice", "Bob"]), json!(0), json!(300)],
+            Box::new(|store: &Store| {
+                let accounts = ["Alice".to_string(), "Bob".to_string()];
+                store
+                    .read_direct(|c| reviews::games_to_review(c.db, &accounts, 0.0, 300.0))
+                    .expect("gamesToReview")
+            }),
         ),
-        ("usageReport", "store.usage.usageReport", vec![]),
+        (
+            "usageReport",
+            Box::new(|store: &Store| store.read_direct(usage::usage_report).expect("usageReport")),
+        ),
     ]
 }
 
-/// The median of `runs` timed calls, the first (cold) call, and the response's JSON size.
-fn measure(
-    store: &Store,
-    method: &str,
-    args: &[Value],
-    runs: usize,
-) -> (Duration, Duration, usize) {
+/// The median of `runs` timed reads, the first (cold) read, and the response's JSON size.
+fn measure(store: &Store, read: &Read, runs: usize) -> (Duration, Duration, usize) {
     let start = Instant::now();
-    let value = direct(store, method, args);
+    let value = read(store);
     let cold = start.elapsed();
     let mut times: Vec<Duration> = (0..runs)
         .map(|_| {
             let start = Instant::now();
-            direct(store, method, args);
+            read(store);
             start.elapsed()
         })
         .collect();
@@ -179,7 +198,9 @@ fn a_full_library_answers_every_read_with_a_bounded_response() {
     let store = seeded(MAX_GAMES);
     let total = MAX_GAMES * ACCOUNTS.len() as i64;
     assert_eq!(
-        direct(&store, "store.games.loadData", &[])["gameCount"],
+        store
+            .read_direct(|c| games::load_app_data(c.db))
+            .expect("loadData")["gameCount"],
         json!(total)
     );
     // What the app's pages transfer at 50,000 games, never the library itself.
@@ -197,8 +218,8 @@ fn a_full_library_answers_every_read_with_a_bounded_response() {
         ("gamesToReview", 1024 * 1024),
         ("usageReport", 4 * 1024),
     ];
-    for (label, method, args) in reads() {
-        let value = direct(&store, method, &args);
+    for (label, read) in reads() {
+        let value = read(&store);
         let size = serde_json::to_string(&value).expect("json").len();
         let budget = budgets
             .iter()
@@ -206,13 +227,18 @@ fn a_full_library_answers_every_read_with_a_bounded_response() {
             .map(|(_, budget)| *budget)
             .unwrap_or_else(|| panic!("{label} has no budget"));
         assert!(size <= budget, "{label}: {size} bytes over {budget}");
-        if method == "store.games.gamePage" {
+        if label.starts_with("gamePage") {
             assert_eq!(value["games"].as_array().map(Vec::len), Some(50), "{label}");
         }
     }
 
     // The totals are the filters' own counts over the whole library.
-    let total_of = |query: Value| direct(&store, "store.games.gamePage", &[query])["total"].clone();
+    let total_of = |query: Value| {
+        store
+            .read_direct(|c| game_page(c, &query))
+            .expect("gamePage")["total"]
+            .clone()
+    };
     assert_eq!(total_of(json!({ "offset": 0, "limit": 1 })), json!(total));
     assert_eq!(
         total_of(json!({ "rated": true, "offset": 0, "limit": 1 })),
@@ -237,14 +263,14 @@ fn a_full_library_answers_every_read_with_a_bounded_response() {
             "SELECT COUNT(*) AS n FROM games WHERE account = 'Carol' AND rated = 0 AND winner = color"
         ))
     );
-    let last = direct(
-        &store,
-        "store.games.gamePage",
-        &[json!({ "offset": total - 7, "limit": 50 })],
-    );
+    let last = store
+        .read_direct(|c| game_page(c, &json!({ "offset": total - 7, "limit": 50 })))
+        .expect("gamePage");
     assert_eq!(last["games"].as_array().map(Vec::len), Some(7));
 
-    let overview = direct(&store, "store.games.gameLibraryOverview", &[]);
+    let overview = store
+        .read_direct(games::game_library_overview)
+        .expect("gameLibraryOverview");
     let records = overview["byAccount"]
         .as_object()
         .expect("records by player");
@@ -256,7 +282,7 @@ fn a_full_library_answers_every_read_with_a_bounded_response() {
         assert_eq!(parts.iter().sum::<i64>(), MAX_GAMES, "{name}");
     }
 
-    let usage = direct(&store, "store.usage.usageReport", &[]);
+    let usage = store.read_direct(usage::usage_report).expect("usageReport");
     for name in ACCOUNTS {
         assert_eq!(
             usage["storage"][name.to_lowercase()]["games"],
@@ -296,19 +322,18 @@ fn the_library_aggregates_read_the_summary_index_not_every_game() {
 #[test]
 fn the_games_storage_is_kept_until_the_games_change() {
     let store = seeded(SMALL);
-    let alice =
-        |store: &Store| direct(store, "store.usage.usageReport", &[])["storage"]["alice"].clone();
+    let alice = |store: &Store| {
+        store.read_direct(usage::usage_report).expect("usageReport")["storage"]["alice"].clone()
+    };
     let before = alice(&store);
     assert_eq!(before["games"], json!(SMALL));
     // A second connection's write is not one the core makes: the kept sums still answer.
     store.exec("DELETE FROM games WHERE account = 'Alice' AND id = 'g0000000'");
     assert_eq!(alice(&store), before);
     // A write through the core sums them again.
-    direct(
-        &store,
-        "store.games.saveGames",
-        &[json!("Alice"), json!([]), json!(START), json!(true)],
-    );
+    store
+        .write_direct(|c| games::save_games(c.host, c.db, "Alice", &[], Some(START)))
+        .expect("saveGames");
     let after = alice(&store);
     assert_eq!(after["games"], json!(SMALL - 1));
     assert!(after["bytes"].as_i64() < before["bytes"].as_i64());
@@ -319,8 +344,8 @@ fn the_games_storage_is_kept_until_the_games_change() {
 fn library_scale_probe() {
     let store = seeded(MAX_GAMES);
     eprintln!("{} games", MAX_GAMES * ACCOUNTS.len() as i64);
-    for (label, method, args) in reads() {
-        let (cold, warm, size) = measure(&store, method, &args, 7);
+    for (label, read) in reads() {
+        let (cold, warm, size) = measure(&store, &read, 7);
         eprintln!(
             "{label:<28} cold {:>9.3} ms  warm {:>9.3} ms  {size:>8} bytes",
             cold.as_secs_f64() * 1000.0,

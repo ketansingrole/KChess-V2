@@ -2,10 +2,12 @@
 //! from a start FEN and the moves played since. `cancel` (a restart, a takeback, another position)
 //! stops the search this helper started and drops its move.
 
+use crate::loading::Epoch;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::calls;
-use serde_json::{Value, json};
+use kchess_contracts::check::Moves;
+use kchess_contracts::types::{BestMoveOptions, EngineLevel};
 
 use crate::core::AppCore;
 
@@ -17,7 +19,7 @@ pub struct EngineMove {
     /// Whether Stockfish is installed: unknown until asked.
     pub ready: Option<bool>,
     /// Bumped by each search and by `cancel`, so a late answer from an old search is dropped.
-    generation: u64,
+    generation: Epoch,
     /// This helper's search is still running in the core.
     running: bool,
     search: Option<Task<()>>,
@@ -29,14 +31,13 @@ pub trait HasEngine: 'static + Sized {
 }
 
 impl EngineMove {
-    /// Ask whether Stockfish is installed (`engineReady`).
+    /// Ask whether Stockfish is installed.
     pub fn check<V: HasEngine>(cx: &mut Context<V>) {
         let status = cx
             .global::<AppCore>()
             .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
-            let ready =
-                matches!(status.await, Ok(status) if status["ready"].as_bool() == Some(true));
+            let ready = matches!(status.await, Ok(status) if status.ready);
             let _ = this.update(cx, |view, cx| {
                 view.engine().ready = Some(ready);
                 cx.notify();
@@ -56,23 +57,26 @@ impl EngineMove {
         cx: &mut Context<V>,
     ) {
         let engine = view.engine();
-        engine.generation += 1;
-        let mine = engine.generation;
+        let mine = engine.generation.next();
         engine.running = true;
         // This search replaces any before it: whether one is thinking, and an earlier failure,
         // are its own. A quiet search after a busy one left `thinking` on for good.
         engine.thinking = busy;
         engine.error = None;
         let search = cx.global::<AppCore>().request(calls::BestMove {
-            moves: json!(moves),
-            level: json!("max"),
-            options: Some(json!({ "fen": fen, "movetime": movetime })),
+            moves: Moves(moves.to_vec()),
+            level: EngineLevel::Max,
+            options: Some(BestMoveOptions {
+                fen: Some(fen.to_string()),
+                movetime: Some(movetime.into()),
+                ..BestMoveOptions::default()
+            }),
         });
         let task = cx.spawn(async move |this, cx| {
             let reply = search.await;
             let _ = this.update(cx, |view, cx| {
                 let engine = view.engine();
-                if engine.generation != mine {
+                if !engine.generation.is_current(mine) {
                     return;
                 }
                 engine.running = false;
@@ -80,7 +84,7 @@ impl EngineMove {
                     engine.thinking = false;
                 }
                 match reply {
-                    Ok(Value::String(best)) if !best.is_empty() => done(view, best, cx),
+                    Ok(best) if !best.is_empty() => done(view, best, cx),
                     Ok(_) => {}
                     Err(cause) if !cause.aborted => {
                         crate::log::write(
@@ -100,7 +104,7 @@ impl EngineMove {
 
     /// Stop this helper's search, if it is still running, and forget its answer.
     pub fn cancel(&mut self, cx: &mut App) {
-        self.generation += 1;
+        self.generation.invalidate();
         self.search = None;
         self.thinking = false;
         self.error = None;

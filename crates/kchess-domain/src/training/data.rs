@@ -21,9 +21,7 @@ pub struct Data {
 }
 
 /// The constants; an error only if the embedded file is malformed.
-pub fn data() -> Result<&'static Data, String> {
-    static DATA: OnceLock<Option<Data>> = OnceLock::new();
-    DATA.get_or_init(|| serde_json::from_str(TRAINING_JSON).ok())
-        .as_ref()
-        .ok_or_else(|| "training data is not valid JSON".to_string())
+pub fn data() -> &'static Data {
+    static DATA: OnceLock<Data> = OnceLock::new();
+    DATA.get_or_init(|| crate::embedded::parse("training tables", TRAINING_JSON))
 }

@@ -31,18 +31,25 @@ survives or times out. Mutants that were already missed in untouched code are th
 so a change never has to pay off the whole backlog at once.
 
 CI first counts a pull request's mutants (`cargo xtask mutants --plan`, which builds nothing),
-then splits them over a runner per 15, up to 8 (`--shard k/n`), one at a time on each, in the
-checkout itself (`--in-place`), built incrementally from the crates.io dependencies each push to
-`main` keeps built, and gives each runner half an hour: a change whose mutants take longer is
-too large for one pull request. A change with no mutants starts no runner. The app's mutants (`apps/gpui`) each rebuild the app, so pull requests leave them
-out; the weekly run's `gpui` job tests the mutants of the lines the past week changed in the app.
+then splits them over a runner per 15, up to 20, as many as the account runs at once
+(`--shard k/n`), one at a time on each, in the checkout itself (`--in-place`), built
+incrementally from the crates.io dependencies each push to `main` keeps built, and gives each
+runner up to six hours, GitHub's limit, so a large refactor's mutants are tested too. A change
+with no mutants starts no runner. The app's mutants (`apps/gpui`) each rebuild the app, so
+`cargo xtask mutants` leaves them out of a run of changed lines (pull requests, the pre-push hook);
+`--app` tests the app's alone, as the weekly run's `gpui` job does for the lines the past week
+changed in the app.
 
 The pre-push hook (`cargo xtask install-hooks`) runs it before every push of a branch, on the
 lines new since that branch's last push, and refuses the push while a mutant survives: a survivor
-costs minutes here rather than a whole CI run. It tests them as CI does, one at a time in place,
-but in the checkout's own mutants tree (`.data/mutants-tree`, a detached worktree set to the pushed
-commit), never in the files you are editing; the tree stays built, so a push rebuilds only what
-changed since the last one. A second push from the same checkout waits for the first, and whatever
+costs minutes here rather than a whole CI run. It tests them in the checkout's own mutants tree
+(`.data/mutants-tree`, a detached worktree set to the pushed commit), never in the files you are
+editing; the tree stays built, so a push rebuilds only what changed since the last one. It counts
+them first (as `--plan` does): below 30 it tests them as CI does, one at a time in place;
+from there, half the CPUs' worth at once (at most six), each job in cargo-mutants' own copy of the
+tree with its build (`--copy-target`, cloned rather than copied on APFS), so each rebuilds only the
+workspace's crates, not their dependencies: 25 kchess-domain mutants took 174 s five at once
+against 294 s in place. A second push from the same checkout waits for the first, and whatever
 an interrupted run left in the tree is reset before the next. Results land in the checkout's
 `mutants.out/`. It skips a push of anything but a clean HEAD, and
 clones without cargo-mutants; `KCHESS_SKIP_PRE_PUSH=1 git push …` skips it on purpose. When CI's
@@ -64,9 +71,9 @@ moved code still is a change. Commit a move first: an untracked file is compared
    CLI or service test over a scratch profile, or a local fixture (the CLI's tests serve a
    stand-in Lichess and use the core's scripted engine, `kchess-fake-uci`).
 2. When the code is hard to observe, make it observable rather than test around it: the voice
-   helper binds libvosk from any symbol source, so its tests bind in-process fakes; the CLI's
-   configuration takes the environment as a parameter, and its host answers take the browser
-   opener.
+   helper binds libvosk from any symbol source, so its tests bind in-process fakes; the profile's
+   layout (`kchess_service::Layout`) takes the environment as a parameter, and the CLI's host
+   answers take the browser opener.
 3. When no test can tell the mutant apart because the program behaves the same (an *equivalent*
    mutant), exclude it in `.cargo/mutants.toml` with the reason. Never exclude one because a
    test is missing. Prefer exclusions by function name to line numbers, which move.
@@ -86,8 +93,9 @@ These stay in the reports on purpose; each is listed with the reason.
 
 - **Windows-only code** (`kchess-service`'s named pipes and owner checks, `launch`'s creation
   flags): not compiled on Linux or macOS, so a mutant there builds and passes on them. They can
-  only be caught by a run on Windows. Likewise the CLI's import of the old Mac database
-  (`config_from`'s `legacy_database_path`) is caught only on macOS, where its test checks it.
+  only be caught by a run on Windows. Likewise the import of the old Mac database
+  (`Layout::config`'s `legacy_database_path`, kchess-service) is caught only on macOS, where its
+  test checks it.
 - **Stack sizes** (`kchess-service`'s and the CLI's 8 MiB core threads): a smaller stack changes
   nothing until a call overflows it, and no deterministic test overflows a 1 MiB stack on
   Linux or macOS (the case it guards, an embedded sign-in in a Windows debug build, needs
@@ -95,17 +103,14 @@ These stay in the reports on purpose; each is listed with the reason.
 - **The service's slow-reader cleanup** (`server.rs`, `handle`'s last `if`): whether a writer
   stuck on a client that stopped reading is cancelled now or left until the client reads again,
   the client receives the same frames and the same end.
-- **Per-window `suspend`** (`server.rs`): the difference from the core-wide `suspend` shows
+- **Per-window `suspend`** (`server.rs`): the difference from stopping every window's work shows
   only in an engine search or a puzzle download of another window.
 - **The CLI's own list of saved games** (`play.rs`, `written`): it only feeds the Game history
   rules within one run, which find an entry by its id with or without the duplicates a mutant
   leaves; the saved library is the same.
-- **How the CLI's `review` recognises its review** (`review.rs`, `run`'s `ours`): by its moves
-  and its start position; one run asks for one review, so no other review's update arrives to
-  be mistaken for it.
 - **The CLI's `close` and `open_browser`**: the process exits right after `close`, with the
-  core's writes already on disk; `open_browser` starts the desktop's opener, which a test must
-  not do.
+  core's writes already on disk (excluded in `.cargo/mutants.toml`); `open_browser` starts the
+  desktop's opener, which a test must not do.
 - **The AppImage step's binding** (`package/linux.rs`, `appimage`): it hands the real pins, the
   `target/package` cache and `download` to `appimage_with`, which its test runs whole with a
   stand-in appimagetool. The binding downloads from GitHub and runs the real tool, so only
@@ -119,5 +124,7 @@ These stay in the reports on purpose; each is listed with the reason.
 - **The tooling's other bindings and tool runs** (xtask): the steps of `check` that run cargo
   over the workspace, what talks to GitHub through `gh`, the platform packagers (snapcraft and
   the macOS tools), and the bindings of the real environment to the functions their tests run
-  whole (`engines::run_with`, `update_key::sign_with`, `release::metadata`, `voice::outdated`).
+  whole (`engines::run_with`, `update_key::sign_with`, `release::metadata`, `voice::outdated`,
+  `app::startable`, `mutants::warm_commands`, `check::scope_report`), and `release-version`,
+  which rewrites the repository's version and notes from origin's tags.
   Each is excluded in `.cargo/mutants.toml`, naming the CI job or command that runs it.

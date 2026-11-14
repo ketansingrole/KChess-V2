@@ -1,0 +1,1 @@
+{"kind":"opening","fen":"rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[P] w KQkq - 0 3","fetchedAt":1000,"games":[],"moves":[{"uci":"P@e4","san":"P@e4","white":5,"draws":0,"black":1},{"uci":"b1c3","san":"Nc3","white":9,"draws":1,"black":3}],"cached":false,"stale":false}

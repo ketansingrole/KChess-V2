@@ -4241,6 +4241,7 @@ dependencies = [
  "kchess-domain",
  "kchess-games",
  "kchess-hack",
+ "kchess-host",
  "kchess-service",
  "serde_json",
  "tempfile",
@@ -4264,15 +4265,17 @@ dependencies = [
  "aes-gcm",
  "base64 0.23.1",
  "bytes",
- "dirs 7.0.0",
  "flate2",
  "futures-util",
  "getrandom 0.4.3",
  "kchess-contracts",
+ "kchess-delta",
  "kchess-domain",
  "kchess-hack",
+ "kchess-host",
+ "kchess-testkit",
+ "kchess-voice",
  "keyring",
- "regex",
  "reqwest",
  "rusqlite",
  "rustix",
@@ -4293,11 +4296,14 @@ dependencies = [
 name = "kchess-delta"
 version = "2026.11.7"
 dependencies = [
+ "base64 0.23.1",
  "kchess-hack",
  "qbsdiff",
+ "ring",
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "tempfile",
 ]
 
 [[package]]
@@ -4305,6 +4311,7 @@ name = "kchess-domain"
 version = "2026.11.7"
 dependencies = [
  "flate2",
+ "kchess-contracts",
  "kchess-hack",
  "memchr",
  "regex",
@@ -4313,7 +4320,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "shakmaty",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4321,6 +4327,7 @@ name = "kchess-games"
 version = "2026.11.7"
 dependencies = [
  "getrandom 0.4.3",
+ "kchess-contracts",
  "kchess-domain",
  "kchess-hack",
  "serde",
@@ -4349,7 +4356,9 @@ dependencies = [
  "kchess-domain",
  "kchess-games",
  "kchess-hack",
+ "kchess-host",
  "kchess-service",
+ "kchess-testkit",
  "nix",
  "notify-rust",
  "objc2 0.6.5",
@@ -4360,6 +4369,7 @@ dependencies = [
  "resvg 0.49.0",
  "ring",
  "rodio",
+ "rusqlite",
  "rust-embed",
  "rustix",
  "serde",
@@ -4390,6 +4400,7 @@ dependencies = [
  "fastrand",
  "flate2",
  "foldhash",
+ "form_urlencoded",
  "futures-channel",
  "futures-core",
  "futures-io",
@@ -4450,12 +4461,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "kchess-host"
+version = "2026.11.7"
+dependencies = [
+ "dirs 7.0.0",
+ "kchess-hack",
+ "regex",
+ "url",
+]
+
+[[package]]
 name = "kchess-service"
 version = "2026.11.7"
 dependencies = [
  "getrandom 0.4.3",
+ "kchess-contracts",
  "kchess-core",
+ "kchess-delta",
  "kchess-hack",
+ "kchess-host",
+ "kchess-testkit",
  "rustix",
  "serde",
  "serde_json",
@@ -4463,6 +4488,14 @@ dependencies = [
  "tempfile",
  "tokio",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "kchess-testkit"
+version = "2026.11.7"
+dependencies = [
+ "kchess-hack",
+ "serde_json",
 ]
 
 [[package]]
@@ -9960,6 +9993,8 @@ dependencies = [
  "image",
  "kchess-delta",
  "kchess-hack",
+ "kchess-testkit",
+ "kchess-voice",
  "lzma-rust2",
  "ring",
  "serde_json",

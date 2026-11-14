@@ -1,23 +1,26 @@
 //! The library snapshot (`library`), its readers, and the studies-table migration.
-//! Split from the library store; bodies are unchanged. Named `library_import` because
-//! `store::import` already owns the JSON-backup/legacy-database profile migration.
+//! Named `library_import` because `store::import` already owns the JSON-backup/legacy-database profile migration.
 
+use kchess_contracts::types::{
+    Drill, JoinedTournament, Library, PlayedGame, RepertoireMisses, RepertoireSchedule,
+    SessionDocument, SessionKind, Sessions, Study,
+};
 use rusqlite::{Connection, params};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::StoreContext;
 use super::documents::{
     DAMAGED_STUDIES, decode_archived_game_text, decode_mistakes_text, parse_text, read_document,
     read_document_text, stored_studies, write_document,
 };
-use super::json_codec::{js_json, utf16_len};
-use super::library::{
-    JOINED, MISSES, MISTAKES, SCHEDULE, SESSION_KINDS, STUDIES, db_err, misc, transaction, truthy,
-};
-use super::studies::id_of;
-use crate::error::{CoreError, Result};
+use super::library::{JOINED, MISSES, MISTAKES, SCHEDULE, STUDIES};
+use super::sql::{Sql as _, transaction};
+use super::studies::{Stored, study_text};
 use crate::host::{Host, Level};
+use kchess_contracts::error::{CoreError, Result};
+use kchess_domain::js::utf16_len;
 use kchess_domain::library::MAX_STUDIES;
+use kchess_domain::misc::value::J;
 
 /// Migrate an earlier release's document atomically, retaining it unchanged on any failure.
 pub(crate) fn migrate_studies(db: &Connection) -> Result<()> {
@@ -41,18 +44,18 @@ pub(crate) fn migrate_studies(db: &Connection) -> Result<()> {
     let work = || {
         let count: i64 = db
             .query_row("SELECT COUNT(*) FROM studies", [], |row| row.get(0))
-            .map_err(db_err)?;
+            .sql()?;
         if count != 0 {
             return Err(CoreError::new(DAMAGED_STUDIES));
         }
         for (position, study) in items.iter().enumerate() {
-            let body = js_json(study);
+            let body = study_text(study);
             let units = utf16_len(&body) as i64;
             db.execute(
                 "INSERT INTO studies (id, body, position, textUnits) VALUES (?1, ?2, ?3, ?4)",
-                params![id_of(study), body, position as i64, units],
+                params![study.id, body, position as i64, units],
             )
-            .map_err(db_err)?;
+            .sql()?;
         }
         write_document(db, STUDIES, &json!({ "version": 3 }), "")?;
         Ok(())
@@ -64,26 +67,46 @@ pub(crate) fn migrate_studies(db: &Connection) -> Result<()> {
     }
 }
 
-pub(crate) fn read_studies(db: &Connection) -> Result<Vec<Value>> {
+pub(crate) fn read_studies(db: &Connection) -> Result<Vec<Study>> {
     migrate_studies(db)?;
+    Ok(read_study_rows(db, StudyBodies::All)?
+        .into_iter()
+        .filter_map(Stored::into_study)
+        .collect())
+}
+
+/// Which stored studies a read decodes; the rest are their id alone.
+pub(crate) enum StudyBodies<'a> {
+    All,
+    /// Only the study with this id (none: no study at all).
+    Only(Option<&'a str>),
+}
+
+/// The `studies` table in order. A damaged row, one stored under another id, or more studies
+/// than the library holds refuses the whole read, so no edit can drop what it could not read.
+pub(crate) fn read_study_rows(db: &Connection, bodies: StudyBodies) -> Result<Vec<Stored>> {
+    let (all, target) = match bodies {
+        StudyBodies::All => (true, None),
+        StudyBodies::Only(target) => (false, target),
+    };
     let mut statement = db
-        .prepare("SELECT id, body FROM studies ORDER BY position")
-        .map_err(db_err)?;
+        .prepare(
+            "SELECT id, CASE WHEN ?1 OR id = ?2 THEN body ELSE NULL END FROM studies
+             ORDER BY position",
+        )
+        .sql()?;
     let rows = statement
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        .query_map(params![all, target], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
         })
-        .map_err(db_err)?;
+        .sql()?;
     let mut items = Vec::new();
     for row in rows {
-        let (id, body) = row.map_err(db_err)?;
-        let raw = parse_text(&body).ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
-        let study = kchess_domain::library::decode_study(&raw)
-            .ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
-        if id_of(&study) != Some(id.as_str()) {
-            return Err(CoreError::new(DAMAGED_STUDIES));
-        }
-        items.push(study);
+        let (id, body) = row.sql()?;
+        items.push(match body {
+            Some(body) => Stored::Read(decode_study_row(&id, &body)?),
+            None => Stored::Unread(id),
+        });
     }
     if items.len() > MAX_STUDIES {
         return Err(CoreError::new(DAMAGED_STUDIES));
@@ -91,50 +114,65 @@ pub(crate) fn read_studies(db: &Connection) -> Result<Vec<Value>> {
     Ok(items)
 }
 
-pub(crate) fn read_mistakes(db: &Connection) -> Result<Vec<Value>> {
+fn decode_study_row(id: &str, body: &str) -> Result<Study> {
+    let damaged = || CoreError::new(DAMAGED_STUDIES);
+    let raw = parse_text(body).ok_or_else(damaged)?;
+    let study = kchess_domain::library::decode_study(&raw).ok_or_else(damaged)?;
+    if study.id != id {
+        return Err(damaged());
+    }
+    Ok(study)
+}
+
+pub(crate) fn read_mistakes(db: &Connection) -> Result<Vec<Drill>> {
     Ok(read_document_text(db, MISTAKES)?
         .and_then(|body| decode_mistakes_text(&body))
         .unwrap_or_default())
 }
 
-pub(crate) fn read_misses(host: &dyn Host, db: &Connection) -> Result<Value> {
+pub(crate) fn read_misses(host: &dyn Host, db: &Connection) -> Result<RepertoireMisses> {
     let raw = read_document(host, db, MISSES)?.unwrap_or(Value::Null);
-    misc("decodeRepertoireMisses", vec![raw])
+    Ok(kchess_domain::misc::documents::decode_repertoire_misses(
+        &J::from(&raw),
+    ))
 }
 
 /// The repertoire schedule's lines, `key` → line → card; none in a profile from before it.
-pub(crate) fn read_schedule_lines(host: &dyn Host, db: &Connection) -> Result<Map<String, Value>> {
+pub(crate) fn read_schedule_lines(host: &dyn Host, db: &Connection) -> Result<RepertoireSchedule> {
     let raw = read_document(host, db, SCHEDULE)?.unwrap_or(Value::Null);
     Ok(kchess_domain::training::repetition::decode_schedule(&raw))
 }
 
-pub(crate) fn read_joined(host: &dyn Host, db: &Connection) -> Result<Vec<Value>> {
+pub(crate) fn read_joined(host: &dyn Host, db: &Connection) -> Result<Vec<JoinedTournament>> {
     let raw = read_document(host, db, JOINED)?.unwrap_or(Value::Null);
-    match misc("decodeJoinedTournaments", vec![raw])? {
-        Value::Array(entries) => Ok(entries),
-        _ => Ok(Vec::new()),
-    }
+    let decoded = kchess_domain::misc::documents::decode_joined_tournaments(&J::from(&raw));
+    Ok(serde_json::from_value(decoded.into_value()).unwrap_or_default())
 }
 
-/// `readSession(kind)`: the decoded session, or null.
-pub(crate) fn read_session(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value> {
-    let raw = read_document(host, db, &format!("session:{kind}"))?.unwrap_or(Value::Null);
-    misc("decodeStoredSession", vec![json!(kind), raw])
+/// The decoded session, none when there is none (or it is no longer one of its kind).
+pub(crate) fn read_session(
+    host: &dyn Host,
+    db: &Connection,
+    kind: SessionKind,
+) -> Result<Option<SessionDocument>> {
+    let raw =
+        read_document(host, db, &format!("session:{}", kind.as_str()))?.unwrap_or(Value::Null);
+    Ok(SessionDocument::decode(kind, &J::from(&raw)))
 }
 
 /// The played games, newest first; a game that no longer replays is skipped.
-pub(crate) fn read_games(host: &dyn Host, db: &Connection) -> Result<Vec<Value>> {
+pub(crate) fn read_games(host: &dyn Host, db: &Connection) -> Result<Vec<PlayedGame>> {
     let mut statement = db
         .prepare("SELECT id, body FROM archived_games ORDER BY seq DESC")
-        .map_err(db_err)?;
+        .sql()?;
     let rows = statement
         .query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
-        .map_err(db_err)?;
+        .sql()?;
     let mut games = Vec::new();
     for row in rows {
-        let (id, body) = row.map_err(db_err)?;
+        let (id, body) = row.sql()?;
         match decode_archived_game_text(&body) {
             Some(game) => games.push(game),
             None => host.log(
@@ -150,7 +188,7 @@ pub(crate) fn read_games(host: &dyn Host, db: &Connection) -> Result<Vec<Value>>
 /// `library(now)` as the store answers it: the snapshot read last, when no row has changed since,
 /// else read afresh. Every frontend reads the whole library to start, and pages read it again to
 /// resume their sessions; reading it decodes every study and replays every played game.
-pub fn cached_library(ctx: &StoreContext, now: f64) -> Result<Value> {
+pub fn cached_library(ctx: &StoreContext, now: f64) -> Result<Library> {
     let changes = ctx.db.total_changes();
     let mut snapshot = match ctx.cache.library(changes) {
         Some(snapshot) => snapshot,
@@ -162,25 +200,22 @@ pub fn cached_library(ctx: &StoreContext, now: f64) -> Result<Value> {
             snapshot
         }
     };
-    if let Some(Value::Array(joined)) = snapshot.get_mut("joinedTournaments") {
-        joined.retain(|entry| until_after(entry, now));
-    }
+    snapshot
+        .joined_tournaments
+        .retain(|entry| entry.until > now);
     Ok(snapshot)
 }
 
 /// `library(now)`: the whole snapshot.
-pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Value> {
-    let mut sessions = Map::new();
-    for kind in SESSION_KINDS {
-        let value = read_session(host, db, kind)?;
-        if truthy(Some(&value)) {
-            sessions.insert(kind.to_string(), value);
+pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Library> {
+    let mut sessions = Sessions::default();
+    for &kind in SessionKind::ALL {
+        if let Some(session) = read_session(host, db, kind)? {
+            sessions.insert(kind, session);
         }
     }
-    let joined: Vec<Value> = read_joined(host, db)?
-        .into_iter()
-        .filter(|entry| until_after(entry, now))
-        .collect();
+    let mut joined = read_joined(host, db)?;
+    joined.retain(|entry| entry.until > now);
     let (studies, study_error) = match read_studies(db) {
         Ok(studies) => (studies, None),
         Err(error) if error.message == DAMAGED_STUDIES => {
@@ -189,25 +224,14 @@ pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Value> {
         }
         Err(error) => return Err(error),
     };
-    let mut snapshot = json!({
-        "studies": studies,
-        "games": read_games(host, db)?,
-        "mistakes": read_mistakes(db)?,
-        "sessions": Value::Object(sessions),
-        "joinedTournaments": joined,
-        "repertoireMisses": read_misses(host, db)?,
-        "repertoireSchedule": Value::Object(read_schedule_lines(host, db)?),
-    });
-    if let Some(error) = study_error {
-        snapshot["studyError"] = json!(error);
-    }
-    Ok(snapshot)
-}
-
-/// `entry.until > now`
-pub(crate) fn until_after(entry: &Value, now: f64) -> bool {
-    entry
-        .get("until")
-        .and_then(Value::as_f64)
-        .is_some_and(|until| until > now)
+    Ok(Library {
+        studies,
+        games: read_games(host, db)?,
+        mistakes: read_mistakes(db)?,
+        sessions,
+        joined_tournaments: joined,
+        repertoire_misses: read_misses(host, db)?,
+        repertoire_schedule: read_schedule_lines(host, db)?,
+        study_error,
+    })
 }

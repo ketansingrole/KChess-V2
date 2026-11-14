@@ -5,16 +5,10 @@
 
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
+use kchess_delta::file_digest;
 
 use crate::discovery;
-use crate::protocol::{self, hex};
-
-fn digest(path: &Path) -> std::io::Result<String> {
-    let mut hash = Sha256::new();
-    hash.update(std::fs::read(path)?);
-    Ok(hex(&hash.finalize()))
-}
+use crate::protocol;
 
 /// This release's copy of `bundled` in the runtime folder, made (or remade, if it differs) from
 /// the app's own binary. The copy is written under a temporary name and renamed into place, so
@@ -31,8 +25,8 @@ pub(crate) fn install_into(bundled: &Path, dir: &Path) -> std::io::Result<PathBu
         .file_name()
         .ok_or_else(|| std::io::Error::other("the service binary has no name"))?;
     let target = dir.join(name);
-    let wanted = digest(bundled)?;
-    if digest(&target).is_ok_and(|found| found == wanted) {
+    let wanted = file_digest(bundled)?;
+    if file_digest(&target).is_ok_and(|found| found == wanted) {
         return Ok(target);
     }
     std::fs::create_dir_all(dir)?;
@@ -42,7 +36,7 @@ pub(crate) fn install_into(bundled: &Path, dir: &Path) -> std::io::Result<PathBu
         std::process::id()
     ));
     std::fs::copy(bundled, &temporary)?;
-    if digest(&temporary)? != wanted {
+    if file_digest(&temporary)? != wanted {
         let _ = std::fs::remove_file(&temporary);
         return Err(std::io::Error::other("the copied service binary differs"));
     }

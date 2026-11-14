@@ -10,7 +10,7 @@ use serde::de::{DeserializeOwned, Error};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
-/// A string of at most `MAX` UTF-16 code units (the length JavaScript counts).
+/// A string of at most `MAX` UTF-16 code units.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Text<const MAX: usize>(pub String);
 

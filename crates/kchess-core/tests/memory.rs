@@ -14,13 +14,13 @@ mod support;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::time::Duration;
 
 use kchess_core::connection::ClientInfo;
-use kchess_core::{Config, Core, Host, Level};
-use serde_json::{Value, json};
+use kchess_core::test_host::TestHost;
+use kchess_core::{Config, Core};
+use serde_json::json;
 
 /// Counts the bytes live on the heap.
 struct Counting;
@@ -74,14 +74,6 @@ static ALLOCATOR: Counting = Counting;
 static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
-/// Drops what it is sent, so the host itself keeps nothing (`support::Recording` keeps all).
-struct Quiet;
-
-impl Host for Quiet {
-    fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-    fn emit(&self, _event: &str, _payload: Value) {}
-}
 
 /// The live heap once background work has settled: once no more than `tasks` tasks are alive (or
 /// after `TASKS_SETTLE`), the lowest of a few samples a moment apart, so a task still finishing
@@ -219,23 +211,19 @@ fn kib(bytes: isize) -> String {
 }
 
 fn open(dir: &Path) -> Core {
-    Core::open(Config::new(dir.to_path_buf()), Arc::new(Quiet)).expect("the profile opens")
+    Core::open(Config::new(dir.to_path_buf()), TestHost::quiet()).expect("the profile opens")
 }
 
 /// A core whose engine is the fake engine in `search` mode, with assistance allowed.
 async fn with_engine(dir: &Path) -> Core {
     let core = open(dir);
     core.call("loadData", vec![]).await.expect("load");
-    core.call("online.resume", vec![]).await.expect("resume");
+    core.call("resumeOnline", vec![]).await.expect("resume");
     let engine = support::engine_copy(dir, "search");
-    core.call_sync("engine.trust", vec![json!(engine)])
+    core.call("trustEnginePath", vec![json!(engine)])
+        .await
         .expect("trusted engine");
-    let mut settings = core
-        .call_sync("store.games.getSettings", vec![])
-        .expect("settings");
-    settings["enginePath"] = json!(engine);
-    core.call_sync("store.games.saveSettings", vec![settings])
-        .expect("save settings");
+    support::save_engine_path(&core, &engine);
     core
 }
 
@@ -248,8 +236,8 @@ async fn clients_connecting_and_leaving() {
     measure("client connect/leave", 50, 5, 200, 64, |_| async {
         let id = core.connect(ClientInfo::app());
         core.focus(id, true);
-        let _ = core.call_client(id, "loadData", vec![]).await;
-        let _ = core.call_client(id, "viewPreferences", vec![]).await;
+        let _ = core.call_as(id, "loadData", vec![]).await;
+        let _ = core.call_as(id, "viewPreferences", vec![]).await;
         core.disconnect(id);
     })
     .await;
@@ -284,7 +272,7 @@ async fn analysing_clients_leaving() {
     let core = with_engine(dir.path()).await;
     measure("analysing client leaves", 10, 5, 20, 256, |_| async {
         let id = core.connect(ClientInfo::app());
-        core.call_client(
+        core.call_as(
             id,
             "startAnalysis",
             vec![json!({"fen": START, "lines": 1, "infinite": true})],

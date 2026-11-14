@@ -1,8 +1,11 @@
-//! One visible position's engine search (`usePositionEngine`), for boards that are not the
+//! One visible position's engine search, for boards that are not the
 //! analysis board: a new request replaces the search running (stopping it in the engine, not only
 //! dropping its answers), and only updates for the request asked last are kept.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::check;
+use kchess_contracts::types::{AnalysisRequest, AnalysisUpdate, EngineLine};
+use kchess_domain::misc::value::J;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -22,7 +25,7 @@ fn next_client() -> u64 {
     NEXT_CLIENT.fetch_add(1, Ordering::Relaxed) + 1
 }
 
-/// The context an update must carry to belong to a request (`analysisContext`).
+/// The context an update must carry to belong to a request.
 fn context_of(request: &Value) -> String {
     let fen = request["fen"].as_str().unwrap_or_default();
     let root = request["rootFen"].as_str().unwrap_or(fen);
@@ -36,9 +39,9 @@ pub struct PositionEngine {
     wanted: Option<Value>,
     context: String,
     client_id: u64,
-    latest_id: f64,
-    /// The latest update for the search asked for (`AnalysisUpdate`).
-    pub update: Option<Value>,
+    latest_id: u64,
+    /// The latest update for the search asked for.
+    pub update: Option<AnalysisUpdate>,
     pub error: Option<String>,
     pub busy: bool,
     _start: Option<Task<()>>,
@@ -72,7 +75,7 @@ impl PositionEngine {
     ) {
         let id = next_client();
         self.client_id = id;
-        self.latest_id = 0.;
+        self.latest_id = 0;
         self.context = request.as_ref().map(context_of).unwrap_or_default();
         self.wanted = request.clone();
         self.update = None;
@@ -106,14 +109,21 @@ impl PositionEngine {
                 (engine(owner).client_id == id).then(|| {
                     let mut request = request;
                     request["clientId"] = json!(id);
-                    cx.global::<AppCore>()
-                        .request(calls::StartAnalysis { request })
+                    let request = check::<AnalysisRequest>(J::from(&request))
+                        .map_err(kchess_contracts::CoreError::new)?;
+                    Ok(cx
+                        .global::<AppCore>()
+                        .request(calls::StartAnalysis { request }))
                 })
             });
             let Ok(Some(start)) = start else {
                 return;
             };
-            if let Err(cause) = start.await {
+            let started = match start {
+                Ok(start) => start.await.map(drop),
+                Err(cause) => Err(cause),
+            };
+            if let Err(cause) = started {
                 let _ = this.update(cx, |owner, cx| {
                     let engine = engine(owner);
                     if engine.client_id != id {
@@ -133,35 +143,33 @@ impl PositionEngine {
     }
 
     /// An `engine:analysis` event: kept, and true, when it is for the search asked for.
-    pub fn receive(&mut self, update: &Value) -> bool {
+    pub fn receive(&mut self, update: &AnalysisUpdate) -> bool {
         let Some(wanted) = &self.wanted else {
             return false;
         };
-        let id = update["id"].as_f64().unwrap_or_default();
-        if update["clientId"].as_f64() != Some(self.client_id as f64)
-            || update["fen"] != wanted["fen"]
-            || update["context"].as_str() != Some(self.context.as_str())
-            || id < self.latest_id
+        if update.client_id != i64::try_from(self.client_id).ok()
+            || wanted["fen"].as_str() != Some(update.fen.as_str())
+            || update.context != self.context
+            || update.id < self.latest_id
         {
             return false;
         }
-        self.latest_id = id;
-        self.error = update["error"].as_str().map(str::to_string);
+        self.latest_id = update.id;
+        self.error = update.error.clone();
         self.update = self.error.is_none().then(|| update.clone());
-        self.busy = update["done"] != json!(true);
+        self.busy = !update.done;
         true
     }
 
     /// The best line of the latest update.
-    pub fn best(&self) -> Option<&Value> {
-        self.update.as_ref()?["lines"].as_array()?.first()
+    pub fn best(&self) -> Option<&EngineLine> {
+        self.update.as_ref()?.lines.first()
     }
 
-    pub fn lines(&self) -> Vec<Value> {
+    pub fn lines(&self) -> &[EngineLine] {
         self.update
             .as_ref()
-            .and_then(|update| update["lines"].as_array().cloned())
-            .unwrap_or_default()
+            .map_or(&[], |update| update.lines.as_slice())
     }
 }
 
@@ -187,23 +195,25 @@ mod tests {
             ..PositionEngine::default()
         };
         let context = engine.context.clone();
-        let update = |client: u64, id: f64, fen: &str| {
-            json!({
+        let update = |client: u64, id: u64, fen: &str| {
+            serde_json::from_value(json!({
                 "clientId": client, "id": id, "fen": fen, "context": context,
-                "depth": 10, "lines": [{ "pv": ["e7e5"], "cp": 20 }], "done": false,
-            })
+                "depth": 10.0, "lines": [{ "rank": 1, "depth": 10.0, "pv": ["e7e5"], "cp": 20.0 }],
+                "done": false, "engine": "stockfish",
+            }))
+            .expect("an update")
         };
         let (stale, other, mine) = (
-            update(6, 1., fen),
-            update(7, 1., "8/8/8/8/8/8/8/8 w"),
-            update(7, 2., fen),
+            update(6, 1, fen),
+            update(7, 1, "8/8/8/8/8/8/8/8 w"),
+            update(7, 2, fen),
         );
         assert!(!engine.receive(&stale));
         assert!(!engine.receive(&other));
         assert!(engine.receive(&mine));
         assert!(engine.busy);
-        assert_eq!(engine.best().unwrap()["cp"], json!(20));
+        assert_eq!(engine.best().unwrap().cp, Some(20.));
         // An older update of the same search arriving late is dropped.
-        assert!(!engine.receive(&update(7, 1., fen)));
+        assert!(!engine.receive(&update(7, 1, fen)));
     }
 }

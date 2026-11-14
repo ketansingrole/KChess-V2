@@ -1,8 +1,9 @@
 //! Exporting a game: the Export menu under a game's moves, for an animated GIF
 //! of the game, a PNG of the position shown, a PGN file, or the PGN or position's FEN copied; and
-//! saving an export (`saveExport`), where the person picks the place, starting in Downloads.
+//! saving an export, where the person picks the place, starting in Downloads.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::{OptionalAccount, PgnText};
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,11 +16,8 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::json;
-use shakmaty::Color;
 
 use crate::assets::icon;
-use crate::game::rules;
 use crate::game_image::{self, ImageOptions};
 use crate::settings::SettingsHandle;
 
@@ -83,26 +81,7 @@ pub fn game_file_name(white: &str, black: &str) -> String {
         .collect()
 }
 
-/// The game an Export menu saves (`ExportGame`'s props).
-#[derive(Clone)]
-pub struct GameExport {
-    pub variant: String,
-    pub fen: String,
-    pub moves: Vec<String>,
-    pub orientation: Color,
-    pub white: String,
-    pub black: String,
-    /// The position shown, for the PNG; the last one by default.
-    pub ply: Option<usize>,
-    pub result: Option<String>,
-    /// The game's id when it was played on Lichess, so its link needs no upload.
-    pub lichess_id: Option<String>,
-    /// The document to save and upload as it is, with its variations, comments and headers,
-    /// instead of the moves rebuilt as a PGN.
-    pub pgn: Option<String>,
-    /// The moves from `fen` to the position shown, when it is off `moves` (a variation).
-    pub shown: Option<Vec<String>>,
-}
+use crate::game::played::PlayedGame;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -121,38 +100,35 @@ impl Kind {
     }
 }
 
-/// The game as a PGN file: its own document, else `setupPgn` of its moves, dated today.
-fn game_pgn(game: &GameExport) -> Option<String> {
+/// The game as a PGN file: its own document, else one written from its moves, dated today.
+fn game_pgn(game: &PlayedGame) -> Option<String> {
     if let Some(pgn) = &game.pgn {
         return Some(pgn.clone());
     }
-    rules(
-        "setupPgn",
+    let result = kchess_domain::games::Outcome::tag(game.result);
+    let date = chrono::Local::now().format("%Y.%m.%d").to_string();
+    kchess_domain::pgn::setup_pgn(
+        game.setup.variant,
+        &game.setup.fen,
+        &game.moves,
         &[
-            json!({ "variant": game.variant, "fen": game.fen }),
-            json!(game.moves),
-            json!({
-                "White": game.white,
-                "Black": game.black,
-                "Result": game.result.clone().unwrap_or_else(|| "*".into()),
-                "Date": chrono::Local::now().format("%Y.%m.%d").to_string(),
-            }),
+            ("Black", &game.black),
+            ("Date", &date),
+            ("Result", result),
+            ("White", &game.white),
         ],
     )
-    .ok()?
-    .as_str()
-    .map(str::to_string)
+    .ok()
 }
 
 /// The FEN of the position shown: a variation's end when it is off the moves, else the move
 /// at `ply` (the last by default), with a Crazyhouse game's pockets.
-fn shown_fen(game: &GameExport) -> Option<String> {
-    let setup = json!({ "variant": game.variant, "fen": game.fen });
+fn shown_fen(game: &PlayedGame) -> Option<String> {
     let moves = match &game.shown {
         Some(shown) => shown.clone(),
         None => game.moves[..game.ply.unwrap_or(game.moves.len()).min(game.moves.len())].to_vec(),
     };
-    let position = crate::game::view::position_at(&setup, &moves, moves.len())?;
+    let position = crate::game::view::position_at(&game.setup, &moves, moves.len())?;
     Some(shakmaty::fen::Fen::from_position(&position, shakmaty::EnPassantMode::Legal).to_string())
 }
 
@@ -171,12 +147,12 @@ fn copy(text: Option<String>, what: &str, window: &mut Window, cx: &mut App) {
 }
 
 /// Copy the game as its PGN file has it.
-pub fn copy_pgn(game: &GameExport, window: &mut Window, cx: &mut App) {
+pub fn copy_pgn(game: &PlayedGame, window: &mut Window, cx: &mut App) {
     copy(game_pgn(game), "PGN", window, cx);
 }
 
 /// Copy the position shown as a FEN.
-pub fn copy_fen(game: &GameExport, window: &mut Window, cx: &mut App) {
+pub fn copy_fen(game: &PlayedGame, window: &mut Window, cx: &mut App) {
     copy(shown_fen(game), "FEN", window, cx);
 }
 
@@ -217,7 +193,7 @@ impl Exporter {
     }
 
     /// Upload the game to Lichess (as the online account, if any) and copy its page's link.
-    fn upload(&mut self, game: GameExport, window: &mut Window, cx: &mut Context<Self>) {
+    fn upload(&mut self, game: PlayedGame, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy || self.uploading {
             return;
         }
@@ -239,8 +215,8 @@ impl Exporter {
             Err(cx
                 .global::<crate::core::AppCore>()
                 .request(calls::ImportGame {
-                    account: json!(account),
-                    pgn: json!(pgn),
+                    account: OptionalAccount(account),
+                    pgn: PgnText(pgn),
                 }))
         };
         self.uploading = true;
@@ -248,12 +224,7 @@ impl Exporter {
         cx.spawn_in(window, async move |this, cx| {
             let url = match link {
                 Ok(url) => Ok(url),
-                Err(upload) => upload.await.and_then(|game| {
-                    game["url"]
-                        .as_str()
-                        .map(str::to_string)
-                        .ok_or_else(|| kchess_contracts::CoreError::new("Lichess sent no link"))
-                }),
+                Err(upload) => upload.await.map(|game| game.url),
             };
             let _ = this.update_in(cx, |this, window, cx| {
                 this.uploading = false;
@@ -278,7 +249,7 @@ impl Exporter {
         .detach();
     }
 
-    fn save(&mut self, kind: Kind, game: GameExport, window: &mut Window, cx: &mut Context<Self>) {
+    fn save(&mut self, kind: Kind, game: PlayedGame, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy {
             return;
         }
@@ -296,8 +267,7 @@ impl Exporter {
         );
         let frontend = &cx.global::<SettingsHandle>().0.read(cx).settings.frontend;
         let options = ImageOptions {
-            variant: game.variant.clone(),
-            fen: game.fen.clone(),
+            setup: game.setup.clone(),
             moves: game.moves.clone(),
             orientation: game.orientation,
             board_theme: frontend.board_theme.clone(),
@@ -375,7 +345,7 @@ impl Exporter {
 pub fn export_menu(
     id: &'static str,
     exporter: &Entity<Exporter>,
-    game: GameExport,
+    game: PlayedGame,
     anchor: Anchor,
     copy: bool,
     cx: &App,
@@ -470,7 +440,8 @@ pub fn export_menu(
 
 #[cfg(test)]
 mod tests {
-    use super::{GameExport, game_file_name, game_pgn, shown_fen, with_extension};
+    use super::{PlayedGame, game_file_name, game_pgn, shown_fen, with_extension};
+    use kchess_domain::variant::{Setup, Variant};
     use shakmaty::Color;
     use std::ffi::OsStr;
 
@@ -492,20 +463,19 @@ mod tests {
         assert_eq!(with_extension(typed.clone(), gif), typed);
     }
 
-    fn game(variant: &str, fen: &str, moves: &[&str], ply: Option<usize>) -> GameExport {
-        GameExport {
-            variant: variant.into(),
-            fen: fen.into(),
-            moves: moves.iter().map(|uci| uci.to_string()).collect(),
-            orientation: Color::White,
-            white: "White".into(),
-            black: "Black".into(),
-            ply,
-            result: None,
-            lichess_id: None,
-            pgn: None,
-            shown: None,
-        }
+    fn game(variant: Variant, fen: &str, moves: &[&str], ply: Option<usize>) -> PlayedGame {
+        let mut game = PlayedGame::new(
+            Setup {
+                variant,
+                fen: fen.into(),
+            },
+            moves.iter().map(|uci| uci.to_string()).collect(),
+            Color::White,
+            "White",
+            "Black",
+        );
+        game.ply = ply;
+        game
     }
 
     /// Copy FEN copies the position shown: the last by default, an earlier move's, a variation's,
@@ -515,40 +485,34 @@ mod tests {
         let standard = crate::game::STANDARD_FEN;
         let moves = ["e2e4", "e7e5"];
         assert_eq!(
-            shown_fen(&game("standard", standard, &moves, None)).as_deref(),
+            shown_fen(&game(Variant::Standard, standard, &moves, None)).as_deref(),
             Some("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2")
         );
         assert_eq!(
-            shown_fen(&game("standard", standard, &moves, Some(0))).as_deref(),
+            shown_fen(&game(Variant::Standard, standard, &moves, Some(0))).as_deref(),
             Some(standard)
         );
-        let mut variation = game("standard", standard, &moves, None);
+        let mut variation = game(Variant::Standard, standard, &moves, None);
         variation.shown = Some(vec!["d2d4".into()]);
         assert_eq!(
             shown_fen(&variation).as_deref(),
             Some("rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1")
         );
         let pocket = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
-        let fen = shown_fen(&game("crazyhouse", pocket, &["P@e3"], None)).expect("a FEN");
+        let fen = shown_fen(&game(Variant::Crazyhouse, pocket, &["P@e3"], None)).expect("a FEN");
         assert!(fen.contains("[p]"), "{fen}");
     }
 
     #[test]
     fn a_pgn_names_its_players_and_result() {
-        let pgn = game_pgn(&GameExport {
-            variant: "standard".into(),
-            fen: crate::game::STANDARD_FEN.into(),
-            moves: vec!["e2e4".into(), "e7e5".into()],
-            orientation: Color::White,
-            white: "You".into(),
-            black: "Stockfish".into(),
-            ply: None,
-            result: None,
-            lichess_id: None,
-            pgn: None,
-            shown: None,
-        })
-        .unwrap();
+        let mut played = game(
+            Variant::Standard,
+            crate::game::STANDARD_FEN,
+            &["e2e4", "e7e5"],
+            None,
+        );
+        (played.white, played.black) = ("You".into(), "Stockfish".into());
+        let pgn = game_pgn(&played).unwrap();
         assert!(pgn.contains("[White \"You\"]"));
         assert!(pgn.contains("[Result \"*\"]"));
         assert!(pgn.contains("1. e4 e5"));

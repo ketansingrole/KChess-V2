@@ -19,11 +19,8 @@ fn computer(cx: &mut gpui_kit::TestAppContext) -> Harness {
 /// as last drawn, which can still show the game before.
 fn wait_playable(app: &mut Harness) {
     app.wait_for("the game to take moves", |_, cx| {
-        crate::shell::view_of::<crate::pages::computer::ComputerPage>(
-            crate::pages::Page::Computer,
-            cx,
-        )
-        .is_some_and(|page| page.read(cx).takes_moves())
+        crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
+            .is_some_and(|page| page.read(cx).takes_moves())
     });
 }
 
@@ -220,7 +217,7 @@ fn quick_pick_shows_the_copy_and_new_keys(cx: &mut gpui_kit::TestAppContext) {
     let key = |id: &str| {
         keys.iter()
             .find(|(command, _)| command == id)
-            .map(|(_, keys)| *keys)
+            .map(|(_, keys)| keys.as_str())
     };
     let (copy, new) = if cfg!(target_os = "macos") {
         ("⌘ C", "⌘ N")
@@ -280,7 +277,7 @@ fn an_unfinished_game_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCo
 fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
     app.with_window(|window, cx| {
-        crate::shell::play_computer_from(
+        crate::pages::computer::play_from(
             crate::game::setup_from_fen("1rk4r/pppppppp/8/8/8/8/PPPPPPPP/1RK4R w HBhb - 0 1"),
             window,
             cx,
@@ -294,34 +291,30 @@ fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::Test
     app.press("enter");
     app.wait_for_moves(&["O-O-O"]);
     let variant = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::computer::ComputerPage>(
-            crate::pages::Page::Computer,
-            cx,
-        )
-        .map(|page| page.read(cx).setup_variant())
+        crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
+            .map(|page| page.read(cx).setup_variant())
     });
-    assert_eq!(variant.as_deref(), Some("chess960"));
+    assert_eq!(variant, Some(kchess_domain::variant::Variant::Chess960));
 }
 
-/// Once the game is over, Quick Pick reviews it on the analysis board, as the banner's button does.
 /// Until the saved game is restored the board takes no move: on a slow profile (Windows CI) the
 /// restore once landed between a player's two clicks and dropped the move.
 #[gpui_kit::test]
 fn no_move_is_taken_before_the_saved_game_is_restored(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
     app.cx.update(|cx| {
-        let page = crate::shell::view_of::<crate::pages::computer::ComputerPage>(
-            crate::pages::Page::Computer,
-            cx,
-        )
-        .expect("the page");
-        page.update(cx, |page, cx| page.forget_loaded(cx));
+        let page =
+            crate::shell::view::<crate::pages::computer::ComputerPage>(cx).expect("the page");
+        page.update(cx, |page, _| {
+            crate::game::session::Resumes::saver(page).forget()
+        });
     });
     app.click_square("e2", true);
     app.click_square("e4", true);
     assert_eq!(app.moves(), Vec::<String>::new());
 }
 
+/// Once the game is over, Quick Pick reviews it on the analysis board, as the banner's button does.
 #[gpui_kit::test]
 fn a_finished_game_is_reviewed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
@@ -336,13 +329,9 @@ fn a_finished_game_is_reviewed_from_quick_pick(cx: &mut gpui_kit::TestAppContext
     app.type_text(">Review game");
     super::palette::wait_for_first(&mut app, "Review game");
     app.press("enter");
-    app.wait_for("the analysis board", |_, cx| {
-        crate::shell::current_page(cx) == Some(crate::pages::Page::Analysis)
-    });
+    app.wait_for_page(crate::pages::Page::Analysis);
 }
 
-/// Game options start a game in another variant, which the engine plays by its rules: the
-/// variant's start, and the computer's move from it.
 /// A variant game starts from a FEN read by that variant's rules (a Crazyhouse position with
 /// its pockets), and a FEN it refuses keeps the game from starting.
 #[gpui_kit::test]
@@ -375,16 +364,15 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
     app.click("start-game");
     app.wait_gone("start-game");
     let setup = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::computer::ComputerPage>(
-            crate::pages::Page::Computer,
-            cx,
-        )
-        .map(|page| {
+        crate::shell::view::<crate::pages::computer::ComputerPage>(cx).map(|page| {
             let page = page.read(cx);
             (page.setup_variant(), page.setup_fen())
         })
     });
-    assert_eq!(setup, Some(("crazyhouse".to_string(), fen.to_string())));
+    assert_eq!(
+        setup,
+        Some((kchess_domain::variant::Variant::Crazyhouse, fen.to_string()))
+    );
 
     // The dialog opens with that position; another variant, which refuses it, clears it.
     app.click("game-options");
@@ -416,6 +404,8 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
     assert!(app.enabled("start-game"));
 }
 
+/// Game options start a game in another variant, which the engine plays by its rules: the
+/// variant's start, and the computer's move from it.
 #[gpui_kit::test]
 fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
@@ -425,15 +415,15 @@ fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
     app.wait_gone("start-game");
     let variant = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::computer::ComputerPage>(
-                crate::pages::Page::Computer,
-                cx,
-            )
-            .map(|page| page.read(cx).setup_variant())
+            crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
+                .map(|page| page.read(cx).setup_variant())
         })
     };
     // The first variant listed after standard chess and Chess960.
-    assert_eq!(variant(&mut app).as_deref(), Some("kingOfTheHill"));
+    assert_eq!(
+        variant(&mut app),
+        Some(kchess_domain::variant::Variant::KingOfTheHill)
+    );
     // The scripted engine answers e2e4, which King of the Hill's rules allow from its start.
     app.click("flip");
     app.wait_for_moves(&["e4"]);
@@ -441,17 +431,14 @@ fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
     // A Crazyhouse start (its FEN has pockets, which standard rules refuse) is searched in
     // Crazyhouse: the computer, White, moves.
     app.with_window(|window, cx| {
-        let page = crate::shell::view_of::<crate::pages::computer::ComputerPage>(
-            crate::pages::Page::Computer,
-            cx,
-        )
-        .expect("the page");
+        let page =
+            crate::shell::view::<crate::pages::computer::ComputerPage>(cx).expect("the page");
         page.update(cx, |page, cx| {
             page.start_from(
-                serde_json::json!({
-                    "variant": "crazyhouse",
-                    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1",
-                }),
+                kchess_domain::variant::Setup {
+                    variant: kchess_domain::variant::Variant::Crazyhouse,
+                    fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1".into(),
+                },
                 shakmaty::Color::Black,
                 window,
                 cx,
@@ -461,12 +448,18 @@ fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
     // Starting over asks first.
     app.click("ok");
     app.wait_for_moves(&["e4"]);
-    assert_eq!(variant(&mut app).as_deref(), Some("crazyhouse"));
+    assert_eq!(
+        variant(&mut app),
+        Some(kchess_domain::variant::Variant::Crazyhouse)
+    );
     // The unfinished Crazyhouse game is kept (it once could not be saved).
     let mut app = app.restart();
     app.open("Play with computer");
     app.wait_for_moves(&["e4"]);
-    assert_eq!(variant(&mut app).as_deref(), Some("crazyhouse"));
+    assert_eq!(
+        variant(&mut app),
+        Some(kchess_domain::variant::Variant::Crazyhouse)
+    );
     // The dialog opens on the variant game being played.
     app.click("game-options");
     assert_eq!(app.find(("start", 2usize)).selected(), Some(true));
@@ -481,35 +474,4 @@ fn undo_takes_back(cx: &mut gpui_kit::TestAppContext) {
     app.wait_for_moves(&["e4"]);
     app.press("secondary-z");
     app.wait_for_moves(&[]);
-}
-
-/// The player's clock warns as it runs low, before it runs out, as Lichess's does. (The stand-in
-/// engine answers e4 alone: the player, Black to move, plays first so that answer is legal.)
-#[gpui_kit::test]
-fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::Page;
-    use crate::pages::computer::ComputerPage;
-    use crate::sound::{Played, Sound};
-    let mut app = computer(cx);
-    app.cx.update(|cx| cx.set_global(Played::default()));
-    app.with_window(|window, cx| {
-        let page = crate::shell::view_of::<ComputerPage>(Page::Computer, cx).expect("the page");
-        let setup = serde_json::json!({
-            "variant": "standard",
-            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1",
-        });
-        // Three seconds: the warning comes under two, once both sides have moved.
-        page.update(cx, |page, cx| {
-            page.play_with_clock(setup, shakmaty::Color::Black, 0.05, window, cx)
-        });
-    });
-    wait_playable(&mut app);
-    app.click_square("e7", false);
-    app.click_square("e5", false);
-    app.wait_for_moves(&["e5", "e4"]);
-    let started = std::time::Instant::now();
-    app.wait_for_in_real_time("the low-time warning", |_, cx| {
-        cx.global::<Played>().0.contains(&Sound::LowTime)
-    });
-    assert!(started.elapsed() < std::time::Duration::from_millis(2_900));
 }

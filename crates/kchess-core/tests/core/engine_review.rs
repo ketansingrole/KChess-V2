@@ -4,16 +4,19 @@
 //! taking the engine from a running review.
 
 use crate::support;
+use kchess_core::time::now_ms;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use kchess_core::engine::review::{Pause, ReviewEval, ReviewRequest, Reviews, StoredReview};
+use kchess_core::engine::review::{
+    Pause, ReviewEval, ReviewRequest, ReviewStore, Reviews, StoredReview,
+};
 use kchess_core::engine::scheduler::Scheduler;
 use kchess_core::engine::search::Search;
 use serde_json::{Map, json};
-use support::review_store::{GameRow, MemoryStore, ScriptedHost, settings};
+use support::reviews::{GameRow, ReviewDb, ScriptedHost, settings};
 use support::{Recording, context, fake_path, log_path, received, scheduler, wait_until};
 
 const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -24,14 +27,14 @@ const WAIT: Duration = Duration::from_secs(30);
 struct Rig {
     reviews: Reviews,
     host: Arc<ScriptedHost>,
-    store: Arc<MemoryStore>,
+    store: Arc<ReviewDb>,
     recording: Arc<Recording>,
     log: PathBuf,
 }
 
-/// Reviews with the engine `mode` on `scheduler`, storing into a fresh in-memory store.
+/// Reviews with the engine `mode` on `scheduler`, storing into a fresh profile.
 fn rig_on(scheduler: Arc<Scheduler>, mode: &str, name: &str, auto: &str, on_battery: bool) -> Rig {
-    let store = MemoryStore::new();
+    let store = ReviewDb::new();
     let recording = support::host();
     let log = log_path(name);
     let mut ctx = context(&recording, scheduler, mode, &log);
@@ -39,7 +42,7 @@ fn rig_on(scheduler: Arc<Scheduler>, mode: &str, name: &str, auto: &str, on_batt
     let mut locations = support::locations();
     locations.variant = PathBuf::from(fake_path());
     ctx.locations = Arc::new(locations);
-    let reviews = Reviews::new(ctx, store.clone());
+    let reviews = Reviews::new(ctx, store.database.clone());
     let host = ScriptedHost::new(store.clone(), settings(auto, on_battery));
     reviews.setup_reviews(host.clone());
     Rig {
@@ -69,17 +72,9 @@ fn request(list: &[&str]) -> ReviewRequest {
     }
 }
 
-/// `reviewKey(fen, moves)`, as the store and the queue key a review.
+/// The key the store and the queue give a review of these moves.
 fn key_of(fen: &str, list: &[&str]) -> String {
-    let out =
-        kchess_domain::api::call("reviewKey", &json!([fen, list]).to_string()).expect("reviewKey");
-    serde_json::from_str::<String>(&out).expect("a key")
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(0))
+    kchess_domain::records::review::review_key(fen, list, None)
 }
 
 fn updates_of(rig: &Rig) -> Vec<StoredReview> {
@@ -126,8 +121,8 @@ async fn a_quick_pass_shows_first_then_the_deep_pass_completes_and_finds_the_blu
         })
     );
     let analysis =
-        kchess_domain::review::analyse_review(&serde_json::to_value(&full).expect("json"))
-            .expect("an analysis");
+        serde_json::to_value(kchess_domain::review::analyse(&full).expect("an analysis"))
+            .expect("json");
     assert_eq!(analysis["black"]["blunder"], json!(1), "Nf6 is the blunder");
     assert_eq!(
         full.evals[5]
@@ -144,11 +139,11 @@ async fn a_quick_pass_shows_first_then_the_deep_pass_completes_and_finds_the_blu
 /// for the five-minute recheck.
 #[tokio::test]
 async fn a_review_asked_for_while_the_queue_finds_nothing_still_runs() {
-    let store = MemoryStore::new();
+    let store = ReviewDb::new();
     let recording = support::host();
     let log = log_path("asked-while-idle");
     let ctx = context(&recording, scheduler(4, false), "review", &log);
-    let reviews = Reviews::new(ctx, store.clone());
+    let reviews = Reviews::new(ctx, store.database.clone());
     let host = ScriptedHost::new(store.clone(), settings("recent", true));
     let (release, held) = tokio::sync::oneshot::channel();
     *host.hold_settings.lock().expect("hold") = Some(held);
@@ -202,16 +197,16 @@ async fn a_review_asked_for_during_a_live_game_waits_without_spinning() {
 #[tokio::test]
 async fn a_review_that_panicked_runs_when_asked_for_again() {
     let rig = rig("review", "panicked-review", false, "off", true);
-    // The request's own read passes; the review's read, once it runs, panics.
-    rig.store.panic_on_read(2);
+    // The review's first update, once it runs, panics.
+    rig.host
+        .panic_on_update
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     rig.reviews
         .request_review(request(&SCHOLARS))
         .await
         .expect("the request");
     wait_until(WAIT, "the failed pass", || {
-        rig.recording
-            .contains("a review step panicked")
-            .then_some(())
+        rig.recording.logged("a review step panicked").then_some(())
     })
     .await;
     rig.reviews
@@ -243,19 +238,36 @@ async fn a_request_for_a_finished_review_answers_from_the_store() {
         .expect("the request")
         .expect("the stored review");
     assert!(stored.complete);
+    support::wire::assert_wire_steady("reviewRequest.stored", &stored, &["updatedAt", "engine"]);
+    let update = rig
+        .host
+        .updates
+        .lock()
+        .expect("updates")
+        .iter()
+        .find(|update| update.review.complete)
+        .cloned()
+        .expect("the complete update");
+    support::wire::assert_wire_steady(
+        "review-update.complete",
+        &update,
+        &["review/updatedAt", "review/engine"],
+    );
     rig.reviews.stop_reviews().await;
 }
 
 #[tokio::test]
 async fn automatic_reviews_ask_lichess_first_and_review_variants_by_their_rules() {
     let rig = rig("review", "auto", false, "recent", true);
+    // One clock reading, so the games are newest first in the order they are added.
+    let now = now_ms();
     rig.store.add_game(GameRow {
         id: "scholar1".into(),
         account: "tester".into(),
         moves: "e4 e5 Qh5 Nc6 Bc4 Nf6 Qxf7#".into(),
         pgn: None,
         perf: "blitz".into(),
-        created_at: now_ms(),
+        created_at: now,
     });
     // Crazyhouse, with a drop that standard rules would stop at; Fairy-Stockfish reviews it.
     rig.store.add_game(GameRow {
@@ -264,7 +276,7 @@ async fn automatic_reviews_ask_lichess_first_and_review_variants_by_their_rules(
         moves: "e4 d5 exd5 Qxd5 Nc3 Qa5 P@d4".into(),
         pgn: None,
         perf: "crazyhouse".into(),
-        created_at: now_ms() - 1,
+        created_at: now - 1,
     });
     // Chess960, which Stockfish reviews.
     rig.store.add_game(GameRow {
@@ -273,7 +285,25 @@ async fn automatic_reviews_ask_lichess_first_and_review_variants_by_their_rules(
         moves: "e4 e5".into(),
         pgn: None,
         perf: "chess960".into(),
-        created_at: now_ms() - 2,
+        created_at: now - 2,
+    });
+    // Older than the recent games reviewed: neither reviewed nor looked up.
+    rig.store.add_game(GameRow {
+        id: "old1".into(),
+        account: "tester".into(),
+        moves: "d4 d5".into(),
+        pgn: None,
+        perf: "blitz".into(),
+        created_at: now - 40 * 86_400_000,
+    });
+    // A game from a set position, which is not reviewed: Lichess is not asked for it either.
+    rig.store.add_game(GameRow {
+        id: "setup1".into(),
+        account: "tester".into(),
+        moves: "e4 e5".into(),
+        pgn: None,
+        perf: "fromPosition".into(),
+        created_at: now - 3,
     });
     rig.reviews.reviews_changed();
     let host = rig.host.clone();
@@ -291,6 +321,7 @@ async fn automatic_reviews_ask_lichess_first_and_review_variants_by_their_rules(
     assert_eq!(crazyhouse.moves.len(), 7, "every move, the drop too");
     assert_eq!(crazyhouse.moves.last().map(String::as_str), Some("P@d4"));
     assert!(crazyhouse.fen.contains('['), "{}", crazyhouse.fen);
+    support::wire::assert_wire_steady("review.crazyhouse", &crazyhouse, &["updatedAt", "engine"]);
     let chess960 = wait_until(WAIT, "the Chess960 review", reviewed("c960")).await;
     assert_eq!(chess960.moves, moves(&["e2e4", "e7e5"]));
     // Lichess is asked first, for all of them at once.
@@ -382,7 +413,7 @@ async fn the_most_recent_request_is_reviewed_first() {
     rig.reviews.stop_reviews().await;
 }
 
-/// Regression: the TypeScript queue yielded to *any* queued request, so a running review and a
+/// Regression: the queue once yielded to *any* queued request, so a running review and a
 /// queued one gave way to each other forever and neither finished. A review now yields only to
 /// a request made after it.
 #[tokio::test]
@@ -580,14 +611,17 @@ async fn a_cached_lichess_review_is_linked_to_the_requesting_game() {
         key: key.clone(),
         fen: START.into(),
         moves: moves(&["e2e4", "e7e5"]),
-        source: "lichess".into(),
+        source: kchess_contracts::types::ReviewSource::Lichess,
         engine: None,
         evals: vec![None, None, None],
         depth: 0,
         complete: true,
         updated_at: 1,
         game_id: None,
-        extra: Map::new(),
+        judgments: None,
+        accuracy: None,
+        variant: None,
+        rest: Map::new(),
     });
     let mut asking = request(&["e2e4", "e7e5"]);
     asking.game_id = Some("Game0002".into());
@@ -598,6 +632,7 @@ async fn a_cached_lichess_review_is_linked_to_the_requesting_game() {
         .expect("the request")
         .expect("the cached review");
     assert_eq!(stored.game_id.as_deref(), Some("Game0002"));
+    support::wire::assert_wire_steady("reviewRequest.linked", &stored, &["updatedAt", "engine"]);
     assert!(
         rig.store.linked("Game0002", &key),
         "linked before the cached review is returned"
@@ -659,11 +694,10 @@ async fn a_pass_with_no_engine_open_leaves_no_idle_countdown() {
     })
     .await;
     // The pass ends just after its status: then only the later recheck's timer is left.
-    let started = std::time::Instant::now();
-    while alive() > 1 && started.elapsed() < Duration::from_secs(2) {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert_eq!(alive(), 1, "the later recheck alone, no idle countdown");
+    wait_until(WAIT, "the later recheck alone, no idle countdown", || {
+        (alive() == 1).then_some(())
+    })
+    .await;
     rig.reviews.stop_reviews().await;
 }
 
@@ -745,5 +779,282 @@ async fn a_computer_move_takes_the_engine_from_a_running_review() {
         rig.host.complete_updates().is_empty(),
         "the interrupted review did not complete"
     );
+    rig.reviews.stop_reviews().await;
+}
+
+/// A review of these moves as an earlier session stored it.
+/// A game whose moves were reviewed already, on the analysis board without the game, is linked
+/// to that review instead of being reviewed again.
+#[tokio::test]
+async fn a_game_already_reviewed_without_it_is_linked_to_the_review() {
+    let rig = rig("review", "linked", false, "all", true);
+    let key = key_of(START, &["e2e4", "e7e5"]);
+    rig.store.put(stored(
+        &["e2e4", "e7e5"],
+        kchess_contracts::types::ReviewSource::Local,
+    ));
+    rig.store.add_game(GameRow {
+        id: "done2".into(),
+        account: "tester".into(),
+        moves: "e4 e5".into(),
+        pgn: None,
+        perf: "blitz".into(),
+        created_at: now_ms(),
+    });
+    rig.reviews.reviews_changed();
+    wait_until(WAIT, "the game linked to its review", || {
+        rig.store.linked("done2", &key).then_some(())
+    })
+    .await;
+    assert_eq!(
+        rig.store.review(&key).and_then(|review| review.game_id),
+        Some("done2".to_string())
+    );
+    assert!(updates_of(&rig).is_empty(), "nothing is reviewed again");
+    rig.reviews.stop_reviews().await;
+}
+
+fn stored(list: &[&str], source: kchess_contracts::types::ReviewSource) -> StoredReview {
+    StoredReview {
+        key: key_of(START, list),
+        fen: START.into(),
+        moves: moves(list),
+        source,
+        engine: None,
+        evals: vec![None; list.len() + 1],
+        depth: 0,
+        complete: true,
+        updated_at: 1,
+        game_id: None,
+        judgments: None,
+        accuracy: None,
+        variant: None,
+        rest: Map::new(),
+    }
+}
+
+/// How many times the engine has been told a new game starts.
+fn new_games(rig: &Rig) -> usize {
+    received(&rig.log)
+        .iter()
+        .filter(|line| *line == "ucinewgame")
+        .count()
+}
+
+/// Games are marked as looked up on Lichess only while the lookup is still wanted.
+#[tokio::test]
+async fn games_are_marked_checked_only_while_wanted() {
+    let store = ReviewDb::new();
+    store.add_game(GameRow {
+        id: "g1".into(),
+        account: "tester".into(),
+        moves: "e4 e5".into(),
+        pgn: None,
+        perf: "blitz".into(),
+        created_at: now_ms(),
+    });
+    let reviews = ReviewStore::new(store.database.clone());
+    let ids = ["g1".to_string()];
+    let checked = || async {
+        reviews
+            .games_to_review(&["tester".to_string()], 0)
+            .await
+            .expect("games")[0]
+            .checked
+    };
+    assert!(
+        !reviews
+            .mark_checked_if(&ids, &|| false)
+            .await
+            .expect("mark")
+    );
+    assert!(!checked().await);
+    assert!(reviews.mark_checked_if(&ids, &|| true).await.expect("mark"));
+    assert!(checked().await);
+}
+
+/// Moves past the first that does not play are left out: the review of the moves before it is
+/// the one found.
+#[tokio::test]
+async fn the_review_of_the_moves_that_play_is_found() {
+    let rig = rig("review", "get-review", false, "off", true);
+    rig.store.put(stored(
+        &["e2e4", "e7e5"],
+        kchess_contracts::types::ReviewSource::Local,
+    ));
+    let found = rig
+        .reviews
+        .get_review(START, &moves(&["e2e4", "e7e5", "e1e8", "g1f3"]), None)
+        .await
+        .expect("the read")
+        .expect("the review of the moves that play");
+    assert_eq!(found.key, key_of(START, &["e2e4", "e7e5"]));
+    rig.reviews.stop_reviews().await;
+}
+
+/// A finished Lichess review is the answer: nothing is queued, so no window hears of a status.
+#[tokio::test]
+async fn a_finished_lichess_review_is_answered_without_queueing() {
+    let rig = rig("review", "lichess-finished", false, "off", true);
+    rig.store.put(stored(
+        &["e2e4", "e7e5"],
+        kchess_contracts::types::ReviewSource::Lichess,
+    ));
+    let answer = rig
+        .reviews
+        .request_review(request(&["e2e4", "e7e5"]))
+        .await
+        .expect("the request")
+        .expect("the stored review");
+    assert!(answer.complete);
+    assert!(rig.host.statuses.lock().expect("statuses").is_empty());
+    rig.reviews.stop_reviews().await;
+}
+
+/// A finished review made here, asked for again, is checked against the engine: it runs again
+/// (and finds nothing to search when the engine is the same).
+#[tokio::test]
+async fn a_finished_review_asked_for_again_is_checked_against_the_engine() {
+    let rig = rig("review", "finished-again", false, "off", true);
+    rig.reviews
+        .request_review(request(&["e2e4", "e7e5"]))
+        .await
+        .expect("the request");
+    wait_until(WAIT, "the complete review", || {
+        rig.host.complete_updates().into_iter().next()
+    })
+    .await;
+    let before = new_games(&rig);
+    assert!(
+        rig.reviews
+            .request_review(request(&["e2e4", "e7e5"]))
+            .await
+            .expect("the request")
+            .is_some_and(|review| review.complete)
+    );
+    wait_until(WAIT, "the review run again", || {
+        (new_games(&rig) > before).then_some(())
+    })
+    .await;
+    rig.reviews.stop_reviews().await;
+}
+
+/// The engine being replaced stops the running review and closes its engine at once.
+#[tokio::test]
+async fn restarting_the_review_engine_stops_the_review_and_its_engine() {
+    let rig = rig("stall", "restart", false, "off", true);
+    rig.reviews
+        .request_review(request(&SCHOLARS))
+        .await
+        .expect("the request");
+    wait_until(WAIT, "the quick pass", || {
+        updates_of(&rig)
+            .into_iter()
+            .find(|review| !review.complete && review.evals.iter().all(Option::is_some))
+    })
+    .await;
+    assert!(!rig.recording.logged("Engine stopped"));
+    rig.reviews.restart_review_engine();
+    assert!(rig.recording.logged("Engine stopped"), "the engine closed");
+    wait_until(WAIT, "the review to stop", || {
+        (rig.host.last_status()?.current.is_none()).then_some(())
+    })
+    .await;
+    assert!(rig.host.complete_updates().is_empty());
+    rig.reviews.stop_reviews().await;
+}
+
+/// A review that fails (here: its engine cannot be found) closes the engine left open.
+#[tokio::test]
+async fn a_failed_review_closes_the_engine_left_open() {
+    let rig = rig("review", "failed-closes", false, "off", true);
+    rig.reviews
+        .request_review(request(&["e2e4", "e7e5"]))
+        .await
+        .expect("the request");
+    wait_until(WAIT, "the complete review", || {
+        rig.host.complete_updates().into_iter().next()
+    })
+    .await;
+    rig.host.settings.lock().expect("settings").engine_path = "/no/such/engine".into();
+    rig.reviews
+        .request_review(request(&["d2d4", "d7d5"]))
+        .await
+        .expect("the request");
+    wait_until(WAIT, "the failed review", || rig.host.last_status()?.failed).await;
+    assert!(rig.recording.logged("Engine stopped"), "the engine closed");
+    rig.reviews.stop_reviews().await;
+}
+
+/// Offline, the automatic reviews mark the games looked up and review them here at once.
+#[tokio::test]
+async fn automatic_reviews_review_locally_when_lichess_cannot_be_reached() {
+    let rig = rig("review", "offline-lookup", false, "all", true);
+    rig.host
+        .fail_lookups
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    rig.store.add_game(GameRow {
+        id: "offline1".into(),
+        account: "tester".into(),
+        moves: "e4 e5".into(),
+        pgn: None,
+        perf: "blitz".into(),
+        created_at: now_ms(),
+    });
+    rig.reviews.reviews_changed();
+    let done = wait_until(WAIT, "the local review", || {
+        rig.host
+            .complete_updates()
+            .into_iter()
+            .find(|review| review.game_id.as_deref() == Some("offline1"))
+    })
+    .await;
+    assert!(rig.store.linked("offline1", &done.key));
+    assert!(rig.recording.logged("Lichess review lookup failed"));
+    rig.reviews.stop_reviews().await;
+}
+
+/// A save waiting for the store when its account is discarded writes nothing once admitted.
+#[tokio::test]
+async fn a_save_admitted_after_its_account_is_discarded_writes_nothing() {
+    let rig = rig("review", "discard-admitted", false, "off", true);
+    rig.store.add_account("tester");
+    // The review stops at its settings, before any search.
+    let (release_settings, held_settings) = tokio::sync::oneshot::channel();
+    *rig.host.hold_settings.lock().expect("hold") = Some(held_settings);
+    let mut asking = request(&SCHOLARS);
+    asking.account = Some("tester".into());
+    rig.reviews
+        .request_review(asking)
+        .await
+        .expect("the request");
+    wait_until(WAIT, "the review to read its settings", || {
+        (rig.host
+            .settings_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
+            > 0)
+        .then_some(())
+    })
+    .await;
+    // The store is busy, so the first position's save waits for it.
+    let held = rig
+        .store
+        .database
+        .hold_execution()
+        .await
+        .expect("hold the store");
+    release_settings.send(()).expect("release the settings");
+    wait_until(WAIT, "the first position's save", || {
+        (rig.host.last_status()?.current?.done == 1).then_some(())
+    })
+    .await;
+    rig.reviews.discard_account_reviews(&["tester".to_string()]);
+    drop(held);
+    wait_until(WAIT, "the discarded review to end", || {
+        (rig.host.last_status()?.current.is_none()).then_some(())
+    })
+    .await;
+    assert!(updates_of(&rig).is_empty(), "nothing reached a window");
+    assert!(rig.store.review(&key_of(START, &SCHOLARS)).is_none());
     rig.reviews.stop_reviews().await;
 }

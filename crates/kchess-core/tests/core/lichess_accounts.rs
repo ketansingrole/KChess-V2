@@ -12,11 +12,13 @@ use fixtures::{
     MemoryStore, MemoryTokens, Recording, Reply, capabilities_for, game_json, http_client, ndjson,
     serve,
 };
+use kchess_contracts::types::{LichessGame, PerfType, RelationAction, StoredReview};
 use kchess_core::lichess::accounts::{
-    AccountRow, CachedValue, Lichess, LichessGame, LichessStore, Reply as Outcome,
+    AccountRow, CachedValue, Lichess, LichessStore, Reply as Outcome,
 };
 use kchess_core::lichess::client::LichessClient;
 use kchess_core::lichess::policy::Policy;
+use kchess_domain::color::Color;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -29,18 +31,18 @@ fn service(
 ) -> Arc<Lichess> {
     let policy = Policy::with_timeout(
         Arc::clone(host) as Arc<dyn kchess_core::host::Host>,
+        Arc::clone(host) as Arc<dyn kchess_core::usage::Meter>,
         http_client(),
         CancellationToken::new(),
         Duration::from_secs(5),
     );
-    let client = LichessClient::with_base(base, Arc::clone(&policy), http_client());
+    let client = LichessClient::with_base(base, Arc::clone(&policy));
     Arc::new(Lichess::new(
         client,
         capabilities_for(host),
         store,
         tokens,
         Arc::clone(host) as Arc<dyn kchess_core::host::Host>,
-        CancellationToken::new(),
     ))
 }
 
@@ -113,7 +115,7 @@ async fn a_failed_export_does_not_move_the_cursor() {
         error.message,
         "Lichess isn’t working right now. Try again shortly."
     );
-    assert_eq!(error.kind, Some(kchess_core::ErrorKind::Unavailable));
+    assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::Unavailable));
     assert!(store.cursors.lock().unwrap().is_empty());
     assert!(store.games.lock().unwrap().is_empty());
 }
@@ -450,6 +452,24 @@ async fn a_stale_login_for_followed_users_asks_to_reconnect() {
     );
 }
 
+/// Every 403 asked to reconnect, though a 403 that is not about the login (Lichess refusing the
+/// request itself) is not mended by reconnecting.
+#[tokio::test]
+async fn a_403_that_is_not_about_the_login_does_not_ask_to_reconnect() {
+    let fixture = serve(|_| Reply::Json(403, r#"{"error":"Not allowed right now."}"#.into())).await;
+    let host = Arc::new(Recording::default());
+    let lichess = service(
+        &fixture.base,
+        &host,
+        MemoryStore::with_accounts(&[("Alice", true)]),
+        MemoryTokens::with(&[("Alice", "lip_alice")]),
+    );
+    let report = lichess.followed_users().await.unwrap();
+    assert_eq!(report.problems.len(), 1);
+    assert!(!report.problems[0].needs_reconnect);
+    assert_eq!(report.problems[0].message, "Not allowed right now.");
+}
+
 #[tokio::test]
 async fn a_missing_user_is_named_in_the_error() {
     let fixture = serve(|_| Reply::Text(404, "text/html", "<html>missing</html>".into())).await;
@@ -462,7 +482,7 @@ async fn a_missing_user_is_named_in_the_error() {
     );
     let error = lichess.profile("nobody").await.unwrap_err();
     assert_eq!(error.message, r#"No such Lichess user "nobody"."#);
-    assert_eq!(error.kind, Some(kchess_core::ErrorKind::NotFound));
+    assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::NotFound));
 }
 
 #[tokio::test]
@@ -531,7 +551,7 @@ async fn recent_games_are_newest_first_and_capped() {
     let games = lichess.recent_games("Alice", false).await.unwrap();
     assert_eq!(games.len(), 10);
     assert_eq!(games[0].id, "Game0000");
-    assert_eq!(games[0].color, "white");
+    assert_eq!(games[0].color, Color::White);
     assert_eq!(
         fixture.to("/api/games/user/Alice")[0]
             .query("max")
@@ -567,7 +587,7 @@ async fn a_player_record_is_read_from_the_perf_endpoint() {
         MemoryStore::with_accounts(&[]),
         MemoryTokens::with(&[]),
     );
-    let stats = lichess.player_perf("Alice", "blitz").await.unwrap();
+    let stats = lichess.player_perf("Alice", PerfType::Blitz).await.unwrap();
     assert_eq!(stats.rating, Some(1612.5));
     assert_eq!(stats.rank, Some(1200));
     assert_eq!(stats.highest.as_ref().map(|mark| mark.rating), Some(1700.0));
@@ -602,33 +622,33 @@ async fn tokens_never_reach_the_host_log() {
 }
 
 /// A store that saves reviews only with their page of games: its `save_reviews` refuses, so a sync
-/// that wrote reviews on its own would fail (`saveGamesPage` wrote both in one transaction).
+/// that wrote reviews on its own would fail.
 struct PageOnly(Arc<MemoryStore>);
 
 impl LichessStore for PageOnly {
     fn accounts<'a>(
         &'a self,
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Vec<AccountRow>>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Vec<AccountRow>>> {
         Box::pin(async move { self.0.accounts().await })
     }
     fn dismissed_friends<'a>(
         &'a self,
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Vec<String>>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Vec<String>>> {
         Box::pin(async move { self.0.dismissed_friends().await })
     }
     fn pending_game_ids<'a>(
         &'a self,
         account: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Vec<String>>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Vec<String>>> {
         Box::pin(async move { self.0.pending_game_ids(account).await })
     }
     fn save_games_page<'a>(
         &'a self,
         account: &'a str,
         games: &'a [LichessGame],
-        reviews: &'a [Value],
+        reviews: &'a [StoredReview],
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<()>> {
         Box::pin(async move {
             self.0
                 .save_games_page(account, games, reviews, current)
@@ -640,13 +660,14 @@ impl LichessStore for PageOnly {
         account: &'a str,
         synced_at: i64,
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<()>> {
         Box::pin(async move { self.0.save_games_cursor(account, synced_at, current).await })
     }
     fn read_api_cache<'a>(
         &'a self,
         key: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Option<CachedValue>>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Option<CachedValue>>>
+    {
         Box::pin(async move { self.0.read_api_cache(key).await })
     }
     fn write_api_cache<'a>(
@@ -654,7 +675,7 @@ impl LichessStore for PageOnly {
         key: &'a str,
         value: &'a Value,
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<()>> {
         Box::pin(async move { self.0.write_api_cache(key, value, current).await })
     }
     fn save_login<'a>(
@@ -662,17 +683,18 @@ impl LichessStore for PageOnly {
         username: &'a str,
         ciphertext: &'a str,
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<()>> {
         Box::pin(async move { self.0.save_login(username, ciphertext, current).await })
     }
     fn save_reviews<'a>(
         &'a self,
         _account: &'a str,
-        _reviews: &'a [Value],
+        _reviews: &'a [StoredReview],
         _current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Vec<Value>>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Vec<StoredReview>>>
+    {
         Box::pin(async move {
-            Err(kchess_core::error::CoreError::new(
+            Err(kchess_contracts::error::CoreError::new(
                 "Reviews are saved with their page.",
             ))
         })
@@ -681,7 +703,7 @@ impl LichessStore for PageOnly {
         &'a self,
         ids: &'a [String],
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<()>> {
         Box::pin(async move { self.0.mark_checked(ids, current).await })
     }
 }
@@ -736,11 +758,11 @@ async fn a_synced_page_saves_its_reviews_with_its_games() {
         &fixture.base,
         Policy::with_timeout(
             Arc::clone(&host) as Arc<dyn kchess_core::host::Host>,
+            Arc::clone(&host) as Arc<dyn kchess_core::usage::Meter>,
             http_client(),
             CancellationToken::new(),
             Duration::from_secs(5),
         ),
-        http_client(),
     );
     let lichess = Lichess::new(
         client,
@@ -748,13 +770,12 @@ async fn a_synced_page_saves_its_reviews_with_its_games() {
         Arc::new(PageOnly(Arc::clone(&store))),
         tokens,
         Arc::clone(&host) as Arc<dyn kchess_core::host::Host>,
-        CancellationToken::new(),
     );
     lichess.sync_games(Some("Alice")).await.unwrap();
     assert_eq!(store.games.lock().unwrap().len(), 1);
     let reviews = store.reviews.lock().unwrap().clone();
     assert_eq!(reviews.len(), 1, "the page's review is saved with the page");
-    assert_eq!(reviews[0]["gameId"], "abcdefgh");
+    assert_eq!(reviews[0].game_id.as_deref(), Some("abcdefgh"));
 }
 
 #[tokio::test]
@@ -950,21 +971,18 @@ async fn following_with_a_login_that_lacks_the_permission_asks_to_reconnect() {
     );
 
     let done = lichess
-        .set_relation("Alice", "Carol", "follow")
+        .set_relation("Alice", "Carol", RelationAction::Follow)
         .await
         .unwrap();
     assert_eq!(done, Outcome::Done(()));
     let call = fixture.to("/api/rel/follow/Carol").remove(0);
     assert_eq!(call.method, "POST");
-    let refused = lichess.set_relation("Bob", "Carol", "block").await.unwrap();
+    let refused = lichess
+        .set_relation("Bob", "Carol", RelationAction::Block)
+        .await
+        .unwrap();
     assert_eq!(refused, Outcome::NeedsReconnect);
     assert_eq!(fixture.to("/api/rel/block/Carol").len(), 1);
-    assert!(
-        lichess
-            .set_relation("Alice", "Carol", "mute")
-            .await
-            .is_err()
-    );
 }
 
 /// Many profiles go to Lichess 300 names a request, as one comma-separated body each.
@@ -1021,4 +1039,92 @@ async fn uploads_a_game_as_the_account_or_anonymously() {
     assert_eq!(calls[0].header("accept"), Some("application/json"));
     assert_eq!(calls[0].header("authorization"), Some("Bearer lip_alice"));
     assert_eq!(calls[1].header("authorization"), None);
+}
+
+/// A game Lichess refuses to import says so in words, not Lichess's own reason.
+#[tokio::test]
+async fn a_refused_upload_says_the_game_could_not_be_read() {
+    let fixture = serve(|_| Reply::Json(400, r#"{"error":"Invalid PGN"}"#.into())).await;
+    let lichess = service(
+        &fixture.base,
+        &Arc::new(Recording::default()),
+        MemoryStore::with_accounts(&[]),
+        MemoryTokens::with(&[]),
+    );
+    let error = lichess.import_game("", "1. e4 *").await.unwrap_err();
+    assert_eq!(error.message, "Lichess could not read that game.");
+}
+
+/// A refusal of the login falls back to the public games; any other failure is the sync's, not a
+/// reason to ask again without the login.
+#[tokio::test]
+async fn a_failure_that_is_not_about_the_login_is_not_asked_again_anonymously() {
+    let fixture = serve(|seen| {
+        if seen.header("authorization").is_some() {
+            Reply::Json(400, r#"{"error":"Bad request"}"#.into())
+        } else {
+            Reply::Text(
+                200,
+                "application/x-ndjson",
+                ndjson(&page_of("Game", 1, 5_000_000)),
+            )
+        }
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let store = MemoryStore::with_accounts(&[("Alice", true)]);
+    let lichess = service(
+        &fixture.base,
+        &host,
+        Arc::clone(&store),
+        MemoryTokens::with(&[("Alice", "lip_alice")]),
+    );
+    assert!(lichess.sync_games(Some("Alice")).await.is_err());
+    let sent = fixture.to("/api/games/user/Alice");
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].header("authorization"), Some("Bearer lip_alice"));
+    assert!(store.games.lock().unwrap().is_empty());
+}
+
+/// Lichess is asked once more about a game it may still analyse; a finished game is settled once
+/// it has a review or ended a day ago, and a game still being played never is.
+#[tokio::test]
+async fn only_finished_games_lichess_has_had_time_to_analyse_are_settled() {
+    let recent = kchess_core::time::now_ms();
+    let mut playing = game_json("Playing1", 5_000_000, "Alice", "Bob");
+    playing["status"] = json!("started");
+    let page = [
+        game_json("OldGame1", 5_000_000, "Alice", "Bob"),
+        playing,
+        game_json("Recent01", recent, "Alice", "Bob"),
+    ];
+    let fixture = serve(move |_| Reply::Text(200, "application/x-ndjson", ndjson(&page))).await;
+    let host = Arc::new(Recording::default());
+    let store = MemoryStore::with_accounts(&[("Alice", true)]);
+    let lichess = service(
+        &fixture.base,
+        &host,
+        Arc::clone(&store),
+        MemoryTokens::with(&[("Alice", "lip_alice")]),
+    );
+    lichess.sync_games(Some("Alice")).await.unwrap();
+    assert_eq!(*store.checked.lock().unwrap(), ["OldGame1"]);
+}
+
+/// A user Lichess no longer has is not served from the saved copy, as an unreachable Lichess is.
+#[tokio::test]
+async fn a_missing_user_is_not_served_from_the_saved_copy() {
+    let fixture = serve(|_| Reply::Text(404, "text/html", "<html>missing</html>".into())).await;
+    let host = Arc::new(Recording::default());
+    let store = MemoryStore::with_accounts(&[]);
+    store.cache.lock().unwrap().insert(
+        "alice:profile".to_string(),
+        CachedValue {
+            value: json!({"username": "Alice", "title": "IM"}),
+            fetched_at: 42,
+        },
+    );
+    let lichess = service(&fixture.base, &host, store, MemoryTokens::with(&[]));
+    let error = lichess.profile("alice").await.unwrap_err();
+    assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::NotFound));
 }

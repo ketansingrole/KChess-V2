@@ -35,7 +35,7 @@ pub struct MoveSheet<'a> {
     pub first: FirstMove,
 }
 
-/// `.moves-list`: the game's moves as a scoresheet, ruled numbered pairs on the panel itself, the
+/// The game's moves as a scoresheet, ruled numbered pairs on the panel itself, the
 /// one on the board highlighted. `select` is called with the ply to show (1 for the first move).
 pub fn moves_list(
     id: impl Into<ElementId>,
@@ -147,17 +147,28 @@ pub fn moves_list(
         }))
 }
 
-/// `.move-controls`: first, previous, next and last move, and a board flip: its label, the key
-/// that does the same on the page (named in the tooltip), and what a click does.
+/// The button after the move controls: Flip board, whose key (F) its tooltip names, or another
+/// turn of the board the page names (Switch sides).
+pub enum TurnButton {
+    Flip(ClickHandler),
+    Named(SharedString, ClickHandler),
+}
+
+/// First, previous, next and last move, and the board's turn.
 pub fn move_controls(
     ply: usize,
     count: usize,
     select: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
-    flip: (SharedString, Option<&'static str>, ClickHandler),
+    turn: TurnButton,
+    cx: &App,
 ) -> impl IntoElement {
-    let flip_tooltip: SharedString = match flip.1 {
-        Some(key) => format!("{} ({key})", flip.0).into(),
-        None => flip.0.clone(),
+    let (label, tooltip, click): (SharedString, SharedString, _) = match turn {
+        TurnButton::Flip(click) => (
+            "Flip board".into(),
+            crate::menu::flip_label(cx).into(),
+            click,
+        ),
+        TurnButton::Named(label, click) => (label.clone(), label, click),
     };
     let targets = [
         ("skip-back", "Go to start", 0, ply == 0),
@@ -205,9 +216,9 @@ pub fn move_controls(
                 .ghost()
                 .small()
                 .icon(icon("arrow-up-down"))
-                .tooltip(flip_tooltip)
-                .accessibility_label(flip.0)
-                .on_click(flip.2),
+                .tooltip(tooltip)
+                .accessibility_label(label)
+                .on_click(click),
         )
 }
 /// The typed-move box's width on every page; it is as tall as a player's line.
@@ -271,7 +282,7 @@ pub fn fit(element: impl IntoElement) -> Action {
     Action(element.into_any_element(), false)
 }
 
-/// `.panel-actions`: the panel's buttons sharing one row equally; in a narrow panel two per row,
+/// The panel's buttons sharing one row equally; in a narrow panel two per row,
 /// an odd one out taking the whole row.
 pub fn panel_actions(narrow: bool, actions: impl IntoIterator<Item = Action>) -> Div {
     h_flex()
@@ -289,7 +300,7 @@ pub fn panel_actions(narrow: bool, actions: impl IntoIterator<Item = Action>) ->
         }))
 }
 
-/// `.board-input-row`: the move box and the controls a page adds (voice) on one line, kept to the
+/// The move box and the controls a page adds (voice) on one line, kept to the
 /// right, the controls at most 60% of the line.
 pub fn input_row(entry: Div, controls: impl IntoElement) -> Div {
     entry_line(entry, Some(controls.into_any_element()))
@@ -318,7 +329,7 @@ fn entry_line(entry: Div, controls: Option<AnyElement>) -> Div {
     )
 }
 
-/// `.player-middle` > `.move-entry`: the input row in a player's line.
+/// The input row in a player's line.
 pub fn move_row(entry: Div, controls: impl IntoElement) -> AnyElement {
     h_flex()
         .flex_1()
@@ -331,12 +342,13 @@ pub fn move_row(entry: Div, controls: impl IntoElement) -> AnyElement {
 mod tests {
     use super::{FirstMove, move_at};
 
+    /// The list numbered every game from 1: one set up at Black's 30th move showed "1. … Nf6"
+    /// where the scoresheet reads "30. … Nf6".
     #[test]
     fn moves_are_numbered_from_the_game_s_first_move() {
-        let setup = serde_json::json!({
-            "variant": "standard",
-            "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 3 30",
-        });
+        let setup = kchess_domain::variant::Setup::standard_at(
+            "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 3 30",
+        );
         let first = crate::game::view::first_move(&setup);
         assert_eq!(
             first,
@@ -363,7 +375,7 @@ mod tests {
                 },
             ]
         );
-        let usual = serde_json::json!({ "fen": crate::game::STANDARD_FEN });
+        let usual = kchess_domain::variant::Setup::standard();
         assert_eq!(crate::game::view::first_move(&usual), FirstMove::default());
         assert_eq!(
             move_at(2, FirstMove::default()),

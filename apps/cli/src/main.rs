@@ -4,42 +4,127 @@ mod core;
 mod play;
 mod puzzle;
 mod review;
+mod wait;
 
 use kchess_contracts::calls;
+use kchess_contracts::check::{Fen, GameId, LichessId, StudyId};
+use kchess_contracts::types::{
+    AnalysisRequest, LookupOptions, PositionLookupKind, WatchPhase, WatchTarget,
+};
+use kchess_domain::variant::Variant;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use serde_json::{Value, json};
 
-use crate::core::{Browser, CoreClient, Options};
+use crate::core::{Browser, CoreClient, CoreEvent, Options};
+use crate::wait::{Next, Wait};
 
-const HELP: &str = "KChess CLI
+/// Declares [`Command`] and [`COMMANDS`] together: each command's name, its other spellings,
+/// and its forms with what each does. The help, the
+/// suggestion for a mistyped command and `run`'s exhaustive match all read them.
+macro_rules! commands {
+    ($($variant:ident $name:literal [$($alias:literal),*] {
+        $($usage:literal => $about:literal,)+
+    })+) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum Command { $($variant,)+ }
 
-Usage: kchess-cli [options] <command>
+        const COMMANDS: &[Spec] = &[$(Spec {
+            command: Command::$variant,
+            name: $name,
+            aliases: &[$($alias),*],
+            forms: &[$(($usage, $about)),+],
+        },)+];
+    };
+}
 
-Commands:
-  library                          Print the library as JSON
-  status                           Print account and engine status
-  login                            Connect a Lichess account in your browser
-  call <method> '[arguments]'      Invoke any CoreApi method (JSON argument array)
-  call <method> --args-file <path> Read arguments from a JSON file
-  analyze [--variant name] <fen|startpos|moves>
-                                   Stream engine analysis as JSON lines until Ctrl-C
-  play [level] [white|black|random] [variant] [--fen FEN]
-                                   Play Stockfish; type moves in SAN or UCI
-  local [variant] [--fen FEN]      Play over the board (chess960, crazyhouse, atomic…)
-  puzzle [id|link]                 Solve the daily puzzle, or that one (hint, solution)
-  pgn <link>                       Print a Lichess game's PGN, or a public study chapter's
-  review <link|file|moves>         Review a game with the engine: accuracy and faulted moves
-  explore [masters|opening|tablebase] [--variant name] <fen|startpos|moves>
-                                   Look a position up (the tablebase for 7 pieces or fewer)
-  opening <fen|startpos|moves>     Name the opening a position or line reaches (ECO)
-  position [--variant name] <fen|startpos|moves>
-                                   Print whose turn, check or mate, and the legal moves
-  watch [channel|link]             Stream Lichess TV, a game or a broadcast as JSON lines
-  methods                          List available CoreApi methods
-  version                          Print the CLI's version (also --version)
+struct Spec {
+    command: Command,
+    name: &'static str,
+    aliases: &'static [&'static str],
+    forms: &'static [(&'static str, &'static str)],
+}
 
+commands! {
+    Library "library" [] {
+        "" => "Print the library as JSON",
+    }
+    Status "status" [] {
+        "" => "Print account and engine status",
+    }
+    Login "login" [] {
+        "" => "Connect a Lichess account in your browser",
+    }
+    Call "call" [] {
+        "<method> '[arguments]'" => "Invoke any CoreApi method (JSON argument array)",
+        "<method> --args-file <path>" => "Read arguments from a JSON file",
+    }
+    Analyze "analyze" [] {
+        "[--variant name] <fen|startpos|moves>" => "Stream engine analysis as JSON lines until Ctrl-C",
+    }
+    Play "play" [] {
+        "[level] [white|black|random] [variant] [--fen FEN]" => "Play Stockfish; type moves in SAN or UCI",
+    }
+    Local "local" [] {
+        "[variant] [--fen FEN]" => "Play over the board (chess960, crazyhouse, atomic…)",
+    }
+    Puzzle "puzzle" [] {
+        "[id|link]" => "Solve the daily puzzle, or that one (hint, solution)",
+    }
+    Pgn "pgn" [] {
+        "<link>" => "Print a Lichess game's PGN, or a public study chapter's",
+    }
+    Review "review" [] {
+        "<link|file|moves>" => "Review a game with the engine: accuracy and faulted moves",
+    }
+    Explore "explore" [] {
+        "[masters|opening|tablebase] [--variant name] <fen|startpos|moves>" => "Look a position up (the tablebase for 7 pieces or fewer)",
+    }
+    Opening "opening" [] {
+        "<fen|startpos|moves>" => "Name the opening a position or line reaches (ECO)",
+    }
+    Position "position" [] {
+        "[--variant name] <fen|startpos|moves>" => "Print whose turn, check or mate, and the legal moves",
+    }
+    Watch "watch" [] {
+        "[channel|link]" => "Stream Lichess TV, a game or a broadcast as JSON lines",
+    }
+    Methods "methods" [] {
+        "" => "List available CoreApi methods",
+    }
+    Version "version" ["--version", "-V"] {
+        "" => "Print the CLI's version (also --version)",
+    }
+    Help "help" ["--help", "-h"] {
+        "" => "Print this help",
+    }
+}
+
+/// Where a command's description starts in the help.
+const COLUMN: usize = 35;
+
+/// A command's form and what it does: side by side, or the description on a line of its own
+/// when the form reaches its column.
+fn help_line(call: &str, about: &str) -> String {
+    if call.chars().count() < COLUMN {
+        format!("{call:COLUMN$}{about}\n")
+    } else {
+        format!("{call}\n{:COLUMN$}{about}\n", "")
+    }
+}
+
+fn help() -> String {
+    let mut out =
+        String::from("KChess CLI\n\nUsage: kchess-cli [options] <command>\n\nCommands:\n");
+    for spec in COMMANDS {
+        for (usage, about) in spec.forms {
+            let call = format!("  {} {usage}", spec.name);
+            out.push_str(&help_line(call.trim_end(), about));
+        }
+    }
+    out.push_str(
+        "
 Options:
   --data-dir <path>                Use another profile (default: the app's)
   --browser open|print             Open the login page or print its URL
@@ -49,39 +134,26 @@ Options:
 
 Interactive game commands: e4 or e2e4, undo, resign, new, status, pgn, quit.
 Local games also accept draw and pause. Sessions are saved in the core library.
-";
+",
+    );
+    out
+}
+
+fn command(word: &str) -> Option<Command> {
+    COMMANDS
+        .iter()
+        .find(|spec| spec.name == word || spec.aliases.contains(&word))
+        .map(|spec| spec.command)
+}
 
 /// The most argument text `call` reads.
 const MAX_ARGUMENTS: u64 = 2_000_000;
 
-// Compared and printed only by the tests.
 #[cfg_attr(test, derive(Debug, PartialEq))]
 struct Cli {
     options: Options,
     args: Vec<String>,
     engine: Option<String>,
-}
-
-#[cfg(test)]
-impl PartialEq for Options {
-    fn eq(&self, other: &Options) -> bool {
-        self.data_dir == other.data_dir
-            && self.browser == other.browser
-            && self.credentials == other.credentials
-            && self.embedded == other.embedded
-    }
-}
-
-#[cfg(test)]
-impl std::fmt::Debug for Options {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Options")
-            .field("data_dir", &self.data_dir)
-            .field("browser", &self.browser)
-            .field("credentials", &self.credentials)
-            .field("embedded", &self.embedded)
-            .finish()
-    }
 }
 
 fn parse(argv: &[String]) -> Result<Cli, String> {
@@ -133,13 +205,25 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
 
 /// A result on stdout. `println!` panics when the reader has gone (`kchess-cli … | head -1`):
 /// a closed pipe ends the output quietly instead.
-fn print(value: &Value) {
+fn print(value: impl std::fmt::Display) {
     use std::io::Write as _;
     let _ = writeln!(std::io::stdout().lock(), "{value}");
 }
 
+/// A step a command takes on its way out, whose failure is told but does not fail the command.
+/// Answers what it told.
+fn told_if_failed<T>(what: &str, result: Result<T, String>) -> Option<String> {
+    let told = result
+        .err()
+        .map(|cause| format!("[cli] {what} failed: {cause}"));
+    if let Some(told) = &told {
+        eprintln!("{told}");
+    }
+    told
+}
+
 fn method_names() -> Vec<&'static str> {
-    kchess_contracts::core_api::methods()
+    kchess_contracts::core_api::METHODS
         .iter()
         .map(|method| method.name)
         .collect()
@@ -148,16 +232,7 @@ fn method_names() -> Vec<&'static str> {
 async fn arguments(args: &[String]) -> Result<Vec<Value>, String> {
     let text = if args.first().map(String::as_str) == Some("--args-file") {
         let path = args.get(1).ok_or("--args-file requires a path.")?;
-        let size = tokio::fs::metadata(path)
-            .await
-            .map_err(|cause| format!("Cannot read {path}: {cause}"))?
-            .len();
-        if size > MAX_ARGUMENTS {
-            return Err("Arguments are too large.".into());
-        }
-        tokio::fs::read_to_string(path)
-            .await
-            .map_err(|cause| format!("Cannot read {path}: {cause}"))?
+        small_file(path, "Arguments are too large.").await?
     } else {
         args.first().cloned().unwrap_or_else(|| "[]".into())
     };
@@ -171,38 +246,11 @@ async fn arguments(args: &[String]) -> Result<Vec<Value>, String> {
     }
 }
 
-/// Until Ctrl-C (or the core closing), answering host requests and handing other events to `on`.
-async fn until_interrupted(
-    core: &CoreClient,
-    events: &mut tokio::sync::mpsc::UnboundedReceiver<core::Event>,
-    mut on: impl FnMut(&core::Event),
-) {
-    let interrupted = tokio::signal::ctrl_c();
-    tokio::pin!(interrupted);
-    loop {
-        tokio::select! {
-            _ = &mut interrupted => return,
-            event = events.recv() => match event {
-                None => return,
-                Some(event) if event.name == "core:closed" => return,
-                Some(event) if event.name == "host:request" => core.answer(&event.payload).await,
-                Some(event) => on(&event),
-            },
-        }
-    }
-}
-
-/// Every command `run` knows, for a mistyped one's suggestion.
-const COMMANDS: [&str; 17] = [
-    "help", "methods", "opening", "position", "library", "status", "login", "call", "analyze",
-    "play", "local", "puzzle", "pgn", "review", "watch", "explore", "version",
-];
-
 /// An unknown command's message, naming the command it was probably meant to be.
 fn unknown_command(command: &str) -> String {
     let nearest = COMMANDS
         .iter()
-        .map(|known| (edit_distance(command, known), *known))
+        .map(|known| (edit_distance(command, known.name), known.name))
         .min()
         .filter(|(distance, known)| *distance <= 2.min(known.len() / 2));
     match nearest {
@@ -235,107 +283,89 @@ async fn run(argv: &[String]) -> Result<(), String> {
         args,
         engine,
     } = parse(argv)?;
-    let command = args.first().map_or("help", String::as_str);
+    let word = args.first().map_or("help", String::as_str);
+    // An unknown command is refused before the core opens, which takes a moment.
+    let command = command(word).ok_or_else(|| unknown_command(word))?;
+    let rest = args.get(1..).unwrap_or_default();
     match command {
-        "help" | "--help" | "-h" => {
-            print!("{HELP}");
-            return Ok(());
-        }
-        "version" | "--version" | "-V" => {
-            println!("kchess-cli {}", env!("CARGO_PKG_VERSION"));
-            return Ok(());
-        }
-        // Refused before the core opens, which takes a moment.
-        other if !COMMANDS.contains(&other) => return Err(unknown_command(other)),
-        "methods" => {
-            print(&json!(method_names()));
-            return Ok(());
-        }
-        "opening" => {
-            print(&opening_name(&args[1..])?);
-            return Ok(());
-        }
-        "position" => {
-            print(&position_info(&args[1..])?);
-            return Ok(());
-        }
-        _ => {}
+        Command::Help => print!("{}", help()),
+        Command::Version => print(format_args!("kchess-cli {}", env!("CARGO_PKG_VERSION"))),
+        Command::Methods => print(json!(method_names())),
+        Command::Opening => print(&opening_name(rest)?),
+        Command::Position => print(&position_info(rest)?),
+        _ => return with_core(command, rest, &options, engine).await,
     }
-    let (core, mut events) = CoreClient::open(&options).await?;
+    Ok(())
+}
+
+/// A command that needs the core, run over the profile's.
+async fn with_core(
+    command: Command,
+    rest: &[String],
+    options: &Options,
+    engine: Option<String>,
+) -> Result<(), String> {
+    let (core, mut events) = CoreClient::open(options).await?;
     let result = async {
         if let Some(engine) = engine {
             // An explicit operator path is trusted and kept without a fingerprint prompt, as the
             // app's own "your own Stockfish" setting; the core checks it on use.
             core.request(calls::TrustEnginePath {
-                path: json!(engine),
+                path: engine.clone(),
             })
             .await?;
             let mut settings = core.request(calls::StoredSettings {}).await?;
-            settings["enginePath"] = json!(engine);
+            settings.engine_path = engine;
             core.request(calls::SaveSettings { settings }).await?;
         }
         match command {
-            "library" => print(&core.request(calls::Library {}).await?),
-            "status" => {
+            Command::Library => print(json!(core.request(calls::Library {}).await?)),
+            Command::Status => {
                 let data = core.request(calls::LoadData {}).await?;
                 let engine = core.request(calls::EngineStatus { variant: None }).await?;
-                print(&json!({ "data": data, "engine": engine }));
+                print(json!({ "data": data, "engine": engine }));
             }
-            "login" => {
+            Command::Login => {
                 // The sign-in page is opened (or printed) while the core waits for it.
-                let login = core.request(calls::ConnectLichess { look: None });
-                tokio::pin!(login);
-                let answer = loop {
-                    tokio::select! {
-                        answer = &mut login => break answer?,
-                        Some(event) = events.recv() => {
-                            if event.name == "host:request" {
-                                core.answer(&event.payload).await;
-                            }
-                        }
-                    }
-                };
-                print(&answer);
+                print(json!(
+                    core.request(calls::ConnectLichess { look: None }).await?
+                ));
             }
-            "call" => {
-                let method = args.get(1).map(String::as_str).unwrap_or_default();
+            Command::Call => {
+                let method = rest.first().map(String::as_str).unwrap_or_default();
                 if !method_names().contains(&method) {
                     return Err("Unknown CoreApi method. Run methods to list them.".into());
                 }
-                let parameters = arguments(&args[2..]).await?;
-                if kchess_domain::misc::ASSISTANCE_METHODS.contains(&method) {
+                let parameters = arguments(rest.get(1..).unwrap_or_default()).await?;
+                let assists = kchess_contracts::core_api::method(method)
+                    .is_some_and(|method| method.assist.is_some());
+                if assists {
                     core.request(calls::ResumeOnline {}).await?;
                 }
-                // A method may ask the host meanwhile (a sign-in opens its page), as login does.
-                let call = core.call(method, parameters);
-                tokio::pin!(call);
-                let answer = loop {
-                    tokio::select! {
-                        answer = &mut call => break answer?,
-                        Some(event) = events.recv() => {
-                            if event.name == "host:request" {
-                                core.answer(&event.payload).await;
-                            }
-                        }
-                    }
-                };
-                print(&answer);
+                print(&core.call_by_name(method, parameters).await?);
             }
-            "analyze" => {
-                let request = analysis_request(&args[1..])?;
+            Command::Analyze => {
+                let request = analysis_request("analyze", rest)?;
                 core.request(calls::ResumeOnline {}).await?;
                 core.request(calls::StartAnalysis { request }).await?;
-                until_interrupted(&core, &mut events, |event| {
-                    if event.name == "engine:analysis" {
-                        print(&event.payload);
+                let mut wait = Wait::new(&mut events);
+                loop {
+                    match wait.next().await {
+                        Next::Event(CoreEvent::Analysis(update)) => {
+                            print(serde_json::json!(update))
+                        }
+                        Next::Event(_) | Next::Line(_) | Next::Tick => {}
+                        Next::Interrupted | Next::Closed | Next::InputEnded => break,
                     }
-                })
-                .await;
-                let _ = core.request(calls::StopAnalysis { kill: None }).await;
+                }
+                told_if_failed(
+                    "Stopping the analysis",
+                    core.request(calls::StopAnalysis { kill: None }).await,
+                );
             }
-            "play" | "local" => {
-                let computer = command == "play";
-                let (fen, words) = play::take_fen(&args[1..])?;
+            Command::Play | Command::Local => {
+                let computer = command == Command::Play;
+                let (fen, words) = play::take_fen(rest)?;
                 let (level, color, variant) = if computer {
                     play::choices(&words)?
                 } else {
@@ -343,60 +373,60 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 };
                 play::interactive(&core, &mut events, computer, level, color, variant, fen).await?;
             }
-            "puzzle" => {
-                let id = args.get(1).map(String::as_str);
+            Command::Puzzle => {
+                let id = rest.first().map(String::as_str);
                 puzzle::interactive(&core, &mut events, id).await?;
             }
-            "pgn" => {
-                let link = args.get(1).map(String::as_str).unwrap_or_default();
-                println!("{}", linked_pgn(&core, link).await?.trim_end());
+            Command::Pgn => {
+                let link = rest.first().map(String::as_str).unwrap_or_default();
+                print(linked_pgn(&core, link).await?.trim_end());
             }
-            "review" => {
-                let pgn = review_input(&core, &args[1..]).await?;
+            Command::Review => {
+                let pgn = review_input(&core, rest).await?;
                 print(&review::run(&core, &mut events, &pgn).await?);
             }
-            "watch" => {
-                let target = watch_target(&args[1..])?;
+            Command::Watch => {
+                let target = watch_target(rest)?;
                 core.request(calls::ResumeOnline {}).await?;
                 match target {
                     Watched::Feed(target) => core.request(calls::Watch { target }).await?,
                     Watched::Round(round) => {
-                        core.request(calls::WatchBroadcast {
-                            round_id: json!(round),
-                        })
-                        .await?
+                        let round_id = LichessId(round);
+                        core.request(calls::WatchBroadcast { round_id }).await?
                     }
                     Watched::Tour(id) => {
-                        let tour = core.request(calls::BroadcastTour { id: json!(id) }).await?;
-                        let round = live_round(&tour).ok_or("That broadcast has no rounds yet.")?;
-                        core.request(calls::WatchBroadcast {
-                            round_id: json!(round),
-                        })
-                        .await?
+                        let id = LichessId(id);
+                        let tour = core.request(calls::BroadcastTour { id }).await?;
+                        let round = kchess_games::broadcast::opening_round(&tour)
+                            .ok_or("That broadcast has no rounds yet.")?;
+                        let round_id = LichessId(round.id.clone());
+                        core.request(calls::WatchBroadcast { round_id }).await?
                     }
                 };
-                let watched = watch_frames(&core, &mut events).await;
-                let _ = core.request(calls::StopWatching { session: None }).await;
+                let watched = watch_frames(&mut events).await;
+                told_if_failed(
+                    "Stopping watching",
+                    core.request(calls::StopWatching { session: None }).await,
+                );
                 watched?;
             }
-            "explore" => {
-                let (kind, fen, variant) = explore_request(&args[1..])?;
-                let options = match variant {
-                    Some(variant) => json!({ "variant": variant }),
-                    None => json!({}),
-                };
+            Command::Explore => {
+                let (kind, fen, options) = explore_request(rest)?;
                 core.request(calls::ResumeOnline {}).await?;
-                print(
-                    &core
-                        .request(calls::PositionLookup {
-                            kind: json!(kind),
-                            fen: json!(fen),
-                            options: Some(options),
-                        })
-                        .await?,
-                );
+                let lookup = core
+                    .request(calls::PositionLookup {
+                        kind,
+                        fen: Fen(fen),
+                        options: Some(options),
+                    })
+                    .await?;
+                print(json!(lookup));
             }
-            other => return Err(unknown_command(other)),
+            Command::Help
+            | Command::Version
+            | Command::Methods
+            | Command::Opening
+            | Command::Position => {} // Answered by `run`.
         }
         Ok(())
     }
@@ -409,29 +439,30 @@ async fn run(argv: &[String]) -> Result<(), String> {
 /// study's own link).
 async fn linked_pgn(core: &CoreClient, link: &str) -> Result<String, String> {
     use kchess_domain::links::{game_link, study_link};
-    let pgn = if let Some(game) = game_link(link) {
-        core.request(calls::ExportGame { id: json!(game.id) })
-            .await?
+    if let Some(game) = game_link(link) {
+        Ok(core
+            .request(calls::ExportGame {
+                id: GameId(game.id),
+            })
+            .await?)
     } else if let Some((study, chapter)) = study_link(link) {
-        core.request(calls::LichessStudyChapter {
-            id: json!(study),
-            chapter: json!(chapter),
-        })
-        .await?["pgn"]
-            .take()
+        let chapter = core
+            .request(calls::LichessStudyChapter {
+                id: LichessId(study),
+                chapter: StudyId(chapter),
+            })
+            .await?;
+        Ok(chapter.pgn)
     } else {
-        return Err("pgn takes a lichess.org game or study link.".into());
-    };
-    pgn.as_str()
-        .map(str::to_string)
-        .ok_or_else(|| "Lichess sent no PGN.".into())
+        Err("pgn takes a lichess.org game or study link.".into())
+    }
 }
 
 /// What `watch` follows.
 #[derive(Debug, PartialEq)]
 enum Watched {
-    /// A TV channel or a game: `{ channel }` or `{ gameId }`.
-    Feed(Value),
+    /// A TV channel or a game.
+    Feed(WatchTarget),
     /// A broadcast round, by id.
     Round(String),
     /// A broadcast tournament, at its live round.
@@ -442,13 +473,13 @@ enum Watched {
 /// link or id, or a broadcast's link.
 fn watch_target(words: &[String]) -> Result<Watched, String> {
     use kchess_domain::links::{BroadcastLink, broadcast_link, game_link};
-    use kchess_domain::misc::TV_CHANNEL_KEYS;
+    use kchess_domain::misc::constants::TV_CHANNELS;
     let word = words.first().map_or("best", String::as_str);
-    if let Some(channel) = TV_CHANNEL_KEYS
+    if let Some((channel, _)) = TV_CHANNELS
         .iter()
-        .find(|channel| channel.eq_ignore_ascii_case(word))
+        .find(|(channel, _)| channel.eq_ignore_ascii_case(word))
     {
-        return Ok(Watched::Feed(json!({ "channel": channel })));
+        return Ok(Watched::Feed(WatchTarget::Channel((*channel).to_owned())));
     }
     match broadcast_link(word) {
         Some(BroadcastLink::Tour(tour)) => return Ok(Watched::Tour(tour)),
@@ -461,58 +492,39 @@ fn watch_target(words: &[String]) -> Result<Watched, String> {
         format!("https://lichess.org/{word}")
     };
     game_link(&link)
-        .map(|game| Watched::Feed(json!({ "gameId": game.id })))
+        .map(|game| Watched::Feed(WatchTarget::Game(game.id)))
         .ok_or_else(|| {
             format!(
                 "watch takes a TV channel ({}), or a Lichess game or broadcast link.",
-                TV_CHANNEL_KEYS.join(", ")
+                TV_CHANNELS.map(|(channel, _)| channel).join(", ")
             )
         })
-}
-
-/// The round a broadcast opens at, as the app opens it: the one Lichess names, else the one being
-/// played, else the last.
-fn live_round(tour: &Value) -> Option<String> {
-    let rounds = tour["rounds"].as_array()?;
-    rounds
-        .iter()
-        .find(|round| round["id"] == tour["defaultRoundId"])
-        .or_else(|| rounds.iter().find(|round| round["ongoing"] == json!(true)))
-        .or(rounds.last())
-        .and_then(|round| round["id"].as_str().map(str::to_string))
 }
 
 /// Print each frame of the watched game, or each update of the broadcast round, as a JSON line
 /// until Ctrl-C; an error, or the round's end, ends it.
 async fn watch_frames(
-    core: &CoreClient,
-    events: &mut tokio::sync::mpsc::UnboundedReceiver<core::Event>,
+    events: &mut tokio::sync::mpsc::UnboundedReceiver<core::ClientEvent>,
 ) -> Result<(), String> {
-    let interrupted = tokio::signal::ctrl_c();
-    tokio::pin!(interrupted);
+    let mut wait = Wait::new(events);
     loop {
-        tokio::select! {
-            _ = &mut interrupted => return Ok(()),
-            event = events.recv() => match event {
-                None => return Err("The core closed.".into()),
-                Some(event) if event.name == "core:closed" => return Err("The core closed.".into()),
-                Some(event) if event.name == "host:request" => core.answer(&event.payload).await,
-                Some(event) if event.name == "watch:frame" => print(&event.payload),
-                Some(event) if event.name == "watch:broadcast" => {
-                    if let Some(error) = event.payload["error"].as_str() {
-                        return Err(error.to_string());
-                    }
-                    print(&event.payload);
-                    if event.payload["ended"] == json!(true) {
-                        return Ok(());
-                    }
+        match wait.next().await {
+            Next::Interrupted | Next::InputEnded => return Ok(()),
+            Next::Closed => return Err("The core closed.".into()),
+            Next::Event(CoreEvent::WatchFrame(frame)) => print(json!(frame)),
+            Next::Event(CoreEvent::WatchBroadcast(update)) => {
+                if let Some(error) = update.error {
+                    return Err(error);
                 }
-                Some(event) if event.name == "watch:state" && event.payload["phase"] == "error" => {
-                    let message = event.payload["message"].as_str().unwrap_or("Watching failed.");
-                    return Err(message.to_string());
+                print(json!(update));
+                if update.ended == Some(true) {
+                    return Ok(());
                 }
-                Some(_) => {}
-            },
+            }
+            Next::Event(CoreEvent::WatchState(state)) if state.phase == WatchPhase::Error => {
+                return Err(state.message.unwrap_or_else(|| "Watching failed.".into()));
+            }
+            Next::Event(_) | Next::Line(_) | Next::Tick => {}
         }
     }
 }
@@ -531,19 +543,19 @@ async fn review_input(core: &CoreClient, words: &[String]) -> Result<String, Str
     }
     let path = std::path::Path::new(text);
     if path.is_file() {
-        return game_file(text).await;
+        return small_file(text, &format!("{text} is too large.")).await;
     }
     Ok(text.to_string())
 }
 
-/// A PGN file `review` was given, refused by its size before it is read.
-async fn game_file(path: &str) -> Result<String, String> {
+/// A file of up to `MAX_ARGUMENTS` bytes, refused as `too_large` by its size before it is read.
+async fn small_file(path: &str, too_large: &str) -> Result<String, String> {
     let size = tokio::fs::metadata(path)
         .await
         .map_err(|cause| format!("Cannot read {path}: {cause}"))?
         .len();
     if size > MAX_ARGUMENTS {
-        return Err(format!("{path} is too large."));
+        return Err(too_large.into());
     }
     tokio::fs::read_to_string(path)
         .await
@@ -552,8 +564,9 @@ async fn game_file(path: &str) -> Result<String, String> {
 
 /// What `analyze` searches: a position, or the one a game's moves (SAN or a PGN) reach, sent
 /// with its history so repetitions count. `--variant crazyhouse` (or a PGN's `Variant` header)
-/// reads them in that variant, which Fairy-Stockfish analyses.
-fn analysis_request(words: &[String]) -> Result<Value, String> {
+/// reads them in that variant, which Fairy-Stockfish analyses. `command` names the command in its
+/// errors.
+fn analysis_request(command: &str, words: &[String]) -> Result<AnalysisRequest, String> {
     let (variant, words) = match words {
         [flag, name, rest @ ..] if flag == "--variant" => {
             (play::local_variant(std::slice::from_ref(name))?, rest)
@@ -567,30 +580,38 @@ fn analysis_request(words: &[String]) -> Result<Value, String> {
         .and_then(|game| game.header("Variant").map(str::to_string));
     let variant = match (variant, header) {
         (Some(variant), _) => Some(variant),
-        (None, Some(name)) => Some(review::variant_key(&name)?.to_string()),
+        (None, Some(name)) => Some(review::pgn_variant(&name)?),
         (None, None) => None,
     };
-    match variant.as_deref() {
-        Some(variant) if !matches!(variant, "standard" | "chess960") => {
-            variant_analysis_request(variant, &text)
+    match variant {
+        Some(variant) if !variant.standard_rules() => {
+            variant_analysis_request(command, variant, &text)
         }
-        _ => standard_analysis_request(words),
+        _ => standard_analysis_request(command, words),
     }
 }
 
 /// A position in another variant, or the one its moves reach, read by that variant's rules.
-fn variant_analysis_request(variant: &str, text: &str) -> Result<Value, String> {
+fn variant_analysis_request(
+    command: &str,
+    variant: Variant,
+    text: &str,
+) -> Result<AnalysisRequest, String> {
     use kchess_domain::rules;
-    let start = rules::lichess_variant(variant).ok_or("Unknown variant.")?;
     let text = text.trim();
     let fen = match text {
-        "" => return Err("analyze requires a FEN or moves.".into()),
-        "startpos" => Some(rules::make_fen(&rules::default_position(start))),
+        "" => return Err(format!("{command} requires a FEN or moves.")),
+        "startpos" => Some(variant.default_fen()),
         text => rules::setup_start(variant, text).map(|position| rules::make_fen(&position)),
     };
+    let request = |fen: String| AnalysisRequest {
+        variant: Some(variant.key().to_string()),
+        ..three_lines(fen)
+    };
     if let Some(fen) = fen {
-        return Ok(json!({ "fen": fen, "lines": 3, "variant": variant }));
+        return Ok(request(fen));
     }
+    let variant = variant.key();
     let pgn = if text.starts_with('[') {
         text.to_string()
     } else {
@@ -604,23 +625,21 @@ fn variant_analysis_request(variant: &str, text: &str) -> Result<Value, String> 
         moves.push(next.uci.clone());
         node = next;
     }
-    Ok(json!({
-        "fen": node.fen,
-        "rootFen": tree.fen,
-        "moves": moves,
-        "lines": 3,
-        "variant": variant,
-    }))
+    Ok(AnalysisRequest {
+        root_fen: Some(tree.fen.clone()),
+        moves: Some(moves),
+        ..request(node.fen.clone())
+    })
 }
 
 /// A standard (or Chess960) position, or the one a game's moves reach.
-fn standard_analysis_request(words: &[String]) -> Result<Value, String> {
+fn standard_analysis_request(command: &str, words: &[String]) -> Result<AnalysisRequest, String> {
     if let Ok(fen) = analysis_fen(words) {
-        return Ok(json!({ "fen": fen, "lines": 3 }));
+        return Ok(three_lines(fen));
     }
     let text = words.join(" ");
     let line = review::main_line(&text).map_err(|cause| match text.trim() {
-        "" => "analyze requires a FEN or moves.".to_string(),
+        "" => format!("{command} requires a FEN or moves."),
         _ if cause.starts_with("Move ") => cause,
         text => format!("Not a legal position or moves: {text}"),
     })?;
@@ -628,7 +647,24 @@ fn standard_analysis_request(words: &[String]) -> Result<Value, String> {
         .pop()
         .map(|position| position.fen)
         .ok_or("Not a legal position.")?;
-    Ok(json!({ "fen": fen, "rootFen": line.fen, "moves": line.moves, "lines": 3 }))
+    Ok(AnalysisRequest {
+        root_fen: Some(line.fen),
+        moves: Some(line.moves),
+        ..three_lines(fen)
+    })
+}
+
+/// The best three lines of a position, without its history.
+fn three_lines(fen: String) -> AnalysisRequest {
+    AnalysisRequest {
+        fen,
+        lines: 3,
+        infinite: None,
+        root_fen: None,
+        moves: None,
+        client_id: None,
+        variant: None,
+    }
 }
 
 /// The position `analyze` was given: a FEN, quoted or as separate words, or `startpos`.
@@ -636,7 +672,7 @@ fn analysis_fen(words: &[String]) -> Result<String, String> {
     let fen = words.join(" ");
     let fen = match fen.trim() {
         "" => return Err("analyze requires a FEN.".into()),
-        "startpos" => "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+        "startpos" => kchess_domain::rules::INITIAL_FEN.to_string(),
         fen => fen.to_string(),
     };
     if kchess_domain::position::fen_problem(&fen).is_some() {
@@ -648,41 +684,40 @@ fn analysis_fen(words: &[String]) -> Result<String, String> {
 /// `opening`: the named opening a position or line reaches, from the openings the app names, as
 /// Lichess does (the last named position on the way). Offline: no core is needed.
 fn opening_name(words: &[String]) -> Result<Value, String> {
-    let request = analysis_request(words).map_err(|cause| cause.replace("analyze", "opening"))?;
-    if request.get("variant").is_some() {
+    let request = analysis_request("opening", words)?;
+    if request.variant.is_some() {
         return Err("Opening names are for standard chess only.".into());
     }
-    let root = request.get("rootFen").unwrap_or(&request["fen"]).clone();
-    let moves = request.get("moves").cloned().unwrap_or_else(|| json!([]));
-    let named = kchess_domain::api::call_value(
-        "openingAt",
-        &[json!({ "variant": "standard", "fen": root }), moves],
-    )?;
-    if named.is_null() {
-        return Err("No named opening there.".into());
-    }
-    Ok(json!({ "eco": named["eco"], "name": named["name"], "fen": request["fen"] }))
+    let root = request.root_fen.as_deref().unwrap_or(&request.fen);
+    let moves = request.moves.as_deref().unwrap_or_default();
+    let ply = moves.len() as f64;
+    let named = kchess_domain::training::openings::opening_at("standard", root, moves, ply)
+        .ok_or("No named opening there.")?;
+    Ok(json!({ "eco": named.eco, "name": named.name, "fen": request.fen }))
 }
 
 /// The position a FEN or line reaches: whose turn, check and how the game stands, and every legal
 /// move in SAN.
 fn position_info(words: &[String]) -> Result<Value, String> {
-    let request = analysis_request(words).map_err(|cause| cause.replace("analyze", "position"))?;
-    let variant = request["variant"].as_str().unwrap_or("standard");
-    let setup = json!({ "variant": variant, "fen": request["fen"] });
-    let call = |method: &str| kchess_domain::api::call_value(method, std::slice::from_ref(&setup));
-    let info = call("position")?;
-    let legal =
-        kchess_domain::rules::setup_start(variant, info["fen"].as_str().unwrap_or_default())
-            .map(|position| kchess_domain::position::legal_sans(&position))
-            .unwrap_or_default();
+    let request = analysis_request("position", words)?;
+    let variant = match request.variant.as_deref() {
+        Some(key) => Variant::from_key(key),
+        None => Some(Variant::Standard),
+    };
+    let position =
+        variant.and_then(|variant| kchess_domain::rules::setup_start(variant, &request.fen));
+    let info = position.as_ref().map(kchess_domain::position::info);
+    let legal = position
+        .as_ref()
+        .map(kchess_domain::position::legal_sans)
+        .unwrap_or_default();
     Ok(json!({
-        "fen": info["fen"],
-        "turn": info["turn"],
-        "check": info["check"],
-        "checkmate": info["checkmate"],
-        "stalemate": info["stalemate"],
-        "insufficient": info["insufficient"],
+        "fen": info.as_ref().map(|info| &info.fen),
+        "turn": info.as_ref().map(|info| info.turn),
+        "check": info.as_ref().map(|info| info.check),
+        "checkmate": info.as_ref().map(|info| info.checkmate),
+        "stalemate": info.as_ref().map(|info| info.stalemate),
+        "insufficient": info.as_ref().map(|info| info.insufficient),
         "legal": legal,
     }))
 }
@@ -690,21 +725,30 @@ fn position_info(words: &[String]) -> Result<Value, String> {
 /// What `explore` looks up: the database named first, else the tablebase when it covers the
 /// position (seven pieces or fewer, no castling rights) and the masters' games when not. A
 /// variant's position (`--variant`, or a PGN's header) is looked up in Lichess's games of it.
-fn explore_request(words: &[String]) -> Result<(&'static str, String, Option<String>), String> {
-    const KINDS: [&str; 3] = ["masters", "opening", "tablebase"];
+fn explore_request(
+    words: &[String],
+) -> Result<(PositionLookupKind, String, LookupOptions), String> {
+    // A player's games need the player, which `explore` does not take.
     let named = words
         .first()
-        .and_then(|word| KINDS.iter().find(|kind| **kind == word.as_str()));
+        .and_then(|word| serde_json::from_value(json!(word)).ok())
+        .filter(|kind| *kind != PositionLookupKind::Player);
     let words = if named.is_some() { &words[1..] } else { words };
-    let request = analysis_request(words).map_err(|cause| cause.replace("analyze", "explore"))?;
-    let fen = request["fen"].as_str().unwrap_or_default().to_string();
-    if let Some(variant) = request["variant"].as_str() {
-        return match named.copied() {
-            None | Some("opening") => Ok(("opening", fen, Some(variant.to_string()))),
+    let request = analysis_request("explore", words)?;
+    let fen = request.fen;
+    if let Some(variant) = request.variant.as_deref().and_then(Variant::from_key) {
+        return match named {
+            None | Some(PositionLookupKind::Opening) => {
+                let options = LookupOptions {
+                    variant: Some(variant),
+                    ..LookupOptions::default()
+                };
+                Ok((PositionLookupKind::Opening, fen, options))
+            }
             Some(_) => Err("Masters games and tablebases are standard chess only.".into()),
         };
     }
-    let kind = named.copied().unwrap_or_else(|| {
+    let kind = named.unwrap_or_else(|| {
         let mut fields = fen.split(' ');
         let pieces = fields
             .next()
@@ -714,45 +758,21 @@ fn explore_request(words: &[String]) -> Result<(&'static str, String, Option<Str
             .count();
         let castling = fields.nth(1).is_some_and(|rights| rights != "-");
         if pieces <= 7 && !castling {
-            "tablebase"
+            PositionLookupKind::Tablebase
         } else {
-            "masters"
+            PositionLookupKind::Masters
         }
     });
-    Ok((kind, fen, None))
+    Ok((kind, fen, LookupOptions::default()))
 }
-
-/// The core's advice names the app's Settings; here the same fix is a command or an option.
-fn for_the_cli(cause: &str) -> String {
-    const LOGIN: &str = "with `kchess-cli login`";
-    [
-        ("Reconnect in Settings", format!("Reconnect {LOGIN}")),
-        ("Reconnect it in Settings", format!("Reconnect it {LOGIN}")),
-        ("Connect it in Settings", format!("Connect it {LOGIN}")),
-        ("account in Settings", format!("account {LOGIN}")),
-        (
-            "Choose an engine in Settings",
-            "Pass --engine <path>".to_string(),
-        ),
-    ]
-    .iter()
-    .fold(cause.to_string(), |text, (app, cli)| text.replace(app, cli))
-}
-
-/// The stack of every thread the CLI runs the core on: what macOS and Linux give a main thread.
-/// Windows gives its main thread 1 MB, which an embedded sign-in overflows in a debug build.
-const STACK: usize = 8 * 1024 * 1024;
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let cli = std::thread::Builder::new()
         .name("kchess-cli".into())
-        .stack_size(STACK)
+        .stack_size(kchess_service::CORE_STACK)
         .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .thread_stack_size(STACK)
-                .build()
+            let runtime = kchess_service::core_runtime()
                 .map_err(|cause| format!("Could not start: {cause}"))?;
             runtime.block_on(run(&argv))
         });
@@ -764,7 +784,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(cause) => {
-            eprintln!("[cli] Command failed: {}", for_the_cli(&cause));
+            eprintln!("[cli] Command failed: {cause}");
             ExitCode::FAILURE
         }
     }
@@ -773,6 +793,93 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_command_is_in_the_help_and_named_once() {
+        let help = help();
+        let mut words = Vec::new();
+        for spec in COMMANDS {
+            assert!(
+                help.contains(&format!("\n  {} ", spec.name)),
+                "help misses {}",
+                spec.name
+            );
+            assert_eq!(command(spec.name), Some(spec.command));
+            words.push(spec.name);
+            words.extend(spec.aliases);
+        }
+        let count = words.len();
+        words.sort_unstable();
+        words.dedup();
+        assert_eq!(words.len(), count, "a word names two commands");
+        assert_eq!(command("--help"), Some(Command::Help));
+        assert_eq!(command("-V"), Some(Command::Version));
+        assert_eq!(command("bogus"), None);
+    }
+
+    /// A form shorter than the column has its description beside it; one that reaches the
+    /// column has it on the next line.
+    #[test]
+    fn a_long_form_puts_its_description_below() {
+        let short = "c".repeat(COLUMN - 1);
+        assert_eq!(help_line(&short, "Does it"), format!("{short} Does it\n"));
+        let long = "c".repeat(COLUMN);
+        let indent = " ".repeat(COLUMN);
+        assert_eq!(
+            help_line(&long, "Does it"),
+            format!("{long}\n{indent}Does it\n")
+        );
+    }
+
+    #[test]
+    fn a_failed_step_on_the_way_out_is_told() {
+        assert_eq!(
+            told_if_failed("Stopping the engine", Err::<(), _>("gone".into())),
+            Some("[cli] Stopping the engine failed: gone".into())
+        );
+        assert_eq!(told_if_failed("Stopping the engine", Ok(())), None);
+    }
+
+    /// Watching a round ends with its end; a failed watch ends with its message, and the core
+    /// closing ends it too.
+    #[tokio::test]
+    async fn watching_ends_with_the_round_or_a_failure() {
+        use kchess_contracts::types::{BroadcastUpdate, WatchState};
+        let update = |ended| {
+            CoreEvent::WatchBroadcast(BroadcastUpdate {
+                session: 1,
+                round_id: "r1".into(),
+                games: vec![],
+                ended,
+                error: None,
+            })
+        };
+        let state = |phase| {
+            CoreEvent::WatchState(WatchState {
+                session: 1,
+                phase,
+                message: Some("Not found.".into()),
+                kind: None,
+            })
+        };
+        let watched = |sent: Vec<CoreEvent>| async move {
+            let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
+            for event in sent {
+                sender.send(core::ClientEvent::Event(event)).expect("sent");
+            }
+            drop(sender);
+            watch_frames(&mut events).await
+        };
+        assert_eq!(watched(vec![update(Some(true))]).await, Ok(()));
+        assert_eq!(
+            watched(vec![update(Some(false)), state(WatchPhase::Error)]).await,
+            Err("Not found.".into())
+        );
+        assert_eq!(
+            watched(vec![update(None), state(WatchPhase::Connected)]).await,
+            Err("The core closed.".into())
+        );
+    }
 
     #[test]
     fn a_mistyped_command_names_the_nearest_one() {
@@ -801,20 +908,23 @@ mod tests {
     #[test]
     fn watch_follows_a_channel_a_game_or_a_broadcast() {
         use super::Watched::{Feed, Round, Tour};
-        use serde_json::json;
+        use kchess_contracts::types::WatchTarget;
         let words = |text: &str| {
             text.split_whitespace()
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         };
         let target = |text: &str| super::watch_target(&words(text));
-        assert_eq!(target(""), Ok(Feed(json!({ "channel": "best" }))));
-        assert_eq!(target("Blitz"), Ok(Feed(json!({ "channel": "blitz" }))));
+        assert_eq!(target(""), Ok(Feed(WatchTarget::Channel("best".into()))));
+        assert_eq!(
+            target("Blitz"),
+            Ok(Feed(WatchTarget::Channel("blitz".into())))
+        );
         assert_eq!(
             target("ultrabullet"),
-            Ok(Feed(json!({ "channel": "ultraBullet" })))
+            Ok(Feed(WatchTarget::Channel("ultraBullet".into())))
         );
-        let game = Ok(Feed(json!({ "gameId": "q7ZvsdUF" })));
+        let game = Ok(Feed(WatchTarget::Game("q7ZvsdUF".into())));
         assert_eq!(target("https://lichess.org/q7ZvsdUF/black"), game);
         assert_eq!(target("q7ZvsdUF"), game);
         assert_eq!(
@@ -826,23 +936,6 @@ mod tests {
             Ok(Tour("kcTour01".into()))
         );
         assert!(target("lichess.org/training").is_err_and(|cause| cause.contains("best, bullet")));
-    }
-
-    #[test]
-    fn a_broadcast_opens_at_its_live_round() {
-        use serde_json::json;
-        let rounds = json!([
-            { "id": "r1", "finished": true },
-            { "id": "r2", "ongoing": true },
-            { "id": "r3" },
-        ]);
-        let named = json!({ "rounds": rounds, "defaultRoundId": "r1" });
-        assert_eq!(super::live_round(&named).as_deref(), Some("r1"));
-        let unnamed = json!({ "rounds": rounds });
-        assert_eq!(super::live_round(&unnamed).as_deref(), Some("r2"));
-        let none_live = json!({ "rounds": [{ "id": "r1" }, { "id": "r2" }] });
-        assert_eq!(super::live_round(&none_live).as_deref(), Some("r2"));
-        assert_eq!(super::live_round(&json!({ "rounds": [] })), None);
     }
 
     #[test]
@@ -874,23 +967,6 @@ mod tests {
         ))
         .expect("a King of the Hill position");
         assert_eq!(hill["legal"], serde_json::json!([]), "{hill}");
-    }
-
-    #[test]
-    fn settings_advice_names_the_cli_fix() {
-        assert_eq!(
-            for_the_cli("Connect a Lichess account in Settings to use the opening explorer."),
-            "Connect a Lichess account with `kchess-cli login` to use the opening explorer."
-        );
-        assert_eq!(
-            for_the_cli("@ann's Lichess login is unavailable. Reconnect it in Settings."),
-            "@ann's Lichess login is unavailable. Reconnect it with `kchess-cli login`."
-        );
-        assert_eq!(
-            for_the_cli("Stockfish could not be found. Choose an engine in Settings."),
-            "Stockfish could not be found. Pass --engine <path>."
-        );
-        assert_eq!(for_the_cli("Move 2 is not legal."), "Move 2 is not legal.");
     }
 
     fn strings(values: &[&str]) -> Vec<String> {
@@ -938,9 +1014,8 @@ mod tests {
 
     /// Without --data-dir, the CLI uses the app's own profile.
     #[test]
-    fn the_profile_defaults_to_the_apps() {
+    fn the_defaults_name_a_profile_open_the_browser_and_use_credentials() {
         let options = parse(&[]).unwrap().options;
-        assert_eq!(options.data_dir, crate::core::default_data_dir());
         assert!(!options.data_dir.as_os_str().is_empty());
         assert_eq!(options.browser, Browser::Open);
         assert!(options.credentials && !options.embedded);
@@ -1004,32 +1079,34 @@ mod tests {
 
     #[test]
     fn explore_picks_the_tablebase_for_few_pieces() {
+        use PositionLookupKind::{Masters, Opening, Tablebase};
+        let standard = LookupOptions::default;
         let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         assert_eq!(
             explore_request(&strings(&["startpos"])),
-            Ok(("masters", start.to_string(), None))
+            Ok((Masters, start.to_string(), standard()))
         );
         assert_eq!(
             explore_request(&strings(&["opening", "startpos"])),
-            Ok(("opening", start.to_string(), None))
+            Ok((Opening, start.to_string(), standard()))
         );
         let ending = "8/8/8/8/8/3k4/8/K6Q w - - 0 1";
         assert_eq!(
             explore_request(&strings(&ending.split(' ').collect::<Vec<_>>())),
-            Ok(("tablebase", ending.to_string(), None))
+            Ok((Tablebase, ending.to_string(), standard()))
         );
         // Castling rights keep a few-piece position out of the tablebase.
         let castling = "4k3/8/8/8/8/8/8/4K2R w K - 0 1";
         assert_eq!(
             explore_request(&strings(&[castling])),
-            Ok(("masters", castling.to_string(), None))
+            Ok((Masters, castling.to_string(), standard()))
         );
         assert_eq!(
             explore_request(&strings(&["opening", "1.", "e4", "c5"])),
             Ok((
-                "opening",
+                Opening,
                 "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2".to_string(),
-                None
+                standard()
             ))
         );
         assert_eq!(
@@ -1044,7 +1121,14 @@ mod tests {
         let zh = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
         assert_eq!(
             explore_request(&strings(&["--variant", "crazyhouse", "startpos"])),
-            Ok(("opening", zh.to_string(), Some("crazyhouse".to_string())))
+            Ok((
+                Opening,
+                zh.to_string(),
+                LookupOptions {
+                    variant: Some(Variant::Crazyhouse),
+                    ..standard()
+                }
+            ))
         );
         assert_eq!(
             explore_request(&strings(&["masters", "--variant", "atomic", "startpos"])),
@@ -1055,82 +1139,80 @@ mod tests {
     #[test]
     fn analyze_reads_a_variant_by_its_own_rules() {
         // A drop in Crazyhouse, which standard chess cannot read.
-        let request = analysis_request(&strings(&[
-            "--variant",
-            "crazyhouse",
-            "1.",
-            "e4",
-            "d5",
-            "2.",
-            "exd5",
-            "Qxd5",
-            "3.",
-            "P@e3",
-        ]))
+        let request = analysis_request(
+            "analyze",
+            &strings(&[
+                "--variant",
+                "crazyhouse",
+                "1.",
+                "e4",
+                "d5",
+                "2.",
+                "exd5",
+                "Qxd5",
+                "3.",
+                "P@e3",
+            ]),
+        )
         .unwrap();
-        assert_eq!(request["variant"], "crazyhouse");
+        assert_eq!(request.variant.as_deref(), Some("crazyhouse"));
         assert_eq!(
-            request["moves"],
-            json!(["e2e4", "d7d5", "e4d5", "d8d5", "P@e3"])
+            request.moves.unwrap(),
+            ["e2e4", "d7d5", "e4d5", "d8d5", "P@e3"]
         );
-        assert!(
-            request["fen"].as_str().unwrap().contains("[p]"),
-            "{request}"
+        assert!(request.fen.contains("[p]"), "{}", request.fen);
+        assert_eq!(
+            request.root_fen.as_deref(),
+            Some("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1")
         );
         // A PGN names its own variant: the Atomic capture explodes.
-        let request = analysis_request(&strings(&[
-            "[Variant \"Atomic\"]",
-            "1.",
-            "e4",
-            "d5",
-            "2.",
-            "exd5",
-        ]))
+        let request = analysis_request(
+            "analyze",
+            &strings(&["[Variant \"Atomic\"]", "1.", "e4", "d5", "2.", "exd5"]),
+        )
         .unwrap();
-        assert_eq!(request["variant"], "atomic");
+        assert_eq!(request.variant.as_deref(), Some("atomic"));
         assert_eq!(
-            request["fen"],
+            request.fen,
             "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
         );
-        let start = analysis_request(&strings(&["--variant", "horde", "startpos"])).unwrap();
-        assert_eq!(start["variant"], "horde");
-        assert!(start["fen"].as_str().unwrap().contains("PPPPPPPP/PPPPPPPP"));
-        assert!(analysis_request(&strings(&["--variant", "bughouse", "startpos"])).is_err());
+        let start =
+            analysis_request("analyze", &strings(&["--variant", "horde", "startpos"])).unwrap();
+        assert_eq!(start.variant.as_deref(), Some("horde"));
+        assert!(start.fen.contains("PPPPPPPP/PPPPPPPP"));
+        assert!(
+            analysis_request("analyze", &strings(&["--variant", "bughouse", "startpos"])).is_err()
+        );
         // Standard chess and Chess960 stay with Stockfish.
-        let request = analysis_request(&strings(&["--variant", "chess960", "e4"])).unwrap();
-        assert!(request.get("variant").is_none());
+        let request =
+            analysis_request("analyze", &strings(&["--variant", "chess960", "e4"])).unwrap();
+        assert_eq!(request.variant, None);
     }
 
     #[test]
     fn analyze_reads_moves_and_keeps_their_history() {
-        let request = analysis_request(&strings(&["1.", "e4", "e5", "2.", "Nf3"])).unwrap();
+        let request =
+            analysis_request("analyze", &strings(&["1.", "e4", "e5", "2.", "Nf3"])).unwrap();
         assert_eq!(
-            request["fen"],
+            request.fen,
             "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
         );
-        assert_eq!(request["moves"], json!(["e2e4", "e7e5", "g1f3"]));
+        assert_eq!(request.moves.unwrap(), ["e2e4", "e7e5", "g1f3"]);
         assert_eq!(
-            request["rootFen"],
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+            request.root_fen.as_deref(),
+            Some("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
         );
         assert_eq!(
-            analysis_request(&strings(&["e4", "Ke7"])).unwrap_err(),
+            analysis_request("analyze", &strings(&["e4", "Ke7"])).unwrap_err(),
             "Move 1 (Ke7) is not legal there."
         );
         assert_eq!(
-            analysis_request(&[]).unwrap_err(),
+            analysis_request("analyze", &[]).unwrap_err(),
             "analyze requires a FEN or moves."
         );
         // A FEN still goes as it is, without a history.
-        let start = analysis_request(&strings(&["startpos"])).unwrap();
-        assert!(start.get("moves").is_none());
-    }
-
-    #[test]
-    fn lists_the_core_methods() {
-        let names = method_names();
-        assert!(names.contains(&"library"));
-        assert!(names.contains(&"bestMove"));
+        let start = analysis_request("analyze", &strings(&["startpos"])).unwrap();
+        assert_eq!(start.moves, None);
     }
 
     #[tokio::test]
@@ -1153,32 +1235,25 @@ mod tests {
         );
     }
 
-    /// A game file up to `MAX_ARGUMENTS` bytes is read; a larger one is refused unread.
+    /// A file up to `MAX_ARGUMENTS` bytes is read; a larger one is refused unread.
     #[tokio::test]
-    async fn a_game_file_is_read_up_to_its_limit() {
+    async fn a_file_is_read_up_to_its_limit() {
         let limit = usize::try_from(MAX_ARGUMENTS).unwrap();
         let file = tempfile::NamedTempFile::new().unwrap();
         let path = file.path().to_string_lossy().to_string();
+        let game_file = || small_file(&path, "too large");
         std::fs::write(file.path(), "e".repeat(limit)).unwrap();
-        assert_eq!(game_file(&path).await.unwrap().len(), limit);
+        assert_eq!(game_file().await.unwrap().len(), limit);
         std::fs::write(file.path(), vec![0xff; limit + 1]).unwrap();
-        assert_eq!(
-            game_file(&path).await.unwrap_err(),
-            format!("{path} is too large.")
-        );
+        assert_eq!(game_file().await.unwrap_err(), "too large");
         std::fs::write(file.path(), [0xff]).unwrap();
-        assert!(
-            game_file(&path)
-                .await
-                .unwrap_err()
-                .starts_with("Cannot read")
-        );
+        assert!(game_file().await.unwrap_err().starts_with("Cannot read"));
     }
 
     #[test]
     fn a_variant_flag_needs_its_variant() {
         assert_eq!(
-            analysis_request(&strings(&["--variant"])).unwrap_err(),
+            analysis_request("analyze", &strings(&["--variant"])).unwrap_err(),
             "--variant needs a variant."
         );
     }

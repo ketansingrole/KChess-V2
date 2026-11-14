@@ -1,7 +1,8 @@
-//! Lichess analysis as a review (`reviewFromLichess`).
+//! Lichess analysis as a review.
 
+use kchess_contracts::types::{Judgment, ReviewEval, ReviewSource};
 use kchess_core::lichess::reviews::review_from_lichess;
-use kchess_domain::review::analyse_review;
+use kchess_domain::review::analyse;
 use serde_json::{Value, json};
 
 const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -53,37 +54,49 @@ fn game() -> Value {
 #[test]
 fn maps_scores_the_better_move_and_the_labels_onto_the_positions() {
     let review = review_from_lichess(&game()).expect("analysed game");
-    let key = kchess_domain::records::call("reviewKey", &[json!(START), json!(MOVES)])
-        .unwrap()
-        .unwrap();
-    assert_eq!(review["key"], key);
-    assert_eq!(review["moves"], json!(MOVES));
-    assert_eq!(review["source"], "lichess");
-    assert_eq!(review["complete"], true);
-    assert_eq!(review["gameId"], "abcdefgh");
-    let evals = review["evals"].as_array().unwrap();
+    let key = kchess_domain::records::review::review_key(START, &MOVES, None);
+    assert_eq!(review.key, key);
+    assert_eq!(review.moves, MOVES);
+    assert_eq!(review.source, ReviewSource::Lichess);
+    assert!(review.complete);
+    assert_eq!(review.game_id.as_deref(), Some("abcdefgh"));
+    let evals = &review.evals;
+    let score = |cp: Option<f64>, mate: Option<f64>| {
+        Some(ReviewEval {
+            cp,
+            mate,
+            ..ReviewEval::default()
+        })
+    };
     // Lichess counts the start as +0.15; entry i scores the position after move i+1.
-    assert_eq!(evals[0], json!({ "cp": 15 }));
-    assert_eq!(evals[1], json!({ "cp": 30 }));
-    assert_eq!(evals[6], json!({ "mate": 1 }));
+    assert_eq!(evals[0], score(Some(15.0), None));
+    assert_eq!(evals[1], score(Some(30.0), None));
+    assert_eq!(evals[6], score(None, Some(1.0)));
     // The better move belongs to the position before the blunder.
     assert_eq!(
         evals[5],
-        json!({ "cp": 50, "best": "g7g6", "pv": ["g7g6", "h5f3", "g8f6"] })
+        Some(ReviewEval {
+            cp: Some(50.0),
+            best: Some("g7g6".into()),
+            pv: Some(vec!["g7g6".into(), "h5f3".into(), "g8f6".into()]),
+            ..ReviewEval::default()
+        })
     );
     // The mating move has no entry: the position speaks for itself.
-    assert_eq!(evals[7], Value::Null);
+    assert_eq!(evals[7], None);
+    let mut judgments = vec![None; 7];
+    judgments[5] = Some(Judgment::Blunder);
+    assert_eq!(review.judgments, Some(judgments));
     assert_eq!(
-        review["judgments"],
-        json!([null, null, null, null, null, "blunder", null])
+        serde_json::to_value(&review.accuracy).unwrap(),
+        json!({ "white": 95.0, "black": 40.0 })
     );
-    assert_eq!(review["accuracy"], json!({ "white": 95.0, "black": 40.0 }));
 }
 
 #[test]
 fn keeps_lichess_labels_and_accuracy_when_summarized() {
     let review = review_from_lichess(&game()).expect("analysed game");
-    let result = analyse_review(&review).expect("summary");
+    let result = serde_json::to_value(analyse(&review).expect("summary")).unwrap();
     assert_eq!(result["black"]["accuracy"], 40.0);
     assert_eq!(result["black"]["blunder"], 1);
     assert_eq!(result["white"]["accuracy"], 95.0);

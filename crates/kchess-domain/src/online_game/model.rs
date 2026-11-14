@@ -1,36 +1,44 @@
-//! The state of one online game as `OnlineGame` holds it, what a
-//! transition reads from its host, and what it returns to the driver: the next state, the effects
-//! the host must see in order, and any network call the driver must make.
+//! The state of one online game, what a transition reads from its host, and what it returns to
+//! the driver: the effects the host must see in order, and any network call the driver must make.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::js;
-use crate::records;
+use super::connection::OnlineConnection;
+use crate::color::{self, Color};
+use crate::misc::constants::NotificationKind;
 use crate::replay::replay_setup;
-use crate::rules::{default_position, lichess_variant, make_fen};
+use crate::rules::INITIAL_FEN;
+pub use crate::variant::Setup;
 
-/// The standard start.
-pub const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
-use crate::misc::constants::VARIANTS;
-
-/// `GameSetup`: the rules and the position before the first move.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Setup {
-    pub variant: String,
-    pub fen: String,
-}
-
-impl Setup {
-    pub fn standard() -> Setup {
-        Setup {
-            variant: "standard".into(),
-            fen: INITIAL_FEN.into(),
-        }
+crate::union!(
+    /// Where the board's online game stands.
+    GamePhase {
+        Idle = "idle",
+        Seeking = "seeking",
+        Playing = "playing",
+        Finished = "finished",
+        /// A game the board cannot reach right now, or Lichess being asked for one.
+        Disconnected = "disconnected",
     }
-}
+);
+
+crate::union!(
+    /// A draw or takeback offer on the board: none, ours, or the opponent's.
+    Offer {
+        None = "none",
+        Mine = "mine",
+        Theirs = "theirs",
+    }
+);
+
+crate::wire_enum!(
+    /// Which chat room a message belongs to.
+    ChatRoom, CHAT_ROOMS {
+        Player = "player",
+        Spectator = "spectator",
+    }
+);
 
 /// `{ initial, increment }` in seconds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -39,14 +47,15 @@ pub struct ClockConfig {
     pub increment: f64,
 }
 
-/// `FinishedGame`: the last game, kept for a rematch.
+/// The last game, kept for a rematch.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FinishedGame {
     pub id: String,
     pub account: String,
     pub opponent: String,
-    pub color: String,
+    #[serde(with = "color::by_name")]
+    pub color: Color,
     pub rated: bool,
     pub setup: Setup,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,18 +66,18 @@ pub struct FinishedGame {
     pub days: Option<f64>,
 }
 
-/// `onlineGameState()` plus the two private fields the class kept: the connection epoch and the
-/// request generation (`RequestScope`'s counter). Options are `undefined` in the TypeScript and
-/// `null` on the wire.
+/// The game's state, with the connection epoch and the request generation (a newer request
+/// supersedes every earlier one). Absent options are `null` on the wire.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Model {
-    pub online_phase: String,
+    pub online_phase: GamePhase,
     pub online_id: String,
     pub online_account: String,
-    pub online_connection: Option<Value>,
+    pub online_connection: Option<OnlineConnection>,
     pub online_moves: Vec<String>,
-    pub online_color: String,
+    #[serde(with = "color::by_name")]
+    pub online_color: Color,
     pub online_opponent: String,
     pub online_opponent_rating: Option<f64>,
     /// Our own rating in this game, as Lichess sent it with the players.
@@ -89,18 +98,33 @@ pub struct Model {
     pub opponent_id: String,
     pub opponent_gone: bool,
     pub claim_at: Option<f64>,
-    pub draw_offer: String,
-    pub takeback_offer: String,
+    pub draw_offer: Offer,
+    pub takeback_offer: Offer,
     pub first_move_by: Option<f64>,
     pub berserked: bool,
-    pub chat: Vec<Value>,
+    pub chat: Vec<ChatEntry>,
     pub last_game: Option<FinishedGame>,
     pub state_epoch: f64,
     pub shown_game: String,
     pub generation: f64,
 }
 
-/// What the class read from its host at the moment of a transition.
+/// A line of a game's chat: who said it, what, and in which room.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChatEntry {
+    pub user: Option<String>,
+    pub text: Option<String>,
+    pub room: ChatRoom,
+}
+
+impl ChatEntry {
+    /// Said by the players, not the spectators.
+    pub fn players(&self) -> bool {
+        self.room == ChatRoom::Player
+    }
+}
+
+/// What the host read at the moment of a transition.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Ctx {
@@ -109,8 +133,7 @@ pub struct Ctx {
     pub chat_enabled: bool,
 }
 
-/// One effect for the driver, in order. Host callbacks are optional on the host, so the driver
-/// calls them with `?.`; `warn` and `failed` take the cause the driver caught.
+/// One effect for the driver, in order; `warn` and `failed` take the cause the driver caught.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "effect", rename_all = "camelCase")]
 pub enum Effect {
@@ -118,7 +141,7 @@ pub enum Effect {
         message: &'static str,
     },
     Notify {
-        kind: &'static str,
+        kind: NotificationKind,
         title: String,
         body: String,
     },
@@ -145,32 +168,126 @@ pub enum Effect {
     },
 }
 
-/// A network call the driver makes with the host's API, then reports back with `settle`.
+/// A network call the driver makes with the core, then reports back with `settle`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Call {
+    /// A seek or challenge with these options.
+    StartOnline(Value),
+    CancelOnline,
+    ResumeOnline,
+    OpenGame {
+        account: String,
+        id: String,
+    },
+    PlayOnline {
+        id: String,
+        uci: String,
+    },
+    OnlineAction {
+        id: String,
+        action: String,
+    },
+    OnlineChat {
+        id: String,
+    },
+}
+
+/// The game a real-time seek left: a correspondence game being played, to go back to.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Call {
-    pub method: &'static str,
-    pub args: Vec<Value>,
+pub struct Left {
+    pub id: String,
+    pub account: String,
 }
 
-impl Call {
-    pub fn new(method: &'static str, args: Vec<Value>) -> Call {
-        Call { method, args }
-    }
+/// What a call `begin` made needs to settle its reply. `generation` is the request's: a newer
+/// request supersedes it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "op", rename_all = "camelCase")]
+pub enum Pending {
+    Start {
+        generation: f64,
+        correspondence: bool,
+        previous: GamePhase,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        left: Option<Left>,
+    },
+    Stop,
+    Reconnect {
+        generation: f64,
+    },
+    Open {
+        generation: f64,
+        account: String,
+        id: String,
+    },
+    Move {
+        generation: f64,
+        id: String,
+        epoch: f64,
+        sent: f64,
+    },
+    Action {
+        generation: f64,
+        id: String,
+        epoch: f64,
+        action: String,
+    },
+    Chat {
+        id: String,
+    },
 }
 
-/// What a transition returns to its driver.
-#[derive(Serialize)]
+/// A network-backed operation the host asks for.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Op {
+    /// A seek or challenge with these options.
+    Start(Value),
+    Stop,
+    Reconnect,
+    Open {
+        account: String,
+        id: String,
+    },
+    Move(String),
+    Action(String),
+    Chat(String),
+}
+
+/// The core's reply to a call: its answer, or a failure whose cause the driver keeps.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Reply {
+    Ok(Value),
+    Failed,
+}
+
+/// What a transition returns to its driver; the state changed in place.
+#[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Transition {
-    pub state: Model,
+pub struct Outcome {
     pub effects: Vec<Effect>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ret: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ret: Option<bool>,
+    #[serde(skip)]
     pub call: Option<Call>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pending: Option<Value>,
+    pub pending: Option<Pending>,
+    /// The call's failure is the operation's: the host reports its cause.
     pub rethrow: bool,
+}
+
+/// The board's view of the state.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct View {
+    /// The live position.
+    pub position: Setup,
+    /// The SAN of each move played.
+    pub history: Vec<String>,
+    /// Moves this side has made.
+    pub own_moves: usize,
+    pub correspondence: bool,
+    /// The challenge that starts a rematch of the last game.
+    pub rematch: Option<Value>,
 }
 
 /// A replay of the moves: the position they reach and the SAN of each move played.
@@ -179,15 +296,15 @@ pub struct Replayed {
     pub played: Vec<String>,
 }
 
-/// One transition's working copy of the state and its effects.
-pub struct Run {
-    pub m: Model,
+/// One transition: the state it changes, its effects so far, and what the host read.
+pub struct Run<'a> {
+    pub m: &'a mut Model,
     pub fx: Vec<Effect>,
-    pub ctx: Ctx,
+    pub ctx: &'a Ctx,
 }
 
-impl Run {
-    pub fn new(m: Model, ctx: Ctx) -> Run {
+impl<'a> Run<'a> {
+    pub fn new(m: &'a mut Model, ctx: &'a Ctx) -> Run<'a> {
         Run {
             m,
             fx: Vec::new(),
@@ -203,7 +320,7 @@ impl Run {
         self.fx.push(Effect::Warn { message });
     }
 
-    pub fn notify(&mut self, kind: &'static str, title: &str, body: String) {
+    pub fn notify(&mut self, kind: NotificationKind, title: &str, body: String) {
         self.fx.push(Effect::Notify {
             kind,
             title: title.to_string(),
@@ -215,37 +332,52 @@ impl Run {
         self.fx.push(Effect::ClockPause);
     }
 
-    /// `RequestScope.next()`: a new request supersedes every earlier one.
+    /// A new request supersedes every earlier one.
     pub fn next_generation(&mut self) -> f64 {
         self.m.generation += 1.0;
         self.m.generation
     }
 
-    pub fn done(
-        self,
-        ret: Option<Value>,
-        call: Option<Call>,
-        pending: Option<Value>,
-        rethrow: bool,
-    ) -> Result<Value, String> {
-        serde_json::to_value(Transition {
-            state: self.m,
+    /// The effects so far, and nothing more.
+    pub fn done(self) -> Outcome {
+        Outcome {
             effects: self.fx,
-            ret,
-            call,
-            pending,
-            rethrow,
-        })
-        .map_err(|e| e.to_string())
+            ..Outcome::default()
+        }
+    }
+
+    /// The operation's answer.
+    pub fn answer(self, ret: bool) -> Outcome {
+        Outcome {
+            ret: Some(ret),
+            ..self.done()
+        }
+    }
+
+    /// The call to make, and what settles its reply.
+    pub fn call(self, call: Call, pending: Pending) -> Outcome {
+        Outcome {
+            call: Some(call),
+            pending: Some(pending),
+            ..self.done()
+        }
+    }
+
+    /// The call failed, and the host reports why.
+    pub fn rethrow(self) -> Outcome {
+        Outcome {
+            rethrow: true,
+            ..self.done()
+        }
     }
 }
 
 impl Model {
-    /// `setupPositionAfter` and `setupSanHistory`: the position the moves reach and the SAN of each
-    /// move played. An illegal setup falls back to the standard start with no history.
+    /// The position the moves reach and the SAN of each move played. An illegal setup falls back
+    /// to the standard start with no history.
     pub fn replayed(&self) -> Replayed {
         let setup = &self.online_setup;
-        match replay_setup(&setup.variant, &setup.fen, &self.online_moves) {
+        match replay_setup(setup.variant, &setup.fen, &self.online_moves) {
             None => Replayed {
                 setup: Setup::standard(),
                 played: Vec::new(),
@@ -259,7 +391,7 @@ impl Model {
                 };
                 Replayed {
                     setup: Setup {
-                        variant: setup.variant.clone(),
+                        variant: setup.variant,
                         fen,
                     },
                     played: replay.played.into_iter().map(|m| m.san).collect(),
@@ -269,22 +401,21 @@ impl Model {
     }
 
     /// Whose turn the position reached by the moves is.
-    pub fn turn(&self) -> &'static str {
+    pub fn turn(&self) -> Color {
         // `replayed()` without its SAN and FEN: only the side to move is wanted.
         let setup = &self.online_setup;
-        match crate::replay::replay_setup_turn(&setup.variant, &setup.fen, &self.online_moves) {
+        match crate::replay::replay_setup_turn(setup.variant, &setup.fen, &self.online_moves) {
             None => turn_of(&Setup::standard().fen),
             // Without a move the position is the setup as given.
             Some((0, _)) => turn_of(&setup.fen),
-            Some((_, shakmaty::Color::Black)) => "black",
-            Some((_, shakmaty::Color::White)) => "white",
+            Some((_, turn)) => turn,
         }
     }
 
     /// Moves this side has made so far.
     pub fn own_moves(&self) -> usize {
         let white_first = self.online_setup.fen.split(' ').nth(1) != Some("b");
-        let mine = usize::from(self.online_color != "white");
+        let mine = usize::from(self.online_color == Color::Black);
         self.online_moves
             .iter()
             .enumerate()
@@ -303,12 +434,7 @@ impl Model {
         let mut out = Map::new();
         out.insert("target".into(), game.opponent.clone().into());
         out.insert("account".into(), game.account.clone().into());
-        let color = if game.color == "white" {
-            "black"
-        } else {
-            "white"
-        };
-        out.insert("color".into(), color.into());
+        out.insert("color".into(), color::name(!game.color).into());
         out.insert("rated".into(), game.rated.into());
         if let Some(minutes) = game.minutes {
             out.insert("minutes".into(), minutes.into());
@@ -319,23 +445,23 @@ impl Model {
         if let Some(days) = game.days {
             out.insert("days".into(), days.into());
         }
-        if game.setup.variant != "standard" {
-            out.insert("variant".into(), game.setup.variant.clone().into());
+        if !game.setup.variant.is_standard() {
+            out.insert("variant".into(), game.setup.variant.key().into());
         } else if game.setup.fen != INITIAL_FEN {
             out.insert("fen".into(), game.setup.fen.clone().into());
         }
         Some(Value::Object(out))
     }
 
-    /// A board with no game (`onlineGameState()`).
+    /// A board with no game.
     pub fn idle() -> Model {
         Model {
-            online_phase: "idle".into(),
+            online_phase: GamePhase::Idle,
             online_id: String::new(),
             online_account: String::new(),
             online_connection: None,
             online_moves: Vec::new(),
-            online_color: "white".into(),
+            online_color: Color::White,
             online_opponent: "Opponent".into(),
             online_opponent_rating: None,
             online_rating: None,
@@ -352,8 +478,8 @@ impl Model {
             opponent_id: String::new(),
             opponent_gone: false,
             claim_at: None,
-            draw_offer: "none".into(),
-            takeback_offer: "none".into(),
+            draw_offer: Offer::None,
+            takeback_offer: Offer::None,
             first_move_by: None,
             berserked: false,
             chat: Vec::new(),
@@ -365,62 +491,11 @@ impl Model {
     }
 }
 
-/// The side to move in a FEN: `black` for `b`, otherwise `white`.
-pub fn turn_of(fen: &str) -> &'static str {
+/// The side to move in a FEN: Black for `b`, otherwise White.
+pub fn turn_of(fen: &str) -> Color {
     if fen.split(' ').nth(1) == Some("b") {
-        "black"
+        Color::Black
     } else {
-        "white"
+        Color::White
     }
-}
-
-/// `variantFromLichess`: the playable variant for a Lichess key; `fromPosition` is standard rules.
-pub fn variant_from_lichess(key: Option<&str>) -> Option<&'static str> {
-    match key {
-        None | Some("") | Some("fromPosition") => Some("standard"),
-        Some(key) => VARIANTS.iter().copied().find(|variant| *variant == key),
-    }
-}
-
-/// `defaultFen(variant)`: the variant's usual start (Chess960's standard start is the usual one).
-pub fn default_fen(variant: &str) -> String {
-    match lichess_variant(variant) {
-        Some(rules) => make_fen(&default_position(rules)),
-        None => INITIAL_FEN.into(),
-    }
-}
-
-/// `obj?.key`: the entry when there is an object holding it.
-pub fn at<'a>(v: Option<&'a Value>, key: &str) -> Option<&'a Value> {
-    v.and_then(|v| v.get(key))
-}
-
-/// `x ?? y`: the value unless it is absent or null.
-pub fn nullish(v: Option<&Value>) -> Option<&Value> {
-    v.filter(|v| !v.is_null())
-}
-
-/// `String(x ?? fallback)` for a string the TypeScript keeps as text.
-pub fn string_or(v: Option<&Value>, fallback: &str) -> String {
-    match nullish(v) {
-        Some(v) => js::to_string(Some(v)),
-        None => fallback.to_string(),
-    }
-}
-
-/// `Number(x ?? 0)`.
-pub fn number_or_zero(v: Option<&Value>) -> f64 {
-    match nullish(v) {
-        Some(v) => js::to_number(Some(v)),
-        None => 0.0,
-    }
-}
-
-/// `isGameInProgress(status ?? null)`: the records rule, reused.
-pub fn is_running(status: Option<&Value>) -> bool {
-    let status = nullish(status).cloned().unwrap_or(Value::Null);
-    matches!(
-        records::call("isGameInProgress", &[status]),
-        Some(Ok(Value::Bool(true)))
-    )
 }

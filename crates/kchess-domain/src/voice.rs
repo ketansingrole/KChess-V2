@@ -1,22 +1,20 @@
-//! Reached through `api::call` (see RUST_MIGRATION.md): spoken commands and moves, the board
-//! editor's string logic, coordinates, knight paths and material.
+//! Spoken commands and moves, coordinates, knight paths and material.
 //!
 //! JavaScript semantics are mirrored deliberately: `toLowerCase`, `\s` splitting, `trim`,
 //! `Number(…)` coercion and `String(…)` formatting (see `crate::js`). No regex crate: each
 //! pattern below is the hand-written equivalent of the regex it names.
 
-use serde_json::{Value, json};
+use serde::Serialize;
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Color, Position};
 use std::collections::HashSet;
+use std::sync::OnceLock;
 
+use crate::editor::{file_offset, unit_number};
 use crate::js;
 use crate::position::{self, LegalMove};
-use crate::rules;
 
-type Result<T> = std::result::Result<T, String>;
-
-const FILES: [char; 8] = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+pub(crate) const FILES: [char; 8] = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const RANK_WORDS: [&str; 8] = [
     "one", "two", "three", "four", "five", "six", "seven", "eight",
 ];
@@ -78,86 +76,42 @@ const EDITOR_PHRASE_KEYS: [&str; 15] = [
     "analysis",
 ];
 
-const INITIAL_BOARD: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
-const EMPTY_BOARD: &str = "8/8/8/8/8/8/8/8";
-const EMPTY_FEN: &str = "8/8/8/8/8/8/8/8 w - - 0 1";
-
-/// This module's methods for `api::call`; None when the method is not one of them.
-pub fn call(method: &str, args: &[Value]) -> Option<Result<Value>> {
-    let result = match method {
-        "COORDINATE_GRAMMAR" => Ok(json!(coordinate_grammar())),
-        "MOVE_GRAMMAR" => Ok(json!(move_grammar())),
-        "GAME_GRAMMAR" => Ok(json!(game_grammar())),
-        "EDITOR_GRAMMAR" => Ok(json!(editor_grammar())),
-        "ANALYSIS_GRAMMAR" => Ok(json!(analysis_grammar())),
-        "FILES" => Ok(json!(FILES.map(|f| f.to_string()))),
-        "RANKS" => Ok(json!(["1", "2", "3", "4", "5", "6", "7", "8"])),
-        "ALL_SQUARES" => Ok(json!(all_squares())),
-        "EMPTY_FEN" => Ok(json!(EMPTY_FEN)),
-        "EMPTY_BOARD" => Ok(json!(EMPTY_BOARD)),
-        "START_SETUP" => Ok(json!({
-            "board": INITIAL_BOARD,
-            "turn": "white",
-            "castling": { "K": true, "Q": true, "k": true, "q": true },
-            "ep": "",
-        })),
-        "spokenCommand" => text(args, 0).map(|t| opt(game_command(t))),
-        "spokenChoice" => text(args, 0).map(spoken_choice),
-        "spokenSquare" => text(args, 0).map(|t| opt(spoken_square(t).as_deref())),
-        "spokenMove" => spoken_move_call(args),
-        "spokenEdit" => text(args, 0)
-            .map(|t| spoken_edit(t, args.get(1).and_then(Value::as_str).unwrap_or("white"))),
-        "spokenAnalysisCommand" => text(args, 0).map(|t| opt(analysis_command(t))),
-        "withPiece" => with_piece_call(args),
-        "castlingAvailable" => text(args, 0).map(castling_available_json),
-        "enPassantSquares" => text(args, 0)
-            .and_then(|board| text(args, 1).map(|turn| json!(en_passant_squares(board, turn)))),
-        "setupFen" => setup_fen_call(args),
-        "randomSquare" => random_square_call(args),
-        "squareColor" => text(args, 0).map(|s| json!(square_color(s))),
-        "knightMoves" => text(args, 0).map(|s| json!(knight_moves(s))),
-        "knightDistance" => text(args, 0).and_then(|from| {
-            text(args, 1).map(|to| knight_distance(from, to).map_or(Value::Null, |n| json!(n)))
-        }),
-        "knightChallenge" => knight_challenge_call(args),
-        "knightFen" => text(args, 0).map(|s| json!(knight_fen(s))),
-        "materialBalance" => text(args, 0).map(|fen| json!(material_balance(fen))),
-        "materialDiff" => text(args, 0).map(material_diff),
-        _ => return None,
-    };
-    Some(result)
-}
-
-fn text(args: &[Value], i: usize) -> Result<&str> {
-    args.get(i)
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("argument {i} must be a string"))
-}
-
-fn numbers(args: &[Value], i: usize) -> Result<Vec<f64>> {
-    args.get(i)
-        .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(Value::as_f64).collect())
-        .ok_or_else(|| format!("argument {i} must be a list of numbers"))
-}
-
-fn number(args: &[Value], i: usize) -> Result<f64> {
-    args.get(i)
-        .and_then(Value::as_f64)
-        .ok_or_else(|| format!("argument {i} must be a number"))
-}
-
-fn opt(value: Option<&str>) -> Value {
-    value.map_or(Value::Null, |s| json!(s))
-}
-
 /* ── Grammar lists ── */
 
 fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|item| item.to_string()).collect()
 }
 
-fn all_squares() -> Vec<String> {
+/// The voice grammars: the words each kind of page listens for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grammar {
+    /// Squares alone, for the coordinate and knight drills.
+    Coordinate,
+    /// Moves, confirmations and cancellations.
+    Move,
+    /// Moves and the game's commands.
+    Game,
+    /// The board editor's pieces, squares and phrases.
+    Editor,
+    /// Moves and the analysis board's commands.
+    Analysis,
+}
+
+/// The words a grammar listens for, built once.
+pub fn grammar(grammar: Grammar) -> &'static [String] {
+    static LISTS: [OnceLock<Vec<String>>; 5] = [const { OnceLock::new() }; 5];
+    let (index, build): (usize, fn() -> Vec<String>) = match grammar {
+        Grammar::Coordinate => (0, coordinate_grammar),
+        Grammar::Move => (1, move_grammar),
+        Grammar::Game => (2, game_grammar),
+        Grammar::Editor => (3, editor_grammar),
+        Grammar::Analysis => (4, analysis_grammar),
+    };
+    LISTS[index].get_or_init(build)
+}
+
+/// Every square, file by file: a1, a2, … h8.
+pub fn all_squares() -> Vec<String> {
     FILES
         .iter()
         .flat_map(|file| (1..=8).map(move |rank| format!("{file}{rank}")))
@@ -359,7 +313,8 @@ fn tokens(text: &str) -> Vec<String> {
 
 /* ── Commands and choices ── */
 
-fn game_command(text: &str) -> Option<&'static str> {
+/// A game command said aloud: `takeback`, `newGame`, `resign` or `flip`.
+pub fn game_command(text: &str) -> Option<&'static str> {
     let mut key = phrase(&split_words(text));
     if key == "takeback" {
         key = "take back".into();
@@ -370,7 +325,9 @@ fn game_command(text: &str) -> Option<&'static str> {
         .map(|(_, command)| *command)
 }
 
-fn analysis_command(text: &str) -> Option<&'static str> {
+/// An analysis board command said aloud: `back`, `forward`, `start`, `end`, `best`, `flip` or
+/// `engine`.
+pub fn analysis_command(text: &str) -> Option<&'static str> {
     let mut key = phrase(&split_words(text));
     if key == "takeback" {
         key = "take back".into();
@@ -381,17 +338,15 @@ fn analysis_command(text: &str) -> Option<&'static str> {
         .map(|(_, command)| *command)
 }
 
-fn spoken_choice(text: &str) -> Value {
+/// A choice's number said aloud, 1 to 8.
+pub fn spoken_choice(text: &str) -> Option<u8> {
     let normalized = js::trim(text).to_lowercase();
     let rank = rank_word(&normalized).map_or(normalized.clone(), String::from);
-    if is_rank_digit(&rank) {
-        json!(rank.as_bytes()[0] - b'0')
-    } else {
-        Value::Null
-    }
+    is_rank_digit(&rank).then(|| rank.as_bytes()[0] - b'0')
 }
 
-fn spoken_square(text: &str) -> Option<String> {
+/// One square said aloud (“echo four”).
+pub fn spoken_square(text: &str) -> Option<String> {
     let words = tokens(text);
     match words.as_slice() {
         [only] if is_square(only) => Some(only.clone()),
@@ -399,83 +354,78 @@ fn spoken_square(text: &str) -> Option<String> {
     }
 }
 
-/// The board editor's whole-phrase actions (`EDITOR_PHRASES`).
-fn editor_phrase(key: &str) -> Option<Value> {
+/// What a phrase said to the board editor asks for.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum EditorAction {
+    Clear,
+    Start,
+    Turn {
+        color: String,
+    },
+    Flip,
+    Analyze,
+    Remove {
+        square: String,
+    },
+    Place {
+        square: String,
+        color: String,
+        role: &'static str,
+    },
+}
+
+/// The board editor's whole-phrase actions.
+fn editor_phrase(key: &str) -> Option<EditorAction> {
+    let turn = |color: &str| EditorAction::Turn {
+        color: color.to_string(),
+    };
     Some(match key {
-        "clear board" | "empty board" | "clear the board" => json!({ "kind": "clear" }),
+        "clear board" | "empty board" | "clear the board" => EditorAction::Clear,
         "starting position" | "start position" | "reset board" | "reset the board" => {
-            json!({ "kind": "start" })
+            EditorAction::Start
         }
-        "white to move" | "white to play" => json!({ "kind": "turn", "color": "white" }),
-        "black to move" | "black to play" => json!({ "kind": "turn", "color": "black" }),
-        "flip board" | "flip the board" => json!({ "kind": "flip" }),
-        "analyze" | "analysis" => json!({ "kind": "analyze" }),
+        "white to move" | "white to play" => turn("white"),
+        "black to move" | "black to play" => turn("black"),
+        "flip board" | "flip the board" => EditorAction::Flip,
+        "analyze" | "analysis" => EditorAction::Analyze,
         _ => return None,
     })
 }
 
 /// “White knight F three”, “black king on E eight”, “remove E four”, “clear board”, … A piece
 /// without a colour takes `color`, the last one used.
-fn spoken_edit(text: &str, color: &str) -> Value {
+pub fn spoken_edit(text: &str, color: &str) -> Option<EditorAction> {
     if let Some(fixed) = editor_phrase(&phrase(&split_words(text))) {
-        return fixed;
+        return Some(fixed);
     }
     let mut words: Vec<String> = tokens(text)
         .into_iter()
         .filter(|w| !matches!(w.as_str(), "on" | "to" | "at" | "the"))
         .collect();
-    let Some(square) = words.pop() else {
-        return Value::Null;
-    };
+    let square = words.pop()?;
     if !is_square(&square) {
-        return Value::Null;
+        return None;
     }
     let mut rest = words;
     if rest.len() == 1 && REMOVE_WORDS.contains(&rest[0].as_str()) {
-        return json!({ "kind": "remove", "square": square });
+        return Some(EditorAction::Remove { square });
     }
     let mut spoken_color: Option<String> = None;
     if matches!(rest.first().map(String::as_str), Some("white" | "black")) {
         spoken_color = Some(rest.remove(0));
     }
     match rest.as_slice() {
-        [piece] => match role_word(piece) {
-            Some(role) => json!({
-                "kind": "place",
-                "square": square,
-                "color": spoken_color.unwrap_or_else(|| color.to_string()),
-                "role": role,
-            }),
-            None => Value::Null,
-        },
-        _ => Value::Null,
+        [piece] => Some(EditorAction::Place {
+            square,
+            color: spoken_color.unwrap_or_else(|| color.to_string()),
+            role: role_word(piece)?,
+        }),
+        _ => None,
     }
 }
 
 /* ── Moves ── */
-
-/// The position a `{ variant, fen }` setup describes; an error when it is not one.
-fn setup_position(args: &[Value], i: usize) -> Result<VariantPosition> {
-    let setup = args
-        .get(i)
-        .and_then(Value::as_object)
-        .ok_or("setup must be an object")?;
-    let variant = setup
-        .get("variant")
-        .and_then(Value::as_str)
-        .ok_or("setup.variant")?;
-    let fen = setup
-        .get("fen")
-        .and_then(Value::as_str)
-        .ok_or("setup.fen")?;
-    rules::setup_start(variant, fen).ok_or_else(|| "setup is not a legal position".into())
-}
-
-fn spoken_move_call(args: &[Value]) -> Result<Value> {
-    let text = text(args, 0)?;
-    let pos = setup_position(args, 1)?;
-    Ok(spoken_move(text, &pos))
-}
 
 fn promotion_letter(role: &str) -> Option<&'static str> {
     Some(match role {
@@ -566,19 +516,39 @@ fn matching_moves(pos: &VariantPosition, spoken: Spoken) -> Vec<(String, String)
     choices
 }
 
+/// What a phrase said at a board means.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SpokenMove {
+    Confirm,
+    Cancel,
+    Invalid,
+    /// Every legal move the words could be, in the rules' move order.
+    Move {
+        choices: Vec<MoveChoice>,
+    },
+}
+
+/// One legal move a phrase could mean; castling in standard UCI (e1g1) outside Chess960.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct MoveChoice {
+    pub uci: String,
+    pub san: String,
+}
+
 /// Resolve spoken words against the actual playable position, including underpromotion and
 /// castling. Unrelated speech never becomes a move by fuzzy matching.
-fn spoken_move(text: &str, pos: &VariantPosition) -> Value {
+pub fn spoken_move(text: &str, pos: &VariantPosition) -> SpokenMove {
     let mut words = tokens(text);
     if words.iter().any(|w| CONFIRM_WORDS.contains(&w.as_str()))
         && words
             .iter()
             .all(|w| CONFIRM_WORDS.contains(&w.as_str()) || CONFIRM_FILLER.contains(&w.as_str()))
     {
-        return json!({ "kind": "confirm" });
+        return SpokenMove::Confirm;
     }
     if !words.is_empty() && words.iter().all(|w| CANCEL_WORDS.contains(&w.as_str())) {
-        return json!({ "kind": "cancel" });
+        return SpokenMove::Cancel;
     }
     if matches!(words.first().map(String::as_str), Some("move" | "play")) {
         words.remove(0);
@@ -633,7 +603,7 @@ fn spoken_move(text: &str, pos: &VariantPosition) -> Value {
             || words.len() > 1
             || source.as_deref().is_some_and(|s| !is_source(s)))
     {
-        return json!({ "kind": "invalid" });
+        return SpokenMove::Invalid;
     }
     // A square alone means a pawn move; piece names and explicit origins are also supported.
     if castle_side.is_none() && role.is_none() && source.is_none() {
@@ -660,250 +630,14 @@ fn spoken_move(text: &str, pos: &VariantPosition) -> Value {
         );
     }
     if choices.is_empty() {
-        return json!({ "kind": "invalid" });
+        return SpokenMove::Invalid;
     }
-    let choices: Vec<Value> = choices
-        .into_iter()
-        .map(|(uci, san)| json!({ "uci": uci, "san": san }))
-        .collect();
-    json!({ "kind": "move", "choices": choices })
-}
-
-/* ── Board editor ── */
-
-/// A JavaScript array index: an integer within `0..len` (anything else reads as undefined).
-fn at_index(index: f64, len: usize) -> Option<usize> {
-    (index.fract() == 0.0 && index >= 0.0 && (index as usize) < len).then_some(index as usize)
-}
-
-/// `Number(unit)` for one UTF-16 code unit of a square name (NaN when absent).
-fn unit_number(unit: Option<&u16>) -> f64 {
-    match unit {
-        None => f64::NAN,
-        Some(unit) => js::string_to_number(&String::from_utf16_lossy(&[*unit])),
+    SpokenMove::Move {
+        choices: choices
+            .into_iter()
+            .map(|(uci, san)| MoveChoice { uci, san })
+            .collect(),
     }
-}
-
-/// `charCodeAt(0) - 97` of a square name (NaN when empty).
-fn file_offset(square: &str) -> Option<i64> {
-    square
-        .encode_utf16()
-        .next()
-        .map(|unit| i64::from(unit) - 97)
-}
-
-/// The piece letter on a square of a FEN board field (`e1` → `K`), or None.
-fn piece_on(board: &str, square: &str) -> Option<char> {
-    let units: Vec<u16> = square.encode_utf16().collect();
-    let file = file_offset(square);
-    let rows: Vec<&str> = board.split('/').collect();
-    let row = rows[at_index(8.0 - unit_number(units.get(1)), rows.len())?];
-    let mut index: i64 = 0;
-    for c in row.chars() {
-        if c.is_ascii_digit() {
-            index += i64::from(c as u8 - b'0');
-        } else {
-            let hit = file == Some(index);
-            index += 1;
-            if hit {
-                return Some(c);
-            }
-        }
-        if file.is_some_and(|f| index > f) {
-            return None;
-        }
-    }
-    None
-}
-
-fn letter_for(role: &str) -> Option<char> {
-    Some(match role {
-        "king" => 'k',
-        "queen" => 'q',
-        "rook" => 'r',
-        "bishop" => 'b',
-        "knight" => 'n',
-        "pawn" => 'p',
-        _ => return None,
-    })
-}
-
-/// Each digit of a board row stands for that many empty squares.
-fn expand_digits(row: &str) -> String {
-    let mut out = String::new();
-    for c in row.chars() {
-        if c.is_ascii_digit() {
-            out.extend(std::iter::repeat_n('.', usize::from(c as u8 - b'0')));
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-/// Runs of empty squares back to digits.
-fn compress_row(row: &str) -> String {
-    let mut out = String::new();
-    let mut run = 0usize;
-    for c in row.chars() {
-        if c == '.' {
-            run += 1;
-            continue;
-        }
-        if run > 0 {
-            out.push_str(&run.to_string());
-            run = 0;
-        }
-        out.push(c);
-    }
-    if run > 0 {
-        out.push_str(&run.to_string());
-    }
-    out
-}
-
-/// The board field with `square` holding `piece`, or emptied when `piece` is None.
-fn with_piece(board: &str, square: &str, piece: Option<(&str, &str)>) -> Result<String> {
-    let mut rows: Vec<String> = board.split('/').map(expand_digits).collect();
-    let units: Vec<u16> = square.encode_utf16().collect();
-    let rank =
-        at_index(8.0 - unit_number(units.get(1)), rows.len()).ok_or("the board has no such row")?;
-    let letter = match piece {
-        None => '.',
-        Some((color, role)) => {
-            let letter = letter_for(role).ok_or("unknown piece role")?;
-            if color == "white" {
-                letter.to_ascii_uppercase()
-            } else {
-                letter
-            }
-        }
-    };
-    let mut cells: Vec<Option<char>> = rows[rank].chars().map(Some).collect();
-    // A file past the board's end leaves holes, which `join` writes as nothing.
-    if let Some(file) = file_offset(square).filter(|file| *file >= 0) {
-        let file = file as usize;
-        if file >= cells.len() {
-            cells.resize(file + 1, None);
-        }
-        cells[file] = Some(letter);
-    }
-    rows[rank] = cells.iter().flatten().collect();
-    Ok(rows
-        .iter()
-        .map(|row| compress_row(row))
-        .collect::<Vec<_>>()
-        .join("/"))
-}
-
-fn with_piece_call(args: &[Value]) -> Result<Value> {
-    let board = text(args, 0)?;
-    let square = text(args, 1)?;
-    let piece = match args.get(2).filter(|v| !v.is_null()) {
-        None => None,
-        Some(piece) => Some((
-            piece
-                .get("color")
-                .and_then(Value::as_str)
-                .ok_or("piece.color must be a string")?,
-            piece
-                .get("role")
-                .and_then(Value::as_str)
-                .ok_or("piece.role must be a string")?,
-        )),
-    };
-    with_piece(board, square, piece).map(Value::String)
-}
-
-/// The castling rights `[K, Q, k, q]` the king and rook squares still allow.
-/// Which castling rights the pieces allow, by the Chess960 rule that includes the standard one:
-/// the king on its back rank (b to g), and a rook on that rank on the side castled to. The FEN
-/// writes them as X-FEN's `KQkq`, which name the outermost rook on each side.
-fn castling_available(board: &str) -> [bool; 4] {
-    let side = |rank: char, king: char, rook: char| {
-        let at = |file: usize, piece: char| {
-            piece_on(board, &format!("{}{rank}", FILES[file])) == Some(piece)
-        };
-        let Some(king_file) = (1..7).find(|file| at(*file, king)) else {
-            return [false, false];
-        };
-        [
-            (king_file + 1..8).any(|file| at(file, rook)),
-            (0..king_file).any(|file| at(file, rook)),
-        ]
-    };
-    let [white_short, white_long] = side('1', 'K', 'R');
-    let [black_short, black_long] = side('8', 'k', 'r');
-    [white_short, white_long, black_short, black_long]
-}
-
-fn castling_available_json(board: &str) -> Value {
-    let [k_upper, q_upper, k_lower, q_lower] = castling_available(board);
-    json!({ "K": k_upper, "Q": q_upper, "k": k_lower, "q": q_lower })
-}
-
-/// Squares a pawn could just have skipped with a double step, so the side to move might capture
-/// en passant there.
-fn en_passant_squares(board: &str, turn: &str) -> Vec<String> {
-    let (pawn, rank, passed, start) = if turn == "white" {
-        ('p', '5', '6', '7')
-    } else {
-        ('P', '4', '3', '2')
-    };
-    FILES
-        .iter()
-        .filter(|file| {
-            piece_on(board, &format!("{file}{rank}")) == Some(pawn)
-                && piece_on(board, &format!("{file}{passed}")).is_none()
-                && piece_on(board, &format!("{file}{start}")).is_none()
-        })
-        .map(|file| format!("{file}{passed}"))
-        .collect()
-}
-
-/// The FEN of an editor setup: castling rights and en passant only where the pieces allow them.
-fn setup_fen(setup: &Value) -> Result<String> {
-    let board = setup
-        .get("board")
-        .and_then(Value::as_str)
-        .ok_or("setup.board must be a string")?;
-    let turn = setup
-        .get("turn")
-        .and_then(Value::as_str)
-        .ok_or("setup.turn must be a string")?;
-    let ep = setup.get("ep").and_then(Value::as_str).unwrap_or("");
-    let ticked = |right: &str| {
-        setup
-            .get("castling")
-            .and_then(|castling| castling.get(right))
-            .and_then(Value::as_bool)
-            == Some(true)
-    };
-    let available = castling_available(board);
-    let rights: String = ["K", "Q", "k", "q"]
-        .iter()
-        .zip(available)
-        .filter(|(right, allowed)| *allowed && ticked(right))
-        .map(|(right, _)| *right)
-        .collect();
-    let placement = if turn == "white" { "w" } else { "b" };
-    let ep = if en_passant_squares(board, turn).iter().any(|s| s == ep) {
-        ep
-    } else {
-        "-"
-    };
-    Ok(format!(
-        "{board} {placement} {} {ep} 0 1",
-        if rights.is_empty() { "-" } else { &rights }
-    ))
-}
-
-fn setup_fen_call(args: &[Value]) -> Result<Value> {
-    let setup = args
-        .first()
-        .filter(|v| v.is_object())
-        .ok_or("setup must be an object")?;
-    setup_fen(setup).map(Value::String)
 }
 
 /* ── Coordinates ── */
@@ -914,16 +648,19 @@ fn square_index(draw: f64) -> Option<usize> {
     (0.0..64.0).contains(&index).then_some(index as usize)
 }
 
-/// The first draw whose square is not `previous`, as `randomSquare` retries; null when the
-/// draws run out. With `allowed`, draws pick among those squares only (in the given order); a
+/// The first draw whose square is not `previous`; none when the draws run out. With `allowed`, draws pick among those squares only (in the given order); a
 /// single allowed square is returned even when it is `previous`, since there is no other.
-fn random_square(previous: Option<&str>, draws: &[f64], allowed: Option<&[String]>) -> Value {
+pub fn random_square(
+    previous: Option<&str>,
+    draws: &[f64],
+    allowed: Option<&[String]>,
+) -> Option<String> {
     let squares = match allowed {
         Some(allowed) if !allowed.is_empty() => allowed.to_vec(),
         _ => all_squares(),
     };
     if squares.len() == 1 {
-        return json!(squares[0]);
+        return squares.into_iter().next();
     }
     for draw in draws {
         let index = (draw * squares.len() as f64).floor();
@@ -932,39 +669,14 @@ fn random_square(previous: Option<&str>, draws: &[f64], allowed: Option<&[String
         }
         let square = &squares[index as usize];
         if Some(square.as_str()) != previous {
-            return json!(square);
+            return Some(square.clone());
         }
     }
-    Value::Null
+    None
 }
 
-fn random_square_call(args: &[Value]) -> Result<Value> {
-    let previous = args.first().and_then(Value::as_str);
-    let allowed: Option<Vec<String>> = match args.get(2) {
-        None | Some(Value::Null) => None,
-        Some(Value::Array(items)) => {
-            let valid = all_squares();
-            let mut list = Vec::new();
-            for item in items {
-                match item.as_str() {
-                    Some(square) if valid.iter().any(|known| known == square) => {
-                        list.push(square.to_string());
-                    }
-                    _ => return Err("argument 2 must be a list of squares".into()),
-                }
-            }
-            Some(list)
-        }
-        Some(_) => return Err("argument 2 must be a list of squares".into()),
-    };
-    Ok(random_square(
-        previous,
-        &numbers(args, 1)?,
-        allowed.as_deref(),
-    ))
-}
-
-fn square_color(square: &str) -> &'static str {
+/// Whether a square is light or dark.
+pub fn square_color(square: &str) -> &'static str {
     let (file, rank) = knight_index(square);
     if (file + rank) % 2.0 == 0.0 {
         "dark"
@@ -993,7 +705,8 @@ fn knight_index(square: &str) -> (f64, f64) {
     (file, unit_number(units.get(1)) - 1.0)
 }
 
-fn knight_moves(square: &str) -> Vec<String> {
+/// The squares a knight on `square` reaches in one jump.
+pub fn knight_moves(square: &str) -> Vec<String> {
     let (file, rank) = knight_index(square);
     JUMPS
         .iter()
@@ -1007,7 +720,7 @@ fn knight_moves(square: &str) -> Vec<String> {
 }
 
 /// Fewest jumps from `from` to `to`; None when no path exists.
-fn knight_distance(from: &str, to: &str) -> Option<u32> {
+pub fn knight_distance(from: &str, to: &str) -> Option<u32> {
     if from == to {
         return Some(0);
     }
@@ -1032,9 +745,17 @@ fn knight_distance(from: &str, to: &str) -> Option<u32> {
     None
 }
 
-/// The first pair of draws whose squares are `min`–`max` jumps apart, as `knightChallenge`
-/// retries; null when the draws run out.
-fn knight_challenge(min: f64, max: f64, draws: &[f64]) -> Value {
+/// A knight's journey: from one square to another, `best` jumps apart (none when unreachable).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct KnightChallenge {
+    pub from: String,
+    pub to: String,
+    pub best: Option<u32>,
+}
+
+/// The first pair of draws whose squares are `min`–`max` jumps apart; none when the draws run
+/// out.
+pub fn knight_challenge(min: f64, max: f64, draws: &[f64]) -> Option<KnightChallenge> {
     let squares = all_squares();
     for pair in draws.as_chunks::<2>().0 {
         let (Some(a), Some(b)) = (square_index(pair[0]), square_index(pair[1])) else {
@@ -1044,25 +765,17 @@ fn knight_challenge(min: f64, max: f64, draws: &[f64]) -> Value {
         let best = knight_distance(from, to);
         let best_value = best.map_or(f64::INFINITY, f64::from);
         if best_value >= min && best_value <= max {
-            return json!({
-                "from": from,
-                "to": to,
-                "best": best.map_or(Value::Null, |n| json!(n)),
+            return Some(KnightChallenge {
+                from: from.clone(),
+                to: to.clone(),
+                best,
             });
         }
     }
-    Value::Null
+    None
 }
 
-fn knight_challenge_call(args: &[Value]) -> Result<Value> {
-    Ok(knight_challenge(
-        number(args, 0)?,
-        number(args, 1)?,
-        &numbers(args, 2)?,
-    ))
-}
-
-/// `${n || ''}`: zero and NaN print as nothing.
+/// A number's text; zero and NaN print as nothing.
 fn js_or_empty(n: f64) -> String {
     if n == 0.0 || n.is_nan() {
         String::new()
@@ -1072,7 +785,7 @@ fn js_or_empty(n: f64) -> String {
 }
 
 /// A board with one white knight, as a FEN (the board only draws it).
-fn knight_fen(square: &str) -> String {
+pub fn knight_fen(square: &str) -> String {
     let (file, rank) = knight_index(square);
     let rows: Vec<String> = (0..8)
         .map(|r| {
@@ -1088,12 +801,6 @@ fn knight_fen(square: &str) -> String {
 }
 
 /* ── Material ── */
-
-/// Material balance of a FEN's placement in pawns: positive when White is ahead.
-fn material_balance(fen: &str) -> i64 {
-    let (white, black) = material_counts(fen);
-    balance_of(&white, &black)
-}
 
 fn balance_of(white: &[u32; 6], black: &[u32; 6]) -> i64 {
     let value = [1, 3, 3, 5, 9, 0];
@@ -1139,7 +846,14 @@ const MATERIAL_ROLES: [(char, &str); 6] = [
 
 /// Lichess's material difference: the pieces each side has beyond the other's, most valuable
 /// first, and `score`, the balance in pawns (positive when White is ahead).
-fn material_diff(fen: &str) -> Value {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct MaterialDiff {
+    pub white: Vec<&'static str>,
+    pub black: Vec<&'static str>,
+    pub score: i64,
+}
+
+pub fn material_diff(fen: &str) -> MaterialDiff {
     let (white_counts, black_counts) = material_counts(fen);
     let mut white = Vec::new();
     let mut black = Vec::new();
@@ -1161,5 +875,49 @@ fn material_diff(fen: &str) -> Value {
         };
         side.extend(std::iter::repeat_n(role, extra as usize));
     }
-    json!({ "white": white, "black": black, "score": balance_of(&white_counts, &black_counts) })
+    MaterialDiff {
+        white,
+        black,
+        score: balance_of(&white_counts, &black_counts),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Grammar, grammar};
+
+    #[test]
+    fn the_grammars_hold_their_words() {
+        let moves = grammar(Grammar::Move);
+        assert!(moves.contains(&"e four".to_string()) && moves.contains(&"knight".to_string()));
+        assert!(grammar(Grammar::Game).contains(&"take back".to_string()));
+    }
+
+    /// Silence is no move and no cancel; a cancel word is a cancel, and a square a move.
+    #[test]
+    fn silence_is_not_a_cancel() {
+        use super::{SpokenMove, spoken_move};
+        let start = crate::rules::default_position(shakmaty::variant::Variant::Chess);
+        assert_eq!(spoken_move("", &start), SpokenMove::Invalid);
+        assert_eq!(spoken_move("cancel", &start), SpokenMove::Cancel);
+        assert!(matches!(
+            spoken_move("e four", &start),
+            SpokenMove::Move { choices } if choices[0].uci == "e2e4"
+        ));
+    }
+
+    /// "Pawn to e5" heard as "pawn two e five": no Black pawn leaves the second rank, so the
+    /// "two" was the "to".
+    #[test]
+    fn a_lone_two_that_fits_no_move_was_a_to() {
+        use super::{SpokenMove, spoken_move};
+        let after_e4 = crate::rules::standard_from_fen(
+            "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+        )
+        .unwrap();
+        assert!(matches!(
+            spoken_move("pawn two e five", &after_e4),
+            SpokenMove::Move { choices } if choices.len() == 1 && choices[0].uci == "e7e5"
+        ));
+    }
 }

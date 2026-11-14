@@ -8,9 +8,10 @@
 //! every line of an older profile is new.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::js;
+use crate::keyed::Keyed;
 
 pub const DAY_MS: f64 = 86_400_000.0;
 /// A new line's ease, and the most it recovers to.
@@ -23,6 +24,13 @@ pub const MAX_KEYS: usize = 200;
 pub const MAX_LINES: usize = 2000;
 pub const MAX_KEY_CHARS: usize = 200;
 pub const MAX_LINE_CHARS: usize = 1300;
+
+/// Every repertoire's schedule: `key` → line → card.
+pub type RepertoireSchedule = Keyed<Keyed<Card>>;
+
+/// Every repertoire's missed positions: `key` (`studyId:color`) → FEN → times missed, a whole
+/// number in the form it was written.
+pub type RepertoireMisses = Keyed<Keyed<serde_json::Number>>;
 
 /// One line's place in the schedule.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -104,16 +112,6 @@ impl Card {
         };
         Some(card)
     }
-
-    fn to_value(self) -> Value {
-        json!({
-            "interval": self.interval,
-            "ease": self.ease,
-            "due": self.due,
-            "reps": self.reps,
-            "lapses": self.lapses,
-        })
-    }
 }
 
 /// A line's name: the UCI moves from its root, space-separated, after `<8 hex digits>:` (the
@@ -157,8 +155,8 @@ pub fn line_id(root_fen: &str, standard: bool, path: &str) -> String {
 }
 
 /// The stored schedule document's lines, `key` → line → card; anything unreadable is dropped.
-pub fn decode_schedule(raw: &Value) -> Map<String, Value> {
-    let mut result = Map::new();
+pub fn decode_schedule(raw: &Value) -> RepertoireSchedule {
+    let mut result = Keyed::default();
     if raw.get("version").and_then(Value::as_u64) != Some(SCHEDULE_VERSION) {
         return result;
     }
@@ -172,26 +170,26 @@ pub fn decode_schedule(raw: &Value) -> Map<String, Value> {
         if key.is_empty() || js::utf16_len(key) > MAX_KEY_CHARS {
             continue;
         }
-        let cards: Map<String, Value> = table
+        let cards = table
             .iter()
             .take(MAX_LINES)
             .filter(|(line, _)| valid_line(line))
-            .filter_map(|(line, card)| Some((line.clone(), Card::decode(card)?.to_value())))
+            .filter_map(|(line, card)| Some((line.clone(), Card::decode(card)?)))
             .collect();
-        result.insert(key.clone(), Value::Object(cards));
+        result.insert(key.clone(), Keyed(cards));
     }
     result
 }
 
 /// The schedule's lines as the document to store.
-pub fn encode_schedule(lines: Map<String, Value>) -> Value {
+pub fn encode_schedule(lines: &RepertoireSchedule) -> Value {
     json!({ "version": SCHEDULE_VERSION, "lines": lines })
 }
 
 /// The schedule after answering one line. A repertoire at [`MAX_LINES`] makes room by dropping
 /// the line due last; a new repertoire past [`MAX_KEYS`] is refused.
 pub fn record(
-    schedule: &mut Map<String, Value>,
+    schedule: &mut RepertoireSchedule,
     key: &str,
     line: &str,
     correct: bool,
@@ -203,33 +201,25 @@ pub fn record(
     if !valid_line(line) {
         return Err("A repertoire line must be its UCI moves.".into());
     }
-    if !schedule.contains_key(key) && schedule.len() >= MAX_KEYS {
+    if schedule.get(key).is_none() && schedule.len() >= MAX_KEYS {
         return Err("Too many repertoires are scheduled.".into());
     }
-    let table = schedule.entry(key.to_string()).or_insert_with(|| json!({}));
-    if !table.is_object() {
-        *table = json!({});
-    }
-    let Some(table) = table.as_object_mut() else {
-        return Err("A repertoire's schedule must be an object.".into());
-    };
-    let previous = table.get(line).and_then(Card::decode);
+    let table = schedule.entry(key);
+    let previous = table.get(line).copied();
     if previous.is_none() && table.len() >= MAX_LINES {
         let last = table
+            .0
             .iter()
-            .max_by(|a, b| due_of(a.1).total_cmp(&due_of(b.1)))
-            .map(|(line, _)| line.clone());
+            .enumerate()
+            .max_by(|a, b| a.1.1.due.total_cmp(&b.1.1.due))
+            .map(|(at, _)| at);
         if let Some(last) = last {
-            table.shift_remove(&last);
+            table.0.remove(last);
         }
     }
     let card = Card::review(previous.as_ref(), correct, now);
-    table.insert(line.to_string(), card.to_value());
+    table.insert(line.to_string(), card);
     Ok(card)
-}
-
-fn due_of(card: &Value) -> f64 {
-    card.get("due").and_then(Value::as_f64).unwrap_or(f64::MAX)
 }
 
 /// How a repertoire's lines stand: how many are due, and when the next of the rest is due.
@@ -241,11 +231,16 @@ pub struct Summary {
     pub next_due: Option<f64>,
 }
 
-/// The cards of `lines` in one repertoire's table (`key` → card), as they stand at `now`.
-pub fn summary<'a>(lines: impl IntoIterator<Item = &'a str>, table: &Value, now: f64) -> Summary {
+/// The cards of `lines` in one repertoire's table (line → card), none for a repertoire never
+/// drilled, as they stand at `now`.
+pub fn summary<'a>(
+    lines: impl IntoIterator<Item = &'a str>,
+    table: Option<&Keyed<Card>>,
+    now: f64,
+) -> Summary {
     let mut summary = Summary::default();
     for line in lines {
-        match table.get(line).and_then(Card::decode) {
+        match table.and_then(|table| table.get(line)) {
             None => summary.new += 1,
             Some(card) if card.is_due(now) => summary.due += 1,
             Some(card) => {
@@ -257,11 +252,12 @@ pub fn summary<'a>(lines: impl IntoIterator<Item = &'a str>, table: &Value, now:
 }
 
 /// The line to review first: the most overdue of `lines`, or None when none is due.
-pub fn most_overdue(lines: &[&str], table: &Value, now: f64) -> Option<usize> {
+pub fn most_overdue(lines: &[&str], table: Option<&Keyed<Card>>, now: f64) -> Option<usize> {
+    let table = table?;
     lines
         .iter()
         .enumerate()
-        .filter_map(|(index, line)| Some((index, table.get(*line).and_then(Card::decode)?)))
+        .filter_map(|(index, line)| Some((index, table.get(line)?)))
         .filter(|(_, card)| card.is_due(now))
         .min_by(|a, b| a.1.due.total_cmp(&b.1.due))
         .map(|(index, _)| index)
@@ -343,55 +339,52 @@ mod tests {
         assert!(decode_schedule(&Value::Null).is_empty());
         assert!(decode_schedule(&json!({ "white": {} })).is_empty());
         assert!(decode_schedule(&json!({ "version": 2, "lines": {} })).is_empty());
-        let card = Card::review(None, true, NOW).to_value();
+        let card = json!(Card::review(None, true, NOW));
         let raw = json!({ "version": 1, "lines": {
             "study:white": { "e2e4": card, "bad": card, "d2d4": { "ease": 9 } },
             "": { "e2e4": card },
             "list": [],
         }});
         assert_eq!(
-            Value::Object(decode_schedule(&raw)),
+            json!(decode_schedule(&raw)),
             json!({ "study:white": { "e2e4": card } })
         );
     }
 
     #[test]
     fn recording_keeps_the_schedule_bounded() {
-        let mut schedule = Map::new();
+        let mut schedule = RepertoireSchedule::default();
         record(&mut schedule, "s:white", "e2e4", true, NOW).expect("record");
         assert!(record(&mut schedule, "s:white", "nope", true, NOW).is_err());
         assert!(record(&mut schedule, "", "e2e4", true, NOW).is_err());
-        let encoded = encode_schedule(schedule.clone());
+        let encoded = encode_schedule(&schedule);
         assert_eq!(decode_schedule(&encoded), schedule);
 
         // A full repertoire drops the line due last for a new one. The first line written is the
         // one due last, so a tie between every line (which picks the last written) would drop
         // another.
-        let mut full = Map::new();
-        let mut table = Map::new();
+        let mut full = RepertoireSchedule::default();
+        let mut table = Keyed::default();
         let square = |i: usize| format!("{}{}", char::from(b'a' + (i % 8) as u8), 1 + i / 8);
         for i in 0..MAX_LINES {
             let card = Card {
                 due: NOW + (MAX_LINES - i) as f64,
                 ..Card::review(None, true, NOW)
             };
-            table.insert(
-                format!("{}{}", square(i % 64), square(i / 64)),
-                card.to_value(),
-            );
+            table.insert(format!("{}{}", square(i % 64), square(i / 64)), card);
         }
         assert_eq!(table.len(), MAX_LINES);
-        full.insert("k".into(), Value::Object(table));
+        full.insert("k".into(), table);
         record(&mut full, "k", "h7h8q", false, NOW).expect("record");
-        let table = full["k"].as_object().expect("table");
+        let table = full.get("k").expect("table");
         assert_eq!(table.len(), MAX_LINES);
-        assert!(table.contains_key("h7h8q"));
-        assert!(!table.contains_key("a1a1"), "the line due last is dropped");
-        assert!(table.contains_key("b1a1") && table.contains_key("h2h4"));
+        assert!(table.get("h7h8q").is_some());
+        assert!(table.get("a1a1").is_none(), "the line due last is dropped");
+        assert!(table.get("b1a1").is_some() && table.get("h2h4").is_some());
 
-        let mut many = Map::new();
+        let mut many = RepertoireSchedule::default();
         for i in 0..MAX_KEYS {
-            many.insert(format!("k{i}"), json!({}));
+            many.insert(format!("k{i}"), Keyed::default());
         }
         assert!(record(&mut many, "another", "e2e4", true, NOW).is_err());
         assert!(record(&mut many, "k0", "e2e4", true, NOW).is_ok());
@@ -401,24 +394,24 @@ mod tests {
     fn a_repertoire_name_may_be_up_to_200_characters() {
         let longest = "é".repeat(MAX_KEY_CHARS);
         let too_long = "é".repeat(MAX_KEY_CHARS + 1);
-        let mut schedule = Map::new();
+        let mut schedule = RepertoireSchedule::default();
         assert!(record(&mut schedule, &longest, "e2e4", true, NOW).is_ok());
         assert!(record(&mut schedule, &too_long, "e2e4", true, NOW).is_err());
 
-        let card = Card::review(None, true, NOW).to_value();
+        let card = json!(Card::review(None, true, NOW));
         let raw = json!({ "version": 1, "lines": {
             (longest.clone()): { "e2e4": card },
             (too_long): { "e2e4": card },
         }});
         assert_eq!(
-            Value::Object(decode_schedule(&raw)),
+            json!(decode_schedule(&raw)),
             json!({ (longest): { "e2e4": card } })
         );
     }
 
     #[test]
     fn counts_in_a_stored_card_are_whole_and_not_negative() {
-        let card = Card::review(None, true, NOW).to_value();
+        let card = json!(Card::review(None, true, NOW));
         let with = |field: &str, value: Value| {
             let mut card = card.clone();
             card[field] = value;
@@ -432,7 +425,7 @@ mod tests {
             "b1c3": with("lapses", json!(0.25)),
         }}});
         assert_eq!(
-            Value::Object(decode_schedule(&raw)),
+            json!(decode_schedule(&raw)),
             json!({ "k": { "e2e4": card } })
         );
     }
@@ -449,11 +442,11 @@ mod tests {
 
     #[test]
     fn due_lines_are_counted_and_the_most_overdue_comes_first() {
-        let mut schedule = Map::new();
+        let mut schedule = RepertoireSchedule::default();
         record(&mut schedule, "k", "e2e4", false, NOW).expect("due now");
         record(&mut schedule, "k", "d2d4", false, NOW - 1000.0).expect("due earlier");
         record(&mut schedule, "k", "c2c4", true, NOW).expect("due tomorrow");
-        let table = &schedule["k"];
+        let table = schedule.get("k");
         let lines = ["e2e4", "d2d4", "c2c4", "g1f3"];
         assert_eq!(
             summary(lines, table, NOW),
@@ -465,6 +458,6 @@ mod tests {
         );
         assert_eq!(most_overdue(&lines, table, NOW), Some(1));
         assert_eq!(most_overdue(&["c2c4", "g1f3"], table, NOW), None);
-        assert_eq!(summary(lines, &Value::Null, NOW).new, 4);
+        assert_eq!(summary(lines, None, NOW).new, 4);
     }
 }

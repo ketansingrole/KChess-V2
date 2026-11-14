@@ -1,140 +1,131 @@
-//! The facade's puzzles, the puzzle database and training runs (`run_facade` arms, moved without changes).
+//! Puzzles, the puzzle database, training runs and the voice input log.
 
-use super::PUZZLE_DB_URL;
-use super::args::{arg, normal};
+use kchess_contracts::check::{ActivityMax, Days, PuzzleId, Username, VoiceId, VoiceLimit};
+use kchess_contracts::core_api::PuzzlesApi;
+use kchess_contracts::types::{
+    LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleActivityEntry, PuzzleAttemptInput,
+    PuzzleDbStatus, PuzzleDraw, PuzzleProgress, PuzzleProgressQuery, PuzzleRequest,
+    PuzzleSolveRequest, PuzzleSolveResult, Reply, RunInput, RunKind, RunSaved, RunSummary,
+    VoiceAttempt, VoiceAttemptInput, VoiceUpdate,
+};
+use serde_json::Value;
+
 use crate::core::Core;
-use crate::error::{CoreError, Result};
-use crate::host::Level;
-use serde_json::{Value, json};
+use crate::lichess::puzzles as lichess;
+use crate::store::{runs, voice_log};
+use kchess_contracts::error::Result;
 
-impl Core {
-    /// Answers the facade's puzzles methods.
-    pub(crate) async fn run_puzzles(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "puzzleNext" => {
-                let request = normal("assertPuzzleRequest", &arg(args, 0))?;
-                self.inner("lichess.puzzleNext", vec![request]).await
-            }
-            "puzzleSolve" => {
-                let request = normal("assertPuzzleSolve", &arg(args, 0))?;
-                self.inner("lichess.puzzleSolve", vec![request]).await
-            }
-            "puzzleDaily" => self.inner("lichess.puzzleDaily", vec![]).await,
-            "puzzleById" => {
-                let id = normal("assertPuzzleId", &arg(args, 0))?;
-                self.inner("lichess.puzzleById", vec![id]).await
-            }
-            "puzzleDashboard" => {
-                let account = normal("assertUsername", &arg(args, 0))?;
-                let days = normal("assertDays", &arg(args, 1))?;
-                self.inner(
-                    "lichess.puzzleDashboard",
-                    vec![json!({ "account": account, "days": days })],
-                )
-                .await
-            }
-            "puzzleActivity" => {
-                let account = normal("assertUsername", &arg(args, 0))?;
-                let max = normal("assertActivityMax", &arg(args, 1))?;
-                self.inner("lichess.puzzleActivity", vec![account, max])
-                    .await
-            }
-            "stormDashboard" => {
-                let name = normal("assertUsername", &arg(args, 0))?;
-                let days = normal("assertDays", &arg(args, 1))?;
-                self.inner("lichess.stormDashboard", vec![name, days]).await
-            }
-            _ => self.run_local_puzzles(method, args).await,
-        }
+impl PuzzlesApi for Core {
+    async fn puzzle_next(&self, request: PuzzleRequest) -> Result<Reply<PuzzleDraw>> {
+        lichess::puzzle_next(self.services.lichess(), &request).await
     }
 
-    /// Answers the facade's puzzle database methods.
-    async fn run_local_puzzles(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "puzzleDbStatus" => self.puzzle_operation("puzzles.status", vec![]).await,
-            "puzzleDbInstall" => {
-                self.puzzle_operation("puzzles.install", vec![json!(PUZZLE_DB_URL)])
-                    .await
-            }
-            "puzzleDbCancel" => {
-                if let Err(cause) = self.dispatch("puzzles.cancel", vec![]).await {
-                    self.host.log(
-                        Level::Warn,
-                        "puzzles",
-                        &format!("Puzzle download cancel failed: {}", cause.message),
-                    );
-                }
-                Ok(Value::Null)
-            }
-            "puzzleDbDelete" => self.puzzle_operation("puzzles.delete", vec![]).await,
-            "localPuzzles" => {
-                let query = normal("assertLocalQuery", &arg(args, 0))?;
-                self.puzzle_operation("puzzles.query", vec![query]).await
-            }
-            "localLadder" => {
-                let query = normal("assertLadderQuery", &arg(args, 0))?;
-                self.puzzle_operation("puzzles.ladder", vec![query]).await
-            }
-            "recordPuzzleAttempt" => {
-                let attempt = normal("assertPuzzleAttempt", &arg(args, 0))?;
-                self.puzzle_operation("puzzles.recordAttempt", vec![attempt])
-                    .await
-            }
-            "puzzleProgress" => {
-                let query = normal("assertPuzzleProgressQuery", &arg(args, 0))?;
-                self.puzzle_operation("puzzles.progress", vec![query]).await
-            }
-            _ => self.run_training_logs(method, args).await,
-        }
+    async fn puzzle_solve(&self, request: PuzzleSolveRequest) -> Result<Reply<PuzzleSolveResult>> {
+        lichess::puzzle_solve(self.services.lichess(), &request).await
     }
 
-    /// Answers the facade's training run and voice log methods.
-    async fn run_training_logs(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "saveRun" => {
-                let run = normal("assertRunInput", &arg(args, 0))?;
-                self.database.call_async("store.runs.saveRun", &[run]).await
-            }
-            "runSummary" => {
-                let kind = normal("assertRunKind", &arg(args, 0))?;
-                self.database
-                    .call_async("store.runs.runSummary", &[kind])
-                    .await
-            }
-            "clearRuns" => {
-                let kind = match args.first() {
-                    None | Some(Value::Null) => Value::Null,
-                    Some(value) => normal("assertRunKind", value)?,
-                };
-                self.database
-                    .call_async("store.runs.clearRuns", &[kind])
-                    .await
-            }
-            "saveVoiceAttempt" => {
-                let attempt = normal("assertVoiceAttempt", &arg(args, 0))?;
-                self.database
-                    .call_async("store.voiceLog.saveVoiceAttempt", &[attempt])
-                    .await
-            }
-            "updateVoiceAttempt" => {
-                let id = normal("assertVoiceId", &arg(args, 0))?;
-                let update = normal("assertVoiceUpdate", &arg(args, 1))?;
-                self.database
-                    .call_async("store.voiceLog.updateVoiceAttempt", &[id, update])
-                    .await
-            }
-            "voiceHistory" => {
-                let limit = normal("assertVoiceLimit", &arg(args, 0))?;
-                self.database
-                    .call_async("store.voiceLog.voiceHistory", &[limit])
-                    .await
-            }
-            "clearVoiceHistory" => {
-                self.database
-                    .call_async("store.voiceLog.clearVoiceHistory", &[])
-                    .await
-            }
-            _ => Err(CoreError::new(format!("Unknown core method {method}."))),
-        }
+    async fn puzzle_daily(&self) -> Result<Puzzle> {
+        lichess::puzzle_daily(self.services.lichess()).await
+    }
+
+    async fn puzzle_by_id(&self, id: PuzzleId) -> Result<Puzzle> {
+        lichess::puzzle_by_id(self.services.lichess(), &id.0).await
+    }
+
+    async fn puzzle_dashboard(&self, account: Username, days: Days) -> Result<Reply<Value>> {
+        lichess::puzzle_dashboard(self.services.lichess(), &account.0, days.0).await
+    }
+
+    async fn puzzle_activity(
+        &self,
+        account: Username,
+        max: ActivityMax,
+    ) -> Result<Reply<Vec<PuzzleActivityEntry>>> {
+        lichess::puzzle_activity(self.services.lichess(), &account.0, max.0).await
+    }
+
+    async fn storm_dashboard(&self, username: Username, days: Days) -> Result<Value> {
+        lichess::storm_dashboard(self.services.lichess(), &username.0, days.0).await
+    }
+
+    async fn puzzle_db_status(&self) -> Result<PuzzleDbStatus> {
+        self.puzzles.status().await
+    }
+
+    async fn puzzle_db_install(&self) -> Result<PuzzleDbStatus> {
+        self.puzzles.install(self.puzzle_db_url.clone()).await
+    }
+
+    async fn puzzle_db_cancel(&self) -> Result<()> {
+        self.puzzles.cancel();
+        Ok(())
+    }
+
+    async fn puzzle_db_delete(&self) -> Result<PuzzleDbStatus> {
+        self.puzzles.delete().await
+    }
+
+    async fn local_puzzles(&self, query: LocalPuzzleQuery) -> Result<Vec<Puzzle>> {
+        self.puzzles.query(query).await
+    }
+
+    async fn local_ladder(&self, query: LocalLadderQuery) -> Result<Vec<Puzzle>> {
+        self.puzzles.ladder(query).await
+    }
+
+    async fn record_puzzle_attempt(&self, attempt: PuzzleAttemptInput) -> Result<PuzzleProgress> {
+        self.puzzles.record_attempt(attempt).await
+    }
+
+    async fn puzzle_progress(&self, query: PuzzleProgressQuery) -> Result<PuzzleProgress> {
+        self.puzzles.progress(query).await
+    }
+
+    async fn save_run(&self, run: RunInput) -> Result<RunSaved> {
+        self.database
+            .write_async(move |ctx| runs::save_run(ctx.host, ctx.db, &run))
+            .await
+    }
+
+    async fn run_summary(&self, kind: RunKind) -> Result<RunSummary> {
+        self.database
+            .read_async(move |ctx| runs::run_summary(ctx.host, ctx.db, kind))
+            .await
+    }
+
+    async fn clear_runs(&self, kind: Option<RunKind>) -> Result<()> {
+        self.database
+            .write_async(move |ctx| runs::clear_runs(ctx.db, kind))
+            .await
+    }
+
+    async fn save_voice_attempt(&self, attempt: VoiceAttemptInput) -> Result<i64> {
+        self.database
+            .write_async(move |ctx| voice_log::save_voice_attempt(ctx.db, &attempt))
+            .await
+    }
+
+    async fn update_voice_attempt(&self, id: VoiceId, update: VoiceUpdate) -> Result<()> {
+        self.database
+            .write_async(move |ctx| voice_log::update_voice_attempt(ctx.db, id.0, &update))
+            .await
+    }
+
+    async fn voice_history(&self, limit: VoiceLimit) -> Result<Vec<VoiceAttempt>> {
+        self.database
+            .read_async(move |ctx| voice_log::voice_history(ctx.host, ctx.db, limit.0))
+            .await
+    }
+
+    async fn clear_voice_history(&self) -> Result<()> {
+        self.database
+            .write_async(|ctx| voice_log::clear_voice_history(ctx.db))
+            .await
+    }
+
+    async fn voice_history_document(&self) -> Result<String> {
+        self.database
+            .read_async(|ctx| voice_log::voice_history_document(ctx.host, ctx.db))
+            .await
     }
 }

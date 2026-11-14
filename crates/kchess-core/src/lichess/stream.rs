@@ -11,12 +11,37 @@ use std::time::Duration;
 use futures_util::{Stream, StreamExt};
 use tokio_util::sync::CancellationToken;
 
-use crate::error::CoreError;
+use kchess_contracts::error::CoreError;
 
-/// The default limit for one line (`maxLineBytes`), in bytes.
+/// The default limit for one line, in bytes.
 pub const MAX_LINE_BYTES: usize = 2_000_000;
-/// The default idle deadline between chunks (`idleMs`).
+/// The default idle deadline between chunks.
 pub const IDLE: Duration = Duration::from_secs(45);
+
+/// How long a stream waits before it reconnects: doubling from `first` with each failure in a
+/// row, up to `most`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Backoff {
+    pub first: Duration,
+    pub most: Duration,
+}
+
+impl Default for Backoff {
+    fn default() -> Backoff {
+        Backoff {
+            first: Duration::from_millis(500),
+            most: Duration::from_secs(15),
+        }
+    }
+}
+
+impl Backoff {
+    /// The wait after `failures` failures in a row.
+    pub fn after(&self, failures: u32) -> Duration {
+        let doubled = 2u32.checked_pow(failures).unwrap_or(u32::MAX);
+        self.first.saturating_mul(doubled).min(self.most)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct LineOptions {
@@ -41,13 +66,14 @@ pub(crate) const STALLED: &str = "Lichess stream stalled. Reconnecting…";
 
 /// The error of a connection that broke while Lichess was sending.
 fn dropped() -> CoreError {
-    CoreError::new("The connection to Lichess dropped.").with_kind(crate::error::ErrorKind::Offline)
+    CoreError::new("The connection to Lichess dropped.")
+        .with_kind(kchess_contracts::error::ErrorKind::Offline)
 }
 
 /// Read `body` to its end, calling `on_line` for every non-empty trimmed line as it arrives.
 ///
 /// `on_line` may fail: the read stops at that line, so a malformed record surfaces when it
-/// arrives rather than at the end of the stream (`readLines` rejected from `onLine` the same way).
+/// arrives rather than at the end of the stream.
 /// `cancel` (when given) stops the read with an abort error; the body is dropped on every exit,
 /// so a cancelled or failed read releases the connection.
 pub async fn read_lines<S, B, E, F, Err>(
@@ -68,13 +94,13 @@ where
     let max = options.max_line_bytes;
     loop {
         if cancel.is_some_and(CancellationToken::is_cancelled) {
-            return Err(CoreError::aborted("This operation was aborted").into());
+            return Err(super::aborted().into());
         }
         let next = match cancel {
             Some(token) => tokio::select! {
                 biased;
                 _ = token.cancelled() => {
-                    return Err(CoreError::aborted("This operation was aborted").into());
+                    return Err(super::aborted().into());
                 }
                 answer = tokio::time::timeout(options.idle, body.next()) => answer,
             },
@@ -110,10 +136,10 @@ where
     Ok(())
 }
 
-/// Read `body` as it arrives in chunks, handing each decoded piece to `on_chunk` (`readPgnStream`).
+/// Read `body` as it arrives in chunks, handing each decoded piece to `on_chunk`.
 /// A multi-byte character split across chunks is held back until its rest arrives. There is no
 /// idle deadline or line limit here: the caller bounds what it keeps, and a slow sender pausing
-/// mid-body is tolerated, as `readPgnStream` waited. Cancellation returns an abort error and
+/// mid-body is tolerated. Cancellation returns an abort error and
 /// drops the body.
 pub async fn read_chunks<S, B, E, F, Err>(
     body: S,
@@ -132,7 +158,7 @@ where
     loop {
         let next = tokio::select! {
             biased;
-            _ = cancel.cancelled() => return Err(CoreError::aborted("This operation was aborted").into()),
+            _ = cancel.cancelled() => return Err(super::aborted().into()),
             answer = body.next() => answer,
         };
         let Some(item) = next else { break };
@@ -174,6 +200,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reconnecting_waits_double_up_to_the_most() {
+        let backoff = Backoff::default();
+        let waits: Vec<u64> = (0..7)
+            .map(|failures| backoff.after(failures).as_millis() as u64)
+            .collect();
+        assert_eq!(waits, [500, 1_000, 2_000, 4_000, 8_000, 15_000, 15_000]);
+        assert_eq!(backoff.after(u32::MAX), Duration::from_secs(15));
+    }
 
     fn stream_of(
         chunks: Vec<&'static [u8]>,
@@ -231,7 +267,7 @@ mod tests {
     }
 
     /// A malformed record fails the read when it arrives: the second chunk never comes, yet the
-    /// first line's error still ends the read (`readLines` rejected from `onLine` the same way).
+    /// first line's error still ends the read.
     #[tokio::test]
     async fn a_failed_line_ends_the_read_before_the_stream_does() {
         let first: std::result::Result<Vec<u8>, String> = Ok(b"bad\n".to_vec());
@@ -281,7 +317,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(text, "a😀é");
-        // A sender pausing mid-body is tolerated, as `readPgnStream` waited: a chunk arriving
+        // A sender pausing mid-body is tolerated: a chunk arriving
         // after a silence longer than any idle bound still joins the download.
         let slow = futures_util::stream::unfold(0u32, |step| async move {
             match step {

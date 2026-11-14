@@ -6,33 +6,40 @@ use gpui_kit::component::input::Input;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use kchess_contracts::types::{
+    TournamentDetail, TournamentFeatured, TournamentPlayer, TournamentStatus, TournamentSystem,
+};
+use kchess_domain::training::clock::format_clock;
+use serde_json::Number;
 use shakmaty::Color;
 
 use super::{TournamentsPage, control};
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
-use crate::game::rules;
 use crate::pages::players::player_link;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Look};
 
+/// A number Lichess may leave out.
+fn number(value: Option<&Number>) -> Option<f64> {
+    value.and_then(Number::as_f64)
+}
+
 /// "Starts in 5 min", "12 min left", "Next round in 2 min", "Finished".
-pub fn status_line(detail: &Value) -> String {
-    let minutes = |key: &str| {
-        detail[key]
-            .as_f64()
+pub fn status_line(detail: &TournamentDetail) -> String {
+    let minutes = |seconds: &Option<Number>| {
+        number(seconds.as_ref())
             .filter(|seconds| *seconds > 0.)
             .map(|seconds| (seconds / 60.).ceil())
     };
-    if detail["status"] == json!("finished") {
+    if detail.summary.status == TournamentStatus::Finished {
         "Finished".into()
-    } else if let Some(m) = minutes("secondsToStart") {
+    } else if let Some(m) = minutes(&detail.seconds_to_start) {
         format!("Starts in {m} min")
-    } else if let Some(m) = minutes("secondsToFinish") {
+    } else if let Some(m) = minutes(&detail.seconds_to_finish) {
         format!("{m} min left")
-    } else if let Some(m) = minutes("nextRoundIn") {
+    } else if let Some(m) = minutes(&detail.next_round_in) {
         format!("Next round in {m} min")
     } else {
         "Under way".into()
@@ -40,40 +47,32 @@ pub fn status_line(detail: &Value) -> String {
 }
 
 /// "3+2 · Rated · 60 min · Berserk allowed".
-pub fn facts(detail: &Value) -> Vec<String> {
-    let mut facts = vec![control(&detail["clock"])];
-    if detail["variant"] != json!("standard")
-        && let Some(name) = detail["variantName"].as_str()
-    {
-        facts.push(name.to_string());
+pub fn facts(detail: &TournamentDetail) -> Vec<String> {
+    let summary = &detail.summary;
+    let mut facts = vec![control(&summary.clock)];
+    if summary.variant != "standard" {
+        facts.push(summary.variant_name.clone());
     }
-    facts.push(
-        if detail["rated"] == json!(true) {
-            "Rated"
-        } else {
-            "Casual"
-        }
-        .into(),
-    );
-    if let Some(minutes) = detail["minutes"].as_f64() {
+    facts.push(if summary.rated { "Rated" } else { "Casual" }.into());
+    if let Some(minutes) = number(summary.minutes.as_ref()) {
         facts.push(format!("{minutes} min"));
-    } else if let Some(rounds) = detail["nbRounds"].as_f64() {
+    } else if let Some(rounds) = number(summary.nb_rounds.as_ref()) {
         facts.push(format!("{rounds} rounds"));
     }
-    if detail["berserkable"] == json!(true) {
+    if detail.berserkable == Some(true) {
         facts.push("Berserk allowed".into());
     }
     facts
 }
 
 impl TournamentsPage {
-    pub(super) fn joined_now(&self, detail: &Value, cx: &App) -> bool {
-        if detail["me"].is_object() {
-            return detail["me"]["withdraw"] != json!(true);
+    pub(super) fn joined_now(&self, detail: &TournamentDetail, cx: &App) -> bool {
+        if let Some(me) = &detail.me {
+            return !me.withdraw;
         }
         self.is_joined(
-            detail["system"].as_str().unwrap_or_default(),
-            detail["id"].as_str().unwrap_or_default(),
+            detail.summary.system.as_str(),
+            &detail.summary.id,
             Self::account(cx).as_deref(),
         )
     }
@@ -133,12 +132,18 @@ impl TournamentsPage {
             .into_any_element()
     }
 
-    fn event_head(&self, detail: &Value, cx: &mut Context<Self>, palette: &Palette) -> Div {
+    fn event_head(
+        &self,
+        detail: &TournamentDetail,
+        cx: &mut Context<Self>,
+        palette: &Palette,
+    ) -> Div {
         let joined = self.joined_now(detail, cx);
         let account = Self::account(cx);
-        let finished = detail["status"] == json!("finished");
-        let started = detail["status"] == json!("started");
-        let arena = detail["system"] == json!("arena");
+        let summary = &detail.summary;
+        let finished = summary.status == TournamentStatus::Finished;
+        let started = summary.status == TournamentStatus::Started;
+        let arena = summary.system == TournamentSystem::Arena;
         let actions = if finished {
             None
         } else if !joined {
@@ -166,14 +171,14 @@ impl TournamentsPage {
                     ),
             )
         } else {
-            let game = detail["me"]["gameId"].as_str().map(str::to_string);
+            let me = detail.me.as_ref();
+            let game = me.and_then(|me| me.game_id.clone());
             Some(
                 h_flex()
                     .gap(px(8.))
                     .child(widgets::badge("You are in", Look::Success, palette))
                     .children(
-                        detail["me"]["rank"]
-                            .as_f64()
+                        number(me.and_then(|me| me.rank.as_ref()))
                             .map(|rank| div().text_size(px(13.)).child(format!("Rank {rank}"))),
                     )
                     .children(game.map(|id| {
@@ -182,7 +187,7 @@ impl TournamentsPage {
                             .icon(icon("swords"))
                             .label("Go to your game")
                             .on_click(move |_, window, cx| {
-                                crate::shell::open_online_game(&id, window, cx)
+                                crate::pages::online::open_game(&id, window, cx)
                             })
                     }))
                     .child(
@@ -197,7 +202,7 @@ impl TournamentsPage {
         let mut line = facts(detail).join(" · ");
         line.push_str(&format!(
             " · {} players · ",
-            detail["nbPlayers"].as_f64().unwrap_or_default()
+            summary.nb_players.as_f64().unwrap_or_default()
         ));
         widgets::card(palette)
             .gap(px(14.))
@@ -215,7 +220,7 @@ impl TournamentsPage {
                                 div()
                                     .text_size(px(20.))
                                     .font_weight(FontWeight::MEDIUM)
-                                    .child(detail["name"].as_str().unwrap_or_default().to_string()),
+                                    .child(summary.name.clone()),
                             )
                             .child(
                                 h_flex()
@@ -232,7 +237,7 @@ impl TournamentsPage {
                     )
                     .children(actions),
             )
-            .children(detail["problem"].as_str().map(|problem| {
+            .children(summary.problem.clone().map(|problem| {
                 h_flex()
                     .gap(px(8.))
                     .p(px(12.))
@@ -240,23 +245,26 @@ impl TournamentsPage {
                     .bg(palette.accented)
                     .text_size(px(13.))
                     .child(icon("eye").size(px(16.)))
-                    .child(problem.to_string())
+                    .child(problem)
             }))
             .children(
-                detail["description"]
-                    .as_str()
-                    .map(|text| div().text_size(px(13.)).child(text.to_string())),
+                detail
+                    .description
+                    .clone()
+                    .map(|text| div().text_size(px(13.)).child(text)),
             )
             .children(
-                detail["verdicts"]["list"]
-                    .as_array()
+                detail
+                    .verdicts
+                    .as_ref()
+                    .map(|verdicts| &verdicts.list)
                     .filter(|list| !list.is_empty())
                     .map(|list| {
                         v_flex()
                             .gap(px(4.))
                             .text_size(px(13.))
                             .children(list.iter().map(|entry| {
-                                let ok = entry["verdict"] == json!("ok");
+                                let ok = entry.verdict == "ok";
                                 h_flex()
                                     .gap(px(8.))
                                     .child(
@@ -270,16 +278,13 @@ impl TournamentsPage {
                                             if ok { palette.success } else { palette.error },
                                         ),
                                     )
-                                    .child(
-                                        entry["condition"].as_str().unwrap_or_default().to_string(),
-                                    )
+                                    .child(entry.condition.clone())
                                     .when(!ok, |row| {
-                                        row.child(div().text_color(palette.text_muted).child(
-                                            format!(
-                                                "· {}",
-                                                entry["verdict"].as_str().unwrap_or_default()
-                                            ),
-                                        ))
+                                        row.child(
+                                            div()
+                                                .text_color(palette.text_muted)
+                                                .child(format!("· {}", entry.verdict)),
+                                        )
                                     })
                             }))
                     }),
@@ -288,15 +293,15 @@ impl TournamentsPage {
 
     fn standings(
         &self,
-        detail: &Value,
+        detail: &TournamentDetail,
         page: usize,
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> Div {
         let pages =
-            ((detail["nbPlayers"].as_f64().unwrap_or_default() / 10.).ceil() as usize).max(1);
+            ((detail.summary.nb_players.as_f64().unwrap_or_default() / 10.).ceil() as usize).max(1);
         let me = Self::account(cx).unwrap_or_default().to_lowercase();
-        let rows = detail["standing"].as_array().cloned().unwrap_or_default();
+        let rows = &detail.standing;
         widgets::card(palette)
             .gap(px(8.))
             .child(
@@ -339,15 +344,19 @@ impl TournamentsPage {
                     }),
             )
             .children(
-                detail["podium"]
-                    .as_array()
+                detail
+                    .extras
+                    .podium
+                    .as_ref()
                     .filter(|podium| !podium.is_empty())
                     .map(|podium| {
                         h_flex().gap(px(8.)).children(podium.iter().enumerate().map(
                             |(index, entry)| {
-                                let mut line =
-                                    format!("{} pts", entry["score"].as_f64().unwrap_or_default());
-                                if let Some(performance) = entry["performance"].as_f64() {
+                                let mut line = format!(
+                                    "{} pts",
+                                    number(entry.score.as_ref()).unwrap_or_default()
+                                );
+                                if let Some(performance) = number(entry.performance.as_ref()) {
                                     line.push_str(&format!(" · perf {performance}"));
                                 }
                                 v_flex()
@@ -367,7 +376,7 @@ impl TournamentsPage {
                                     .child(
                                         player_link(
                                             ("podium", index),
-                                            entry["name"].as_str().unwrap_or("?").to_string(),
+                                            entry.name.clone(),
                                             palette.primary,
                                         )
                                         .font_weight(FontWeight::MEDIUM),
@@ -386,7 +395,7 @@ impl TournamentsPage {
                 card.child(widgets::hint("No players yet", palette))
             })
             .children(rows.iter().enumerate().map(|(index, row)| {
-                let name = row["name"].as_str().unwrap_or("?").to_string();
+                let name = row.name.clone();
                 let mine = name.to_lowercase() == me;
                 h_flex()
                     .gap(px(8.))
@@ -399,32 +408,32 @@ impl TournamentsPage {
                         div()
                             .w(px(32.))
                             .text_color(palette.text_muted)
-                            .child(format!("{}", row["rank"].as_f64().unwrap_or_default())),
+                            .child(format!("{}", row.rank.as_f64().unwrap_or_default())),
                     )
                     .child(
                         h_flex()
                             .flex_1()
                             .min_w_0()
                             .gap(px(8.))
-                            .children(row["title"].as_str().map(|title| {
+                            .children(row.title.clone().map(|title| {
                                 div()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(palette.primary)
-                                    .child(title.to_string())
+                                    .child(title)
                             }))
                             .child(player_link(("standing", index), name, palette.primary))
-                            .children(row["rating"].as_f64().map(|rating| {
+                            .children(number(row.rating.as_ref()).map(|rating| {
                                 div()
                                     .text_color(palette.text_muted)
                                     .child(rating.to_string())
                             })),
                     )
-                    .children(row["sheet"].as_str().map(|sheet| {
+                    .children(row.sheet.clone().map(|sheet| {
                         div()
                             .max_w(px(160.))
                             .truncate()
                             .text_color(palette.text_muted)
-                            .child(sheet.to_string())
+                            .child(sheet)
                     }))
                     .child(
                         h_flex()
@@ -432,14 +441,13 @@ impl TournamentsPage {
                             .justify_end()
                             .gap(px(2.))
                             .font_weight(FontWeight::MEDIUM)
-                            .when(row["fire"] == json!(true), |score| {
+                            .when(row.fire == Some(true), |score| {
                                 score
                                     .text_color(palette.warning)
                                     .child(icon("flame").size(px(14.)))
                             })
                             .child(
-                                row["score"]
-                                    .as_f64()
+                                number(row.score.as_ref())
                                     .map_or(String::new(), |score| score.to_string()),
                             ),
                     )
@@ -449,23 +457,19 @@ impl TournamentsPage {
     /// The top game, watched with a click.
     fn featured(
         &mut self,
-        detail: &Value,
+        detail: &TournamentDetail,
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> Option<Div> {
-        let featured = detail["featured"].as_object()?.clone();
-        let featured = Value::Object(featured);
-        let orientation = if featured["orientation"] == json!("black") {
-            Color::Black
-        } else {
-            Color::White
-        };
+        let featured = detail.extras.featured.clone()?;
+        let orientation = featured.orientation;
         let mut state = BoardState::shown(
-            featured["fen"].as_str().unwrap_or_default(),
-            "standard",
+            &featured.fen,
+            kchess_domain::variant::Variant::Standard,
             orientation,
-            featured["lastMove"]
-                .as_str()
+            featured
+                .last_move
+                .as_deref()
                 .filter(|uci| !uci.contains('@')),
         );
         state.preview = true;
@@ -480,7 +484,7 @@ impl TournamentsPage {
                 board
             }
         };
-        let elapsed = if detail["status"] == json!("finished") {
+        let elapsed = if detail.summary.status == TournamentStatus::Finished {
             0.
         } else {
             self.open
@@ -488,12 +492,7 @@ impl TournamentsPage {
                 .map_or(0., |open| open.received.elapsed().as_secs_f64())
         };
         let side = |color: Color, index: usize| {
-            let key = if color == Color::White {
-                "white"
-            } else {
-                "black"
-            };
-            let entry = &featured[key];
+            let entry = player(&featured, color);
             let clock = featured_clock(&featured, color, elapsed).map(|(text, running)| {
                 div()
                     .font_features(widgets::tabular())
@@ -507,17 +506,17 @@ impl TournamentsPage {
                 .child(
                     h_flex()
                         .gap(px(8.))
-                        .children(entry["rank"].as_f64().map(|rank| {
+                        .children(number(entry.rank.as_ref()).map(|rank| {
                             div()
                                 .text_color(palette.text_muted)
                                 .child(format!("#{rank}"))
                         }))
                         .child(player_link(
                             ("featured-player", index),
-                            entry["name"].as_str().unwrap_or("?").to_string(),
+                            entry.name.clone(),
                             palette.primary,
                         ))
-                        .children(entry["rating"].as_f64().map(|rating| {
+                        .children(number(entry.rating.as_ref()).map(|rating| {
                             div()
                                 .text_color(palette.text_muted)
                                 .child(rating.to_string())
@@ -525,7 +524,7 @@ impl TournamentsPage {
                 )
                 .children(clock)
         };
-        let id = featured["id"].as_str().unwrap_or_default().to_string();
+        let id = featured.id.clone();
         Some(
             widgets::card(palette)
                 .gap(px(8.))
@@ -540,7 +539,9 @@ impl TournamentsPage {
                         .w_full()
                         .h(px(298.))
                         .cursor_pointer()
-                        .on_click(move |_, window, cx| crate::shell::watch_game(&id, window, cx))
+                        .on_click(move |_, window, cx| {
+                            crate::pages::watch::watch_game(&id, window, cx)
+                        })
                         .child(board),
                 )
                 .child(side(orientation, 1)),
@@ -548,57 +549,61 @@ impl TournamentsPage {
     }
 }
 
+fn player(featured: &TournamentFeatured, color: Color) -> &TournamentPlayer {
+    match color {
+        Color::White => &featured.white,
+        Color::Black => &featured.black,
+    }
+}
+
 /// The side whose clock runs in the top game: the side to move, once the game has a move.
-pub(super) fn featured_running(featured: &Value) -> Option<Color> {
-    featured["lastMove"].as_str()?;
-    featured["clocks"].as_object()?;
-    Some(
-        if featured["fen"]
-            .as_str()
-            .and_then(|fen| fen.split(' ').nth(1))
-            == Some("b")
-        {
-            Color::Black
-        } else {
-            Color::White
-        },
-    )
+pub(super) fn featured_running(featured: &TournamentFeatured) -> Option<Color> {
+    featured.last_move.as_ref()?;
+    featured.clocks.as_ref()?;
+    Some(if featured.fen.split(' ').nth(1) == Some("b") {
+        Color::Black
+    } else {
+        Color::White
+    })
 }
 
 /// One side's clock in the top game, `elapsed` seconds after Lichess reported it, and whether it
 /// is the one running.
-fn featured_clock(featured: &Value, color: Color, elapsed: f64) -> Option<(String, bool)> {
-    let key = if color == Color::White {
-        "white"
-    } else {
-        "black"
-    };
-    let reported = featured["clocks"][key].as_f64()?;
+fn featured_clock(
+    featured: &TournamentFeatured,
+    color: Color,
+    elapsed: f64,
+) -> Option<(String, bool)> {
+    let clocks = featured.clocks.as_ref()?;
+    let reported = match color {
+        Color::White => &clocks.white,
+        Color::Black => &clocks.black,
+    }
+    .as_f64()?;
     let running = featured_running(featured) == Some(color);
     let left = if running {
         reported - elapsed
     } else {
         reported
     };
-    let text = rules("formatClock", &[json!(left.max(0.) * 1000.)]).ok()?;
-    Some((text.as_str()?.to_string(), running))
+    Some((format_clock(left.max(0.) * 1000.), running))
 }
 
 /// The games being played now: a row each, watched with a click anywhere on it.
-fn duels(detail: &Value, palette: &Palette) -> Option<Div> {
-    let duels = detail["duels"]
-        .as_array()
-        .filter(|duels| !duels.is_empty())?
-        .clone();
+fn duels(detail: &TournamentDetail, palette: &Palette) -> Option<Div> {
+    let duels = detail
+        .extras
+        .duels
+        .clone()
+        .filter(|duels| !duels.is_empty())?;
     Some(
         widgets::card(palette)
             .gap(px(4.))
             .child(widgets::heading("Playing now", palette))
             .children(duels.into_iter().enumerate().map(|(index, duel)| {
-                let id = duel["id"].as_str().unwrap_or_default().to_string();
-                let name = |key: &str| duel[key]["name"].as_str().unwrap_or("?").to_string();
-                let label = format!("Watch {} against {}", name("white"), name("black"));
-                let side = |key: &str, slot: usize| {
+                let id = duel.id.clone();
+                let label = format!("Watch {} against {}", duel.white.name, duel.black.name);
+                let side = |player: &TournamentPlayer, slot: usize| {
                     h_flex()
                         .gap(px(8.))
                         .min_w_0()
@@ -610,12 +615,12 @@ fn duels(detail: &Value, palette: &Palette) -> Option<Div> {
                                 .font_features(widgets::tabular())
                                 .text_color(palette.text_muted)
                                 .children(
-                                    duel[key]["rank"].as_f64().map(|rank| format!("#{rank}")),
+                                    number(player.rank.as_ref()).map(|rank| format!("#{rank}")),
                                 ),
                         )
                         .child(player_link(
                             ("duel-player", index * 2 + slot),
-                            name(key),
+                            player.name.clone(),
                             palette.primary,
                         ))
                 };
@@ -632,14 +637,14 @@ fn duels(detail: &Value, palette: &Palette) -> Option<Div> {
                     .text_size(px(13.))
                     .cursor_pointer()
                     .pressable(palette)
-                    .on_click(move |_, window, cx| crate::shell::watch_game(&id, window, cx))
+                    .on_click(move |_, window, cx| crate::pages::watch::watch_game(&id, window, cx))
                     .child(
                         v_flex()
                             .flex_1()
                             .min_w_0()
                             .gap(px(2.))
-                            .child(side("white", 0))
-                            .child(side("black", 1)),
+                            .child(side(&duel.white, 0))
+                            .child(side(&duel.black, 1)),
                     )
                     .child(
                         icon("tv")
@@ -651,22 +656,22 @@ fn duels(detail: &Value, palette: &Palette) -> Option<Div> {
     )
 }
 
-fn totals(detail: &Value, palette: &Palette) -> Option<Div> {
-    let stats = detail["stats"].as_object()?;
-    let number = |key: &str| stats.get(key).and_then(Value::as_f64).unwrap_or_default();
+fn totals(detail: &TournamentDetail, palette: &Palette) -> Option<Div> {
+    let stats = detail.extras.stats.as_ref()?;
+    let number = |value: &Number| value.as_f64().unwrap_or_default();
     let rows = [
-        ("Games", number("games").to_string()),
+        ("Games", number(&stats.games).to_string()),
         (
             "White · draws · Black",
             format!(
                 "{} · {} · {}",
-                number("whiteWins"),
-                number("draws"),
-                number("blackWins")
+                number(&stats.white_wins),
+                number(&stats.draws),
+                number(&stats.black_wins)
             ),
         ),
-        ("Berserks", number("berserks").to_string()),
-        ("Average rating", number("averageRating").to_string()),
+        ("Berserks", number(&stats.berserks).to_string()),
+        ("Average rating", number(&stats.average_rating).to_string()),
     ];
     Some(
         widgets::card(palette)
@@ -686,15 +691,41 @@ fn totals(detail: &Value, palette: &Palette) -> Option<Div> {
 #[cfg(test)]
 mod tests {
     use super::{facts, featured_clock, featured_running, status_line};
-    use serde_json::json;
+    use kchess_contracts::types::{TournamentDetail, TournamentFeatured};
+    use serde_json::{Value, json};
     use shakmaty::Color;
+
+    /// `fields` over a waiting arena with no players.
+    fn detail(fields: Value) -> TournamentDetail {
+        let mut detail = json!({
+            "id": "a", "system": "arena", "name": "Hourly", "status": "created",
+            "variant": "standard", "variantName": "Standard", "rated": false,
+            "clock": { "limit": 180, "increment": 0 }, "nbPlayers": 0, "startsAt": 0,
+            "playable": true, "standing": [],
+        });
+        for (key, value) in fields.as_object().expect("fields") {
+            detail[key] = value.clone();
+        }
+        serde_json::from_value(detail).expect("a tournament")
+    }
+
+    fn featured(fields: Value) -> TournamentFeatured {
+        let mut featured = json!({
+            "id": "g", "fen": "", "orientation": "white",
+            "white": { "name": "A" }, "black": { "name": "B" },
+        });
+        for (key, value) in fields.as_object().expect("fields") {
+            featured[key] = value.clone();
+        }
+        serde_json::from_value(featured).expect("a featured game")
+    }
 
     #[test]
     fn the_top_games_side_to_move_loses_time_between_refreshes() {
-        let featured = json!({
+        let featured = featured(json!({
             "fen": "8/8/8/8/8/8/8/8 b - - 0 1", "lastMove": "e2e4",
             "clocks": { "white": 255, "black": 239 },
-        });
+        }));
         assert_eq!(
             featured_clock(&featured, Color::Black, 30.),
             Some(("3:29".to_string(), true))
@@ -712,9 +743,9 @@ mod tests {
 
     #[test]
     fn the_top_games_clocks_wait_for_the_first_move() {
-        let featured = json!({
+        let featured = featured(json!({
             "fen": "8/8/8/8/8/8/8/8 w - - 0 1", "clocks": { "white": 180, "black": 180 },
-        });
+        }));
         assert_eq!(featured_running(&featured), None);
         assert_eq!(
             featured_clock(&featured, Color::White, 30.),
@@ -724,24 +755,34 @@ mod tests {
 
     #[test]
     fn the_status_says_what_happens_next() {
-        assert_eq!(status_line(&json!({ "status": "finished" })), "Finished");
         assert_eq!(
-            status_line(&json!({ "status": "created", "secondsToStart": 290 })),
+            status_line(&detail(json!({ "status": "finished" }))),
+            "Finished"
+        );
+        assert_eq!(
+            status_line(&detail(
+                json!({ "status": "created", "secondsToStart": 290 })
+            )),
             "Starts in 5 min"
         );
         assert_eq!(
-            status_line(&json!({ "status": "started", "secondsToFinish": 61 })),
+            status_line(&detail(
+                json!({ "status": "started", "secondsToFinish": 61 })
+            )),
             "2 min left"
         );
-        assert_eq!(status_line(&json!({ "status": "started" })), "Under way");
+        assert_eq!(
+            status_line(&detail(json!({ "status": "started" }))),
+            "Under way"
+        );
     }
 
     #[test]
     fn facts_name_the_clock_variant_and_length() {
-        let detail = json!({
+        let detail = detail(json!({
             "clock": { "limit": 180, "increment": 2 }, "variant": "atomic",
             "variantName": "Atomic", "rated": true, "minutes": 60, "berserkable": true,
-        });
+        }));
         assert_eq!(
             facts(&detail),
             ["3+2", "Atomic", "Rated", "60 min", "Berserk allowed"]

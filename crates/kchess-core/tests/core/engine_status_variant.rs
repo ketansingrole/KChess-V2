@@ -2,18 +2,9 @@
 //! Chess960, the bundled Fairy-Stockfish for the others. The computer page checks it before a
 //! variant game, so a missing Fairy-Stockfish shows "not found" rather than a failed move.
 
-use std::sync::Arc;
-
-use kchess_core::{Config, Core, Host, Level};
-use serde_json::{Value, json};
-
-struct Quiet;
-
-impl Host for Quiet {
-    fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-
-    fn emit(&self, _event: &str, _payload: Value) {}
-}
+use kchess_core::test_host::TestHost;
+use kchess_core::{Config, Core};
+use serde_json::json;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn engine_status_reports_the_engine_that_plays_the_variant() {
@@ -21,7 +12,7 @@ async fn engine_status_reports_the_engine_that_plays_the_variant() {
     let fairy = dir.path().join("no-fairy-stockfish");
     let mut config = Config::new(dir.path().to_path_buf());
     config.variant_engine_path = Some(fairy.clone());
-    let core = Core::open(config, Arc::new(Quiet)).expect("opens");
+    let core = Core::open(config, TestHost::quiet()).expect("opens");
 
     // Fairy-Stockfish plays Crazyhouse: missing here, so not ready.
     let status = core
@@ -30,6 +21,11 @@ async fn engine_status_reports_the_engine_that_plays_the_variant() {
         .expect("a status");
     assert_eq!(status["ready"], false);
     assert_eq!(status["path"], json!(fairy));
+    crate::support::wire::assert_wire_steady(
+        "engineStatus.variant-missing",
+        &status,
+        &["path", "managed/path"],
+    );
 
     // Stockfish plays standard chess and Chess960, with or without the argument.
     for args in [vec![], vec![json!("standard")], vec![json!("chess960")]] {

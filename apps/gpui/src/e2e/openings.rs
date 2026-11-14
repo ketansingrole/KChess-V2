@@ -36,10 +36,6 @@ fn reveal(app: &mut Harness, id: impl Into<gpui_kit::ElementId>) {
     app.find(id);
 }
 
-fn page(app: &mut Harness) -> Option<Page> {
-    app.cx.update(|cx| crate::shell::current_page(cx))
-}
-
 /// Wait until the status banner's title begins with `title`.
 fn wait_for_status(app: &mut Harness, title: &str) {
     use gpui_kit::test::TestWindowExt as _;
@@ -129,7 +125,7 @@ fn openings_that_leave_recent_let_their_preview_go(cx: &mut gpui_kit::TestAppCon
     }
     let kept = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<OpeningsPage>(Page::Openings, cx)
+            crate::shell::view::<OpeningsPage>(cx)
                 .expect("the page")
                 .read(cx)
                 .kept_previews()
@@ -143,7 +139,7 @@ fn openings_that_leave_recent_let_their_preview_go(cx: &mut gpui_kit::TestAppCon
     );
     // The boards shown stay from one frame to the next, not made afresh each time.
     app.cx.update(|cx| {
-        crate::shell::view_of::<OpeningsPage>(Page::Openings, cx)
+        crate::shell::view::<OpeningsPage>(cx)
             .expect("the page")
             .update(cx, |_, cx| cx.notify());
     });
@@ -156,8 +152,15 @@ fn a_popular_opening_is_trained_in_the_repertoire_trainer(cx: &mut gpui_kit::Tes
     let mut app = openings(cx);
     reveal(&mut app, "train-Sicilian Defense");
     app.click("train-Sicilian Defense");
-    assert_eq!(page(&mut app), Some(Page::Practice));
-    assert_eq!(app.find(("practice-tabs", 4usize)).selected(), Some(true));
+    app.wait_for_page(Page::Practice);
+    assert_eq!(
+        app.find(super::tab(
+            "practice-tabs",
+            crate::pages::practice::Tab::Openings
+        ))
+        .selected(),
+        Some(true)
+    );
     app.find("restart-line");
 }
 
@@ -167,7 +170,14 @@ fn a_line_can_be_drilled_and_saved_as_a_study(cx: &mut gpui_kit::TestAppContext)
     open_kieseritzky(&mut app);
     app.click(("opening-move", 2usize));
     app.click("train-line");
-    assert_eq!(app.find(("practice-tabs", 4usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab(
+            "practice-tabs",
+            crate::pages::practice::Tab::Openings
+        ))
+        .selected(),
+        Some(true)
+    );
 
     // White plays the line's moves; Black answers from it.
     app.click_square("e2", true);
@@ -196,8 +206,8 @@ fn loop_until_saved(app: &mut Harness) -> String {
     let mut shown = String::new();
     app.wait_for("the study to be saved", |_, _| {
         shown = core
-            .call_now("library", Vec::new())
-            .map(|library| library.to_string())
+            .request_now(kchess_contracts::calls::Library {})
+            .map(|library| serde_json::json!(library).to_string())
             .unwrap_or_default();
         shown.contains("King's Gambit")
     });
@@ -209,7 +219,7 @@ fn an_opening_can_be_analysed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = openings(cx);
     open_kieseritzky(&mut app);
     app.click("analyse-line");
-    assert_eq!(page(&mut app), Some(Page::Analysis));
+    app.wait_for_page(Page::Analysis);
 }
 
 /// An open line's buttons are in Quick Pick: its puzzles open from there.
@@ -241,7 +251,7 @@ fn an_open_lines_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     super::palette::wait_for_first(&mut app, "Train with puzzles");
     app.press("enter");
     super::palette::wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Puzzles));
+    app.wait_for_page(Page::Puzzles);
 }
 
 /// The repertoire trainer's buttons are in Quick Pick: a drilled line is saved from there.
@@ -251,10 +261,20 @@ fn a_drilled_line_is_saved_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = openings(cx);
     open_kieseritzky(&mut app);
     app.click("train-line");
-    app.find("save-opening");
+    // The drill is ready once the explorer's replies are in: its buttons are shown, disabled,
+    // before that, and Quick Pick offers only what they can do now (missing Show move and Save
+    // as study once the lookups outlasted a loaded machine's first look).
+    app.wait_for("the drill to be ready", |window, _| {
+        ["show-move", "save-opening"].into_iter().all(|id| {
+            window
+                .try_find(id)
+                .is_some_and(|button| button.visible() && button.disabled() != Some(true))
+        })
+    });
     app.press("secondary-k");
     app.type_text(">");
-    super::palette::wait_for_first(&mut app, "Show move");
+    // Zen mode leads, as on every page it applies to.
+    super::palette::wait_for_first(&mut app, "Zen mode");
     let listed: Vec<String> = app.with_window(|window, _| {
         (0..6usize)
             .filter_map(|index| window.try_find(("palette-item", index)))
@@ -262,7 +282,10 @@ fn a_drilled_line_is_saved_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
             .collect()
     });
     // Nothing missed yet: there are no mistakes to forget.
-    assert_eq!(&listed[..3], ["Show move", "Restart line", "Save as study"]);
+    assert_eq!(
+        &listed[1..4],
+        ["Show move", "Restart line", "Save as study"]
+    );
     app.type_text("Save as study");
     super::palette::wait_for_first(&mut app, "Save as study");
     app.press("enter");
@@ -286,8 +309,8 @@ fn forgotten_mistakes_come_back_with_undo(cx: &mut gpui_kit::TestAppContext) {
         .cx
         .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
     let misses = move || {
-        core.call_now("library", Vec::new())
-            .map(|library| library["repertoireMisses"].to_string())
+        core.request_now(kchess_contracts::calls::Library {})
+            .map(|library| serde_json::to_string(&library.repertoire_misses).unwrap_or_default())
             .unwrap_or_default()
     };
     app.wait_for("the miss to be kept", |_, _| misses().contains("rnbqkbnr"));
@@ -356,15 +379,18 @@ fn missed_lines_are_due_for_review_and_right_ones_wait(cx: &mut gpui_kit::TestAp
         .cx
         .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
     let card = move || {
-        core.call_now("library", Vec::new())
-            .map(|library| {
-                library["repertoireSchedule"]["opening:King's Gambit:white"]["e2e4 e7e5 f2f4"]
-                    .clone()
+        core.request_now(kchess_contracts::calls::Library {})
+            .ok()
+            .and_then(|library| {
+                library
+                    .repertoire_schedule
+                    .get("opening:King's Gambit:white")?
+                    .get("e2e4 e7e5 f2f4")
+                    .copied()
             })
-            .unwrap_or_default()
     };
     app.wait_for("the lapse to be kept", |_, _| {
-        card()["lapses"].as_f64() == Some(1.)
+        card().is_some_and(|card| card.lapses == 1)
     });
 
     // Reviewed right, it waits a day; with nothing else due, the review is done.
@@ -373,27 +399,10 @@ fn missed_lines_are_due_for_review_and_right_ones_wait(cx: &mut gpui_kit::TestAp
     play_kings_gambit(&mut app);
     wait_for_schedule(&mut app, "Next line due in 1 day");
     app.wait_for("the review to be kept", |_, _| {
-        card()["interval"].as_f64() == Some(1.)
+        card().is_some_and(|card| card.interval == 1.)
     });
     wait_for_status(&mut app, "Due lines reviewed");
     assert_eq!(app.find("review-due").disabled(), Some(true));
-}
-
-/// F turns an opening's board, as its button does.
-#[gpui_kit::test]
-fn f_flips_an_openings_board(cx: &mut gpui_kit::TestAppContext) {
-    let mut app = openings(cx);
-    open_kieseritzky(&mut app);
-    let orientation = |app: &mut Harness| {
-        app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::openings::OpeningsPage>(Page::Openings, cx)
-                .map(|page| page.read(cx).orientation())
-        })
-    };
-    let before = orientation(&mut app).expect("the page");
-    app.click("opening-title");
-    app.press("f");
-    assert_eq!(orientation(&mut app), Some(!before));
 }
 
 /// A line opened from the search takes the keys at once: F turns its board, Escape goes back to
@@ -402,15 +411,9 @@ fn f_flips_an_openings_board(cx: &mut gpui_kit::TestAppContext) {
 fn escape_goes_back_to_all_openings(cx: &mut gpui_kit::TestAppContext) {
     let mut app = openings(cx);
     open_kieseritzky(&mut app);
-    let orientation = |app: &mut Harness| {
-        app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::openings::OpeningsPage>(Page::Openings, cx)
-                .map(|page| page.read(cx).orientation())
-        })
-    };
-    let before = orientation(&mut app).expect("the page");
+    let before = app.white_at_bottom();
     app.press("f");
-    assert_eq!(orientation(&mut app), Some(!before));
+    assert_eq!(app.white_at_bottom(), !before);
     app.press("escape");
     app.wait_gone("opening-title");
     app.click_label("Search openings");

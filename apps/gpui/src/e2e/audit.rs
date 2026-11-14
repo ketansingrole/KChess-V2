@@ -43,11 +43,8 @@ struct Findings {
 fn every_page_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     let mut findings = Findings::default();
-    let mut pages: Vec<(Page, &str)> = crate::shell::nav()
-        .iter()
-        .map(|(page, label, _)| (*page, *label))
-        .collect();
-    pages.push((Page::Settings, "Settings"));
+    let pages: Vec<(Page, &'static str)> =
+        Page::all().map(|page| (page, page.info().label)).collect();
     for (width, height) in SIZES {
         app.cx
             .simulate_window_resize(app.window, size(px(width), px(height)));
@@ -256,11 +253,8 @@ fn every_page_with_content_lays_out_its_controls(cx: &mut gpui_kit::TestAppConte
     let mut app = Harness::start(cx);
     seed(&mut app);
     let mut findings = Findings::default();
-    let mut pages: Vec<(Page, &str)> = crate::shell::nav()
-        .iter()
-        .map(|(page, label, _)| (*page, *label))
-        .collect();
-    pages.push((Page::Settings, "Settings"));
+    let pages: Vec<(Page, &'static str)> =
+        Page::all().map(|page| (page, page.info().label)).collect();
     for (width, height) in SIZES {
         app.cx
             .simulate_window_resize(app.window, size(px(width), px(height)));
@@ -326,8 +320,8 @@ fn every_tab_and_settings_section_lays_out_its_controls(
     {
         app.cx
             .simulate_window_resize(app.window, size(px(width), px(height)));
-        for (page, label, _) in crate::shell::nav().iter() {
-            let (page, label) = (*page, *label);
+        for page in Page::in_sidebar() {
+            let label = page.info().label;
             app.with_window(|window, cx| crate::shell::open(page, window, cx));
             settle(&mut app);
             let tabs = app.with_window(|window, _| {
@@ -359,7 +353,7 @@ fn every_tab_and_settings_section_lays_out_its_controls(
                 );
             }
         }
-        for (section, label, _) in crate::pages::settings::sections() {
+        for (section, label) in crate::pages::settings::Section::ALL.map(|s| (s, s.label())) {
             let states = if section == crate::pages::settings::Section::Voice {
                 microphone_states()
             } else {
@@ -527,7 +521,7 @@ fn seed(app: &mut Harness) {
             .enumerate()
             {
                 played.save(
-                    serde_json::json!({
+                    serde_json::from_value(serde_json::json!({
                         "id": format!("audit-{index}"),
                         "source": "computer",
                         "setup": { "variant": variant, "fen": start },
@@ -540,50 +534,41 @@ fn seed(app: &mut Harness) {
                         "timeControl": "300+3",
                         "startedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
                         "updatedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
-                    }),
+                    }))
+                    .expect("a played game"),
                     cx,
                 );
             }
         });
     });
     let day = crate::game::puzzle::local_day();
-    let calls = [
-        (
-            "recordPuzzleAttempt",
-            serde_json::json!({
-                "puzzle": {
-                    "id": "aaaaa",
-                    "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 2 4",
-                    "solution": ["f3f7", "e8f7"],
-                    "rating": 1500,
-                    "themes": ["mateIn1", "short", "opening"],
-                },
-                "mode": "practice", "retry": false, "win": false, "revealed": false,
-                "hinted": false, "found": 1, "wrong": 1, "total": 2, "day": day,
-            }),
-        ),
-        (
-            "studyCommand",
-            serde_json::json!({
-                "op": "saveChapters",
-                "name": "A study with a fairly long name to wrap",
-                "chapters": [
-                    { "name": "King pawn", "pgn": "1. e4 e5 *" },
-                    { "name": "Queen pawn", "pgn": "1. d4 d5 *" },
-                ],
-            }),
-        ),
-    ];
-    for (method, argument) in calls {
-        let done = app.cx.update(|cx| {
-            cx.global::<crate::core::AppCore>()
-                .call(method, vec![argument])
-        });
-        app.cx
-            .foreground_executor()
-            .block_test(done)
-            .unwrap_or_else(|cause| panic!("{method}: {cause:?}"));
-    }
+    let attempt = serde_json::json!({
+        "puzzle": {
+            "id": "aaaaa",
+            "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 2 4",
+            "solution": ["f3f7", "e8f7"],
+            "rating": 1500,
+            "themes": ["mateIn1", "short", "opening"],
+        },
+        "mode": "practice", "retry": false, "win": false, "revealed": false,
+        "hinted": false, "found": 1, "wrong": 1, "total": 2, "day": day,
+    });
+    app.request(kchess_contracts::calls::RecordPuzzleAttempt {
+        attempt: serde_json::from_value(attempt).expect("an attempt"),
+    });
+    let command = serde_json::json!({
+        "op": "saveChapters",
+        "name": "A study with a fairly long name to wrap",
+        "chapters": [
+            { "name": "King pawn", "pgn": "1. e4 e5 *" },
+            { "name": "Queen pawn", "pgn": "1. d4 d5 *" },
+        ],
+    });
+    app.request(kchess_contracts::calls::StudyCommand {
+        command: serde_json::from_value(command).expect("a study command"),
+        incremental: None,
+        based_on: None,
+    });
 }
 
 /// Every page with the longest content people realistically bring: names from imported PGNs
@@ -596,11 +581,8 @@ fn every_page_with_the_longest_content_lays_out_its_controls(cx: &mut gpui_kit::
     let mut app = Harness::start(cx);
     seed_longest(&mut app);
     let mut findings = Findings::default();
-    let mut pages: Vec<(Page, &str)> = crate::shell::nav()
-        .iter()
-        .map(|(page, label, _)| (*page, *label))
-        .collect();
-    pages.push((Page::Settings, "Settings"));
+    let pages: Vec<(Page, &'static str)> =
+        Page::all().map(|page| (page, page.info().label)).collect();
     for (width, height) in SIZES {
         app.cx
             .simulate_window_resize(app.window, size(px(width), px(height)));
@@ -637,7 +619,7 @@ fn seed_longest(app: &mut Harness) {
         played.update(cx, |played, cx| {
             for index in 0..3 {
                 played.save(
-                    serde_json::json!({
+                    serde_json::from_value(serde_json::json!({
                         "id": format!("longest-{index}"),
                         "source": "computer",
                         "setup": { "variant": "standard", "fen": start },
@@ -650,7 +632,8 @@ fn seed_longest(app: &mut Harness) {
                         "timeControl": "5400+30",
                         "startedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
                         "updatedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
-                    }),
+                    }))
+                    .expect("a played game"),
                     cx,
                 );
             }

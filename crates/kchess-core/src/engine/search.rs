@@ -1,10 +1,8 @@
-//! Computer moves (`bestMove`, `stopEngine`, `resetEngine` and
-//! `computerPlaying`). One warm engine process serves consecutive moves; a new search supersedes
+//! Computer moves. One warm engine process serves consecutive moves; a new search supersedes
 //! the one running (`SUPERSEDED`), and the process goes after two idle minutes.
 //!
-//! The TypeScript module state lives in `Search`'s `State`, one per core instance. As in
-//! TypeScript, `best_move` takes its place in line and supersedes the running search as soon as
-//! it is called, before its future is polled; the search itself runs inside the returned future.
+//! `best_move` takes its place in line and supersedes the running search as soon as it is
+//! called, before its future is polled; the search itself runs inside the returned future.
 //! Dropping that future ends the search.
 
 use std::collections::HashMap;
@@ -15,46 +13,32 @@ use std::time::Duration;
 
 use futures_util::future::{BoxFuture, ready};
 use serde::Deserialize;
-use serde_json::{Value, json};
-use tokio::sync::oneshot;
-use tokio::task::AbortHandle;
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use super::status::{
-    EngineStatus, EngineTrust, computer_playing, engine_identity, engine_status, fairy_variant,
-    variant_engine_status,
-};
-use super::uci::{
-    UciController, error_summary, lock, search_cancelled, signal_aborted, truncate_for_log,
-};
-use super::{EngineContext, after, clear_timer, js_number, now_ms, random_unit, replace_timer};
-use crate::error::{CoreError, Result};
-use crate::host::Level;
+use super::job::{self, Line, Place};
+use super::scheduler::Priority;
+use super::slot::EngineSlot;
+use super::status::{EngineTrust, computer_playing, fairy_variant};
+use super::uci::{UciController, truncate_for_log};
+use super::{EngineContext, random_unit};
+use crate::tasks::{aborted as signal_aborted, lock};
+use crate::time::now_ms;
+use kchess_contracts::check::{Moves, check};
+use kchess_contracts::error::{CoreError, Result};
+use kchess_contracts::types::BestMoveOptions;
+use kchess_domain::js::number_to_string as js_number;
+use kchess_domain::misc::value::J;
 
-/// The message a superseded search rejects with (`SUPERSEDED`).
+/// The message a superseded search rejects with.
 pub const SUPERSEDED: &str = "Engine search superseded.";
 /// The start position when a request gives none.
 const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 /// How long an idle warm engine is kept.
-const WARM_IDLE_MS: u64 = 120_000;
+const WARM_IDLE: Duration = Duration::from_secs(120);
 
-/// The random source `Math.random()` is read from; tests replace it.
+/// The random source for the weakest levels' random moves; tests replace it.
 pub type RandomSource = Arc<dyn Fn() -> f64 + Send + Sync>;
-
-/// `BestMoveOptions` after validation.
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MoveOptions {
-    #[serde(default)]
-    fen: Option<String>,
-    #[serde(default)]
-    movetime: Option<f64>,
-    #[serde(default)]
-    chess960: bool,
-    /// Another variant's Lichess key; Fairy-Stockfish plays it.
-    #[serde(default)]
-    variant: Option<String>,
-}
 
 /// `EngineLevelInfo` for the level asked for.
 #[derive(Debug, Deserialize)]
@@ -81,26 +65,18 @@ struct Request {
     configured: String,
 }
 
-#[derive(Clone)]
-struct Warm {
-    key: String,
-    uci: Arc<UciController>,
-}
-
 /// The search service's state.
 #[derive(Default)]
 struct State {
-    /// Bumped by every `stopEngine`; a search that sees a newer value was superseded.
+    /// Bumped by every `stop_engine`; a search that sees a newer value was superseded.
     generation: u64,
     /// The searches in progress or in line, by the connection that asked (each window plays its
     /// own computer game), with the ticket that identifies each.
     active: HashMap<u64, (u64, CancellationToken)>,
     ticket: u64,
     last_move_at: i64,
-    warm: Option<Warm>,
-    /// Finishes when the search queued last has finished (the promise chain `serial`).
-    serial: Option<oneshot::Receiver<()>>,
-    idle: Option<AbortHandle>,
+    /// The searches in the order they were asked for.
+    line: Line,
 }
 
 struct Shared {
@@ -108,6 +84,7 @@ struct Shared {
     random: RandomSource,
     trust: EngineTrust,
     state: Mutex<State>,
+    warm: Arc<EngineSlot>,
 }
 
 /// The computer's search. Cloning shares the same engine and state.
@@ -116,7 +93,7 @@ pub struct Search {
     shared: Arc<Shared>,
 }
 
-/// Runs when a search ends (`finally`), before the next search in line may start.
+/// Runs when a search ends, however it ends, before the next search in line may start.
 struct Finish {
     shared: Arc<Shared>,
     connection: u64,
@@ -134,46 +111,13 @@ impl Drop for Finish {
             state.active.remove(&self.connection);
         }
         if state.active.is_empty() {
-            let weak = Arc::downgrade(&self.shared);
-            let idle = after(WARM_IDLE_MS, move || {
-                if let Some(shared) = weak.upgrade() {
-                    close_warm(&shared);
-                }
-            });
-            replace_timer(&mut state.idle, idle);
+            self.shared.warm.release();
         }
     }
 }
 
-fn close_warm(shared: &Shared) {
-    let mut state = lock(&shared.state);
-    if let Some(warm) = state.warm.take() {
-        warm.uci.close();
-    }
-}
-
-/// `stopEngine`'s body, under the state lock: every connection's search stops.
-fn stop_locked(state: &mut State, close: bool) {
-    state.generation += 1;
-    for (_, token) in state.active.values() {
-        token.cancel();
-    }
-    if close {
-        if let Some(warm) = state.warm.take() {
-            warm.uci.close();
-        }
-        clear_timer(&mut state.idle);
-    }
-}
-
-/// The receiving end of the search queue, and the sender that releases the next search.
-type Ticket = (
-    u64,
-    u64,
-    CancellationToken,
-    Option<oneshot::Receiver<()>>,
-    oneshot::Sender<()>,
-);
+/// A search's epoch, ticket, token and place in line.
+type Ticket = (u64, u64, CancellationToken, Place);
 
 impl Search {
     pub fn new(ctx: EngineContext) -> Search {
@@ -184,6 +128,7 @@ impl Search {
     pub fn with_random(ctx: EngineContext, random: RandomSource) -> Search {
         Search {
             shared: Arc::new(Shared {
+                warm: EngineSlot::new(ctx.clone(), WARM_IDLE),
                 ctx,
                 random,
                 trust: EngineTrust::default(),
@@ -192,27 +137,33 @@ impl Search {
         }
     }
 
-    /// `engineThreads`: the engine budget the scheduler grants searches.
+    /// The engine budget the scheduler grants searches.
     pub fn engine_threads(&self) -> usize {
         self.shared.ctx.scheduler.search_threads()
     }
 
-    /// `trustEnginePath`: an engine path the frontends may persist.
+    /// An engine path the frontends may persist.
     pub fn trust_engine_path(&self, path: &Path) {
         self.shared.trust.trust(path);
     }
 
-    /// `isTrustedEnginePath`.
     pub fn is_trusted_engine_path(&self, path: &Path) -> bool {
         self.shared
             .trust
             .is_trusted(path, &self.shared.ctx.locations.managed_dir)
     }
 
-    /// `stopEngine(close)`: supersedes every search (settings, a live game, closing); with
-    /// `close`, also ends the warm engine and its idle timer.
+    /// Supersedes every search (settings, a live game, closing); with `close`, also ends the warm
+    /// engine and its idle timer.
     pub fn stop_engine(&self, close: bool) {
-        stop_locked(&mut lock(&self.shared.state), close);
+        let mut state = lock(&self.shared.state);
+        state.generation += 1;
+        for (_, token) in state.active.values() {
+            token.cancel();
+        }
+        if close {
+            self.shared.warm.close();
+        }
     }
 
     /// Stops the search `connection` asked for (a window's takeback or teardown); other windows'
@@ -223,14 +174,14 @@ impl Search {
         }
     }
 
-    /// `resetEngine`: stops and closes the engine, forgets trusted paths and the last move.
+    /// Stops and closes the engine, forgets trusted paths and the last move.
     pub fn reset_engine(&self) {
         self.stop_engine(true);
         self.shared.trust.clear();
         lock(&self.shared.state).last_move_at = 0;
     }
 
-    /// `computerPlaying(withinMs)`: a search runs, or a move was computed within `within_ms`.
+    /// A search runs, or a move was computed within `within_ms`.
     pub fn computer_playing(&self, within_ms: i64) -> bool {
         let state = lock(&self.shared.state);
         computer_playing(
@@ -241,7 +192,7 @@ impl Search {
         )
     }
 
-    /// `bestMove(moves, level, configured, options)`: the engine's move from the position the
+    /// The engine's move from the position the
     /// moves reach, at the level's strength. Invalid input is refused at once; otherwise the
     /// search supersedes the one the same connection asked for, and waits its turn in line
     /// behind other connections' searches.
@@ -252,15 +203,26 @@ impl Search {
         configured: &str,
         options: Value,
     ) -> BoxFuture<'static, Result<String>> {
+        let checked = check::<Moves>(J::from(&moves)).and_then(|Moves(moves)| {
+            let options = match options {
+                Value::Null => BestMoveOptions::default(),
+                options => check::<BestMoveOptions>(J::from(&options))?,
+            };
+            Ok((moves, options))
+        });
+        let (moves, options) = match checked {
+            Ok(checked) => checked,
+            Err(refusal) => return Box::pin(ready(Err(CoreError::new(refusal)))),
+        };
         self.best_move_with_settings(moves, level, options, ready(Ok(configured.to_string())))
     }
 
     /// Register before settings are read, so stop/suspend also cancel that wait.
     pub(crate) fn best_move_with_settings<'a>(
         &self,
-        moves: Value,
+        moves: Vec<String>,
         level: &str,
-        options: Value,
+        options: BestMoveOptions,
         configured: impl Future<Output = Result<String>> + Send + 'a,
     ) -> BoxFuture<'a, Result<String>> {
         let mut request = match prepare(moves, options, level, "") {
@@ -268,11 +230,12 @@ impl Search {
             Err(cause) => return Box::pin(ready(Err(cause))),
         };
         let connection = crate::connection::current_or_app();
-        let (epoch, ticket, token, prev, done) = self.register(connection);
+        let (epoch, ticket, token, place) = self.register(connection);
         let shared = Arc::clone(&self.shared);
         Box::pin(async move {
-            // Declared so that the finish bookkeeping runs first, then the next search may start.
-            let _done = done;
+            // Declared before the finish bookkeeping, which so runs first: then the next search
+            // may start.
+            let mut place = place;
             let _finish = Finish {
                 shared: Arc::clone(&shared),
                 connection,
@@ -280,56 +243,38 @@ impl Search {
             };
             let mut key = String::new();
             let outcome = async {
-                // Retain the serial chain even when a settings wait is cancelled.
-                if let Some(prev) = prev {
-                    let _ = prev.await;
-                }
-                request.configured = tokio::select! {
-                    biased;
-                    _ = token.cancelled() => return Err(signal_aborted()),
-                    result = configured => result?,
-                };
+                // In line even when the settings wait is cancelled.
+                place.turn().await;
+                request.configured = job::configured(&token, configured).await?;
                 attempt(&shared, &request, epoch, &token, &mut key).await
             }
             .await;
-            match outcome {
-                Ok(mv) => Ok(mv),
-                Err(cause) => {
-                    let fen = match &request.fen {
-                        Some(fen) => format!("fen={}", truncate_for_log(fen, 60)),
-                        None => "startpos".to_string(),
-                    };
-                    let shown_key = if key.is_empty() {
-                        "unstarted".to_string()
-                    } else {
-                        key.clone()
-                    };
-                    let context = format!(
-                        "level={} moves={} engine={} {fen}",
-                        request.level,
-                        request.moves.len(),
-                        truncate_for_log(&shown_key, 80),
-                    );
-                    if token.is_cancelled() || cause.aborted {
-                        shared.ctx.host.log(
-                            Level::Debug,
-                            "engine",
-                            &format!(
-                                "Engine search superseded: {context} {}",
-                                error_summary(&cause)
-                            ),
-                        );
-                        Err(CoreError::new(SUPERSEDED))
-                    } else {
-                        shared.ctx.host.log(
-                            Level::Warn,
-                            "engine",
-                            &format!("Engine search failed: {context} {}", error_summary(&cause)),
-                        );
-                        Err(cause)
-                    }
+            outcome.map_err(|cause| {
+                let fen = match &request.fen {
+                    Some(fen) => format!("fen={}", truncate_for_log(fen, 60)),
+                    None => "startpos".to_string(),
+                };
+                let shown_key = if key.is_empty() { "unstarted" } else { &key };
+                let context = format!(
+                    "level={} moves={} engine={} {fen}",
+                    request.level,
+                    request.moves.len(),
+                    truncate_for_log(shown_key, 80),
+                );
+                let labels = ("Engine search superseded", "Engine search failed");
+                if job::interrupted(
+                    &*shared.ctx.host,
+                    "engine",
+                    labels,
+                    &context,
+                    &cause,
+                    &token,
+                ) {
+                    CoreError::aborted(SUPERSEDED)
+                } else {
+                    cause
                 }
-            }
+            })
         })
     }
 
@@ -344,86 +289,58 @@ impl Search {
         if let Some((_, superseded)) = state.active.insert(connection, (ticket, token.clone())) {
             superseded.cancel();
         }
-        clear_timer(&mut state.idle);
+        self.shared.warm.keep();
         state.last_move_at = now_ms();
-        let (done, queued) = oneshot::channel();
-        let prev = state.serial.replace(queued);
-        (epoch, ticket, token, prev, done)
+        let place = state.line.join();
+        (epoch, ticket, token, place)
     }
 }
 
-/// Validates the untrusted arguments the way `bestMove` does, then checks the moves reach a
-/// position.
-fn prepare(moves: Value, options: Value, level: &str, configured: &str) -> Result<Request> {
-    let moves: Vec<String> = serde_json::from_value(super::domain_client::assert_moves(&moves)?)
-        .map_err(|cause| CoreError::wrap("Invalid moves for the engine search", cause))?;
-    let options = if options.is_null() {
-        json!({})
-    } else {
-        options
-    };
-    let options: MoveOptions =
-        serde_json::from_value(super::domain_client::assert_best_move_options(&options)?)
-            .map_err(|cause| CoreError::new(cause.to_string()))?;
+/// Checks the moves reach a position from the options' start.
+fn prepare(
+    moves: Vec<String>,
+    options: BestMoveOptions,
+    level: &str,
+    configured: &str,
+) -> Result<Request> {
+    let chess960 = options.chess960 == Some(true);
     let start = options.fen.as_deref().unwrap_or(INITIAL_FEN);
     let invalid = || CoreError::new("Invalid computer position or move history.");
     let variant = options.variant.as_deref().and_then(fairy_variant);
     let moves = match (&options.variant, variant) {
         // Another variant's moves (drops among them) replay by its rules, and go as they are.
         (Some(key), Some(_)) => {
-            kchess_domain::replay::replay_setup_count(key, start, &moves)
+            let variant = kchess_domain::variant::Variant::from_key(key).ok_or_else(invalid)?;
+            kchess_domain::replay::replay_setup_count(variant, start, &moves)
                 .filter(|count| *count == moves.len())
                 .ok_or_else(invalid)?;
             moves
         }
         // The rules write castling king-takes-rook; with `UCI_Chess960` off the engine rejects
         // that.
-        _ => kchess_domain::replay::engine_line(start, &moves, options.chess960)
-            .ok_or_else(invalid)?,
+        _ => kchess_domain::replay::engine_line(start, &moves, chess960).ok_or_else(invalid)?,
     };
     Ok(Request {
         moves,
         fen: options.fen,
-        movetime: options.movetime,
-        chess960: options.chess960,
+        movetime: options.movetime.map(|ms| ms as f64),
+        chess960,
         variant,
         level: level.to_string(),
         configured: configured.to_string(),
     })
 }
 
-/// The level's search profile (`engineLevelInfo`).
+/// The level's search profile.
 fn level_profile(level: &str) -> Result<LevelProfile> {
-    let info = super::domain_client::engine_level_info(level)?;
-    if info.is_null() {
-        return Err(CoreError::new(format!("Unknown engine level {level}.")));
-    }
-    serde_json::from_value(info).map_err(|cause| CoreError::new(cause.to_string()))
-}
-
-/// The warm engine for `status`: kept when it is the same executable and still healthy,
-/// otherwise replaced.
-fn warm_engine(shared: &Shared, key: &str, status: &EngineStatus) -> Result<Arc<UciController>> {
-    let mut state = lock(&shared.state);
-    let current = state
-        .warm
-        .as_ref()
-        .is_some_and(|warm| warm.key == key && warm.uci.failed().is_none());
-    if !current {
-        if let Some(stale) = state.warm.take() {
-            stale.uci.close();
-        }
-        let uci = Arc::new(shared.ctx.spawn(status)?);
-        state.warm = Some(Warm {
-            key: key.to_string(),
-            uci,
-        });
-    }
-    state
-        .warm
-        .as_ref()
-        .map(|warm| Arc::clone(&warm.uci))
-        .ok_or_else(|| CoreError::new("The engine is unavailable."))
+    let info = kchess_domain::training::engine_levels::info(level)
+        .ok_or_else(|| CoreError::new(format!("Unknown engine level {level}.")))?;
+    Ok(LevelProfile {
+        time: info.time,
+        uci_elo: info.uci_elo,
+        skill: info.skill,
+        random_move: info.random_move,
+    })
 }
 
 /// One attempt at the search: waits in line, locates the engine, reuses or starts the warm
@@ -435,50 +352,24 @@ async fn attempt(
     token: &CancellationToken,
     key: &mut String,
 ) -> Result<String> {
-    if token.is_cancelled() {
-        return Err(signal_aborted());
-    }
-    let status = match request.variant {
-        Some(_) => variant_engine_status(&*shared.ctx.host, &shared.ctx.locations).await,
-        None => {
-            engine_status(
-                &*shared.ctx.host,
-                &shared.ctx.locations,
-                &request.configured,
-            )
-            .await
-        }
-    };
-    if !status.ready {
-        return Err(CoreError::new(match request.variant {
-            Some(_) => "Fairy-Stockfish, which plays this variant, is missing.",
-            None => "Stockfish could not be found. Choose an engine in Settings.",
-        }));
-    }
-    *key = engine_identity(&status).await?;
-    if epoch != lock(&shared.state).generation {
-        return Err(search_cancelled());
-    }
-    let target = warm_engine(shared, key, &status)?;
+    // A `stop_engine` moves the generation: checked before the engine is found, once the
+    // engine budget is granted, and once the engine is ready.
+    let wanted = || job::still_wanted(token, epoch, lock(&shared.state).generation);
+    wanted()?;
+    let located = shared
+        .warm
+        .locate(&request.configured, request.variant.is_some())
+        .await?;
+    key.clone_from(&located.key);
+    wanted()?;
+    let target = shared.warm.open(&located)?.uci;
     let profile = level_profile(&request.level)?;
-    let stop_token = token.clone();
-    let epoch_at_lease = epoch;
     shared
         .ctx
-        .lease(3, move || stop_token.cancel(), token, async {
-            // Re-check supersede after queue wait: a `stop_engine` during admission
-            // only surfaces via token-cancel otherwise, which future generations
-            // without token cancel would bypass.
-            if epoch_at_lease != lock(&shared.state).generation {
-                return Err(search_cancelled());
-            }
+        .lease(Priority::Computer, token, async {
+            wanted()?;
             target.ready().await?;
-            if token.is_cancelled() {
-                return Err(signal_aborted());
-            }
-            if epoch_at_lease != lock(&shared.state).generation {
-                return Err(search_cancelled());
-            }
+            wanted()?;
             target.write("ucinewgame")?;
             search_under_lease(shared, request, &profile, &target, token).await
         })
@@ -519,14 +410,10 @@ async fn search_under_lease(
         return Err(signal_aborted());
     }
     let movetime = request.movetime.unwrap_or(profile.time);
-    let mut position = match &request.fen {
-        Some(fen) => format!("position fen {fen}"),
-        None => "position startpos".to_string(),
-    };
-    if !request.moves.is_empty() {
-        position.push_str(&format!(" moves {}", request.moves.join(" ")));
-    }
-    target.write(&position)?;
+    target.write(&job::position_command(
+        request.fen.as_deref(),
+        &request.moves,
+    ))?;
     let random = (shared.random)() < profile.random_move.unwrap_or(0.0);
     let legal: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&legal);
@@ -565,7 +452,7 @@ async fn search_under_lease(
     }
 }
 
-/// A `go perft 1` line `e2e4: 1` names one legal move (`/^([a-h][1-8][a-h][1-8][nbrq]?): \d+$/`).
+/// A `go perft 1` line `e2e4: 1` names one legal move.
 fn perft_move(line: &str) -> Option<String> {
     let (mv, count) = line.split_once(": ")?;
     let bytes = mv.as_bytes();
@@ -587,7 +474,24 @@ fn perft_move(line: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::perft_move;
+    use super::{BestMoveOptions, perft_move, prepare};
+
+    /// A variant's moves, drops among them, replay by its own rules and go to the engine as
+    /// they are.
+    #[test]
+    fn a_variant_game_replays_by_its_rules() {
+        let moves: Vec<String> = ["e2e4", "d7d5", "e4d5", "d8d5", "P@e4"]
+            .map(String::from)
+            .to_vec();
+        let options = BestMoveOptions {
+            variant: Some("crazyhouse".into()),
+            ..BestMoveOptions::default()
+        };
+        let request = prepare(moves.clone(), options, "max", "").expect("a crazyhouse game");
+        assert_eq!(request.moves, moves);
+        assert_eq!(request.variant, Some("crazyhouse"));
+        assert!(prepare(moves, BestMoveOptions::default(), "max", "").is_err());
+    }
 
     /// The weakest levels pick from `go perft 1`'s moves: drops and Antichess's king promotions
     /// are among them.

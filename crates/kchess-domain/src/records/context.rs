@@ -1,21 +1,8 @@
 //! The key an analysis is cached under.
 
-use serde_json::Value;
-
-use super::review::join;
-use super::{Out, arg, text_of};
-
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    Some(match method {
-        "analysisContext" => match arg(args, 1) {
-            None => Ok(Value::String(format!("{}|", text_of(args, 0)))),
-            Some(Value::Array(moves)) => Ok(Value::String(format!(
-                "{}|{}",
-                text_of(args, 0),
-                join(moves)
-            ))),
-            Some(_) => Err("moves must be a list".into()),
-        },
-        _ => return None,
-    })
+/// The position a line starts from and its moves: an analysis of the same position reached
+/// another way is another analysis, since repetitions differ.
+pub fn analysis_context<S: AsRef<str>>(root_fen: &str, moves: &[S]) -> String {
+    let moves: Vec<&str> = moves.iter().map(AsRef::as_ref).collect();
+    format!("{root_fen}|{}", moves.join(" "))
 }

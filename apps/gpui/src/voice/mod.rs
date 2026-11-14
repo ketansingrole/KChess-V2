@@ -4,14 +4,17 @@
 //! `voiceAccept`, `voiceFinish`, `voiceStop`) in order, and hands each phrase heard to its owner.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::{SampleRate, VoiceAudio, VoiceGrammar};
 use std::collections::VecDeque;
 use std::sync::Arc;
 
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui_kit::*;
+use kchess_contracts::check::VoiceId;
+use kchess_contracts::types::{VoiceAttemptInput, VoiceUpdate, VoiceWord};
 use kchess_contracts::voice as model;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::core::AppCore;
 
@@ -22,7 +25,7 @@ pub mod moves;
 
 pub use bar::voice_bar;
 
-/// What voice input is doing (`VoiceState`).
+/// What voice input is doing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
     Off,
@@ -32,7 +35,7 @@ pub enum State {
     Error,
 }
 
-/// Why it stopped, so the bar can offer the right fix (`VoiceErrorKind`).
+/// Why it stopped, so the bar can offer the right fix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
     Denied,
@@ -48,7 +51,7 @@ pub struct Word {
     pub conf: f64,
 }
 
-/// A finished phrase (`VoiceResult`).
+/// A finished phrase.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Heard {
     /// The words, noise markers (`[unk]`) left out.
@@ -126,7 +129,7 @@ pub type Listener = Arc<dyn Fn(&model::Progress) + Send + Sync>;
 /// Whether the offline model is installed, or being prepared (`voiceModelStatus`).
 pub fn model_status(cx: &App) -> impl Future<Output = Option<model::Status>> + 'static + use<> {
     let status = cx.global::<AppCore>().request(calls::VoiceModelStatus {});
-    async move { serde_json::from_value(status.await.ok()?).ok() }
+    async move { status.await.ok() }
 }
 
 /// Have the core download and prepare the model (`voiceModelInstall`); `progress` hears its
@@ -139,10 +142,10 @@ fn install_model(
     let listening = Arc::new(std::sync::Mutex::new(Some(progress)));
     let hearing = Arc::clone(&listening);
     let events = cx.global::<AppCore>().events.clone();
-    let reports = cx.subscribe(&events, move |_, event: &crate::core::CoreEvent, _| {
+    let reports = cx.subscribe(&events, move |_, event: &crate::core::ClientEvent, _| {
         let listener = hearing.lock().ok().and_then(|listener| listener.clone());
         if let Some(listener) = listener
-            && let Some(update) = progress_of(event)
+            && let Some(update) = event.core().and_then(progress_of)
         {
             listener(&update);
         }
@@ -160,10 +163,10 @@ fn install_model(
 
 /// The model's progress, when `event` reports it.
 fn progress_of(event: &crate::core::CoreEvent) -> Option<model::Progress> {
-    if event.name != "voicemodel:progress" {
-        return None;
+    match event {
+        crate::core::CoreEvent::VoiceModelProgress(progress) => Some(progress.clone()),
+        _ => None,
     }
-    serde_json::from_value(event.payload.clone()).ok()
 }
 
 /// Download and prepare the model ahead of use; `progress` hears how far.
@@ -177,21 +180,18 @@ pub fn download_model(
 
 /// The real words' average confidence: noise markers would sink a clearly heard command, and a
 /// homophone in the grammar splits a word's confidence even when it was heard perfectly.
-pub fn heard_of(result: &Value) -> Option<Heard> {
-    let raw = result["text"].as_str()?.trim().to_string();
+pub fn heard_of(result: &model::Utterance) -> Option<Heard> {
+    let raw = result.text.trim().to_string();
     if raw.is_empty() {
         return None;
     }
-    let words: Vec<Word> = result["words"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|word| {
-            let text = word["word"].as_str()?;
-            (text != "[unk]").then(|| Word {
-                word: text.to_string(),
-                conf: (word["conf"].as_f64().unwrap_or_default() * 1000.).round() / 1000.,
-            })
+    let words: Vec<Word> = result
+        .words
+        .iter()
+        .filter(|word| word.word != "[unk]")
+        .map(|word| Word {
+            word: word.word.clone(),
+            conf: (word.conf * 1000.).round() / 1000.,
         })
         .collect();
     let confidence = if words.is_empty() {
@@ -298,7 +298,7 @@ impl Voice {
         self.held = false;
     }
 
-    /// Another page was opened: voice stops, and the microphone is released (`dispose`).
+    /// Another page was opened: voice stops, and the microphone is released.
     pub fn release(&mut self, cx: &mut Context<Self>) {
         if self.owner.is_some() {
             self.disable_now(cx);
@@ -394,7 +394,7 @@ impl Voice {
     }
 
     fn open_microphone(&mut self, cx: &mut Context<Self>) {
-        let (capture, mut chunks) = match capture::start() {
+        let (capture, mut chunks) = match capture::start(cx) {
             Ok(opened) => opened,
             Err(cause) => {
                 let kind = match cause {
@@ -434,7 +434,7 @@ impl Voice {
         cx.notify();
     }
 
-    /// A fresh utterance with the current grammar (`resetRecognizer`).
+    /// A fresh utterance with the current grammar.
     fn reset(&mut self, cx: &mut Context<Self>) {
         // Nothing is heard yet while the model or the microphone is still opening: a new epoch
         // would only drop that opening's answer and leave voice loading for good.
@@ -488,24 +488,33 @@ impl Voice {
                         epoch,
                     } => (
                         core.request(calls::VoiceStart {
-                            grammar: json!(grammar),
-                            sample_rate: json!(rate),
+                            grammar: VoiceGrammar(grammar),
+                            sample_rate: SampleRate(rate),
                         })
+                        .map(|started| started.map(|()| None))
                         .boxed_local(),
                         Some(epoch),
                     ),
                     Request::Accept { audio, epoch } => (
                         core.request(calls::VoiceAccept {
-                            audio: json!(audio),
+                            audio: VoiceAudio(audio),
                         })
+                        .map(|heard| heard.map(Some))
                         .boxed_local(),
                         Some(epoch),
                     ),
                     Request::Finish { epoch } => (
-                        core.request(calls::VoiceFinish {}).boxed_local(),
+                        core.request(calls::VoiceFinish {})
+                            .map(|heard| heard.map(Some))
+                            .boxed_local(),
                         Some(epoch),
                     ),
-                    Request::Stop => (core.request(calls::VoiceStop {}).boxed_local(), None),
+                    Request::Stop => (
+                        core.request(calls::VoiceStop {})
+                            .map(|stopped| stopped.map(|()| None))
+                            .boxed_local(),
+                        None,
+                    ),
                 };
                 let answer = call.await;
                 let Some(epoch) = epoch else {
@@ -524,17 +533,17 @@ impl Voice {
     fn answered(
         &mut self,
         epoch: u64,
-        answer: Result<Value, kchess_contracts::CoreError>,
+        answer: Result<Option<model::Heard>, kchess_contracts::CoreError>,
         cx: &mut Context<Self>,
     ) {
         if epoch != self.epoch || self.owner.is_none() {
             return;
         }
         let heard = match answer {
-            Ok(heard) => heard,
+            Ok(heard) => heard.unwrap_or_default(),
             Err(cause) => return self.fail(cause.message, ErrorKind::Model, cx),
         };
-        if let Some(result) = heard.get("result").filter(|result| result.is_object()) {
+        if let Some(result) = &heard.result {
             self.partial.clear();
             if let (Some(heard), Some(owner)) = (heard_of(result), self.owner) {
                 let event = if heard.text.is_empty() {
@@ -548,8 +557,8 @@ impl Voice {
             if self.epoch == epoch {
                 self.reset(cx);
             }
-        } else if let Some(partial) = heard["partial"].as_str() {
-            self.partial = partial.to_string();
+        } else if let Some(partial) = heard.partial {
+            self.partial = partial;
             cx.notify();
         }
     }
@@ -563,7 +572,7 @@ impl Voice {
         cx.notify();
     }
 
-    /// Turn it off and on again after an error (`retryVoice`).
+    /// Turn it off and on again after an error.
     pub fn retry(&mut self, cx: &mut Context<Self>) {
         if let Some(owner) = self.owner {
             let (grammar, active, push) = (self.grammar.clone(), self.active, self.push_to_talk);
@@ -599,8 +608,8 @@ pub fn init(cx: &mut App) {
     let events = cx.global::<AppCore>().events.clone();
     cx.subscribe(&events, {
         let voice = voice.downgrade();
-        move |_, event: &crate::core::CoreEvent, cx| {
-            if event.name == crate::core::RECONNECTED {
+        move |_, event: &crate::core::ClientEvent, cx| {
+            if *event == crate::core::ClientEvent::Reconnected {
                 let _ = voice.update(cx, |voice, cx| voice.reset(cx));
             }
         }
@@ -609,7 +618,6 @@ pub fn init(cx: &mut App) {
     cx.set_global(VoiceHandle(voice));
 }
 
-/// A rules grammar (`MOVE_GRAMMAR`, `GAME_GRAMMAR`, …).
 /// A phrase's place in the voice history, once saved (none when Settings keep no history).
 pub type Entry = Shared<Task<Option<i64>>>;
 
@@ -624,7 +632,7 @@ pub struct Attempt<'a> {
     pub fen: Option<&'a str>,
 }
 
-/// Save a phrase to the voice history, when Settings keep one (`logVoice`); `retry` is the
+/// Save a phrase to the voice history, when Settings keep one; `retry` is the
 /// phrase it tries again.
 pub fn log(attempt: &Attempt, retry: Option<Entry>, cx: &App) -> Option<Entry> {
     let keep = cx
@@ -638,25 +646,41 @@ pub fn log(attempt: &Attempt, retry: Option<Entry>, cx: &App) -> Option<Entry> {
         return None;
     }
     let heard = attempt.heard;
-    let mut record = json!({
-        "source": attempt.source,
-        "heard": heard.raw.chars().take(200).collect::<String>(),
-        "confidence": (heard.confidence.clamp(0., 1.) * 1000.).round() / 1000.,
-        "words": heard.words.iter().take(40).map(|word| json!({
-            "word": word.word.chars().take(40).collect::<String>(),
-            "conf": word.conf.clamp(0., 1.),
-        })).collect::<Vec<_>>(),
-        "outcome": attempt.outcome,
-    });
-    if let Some(parsed) = attempt.parsed {
-        record["parsed"] = json!(parsed.chars().take(120).collect::<String>());
-    }
-    if let Some(expected) = attempt.expected {
-        record["expected"] = json!(expected);
-    }
-    if let Some(fen) = attempt.fen.filter(|fen| !fen.is_empty()) {
-        record["fen"] = json!(fen);
-    }
+    let (Some(source), Some(outcome)) = (wire(attempt.source), wire(attempt.outcome)) else {
+        crate::log::write(
+            kchess_contracts::Level::Warn,
+            "voice-log",
+            &format!(
+                "a voice attempt has no such source or outcome: {} {}",
+                attempt.source, attempt.outcome
+            ),
+        );
+        return None;
+    };
+    let mut record = VoiceAttemptInput {
+        source,
+        heard: heard.raw.chars().take(200).collect(),
+        confidence: (heard.confidence.clamp(0., 1.) * 1000.).round() / 1000.,
+        words: heard
+            .words
+            .iter()
+            .take(40)
+            .map(|word| VoiceWord {
+                word: word.word.chars().take(40).collect(),
+                conf: word.conf.clamp(0., 1.),
+            })
+            .collect(),
+        outcome,
+        parsed: attempt
+            .parsed
+            .map(|parsed| parsed.chars().take(120).collect()),
+        expected: attempt.expected.map(str::to_string),
+        fen: attempt
+            .fen
+            .filter(|fen| !fen.is_empty())
+            .map(str::to_string),
+        retry_of: None,
+    };
     let core = cx.global::<AppCore>().clone();
     let entry = cx
         .foreground_executor()
@@ -664,14 +688,14 @@ pub fn log(attempt: &Attempt, retry: Option<Entry>, cx: &App) -> Option<Entry> {
             if let Some(retry) = retry
                 && let Some(id) = retry.await
             {
-                record["retryOf"] = json!(id);
+                record.retry_of = Some(id);
             }
             // The history is a study aid; a lost entry never disturbs play.
             match core
                 .request(calls::SaveVoiceAttempt { attempt: record })
                 .await
             {
-                Ok(id) => id.as_i64(),
+                Ok(id) => Some(id),
                 Err(cause) => {
                     crate::log::write(
                         kchess_contracts::Level::Warn,
@@ -690,15 +714,20 @@ pub fn log(attempt: &Attempt, retry: Option<Entry>, cx: &App) -> Option<Entry> {
     Some(entry)
 }
 
-/// A saved phrase's new outcome or meant move (`updateVoice`).
-pub fn amend(entry: Entry, update: Value, cx: &App) {
+/// A wire name as its contract type (`played` as `VoiceOutcome::Played`).
+pub fn wire<T: serde::de::DeserializeOwned>(name: &str) -> Option<T> {
+    serde_json::from_value(Value::String(name.to_string())).ok()
+}
+
+/// A saved phrase's new outcome or meant move.
+pub fn amend(entry: Entry, update: VoiceUpdate, cx: &App) {
     let core = cx.global::<AppCore>().clone();
     cx.foreground_executor()
         .spawn(async move {
             let Some(id) = entry.await else { return };
             if let Err(cause) = core
                 .request(calls::UpdateVoiceAttempt {
-                    id: json!(id),
+                    id: VoiceId(id),
                     update,
                 })
                 .await
@@ -713,33 +742,12 @@ pub fn amend(entry: Entry, update: Value, cx: &App) {
         .detach();
 }
 
-/// A voice grammar by name. Pages read it on every render and it never changes, so each one is
-/// built by the rules once and copied from then on.
-pub fn grammar(name: &str) -> Vec<String> {
-    thread_local! {
-        static GRAMMARS: std::cell::RefCell<std::collections::HashMap<String, Vec<String>>> =
-            std::cell::RefCell::default();
-    }
-    if let Some(known) = GRAMMARS.with_borrow(|grammars| grammars.get(name).cloned()) {
-        return known;
-    }
-    let list: Vec<String> = crate::game::rules(name, &[])
-        .ok()
-        .and_then(|list| serde_json::from_value(list).ok())
-        .unwrap_or_default();
-    // An unreadable answer is tried again next time rather than kept.
-    if !list.is_empty() {
-        GRAMMARS.with_borrow_mut(|grammars| grammars.insert(name.to_string(), list.clone()));
-    }
-    list
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{ErrorKind, grammar, handle, heard_of, model, progress_of};
+    use super::{ErrorKind, handle, heard_of, model, progress_of};
     use crate::e2e::Harness;
     use kchess_contracts::CoreError;
-    use serde_json::{Value, json};
+    use serde_json::json;
 
     /// A build without the speech helper said "The offline voice model couldn’t load. Voice input
     /// isn’t available in this build.", cut off after "Voice input isn’t…", though no model failed.
@@ -779,52 +787,50 @@ mod tests {
 
     #[test]
     fn only_the_model_s_progress_reaches_its_listener() {
-        let event = |name: &str, payload: Value| crate::core::CoreEvent {
-            name: name.into(),
-            payload,
+        use crate::core::CoreEvent;
+        let report = model::Progress {
+            phase: model::Phase::Downloading,
+            received: 3,
+            total: Some(9),
         };
-        let report = json!({ "phase": "downloading", "received": 3, "total": 9 });
         assert_eq!(
-            progress_of(&event("voicemodel:progress", report.clone())),
-            Some(model::Progress {
-                phase: model::Phase::Downloading,
-                received: 3,
-                total: Some(9),
-            })
+            progress_of(&CoreEvent::VoiceModelProgress(report.clone())),
+            Some(report)
         );
-        assert_eq!(progress_of(&event("puzzledb:progress", report)), None);
-        assert_eq!(
-            progress_of(&event("voicemodel:progress", json!("noise"))),
-            None
-        );
+        let puzzles = kchess_contracts::types::PuzzleDbProgress {
+            phase: kchess_contracts::types::PuzzleDbPhase::Downloading,
+            received: 3,
+            kept: 0,
+            total: Some(9),
+            message: None,
+        };
+        assert_eq!(progress_of(&CoreEvent::PuzzleDbProgress(puzzles)), None);
+    }
+
+    fn utterance(value: serde_json::Value) -> model::Utterance {
+        serde_json::from_value(value).expect("an utterance")
     }
 
     #[test]
     fn confidence_ignores_noise_markers() {
-        let heard = heard_of(&json!({
+        let heard = heard_of(&utterance(json!({
             "text": "[unk] e four",
             "words": [
                 { "word": "[unk]", "conf": 0.1 },
                 { "word": "e", "conf": 0.9 },
                 { "word": "four", "conf": 0.7 },
             ],
-        }))
+        })))
         .unwrap();
         assert_eq!(heard.text, "e four");
         assert_eq!(heard.raw, "[unk] e four");
         assert!((heard.confidence - 0.8).abs() < 1e-9);
         assert!(!heard.unclear);
-        let noise =
-            heard_of(&json!({ "text": "[unk]", "words": [{ "word": "[unk]", "conf": 1 }] }))
-                .unwrap();
+        let noise = heard_of(&utterance(
+            json!({ "text": "[unk]", "words": [{ "word": "[unk]", "conf": 1 }] }),
+        ))
+        .unwrap();
         assert!(noise.text.is_empty() && noise.unclear);
-        assert!(heard_of(&json!({ "text": " ", "words": [] })).is_none());
-    }
-
-    #[test]
-    fn the_rules_supply_the_grammars() {
-        let moves = grammar("MOVE_GRAMMAR");
-        assert!(moves.contains(&"e four".to_string()) && moves.contains(&"knight".to_string()));
-        assert!(grammar("GAME_GRAMMAR").contains(&"take back".to_string()));
+        assert!(heard_of(&utterance(json!({ "text": " ", "words": [] }))).is_none());
     }
 }

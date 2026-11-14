@@ -1,23 +1,196 @@
-//! Large downloads that survive a dropped connection: `Resumable` reads a body as
-//! `reqwest::Response::chunk` does, and when the connection fails partway it asks again from the
-//! byte it reached (`Range`), so the bytes already received are not fetched twice.
+//! The verified downloads (the managed engine, the voice model, the puzzle database) and their
+//! metadata go through one pipeline: [`open`] sends the request, [`Body::next`] reads the answer.
+//! Together they bound the size and the time, stop the moment the caller cancels, and count every
+//! request and byte as network use, retries and resumes included.
 //!
-//! It resumes only when that is safe: the first answer was a whole `200` that named its length,
-//! offered byte ranges and gave a validator (`ETag`, or `Last-Modified`), and the new answer is a
-//! `206` for exactly the rest of that same file (`If-Range`, `Content-Range`). Anything else
-//! ends the read with the failure the connection had, as it did before resuming existed.
+//! The first request is sent again after a brief server failure (502, 503, 504, a 429 with a
+//! short `Retry-After`, or a connection that failed before any answer), so a single hiccup at the
+//! host does not fail a download.
 //!
-//! `send_retrying` sends the first request again after a brief server failure (502, 503, 504, a
-//! 429 with a short `Retry-After`, or a connection that failed before any answer), so a single
-//! hiccup at the release host does not fail a download.
+//! A body survives a dropped connection (`Resumable`): it asks again from the byte it reached
+//! (`Range`), so the bytes already received are not fetched twice. It resumes only when that is
+//! safe: the first answer was a whole `200` that named its length, offered byte ranges and gave a
+//! validator (`ETag`, or `Last-Modified`), and the new answer is a `206` for exactly the rest of
+//! that same file (`If-Range`, `Content-Range`). Anything else ends the read with the failure the
+//! connection had.
 
 use std::time::{Duration, Instant};
 
+use kchess_contracts::types::UsageKind;
 use reqwest::StatusCode;
 use reqwest::header::{
     ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG, HeaderMap, IF_RANGE, LAST_MODIFIED, RANGE,
     RETRY_AFTER,
 };
+use tokio_util::sync::CancellationToken;
+
+use crate::usage::Meter;
+use kchess_contracts::error::{CoreError, ErrorKind, Result};
+
+pub use crate::tasks::ABORTED;
+
+/// The HTTP client of a download. It asks for the body as published (no gzip on top), so the
+/// length is the progress total, digests are of the published file and a body can resume.
+/// `silence`, when given, ends a download whose server stops sending for that long.
+pub fn client(silence: Option<Duration>) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .user_agent(crate::USER_AGENT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .no_gzip();
+    if let Some(silence) = silence {
+        builder = builder.read_timeout(silence);
+    }
+    builder
+        .build()
+        .map_err(|cause| CoreError::wrap("Could not start the download", cause))
+}
+
+/// How long a download may take to connect.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// What one download may bring and how long it may take, in all.
+#[derive(Clone, Copy)]
+pub struct Limits {
+    pub max_bytes: u64,
+    pub deadline: Option<Instant>,
+}
+
+/// How one download words its failures for the person who asked for it.
+pub struct Wording {
+    /// A request that failed or timed out.
+    pub network: fn(&reqwest::Error) -> String,
+    /// An answer other than success, by its status code.
+    pub status: fn(u16) -> String,
+    /// A body larger than `Limits::max_bytes`.
+    pub too_large: &'static str,
+}
+
+/// A request that failed or timed out, in `wording`'s words: an `Offline` (or `TimedOut`) error,
+/// so a caller can tell the person to check the connection only when the connection failed.
+fn network_error(wording: &Wording, cause: &reqwest::Error) -> CoreError {
+    let kind = if cause.is_timeout() {
+        ErrorKind::TimedOut
+    } else {
+        ErrorKind::Offline
+    };
+    CoreError::new((wording.network)(cause)).with_kind(kind)
+}
+
+/// Where a download's traffic is counted.
+#[derive(Clone, Copy)]
+pub struct Usage<'a> {
+    pub meter: &'a dyn Meter,
+    pub kind: UsageKind,
+}
+
+/// An answer being read. Its traffic is counted when it is dropped, however the read ended.
+pub struct Body<'a> {
+    body: Resumable,
+    total: Option<u64>,
+    received: u64,
+    requests: u64,
+    limits: Limits,
+    cancel: &'a CancellationToken,
+    usage: Usage<'a>,
+    wording: &'a Wording,
+}
+
+/// Sends the request `request` builds (again after a transient failure) and checks the answer:
+/// a success, not announced larger than the limit. Cancelling `cancel` ends the wait at once.
+pub async fn open<'a>(
+    client: &reqwest::Client,
+    request: impl Fn() -> reqwest::RequestBuilder,
+    limits: Limits,
+    cancel: &'a CancellationToken,
+    usage: Usage<'a>,
+    wording: &'a Wording,
+) -> Result<Body<'a>> {
+    let mut requests = 0;
+    let sent = tokio::select! {
+        biased;
+        () = cancel.cancelled() => Err(crate::tasks::aborted()),
+        sent = send_retrying(request, limits.deadline, &mut requests) => {
+            sent.map_err(|cause| network_error(wording, &cause))
+        }
+    };
+    let counted = |requests| usage.meter.count("", usage.kind, requests, 0);
+    let response = match sent {
+        Ok(response) => response,
+        Err(error) => {
+            counted(requests);
+            return Err(error);
+        }
+    };
+    if !response.status().is_success() {
+        counted(requests);
+        return Err(CoreError::new((wording.status)(response.status().as_u16())));
+    }
+    let total = response.content_length().filter(|&total| total > 0);
+    if total.is_some_and(|total| total > limits.max_bytes) {
+        counted(requests);
+        return Err(CoreError::new(wording.too_large));
+    }
+    Ok(Body {
+        body: Resumable::new(client, response, limits.deadline),
+        total,
+        received: 0,
+        requests,
+        limits,
+        cancel,
+        usage,
+        wording,
+    })
+}
+
+impl Body<'_> {
+    /// The length the server announced, if it did.
+    pub fn total(&self) -> Option<u64> {
+        self.total
+    }
+
+    /// The bytes received so far.
+    pub fn received(&self) -> u64 {
+        self.received
+    }
+
+    /// The next chunk; `None` once the body has all arrived. Fails past the size limit, when
+    /// the connection is lost for good, or as an abort once the caller cancels.
+    pub async fn next(&mut self) -> Result<Option<bytes::Bytes>> {
+        let chunk = tokio::select! {
+            biased;
+            () = self.cancel.cancelled() => return Err(crate::tasks::aborted()),
+            chunk = self.body.chunk() => chunk,
+        };
+        let chunk = chunk.map_err(|cause| network_error(self.wording, &cause))?;
+        if let Some(chunk) = &chunk {
+            self.received += chunk.len() as u64;
+            if self.received > self.limits.max_bytes {
+                return Err(CoreError::new(self.wording.too_large));
+            }
+        }
+        Ok(chunk)
+    }
+
+    /// The whole body, for metadata.
+    pub async fn bytes(mut self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        while let Some(chunk) = self.next().await? {
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    }
+}
+
+impl Drop for Body<'_> {
+    fn drop(&mut self) {
+        self.usage.meter.count(
+            "",
+            self.usage.kind,
+            self.requests + self.body.resumed() as u64,
+            self.received,
+        );
+    }
+}
 
 /// How long `send_retrying` waits before each further attempt (three attempts in all).
 #[cfg(not(test))]
@@ -35,10 +208,12 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(10);
 ///
 /// `deadline`, when given, bounds every attempt together, as one request timeout bounded the
 /// single attempt: each one gets the time that is left, and no wait runs past it. Dropping the
-/// future (a cancelled install) stops it between or during attempts.
-pub async fn send_retrying(
+/// future (a cancelled install) stops it between or during attempts. `attempts` counts the
+/// requests sent.
+async fn send_retrying(
     request: impl Fn() -> reqwest::RequestBuilder,
     deadline: Option<Instant>,
+    attempts: &mut u64,
 ) -> reqwest::Result<reqwest::Response> {
     let mut waits = SEND_WAITS.iter();
     loop {
@@ -46,6 +221,7 @@ pub async fn send_retrying(
         if let Some(deadline) = deadline {
             builder = builder.timeout(deadline.saturating_duration_since(Instant::now()));
         }
+        *attempts += 1;
         let outcome = builder.send().await;
         let Some(wait) = retry_wait(&outcome) else {
             return outcome;
@@ -414,24 +590,17 @@ mod tests {
     const HANG: &str = "hang";
 
     /// Sends to `url` through `send_retrying`; the final status (or `None` for an error), and how
-    /// many requests were built.
+    /// many requests it counted.
     async fn send(
         client: &reqwest::Client,
         url: &str,
         deadline: Option<Instant>,
-    ) -> (Option<u16>, usize) {
-        let built = std::cell::Cell::new(0);
-        let outcome = send_retrying(
-            || {
-                built.set(built.get() + 1);
-                client.get(url)
-            },
-            deadline,
-        )
-        .await;
+    ) -> (Option<u16>, u64) {
+        let mut attempts = 0;
+        let outcome = send_retrying(|| client.get(url), deadline, &mut attempts).await;
         (
             outcome.ok().map(|response| response.status().as_u16()),
-            built.get(),
+            attempts,
         )
     }
 
@@ -520,5 +689,196 @@ mod tests {
         assert_eq!(send(&client(), &url, deadline).await, (None, 1));
         assert!(started.elapsed() < Duration::from_secs(5));
         assert_eq!(*connections.lock().unwrap(), 1);
+    }
+
+    /// Sums the requests and bytes reported as network use.
+    #[derive(Default)]
+    struct Metered(Mutex<(u64, u64)>);
+
+    impl Meter for Metered {
+        fn count(&self, account: &str, kind: UsageKind, requests: u64, bytes: u64) {
+            assert_eq!((account, kind), ("", UsageKind::Database));
+            let mut total = self.0.lock().unwrap();
+            total.0 += requests;
+            total.1 += bytes;
+        }
+    }
+
+    const WORDING: Wording = Wording {
+        network: |_| "network".into(),
+        status: |status| format!("status {status}"),
+        too_large: "too large",
+    };
+
+    const UNLIMITED: Limits = Limits {
+        max_bytes: u64::MAX,
+        deadline: None,
+    };
+
+    async fn fetch(
+        url: &str,
+        limits: Limits,
+        cancel: &CancellationToken,
+        host: &Metered,
+    ) -> Result<Vec<u8>> {
+        let client = client();
+        let usage = Usage {
+            meter: host,
+            kind: UsageKind::Database,
+        };
+        open(&client, || client.get(url), limits, cancel, usage, &WORDING)
+            .await?
+            .bytes()
+            .await
+    }
+
+    #[tokio::test]
+    async fn usage_counts_every_retry_resume_and_byte() {
+        let host = Metered::default();
+        let (url, _) = answering(vec!["503 Unavailable", "200 OK"]).await;
+        let body = fetch(&url, UNLIMITED, &CancellationToken::new(), &host).await;
+        assert_eq!(body.unwrap(), b"ok");
+        assert_eq!(*host.0.lock().unwrap(), (2, 2));
+
+        let host = Metered::default();
+        let fixture = fixture(file(), vec![Serve::Drop, Serve::Whole], true).await;
+        let body = fetch(&fixture.url, UNLIMITED, &CancellationToken::new(), &host).await;
+        assert_eq!(body.unwrap(), file());
+        assert_eq!(*host.0.lock().unwrap(), (2, file().len() as u64));
+
+        let host = Metered::default();
+        let (url, _) = answering(vec!["404 Not Found"]).await;
+        let error = fetch(&url, UNLIMITED, &CancellationToken::new(), &host).await;
+        assert_eq!(error.unwrap_err().message, "status 404");
+        assert_eq!(*host.0.lock().unwrap(), (1, 0));
+    }
+
+    #[tokio::test]
+    async fn a_body_over_the_limit_is_refused() {
+        let host = Metered::default();
+        let fixture = fixture(file(), vec![Serve::Whole], false).await;
+        let limits = Limits {
+            max_bytes: 1000,
+            deadline: None,
+        };
+        let error = fetch(&fixture.url, limits, &CancellationToken::new(), &host).await;
+        assert_eq!(error.unwrap_err().message, "too large");
+    }
+
+    #[tokio::test]
+    async fn cancelling_ends_a_download_that_waits_for_its_answer() {
+        let host = Metered::default();
+        let (url, _) = answering(vec![HANG]).await;
+        let cancel = CancellationToken::new();
+        let stop = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            stop.cancel();
+        });
+        let error = fetch(&url, UNLIMITED, &cancel, &host).await.unwrap_err();
+        assert!(error.aborted);
+        assert_eq!(error.message, ABORTED);
+        assert_eq!(*host.0.lock().unwrap(), (1, 0));
+    }
+
+    /// A server sending `answer` (a whole HTTP response) on every connection, keeping the heads
+    /// of the requests it received.
+    async fn serving(answer: Vec<u8>) -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/asset", listener.local_addr().unwrap());
+        let heads = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&heads);
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") && matches!(socket.read(&mut byte).await, Ok(1))
+                {
+                    head.push(byte[0]);
+                }
+                seen.lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&head).to_lowercase());
+                let _ = socket.write_all(&answer).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        (url, heads)
+    }
+
+    /// Reads `body` to its end through `Body::next`, failing when it does not end.
+    async fn read_to_end(body: &mut Body<'_>) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        for _ in 0..10_000 {
+            match body.next().await? {
+                Some(chunk) => bytes.extend_from_slice(&chunk),
+                None => return Ok(bytes),
+            }
+        }
+        panic!("the body never ended")
+    }
+
+    /// Opens `url` with `max_bytes` as the limit, counting into `host`.
+    async fn open_limited<'a>(
+        client: &reqwest::Client,
+        url: &str,
+        max_bytes: u64,
+        cancel: &'a CancellationToken,
+        host: &'a Metered,
+    ) -> Result<Body<'a>> {
+        let limits = Limits {
+            max_bytes,
+            deadline: None,
+        };
+        let usage = Usage {
+            meter: host,
+            kind: UsageKind::Database,
+        };
+        open(client, || client.get(url), limits, cancel, usage, &WORDING).await
+    }
+
+    #[tokio::test]
+    async fn the_client_names_kchess() {
+        let (url, heads) = serving(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_vec(),
+        )
+        .await;
+        super::client(None).unwrap().get(&url).send().await.unwrap();
+        let user_agent = format!("user-agent: {}", crate::USER_AGENT.to_lowercase());
+        assert!(heads.lock().unwrap()[0].contains(&user_agent));
+    }
+
+    #[tokio::test]
+    async fn the_announced_length_is_the_total_and_a_body_may_fill_the_limit() {
+        for (answer, total, expected) in [
+            ("Content-Length: 2\r\n\r\nok", Some(2), &b"ok"[..]),
+            ("Content-Length: 0\r\n\r\n", None, &b""[..]),
+        ] {
+            let host = Metered::default();
+            let raw = format!("HTTP/1.1 200 OK\r\nConnection: close\r\n{answer}");
+            let (url, _) = serving(raw.into_bytes()).await;
+            let (client, cancel) = (client(), CancellationToken::new());
+            let mut body = open_limited(&client, &url, 2, &cancel, &host)
+                .await
+                .unwrap();
+            assert_eq!(body.total(), total, "{answer}");
+            assert_eq!(read_to_end(&mut body).await.unwrap(), expected, "{answer}");
+            assert_eq!(body.received(), expected.len() as u64);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_body_without_a_length_is_cut_off_past_the_limit() {
+        let host = Metered::default();
+        let mut raw = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_vec();
+        raw.extend(file());
+        let (url, _) = serving(raw).await;
+        let (client, cancel) = (client(), CancellationToken::new());
+        let mut body = open_limited(&client, &url, 1001, &cancel, &host)
+            .await
+            .unwrap();
+        assert_eq!(body.total(), None);
+        let error = read_to_end(&mut body).await.unwrap_err();
+        assert_eq!(error.message, "too large");
     }
 }

@@ -118,6 +118,42 @@ fn a_local_game_is_played_through_stdin_and_kept_in_the_library() {
     assert!(lines(&status)[0].get("engine").is_some());
 }
 
+/// 2026-11-11: `--data-dir` alone (no `KCHESS_USER_DATA_DIR`) gave the scratch profile the
+/// person's own downloaded engine in `~/.kchess/engines`, which installing or deleting it there
+/// then replaced. A scratch profile keeps its own, as the app's do.
+#[test]
+fn a_scratch_profile_keeps_its_own_engine() {
+    let home = tempfile::tempdir().expect("home");
+    let profile = tempfile::tempdir().expect("profile");
+    let output = kchess_cli()
+        .args(["--embedded", "--no-credentials", "--data-dir"])
+        .arg(profile.path())
+        .arg("status")
+        .env_remove("KCHESS_USER_DATA_DIR")
+        .env_remove("KCHESS_SERVICE_BINARY")
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .output()
+        .expect("kchess-cli finishes");
+    assert!(output.status.success(), "{output:?}");
+    let status = &lines(&output)[0];
+    let managed = std::path::PathBuf::from(
+        status["engine"]["managed"]["path"]
+            .as_str()
+            .expect("the managed engine's path"),
+    );
+    assert!(
+        managed.starts_with(profile.path()),
+        "{} is outside {}",
+        managed.display(),
+        profile.path().display()
+    );
+    assert!(
+        !home.path().join(".kchess").exists(),
+        "the person's engines were touched"
+    );
+}
+
 /// Moves are typed in SAN as readily as in UCI, read in the position on the board.
 #[test]
 fn moves_are_typed_in_san_or_uci() {
@@ -343,89 +379,22 @@ fn is_cargo_test_var(key: &str) -> bool {
         )
 }
 
-/// A nested build leaves out only what Cargo set for this package: its own configuration
-/// (`CARGO_HOME`, `CARGO_INCREMENTAL`, `CARGO_BUILD_*`) still applies.
+/// What `child` printed once it finished, which it must within `limit`: a command that never
+/// ends is stopped and fails its test there, rather than hang it.
 #[cfg(unix)]
-#[test]
-fn a_nested_build_drops_only_this_packages_variables() {
-    for key in [
-        "CARGO_MANIFEST_DIR",
-        "CARGO_MANIFEST_PATH",
-        "CARGO_PKG_NAME",
-        "CARGO_BIN_EXE_kchess-cli",
-        "CARGO_CRATE_NAME",
-        "CARGO_PRIMARY_PACKAGE",
-        "CARGO_TARGET_TMPDIR",
-        "CARGO_BIN_NAME",
-        "OUT_DIR",
-    ] {
-        assert!(is_cargo_test_var(key), "{key}");
+fn finished_within(child: std::process::Child, limit: std::time::Duration) -> Output {
+    let pid = child.id().to_string();
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(child.wait_with_output());
+    });
+    match finished.recv_timeout(limit) {
+        Ok(output) => output.expect("kchess-cli finishes"),
+        Err(_) => {
+            let _ = Command::new("kill").args(["-KILL", &pid]).status();
+            panic!("kchess-cli did not finish within {limit:?}");
+        }
     }
-    for key in [
-        "CARGO",
-        "CARGO_HOME",
-        "CARGO_INCREMENTAL",
-        "CARGO_BUILD_JOBS",
-        "PATH",
-    ] {
-        assert!(!is_cargo_test_var(key), "{key}");
-    }
-    assert!(
-        cargo_test_vars()
-            .iter()
-            .any(|key| key == "CARGO_MANIFEST_DIR")
-    );
-}
-
-/// A stale binary on disk is rebuilt before use, not run as it is (2026-11-09: a service built
-/// before a contracts change refused the CLI of the same release).
-#[cfg(unix)]
-#[test]
-fn a_stale_workspace_binary_is_rebuilt_before_use() {
-    use std::os::unix::fs::MetadataExt as _;
-    let fresh = workspace_binary("kchess-core", "kchess-fake-uci");
-    let stale = put_stale_copy(&fresh);
-    let used = workspace_binary("kchess-core", "kchess-fake-uci");
-    assert_eq!(used, fresh);
-    assert_ne!(
-        std::fs::metadata(&used).expect("the scripted engine").ino(),
-        stale,
-        "the stale binary was used as it was"
-    );
-}
-
-/// Puts a file that is not Cargo's output in place of `binary`, and answers its inode. Tests in
-/// other binaries run this one at once (kchess-core's run it as their engine), and the core
-/// takes an executable of another length or time for another engine: it restarted a warm engine
-/// between two moves of `consecutive_moves_reuse_the_warm_engine_and_send_only_changed_options`
-/// (2026-11-11) when this put a longer copy here. So the copy is the same bytes and time, put in
-/// place under another name first so nobody reads half of it, and renamed over the file rather
-/// than written into it, which Cargo hard-links to its own copy.
-#[cfg(unix)]
-fn put_stale_copy(binary: &std::path::Path) -> u64 {
-    use std::os::unix::fs::MetadataExt as _;
-    let built = std::fs::metadata(binary).expect("the binary");
-    let partial = binary.with_file_name(format!(
-        "{}-stale-{}",
-        binary.file_name().expect("a file").to_string_lossy(),
-        std::process::id()
-    ));
-    std::fs::copy(binary, &partial).expect("stale copy");
-    let copy = std::fs::File::options()
-        .write(true)
-        .open(&partial)
-        .expect("the stale copy");
-    copy.set_modified(built.modified().expect("modified"))
-        .expect("the binary's time");
-    drop(copy);
-    let stale = std::fs::metadata(&partial).expect("the stale copy");
-    assert_eq!(
-        (stale.len(), stale.modified().ok()),
-        (built.len(), built.modified().ok()),
-        "the copy looks like the binary to the tests running it"
-    );
-    std::fs::rename(&partial, binary).expect("stale binary in place");
-    stale.ino()
 }
 
 /// The scripted engine (`kchess-fake-uci`, built first) as the copy `engine-quick`: its
@@ -616,7 +585,7 @@ fn a_computer_game_is_played_saved_and_resumed() {
             .expect("stdin")
             .write_all(input.as_bytes())
             .expect("input");
-        let output = child.wait_with_output().expect("kchess-cli finishes");
+        let output = finished_within(child, std::time::Duration::from_secs(10));
         let states: Vec<Value> = String::from_utf8_lossy(&output.stdout)
             .lines()
             .filter_map(|line| serde_json::from_str(line).ok())
@@ -1107,16 +1076,38 @@ fn a_resumed_clock_runs_out() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("kchess-cli starts");
+    use std::io::BufRead;
     let mut stdin = child.stdin.take().expect("stdin");
     stdin.write_all(b"pause\n").expect("resume");
     stdin.flush().expect("flush");
-    // Black's 0.3 s run out well within this.
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    // Each state as it is shown, until the one where Black's 0.3 s have run out. A clock that
+    // never runs out shows nothing more: the wait for it ends long after 0.3 s.
+    let stdout = std::io::BufReader::new(child.stdout.take().expect("stdout"));
+    let (shown, states_shown) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in stdout.lines() {
+            if shown.send(line.expect("a line")).is_err() {
+                return;
+            }
+        }
+    });
+    let mut states = Vec::new();
+    loop {
+        let Ok(line) = states_shown.recv_timeout(std::time::Duration::from_secs(10)) else {
+            let _ = child.kill();
+            panic!("the clock did not run out: {states:?}");
+        };
+        let state: Value = serde_json::from_str(&line).expect("a state");
+        let over = !state["result"].is_null();
+        states.push(state);
+        if over {
+            break;
+        }
+    }
     stdin.write_all(b"quit\n").expect("quit");
     drop(stdin);
     let played = child.wait_with_output().expect("kchess-cli finishes");
     assert!(played.status.success(), "{played:?}");
-    let states = lines(&played);
     assert!(states[1]["result"].is_null(), "{states:?}");
     assert_eq!(
         states.last().expect("a state")["result"],

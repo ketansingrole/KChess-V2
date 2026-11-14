@@ -58,7 +58,6 @@ impl RenderOnce for StudyCard {
     }
 }
 
-/// A study or opening card.
 fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
     let (width, open) = (card.width, card.on_open.clone());
     let open_title = open.clone();

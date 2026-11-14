@@ -3,12 +3,8 @@
 //! `info` lines. Cancellation flows through `CancellationToken`s. Dropping a controller
 //! terminates its process; a dropped future never leaves a search running unobserved.
 //!
-//! Deviations from the TypeScript, kept deliberately:
-//! - Spawn failures are returned from `UciController::start` instead of rejecting `ready()`.
-//! - Engine registries (maintenance, `closeEngines`) live in an `EngineHub`, not a module
-//!   singleton, so independent cores and parallel tests do not share one another's engines.
-//! - `search` and `command` take `Option<Duration>` where TypeScript used `0` for "no deadline".
-//! - Performance timings (`timed`) are not mirrored; the Rust core has no performance module yet.
+//! Engine registries (maintenance, closing every engine) live in an `EngineHub`, so independent
+//! cores and parallel tests do not share one another's engines.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -25,8 +21,8 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_contracts::error::{CoreError, Result};
 
 /// The constructor's default deadline for the handshake and `isready`.
 pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(10);
@@ -36,6 +32,11 @@ const STOP_DEADLINE: Duration = Duration::from_secs(2);
 const TERMINATION_DEADLINE: Duration = Duration::from_secs(1);
 /// How long maintenance and shutdown wait for engines to exit.
 pub const EXIT_DEADLINE: Duration = Duration::from_secs(4);
+/// Engines that outlived `EXIT_DEADLINE` during a replacement.
+pub(crate) const EXIT_TIMEOUT_MESSAGE: &str =
+    "Stockfish did not exit. The previous engine was retained.";
+/// The longest output line an engine may write; a longer one fails the engine.
+const LINE_LIMIT: u64 = 1_000_000;
 /// Bytes of stderr kept for failure diagnostics.
 const STDERR_LIMIT: usize = 2048;
 
@@ -43,17 +44,12 @@ type Matcher = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 type OnLine = Box<dyn FnMut(&str) + Send>;
 type LineSink = Arc<Mutex<OnLine>>;
 
-/// `SearchCancelled`: the search was stopped on purpose. Crosses the bridge as `AbortError`.
+/// The search was stopped on purpose.
 pub fn search_cancelled() -> CoreError {
     CoreError::aborted("Engine search cancelled.")
 }
 
-/// `AbortSignal.throwIfAborted()` without a reason: the default `AbortError` message.
-pub(crate) fn signal_aborted() -> CoreError {
-    CoreError::aborted("This operation was aborted.")
-}
-
-pub(crate) use crate::tasks::lock;
+use crate::tasks::lock;
 
 /// Resolves when `cancel` fires; never resolves without a token.
 pub(crate) async fn cancelled_or_pending(cancel: Option<&CancellationToken>) {
@@ -95,15 +91,14 @@ impl EngineHub {
         }
     }
 
-    /// `withEngineMaintenance`'s first half: refuses new engines, runs `stop_owners`, and waits
+    /// Refuses new engines, runs `stop_owners`, and waits
     /// for every engine to exit. The returned hold keeps engines refused until it is dropped.
     pub async fn suspend(&self, stop_owners: impl FnOnce()) -> Result<MaintenanceHold> {
         self.assert_available()?;
         self.maintenance.store(true, Ordering::SeqCst);
         let hold = MaintenanceHold(Arc::clone(&self.maintenance));
         stop_owners();
-        self.close_all("Stockfish did not exit. The previous engine was retained.")
-            .await?;
+        self.close_all(EXIT_TIMEOUT_MESSAGE).await?;
         Ok(hold)
     }
 
@@ -113,7 +108,7 @@ impl EngineHub {
         self
     }
 
-    /// `assertEngineAvailable`: refuses new engines while an executable is being replaced.
+    /// Refuses new engines while an executable is being replaced.
     pub fn assert_available(&self) -> Result<()> {
         if self.maintenance.load(Ordering::SeqCst) {
             return Err(CoreError::new("Stockfish is being updated. Retry shortly."));
@@ -121,7 +116,7 @@ impl EngineHub {
         Ok(())
     }
 
-    /// `withEngineMaintenance`: stops every engine, waits for all to exit within the deadline,
+    /// Stops every engine, waits for all to exit within the deadline,
     /// then runs `action`. The flag clears on every exit path.
     pub async fn with_maintenance<T, Fut>(
         &self,
@@ -135,7 +130,7 @@ impl EngineHub {
         action().await
     }
 
-    /// `closeEngines`: terminates every engine and waits for their exit.
+    /// Terminates every engine and waits for their exit.
     pub async fn close_engines(&self) -> Result<()> {
         self.close_all("Stockfish did not exit during shutdown.")
             .await
@@ -165,30 +160,6 @@ impl EngineHub {
     }
 }
 
-/// How long `spawn_waiting_out_busy` keeps retrying a busy executable, in all.
-const BUSY_FOR: Duration = Duration::from_secs(1);
-
-/// Spawn `command`. On Linux, a process forked elsewhere in this process while the executable
-/// was still open for writing (a fresh copy or download) holds that descriptor until it execs,
-/// and `execve` fails with `ETXTBSY` meanwhile. The window is brief, so a busy spawn is retried
-/// for up to `BUSY_FOR`; the caller is synchronous, so the waits block (only ever on this error).
-fn spawn_waiting_out_busy(command: &mut Command) -> std::io::Result<Child> {
-    let started = std::time::Instant::now();
-    let mut delay = Duration::from_millis(5);
-    loop {
-        match command.spawn() {
-            Err(cause)
-                if cause.kind() == std::io::ErrorKind::ExecutableFileBusy
-                    && started.elapsed() < BUSY_FOR =>
-            {
-                std::thread::sleep(delay);
-                delay = (delay * 2).min(Duration::from_millis(200));
-            }
-            spawned => return spawned,
-        }
-    }
-}
-
 /// A running UCI process. Dropping it terminates the process.
 pub struct UciController {
     inner: Arc<Inner>,
@@ -207,7 +178,7 @@ impl UciController {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        let mut child = spawn_waiting_out_busy(&mut command)
+        let mut child = crate::process::spawn(&mut command)
             .map_err(|error| CoreError::wrap("Could not start the engine", error))?;
         let (Some(stdin), Some(stdout), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
@@ -267,10 +238,6 @@ impl UciController {
         self.inner.write(command)
     }
 
-    pub async fn sync(&self) -> Result<String> {
-        self.inner.sync().await
-    }
-
     /// Sends `command` and waits for the first line matching `matches`. `on_line` sees every
     /// line while the wait lasts. A `timeout` that elapses fails the whole engine.
     pub async fn command(
@@ -295,11 +262,6 @@ impl UciController {
         self.inner.search(command, on_line, timeout, cancel).await
     }
 
-    /// Asks the active search (if any) to stop, as cancelling its token does.
-    pub fn stop(&self) {
-        self.inner.stop();
-    }
-
     /// Fails the engine with `search_cancelled()`, terminates the process and forgets its options.
     pub fn close(&self) {
         self.inner.close();
@@ -314,11 +276,6 @@ impl UciController {
     /// once when anything changed. Order follows `options`.
     pub async fn ensure_options(&self, options: &[(&str, &str)]) -> Result<()> {
         self.inner.ensure_options(options).await
-    }
-
-    /// Forgets which options this process has confirmed; the next `ensure_options` resends them.
-    pub fn clear_engine_options(&self) {
-        self.inner.clear_engine_options();
     }
 }
 
@@ -507,7 +464,7 @@ impl Inner {
         cancel: Option<&CancellationToken>,
     ) -> Result<String> {
         if cancel.is_some_and(CancellationToken::is_cancelled) {
-            return Err(signal_aborted());
+            return Err(crate::tasks::aborted());
         }
         let stop = CancellationToken::new();
         {
@@ -562,13 +519,6 @@ impl Inner {
         Ok(line)
     }
 
-    fn stop(&self) {
-        let token = lock(&self.state).stop.clone();
-        if let Some(token) = token {
-            token.cancel();
-        }
-    }
-
     fn close(&self) {
         self.fail(search_cancelled());
         self.clear_engine_options();
@@ -621,7 +571,7 @@ impl Inner {
             state.failure = Some(error.clone());
             std::mem::take(&mut state.listeners)
         };
-        if is_expected_cancellation(&error) {
+        if error.aborted {
             self.log(
                 Level::Debug,
                 format!("Engine stopped: {}", error_summary(&error)),
@@ -641,8 +591,8 @@ impl Inner {
         let _ = self.kill.send(());
     }
 
-    /// Hands one stdout line to every listener: `on_line` first, then the match, as TypeScript
-    /// does. Callbacks run without the state lock, so they may call back into the controller.
+    /// Hands one stdout line to every listener: `on_line` first, then the match. Callbacks run
+    /// without the state lock, so they may call back into the controller.
     fn dispatch(&self, line: &str) {
         let listeners: Vec<(u64, Matcher, Option<LineSink>)> = lock(&self.state)
             .listeners
@@ -733,8 +683,16 @@ async fn read_lines(inner: Arc<Inner>, stdout: ChildStdout) {
     let mut buffer = Vec::new();
     loop {
         buffer.clear();
-        match reader.read_until(b'\n', &mut buffer).await {
+        match (&mut reader)
+            .take(LINE_LIMIT)
+            .read_until(b'\n', &mut buffer)
+            .await
+        {
             Ok(0) => break,
+            Ok(read) if cut_off(read, &buffer) => {
+                inner.fail(CoreError::new("Invalid engine output."));
+                break;
+            }
             Ok(_) => {
                 let raw = String::from_utf8_lossy(&buffer);
                 let line = raw.trim();
@@ -748,6 +706,11 @@ async fn read_lines(inner: Arc<Inner>, stdout: ChildStdout) {
             }
         }
     }
+}
+
+/// Whether a read of `read` bytes into `line` stopped at `LINE_LIMIT` before the line ended.
+fn cut_off(read: usize, line: &[u8]) -> bool {
+    read as u64 == LINE_LIMIT && line.last() != Some(&b'\n')
 }
 
 async fn read_stderr(inner: Arc<Inner>, mut stderr: ChildStderr) {
@@ -855,19 +818,11 @@ fn exit_fields(status: &ExitStatus) -> (String, String) {
     (code, signal)
 }
 
-fn is_expected_cancellation(error: &CoreError) -> bool {
-    if error.aborted {
-        return true;
-    }
-    let message = error.message.to_lowercase();
-    message.contains("superseded") || message.contains("cancelled")
-}
-
 fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// `truncateForLog`: one line, at most `max` characters.
+/// One line, at most `max` characters.
 pub(crate) fn truncate_for_log(text: &str, max: usize) -> String {
     let single = collapse_whitespace(text);
     let count = single.chars().count();
@@ -878,13 +833,13 @@ pub(crate) fn truncate_for_log(text: &str, max: usize) -> String {
     format!("{head}…({} more chars)", count - max)
 }
 
-/// `errorSummary` for a `CoreError`: the name and the message, bounded.
+/// A `CoreError` for the log: the name and the message, bounded.
 pub(crate) fn error_summary(error: &CoreError) -> String {
     let name = if error.aborted { "AbortError" } else { "Error" };
     truncate_for_log(&format!("{name}: {}", error.message), 300)
 }
 
-/// `uciCommandName`: the command word and the move count, never the position itself.
+/// A UCI command for the log: the command word and the move count, never the position itself.
 fn uci_command_name(command: &str) -> String {
     let head = command.split_whitespace().next().unwrap_or(command);
     let moves = if command.contains(" moves ") {
@@ -905,35 +860,16 @@ fn uci_command_name(command: &str) -> String {
 mod tests {
     use super::*;
 
-    /// CI regression (Linux, `core_wiring::a_lease_never_waits_on_an_unanswered_battery_request`):
-    /// "Could not start the engine: Text file busy" when a test's fresh engine copy was still
-    /// held open for writing by a child another thread had just forked. The spawn waits it out.
-    #[cfg(target_os = "linux")]
-    #[tokio::test]
-    async fn a_busy_engine_executable_is_waited_out() {
-        use std::io::Write as _;
-        use std::os::unix::fs::PermissionsExt as _;
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("engine");
-        let mut writer = std::fs::File::create(&path).unwrap();
-        writer.write_all(b"#!/bin/sh\nexit 0\n").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let busy = Command::new(&path).spawn().unwrap_err();
-        assert_eq!(busy.kind(), std::io::ErrorKind::ExecutableFileBusy);
-        let release = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(50));
-            drop(writer);
-        });
-        let mut child = spawn_waiting_out_busy(&mut Command::new(&path)).unwrap();
-        assert!(child.wait().await.unwrap().success());
-        release.join().unwrap();
-    }
-
-    #[tokio::test]
-    async fn a_missing_engine_is_an_error_at_once() {
-        let started = std::time::Instant::now();
-        let missing = spawn_waiting_out_busy(&mut Command::new("/nonexistent/kchess-engine"));
-        assert_eq!(missing.unwrap_err().kind(), std::io::ErrorKind::NotFound);
-        assert!(started.elapsed() < BUSY_FOR);
+    #[test]
+    fn only_a_line_cut_off_at_the_limit_is_invalid() {
+        let limit = LINE_LIMIT as usize;
+        for (read, line, cut) in [
+            (limit, &b"info\n"[..], false),
+            (limit, &b"info"[..], true),
+            (5, &b"info\n"[..], false),
+            (4, &b"info"[..], false),
+        ] {
+            assert_eq!(cut_off(read, line), cut, "{read} {line:?}");
+        }
     }
 }

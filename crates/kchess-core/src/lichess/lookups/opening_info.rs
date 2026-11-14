@@ -5,10 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::time::Duration;
 
-use super::PositionLookups;
-use crate::error::{CoreError, Result as CoreResult};
+use super::{PositionLookups, explorer_error};
+use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
+use kchess_contracts::types::{DescriptionBlock, OpeningDescription, PopularityMonth};
 use kchess_domain::training::openings::{line_fens, wikibooks_title};
 
 /// Saved descriptions (and pages that do not exist) are fresh for a week; so is popularity.
@@ -33,34 +33,6 @@ const STOP_HEADINGS: &[&str] = &[
 /// Wikibooks' editing notes, which are not about the opening.
 const BOILERPLATE: &[&str] = &["When contributing to this Wikibook", "This page is a stub"];
 
-/// One paragraph or section heading of a description (`DescriptionBlock`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DescriptionBlock {
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub heading: bool,
-    pub text: String,
-}
-
-/// A line's Wikibooks page as plain text (`OpeningDescription`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OpeningDescription {
-    pub title: String,
-    pub url: String,
-    pub blocks: Vec<DescriptionBlock>,
-    pub fetched_at: i64,
-}
-
-/// One month of a line's popularity (`PopularityMonth`): of the games at the position before its
-/// last move, the share that continued with that move.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PopularityMonth {
-    pub month: String,
-    pub share: f64,
-    pub games: i64,
-}
-
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SavedDescription {
@@ -84,16 +56,9 @@ struct SavedHistory {
     history: Value,
 }
 
-/// The UCI moves of a line, as the methods receive them.
-fn line_of(raw: &Value) -> CoreResult<Vec<String>> {
-    let moves: Vec<String> = raw
-        .as_array()
-        .ok_or_else(|| CoreError::new("moves must be a list."))?
-        .iter()
-        .map(|entry| entry.as_str().map(str::to_string))
-        .collect::<Option<_>>()
-        .ok_or_else(|| CoreError::new("moves must be UCI moves."))?;
-    if moves.len() > 200 || line_fens(&moves).is_none() {
+/// A line the opening pages know: at most 200 moves, legal from the start.
+fn legal_line(moves: &[String]) -> CoreResult<&[String]> {
+    if moves.len() > 200 || line_fens(moves).is_none() {
         return Err(CoreError::new("That line is not legal."));
     }
     Ok(moves)
@@ -189,21 +154,21 @@ pub fn popularity(parent: &Value, child: &Value) -> Vec<PopularityMonth> {
 }
 
 impl PositionLookups {
-    /// `openingDescription(moves)`: the line's Wikibooks page, or None when it has none.
-    pub async fn opening_description(&self, raw: &Value) -> CoreResult<Option<OpeningDescription>> {
-        tokio::select! {
-            biased;
-            _ = self.lifetime.cancelled() => Err(CoreError::aborted("Position lookup was cancelled.")),
-            result = self.opening_description_inner(raw) => result,
-        }
+    /// The line's Wikibooks page, or None when it has none.
+    pub async fn opening_description(
+        &self,
+        moves: &[String],
+    ) -> CoreResult<Option<OpeningDescription>> {
+        self.until_closed(self.opening_description_inner(moves))
+            .await
     }
 
     async fn opening_description_inner(
         &self,
-        raw: &Value,
+        moves: &[String],
     ) -> CoreResult<Option<OpeningDescription>> {
-        let moves = line_of(raw)?;
-        let Some(title) = wikibooks_title(&moves) else {
+        let moves = legal_line(moves)?;
+        let Some(title) = wikibooks_title(moves) else {
             return Ok(None);
         };
         let key = format!("wikibooks:{title}");
@@ -240,7 +205,7 @@ impl PositionLookups {
         title: &str,
         now: i64,
     ) -> CoreResult<Option<OpeningDescription>> {
-        let mut url = reqwest::Url::parse(&self.endpoints.wikibooks)
+        let mut url = reqwest::Url::parse(&self.wikibooks)
             .map_err(|cause| CoreError::new(format!("Invalid Wikibooks URL: {cause}")))?;
         url.query_pairs_mut()
             .append_pair("action", "query")
@@ -251,9 +216,7 @@ impl PositionLookups {
             .append_pair("format", "json")
             .append_pair("formatversion", "2")
             .append_pair("titles", title);
-        let text = self
-            .bounded_get(self.http.get(url), "The opening description")
-            .await?;
+        let text = self.wikibooks(url).await?;
         let raw: Value = serde_json::from_str(&text)
             .map_err(|_| CoreError::new("The opening description could not be read."))?;
         let Some(page) = raw.pointer("/query/pages/0") else {
@@ -277,19 +240,16 @@ impl PositionLookups {
         }))
     }
 
-    /// `openingPopularity(moves)`: the monthly share of the Lichess games (blitz, rapid and
+    /// The monthly share of the Lichess games (blitz, rapid and
     /// classical) at the position before the line's last move that went on with it.
-    pub async fn opening_popularity(&self, raw: &Value) -> CoreResult<Vec<PopularityMonth>> {
-        tokio::select! {
-            biased;
-            _ = self.lifetime.cancelled() => Err(CoreError::aborted("Position lookup was cancelled.")),
-            result = self.opening_popularity_inner(raw) => result,
-        }
+    pub async fn opening_popularity(&self, moves: &[String]) -> CoreResult<Vec<PopularityMonth>> {
+        self.until_closed(self.opening_popularity_inner(moves))
+            .await
     }
 
-    async fn opening_popularity_inner(&self, raw: &Value) -> CoreResult<Vec<PopularityMonth>> {
-        let moves = line_of(raw)?;
-        let fens = line_fens(&moves).unwrap_or_default();
+    async fn opening_popularity_inner(&self, moves: &[String]) -> CoreResult<Vec<PopularityMonth>> {
+        let moves = legal_line(moves)?;
+        let fens = line_fens(moves).unwrap_or_default();
         let (Some(parent), Some(child)) = (fens.iter().rev().nth(1), fens.last()) else {
             return Ok(Vec::new());
         };
@@ -357,63 +317,59 @@ impl PositionLookups {
     }
 
     async fn fetch_history(&self, fen: &str) -> CoreResult<Value> {
-        let mut url = reqwest::Url::parse(&format!("{}/history", self.endpoints.opening))
-            .map_err(|cause| CoreError::new(format!("Invalid explorer URL: {cause}")))?;
-        url.query_pairs_mut()
-            .append_pair("variant", "standard")
-            .append_pair("fen", fen)
-            .append_pair("speeds", "blitz,rapid,classical");
-        let request = self.explorer_request(url).await?;
-        let text = self.bounded_get(request, "Opening popularity").await?;
+        let text = self
+            .explorer_get("/lichess/history")
+            .await?
+            .query(&[
+                ("variant", "standard"),
+                ("fen", fen),
+                ("speeds", "blitz,rapid,classical"),
+            ])
+            .max_bytes(MAX_BYTES, "Opening popularity returned too much data.")
+            .read_text(None)
+            .await
+            .map_err(|cause| {
+                explorer_error(
+                    cause,
+                    "Opening popularity could not be loaded. Check your connection.",
+                )
+            })?;
         serde_json::from_str(&text)
             .map_err(|_| CoreError::new("Opening popularity could not be read."))
     }
 
-    /// A GET answered within 15 seconds and `MAX_BYTES`; `what` names it in errors.
-    async fn bounded_get(
-        &self,
-        request: reqwest::RequestBuilder,
-        what: &str,
-    ) -> CoreResult<String> {
-        let request = request
-            .build()
-            .map_err(|_| CoreError::new(format!("{what} could not be loaded.")))?;
-        let url = request.url().clone();
-        self.paced(&url)?;
+    /// A Wikibooks page, answered within the lookup deadline and `MAX_BYTES`. Wikibooks has
+    /// nothing to do with Lichess, so no failure asks for a Lichess login.
+    async fn wikibooks(&self, url: reqwest::Url) -> CoreResult<String> {
+        const WHAT: &str = "The opening description";
+        let unreachable = || {
+            CoreError::new(format!(
+                "{WHAT} could not be loaded. Check your connection."
+            ))
+            .with_kind(ErrorKind::Offline)
+        };
         let attempt = async {
-            let mut response = self.http.execute(request).await.map_err(|_| {
-                CoreError::new(format!(
-                    "{what} could not be loaded. Check your connection."
-                ))
-            })?;
-            self.note_rate_limit(&url, &response)?;
-            let status = response.status().as_u16();
-            if status == 401 || status == 403 {
-                return Err(CoreError::new(
-                    "Connect a Lichess account in Settings to use the opening explorer.",
-                ));
-            }
+            let response = self.http.get(url).send().await.map_err(|_| unreachable())?;
             if !response.status().is_success() {
                 return Err(CoreError::new(format!(
-                    "{what} returned {status}. Try again shortly."
-                )));
-            }
-            let mut bytes: Vec<u8> = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(|_| {
-                CoreError::new(format!(
-                    "{what} could not be loaded. Check your connection."
+                    "{WHAT} could not be loaded. Try again shortly."
                 ))
-            })? {
-                if bytes.len() + chunk.len() > MAX_BYTES {
-                    return Err(CoreError::new(format!("{what} returned too much data.")));
-                }
-                bytes.extend_from_slice(&chunk);
+                .with_kind(ErrorKind::Unavailable));
             }
-            Ok(String::from_utf8_lossy(&bytes).into_owned())
-        };
-        tokio::time::timeout(Duration::from_secs(15), attempt)
+            crate::lichess::client::read_body(
+                response,
+                &self.lifetime,
+                (MAX_BYTES, "The opening description returned too much data."),
+                None,
+            )
             .await
-            .map_err(|_| CoreError::new("The operation was aborted due to timeout"))?
+        };
+        tokio::time::timeout(self.timeout, attempt)
+            .await
+            .map_err(|_| {
+                CoreError::new(format!("{WHAT} took too long to load."))
+                    .with_kind(ErrorKind::TimedOut)
+            })?
     }
 }
 
@@ -471,5 +427,25 @@ mod tests {
             ]
         );
         assert!(popularity(&json!({}), &child).is_empty());
+    }
+
+    /// A line is at most 200 legal moves: the 200th is kept, a 201st or an illegal move refused.
+    #[test]
+    fn a_line_is_at_most_two_hundred_legal_moves() {
+        let shuffle = |count: usize| -> Vec<String> {
+            ["g1f3", "g8f6", "f3g1", "f6g8"]
+                .iter()
+                .cycle()
+                .take(count)
+                .map(|step| step.to_string())
+                .collect()
+        };
+        let longest = shuffle(200);
+        assert_eq!(legal_line(&longest).ok(), Some(longest.as_slice()));
+        let refused = |moves: &[String]| legal_line(moves).err().map(|cause| cause.message);
+        let not_legal = Some("That line is not legal.".to_string());
+        assert_eq!(refused(&shuffle(201)), not_legal);
+        assert_eq!(refused(&["e2e5".to_string()]), not_legal);
+        assert_eq!(refused(&[]), None);
     }
 }

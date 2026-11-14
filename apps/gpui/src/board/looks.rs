@@ -1,4 +1,4 @@
-//! Boards and pieces (`crates/kchess-domain/data/looks.json`): the
+//! Boards and pieces (`apps/gpui/data/looks.json`): the
 //! board images and their coordinate colors, and the piece sets, rasterized at the exact size they
 //! are shown so they stay sharp at any board size.
 
@@ -12,7 +12,7 @@ use gpui_kit::{
 use serde::Deserialize;
 use shakmaty::{Color, Piece, Role};
 
-const LOOKS_JSON: &str = include_str!("../../../../crates/kchess-domain/data/looks.json");
+const LOOKS_JSON: &str = include_str!("../../data/looks.json");
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

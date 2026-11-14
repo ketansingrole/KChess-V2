@@ -25,6 +25,8 @@ mod game_image;
 #[cfg(test)]
 mod gpui_patches;
 mod interface_zoom;
+mod links;
+mod loading;
 mod log;
 mod menu;
 mod microphone;
@@ -47,6 +49,7 @@ mod profile;
 mod puzzle_board;
 mod puzzle_db;
 mod quick_pick;
+mod quit;
 mod rating_history;
 mod rating_speeds;
 mod remote_image;
@@ -60,6 +63,7 @@ mod startup;
 mod studies;
 mod swipe;
 mod theme;
+mod timer;
 mod updates;
 mod voice;
 mod whats_new;
@@ -121,7 +125,7 @@ fn main() {
             explain_and_quit(message, cx);
             return;
         }
-        cx.on_app_quit(core::quit).detach();
+        cx.on_app_quit(quit::quit).detach();
         dock_icon::apply(cx);
         startup::start(cx);
         cx.activate(true);
@@ -130,7 +134,7 @@ fn main() {
 
 /// The models, from the profile the core has read (its library read once for them), then the
 /// window.
-fn start_models(library: &serde_json::Value, cx: &mut App) {
+fn start_models(library: &kchess_contracts::types::Library, cx: &mut App) {
     settings::init(cx);
     interface_zoom::init(profile::data_dir().unwrap_or_default(), cx);
     prefs::init(cx);
@@ -185,7 +189,7 @@ fn explain_and_quit(message: String, cx: &mut App) {
     }
 }
 
-/// The window, where and as it was left (`createWindow`).
+/// The window, where and as it was left.
 fn main_window_options(cx: &mut App) -> WindowOptions {
     let dir = profile::data_dir().unwrap_or_default();
     let (window_bounds, _) = window_state::bounds(&dir, cx);

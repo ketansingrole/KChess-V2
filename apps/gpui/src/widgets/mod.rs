@@ -112,11 +112,11 @@ pub trait Pressable: StatefulInteractiveElement + Sized {
 
 impl<E: StatefulInteractiveElement> Pressable for E {}
 
-/// `aria-live="polite"`: text a screen reader speaks whenever it changes, without moving the
+/// Text a screen reader speaks whenever it changes, without moving the
 /// reader's place (a move just played, a game's result). GPUI's elements cannot mark themselves
 /// live, so this one writes AccessKit's `live` itself; each platform adapter announces a live
 /// node when its text changes (macOS reads the value, Windows and Linux the name). Unseen: a
-/// 1px box in its parent's corner (`.sr-only`), since a node with no area may be left out.
+/// 1px box in its parent's corner, since a node with no area may be left out.
 pub struct LiveRegion {
     id: ElementId,
     text: SharedString,

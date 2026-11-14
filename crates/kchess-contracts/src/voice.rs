@@ -1,4 +1,5 @@
-//! The offline speech model as the core reports it (`voiceModelStatus`, `voiceModelInstall` and
+//! Offline speech recognition as the core answers it (`voiceAccept`, `voiceFinish`), and its
+//! model as the core reports it (`voiceModelStatus`, `voiceModelInstall` and
 //! `voicemodel:progress`).
 
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,23 @@ pub struct Status {
     pub busy: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<Progress>,
+}
+
+/// What one request heard: the words of the utterance so far, or the finished utterance.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Heard {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<Utterance>,
+}
+
+/// A finished utterance: the recognizer's text and each word with its confidence.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Utterance {
+    pub text: String,
+    pub words: Vec<crate::types::VoiceWord>,
 }
 
 #[cfg(test)]

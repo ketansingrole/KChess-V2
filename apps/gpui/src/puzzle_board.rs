@@ -2,16 +2,19 @@
 //! opponent's replies. It reports what happened and leaves everything else (scores, Lichess, the
 //! next puzzle) to its page: Puzzles' Train tab and Practice's mistakes.
 
+use crate::loading::Epoch;
 use std::time::Duration;
 
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
-use serde_json::{Value, json};
+use kchess_contracts::types::{Puzzle, PuzzleWrongMove};
+use kchess_domain::trainer::puzzle_session::Detail;
+use kchess_domain::variant::Setup;
 use shakmaty::Color;
 
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
-use crate::game::puzzle::OnBoard;
+use crate::game::puzzle::{OnBoard, PuzzleStatus};
 use crate::game::{STANDARD_FEN, view};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii, tint};
@@ -34,7 +37,7 @@ pub enum PuzzleBoardEvent {
         uci: String,
     },
     /// The first verdict on the puzzle: solved cleanly or not, and how far it got. Sent once.
-    Outcome { win: bool, detail: Value },
+    Outcome { win: bool, detail: Detail },
     /// The puzzle is over: solved, or its solution played out.
     Done,
 }
@@ -61,9 +64,8 @@ pub struct PuzzleBoard {
     /// The player's last wrong move here (UCI), until the next try.
     last_wrong: Option<String>,
     /// The first wrong try at each of the player's moves, as the attempt log keeps them
-    /// (`{index, uci}`, `index` along the solution), so the finished puzzle opens on the
-    /// analysis board with them.
-    tried: Vec<Value>,
+    /// (`index` along the solution), so the finished puzzle opens on the analysis board with them.
+    tried: Vec<PuzzleWrongMove>,
     /// Explanations of this board's puzzle.
     explainer: Entity<crate::ai::Explainer>,
     /// A hint was shown at some point: `hinted` itself clears after each move.
@@ -87,7 +89,7 @@ pub struct PuzzleBoard {
     seen: Vec<(String, Option<(shakmaty::Square, shakmaty::Square)>)>,
     viewing: Option<usize>,
     /// Bumped when the puzzle changes, so a late timer from the old one does nothing.
-    generation: u64,
+    generation: Epoch,
     timers: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -113,7 +115,11 @@ impl PuzzleBoard {
     pub fn new(material: bool, window: &mut Window, cx: &mut Context<Self>) -> PuzzleBoard {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 None,
                 None,
@@ -164,7 +170,7 @@ impl PuzzleBoard {
             frozen: false,
             reply_delay: REPLY_DELAY,
             voice: VoiceMoves::new("puzzles", cx),
-            generation: 0,
+            generation: Epoch::default(),
             timers: Vec::new(),
             seen: Vec::new(),
             viewing: None,
@@ -172,9 +178,9 @@ impl PuzzleBoard {
         }
     }
 
-    /// A puzzle, from its start (`begin`); `outcome` is a verdict its page kept from before.
-    pub fn start(&mut self, puzzle: &Value, outcome: Option<bool>, cx: &mut Context<Self>) {
-        self.generation += 1;
+    /// A puzzle, from its start; `outcome` is a verdict its page kept from before.
+    pub fn start(&mut self, puzzle: Puzzle, outcome: Option<bool>, cx: &mut Context<Self>) {
+        self.generation.invalidate();
         self.timers.clear();
         self.on_board = Some(OnBoard::start(puzzle));
         self.seen.clear();
@@ -196,7 +202,7 @@ impl PuzzleBoard {
 
     /// No puzzle on the board.
     pub fn clear(&mut self, cx: &mut Context<Self>) {
-        self.generation += 1;
+        self.generation.invalidate();
         self.timers.clear();
         self.on_board = None;
         cx.notify();
@@ -206,12 +212,12 @@ impl PuzzleBoard {
         self.on_board.as_ref()
     }
 
-    /// `playing`, `solved`, `failed`, or `revealed` once the solution was shown.
-    pub fn status(&self) -> &str {
+    /// The board's status, `Revealed` once the solution was shown.
+    pub fn status(&self) -> PuzzleStatus {
         match &self.on_board {
-            Some(_) if self.revealed => "revealed",
+            Some(_) if self.revealed => PuzzleStatus::Revealed,
             Some(board) => board.status(),
-            None => "playing",
+            None => PuzzleStatus::Playing,
         }
     }
 
@@ -244,8 +250,8 @@ impl PuzzleBoard {
         self.last_wrong.as_deref()
     }
 
-    /// The first wrong try at each of the player's moves (`{index, uci}`).
-    pub fn wrong_moves(&self) -> &[Value] {
+    /// The first wrong try at each of the player's moves.
+    pub fn wrong_moves(&self) -> &[PuzzleWrongMove] {
         &self.tried
     }
 
@@ -261,9 +267,7 @@ impl PuzzleBoard {
 
     /// The player may move: not while the opponent replies or the solution plays itself out.
     pub fn playing(&self) -> bool {
-        self.on_board
-            .as_ref()
-            .is_some_and(|board| board.status() == "playing")
+        self.on_board.as_ref().is_some_and(OnBoard::playing)
             && !self.waiting
             && !self.revealed
             && !self.frozen
@@ -276,7 +280,7 @@ impl PuzzleBoard {
 
     /// Solved, failed or its solution shown: what is left is the next puzzle.
     pub fn over(&self) -> bool {
-        self.on_board.is_some() && matches!(self.status(), "solved" | "failed" | "revealed")
+        self.on_board.is_some() && self.status().is_over()
     }
 
     /// Once the puzzle is over, step through its moves as on any board: `left`, `right`, `home` or
@@ -305,7 +309,7 @@ impl PuzzleBoard {
         self.viewing
     }
 
-    /// Runs (`retry: false`, `reply-delay`): a wrong move fails the puzzle, replies come faster.
+    /// Runs: a wrong move fails the puzzle, replies come faster.
     pub fn for_runs(&mut self, reply_delay: Duration) {
         self.retry = false;
         self.reply_delay = reply_delay;
@@ -325,11 +329,6 @@ impl PuzzleBoard {
             .as_ref()
             .map_or(Color::White, OnBoard::player_color);
         if self.flipped { !color } else { color }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn flipped(&self) -> bool {
-        self.flipped
     }
 
     pub fn flip(&mut self, cx: &mut Context<Self>) {
@@ -360,7 +359,7 @@ impl PuzzleBoard {
             kchess_domain::rules::setup_start(on_board.variant(), &fen).unwrap_or_default();
         let movable = self.playing().then(|| on_board.player_color());
         let mut state = BoardState::of(&position, self.orientation(), movable, last_move);
-        if on_board.status() == "playing"
+        if on_board.playing()
             && let Some((from, to)) = on_board.next_squares()
         {
             if self.revealed {
@@ -380,11 +379,11 @@ impl PuzzleBoard {
             return;
         }
         self.outcome = Some(win);
-        let detail = json!({
-            "revealed": self.revealed,
-            "hinted": self.hint_used,
-            "total": self.on_board.as_ref().map_or(0, OnBoard::player_moves),
-        });
+        let detail = Detail {
+            revealed: self.revealed,
+            hinted: self.hint_used,
+            total: self.on_board.as_ref().map_or(0, OnBoard::player_moves) as u32,
+        };
         cx.emit(PuzzleBoardEvent::Outcome { win, detail });
     }
 
@@ -400,20 +399,23 @@ impl PuzzleBoard {
         let (correct, reply) = board.player_move(uci);
         self.last_wrong = (!correct).then(|| uci.to_string());
         // The player moves first, so their move `index` is the solution's `2 × index`.
-        let ply = 2 * index;
-        if !correct && !self.tried.iter().any(|tried| tried["index"] == ply) {
-            self.tried.push(json!({ "index": ply, "uci": uci }));
+        let ply = 2 * index as u32;
+        if !correct && !self.tried.iter().any(|tried| tried.index == ply) {
+            self.tried.push(PuzzleWrongMove {
+                index: ply,
+                uci: uci.to_string(),
+            });
         }
         if !correct {
             self.mistakes += 1;
             self.feedback = Feedback::Wrong;
             self.flash = true;
             self.hinted = false;
-            let generation = self.generation;
+            let generation = self.generation.current();
             self.timers.push(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(FLASH).await;
                 let _ = this.update(cx, |this, cx| {
-                    if this.generation == generation {
+                    if this.generation.is_current(generation) {
                         this.flash = false;
                         cx.notify();
                     }
@@ -427,7 +429,7 @@ impl PuzzleBoard {
             self.decide(false, cx);
             if !self.retry {
                 if let Some(board) = &mut self.on_board {
-                    board.state["status"] = json!("failed");
+                    board.state.status = PuzzleStatus::Failed;
                 }
                 cx.emit(PuzzleBoardEvent::Done);
             }
@@ -437,7 +439,7 @@ impl PuzzleBoard {
         self.feedback = Feedback::Good;
         self.hinted = false;
         crate::sound::move_sound(&board.last_san(), cx);
-        let solved = board.status() == "solved";
+        let solved = board.solved();
         cx.emit(PuzzleBoardEvent::Move {
             index,
             correct: true,
@@ -457,11 +459,11 @@ impl PuzzleBoard {
     fn reply(&mut self, uci: String, cx: &mut Context<Self>) {
         self.waiting = true;
         let delay = self.reply_delay;
-        let generation = self.generation;
+        let generation = self.generation.current();
         self.timers.push(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
             let _ = this.update(cx, |this, cx| {
-                if this.generation != generation {
+                if !this.generation.is_current(generation) {
                     return;
                 }
                 if let Some(board) = &mut this.on_board {
@@ -476,7 +478,7 @@ impl PuzzleBoard {
 
     /// Light up the piece to move, or hide it again.
     pub fn hint(&mut self, cx: &mut Context<Self>) {
-        if self.status() != "playing" {
+        if self.status() != PuzzleStatus::Playing {
             return;
         }
         self.hinted = !self.hinted;
@@ -488,25 +490,25 @@ impl PuzzleBoard {
 
     /// Play out the rest of the solution; the puzzle then counts as failed.
     pub fn show_solution(&mut self, cx: &mut Context<Self>) {
-        if self.status() != "playing" {
+        if self.status() != PuzzleStatus::Playing {
             return;
         }
         self.revealed = true;
         self.decide(false, cx);
         self.redraw(cx);
-        let generation = self.generation;
+        let generation = self.generation.current();
         self.timers.push(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(SOLUTION_STEP).await;
                 let reply = this
                     .update(cx, |this, cx| {
-                        if this.generation != generation {
+                        if !this.generation.is_current(generation) {
                             return Err(());
                         }
                         let Some(board) = &mut this.on_board else {
                             return Err(());
                         };
-                        if board.status() != "playing" {
+                        if !board.playing() {
                             return Err(());
                         }
                         // The opponent's reply to the last move is still on its way: the
@@ -514,13 +516,9 @@ impl PuzzleBoard {
                         if this.waiting {
                             return Ok(None);
                         }
-                        let Some(uci) = board.solution(board.index()) else {
+                        let Some(reply) = board.reveal_next() else {
                             return Err(());
                         };
-                        let (correct, reply) = board.player_move(&uci);
-                        if !correct {
-                            return Err(());
-                        }
                         crate::sound::move_sound(&board.last_san(), cx);
                         this.redraw(cx);
                         Ok(reply)
@@ -530,7 +528,7 @@ impl PuzzleBoard {
                 if let Some(reply) = reply {
                     cx.background_executor().timer(SOLUTION_REPLY).await;
                     let _ = this.update(cx, |this, cx| {
-                        if this.generation != generation {
+                        if !this.generation.is_current(generation) {
                             return;
                         }
                         if let Some(board) = &mut this.on_board {
@@ -542,7 +540,7 @@ impl PuzzleBoard {
                 }
             }
             let _ = this.update(cx, |this, cx| {
-                if this.generation == generation {
+                if this.generation.is_current(generation) {
                     cx.emit(PuzzleBoardEvent::Done);
                     this.redraw(cx);
                 }
@@ -553,12 +551,12 @@ impl PuzzleBoard {
     /// A spoken move belongs to this puzzle at this point of it; another drops a choice waiting.
     fn sync_voice(&mut self, cx: &mut Context<Self>) {
         let index = self.on_board.as_ref().map_or(0, OnBoard::index);
-        let context = format!("{}:{index}", self.generation);
+        let context = format!("{}:{index}", self.generation.current());
         let playing = self.playing();
         self.voice.sync(
             &context,
             None,
-            crate::voice::grammar("MOVE_GRAMMAR"),
+            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Move).to_vec(),
             playing,
             cx,
         );
@@ -568,11 +566,15 @@ impl PuzzleBoard {
         if !self.voice.owns(event) {
             return;
         }
-        let (fen, variant) = self
+        let setup = self
             .on_board
             .as_ref()
-            .map(|board| (board.fen().to_string(), board.variant().to_string()))
-            .unwrap_or_default();
+            .map(|board| Setup {
+                variant: board.variant(),
+                fen: board.fen().to_string(),
+            })
+            .unwrap_or_else(|| Setup::standard_at(""));
+        let fen = setup.fen.clone();
         let heard = match event {
             crate::voice::VoiceEvent::Missed { heard, .. } => {
                 self.voice.missed(heard, &fen, self.playing(), cx);
@@ -580,7 +582,6 @@ impl PuzzleBoard {
             }
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
         };
-        let setup = json!({ "variant": variant, "fen": fen });
         let turn = Turn {
             taking: self.playing(),
             idle: None,
@@ -598,7 +599,10 @@ impl PuzzleBoard {
         if text.is_empty() || !self.playing() {
             return;
         }
-        let setup = json!({ "variant": board.variant(), "fen": board.fen() });
+        let setup = Setup {
+            variant: board.variant(),
+            fen: board.fen().to_string(),
+        };
         let typed = kchess_domain::rules::setup_start(board.variant(), board.fen())
             .and_then(|position| view::typed_uci(&setup, &position, &text));
         match typed {
@@ -647,7 +651,8 @@ impl Render for PuzzleBoard {
                 hint: "Say “E four” or “Knight F three”",
                 active: playing,
                 listening: playing,
-                grammar: crate::voice::grammar("MOVE_GRAMMAR"),
+                grammar: kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Move)
+                    .to_vec(),
             },
             cx,
         );
@@ -723,13 +728,14 @@ mod tests {
             board.update(cx, |board, cx| {
                 board.for_runs(Duration::from_secs(1));
                 board.start(
-                    &serde_json::json!({
+                    serde_json::from_value(serde_json::json!({
                         "id": "slowreply",
                         "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
                         "solution": ["e2e4", "e7e5", "g1f3"],
                         "rating": 1500,
                         "themes": [],
-                    }),
+                    }))
+                    .expect("a puzzle"),
                     None,
                     cx,
                 );

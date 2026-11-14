@@ -101,11 +101,12 @@ creating/pushing a tag or publishing a release.
   update to 2026.11.4 through the `latest*.yml` the release job writes; don't change that step.
   Keep `SHA256SUMS.txt` with the installers. Verify all packages and checksums before
   publishing; macOS ZIPs are required for the update feed.
-- The AppImage is made with appimagetool and the AppImage runtime it embeds, both pinned by
-  release and SHA-256 in `tooling/xtask/src/package/linux.rs`; packaging downloads them once
-  into `target/package/`, refetches a cached copy that does not match and refuses a download
-  that does not. The weekly Pins workflow (`cargo xtask pins --check`) opens one issue when
-  either has a newer release; move a pin in a pull request so CI packages and tests it.
+- Every download the build pins (appimagetool and the AppImage runtime it embeds, libvosk,
+  Fairy-Stockfish's source) is pinned by version and SHA-256 in `tooling/xtask/src/pinned.rs`,
+  the shipped Stockfish in `crates/kchess-core/src/engine/managed/shipped.rs`; a build
+  downloads each once into `target/`, refetches a cached copy that does not match and refuses
+  a download that does not. The weekly Pins workflow (`cargo xtask pins --check`) opens one
+  issue when any has a newer release; move a pin in a pull request so CI builds and tests it.
 
 Before an authorized tag push, derive its name from the committed workspace version,
 confirm the named commit is the intended release, and inspect the exact local tag:
@@ -152,7 +153,9 @@ check and the checksum files are tried three times after a dropped connection or
 
 Each package also comes as **update patches** (`KChess-<version>-<platform>-<arch>.from-<old>.delta`),
 from each of the three newest published releases before it, written by `cargo xtask deltas` in
-each package job (`crates/kchess-delta`). The release tooling compares the old and new
+each package job (`crates/kchess-delta`, the crate a release and the installed app agree
+through: versions, release notes, asset and install names, the signed checksums and the
+patches). The release tooling compares the old and new
 releases' files by SHA-256: unchanged ones are taken from the installation, changed ones are
 bsdiff patches, new ones come whole, so a release that replaces Stockfish carries it. A patch that
 saves less than a quarter of the package is left out. The updater uses the patch for its own

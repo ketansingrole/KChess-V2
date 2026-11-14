@@ -1,86 +1,74 @@
-//! The shared engine budget: one lease at a time, in order.
+//! The shared engine budget: one lease at a time, in priority order.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::Poll;
 use std::time::Duration;
 
-use kchess_core::engine::scheduler::Scheduler;
+use futures_util::poll;
+use kchess_contracts::error::CoreError;
+use kchess_core::engine::scheduler::{Priority, Scheduler};
 use kchess_core::engine::uci::search_cancelled;
-use kchess_core::error::CoreError;
 use tokio_util::sync::CancellationToken;
-
-/// Lets spawned acquisitions reach their queue position.
-async fn settle() {
-    tokio::time::sleep(Duration::from_millis(20)).await;
-}
 
 #[tokio::test]
 async fn preempts_lower_priority_work_and_releases_queued_work_in_priority_order() {
     let scheduler = Scheduler::with_budget(1, || false);
-    let stops = Arc::new(AtomicUsize::new(0));
-    let counter = Arc::clone(&stops);
+    let review = CancellationToken::new();
     let release = scheduler
-        .acquire(
-            1,
-            move || {
-                counter.fetch_add(1, Ordering::SeqCst);
-            },
-            None,
-        )
+        .acquire(Priority::Review, &review)
         .await
         .expect("first lease");
 
-    let analysis = tokio::spawn({
-        let scheduler = scheduler.clone();
-        async move { scheduler.acquire(2, || {}, None).await }
-    });
-    settle().await;
-    let computer = tokio::spawn({
-        let scheduler = scheduler.clone();
-        async move { scheduler.acquire(3, || {}, None).await }
-    });
-    settle().await;
-    assert!(
-        stops.load(Ordering::SeqCst) > 0,
-        "higher priority preempts the active lease"
-    );
+    // One poll queues each acquisition: the waiter is in line before its first await.
+    let analysis_token = CancellationToken::new();
+    let analysis = scheduler.acquire(Priority::Analysis, &analysis_token);
+    tokio::pin!(analysis);
+    assert!(poll!(&mut analysis).is_pending());
+    assert!(review.is_cancelled(), "analysis preempts the review");
+
+    let computer_token = CancellationToken::new();
+    let computer = scheduler.acquire(Priority::Computer, &computer_token);
+    tokio::pin!(computer);
+    assert!(poll!(&mut computer).is_pending());
+    assert!(!analysis_token.is_cancelled(), "a waiter is not preempted");
 
     drop(release);
-    let release_computer = computer.await.expect("join").expect("computer lease");
-    settle().await;
+    let release_computer = computer.await.expect("computer lease");
     assert!(
-        !analysis.is_finished(),
-        "analysis waits while computer holds the budget"
+        poll!(&mut analysis).is_pending(),
+        "analysis waits while the computer holds the budget"
     );
 
     drop(release_computer);
-    let release_analysis = analysis.await.expect("join").expect("analysis lease");
-    drop(release_analysis);
+    let Poll::Ready(release_analysis) = poll!(&mut analysis) else {
+        panic!("analysis is granted once the computer is done");
+    };
+    drop(release_analysis.expect("analysis lease"));
 }
 
 #[tokio::test]
 async fn removes_cancelled_queued_work() {
     let scheduler = Scheduler::with_budget(1, || false);
     let release = scheduler
-        .acquire(3, || {}, None)
+        .acquire(Priority::Computer, &CancellationToken::new())
         .await
         .expect("first lease");
     let cancel = CancellationToken::new();
-    let queued = tokio::spawn({
-        let scheduler = scheduler.clone();
-        let cancel = cancel.clone();
-        async move { scheduler.acquire(1, || {}, Some(&cancel)).await.map(|_| ()) }
-    });
-    settle().await;
+    let queued = scheduler.acquire(Priority::Review, &cancel);
+    tokio::pin!(queued);
+    assert!(poll!(&mut queued).is_pending());
     cancel.cancel();
-    let error = queued.await.expect("join").unwrap_err();
+    let error = queued.await.map(|_| ()).unwrap_err();
     assert_eq!(error, search_cancelled());
     drop(release);
     // The cancelled waiter left no lease behind: the budget is free again.
-    let next = tokio::time::timeout(Duration::from_secs(1), scheduler.acquire(1, || {}, None))
-        .await
-        .expect("budget is free")
-        .expect("lease");
+    let next = tokio::time::timeout(
+        Duration::from_secs(1),
+        scheduler.acquire(Priority::Review, &CancellationToken::new()),
+    )
+    .await
+    .expect("budget is free")
+    .expect("lease");
     drop(next);
 }
 
@@ -89,33 +77,28 @@ async fn releases_the_shared_engine_lease_after_success_failure_and_cancel() {
     for outcome in ["success", "failure", "cancel"] {
         let scheduler = Scheduler::with_budget(1, || false);
         let cancel = CancellationToken::new();
-        let work = scheduler.with_lease(
-            1,
-            {
-                let cancel = cancel.clone();
-                move || cancel.cancel()
-            },
-            &cancel,
-            async {
-                match outcome {
-                    "failure" => Err(CoreError::new("search failed")),
-                    "cancel" => {
-                        cancel.cancel();
-                        Err(search_cancelled())
-                    }
-                    _ => Ok("bestmove"),
+        let work = scheduler.with_lease(Priority::Review, &cancel, async {
+            match outcome {
+                "failure" => Err(CoreError::new("search failed")),
+                "cancel" => {
+                    cancel.cancel();
+                    Err(search_cancelled())
                 }
-            },
-        );
+                _ => Ok("bestmove"),
+            }
+        });
         match outcome {
             "success" => assert_eq!(work.await.expect("result"), "bestmove"),
             _ => assert!(work.await.is_err(), "{outcome} reports an error"),
         }
         // Whatever the outcome, the lease was released: a new acquisition does not wait.
-        let lease = tokio::time::timeout(Duration::from_secs(1), scheduler.acquire(1, || {}, None))
-            .await
-            .unwrap_or_else(|_| panic!("lease leaked after {outcome}"))
-            .expect("lease");
+        let lease = tokio::time::timeout(
+            Duration::from_secs(1),
+            scheduler.acquire(Priority::Review, &CancellationToken::new()),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("lease leaked after {outcome}"))
+        .expect("lease");
         drop(lease);
     }
 }
@@ -127,11 +110,35 @@ async fn an_aborted_signal_never_starts_work() {
     cancel.cancel();
     let ran = AtomicUsize::new(0);
     let result = scheduler
-        .with_lease(1, || {}, &cancel, async {
+        .with_lease(Priority::Review, &cancel, async {
             ran.fetch_add(1, Ordering::SeqCst);
             Ok::<(), CoreError>(())
         })
         .await;
     assert!(result.is_err());
     assert_eq!(ran.load(Ordering::SeqCst), 0);
+}
+
+/// The scheduler asks for a fresh battery reading before every lease, without waiting for it.
+#[tokio::test]
+async fn every_lease_refreshes_the_battery_reading() {
+    struct Counted(std::sync::Arc<AtomicUsize>);
+    impl kchess_core::engine::scheduler::Power for Counted {
+        fn on_battery(&self) -> bool {
+            false
+        }
+        fn refresh(&self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    let refreshes = std::sync::Arc::new(AtomicUsize::new(0));
+    let scheduler = Scheduler::with_budget(1, Counted(std::sync::Arc::clone(&refreshes)));
+    for _ in 0..2 {
+        let lease = scheduler
+            .acquire(Priority::Review, &CancellationToken::new())
+            .await
+            .expect("lease");
+        drop(lease);
+    }
+    assert_eq!(refreshes.load(Ordering::SeqCst), 2);
 }

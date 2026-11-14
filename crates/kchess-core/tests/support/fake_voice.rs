@@ -1,5 +1,5 @@
 //! A scripted `kchess-voice` helper for the recognizer tests: `kchess-fake-voice <model folder>`.
-//! It speaks the helper's pipe protocol (`crates/kchess-voice/src/protocol.rs`) without Vosk.
+//! It speaks the helper's pipe protocol (`kchess_voice::protocol`) without Vosk.
 //! The folder's `mode` file picks the behaviour, so parallel tests never share settings:
 //! - `normal` (or no file): ready; a grammar is acknowledged; audio with any non-zero sample ends
 //!   an utterance heard as "e four", silent audio is a partial "e"; the final result is empty.
@@ -16,21 +16,38 @@
 //! scanning can hold up on Windows) inside every request's deadline.
 
 use std::fs::OpenOptions;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
+use std::time::Duration;
+
+use kchess_voice::protocol::{Answer, Recognized, Request, Word, read_request};
+
+fn heard(text: &str, words: &[(&str, f64)]) -> Answer {
+    Answer::Result(Recognized {
+        text: text.into(),
+        words: words
+            .iter()
+            .map(|(word, conf)| Word {
+                word: (*word).into(),
+                conf: *conf,
+            })
+            .collect(),
+    })
+}
 
 fn main() {
     let folder = PathBuf::from(std::env::args().nth(1).expect("model folder"));
     let mode = std::fs::read_to_string(folder.join("mode")).unwrap_or_default();
     let mode = mode.trim();
     let mut out = std::io::stdout().lock();
-    let mut say = |line: &str| {
-        out.write_all(line.as_bytes()).expect("write");
-        out.write_all(b"\n").expect("write");
+    let mut say = |answer: Answer| {
+        out.write_all(answer.line().as_bytes()).expect("write");
         out.flush().expect("flush");
     };
     if mode == "refuse" {
-        say(r#"{"error":"The offline voice model couldn’t load."}"#);
+        say(Answer::Error(
+            "The offline voice model couldn’t load.".into(),
+        ));
         std::process::exit(1);
     }
     let mut log = OpenOptions::new()
@@ -38,42 +55,43 @@ fn main() {
         .append(true)
         .open(folder.join("log"))
         .expect("log");
-    say(r#"{"ready":true}"#);
+    say(Answer::Ready(true));
     let mut input = std::io::stdin().lock();
-    loop {
-        let mut head = [0u8; 5];
-        if input.read_exact(&mut head).is_err() {
-            return;
-        }
-        let length = u32::from_le_bytes([head[1], head[2], head[3], head[4]]) as usize;
-        let mut payload = vec![0u8; length];
-        input.read_exact(&mut payload).expect("payload");
-        writeln!(log, "{}", head[0] as char).expect("log line");
-        match head[0] {
-            b'G' => {
+    while let Ok(Some(request)) = read_request(&mut input) {
+        let tag = match &request {
+            Request::Grammar(_) => 'G',
+            Request::Audio(_) => 'A',
+            Request::Final => 'F',
+            Request::Invalid(_) => '?',
+        };
+        // One write per line, so a helper starting as another stops cannot split it.
+        log.write_all(format!("{tag}\n").as_bytes())
+            .expect("log line");
+        match request {
+            Request::Grammar(_) => {
                 if mode == "slow-grammar" {
-                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    std::thread::sleep(Duration::from_secs(2));
                 }
-                say(r#"{"ok":true}"#);
+                say(Answer::Ok(true));
             }
-            b'A' if mode == "crash-on-audio" => std::process::exit(3),
-            b'A' if mode == "hang-on-audio" => loop {
+            Request::Audio(_) if mode == "crash-on-audio" => std::process::exit(3),
+            Request::Audio(_) if mode == "hang-on-audio" => loop {
                 std::thread::park();
             },
-            b'A' if mode == "slow-audio" => {
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                if payload.iter().any(|byte| *byte != 0) {
-                    say(r#"{"result":{"text":"e four","words":[]}}"#);
+            Request::Audio(samples) if mode == "slow-audio" => {
+                std::thread::sleep(Duration::from_millis(500));
+                if samples.iter().any(|sample| *sample != 0) {
+                    say(heard("e four", &[]));
                 } else {
-                    say(r#"{"partial":"e"}"#);
+                    say(Answer::Partial("e".into()));
                 }
             }
-            b'A' if payload.iter().any(|byte| *byte != 0) => say(
-                r#"{"result":{"text":"e four","words":[{"word":"e","conf":0.9},{"word":"four","conf":0.8}]}}"#,
-            ),
-            b'A' => say(r#"{"partial":"e"}"#),
-            b'F' => say(r#"{"result":{"text":"","words":[]}}"#),
-            _ => say(r#"{"error":"unknown request"}"#),
+            Request::Audio(samples) if samples.iter().any(|sample| *sample != 0) => {
+                say(heard("e four", &[("e", 0.9), ("four", 0.8)]));
+            }
+            Request::Audio(_) => say(Answer::Partial("e".into())),
+            Request::Final => say(heard("", &[])),
+            Request::Invalid(message) => say(Answer::Error(message.into())),
         }
     }
 }

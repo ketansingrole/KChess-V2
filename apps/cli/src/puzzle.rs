@@ -2,14 +2,16 @@
 //! Puzzles page.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::PuzzleId;
+use kchess_contracts::types::Puzzle;
 use kchess_domain::position::{play_san, play_uci};
 use kchess_domain::rules::setup_start;
 use kchess_games::puzzle::OnBoard;
-use serde_json::{Value, json};
-use tokio::io::AsyncBufReadExt;
+use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::core::{CoreClient, Event};
+use crate::core::{ClientEvent, CoreClient};
+use crate::wait::{Next, Wait};
 
 /// A puzzle being solved, on the board as the Puzzles page plays it
 /// (`kchess_games::puzzle::OnBoard`): the rules decide whether a move is the solution's (any
@@ -35,13 +37,13 @@ pub enum Answer {
 
 impl Solving {
     /// The puzzle, unless the rules cannot set it up or it has no solution.
-    pub fn new(puzzle: &Value) -> Option<Solving> {
+    pub fn new(puzzle: Puzzle) -> Option<Solving> {
         let board = OnBoard::start(puzzle);
         (!board.fen().is_empty() && board.player_moves() > 0).then_some(Solving { board })
     }
 
     pub fn solved(&self) -> bool {
-        self.board.status() == "solved"
+        self.board.solved()
     }
 
     /// The position now, as FEN.
@@ -61,7 +63,7 @@ impl Solving {
     /// Play `text` (SAN or UCI). As on Lichess, any checkmate solves the puzzle, not only the
     /// one in its solution.
     pub fn answer(&mut self, text: &str) -> Answer {
-        if self.board.status() != "playing" {
+        if !self.board.playing() {
             return Answer::Illegal;
         }
         let Some(position) = setup_start(self.board.variant(), self.board.fen()) else {
@@ -98,14 +100,7 @@ impl Solving {
     /// The moves left, in SAN; the puzzle ends shown.
     pub fn give_up(&mut self) -> Vec<String> {
         let mut shown = Vec::new();
-        while self.board.status() == "playing" {
-            let Some(uci) = self.board.solution(self.board.index()) else {
-                break;
-            };
-            let (correct, reply) = self.board.player_move(&uci);
-            if !correct {
-                break;
-            }
+        while let Some(reply) = self.board.reveal_next() {
             shown.push(self.board.last_san());
             if let Some(reply) = reply {
                 self.board.opponent_reply(&reply);
@@ -123,73 +118,60 @@ pub fn named(word: &str) -> String {
 
 pub async fn interactive(
     core: &CoreClient,
-    events: &mut UnboundedReceiver<Event>,
+    events: &mut UnboundedReceiver<ClientEvent>,
     id: Option<&str>,
 ) -> Result<(), String> {
     let puzzle = match id {
         Some(word) => {
             core.request(calls::PuzzleById {
-                id: json!(named(word)),
+                id: PuzzleId(named(word)),
             })
             .await?
         }
         None => core.request(calls::PuzzleDaily {}).await?,
     };
-    let mut solving =
-        Solving::new(&puzzle).ok_or("Lichess sent a puzzle KChess could not read.")?;
-    println!(
-        "{}",
-        json!({
-            "puzzle": puzzle["id"],
-            "rating": puzzle["rating"],
-            "themes": puzzle["themes"],
-            "fen": solving.fen(),
-            "toMove": solving.solver(),
-        })
-    );
-    let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
-    let interrupted = tokio::signal::ctrl_c();
-    tokio::pin!(interrupted);
+    let sent = json!(puzzle);
+    let mut solving = Solving::new(puzzle).ok_or("Lichess sent a puzzle KChess could not read.")?;
+    crate::print(json!({
+        "puzzle": sent["id"],
+        "rating": sent["rating"],
+        "themes": sent["themes"],
+        "fen": solving.fen(),
+        "toMove": solving.solver(),
+    }));
+    let mut wait = Wait::new(events).typed();
     loop {
-        tokio::select! {
-            _ = &mut interrupted => break,
-            Some(event) = events.recv() => {
-                if event.name == "host:request" {
-                    core.answer(&event.payload).await;
-                } else if event.name == "core:closed" {
-                    break;
-                }
+        let line = match wait.next().await {
+            Next::Line(line) => line,
+            Next::Event(_) | Next::Tick => continue,
+            Next::Interrupted | Next::Closed | Next::InputEnded => break,
+        };
+        let shown = match line.as_str() {
+            "" => continue,
+            "quit" => break,
+            "hint" => json!({ "hint": solving.hint() }),
+            "solution" => {
+                let moves = solving.give_up();
+                json!({ "solution": moves, "fen": solving.fen() })
             }
-            line = lines.next_line() => {
-                let Ok(Some(line)) = line else { break };
-                let shown = match line.trim() {
-                    "" => continue,
-                    "quit" => break,
-                    "hint" => json!({ "hint": solving.hint() }),
-                    "solution" => {
-                        let moves = solving.give_up();
-                        json!({ "solution": moves, "fen": solving.fen() })
-                    }
-                    text => match solving.answer(text) {
-                        Answer::Illegal => {
-                            eprintln!("Illegal move.");
-                            continue;
-                        }
-                        Answer::Wrong { san } => json!({ "move": san, "correct": false }),
-                        Answer::Right { san, reply, solved } => json!({
-                            "move": san,
-                            "correct": true,
-                            "reply": reply,
-                            "solved": solved,
-                            "fen": solving.fen(),
-                        }),
-                    },
-                };
-                println!("{shown}");
-                if solving.solved() {
-                    break;
+            text => match solving.answer(text) {
+                Answer::Illegal => {
+                    eprintln!("Illegal move.");
+                    continue;
                 }
-            }
+                Answer::Wrong { san } => json!({ "move": san, "correct": false }),
+                Answer::Right { san, reply, solved } => json!({
+                    "move": san,
+                    "correct": true,
+                    "reply": reply,
+                    "solved": solved,
+                    "fen": solving.fen(),
+                }),
+            },
+        };
+        crate::print(shown);
+        if solving.solved() {
+            break;
         }
     }
     Ok(())
@@ -198,14 +180,28 @@ pub async fn interactive(
 #[cfg(test)]
 mod tests {
     use super::{Answer, Solving};
-    use serde_json::json;
+    use kchess_contracts::types::Puzzle;
+
+    fn puzzle(fen: &str, solution: &[&str]) -> Puzzle {
+        Puzzle {
+            id: "test".into(),
+            fen: fen.into(),
+            last_move: None,
+            solution: solution.iter().map(|uci| uci.to_string()).collect(),
+            rating: 1500.,
+            themes: Vec::new(),
+            plays: None,
+            game_id: None,
+            variant: Default::default(),
+        }
+    }
 
     /// Lichess's daily puzzle of 4 November 2026: a discovered check wins the queen.
     fn daily() -> Solving {
-        Solving::new(&json!({
-            "fen": "r1b4r/ppqpkpb1/2nNpnp1/7p/5P1P/4BNP1/PPP5/R2QKB1R w KQ - 1 1",
-            "solution": ["e3c5", "c7a5", "b2b4", "c6b4", "d6b7", "a5c5", "b7c5"],
-        }))
+        Solving::new(puzzle(
+            "r1b4r/ppqpkpb1/2nNpnp1/7p/5P1P/4BNP1/PPP5/R2QKB1R w KQ - 1 1",
+            &["e3c5", "c7a5", "b2b4", "c6b4", "d6b7", "a5c5", "b7c5"],
+        ))
         .expect("the puzzle reads")
     }
 
@@ -253,11 +249,8 @@ mod tests {
     #[test]
     fn any_checkmate_solves_a_mate_puzzle() {
         // Mate in one with two mating moves: Ra8 and Rb8 both mate; the solution names one.
-        let mut solving = Solving::new(&json!({
-            "fen": "6k1/5ppp/8/8/8/8/8/RR4K1 w - - 0 1",
-            "solution": ["a1a8"],
-        }))
-        .expect("the puzzle reads");
+        let mut solving = Solving::new(puzzle("6k1/5ppp/8/8/8/8/8/RR4K1 w - - 0 1", &["a1a8"]))
+            .expect("the puzzle reads");
         assert!(matches!(
             solving.answer("Rb8#"),
             Answer::Right { solved: true, .. }

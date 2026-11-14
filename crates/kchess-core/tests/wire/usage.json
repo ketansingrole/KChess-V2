@@ -1,0 +1,1 @@
+{"accounts":{"":{"total":{"requests":4,"bytesIn":0},"byKind":{"puzzles":{"requests":4,"bytesIn":0}}},"alice":{"total":{"requests":7,"bytesIn":392},"byKind":{"puzzles":{"requests":7,"bytesIn":392}}}},"storage":{},"since":0.0,"dbBytes":0}

@@ -6,12 +6,12 @@
 //!
 //! cargo run --release -p kchess-core --example fetch_stockfish -- <folder>
 
+use kchess_contracts::CoreEvent;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use kchess_core::engine::managed::{ManagedLocation, install_managed_engine};
 use kchess_core::host::{Host, Level};
-use serde_json::Value;
 
 struct Stderr;
 
@@ -22,7 +22,7 @@ impl Host for Stderr {
         }
     }
 
-    fn emit(&self, _: &str, _: Value) {}
+    fn emit(&self, _event: CoreEvent) {}
 }
 
 #[tokio::main]

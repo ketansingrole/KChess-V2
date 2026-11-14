@@ -1,5 +1,4 @@
-//! Whether the computer is on a network (`useOnline`, the browser's `navigator.onLine`): there is a
-//! route out. Nothing is sent to find out.
+//! Whether the computer is on a network: there is a route out. Nothing is sent to find out.
 
 use std::time::Duration;
 

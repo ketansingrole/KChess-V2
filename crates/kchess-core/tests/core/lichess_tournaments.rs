@@ -11,35 +11,38 @@ use std::time::Duration;
 use fixtures::{
     MemoryStore, MemoryTokens, Recording, Reply, capabilities_for, http_client, ndjson, serve,
 };
+use kchess_contracts::Variant;
+use kchess_contracts::types::{TournamentStatus, TournamentSystem};
 use kchess_core::host::Host;
 use kchess_core::lichess::accounts::{Lichess, LichessStore, Reply as Outcome};
 use kchess_core::lichess::client::{LichessClient, TokenSource};
 use kchess_core::lichess::policy::Policy;
 use kchess_core::lichess::tournaments::{
-    NewArena, arena_extras, create_tournament, tournament, tournaments,
+    NewArena, arena_extras, arena_form, create_tournament, tournament, tournaments,
 };
+use kchess_domain::color::Color;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 fn lichess(base: &str, host: &Arc<Recording>, tokens: Arc<MemoryTokens>) -> Lichess {
     let policy = Policy::with_timeout(
         Arc::clone(host) as Arc<dyn Host>,
+        Arc::clone(host) as Arc<dyn kchess_core::usage::Meter>,
         http_client(),
         CancellationToken::new(),
         Duration::from_secs(5),
     );
-    let client = LichessClient::with_base(base, policy, http_client());
+    let client = LichessClient::with_base(base, policy);
     Lichess::new(
         client,
         capabilities_for(host),
         MemoryStore::with_accounts(&[]) as Arc<dyn LichessStore>,
         tokens as Arc<dyn TokenSource>,
         Arc::clone(host) as Arc<dyn Host>,
-        CancellationToken::new(),
     )
 }
 
-/// `arena()` of the TypeScript suite: an arena as Lichess lists it.
+/// An arena as Lichess lists it.
 fn arena(overrides: Value) -> Value {
     let mut arena = json!({
         "id": "Abcd1234",
@@ -80,6 +83,7 @@ async fn lists_running_upcoming_and_finished_arenas_with_what_the_timeline_group
     let host = Arc::new(Recording::default());
     let lichess = lichess(&fixture.base, &host, Arc::new(MemoryTokens::default()));
     let list = tournaments(&lichess, "").await.unwrap();
+    crate::support::wire::assert_wire("tournaments.arenas", &list);
     let listed: Vec<(&str, &str)> = list
         .arenas
         .iter()
@@ -121,12 +125,12 @@ async fn creates_an_arena_as_the_chosen_account_and_returns_it() {
         "Alice",
         &NewArena {
             name: Some("Club Night".into()),
-            clock_time: serde_json::Number::from(10),
-            clock_increment: serde_json::Number::from(0),
-            minutes: serde_json::Number::from(60),
-            wait_minutes: Some(serde_json::Number::from(5)),
+            clock_time: 10.0,
+            clock_increment: 0.0,
+            minutes: 60.0,
+            wait_minutes: Some(5.0),
             start_date: None,
-            variant: "standard".into(),
+            variant: Variant::Standard,
             rated: true,
             password: None,
             description: None,
@@ -134,6 +138,7 @@ async fn creates_an_arena_as_the_chosen_account_and_returns_it() {
     )
     .await
     .unwrap();
+    crate::support::wire::assert_wire("createTournament.done", &created);
     let Outcome::Done(summary) = created else {
         panic!("the arena was created");
     };
@@ -199,12 +204,12 @@ async fn reads_the_created_arena_lichess_sends_on_its_own() {
         "Alice",
         &NewArena {
             name: Some("KChess button QA".into()),
-            clock_time: serde_json::Number::from(10),
-            clock_increment: serde_json::Number::from(0),
-            minutes: serde_json::Number::from(60),
-            wait_minutes: Some(serde_json::Number::from(5)),
+            clock_time: 10.0,
+            clock_increment: 0.0,
+            minutes: 60.0,
+            wait_minutes: Some(5.0),
             start_date: None,
-            variant: "standard".into(),
+            variant: Variant::Standard,
             rated: false,
             password: Some("entry".into()),
             description: None,
@@ -212,12 +217,13 @@ async fn reads_the_created_arena_lichess_sends_on_its_own() {
     )
     .await
     .unwrap();
+    crate::support::wire::assert_wire("createTournament.full", &created);
     let Outcome::Done(summary) = created else {
         panic!("the arena was created");
     };
     assert_eq!(summary.id, "QITRjufu");
     assert_eq!(summary.name, "KChess button QA Arena");
-    assert_eq!(summary.status, "created");
+    assert_eq!(summary.status, TournamentStatus::Created);
     assert!(!summary.rated);
     assert_eq!(summary.starts_at, 1_792_232_656_000);
 }
@@ -237,12 +243,12 @@ async fn asks_to_reconnect_when_the_login_lacks_the_tournament_permission() {
         "Alice",
         &NewArena {
             name: None,
-            clock_time: serde_json::Number::from(3),
-            clock_increment: serde_json::Number::from(2),
-            minutes: serde_json::Number::from(60),
+            clock_time: 3.0,
+            clock_increment: 2.0,
+            minutes: 60.0,
             wait_minutes: None,
             start_date: None,
-            variant: "standard".into(),
+            variant: Variant::Standard,
             rated: true,
             password: None,
             description: None,
@@ -250,6 +256,7 @@ async fn asks_to_reconnect_when_the_login_lacks_the_tournament_permission() {
     )
     .await
     .unwrap();
+    crate::support::wire::assert_wire("createTournament.reconnect", &outcome);
     assert!(matches!(outcome, Outcome::NeedsReconnect));
 }
 
@@ -275,6 +282,7 @@ async fn looks_up_the_accounts_teams_signed_in_and_explains_a_refusal_briefly() 
         MemoryTokens::with(&[("Alice", "Alice-token")]),
     );
     let list = tournaments(&lichess, "Alice").await.unwrap();
+    crate::support::wire::assert_wire("tournaments.team-refused", &list);
     let teams = fixture.to("/api/team/of/Alice");
     assert!(!teams.is_empty());
     assert_eq!(teams[0].header("Authorization"), Some("Bearer Alice-token"));
@@ -285,6 +293,116 @@ async fn looks_up_the_accounts_teams_signed_in_and_explains_a_refusal_briefly() 
         ]
     );
     assert!(!list.problems.join(" ").contains("authorization header"));
+}
+
+/// A team lookup Lichess rate-limited says that it asked to slow down, and does not ask to
+/// reconnect.
+#[tokio::test]
+async fn a_rate_limited_team_lookup_says_lichess_asked_to_slow_down() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/tournament" => Reply::Json(
+            200,
+            json!({ "started": [], "created": [], "finished": [] }).to_string(),
+        ),
+        _ => Reply::Json(429, "{}".into()),
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let lichess = lichess(
+        &fixture.base,
+        &host,
+        MemoryTokens::with(&[("Alice", "Alice-token")]),
+    );
+    let list = tournaments(&lichess, "Alice").await.unwrap();
+    assert_eq!(
+        list.problems,
+        vec!["Couldn’t load the teams of @Alice. Lichess asked to slow down.".to_string()]
+    );
+}
+
+/// KChess plays tournament games through the Board API, which allows Rapid and Classical only:
+/// a faster arena is listed as one it cannot play, and says why.
+#[tokio::test]
+async fn a_bullet_arena_is_listed_as_one_kchess_cannot_play() {
+    let fixture = serve(|_| {
+        Reply::Json(
+            200,
+            json!({
+                "started": [],
+                "created": [arena(json!({ "clock": { "limit": 60, "increment": 0 } }))],
+                "finished": [],
+            })
+            .to_string(),
+        )
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let lichess = lichess(&fixture.base, &host, Arc::new(MemoryTokens::default()));
+    let list = tournaments(&lichess, "").await.unwrap();
+    let bullet = &list.arenas[0];
+    assert!(!bullet.playable);
+    assert_eq!(
+        bullet.problem.as_deref(),
+        Some(
+            "Lichess lets third-party apps play only Rapid and Classical tournament games (this is faster)."
+        )
+    );
+}
+
+/// A start date replaces the wait before the arena; a date of 0 is no date, so the wait stays.
+#[test]
+fn an_arenas_start_date_replaces_its_wait() {
+    let new_arena = |start_date| NewArena {
+        name: None,
+        clock_time: 10.0,
+        clock_increment: 0.0,
+        minutes: 60.0,
+        wait_minutes: Some(5.0),
+        start_date,
+        variant: Variant::Standard,
+        rated: true,
+        password: None,
+        description: None,
+    };
+    for (start_date, wait) in [
+        (None, Some("5")),
+        (Some(0), Some("5")),
+        (Some(1_800_000_000_000), None),
+    ] {
+        let form = arena_form(&new_arena(start_date));
+        let sent = form
+            .iter()
+            .find(|(key, _)| *key == "waitMinutes")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(sent, wait, "{start_date:?}");
+    }
+}
+
+/// Every 403 asked to connect the account again, though one that is not about the login (a
+/// team Lichess will not list) is not mended by reconnecting.
+#[tokio::test]
+async fn a_team_refusal_that_is_not_about_the_login_does_not_ask_to_reconnect() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/tournament" => Reply::Json(
+            200,
+            json!({ "started": [], "created": [], "finished": [] }).to_string(),
+        ),
+        "/api/team/of/Alice" => Reply::Json(403, json!({ "error": "Forbidden" }).to_string()),
+        _ => Reply::Json(404, "{}".into()),
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let lichess = lichess(
+        &fixture.base,
+        &host,
+        MemoryTokens::with(&[("Alice", "Alice-token")]),
+    );
+    let list = tournaments(&lichess, "Alice").await.unwrap();
+    crate::support::wire::assert_wire("tournaments.team-failed", &list);
+    assert_eq!(
+        list.problems,
+        vec!["Couldn’t load the teams of @Alice.".to_string()]
+    );
 }
 
 #[tokio::test]
@@ -317,9 +435,10 @@ async fn reads_an_arenas_top_game_games_in_progress_podium_and_totals() {
             "averageRating": 1132
         }
     }));
+    crate::support::wire::assert_wire("tournament.arena-extras", &extras);
     let featured = extras.featured.expect("featured game");
     assert_eq!(featured.fen, "8/5rpp/4R3/6KP/3k4/5qP1/8/8 w - - 0 1");
-    assert_eq!(featured.orientation, "black");
+    assert_eq!(featured.orientation, Color::Black);
     assert_eq!(featured.black.name, "Coach13");
     assert_eq!(featured.black.rank, Some(serde_json::Number::from(1)));
     let clocks = featured.clocks.expect("clocks");
@@ -391,6 +510,7 @@ async fn lists_the_upcoming_swiss_events_of_each_team_and_names_a_team_that_fail
         MemoryTokens::with(&[("Alice", "Alice-token")]),
     );
     let list = tournaments(&lichess, "Alice").await.unwrap();
+    crate::support::wire::assert_wire("tournaments.swiss", &list);
     assert_eq!(list.arenas.len(), 1);
     // Finished and unreadable events are left out.
     let ids: Vec<&str> = list.swiss.iter().map(|event| event.id.as_str()).collect();
@@ -405,7 +525,7 @@ async fn lists_the_upcoming_swiss_events_of_each_team_and_names_a_team_that_fail
         later.team.as_ref().map(|team| team.name.as_str()),
         Some("The Club")
     );
-    assert_eq!(later.status, "created");
+    assert_eq!(later.status, TournamentStatus::Created);
     assert_eq!(later.starts_at, 1_793_556_000_000);
     assert_eq!(
         fixture.to("/api/team/club/swiss")[0]
@@ -453,9 +573,10 @@ async fn reads_an_arena_with_its_leaderboard_page_and_the_accounts_place() {
     let host = Arc::new(Recording::default());
     let tokens = MemoryTokens::with(&[("Alice", "Alice-token")]);
     let lichess = lichess(&fixture.base, &host, Arc::clone(&tokens));
-    let detail = tournament(&lichess, tokens.as_ref(), "arena", "Abcd1234", "Alice", 2)
+    let detail = tournament(&lichess, TournamentSystem::Arena, "Abcd1234", "Alice", 2)
         .await
         .unwrap();
+    crate::support::wire::assert_wire("tournament.arena", &detail);
     let seen = &fixture.to("/api/tournament/Abcd1234")[0];
     assert_eq!(seen.query("page").as_deref(), Some("2"));
     assert_eq!(seen.header("Authorization"), Some("Bearer Alice-token"));
@@ -478,11 +599,11 @@ async fn reads_an_arena_with_its_leaderboard_page_and_the_accounts_place() {
     // An arena whose clock cannot be read is refused, not shown half-read.
     let fixture = serve(|_| Reply::Json(200, json!({ "id": "Abcd1234" }).to_string())).await;
     let lichess = self::lichess(&fixture.base, &host, MemoryTokens::with(&[]));
-    let error = tournament(&lichess, tokens.as_ref(), "arena", "Abcd1234", "", 1)
+    let error = tournament(&lichess, TournamentSystem::Arena, "Abcd1234", "", 1)
         .await
         .unwrap_err();
     assert_eq!(
-        error.message(),
+        error.message,
         "Lichess sent an unreadable tournament clock."
     );
     assert!(fixture.requests()[0].header("Authorization").is_none());
@@ -507,9 +628,10 @@ async fn reads_a_swiss_event_with_its_results_and_next_round() {
     let host = Arc::new(Recording::default());
     let tokens = MemoryTokens::with(&[]);
     let lichess = lichess(&fixture.base, &host, Arc::clone(&tokens));
-    let detail = tournament(&lichess, tokens.as_ref(), "swiss", "Swiss123", "", 1)
+    let detail = tournament(&lichess, TournamentSystem::Swiss, "Swiss123", "", 1)
         .await
         .unwrap();
+    crate::support::wire::assert_wire("tournament.swiss", &detail);
     let value = serde_json::to_value(&detail).unwrap();
     assert_eq!(value["system"], json!("swiss"));
     assert_eq!(value["round"], json!(2));
@@ -526,11 +648,8 @@ async fn reads_a_swiss_event_with_its_results_and_next_round() {
             .as_deref(),
         Some("50")
     );
-    let error = tournament(&lichess, tokens.as_ref(), "swiss", "Garbled1", "", 1)
+    let error = tournament(&lichess, TournamentSystem::Swiss, "Garbled1", "", 1)
         .await
         .unwrap_err();
-    assert_eq!(
-        error.message(),
-        "Lichess sent details KChess could not read."
-    );
+    assert_eq!(error.message, "Lichess sent details KChess could not read.");
 }

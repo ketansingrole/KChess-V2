@@ -1,38 +1,37 @@
-//! Lichess request admission and the request accounting (`withUsage`, `attributeTo`,
-//! `meteredFetch`, `forgetUsage`).
+//! Lichess request admission and accounting.
 //!
 //! Admission: at most two requests are in flight, interactive requests (game moves and their
 //! resign/abort/draw/takeback family) go before the rest, a 429 starts a cooldown that the next
 //! request waits out (`Retry-After`, capped at 5 minutes, 60 seconds when absent) without holding
 //! a lane, and that interactive requests wait out only when one of them was refused, a request
-//! that is not a stream has 30 seconds to answer, and game exports hold a lane of their own
+//! that is not a stream has its deadline to answer, and game exports hold a lane of their own
 //! until their body is read, cancelled or fails. Nothing here retries: an ambiguous mutation is
-//! never replayed.
+//! never replayed. The caller says which [`Lane`] a request belongs to.
 //!
-//! Accounting: each request is counted against the account and kind of the task that made it
-//! (`with_usage`). The counters leave as `host:usage` events
-//! `{ account, category, requests, bytes }`, the same shape the puzzle download reports, and the
-//! host stores them. Traffic from an account whose epoch moved on (logout, removal, clearing) is
-//! not counted.
+//! Accounting: each request and the bytes of its body are counted against the account and kind
+//! of its [`Usage`], through its [`Meter`]. Traffic from an account whose epoch moved
+//! on (logout, removal, clearing) is not counted.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_util::{Stream, TryStreamExt};
+use kchess_contracts::types::UsageKind;
 use reqwest::header::HeaderMap;
-use serde_json::json;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{CoreError, ErrorKind, Result};
 use crate::host::{Host, Level};
+use crate::usage::{Meter, Unmetered};
+use kchess_contracts::error::{CoreError, ErrorKind, Result};
 
 /// A request may take this long to answer (its headers, and its body unless it is a stream).
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_ACTIVE: usize = 2;
+/// The position lookups run side by side: the explorer answers each in a moment.
+const MAX_LOOKUPS: usize = 16;
 const MAX_WAITING: usize = 500;
 /// A backstop for an export body dropped without being read or cancelled.
 const BULK_HOLD: Duration = Duration::from_secs(600);
@@ -41,28 +40,41 @@ const MAX_COOLDOWN: Duration = Duration::from_secs(300);
 /// The shortest cooldown, in seconds: `Retry-After: 0` must not let a refused burst repeat at once.
 const MIN_COOLDOWN: f64 = 1.0;
 
-/// `UNATTRIBUTED`: traffic made outside any `with_usage` scope.
-const UNATTRIBUTED_KIND: &str = "other";
+/// Which kind of request this is: how it is admitted and how long its answer may take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lane {
+    /// A game action (move, resign, abort, takeback, draw, claim, berserk): it goes before the
+    /// rest, and waits out only a cooldown an action of its kind caused.
+    Interactive,
+    /// An ordinary request, answered within the deadline.
+    Background,
+    /// A game export: one at a time, its body read without a deadline.
+    Export,
+    /// A long body read as it arrives, without a deadline.
+    Feed,
+    /// A live stream (events, games, seeks, TV feeds): no deadline, and an uncompressed body,
+    /// since a compressor on the way would buffer the lines until it had a block.
+    Live,
+}
+
+impl Lane {
+    fn interactive(self) -> bool {
+        self == Lane::Interactive
+    }
+
+    /// Whether the body is read without the request deadline.
+    pub(crate) fn streamed(self) -> bool {
+        matches!(self, Lane::Export | Lane::Feed | Lane::Live)
+    }
+}
 
 /// Who a request is counted against: the account (lowercase), the kind, and the account's epoch
-/// when the request started.
+/// when the work started.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UsageContext {
+pub struct Usage {
     pub account: String,
-    pub kind: String,
+    pub kind: UsageKind,
     pub epoch: u64,
-}
-
-type UsageCell = Arc<Mutex<Option<UsageContext>>>;
-
-tokio::task_local! {
-    /// The usage context of the task that is running.
-    static USAGE: UsageCell;
-}
-
-/// The context of the running task, if any `with_usage` scope or `attribute_to` set one.
-pub fn current_usage() -> Option<UsageContext> {
-    USAGE.try_with(|cell| lock(cell).clone()).ok().flatten()
 }
 
 /// A permit of the interactive/background lanes, from the moment it is queued; returned to the
@@ -92,6 +104,8 @@ struct Waiter {
 
 #[derive(Default)]
 struct Lanes {
+    /// How many requests run at once.
+    max_active: usize,
     active: usize,
     running: HashSet<u64>,
     waiting: Vec<Waiter>,
@@ -103,7 +117,7 @@ struct Lanes {
 /// Hands the freed slots to the highest-priority waiters (stable among equal priorities).
 fn pump(lanes: &mut Lanes) {
     lanes.waiting.sort_by_key(|a| std::cmp::Reverse(a.priority));
-    while lanes.active < MAX_ACTIVE && !lanes.waiting.is_empty() {
+    while lanes.active < lanes.max_active && !lanes.waiting.is_empty() {
         let waiter = lanes.waiting.remove(0);
         lanes.active += 1;
         lanes.running.insert(waiter.id);
@@ -192,15 +206,34 @@ struct Accounting {
 /// The shared admission state of one Lichess client. One per process; every client shares its cooldown and lanes.
 pub struct Policy {
     host: Arc<dyn Host>,
+    meter: Arc<dyn Meter>,
     http: reqwest::Client,
     lifetime: CancellationToken,
     timeout: Duration,
     lanes: Mutex<Lanes>,
-    /// A 429 answered to a background request (a sync, an export): background requests wait.
-    cooldown_until: Mutex<Option<Instant>>,
-    /// A 429 answered to an interactive request: every request waits.
-    interactive_cooldown_until: Mutex<Option<Instant>>,
+    /// When (by `now`, in milliseconds) a 429 answered to a background request (a sync, an
+    /// export) ends: background requests wait until then.
+    cooldown_until: Mutex<Option<i64>>,
+    /// When a 429 answered to an interactive request ends: every request waits until then.
+    interactive_cooldown_until: Mutex<Option<i64>>,
+    /// The position lookups' policy: a request during a cooldown is refused instead of waiting
+    /// it out (a saved answer is shown), they run side by side, and they are not metered.
+    lookups: bool,
+    now: Clock,
     accounting: Mutex<Accounting>,
+}
+
+/// A clock in milliseconds.
+pub type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
+
+/// Milliseconds of a monotonic clock.
+fn monotonic_ms() -> i64 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    i64::try_from(START.get_or_init(Instant::now).elapsed().as_millis()).unwrap_or(i64::MAX)
+}
+
+fn millis(duration: Duration) -> i64 {
+    i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
 }
 
 use crate::tasks::lock;
@@ -210,69 +243,7 @@ pub(crate) fn timed_out() -> CoreError {
     CoreError::new("Lichess didn’t answer in time.").with_kind(ErrorKind::TimedOut)
 }
 
-fn aborted() -> CoreError {
-    CoreError::aborted("This operation was aborted")
-}
-
-/// Whether `url` is a bulk game export (`/api/games/user/` or `/api/games/export/`).
-pub fn is_bulk_export(url: &str) -> bool {
-    url.contains("/api/games/user/") || url.contains("/api/games/export/")
-}
-
-/// Whether `url` answers with a long-lived stream, which owns its own lifetime: the header
-/// deadline does not apply to it, nor does the body deadline.
-pub fn is_stream(url: &str, content_type: Option<&str>) -> bool {
-    if content_type.is_some_and(|value| value.contains("ndjson")) {
-        return true;
-    }
-    if url.contains("/api/stream/")
-        || url.contains("/api/board/game/stream")
-        || url.contains("/api/board/seek")
-        || url.contains("/api/games/user")
-        || url.contains("/api/puzzle/activity")
-    {
-        return true;
-    }
-    if let Some(at) = url.find("/api/tv/") {
-        let rest = &url[at + "/api/tv/".len()..];
-        if let Some(slash) = rest.find('/') {
-            return slash > 0 && rest[slash..].starts_with("/feed");
-        }
-    }
-    false
-}
-
-/// Whether `url` is a live stream (events, games, seeks, TV feeds), whose lines must arrive the
-/// moment Lichess writes them: such requests ask for an uncompressed body, so no compressor on
-/// the way buffers a move. Bulk exports stream too but are read whole, and stay compressed.
-pub fn is_live_stream(url: &str) -> bool {
-    is_stream(url, None)
-        && !url.contains("/api/games/user")
-        && !url.contains("/api/puzzle/activity")
-}
-
-/// Whether `url` is an interactive game request (move, resign, abort, takeback, draw, claim,
-/// berserk) that goes before background reads.
-pub fn is_foreground(url: &str) -> bool {
-    const PREFIX: &str = "/api/board/game/";
-    let Some(at) = url.find(PREFIX) else {
-        return false;
-    };
-    let rest = &url[at + PREFIX.len() - 1..];
-    const MIDDLE: [&str; 5] = ["/move/", "/resign/", "/abort/", "/takeback/", "/draw/"];
-    if MIDDLE.iter().any(|segment| rest.contains(segment)) {
-        return true;
-    }
-    const END: [&str; 5] = [
-        "/resign",
-        "/abort",
-        "/claim-victory",
-        "/claim-draw",
-        "/berserk",
-    ];
-    END.iter()
-        .any(|segment| rest.len() > segment.len() && rest.ends_with(segment))
-}
+use crate::tasks::aborted;
 
 /// The cooldown a 429 starts: `Retry-After` in seconds, at most 5 minutes; 60 seconds when the
 /// header is missing or not a number, and at least a second when it says 0.
@@ -295,38 +266,95 @@ impl Policy {
         self.host.log(Level::Warn, "lichess", message);
     }
 
-    /// `host` receives the `host:usage` events and the warnings; `lifetime` ends the accounting
-    /// when the core closes.
+    /// `host` receives the warnings and `meter` the traffic; `lifetime` ends the accounting when
+    /// the core closes.
     pub fn new(
         host: Arc<dyn Host>,
+        meter: Arc<dyn Meter>,
         http: reqwest::Client,
         lifetime: CancellationToken,
     ) -> Arc<Policy> {
-        Policy::with_timeout(host, http, lifetime, REQUEST_TIMEOUT)
+        Policy::with_timeout(host, meter, http, lifetime, REQUEST_TIMEOUT)
     }
 
     /// As `new`, with another request deadline (tests use a short one).
     pub fn with_timeout(
         host: Arc<dyn Host>,
+        meter: Arc<dyn Meter>,
         http: reqwest::Client,
         lifetime: CancellationToken,
         timeout: Duration,
     ) -> Arc<Policy> {
-        Arc::new(Policy {
+        Policy::build(
             host,
+            meter,
             http,
             lifetime,
             timeout,
-            lanes: Mutex::new(Lanes::default()),
+            false,
+            Arc::new(monotonic_ms),
+        )
+    }
+
+    /// The policy of one lookup origin (the explorer, the tablebase): a request during a
+    /// cooldown fails at once with how long is left, by `now`.
+    pub fn for_lookups(
+        host: Arc<dyn Host>,
+        http: reqwest::Client,
+        lifetime: CancellationToken,
+        timeout: Duration,
+        now: Clock,
+    ) -> Arc<Policy> {
+        // A lookup counts no traffic (`record`).
+        Policy::build(
+            host,
+            Arc::new(Unmetered),
+            http,
+            lifetime,
+            timeout,
+            true,
+            now,
+        )
+    }
+
+    fn build(
+        host: Arc<dyn Host>,
+        meter: Arc<dyn Meter>,
+        http: reqwest::Client,
+        lifetime: CancellationToken,
+        timeout: Duration,
+        lookups: bool,
+        now: Clock,
+    ) -> Arc<Policy> {
+        Arc::new(Policy {
+            host,
+            meter,
+            http,
+            lifetime,
+            timeout,
+            lanes: Mutex::new(Lanes {
+                max_active: if lookups { MAX_LOOKUPS } else { MAX_ACTIVE },
+                ..Lanes::default()
+            }),
             cooldown_until: Mutex::new(None),
             interactive_cooldown_until: Mutex::new(None),
+            lookups,
+            now,
             accounting: Mutex::new(Accounting::default()),
         })
     }
 
-    /// The request deadline of this policy.
     pub fn timeout(&self) -> Duration {
         self.timeout
+    }
+
+    pub fn http(&self) -> &reqwest::Client {
+        &self.http
+    }
+
+    /// Ends with the core: requests are cancelled by it unless given another token.
+    pub fn lifetime(&self) -> &CancellationToken {
+        &self.lifetime
     }
 
     /// The epoch of `account` (lowercase). Usage started under an older epoch is dropped.
@@ -338,51 +366,28 @@ impl Policy {
             .unwrap_or(0)
     }
 
-    /// `withUsage`: run `work` so every request it makes is counted against `account`.
-    pub async fn with_usage<T, F>(&self, account: &str, kind: &str, work: F) -> T
-    where
-        F: Future<Output = T>,
-    {
+    /// The usage of work for `account` and `kind` starting now.
+    pub fn usage(&self, account: &str, kind: UsageKind) -> Usage {
         let account = account.to_lowercase();
-        let context = UsageContext {
+        Usage {
             epoch: self.epoch(&account),
             account,
-            kind: kind.to_string(),
-        };
-        USAGE.scope(Arc::new(Mutex::new(Some(context))), work).await
+            kind,
+        }
     }
 
-    /// `attributeTo`: count the rest of the current task against `account`. Outside a
-    /// `with_usage` scope there is no task context to set, so it does nothing there.
-    pub fn attribute_to(&self, account: &str, kind: &str) {
-        let account = account.to_lowercase();
-        let context = UsageContext {
-            epoch: self.epoch(&account),
-            account,
-            kind: kind.to_string(),
-        };
-        let _ = USAGE.try_with(|cell| *lock(cell) = Some(context));
-    }
-
-    fn record(&self, context: &UsageContext, requests: u64, bytes: u64) {
-        if self.lifetime.is_cancelled() || (requests == 0 && bytes == 0) {
+    fn record(&self, usage: &Usage, requests: u64, bytes: u64) {
+        if self.lookups || self.lifetime.is_cancelled() || (requests == 0 && bytes == 0) {
             return;
         }
-        if context.epoch != self.epoch(&context.account) {
+        if usage.epoch != self.epoch(&usage.account) {
             return;
         }
-        self.host.emit(
-            "host:usage",
-            json!({
-                "account": context.account,
-                "category": context.kind,
-                "requests": requests,
-                "bytes": bytes,
-            }),
-        );
+        self.meter
+            .count(&usage.account, usage.kind, requests, bytes);
     }
 
-    /// `forgetUsage`: traffic still arriving for these accounts is no longer counted.
+    /// Traffic still arriving for these accounts is no longer counted.
     pub fn forget_usage(&self, accounts: &[String]) {
         let mut accounting = lock(&self.accounting);
         for name in accounts {
@@ -390,68 +395,49 @@ impl Policy {
         }
     }
 
-    /// The body of a response, passed through with its bytes counted against the task that
-    /// made the request (`meteredFetch`).
+    /// The body of a response, passed through with its bytes counted against `usage`.
     pub fn metered<S, B, E>(
         self: &Arc<Self>,
         body: S,
+        usage: &Usage,
     ) -> impl Stream<Item = std::result::Result<B, E>>
     where
         S: Stream<Item = std::result::Result<B, E>>,
         B: AsRef<[u8]>,
     {
         let policy = Arc::clone(self);
-        let context = current_usage().unwrap_or_else(unattributed);
-        body.inspect_ok(move |chunk| policy.record(&context, 0, chunk.as_ref().len() as u64))
+        let usage = usage.clone();
+        body.inspect_ok(move |chunk| policy.record(&usage, 0, chunk.as_ref().len() as u64))
     }
 
-    /// Admit `request` under the lanes, the cooldown and the deadline, and count it.
-    /// `cancel` ends the wait, the request and (for a stream) the body hand-off, with an abort.
+    /// Admit `request` in `lane` under the lanes, the cooldown and the deadline, and count it
+    /// against `usage`. `cancel` ends the wait, the request and (for a stream) the body hand-off,
+    /// with an abort.
     pub async fn send(
         self: &Arc<Self>,
         request: reqwest::Request,
-        cancel: &CancellationToken,
-    ) -> Result<Admitted> {
-        let bulk = is_bulk_export(request.url().as_str());
-        self.send_in(request, bulk, cancel).await
-    }
-
-    /// `send` for one game from the export endpoint: a small answer that does not wait for the
-    /// bulk lane, which a running sync holds until its whole download ends.
-    pub async fn send_single(
-        self: &Arc<Self>,
-        request: reqwest::Request,
-        cancel: &CancellationToken,
-    ) -> Result<Admitted> {
-        self.send_in(request, false, cancel).await
-    }
-
-    async fn send_in(
-        self: &Arc<Self>,
-        request: reqwest::Request,
-        bulk: bool,
+        lane: Lane,
+        usage: &Usage,
         cancel: &CancellationToken,
     ) -> Result<Admitted> {
         if cancel.is_cancelled() {
             return Err(aborted());
         }
-        let url = request.url().to_string();
-        let context = current_usage().unwrap_or_else(unattributed);
-        let hold = if bulk {
+        let hold = if lane == Lane::Export {
             Some(self.acquire_bulk(cancel).await?)
         } else {
             None
         };
-        let response = match self.admitted(request, &url, cancel).await {
+        let response = match self.admitted(request, lane, cancel).await {
             Ok(response) => response,
             Err(cause) => {
                 drop(hold);
                 return Err(cause);
             }
         };
-        self.record(&context, 1, 0);
+        self.record(usage, 1, 0);
         if !response.status().is_success() {
-            // A failed export does not keep the lane (`releaseWithBody`).
+            // A failed export does not keep the lane.
             drop(hold);
             return Ok(Admitted {
                 response,
@@ -464,12 +450,18 @@ impl Policy {
     async fn admitted(
         self: &Arc<Self>,
         mut request: reqwest::Request,
-        url: &str,
+        lane: Lane,
         cancel: &CancellationToken,
     ) -> Result<reqwest::Response> {
-        let interactive = is_foreground(url);
+        let interactive = lane.interactive();
+        if self.lookups
+            && let Some(left) = self.cooldown_left(interactive)
+        {
+            return Err(rate_limited(left));
+        }
+        let url = request.url().to_string();
         let _slot = self.admit(interactive, cancel).await?;
-        if is_live_stream(url) {
+        if lane == Lane::Live {
             request.headers_mut().insert(
                 reqwest::header::ACCEPT_ENCODING,
                 reqwest::header::HeaderValue::from_static("identity"),
@@ -498,14 +490,17 @@ impl Policy {
             } else {
                 &self.cooldown_until
             };
-            *lock(until) = Some(Instant::now() + cooldown);
+            *lock(until) = Some((self.now)().saturating_add(millis(cooldown)));
+            if self.lookups {
+                return Err(rate_limited(cooldown));
+            }
             let retry = response
                 .headers()
                 .get(reqwest::header::RETRY_AFTER)
                 .and_then(|value| value.to_str().ok())
                 .unwrap_or("none")
                 .to_string();
-            let path: String = url_path(url).chars().take(80).collect();
+            let path: String = url_path(&url).chars().take(80).collect();
             self.host.log(
                 Level::Warn,
                 "request-policy",
@@ -522,14 +517,12 @@ impl Policy {
     /// Lichess rate-limited (a game sync during a blitz game) must not hold up the player's moves,
     /// which have limits of their own.
     fn cooldown_left(&self, interactive: bool) -> Option<Duration> {
-        let now = Instant::now();
         let mut until = *lock(&self.interactive_cooldown_until);
         if !interactive {
             until = until.max(*lock(&self.cooldown_until));
         }
-        until
-            .and_then(|until| until.checked_duration_since(now))
-            .filter(|left| !left.is_zero())
+        let left = until? - (self.now)();
+        (left > 0).then(|| Duration::from_millis(left.unsigned_abs()))
     }
 
     /// A lane for a request, once its cooldown is over. The cooldown is waited out without a lane,
@@ -658,15 +651,14 @@ impl Policy {
     }
 }
 
-fn unattributed() -> UsageContext {
-    UsageContext {
-        account: String::new(),
-        kind: UNATTRIBUTED_KIND.to_string(),
-        epoch: 0,
-    }
+/// A lookup refused while its origin's cooldown runs: the message says how long is left.
+fn rate_limited(left: Duration) -> CoreError {
+    let seconds = left.as_millis().div_ceil(1000).max(1);
+    let unit = if seconds == 1 { "second" } else { "seconds" };
+    CoreError::new(format!("Too many lookups. Try again in {seconds} {unit}."))
+        .with_kind(ErrorKind::RateLimited)
 }
 
-/// The path of a URL, without its origin or query (for logs).
 /// `cause` followed by each error beneath it, as `a: b: c`.
 fn with_sources(cause: &dyn std::error::Error) -> String {
     let mut text = cause.to_string();
@@ -679,6 +671,7 @@ fn with_sources(cause: &dyn std::error::Error) -> String {
     text
 }
 
+/// The path of a URL, without its origin or query (for logs).
 fn url_path(url: &str) -> &str {
     let after_scheme = url.find("://").map_or(url, |at| &url[at + 3..]);
     let path_start = after_scheme.find('/').unwrap_or(after_scheme.len());
@@ -689,6 +682,8 @@ fn url_path(url: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::test_host::TestHost;
 
     /// reqwest says "error sending request" for every failed connection; the log carries what
     /// lies beneath, so a failure on CI says whether it was refused, reset or out of ports.
@@ -706,43 +701,6 @@ mod tests {
         let text = with_sources(&cause);
         assert!(text.starts_with(&cause.to_string()), "{text}");
         assert!(text.len() > cause.to_string().len(), "{text}");
-    }
-
-    #[test]
-    fn classifies_interactive_and_stream_urls() {
-        assert!(is_foreground(
-            "https://lichess.org/api/board/game/abcdefgh/move/e2e4"
-        ));
-        assert!(is_foreground(
-            "https://lichess.org/api/board/game/abcdefgh/resign"
-        ));
-        assert!(!is_foreground("https://lichess.org/api/account"));
-        assert!(is_bulk_export(
-            "https://lichess.org/api/games/user/Alice?max=5"
-        ));
-        assert!(is_bulk_export("https://lichess.org/api/games/export/_ids"));
-        assert!(!is_bulk_export("https://lichess.org/api/user/Alice"));
-        assert!(is_stream("https://lichess.org/api/stream/event", None));
-        assert!(is_stream("https://lichess.org/api/tv/rapid/feed", None));
-        assert!(!is_stream("https://lichess.org/api/tv/feed", None));
-        assert!(is_live_stream("https://lichess.org/api/stream/event"));
-        assert!(is_live_stream(
-            "https://lichess.org/api/board/game/stream/abcd1234"
-        ));
-        assert!(is_live_stream("https://lichess.org/api/tv/rapid/feed"));
-        assert!(!is_live_stream(
-            "https://lichess.org/api/games/user/someone?max=50"
-        ));
-        assert!(!is_live_stream("https://lichess.org/api/puzzle/activity"));
-        assert!(!is_live_stream("https://lichess.org/api/account"));
-        assert!(is_stream(
-            "https://lichess.org/api/account",
-            Some("application/x-ndjson")
-        ));
-        assert!(!is_stream(
-            "https://lichess.org/api/account",
-            Some("application/json")
-        ));
     }
 
     #[test]
@@ -767,7 +725,7 @@ mod tests {
     async fn a_rate_limited_sync_does_not_hold_up_moves() {
         let policy = quiet_policy();
         let cancel = CancellationToken::new();
-        *lock(&policy.cooldown_until) = Some(Instant::now() + Duration::from_secs(60));
+        *lock(&policy.cooldown_until) = Some(monotonic_ms() + 60_000);
         let mut sync = Box::pin(policy.admit(false, &cancel));
         let mut other = Box::pin(policy.admit(false, &cancel));
         queue(&mut sync).await;
@@ -779,30 +737,24 @@ mod tests {
             .expect("slot");
         drop(first);
         // A 429 on a move holds back everything.
-        *lock(&policy.interactive_cooldown_until) = Some(Instant::now() + Duration::from_secs(60));
+        *lock(&policy.interactive_cooldown_until) = Some(monotonic_ms() + 60_000);
         let mut moved = Box::pin(policy.admit(true, &cancel));
         queue(&mut moved).await;
         cancel.cancel();
         assert!(sync.await.is_err() && other.await.is_err() && moved.await.is_err());
     }
 
-    struct Quiet;
-
-    impl Host for Quiet {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _: &str, _: serde_json::Value) {}
-    }
-
     fn quiet_policy() -> Arc<Policy> {
         Policy::new(
-            Arc::new(Quiet),
+            TestHost::quiet(),
+            Arc::new(Unmetered),
             reqwest::Client::new(),
             CancellationToken::new(),
         )
     }
 
     /// Polls `future` once, so it queues, without waiting for it.
-    async fn queue<F: Future + Unpin>(future: &mut F) {
+    async fn queue<F: std::future::Future + Unpin>(future: &mut F) {
         tokio::select! {
             biased;
             _ = future => panic!("admitted at once"),

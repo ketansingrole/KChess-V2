@@ -79,6 +79,11 @@ pub struct Harness {
     owns_app: bool,
 }
 
+/// A page's tab by name, as its pills are found: `tab("practice-tabs", Tab::Guess)`.
+pub fn tab<T: crate::pages::PageTab>(tabs: &'static str, tab: T) -> (&'static str, usize) {
+    (tabs, tab.index())
+}
+
 impl Harness {
     /// Start the app as `main` does, over a fresh profile.
     pub fn start(cx: &mut TestAppContext) -> Harness {
@@ -303,7 +308,7 @@ impl Harness {
         std::fs::write(&path, text).expect("the file");
         self.with_window(|window, cx| {
             let paths = gpui_kit::ExternalPaths(std::iter::once(path).collect());
-            crate::shell::open_dropped(&paths, window, cx);
+            crate::links::open_dropped(&paths, window, cx);
         });
         folder
     }
@@ -353,6 +358,46 @@ impl Harness {
         }
     }
 
+    /// Wait until the app has shown a system notification `matches` takes, and return the latest
+    /// such. The system's notifications are drawn by the app on Windows and Linux alone.
+    #[cfg(any(windows, target_os = "linux"))]
+    pub fn wait_for_notification(
+        &mut self,
+        what: &str,
+        mut matches: impl FnMut(&gpui_kit::SystemNotification) -> bool,
+    ) -> gpui_kit::SystemNotification {
+        let started = Instant::now();
+        loop {
+            self.cx.run_until_parked();
+            let shown = self.cx.shown_system_notifications();
+            if let Some(found) = shown.into_iter().rev().find(|shown| matches(shown)) {
+                return found;
+            }
+            if started.elapsed() > TIMEOUT {
+                panic!("timed out after {TIMEOUT:?} waiting for {what}");
+            }
+            self.tick();
+        }
+    }
+
+    /// Wait until the app has asked where to save a file (the system's save dialog).
+    pub fn wait_for_save_dialog(&mut self) {
+        self.wait_for_prompt("save dialog", |cx| cx.did_prompt_for_new_path());
+    }
+
+    /// Wait until the app has asked which files to open (the system's open dialog).
+    pub fn wait_for_open_dialog(&mut self) {
+        self.wait_for_prompt("open dialog", |cx| cx.did_prompt_for_paths());
+    }
+
+    fn wait_for_prompt(&mut self, what: &str, asked: impl Fn(&mut TestAppContext) -> bool) {
+        let started = Instant::now();
+        while !asked(&mut self.cx) {
+            assert!(started.elapsed() < TIMEOUT, "no {what} opened");
+            self.tick();
+        }
+    }
+
     /// Type `text` into the dialog's field labelled `label`, in place of what it holds, once the
     /// dialog has stopped moving.
     pub fn fill_in_dialog(&mut self, label: &str, text: &str) {
@@ -367,6 +412,15 @@ impl Harness {
         self.click_label(label);
         self.press("secondary-a");
         self.type_text(text);
+    }
+
+    /// Wait until `page` is shown. A page can open after Quick Pick has closed: the analysis
+    /// board opens only once it has read the session it was left with, an answer from the core's
+    /// thread, so a check right after the palette closed saw the page before (2026.11.11).
+    pub fn wait_for_page(&mut self, page: crate::pages::Page) {
+        self.wait_for(&format!("the {page:?} page"), |_, cx| {
+            crate::shell::current_page(cx) == Some(page)
+        });
     }
 
     /// Wait until the element is shown, then return it.
@@ -431,21 +485,14 @@ impl Harness {
             use gpui_kit::component::WindowExt as _;
             !window.has_active_dialog(cx)
         });
-        let index = crate::shell::nav()
+        let (group, row) = crate::shell::nav_groups()
             .iter()
-            .position(|(_, name, _)| *name == label)
-            .unwrap_or_else(|| panic!("no sidebar page {label:?}"));
-        let mut row = index;
-        let group = crate::shell::NAV_GROUPS
-            .iter()
-            .position(|size| {
-                let inside = row < *size;
-                if !inside {
-                    row -= size;
-                }
-                inside
+            .enumerate()
+            .find_map(|(group, (_, pages))| {
+                let row = pages.iter().position(|page| page.info().label == label)?;
+                Some((group, row))
             })
-            .expect("every page has a group");
+            .unwrap_or_else(|| panic!("no sidebar page {label:?}"));
         self.click(format!("{group}-{row}"));
     }
 
@@ -578,6 +625,13 @@ impl Harness {
             .to_string()
     }
 
+    /// Whether the board shown has White at the bottom, as its squares are drawn.
+    pub fn white_at_bottom(&mut self) -> bool {
+        let a1 = self.find(("square", 0usize)).bounds();
+        let h8 = self.find(("square", 63usize)).bounds();
+        a1.origin.y > h8.origin.y
+    }
+
     /// Type text into the focused input.
     pub fn type_text(&mut self, text: &str) {
         self.with_window(|window, cx| window.input(text, cx));
@@ -595,11 +649,40 @@ impl Harness {
 
     /// The settings as the core has them (the app saves a change after 400 ms).
     pub fn saved_settings(&mut self) -> serde_json::Value {
+        serde_json::to_value(self.request(kchess_contracts::calls::DesktopSettings {}))
+            .expect("the settings as JSON")
+    }
+
+    /// A typed core call, waited for: the core answers on its own threads.
+    pub fn request<C: kchess_contracts::calls::CoreCall + Send + 'static>(
+        &mut self,
+        call: C,
+    ) -> C::Answer
+    where
+        C::Answer: Send,
+    {
         let core = self
             .cx
             .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
-        core.call_now("desktopSettings", Vec::new())
-            .expect("the core reads the settings")
+        core.request_now(call)
+            .unwrap_or_else(|cause| panic!("{}: {}", C::METHOD, cause.message))
+    }
+
+    /// What the core reports when another window wrote `areas` of the profile (that window's
+    /// write itself is the test's to make, with `request`).
+    pub fn changed_elsewhere(&mut self, areas: &[kchess_contracts::types::ProfileArea]) {
+        use crate::core::{AppCore, ClientEvent, CoreEvent};
+        let areas = areas.to_vec();
+        self.cx.update(|cx| {
+            let core = cx.global::<AppCore>().clone();
+            let change = kchess_contracts::types::ProfileChange {
+                areas,
+                origin: core.bridge.connection() + 1,
+            };
+            core.events.update(cx, |_, cx| {
+                cx.emit(ClientEvent::Event(CoreEvent::ProfileChanged(change)))
+            });
+        });
     }
 
     /// Wait until the core has saved `key` as `value`.
@@ -625,19 +708,21 @@ impl Harness {
         if !self.shows(SETTINGS_SHOWN) {
             self.click("settings");
         }
-        let index = crate::pages::settings::sections()
-            .iter()
-            .position(|(_, name, _)| *name == label)
+        use crate::pages::settings::{Section, SectionGroup};
+        let section = Section::ALL
+            .into_iter()
+            .find(|section| section.label() == label)
             .unwrap_or_else(|| panic!("no Settings category {label:?}"));
         // A block for each group of categories, numbered from 1.
-        let (mut block, mut row) = (1, index);
-        for (_, size) in crate::pages::settings::SECTION_GROUPS {
-            if row < size {
-                break;
-            }
-            row -= size;
-            block += 1;
-        }
+        let group = section.group();
+        let block = 1 + SectionGroup::ALL
+            .iter()
+            .position(|shown| *shown == group)
+            .expect("its group");
+        let row = group
+            .sections()
+            .position(|shown| shown == section)
+            .expect("its row");
         self.click(format!("s{block}-{row}"));
     }
 }
@@ -648,7 +733,7 @@ pub const SETTINGS_SHOWN: &str = "settings-dialog";
 impl Drop for Harness {
     fn drop(&mut self) {
         // Saves are flushed and the core closed as at quit, before the profile is removed.
-        let quit = self.cx.update(crate::core::quit);
+        let quit = self.cx.update(crate::quit::quit);
         self.cx.foreground_executor().block_test(quit);
         if self.owns_app {
             // `#[gpui_kit::test]` drains the shared scheduler after the test, which runs this
@@ -660,9 +745,9 @@ impl Drop for Harness {
 }
 
 /// The process-wide switches every test shares: the same values for all, set once
-/// (`kchess_core::env`, which the app and its embedded core read in place of the environment).
+/// (`kchess_host::env`, which the app and its embedded core read in place of the environment).
 fn environment() {
-    use kchess_core::env::set;
+    use kchess_host::env::set;
     static SET: OnceLock<()> = OnceLock::new();
     SET.get_or_init(|| {
         let engine = engine();
@@ -685,7 +770,7 @@ fn environment() {
         set("KCHESS_TEST_VOICE_SHA256", "0");
         // No update feed from the shell the tests run in: Settings → Updates shows one state
         // everywhere.
-        kchess_core::env::unset("KCHESS_UPDATE_FEED");
+        kchess_host::env::unset("KCHESS_UPDATE_FEED");
     });
 }
 

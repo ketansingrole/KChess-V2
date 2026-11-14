@@ -1,5 +1,4 @@
-//! A sync saves the player's Lichess play time over a local Lichess. On its own: the signed-in
-//! profile reads its Lichess from the process environment, one per test binary.
+//! A sync saves the player's Lichess play time over a local Lichess.
 use crate::fixtures;
 use crate::signed_in;
 

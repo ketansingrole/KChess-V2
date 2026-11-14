@@ -5,9 +5,6 @@
 //! the session agree. Rated Lichess results stay binary; these outcomes are local only.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-
-use super::Out;
 
 /// How an attempt went. Each player move of the solution is scored by the first try at it, so a
 /// mistake does not end the scoring: wrong, right, wrong on a 3-move puzzle is 1 found, 2 wrong.
@@ -77,7 +74,7 @@ pub struct Verdict {
     pub total: u32,
 }
 
-/// `puzzleAttemptOutcome`: a win (every move right at the first try) is solved, with or without a
+/// A win (every move right at the first try) is solved, with or without a
 /// hint; otherwise a reveal before any wrong move is revealed, and an attempt with a wrong move is
 /// partial when some move was found at the first try, else missed.
 pub fn classify(verdict: &Verdict) -> Outcome {
@@ -120,7 +117,7 @@ pub struct DayStreak {
     pub best: u32,
 }
 
-/// `puzzleDayStreak`: the streak of `days` (days with a solve, in any order, repeats allowed) as of
+/// The streak of `days` (days with a solve, in any order, repeats allowed) as of
 /// `today`. Unreadable days are ignored; days after `today` (a clock moved back) end no run.
 pub fn day_streak<'a>(days: impl IntoIterator<Item = &'a str>, today: &str) -> DayStreak {
     let mut numbers: Vec<i64> = days.into_iter().filter_map(day_number).collect();
@@ -154,33 +151,6 @@ pub fn day_streak<'a>(days: impl IntoIterator<Item = &'a str>, today: &str) -> D
         day -= 1;
     }
     streak
-}
-
-fn verdict_arg(args: &[Value]) -> Result<Verdict, String> {
-    serde_json::from_value(args.first().cloned().unwrap_or(Value::Null))
-        .map_err(|error| format!("verdict: {error}"))
-}
-
-/// This module's methods for `api::call`; None when the method is not one of them.
-pub(super) fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result = match method {
-        "puzzleAttemptOutcome" => verdict_arg(args).map(|verdict| {
-            let outcome = classify(&verdict);
-            let (found, tried) = moves(outcome, &verdict);
-            json!({ "outcome": outcome.name(), "found": found, "tried": tried })
-        }),
-        "puzzleDayStreak" => {
-            let days: Vec<&str> = args
-                .first()
-                .and_then(Value::as_array)
-                .map(|days| days.iter().filter_map(Value::as_str).collect())
-                .unwrap_or_default();
-            let today = args.get(1).and_then(Value::as_str).unwrap_or_default();
-            serde_json::to_value(day_streak(days, today)).map_err(|error| error.to_string())
-        }
-        _ => return None,
-    };
-    Some(result)
 }
 
 #[cfg(test)]

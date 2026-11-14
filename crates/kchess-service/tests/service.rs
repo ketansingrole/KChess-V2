@@ -5,6 +5,8 @@
 use std::path::Path;
 use std::time::Duration;
 
+use kchess_contracts::types::AlertOwner;
+use kchess_contracts::{CoreEvent, HostRequest};
 use kchess_core::Config;
 use kchess_service::protocol::{self, Frame, RefuseReason, read_frame, write_frame};
 use kchess_service::server::{ServeOptions, serve};
@@ -53,7 +55,9 @@ async fn event(events: &mut UnboundedReceiver<ClientEvent>, name: &str) -> Value
     tokio::time::timeout(WAIT, async {
         loop {
             match events.recv().await {
-                Some(ClientEvent::Event { name: got, payload }) if got == name => return payload,
+                Some(ClientEvent::Event(got)) if got.name() == name => {
+                    return got.into_payload().unwrap();
+                }
                 Some(_) => {}
                 None => panic!("the events ended before {name}"),
             }
@@ -154,7 +158,7 @@ async fn two_windows_share_one_core_and_see_each_others_writes() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_client_reaches_only_the_core_api() {
+async fn a_client_calls_the_core_and_answers_host_requests() {
     let profile = tempfile::tempdir().expect("profile");
     let service = spawn_service(profile.path(), Duration::from_secs(30));
     let (gpui, _events) = connect(profile.path(), "gpui").await;
@@ -166,24 +170,10 @@ async fn a_client_reaches_only_the_core_api() {
             .await
             .expect("the call is answered")
     };
-    // Internal methods skip the facade's validation and its live-game assistance checks.
-    for method in [
-        "engine.bestMove",
-        "analysis.start",
-        "store.voiceLog.voiceHistoryDocument",
-    ] {
-        let refused = answered(gpui.call(method, vec![]))
-            .await
-            .expect_err("an internal method");
-        assert!(
-            refused.message.contains("Unknown core method"),
-            "{method}: {refused}"
-        );
-    }
     answered(gpui.call("library", vec![]))
         .await
         .expect("a CoreApi method");
-    answered(gpui.call("host.reply", vec![json!(0), Value::Null]))
+    answered(gpui.call("host.reply", vec![json!(0), json!({ "value": null })]))
         .await
         .expect("host replies still arrive");
 
@@ -251,10 +241,19 @@ async fn a_core_nobody_uses_closes_for_another_release() {
     let service = spawn_service(profile.path(), Duration::from_secs(30));
     let (gpui, _events) = connect(profile.path(), "gpui").await;
     drop(gpui);
-    tokio::time::sleep(Duration::from_millis(100)).await;
     let token = discovery::read_token(profile.path()).expect("token");
-    let refused = raw_hello(profile.path(), token, "another-release".into()).await;
-    assert!(matches!(refused, Frame::Refuse { sole: true, .. }));
+    // Until the core has let go of the window that left, it refuses with `sole: false` and
+    // stays open; once it has, the refusal is the only client's and the core closes.
+    tokio::time::timeout(WAIT, async {
+        while !matches!(
+            raw_hello(profile.path(), token.clone(), "another-release".into()).await,
+            Frame::Refuse { sole: true, .. }
+        ) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the core lets go of the window that left");
     tokio::time::timeout(WAIT, service)
         .await
         .expect("the service closes")
@@ -328,8 +327,8 @@ async fn a_host_request_reaches_only_the_window_that_answers_it() {
     let elsewhere = tokio::time::timeout(Duration::from_millis(500), async {
         loop {
             match second_events.recv().await {
-                Some(ClientEvent::Event { name, payload })
-                    if name == "host:request" && payload["kind"] == "openExternal" =>
+                Some(ClientEvent::Event(CoreEvent::HostRequest(ask)))
+                    if matches!(ask.request, HostRequest::OpenExternal(_)) =>
                 {
                     return;
                 }
@@ -341,6 +340,55 @@ async fn a_host_request_reaches_only_the_window_that_answers_it() {
     .await;
     assert!(elsewhere.is_err(), "the other window is not asked");
     signing_in.abort();
+    service.abort();
+}
+
+/// 2026-11-11: no client sent `cancel`, so a call whose caller gave up (a page that moved on, a
+/// command stopped) kept running in the shared core until it ended. Dropping the call cancels
+/// it there: the sign-in it started stops listening for the browser's return.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dropped_call_stops_its_work_in_the_core() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (gpui, mut events) = connect(profile.path(), "gpui").await;
+    // The client stays connected: only the call goes.
+    let signing_in = tokio::spawn(gpui.call("connectLichess", vec![]));
+    let request = loop {
+        let request = event(&mut events, "host:request").await;
+        if request["kind"] == "openExternal" {
+            break request;
+        }
+    };
+    let page = request["payload"].as_str().expect("the sign-in page");
+    let port: u16 = page
+        .split("redirect_uri=http%3A%2F%2F127.0.0.1%3A")
+        .nth(1)
+        .and_then(|rest| rest.split('%').next())
+        .and_then(|port| port.parse().ok())
+        .unwrap_or_else(|| panic!("a loopback redirect in {page}"));
+    assert!(
+        tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok(),
+        "the sign-in listens for the browser"
+    );
+    signing_in.abort();
+    let stopped = tokio::time::timeout(WAIT, async {
+        while tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok()
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(
+        stopped.is_ok(),
+        "the sign-in still listens after its call was dropped"
+    );
+    gpui.call("library", vec![])
+        .await
+        .expect("the client is still connected");
     service.abort();
 }
 
@@ -398,6 +446,58 @@ async fn a_cancelled_call_is_answered_as_cancelled() {
     service.abort();
 }
 
+/// A window that says it has none open stops what it started: the game it watched is no longer
+/// streamed from Lichess.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_suspended_window_stops_watching() {
+    let (ended, mut feeds_ended) = tokio::sync::mpsc::unbounded_channel();
+    let (opened, mut feeds_opened) = tokio::sync::mpsc::unbounded_channel();
+    let ended = std::sync::Mutex::new(ended);
+    let opened = std::sync::Mutex::new(opened);
+    // Every request is a feed that stays open, with no moves, until KChess hangs up.
+    let lichess = kchess_testkit::Server::start(move |request, out| {
+        let _ = opened
+            .lock()
+            .expect("opened")
+            .send(request.path().to_owned());
+        let streamed = kchess_testkit::ndjson_stream(
+            out,
+            Vec::new(),
+            Duration::from_secs(1),
+            || true,
+            |_| None,
+        );
+        let _ = ended.lock().expect("ended").send(());
+        streamed
+    })
+    .expect("a stand-in Lichess");
+    let profile = tempfile::tempdir().expect("profile");
+    let mut config = Config::new(profile.path().to_path_buf());
+    config.test = Some(kchess_core::TestSwitches {
+        lichess_origin: Some(lichess.base().to_owned()),
+        ..Default::default()
+    });
+    let service = tokio::spawn(serve(ServeOptions {
+        config,
+        idle: Duration::from_secs(30),
+    }));
+    let (gpui, _events) = connect(profile.path(), "gpui").await;
+    gpui.call("watch", vec![json!({ "gameId": "Game0001" })])
+        .await
+        .expect("watching");
+    tokio::time::timeout(WAIT, feeds_opened.recv())
+        .await
+        .expect("the game is streamed")
+        .expect("a feed");
+    assert!(feeds_ended.try_recv().is_err(), "the feed is open");
+    gpui.suspend();
+    tokio::time::timeout(WAIT, feeds_ended.recv())
+        .await
+        .expect("the feed ends once the window is suspended")
+        .expect("ended");
+    service.abort();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_window_that_joins_learns_which_window_alerts() {
     let profile = tempfile::tempdir().expect("profile");
@@ -415,10 +515,9 @@ async fn a_window_that_joins_learns_which_window_alerts() {
         .expect("open");
     assert_eq!(
         first,
-        ClientEvent::Event {
-            name: "alerts:owner".into(),
-            payload: json!({ "connection": gpui.connection() }),
-        }
+        ClientEvent::Event(CoreEvent::AlertsOwner(AlertOwner {
+            connection: Some(gpui.connection())
+        }))
     );
     drop((gpui, second));
     service.abort();
@@ -613,16 +712,18 @@ fn the_binary_prints_its_release_and_protocol() {
     assert_eq!(usage.status.code(), Some(2));
 }
 
-/// `suspend` and `close` only answer: the shared core keeps serving every window.
+/// A window that suspends stops only its own work, and no call closes the shared core: neither
+/// lifecycle step is a core method.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_window_cannot_close_the_shared_core() {
     let profile = tempfile::tempdir().expect("profile");
     let service = spawn_service(profile.path(), Duration::from_secs(30));
     let (gpui, _events) = connect(profile.path(), "gpui").await;
-    let info = discovery::read_info(profile.path()).expect("core.json");
-    assert!(info.started_at > 1_600_000_000_000, "{}", info.started_at);
-    assert_eq!(gpui.call("suspend", vec![]).await, Ok(Value::Null));
-    assert_eq!(gpui.call("close", vec![]).await, Ok(Value::Null));
+    gpui.suspend();
+    for name in ["suspend", "close"] {
+        let refused = gpui.call(name, vec![]).await.expect_err("not a method");
+        assert!(refused.message.contains("Unknown core method"), "{refused}");
+    }
     gpui.call("library", vec![]).await.expect("still served");
     assert!(!service.is_finished());
     service.abort();
@@ -638,16 +739,8 @@ async fn a_closing_core_lets_nobody_in() {
     let socket =
         std::path::PathBuf::from(discovery::read_info(profile.path()).expect("info").socket);
     drop(gpui);
-    tokio::time::sleep(Duration::from_millis(100)).await;
     let token = discovery::read_token(profile.path()).expect("token");
     let info = discovery::read_info(profile.path()).expect("core.json");
-    // Both connect before the refusal, so the second is answered after the core decided.
-    let first = transport::connect(Path::new(&info.socket))
-        .await
-        .expect("socket");
-    let second = transport::connect(Path::new(&info.socket))
-        .await
-        .expect("socket");
     let say_hello = |stream: transport::Stream, protocol: String| {
         let token = token.clone();
         async move {
@@ -663,8 +756,28 @@ async fn a_closing_core_lets_nobody_in() {
             read_frame(&mut reader).await.ok().flatten()
         }
     };
-    let refused = say_hello(first, "another-release".into()).await;
-    assert!(matches!(refused, Some(Frame::Refuse { sole: true, .. })));
+    // Both connect before the refusal, so the second is answered after the core decided. Until
+    // the core has let go of the window that left, the refusal is not the only client's
+    // (`sole: false`) and changes nothing: try again.
+    let second = tokio::time::timeout(WAIT, async {
+        loop {
+            let first = transport::connect(Path::new(&info.socket))
+                .await
+                .expect("socket");
+            let second = transport::connect(Path::new(&info.socket))
+                .await
+                .expect("socket");
+            match say_hello(first, "another-release".into()).await {
+                Some(Frame::Refuse { sole: true, .. }) => return second,
+                Some(Frame::Refuse { sole: false, .. }) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                answer => panic!("not refused for its release: {answer:?}"),
+            }
+        }
+    })
+    .await
+    .expect("the core lets go of the window that left");
     let late = say_hello(second, protocol::protocol()).await;
     assert!(
         !matches!(late, Some(Frame::Welcome { .. })),

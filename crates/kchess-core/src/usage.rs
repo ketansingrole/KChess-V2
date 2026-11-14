@@ -1,22 +1,23 @@
-//! Network accounting batches: the `host:usage` events the Lichess
-//! policy and the puzzle download emit accumulate in memory per account and kind, and reach
-//! `kchess.db` at most every five seconds (`flushUsage`), or on demand before a report. Traffic of
-//! an account whose epoch moved on is dropped by the policy before it is emitted; `forget` drops
-//! what is still pending for those accounts.
+//! Network accounting batches: what the Lichess policy and the downloads count (`Meter`)
+//! accumulates in memory per account and kind, and reaches `kchess.db` at most every five
+//! seconds, or on demand before a report. Traffic of an account whose epoch moved
+//! on is dropped by the policy before it is counted; `forget` drops what is still pending for
+//! those accounts.
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use serde_json::{Map, Value, json};
+#[cfg(test)]
+use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 
-use crate::error::Result;
 use crate::host::{Host, Level};
-use crate::store::Database;
+use crate::store::{self, Database, usage::UsageRow};
+use kchess_contracts::error::Result;
+use kchess_contracts::types::UsageReport;
 
-/// How long counters wait in memory before they are written.
 pub const FLUSH_EVERY: Duration = Duration::from_secs(5);
 
 /// The counters of one account and kind, not yet written.
@@ -33,6 +34,8 @@ struct Pending {
 }
 
 pub struct UsageBatch {
+    /// This batch, for the flush timer it starts.
+    me: Weak<UsageBatch>,
     database: Arc<Database>,
     host: Arc<dyn Host>,
     data_dir: std::path::PathBuf,
@@ -45,7 +48,8 @@ impl UsageBatch {
         host: Arc<dyn Host>,
         data_dir: std::path::PathBuf,
     ) -> Arc<UsageBatch> {
-        Arc::new(UsageBatch {
+        Arc::new_cyclic(|me| UsageBatch {
+            me: me.clone(),
             database,
             host,
             data_dir,
@@ -53,9 +57,9 @@ impl UsageBatch {
         })
     }
 
-    /// Counts `requests` and `bytes` for `account` and `kind` (`recordUsage`'s batching). The first
+    /// Counts `requests` and `bytes` for `account` and `kind`. The first
     /// count starts the flush timer; without a runtime the counters are written at once.
-    pub fn record(self: &Arc<Self>, account: &str, kind: &str, requests: i64, bytes: i64) {
+    pub fn record(&self, account: &str, kind: &str, requests: i64, bytes: i64) {
         let immediate = {
             let mut pending = lock(&self.pending);
             let cell = pending
@@ -66,8 +70,9 @@ impl UsageBatch {
             cell.bytes_in += bytes;
             match tokio::runtime::Handle::try_current() {
                 Ok(handle) => {
-                    if pending.timer.is_none() {
-                        let this = Arc::clone(self);
+                    if pending.timer.is_none()
+                        && let Some(this) = self.me.upgrade()
+                    {
                         pending.timer = Some(handle.spawn(async move {
                             tokio::time::sleep(FLUSH_EVERY).await;
                             lock(&this.pending).timer = None;
@@ -84,25 +89,16 @@ impl UsageBatch {
         }
     }
 
-    /// Writes every pending counter (`flushUsage`). A failed write drops the batch and logs it.
-    fn take_rows(&self) -> Vec<Value> {
-        {
-            let mut pending = lock(&self.pending);
-            if pending.cells.is_empty() {
-                return Vec::new();
-            }
-            std::mem::take(&mut pending.cells)
-                .into_iter()
-                .map(|((account, kind), cell)| {
-                    json!({
-                        "account": account,
-                        "kind": kind,
-                        "requests": cell.requests,
-                        "bytesIn": cell.bytes_in,
-                    })
-                })
-                .collect()
-        }
+    fn take_rows(&self) -> Vec<UsageRow> {
+        std::mem::take(&mut lock(&self.pending).cells)
+            .into_iter()
+            .map(|((account, kind), cell)| UsageRow {
+                account,
+                kind,
+                requests: cell.requests,
+                bytes_in: cell.bytes_in,
+            })
+            .collect()
     }
 
     fn flush_sync(&self) {
@@ -113,11 +109,12 @@ impl UsageBatch {
         let count = rows.len();
         self.log_flush(
             self.database
-                .call("store.usage.flushUsage", &[Value::Array(rows)]),
+                .write(|ctx| store::usage::flush_usage(ctx.db, &rows)),
             count,
         );
     }
 
+    /// Writes every pending counter. A failed write drops the batch and logs it.
     pub async fn flush(&self) {
         let rows = self.take_rows();
         if rows.is_empty() {
@@ -126,13 +123,13 @@ impl UsageBatch {
         let count = rows.len();
         self.log_flush(
             self.database
-                .call_async("store.usage.flushUsage", &[Value::Array(rows)])
+                .write_async(move |ctx| store::usage::flush_usage(ctx.db, &rows))
                 .await,
             count,
         );
     }
 
-    fn log_flush(&self, result: Result<Value>, count: usize) {
+    fn log_flush(&self, result: Result<()>, count: usize) {
         if let Err(cause) = result {
             self.host.log(
                 Level::Warn,
@@ -142,7 +139,7 @@ impl UsageBatch {
         }
     }
 
-    /// Drops the pending counters of `accounts` (`forgetUsage`).
+    /// Drops the pending counters of `accounts`.
     pub fn forget(&self, accounts: &[String]) {
         let mut pending = lock(&self.pending);
         pending
@@ -150,35 +147,29 @@ impl UsageBatch {
             .retain(|(account, _), _| !accounts.iter().any(|name| name.to_lowercase() == *account));
     }
 
-    /// `usageReport`: the pending counters are written first, then the stored report with the
+    /// The pending counters are written first, then the stored report with the
     /// size of the databases on disk.
-    pub async fn report(&self) -> Result<Value> {
+    pub async fn report(&self) -> Result<UsageReport> {
         self.flush().await;
-        let report = self
-            .database
-            .call_async("store.usage.usageReport", &[])
-            .await?;
-        let mut object: Map<String, Value> = match report {
-            Value::Object(object) => object,
-            _ => Map::new(),
-        };
+        let mut report = self.database.read_async(store::usage::usage_report).await?;
         let dir = self.data_dir.clone();
-        let db_bytes = tokio::task::spawn_blocking(move || database_bytes(&dir))
+        report.db_bytes = tokio::task::spawn_blocking(move || database_bytes(&dir))
             .await
-            .map_err(|cause| crate::error::CoreError::wrap("Database size check failed", cause))?;
-        object.insert("dbBytes".into(), json!(db_bytes));
-        Ok(Value::Object(object))
+            .map_err(|cause| {
+                kchess_contracts::error::CoreError::wrap("Database size check failed", cause)
+            })?;
+        Ok(report)
     }
 
-    /// `resetUsage`: the pending counters and the stored ones are cleared.
-    pub async fn reset(&self) -> Result<Value> {
+    /// The pending counters and the stored ones are cleared.
+    pub async fn reset(&self) -> Result<()> {
         lock(&self.pending).cells.clear();
         self.database
-            .call_async("store.usage.resetUsage", &[])
+            .write_async(|ctx| store::usage::reset_usage(ctx.db))
             .await
     }
 
-    /// `closeUsage`: stops the timer and drops what is pending.
+    /// Stops the timer and drops what is pending.
     pub fn close(&self) {
         let mut pending = lock(&self.pending);
         if let Some(timer) = pending.timer.take() {
@@ -188,7 +179,7 @@ impl UsageBatch {
     }
 }
 
-/// The size of KChess's databases on disk (`usageReport`'s `dbBytes`): the main and puzzle
+/// The size of KChess's databases on disk (the report's `dbBytes`): the main and puzzle
 /// databases with their write-ahead logs. A missing file counts as zero.
 fn database_bytes(data_dir: &Path) -> u64 {
     ["kchess.db", "kchess.db-wal", "puzzles.db", "puzzles.db-wal"]
@@ -202,40 +193,47 @@ fn database_bytes(data_dir: &Path) -> u64 {
 }
 
 use crate::tasks::lock;
+use kchess_contracts::types::UsageKind;
 
-/// The host the core's services use: `host:usage` events go to the batch, everything else to the
-/// platform host unchanged.
-pub struct UsageHost {
-    pub inner: Arc<dyn Host>,
-    pub batch: Arc<UsageBatch>,
+/// Where metered network traffic is counted: every service that downloads reports its requests
+/// and bytes here.
+pub trait Meter: Send + Sync {
+    fn count(&self, account: &str, kind: UsageKind, requests: u64, bytes: u64);
 }
 
-impl Host for UsageHost {
-    fn log(&self, level: Level, scope: &str, message: &str) {
-        self.inner.log(level, scope, message);
-    }
+/// Traffic that is not counted.
+pub struct Unmetered;
 
-    fn emit(&self, event: &str, payload: Value) {
-        if event != "host:usage" {
-            self.inner.emit(event, payload);
-            return;
-        }
-        let account = payload.get("account").and_then(Value::as_str).unwrap_or("");
-        let kind = payload
-            .get("category")
-            .and_then(Value::as_str)
-            .unwrap_or("other");
-        let requests = payload.get("requests").and_then(Value::as_i64).unwrap_or(0);
-        let bytes = payload.get("bytes").and_then(Value::as_i64).unwrap_or(0);
-        self.batch.record(account, kind, requests, bytes);
-    }
+impl Meter for Unmetered {
+    fn count(&self, _: &str, _: UsageKind, _: u64, _: u64) {}
+}
 
-    fn emit_to(&self, connection: u64, event: &str, payload: Value) {
-        if event == "host:usage" {
-            self.emit(event, payload);
-        } else {
-            self.inner.emit_to(connection, event, payload);
-        }
+/// Tests: every count, as `{ account, category, requests, bytes }`.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct UsageLog(Mutex<Vec<Value>>);
+
+#[cfg(test)]
+impl UsageLog {
+    pub(crate) fn counted(&self) -> Vec<Value> {
+        lock(&self.0).clone()
+    }
+}
+
+#[cfg(test)]
+impl Meter for UsageLog {
+    fn count(&self, account: &str, kind: UsageKind, requests: u64, bytes: u64) {
+        lock(&self.0).push(
+            json!({ "account": account, "category": kind, "requests": requests, "bytes": bytes }),
+        );
+    }
+}
+
+impl Meter for UsageBatch {
+    fn count(&self, account: &str, kind: UsageKind, requests: u64, bytes: u64) {
+        let kind = serde_json::to_value(kind).unwrap_or_default();
+        let kind = kind.as_str().unwrap_or("other");
+        self.record(account, kind, requests as i64, bytes as i64);
     }
 }
 
@@ -243,15 +241,10 @@ impl Host for UsageHost {
 mod tests {
     use super::*;
 
-    struct Quiet;
-
-    impl Host for Quiet {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _: &str, _: Value) {}
-    }
+    use crate::test_host::TestHost;
 
     fn batch(dir: &Path) -> Arc<UsageBatch> {
-        let host: Arc<dyn Host> = Arc::new(Quiet);
+        let host: Arc<dyn Host> = TestHost::quiet();
         let database = Arc::new(Database::new(
             crate::host::Config::new(dir.to_path_buf()),
             Arc::clone(&host),
@@ -259,8 +252,8 @@ mod tests {
         UsageBatch::new(database, host, dir.to_path_buf())
     }
 
-    /// The counters of one batch read back as `usageReport` reports them: the same rows the
-    /// TypeScript batch wrote, summed per account (case-insensitively) and kind.
+    /// The counters of one batch read back in the report, summed per account (case-insensitively)
+    /// and kind.
     #[tokio::test]
     async fn counts_are_written_as_the_same_rows_per_account_and_kind() {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -269,7 +262,7 @@ mod tests {
         batch.record("alice", "profile", 2, 50);
         batch.record("Alice", "games", 1, 10);
         batch.record("Bob", "games", 3, 7);
-        let report = batch.report().await.expect("report");
+        let report = json!(batch.report().await.expect("report"));
         let alice = &report["accounts"]["alice"];
         assert_eq!(alice["total"], json!({ "requests": 4, "bytesIn": 160 }));
         assert_eq!(
@@ -287,7 +280,27 @@ mod tests {
         assert!(report["dbBytes"].as_u64().is_some());
     }
 
-    /// `forgetUsage` drops what is still pending for the account, and nothing else.
+    /// Each account's cached responses add up to its cache storage, keyed by the account before
+    /// the key's first colon.
+    #[tokio::test]
+    async fn cached_responses_add_up_per_account() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let batch = batch(dir.path());
+        batch
+            .database
+            .write(|ctx| {
+                // Stored as JSON text: 5, 3 and 2 bytes.
+                store::games::write_api_cache(ctx.db, "alice:profile", &json!("abc"))?;
+                store::games::write_api_cache(ctx.db, "alice:games", &json!([1]))?;
+                store::games::write_api_cache(ctx.db, "bob:games", &json!(12))
+            })
+            .expect("cache rows");
+        let report = json!(batch.report().await.expect("report"));
+        assert_eq!(report["storage"]["alice"]["cacheBytes"], json!(8));
+        assert_eq!(report["storage"]["bob"]["cacheBytes"], json!(2));
+    }
+
+    /// Forgetting an account drops what is still pending for the account, and nothing else.
     #[tokio::test]
     async fn forgetting_an_account_drops_its_pending_counts() {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -295,12 +308,12 @@ mod tests {
         batch.record("Alice", "games", 1, 10);
         batch.record("Bob", "games", 1, 20);
         batch.forget(&["ALICE".to_string()]);
-        let report = batch.report().await.expect("report");
+        let report = json!(batch.report().await.expect("report"));
         assert!(report["accounts"].get("alice").is_none());
         assert_eq!(report["accounts"]["bob"]["total"]["bytesIn"], json!(20));
     }
 
-    /// `resetUsage` clears the pending and the stored counters.
+    /// A reset clears the pending and the stored counters.
     #[tokio::test]
     async fn a_reset_clears_pending_and_stored_counts() {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -309,11 +322,30 @@ mod tests {
         batch.flush().await;
         batch.record("Alice", "games", 1, 10);
         batch.reset().await.expect("reset");
-        let report = batch.report().await.expect("report");
+        let report = json!(batch.report().await.expect("report"));
         assert!(
             report["accounts"]
                 .as_object()
                 .is_some_and(|accounts| accounts.is_empty())
+        );
+    }
+
+    /// Without a runtime to time a flush, a count is written at once.
+    #[test]
+    fn without_a_runtime_a_count_is_written_at_once() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let batch = batch(dir.path());
+        batch.record("Alice", "games", 2, 30);
+        assert!(lock(&batch.pending).cells.is_empty());
+        let report = json!(
+            batch
+                .database
+                .read(store::usage::usage_report)
+                .expect("report")
+        );
+        assert_eq!(
+            report["accounts"]["alice"]["total"],
+            json!({ "requests": 2, "bytesIn": 30 })
         );
     }
 }

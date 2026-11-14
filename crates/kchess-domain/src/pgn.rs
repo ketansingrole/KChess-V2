@@ -1,5 +1,4 @@
-//! The PGN parser (`PgnParser`, non-streaming, unbounded budget, as `parsePgn` runs it):
-//! the same headers, comments, NAGs, variations and game boundaries.
+//! The PGN parser: headers, comments, NAGs, variations and game boundaries.
 // PGN is outside input: read it without indexing that can panic. Node ids are the one
 // exception, and only through `Game::node`.
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
@@ -67,7 +66,7 @@ pub struct PgnNode {
 
 #[derive(Debug, Clone)]
 pub struct Game {
-    /// Insertion-ordered, as a JavaScript `Map`.
+    /// Insertion-ordered.
     pub headers: Vec<(String, String)>,
     pub comments: Option<Vec<String>>,
     /// Arena of move nodes; index 0 is the root (no move).
@@ -112,7 +111,7 @@ impl Game {
         }
     }
 
-    /// A game with the default headers and no moves (`defaultGame()`).
+    /// A game with the default headers and no moves.
     pub fn empty() -> Game {
         Game::new()
     }
@@ -144,6 +143,18 @@ impl Game {
         })
     }
 
+    /// The main line's nodes from the start, first move first.
+    pub fn main_line(&self) -> impl Iterator<Item = usize> + '_ {
+        std::iter::successors(self.children(0).next(), |&node| self.children(node).next())
+    }
+
+    /// The main line's moves, in SAN.
+    pub fn main_line_sans(&self) -> Vec<String> {
+        self.main_line()
+            .map(|node| self.node(node).san.as_str().to_string())
+            .collect()
+    }
+
     fn append_child(&mut self, parent: usize, child: usize) {
         match self.node(parent).last_child {
             Some(last) => self.node_mut(last).next_sibling = Some(child),
@@ -159,7 +170,7 @@ impl Game {
             .map(|(_, v)| v.as_str())
     }
 
-    /// `headers.set(name, value)`: an existing header keeps its place.
+    /// An existing header keeps its place.
     pub fn put_header(&mut self, name: &str, value: String) {
         match self.headers.iter_mut().find(|(k, _)| k == name) {
             Some(entry) => entry.1 = value,
@@ -167,7 +178,6 @@ impl Game {
         }
     }
 
-    /// `headers.delete(name)`
     pub fn remove_header(&mut self, name: &str) {
         self.headers.retain(|(k, _)| k != name);
     }
@@ -186,7 +196,6 @@ impl Game {
     }
 }
 
-/// `makeOutcome(parseOutcome(value))`
 fn outcome(value: &str) -> &'static str {
     match value {
         "1-0" | "1–0" | "1—0" => "1-0",
@@ -706,7 +715,7 @@ struct WriteFrame {
     in_variation: bool,
 }
 
-/// `makePgn`: headers, comments, NAGs and variations exactly as PGN is written.
+/// Headers, comments, NAGs and variations exactly as PGN is written.
 pub fn make_pgn(game: &Game) -> String {
     let mut out = String::with_capacity(64 + game.nodes.len() * 8);
     if !game.headers.is_empty() {
@@ -823,8 +832,7 @@ pub fn make_pgn(game: &Game) -> String {
     out
 }
 
-/// `studyDocumentPgn`: every chapter as one PGN named by a `ChapterName` header, or None when
-/// a chapter holds no game (the TypeScript function throws there).
+/// Every chapter as one PGN named by a `ChapterName` header, or None when a chapter holds no game.
 pub fn study_document_pgn<S: AsRef<str>>(chapters: &[(S, S)]) -> Option<String> {
     let mut parts = Vec::with_capacity(chapters.len());
     for (name, pgn) in chapters {
@@ -835,13 +843,13 @@ pub fn study_document_pgn<S: AsRef<str>>(chapters: &[(S, S)]) -> Option<String> 
     Some(parts.join("\n\n"))
 }
 
-/// `studyContent(studyDocumentPgn(chapters)) === studyContent(downloaded)`: whether a study
-/// still matches the copy downloaded from Lichess. None when a chapter holds no game.
+/// Whether a study still matches the copy downloaded from Lichess. None when a chapter holds no
+/// game.
 pub fn study_matches<S: AsRef<str>>(chapters: &[(S, S)], downloaded: &str) -> Option<bool> {
     Some(study_content(&study_document_pgn(chapters)?) == study_content(downloaded))
 }
 
-/// `studyContent`: the moves and annotations, without headers Lichess adds or rewrites.
+/// The moves and annotations, without headers Lichess adds or rewrites.
 pub fn study_content(pgn: &str) -> String {
     parse_pgn(pgn)
         .into_iter()
@@ -854,7 +862,6 @@ pub fn study_content(pgn: &str) -> String {
         .join("\n\n")
 }
 
-/// `parsePgn`.
 pub fn parse_pgn(pgn: &str) -> Vec<Game> {
     let mut parser = Parser::new();
     let mut rest = pgn;
@@ -869,8 +876,129 @@ pub fn parse_pgn(pgn: &str) -> Vec<Game> {
     parser.games
 }
 
+/// SAN of UCI moves from the standard start, as far as they are legal.
+pub fn san_history<S: AsRef<str>>(moves: &[S]) -> Vec<String> {
+    let start = shakmaty::variant::VariantPosition::Chess(shakmaty::Chess::default());
+    crate::replay::replay_from(start, moves)
+        .played
+        .into_iter()
+        .map(|m| m.san)
+        .collect()
+}
+
+/// SAN moves, not validated, as a PGN with the default headers.
+pub fn pgn_from_san<S: AsRef<str>>(sans: &[S]) -> String {
+    let mut game = Game::empty();
+    let mut parent = 0;
+    for san in sans {
+        parent = game.add_move(parent, PgnNode::with(san.as_ref(), None, None, None));
+    }
+    make_pgn(&game)
+}
+
+/// UCI moves from the standard start, as far as they are legal, as a PGN.
+pub fn pgn_from_uci<S: AsRef<str>>(moves: &[S]) -> String {
+    pgn_from_san(&san_history(moves))
+}
+
+/// UCI moves from a setup, as far as they are legal, with the headers another program needs to
+/// replay them after `headers`. A setup that is not a legal position is refused
+/// (`games::ILLEGAL_SETUP`).
+pub fn setup_pgn<S: AsRef<str>>(
+    variant: crate::variant::Variant,
+    fen: &str,
+    moves: &[S],
+    headers: &[(&str, &str)],
+) -> Result<String, String> {
+    let replay = crate::replay::replay_setup(variant, fen, moves)
+        .ok_or_else(|| crate::games::ILLEGAL_SETUP.to_string())?;
+    let mut game = Game::empty();
+    for (key, value) in headers {
+        game.put_header(key, (*value).to_string());
+    }
+    if !variant.is_standard() {
+        // The PGN `Variant` header takes the names other PGN readers know, not the Lichess keys.
+        game.put_header("Variant", variant.label().to_string());
+    }
+    if fen != rules::INITIAL_FEN || variant == crate::variant::Variant::Chess960 {
+        game.put_header("SetUp", "1".into());
+        game.put_header("FEN", fen.to_string());
+    }
+    let mut parent = 0;
+    for played in &replay.played {
+        parent = game.add_move(parent, PgnNode::with(&played.san, None, None, None));
+    }
+    Ok(make_pgn(&game))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_main_line_follows_first_children_past_variations() {
+        let games = parse_pgn("1. e4 (1. d4 d5) 1... e5 (1... c5 2. Nf3) 2. Nf3 *");
+        let game = games.first().unwrap();
+        assert_eq!(game.main_line_sans(), ["e4", "e5", "Nf3"]);
+        assert_eq!(game.main_line().count(), 3);
+        assert_eq!(Game::empty().main_line().count(), 0);
+    }
+
+    #[test]
+    fn setup_pgns_name_their_variant_as_pgn_readers_know_it() {
+        let koth = rules::make_fen(&rules::default_position(
+            shakmaty::variant::Variant::KingOfTheHill,
+        ));
+        let pgn = setup_pgn(
+            crate::variant::Variant::KingOfTheHill,
+            &koth,
+            &["e2e4"],
+            &[],
+        )
+        .unwrap();
+        assert!(pgn.contains("[Variant \"King of the Hill\"]"), "{pgn}");
+        assert_eq!(
+            rules::pgn_variant(Some("King of the Hill")),
+            Some(shakmaty::variant::Variant::KingOfTheHill)
+        );
+    }
+
+    /// The headers come first, then what replaying the moves needs.
+    #[test]
+    fn setup_pgns_carry_their_headers_and_start() {
+        let pgn = setup_pgn(
+            crate::variant::Variant::Standard,
+            "4k3/8/8/8/8/8/8/4K2R w K - 0 1",
+            &["e1g1"],
+            &[("White", "You")],
+        )
+        .unwrap();
+        assert!(pgn.contains("[White \"You\"]"), "{pgn}");
+        assert!(
+            pgn.contains("[FEN \"4k3/8/8/8/8/8/8/4K2R w K - 0 1\"]"),
+            "{pgn}"
+        );
+        assert!(pgn.contains("1. O-O"), "{pgn}");
+        assert_eq!(
+            pgn_from_uci(&["e2e4", "e7e5", "e1e3"]),
+            pgn_from_san(&["e4", "e5"])
+        );
+    }
+
+    /// An illegal setup gave a PGN of the headers alone, which read back as a game from the
+    /// standard start with no moves.
+    #[test]
+    fn a_setup_pgn_refuses_an_illegal_setup() {
+        let kingless = "8/8/8/8/8/8/8/8 w - - 0 1";
+        assert_eq!(
+            setup_pgn(
+                crate::variant::Variant::Standard,
+                kingless,
+                &["e2e4"],
+                &[("White", "You")]
+            ),
+            Err(crate::games::ILLEGAL_SETUP.to_string())
+        );
+    }
+
     use super::*;
     use regex::Regex;
 

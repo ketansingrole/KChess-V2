@@ -3,7 +3,7 @@
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
-use gpui_kit::component::{Disableable as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::types::Settings;
@@ -26,11 +26,8 @@ pub fn restart_cost(cx: &App) -> Option<&'static str> {
             "Your Lichess game is still on, and its clock keeps running while KChess restarts",
         );
     }
-    let run = crate::shell::view_of::<crate::pages::puzzles::PuzzlesPage>(
-        crate::pages::Page::Puzzles,
-        cx,
-    )
-    .is_some_and(|puzzles| puzzles.read(cx).run_going(cx));
+    let run = crate::shell::view::<crate::pages::puzzles::PuzzlesPage>(cx)
+        .is_some_and(|puzzles| puzzles.read(cx).run_going(cx));
     run.then_some("Your puzzle run ends")
 }
 
@@ -61,25 +58,105 @@ pub fn ask_restart(window: &mut Window, cx: &mut App) {
     });
 }
 
+/// What the title bar's update button shows: the top bar is drawn again when one of these
+/// changes.
+#[derive(PartialEq)]
+pub struct ButtonInputs {
+    phase: Phase,
+    /// A real-time game is on: the button waits until it ends.
+    live_game: bool,
+    version: Option<String>,
+    current: String,
+    progress: Option<(u64, u64)>,
+    error: Option<String>,
+}
+
+impl ButtonInputs {
+    pub fn of(cx: &App) -> ButtonInputs {
+        let updates = cx.global::<UpdatesHandle>().0.read(cx);
+        ButtonInputs {
+            phase: updates.phase,
+            live_game: crate::online::handle(cx).read(cx).live_game_on(),
+            version: updates.version.clone(),
+            current: updates.current.clone(),
+            progress: updates.progress,
+            error: updates.error.clone(),
+        }
+    }
+}
+
+/// The title bar's button for a newer KChess: its download, or the restart that installs it.
+pub fn title_bar_button(cx: &App) -> Option<impl IntoElement + use<>> {
+    // Not during a real-time game: the update waits in Settings → Updates until it ends.
+    if crate::online::handle(cx).read(cx).live_game_on() {
+        return None;
+    }
+    let handle = cx.global::<UpdatesHandle>().0.clone();
+    let updates = handle.read(cx);
+    let version = updates.version.clone()?;
+    let from = updates.current.clone();
+    let (label, tooltip) = match updates.phase {
+        Phase::Available => (
+            format!("Update to {version}"),
+            format!("Download KChess {version} (you have {from})"),
+        ),
+        Phase::Downloading => (
+            match updates.progress {
+                Some((received, total)) if total > 0 => {
+                    format!("Updating {}%", (100 * received / total).min(100))
+                }
+                _ => "Updating…".into(),
+            },
+            format!("Downloading KChess {version} (you have {from})"),
+        ),
+        Phase::Downloaded => (
+            "Restart to update".into(),
+            format!("KChess {version} is ready. Restart now, or it installs when you quit."),
+        ),
+        Phase::Error => (
+            "Retry update".into(),
+            updates
+                .error
+                .clone()
+                .unwrap_or_else(|| "The update could not finish".into()),
+        ),
+        _ => return None,
+    };
+    let phase = updates.phase;
+    let installs = phase == Phase::Downloaded || updates.retries_install();
+    let target = handle.downgrade();
+    Some(
+        crate::shell::over_title_bar(
+            Button::new("update-button")
+                .small()
+                .when(phase == Phase::Downloaded, |button| button.primary())
+                .when(phase == Phase::Error, |button| button.danger())
+                .when(
+                    !matches!(phase, Phase::Downloaded | Phase::Error),
+                    |button| button.outline(),
+                )
+                .icon(icon(badge(phase).map_or("download", |(_, _, glyph)| glyph)))
+                .label(label)
+                .tooltip(tooltip)
+                .disabled(phase == Phase::Downloading)
+                .on_click(move |_, window, cx| {
+                    if installs {
+                        ask_restart(window, cx);
+                    } else {
+                        let _ = target.update(cx, |updates, cx| updates.download(cx));
+                    }
+                }),
+        )
+        // Its right edge is anchored, so a proportional "Updating N%" moves it with every percent.
+        .font_features(crate::widgets::tabular()),
+    )
+}
+
 /// The landing page, the source and the issue tracker, under the version.
-pub const WEBSITE: &str = "https://ketansingrole.github.io/KChess-V2/";
-pub const SOURCE: &str = "https://github.com/ketansingrole/KChess-V2";
-pub const ISSUES: &str = "https://github.com/ketansingrole/KChess-V2/issues";
+pub use kchess_delta::{ISSUES, SOURCE, WEBSITE};
 
 fn bytes(count: u64) -> String {
     widgets::format_bytes(count as f64)
-}
-
-/// `timeAgo` for a check: "just now", "5 minutes ago", "3 hours ago".
-fn ago(millis: i64) -> String {
-    let minutes = (chrono::Utc::now().timestamp_millis() - millis).max(0) / 60_000;
-    match minutes {
-        0 => "just now".into(),
-        1 => "1 minute ago".into(),
-        2..60 => format!("{minutes} minutes ago"),
-        60..120 => "1 hour ago".into(),
-        _ => format!("{} hours ago", minutes / 60),
-    }
 }
 
 /// The badge beside the version (`badge`).
@@ -153,7 +230,10 @@ impl SettingsPage {
             if !line.is_empty() {
                 line.push_str(" · ");
             }
-            line.push_str(&format!("Checked {}", ago(checked)));
+            line.push_str(&format!(
+                "Checked {}",
+                widgets::time_ago(checked as f64, kchess_games::now_ms())
+            ));
         }
         let page = updates.release_page();
         let act = |run: fn(&mut Updates, &mut Context<Updates>)| {
@@ -364,37 +444,12 @@ impl SettingsPage {
             }))
             .child(about);
         let can_check = updates.can_check();
-        let frontend = &settings.frontend;
         v_flex().gap(px(16.)).child(status).when(can_check, |page| {
             page.child(
                 Rows::new(self.narrow())
-                    .switch(
-                        "update-auto-check",
-                        "Automatically check for updates",
-                        Some("On startup and every six hours"),
-                        frontend.update_auto_check,
-                        true,
-                        |s, on| s.frontend.update_auto_check = on,
-                        palette,
-                    )
-                    .switch(
-                        "update-auto-download",
-                        "Download updates in the background",
-                        Some("Turning this off does not cancel an ongoing download"),
-                        frontend.update_auto_download,
-                        true,
-                        |s, on| s.frontend.update_auto_download = on,
-                        palette,
-                    )
-                    .switch(
-                        "update-install-on-quit",
-                        "Install updates when I quit",
-                        Some("KChess will not quit or restart automatically"),
-                        frontend.update_install_on_quit,
-                        true,
-                        |s, on| s.frontend.update_install_on_quit = on,
-                        palette,
-                    )
+                    .switch("update-auto-check", settings, true, palette)
+                    .switch("update-auto-download", settings, true, palette)
+                    .switch("update-install-on-quit", settings, true, palette)
                     .card(palette),
             )
         })

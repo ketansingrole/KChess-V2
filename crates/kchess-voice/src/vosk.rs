@@ -1,5 +1,7 @@
 //! The part of the Vosk C API (`vosk_api.h`) the helper uses, loaded from the shared library at
 //! run time. Models and recognizers borrow the loaded library, so neither outlives it.
+// The one module that calls C; every unsafe block carries its SAFETY comment.
+#![allow(unsafe_code)]
 
 use std::ffi::{CStr, CString, c_char, c_float, c_int, c_short, c_void};
 use std::path::Path;
@@ -98,7 +100,6 @@ impl Vosk {
         })
     }
 
-    /// Loads the model folder at `path`.
     pub fn model(&self, path: &Path) -> Result<Model<'_>, String> {
         let text = path
             .to_str()

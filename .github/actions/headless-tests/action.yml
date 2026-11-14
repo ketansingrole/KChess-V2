@@ -1,0 +1,17 @@
+name: Lint and test the workspace but the app
+description: >-
+  The workspace's lints and every member's tests but the app's (whose tests run under
+  `cargo test -p kchess-gpui`). The whole workspace, so a new member is tested without naming it;
+  one clippy and one nextest over all of them, since separate runs resolved features apart and
+  rebuilt the dependencies they share.
+
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/install-tools
+      with:
+        tools: cargo-nextest
+    - shell: bash
+      run: cargo clippy --workspace --all-targets --locked -- -D warnings
+    - shell: bash
+      run: cargo nextest run --workspace --exclude kchess-gpui --locked

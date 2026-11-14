@@ -1,9 +1,11 @@
 //! Openings: the browser with a search, the
 //! openings opened lately, popular ones and every family by first move; and one opening
 //! on a board to explore, with its moves, its Wikibooks description and
-//! the ways to train it. The names and the tree are the shared rules' (`openingTree`).
+//! the ways to train it. The names and the tree are the shared rules'.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::Moves;
+use kchess_contracts::types::{DescriptionBlock, OpeningDescription, PopularityMonth};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -15,8 +17,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_domain::training::openings::{OpeningNode, opening_tree};
+use kchess_domain::variant::Variant;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use shakmaty::{Color, Position as _};
 
 use crate::assets::icon;
@@ -24,7 +26,8 @@ use crate::board::{BoardEvent, BoardState, ChessBoard};
 use crate::chart::{ChartPoint, LineChart};
 use crate::core::AppCore;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
-use crate::game::{STANDARD_FEN, rules, view};
+use crate::game::surface::TakesKeys as _;
+use crate::game::{STANDARD_FEN, view};
 use crate::pages::Page;
 use crate::play_layout::{
     Measured, PAGE_BOTTOM, PAGE_TOP, PANEL_MAX, PANEL_MIN, PlayLayout, side_padding,
@@ -39,7 +42,7 @@ const RECENT_LIMIT: usize = 6;
 /// Search results shown at once.
 const LIMIT: usize = 60;
 const SEARCH_DELAY: Duration = Duration::from_millis(120);
-/// The popular cards' columns (`.popular-grid`).
+/// The popular cards' columns.
 const CARD_MIN: Pixels = px(150.);
 const CARD_GAP: Pixels = px(16.);
 
@@ -95,7 +98,11 @@ fn percent(value: f64) -> String {
 }
 
 fn line_of(moves: &[String]) -> Vec<(String, String, String)> {
-    let Some(replay) = kchess_domain::replay::replay_setup("standard", STANDARD_FEN, moves) else {
+    let Some(replay) = kchess_domain::replay::replay_setup(
+        kchess_domain::variant::Variant::Standard,
+        STANDARD_FEN,
+        moves,
+    ) else {
         return Vec::new();
     };
     let positions = kchess_domain::replay::replay_positions(STANDARD_FEN, moves);
@@ -107,21 +114,15 @@ fn line_of(moves: &[String]) -> Vec<(String, String, String)> {
         .collect()
 }
 
-/// `openingAt`: the name and code of the line.
+/// The name and code of the line.
 fn opening_at(moves: &[String]) -> Option<(String, String)> {
-    let named = rules(
-        "openingAt",
-        &[
-            json!({ "variant": "standard", "fen": STANDARD_FEN }),
-            json!(moves),
-            json!(moves.len()),
-        ],
-    )
-    .ok()?;
-    Some((
-        named["name"].as_str()?.to_string(),
-        named["eco"].as_str().unwrap_or_default().to_string(),
-    ))
+    let named = kchess_domain::training::openings::opening_at(
+        "standard",
+        STANDARD_FEN,
+        moves,
+        moves.len() as f64,
+    )?;
+    Some((named.name, named.eco))
 }
 
 fn entry(moves: &[String], name: Option<&str>) -> Option<Entry> {
@@ -265,7 +266,7 @@ pub struct OpeningsPage {
     layout: PlayLayout,
     orientation: Color,
     move_input: Entity<InputState>,
-    description: Option<Value>,
+    description: Option<OpeningDescription>,
     full_description: bool,
     description_task: Option<Task<()>>,
     /// Month by month, how often the line's last move was chosen; shown once there is a year of it.
@@ -297,13 +298,18 @@ impl OpeningsPage {
         let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 Some(Color::White),
                 None,
             ))
         });
-        let explorer = cx.new(|cx| PositionExplorer::new(true, window, cx));
+        let explorer =
+            cx.new(|cx| PositionExplorer::new(crate::explorer::Layout::Grid, window, cx));
         let subscriptions = vec![
             cx.subscribe(&explorer, |this, _, event: &ExplorerEvent, cx| {
                 let ExplorerEvent::Play(uci) = event;
@@ -382,8 +388,11 @@ impl OpeningsPage {
         self.previews
             .entry(fen.to_string())
             .or_insert_with(|| {
-                let position =
-                    kchess_domain::rules::setup_start("standard", fen).unwrap_or_default();
+                let position = kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    fen,
+                )
+                .unwrap_or_default();
                 let mut state = BoardState::of(&position, Color::White, None, None);
                 state.preview = true;
                 cx.new(|_| ChessBoard::new(state))
@@ -433,13 +442,13 @@ impl OpeningsPage {
             Self::remember(&name, &line, cx);
         }
         if !line.is_empty() {
-            let description = cx
-                .global::<AppCore>()
-                .request(calls::OpeningDescription { moves: json!(line) });
+            let description = cx.global::<AppCore>().request(calls::OpeningDescription {
+                moves: Moves(line.clone()),
+            });
             self.description_task = Some(cx.spawn(async move |this, cx| match description.await {
                 Ok(page) => {
                     let _ = this.update(cx, |this, cx| {
-                        this.description = (!page.is_null()).then_some(page);
+                        this.description = page;
                         cx.notify();
                     });
                 }
@@ -451,9 +460,9 @@ impl OpeningsPage {
             }));
         }
         if !line.is_empty() {
-            let months = cx
-                .global::<AppCore>()
-                .request(calls::OpeningPopularity { moves: json!(line) });
+            let months = cx.global::<AppCore>().request(calls::OpeningPopularity {
+                moves: Moves(line.clone()),
+            });
             let san = steps
                 .last()
                 .map(|(_, san, _)| san.clone())
@@ -474,24 +483,22 @@ impl OpeningsPage {
             .map_or_else(|| STANDARD_FEN.to_string(), |(_, _, fen)| fen.clone());
         let shown = line.clone();
         self.explorer.update(cx, |explorer, cx| {
-            explorer.show(None, &fen, Some(shown), false, cx)
+            explorer.show(Variant::Standard, &fen, Some(shown), false, cx)
         });
         self.line = Some(line);
         self.redraw(cx);
     }
 
-    /// `popularityPoints`: each month's share of games, once there is a year of them.
-    fn show_popularity(&mut self, months: &Value, san: &str, cx: &mut Context<Self>) {
+    /// Each month's share of games, once there is a year of them.
+    fn show_popularity(&mut self, months: &[PopularityMonth], san: &str, cx: &mut Context<Self>) {
         let points: Vec<ChartPoint> = months
-            .as_array()
-            .into_iter()
-            .flatten()
+            .iter()
             .filter_map(|month| {
-                let key = month["month"].as_str()?;
+                let key = &month.month;
                 let date =
                     chrono::NaiveDate::parse_from_str(&format!("{key}-01"), "%Y-%m-%d").ok()?;
                 Some(ChartPoint {
-                    value: (month["share"].as_f64()? * 1000.).round() / 10.,
+                    value: (month.share * 1000.).round() / 10.,
                     short: date.format("%b %y").to_string().into(),
                     long: date.format("%b %-d, %Y").to_string().into(),
                 })
@@ -504,10 +511,8 @@ impl OpeningsPage {
         }
         let top = points.iter().map(|point| point.value).fold(1., f64::max);
         let (first, last) = (&points[0], &points[points.len() - 1]);
-        let first_month = months[0]["month"].as_str().unwrap_or_default();
-        let last_month = months[points.len() - 1]["month"]
-            .as_str()
-            .unwrap_or_default();
+        let first_month = &months[0].month;
+        let last_month = &months[points.len() - 1].month;
         let summary = format!(
             "{san} was chosen in {} of games in {first_month} and {} in {last_month}",
             percent(first.value),
@@ -525,7 +530,9 @@ impl OpeningsPage {
         let fen = line_of(&line)
             .last()
             .map_or_else(|| STANDARD_FEN.to_string(), |(_, _, fen)| fen.clone());
-        let position = kchess_domain::rules::setup_start("standard", &fen).unwrap_or_default();
+        let position =
+            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &fen)
+                .unwrap_or_default();
         let last = line
             .last()
             .and_then(|uci| Some((uci.get(0..2)?.parse().ok()?, uci.get(2..4)?.parse().ok()?)));
@@ -541,9 +548,10 @@ impl OpeningsPage {
         let fen = line_of(&line)
             .last()
             .map_or_else(|| STANDARD_FEN.to_string(), |(_, _, fen)| fen.clone());
-        let setup = json!({ "variant": "standard", "fen": fen });
-        let typed = kchess_domain::rules::setup_start("standard", &fen)
-            .and_then(|position| view::typed_uci(&setup, &position, &text));
+        let setup = kchess_domain::variant::Setup::standard_at(fen.clone());
+        let typed =
+            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &fen)
+                .and_then(|position| view::typed_uci(&setup, &position, &text));
         if let Some(uci) = typed {
             self.move_input
                 .update(cx, |input, cx| input.set_value("", window, cx));
@@ -583,10 +591,10 @@ impl OpeningsPage {
                     opening.map_or_else(|| "Starting position".to_string(), |(name, _)| name);
                 Self::train(OpeningChoice { name, moves: line }, window, cx);
             }
-            Action::Analyse => crate::shell::open_analysis_line(line, window, cx),
+            Action::Analyse => crate::pages::analysis::open_line(line, window, cx),
             Action::Puzzles => {
                 if let Some((name, _)) = opening {
-                    crate::shell::open_opening_puzzles(&name, window, cx);
+                    crate::pages::puzzles::open_opening(&name, window, cx);
                 }
             }
             Action::Flip => self.flip(cx),
@@ -594,22 +602,14 @@ impl OpeningsPage {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn orientation(&self) -> Color {
-        self.orientation
-    }
-
     fn flip(&mut self, cx: &mut Context<Self>) {
         self.orientation = !self.orientation;
         self.redraw(cx);
     }
 
-    /// `useTrainOpening`: Practice → Repertoire on an opening.
+    /// Practice → Repertoire on an opening.
     fn train(choice: OpeningChoice, window: &mut Window, cx: &mut App) {
-        crate::prefs::set(cx, "kchess:repertoire-opening", &choice);
-        crate::prefs::set(cx, "kchess:repertoire-study", "opening");
-        crate::prefs::set(cx, "kchess:practice-tab", "openings");
-        crate::shell::open(Page::Practice, window, cx);
+        crate::pages::practice::repertoire::train_opening(&choice, window, cx);
     }
 
     fn render_card(&mut self, item: &Entry, width: Pixels, cx: &mut Context<Self>) -> AnyElement {
@@ -1038,28 +1038,26 @@ impl OpeningsPage {
         let analyse_line = line.clone();
         let puzzles = opening.clone();
         let description = self.description.clone().map(|page| {
-            let blocks: Vec<Value> = page["blocks"].as_array().cloned().unwrap_or_default();
-            let shown: Vec<Value> = if self.full_description {
+            let blocks = page.blocks;
+            let shown: Vec<DescriptionBlock> = if self.full_description {
                 blocks.clone()
             } else {
                 blocks
                     .iter()
-                    .find(|block| block["heading"] != json!(true))
+                    .find(|block| !block.heading)
                     .cloned()
                     .into_iter()
                     .collect()
             };
             let more = blocks.len() > shown.len() || self.full_description;
-            let url = page["url"].as_str().unwrap_or_default().to_string();
+            let url = page.url;
             v_flex()
                 .gap(px(8.))
                 .children(shown.into_iter().map(|block| {
                     div()
                         .text_size(px(14.))
-                        .when(block["heading"] == json!(true), |text| {
-                            text.font_weight(FontWeight::MEDIUM)
-                        })
-                        .child(block["text"].as_str().unwrap_or_default().to_string())
+                        .when(block.heading, |text| text.font_weight(FontWeight::MEDIUM))
+                        .child(block.text)
                 }))
                 .when(more, |section| {
                     section.child(
@@ -1135,7 +1133,7 @@ impl OpeningsPage {
                             .ghost()
                             .xsmall()
                             .icon(icon("arrow-up-down"))
-                            .tooltip("Flip board (F)")
+                            .tooltip(crate::menu::flip_label(cx))
                             .accessibility_label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     ),
@@ -1180,7 +1178,7 @@ impl OpeningsPage {
                             .icon(icon("microscope"))
                             .label("Analyse")
                             .on_click(move |_, window, cx| {
-                                crate::shell::open_analysis_line(analyse_line.clone(), window, cx)
+                                crate::pages::analysis::open_line(analyse_line.clone(), window, cx)
                             }),
                     )
                     .children(puzzles.map(|(name, _)| {
@@ -1189,7 +1187,7 @@ impl OpeningsPage {
                             .icon(icon("puzzle"))
                             .label("Train with puzzles")
                             .on_click(move |_, window, cx| {
-                                crate::shell::open_opening_puzzles(&name, window, cx)
+                                crate::pages::puzzles::open_opening(&name, window, cx)
                             })
                     })),
             )
@@ -1253,7 +1251,6 @@ impl Render for OpeningsPage {
             return div()
                 .size_full()
                 .track_focus(&self.focus)
-                // F turns the line's board, as its button does, while no text field has the keys.
                 // Escape goes back to all openings.
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                     if !crate::board::page_has_keys(&this.focus, window, cx)
@@ -1261,18 +1258,12 @@ impl Render for OpeningsPage {
                     {
                         return;
                     }
-                    match event.keystroke.key.as_str() {
-                        "f" => this.act(Action::Flip, window, cx),
-                        "escape" => this.show_line(None, cx),
-                        _ => return,
-                    }
-                    cx.stop_propagation();
-                }))
-                .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                    if event.button == MouseButton::Left {
-                        window.focus(&this.focus, cx);
+                    if event.keystroke.key == "escape" {
+                        this.show_line(None, cx);
+                        cx.stop_propagation();
                     }
                 }))
+                .takes_keys(&self.focus)
                 .child(self.render_detail(window, cx, &palette))
                 .into_any_element();
         }
@@ -1305,6 +1296,67 @@ impl Render for OpeningsPage {
                     ),
             )
             .into_any_element()
+    }
+}
+
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::ActionInfo;
+        match self {
+            Action::Train => ActionInfo::new(
+                "openings:train",
+                "Train this line",
+                "graduation-cap",
+                "repertoire drill",
+            ),
+            Action::Analyse => {
+                ActionInfo::new("openings:analyse", "Analyse", "microscope", "analysis")
+            }
+            Action::Puzzles => ActionInfo::new(
+                "openings:puzzles",
+                "Train with puzzles",
+                "puzzle",
+                "tactics",
+            ),
+            Action::Flip => ActionInfo::flip("openings:flip"),
+            Action::AllOpenings => {
+                ActionInfo::new("openings:all", "All openings", "arrow-left", "back browse")
+            }
+        }
+    }
+}
+
+impl crate::pages::PageView for OpeningsPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: Page::Openings,
+        label: "Openings",
+        short: "Openings",
+        icon: "book-open-text",
+        group: Some(crate::pages::NavGroup::Train),
+        keywords: "eco gambit defense variation explorer repertoire",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        OpeningsPage::new(window, cx)
+    }
+
+    /// The sidebar's Openings is the browser, not the line shown last.
+    fn shown(this: &Entity<Self>, _again: bool, _window: &mut Window, cx: &mut App) {
+        this.update(cx, |openings, cx| openings.show_line(None, cx));
+    }
+
+    fn search_fields(&self) -> Vec<Entity<InputState>> {
+        OpeningsPage::search_fields(self)
+    }
+
+    fn actions(&self, _: &App) -> Vec<Action> {
+        OpeningsPage::actions(self)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.act(action, window, cx));
     }
 }
 

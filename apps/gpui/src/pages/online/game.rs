@@ -8,12 +8,12 @@ use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
 use shakmaty::Color;
 
 use super::OnlinePage;
 use crate::assets::icon;
-use crate::export::GameExport;
+use crate::game::played::PlayedGame;
+use crate::game::surface::{self, Steps};
 use crate::game::view;
 use crate::online::{OnlineHandle, OnlineState, Phase};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, panel_style};
@@ -21,18 +21,13 @@ use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
+use kchess_contracts::ErrorKind;
+use kchess_contracts::types::{DeclineReason, OnlinePhase};
+use kchess_domain::online_game::model::{Model, Offer};
 
 /// The player may touch pieces: the game is on, at its last move.
 pub fn can_play(online: &OnlineState) -> bool {
     online.phase == Phase::Playing && online.view_ply.is_none()
-}
-
-fn color_name(color: Color) -> &'static str {
-    if color == Color::White {
-        "white"
-    } else {
-        "black"
-    }
 }
 
 fn action(name: &'static str) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
@@ -63,19 +58,15 @@ pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
         Phase::Finished => {
             let model = online.model();
             let mut actions = Vec::new();
-            let tournament = model["onlineTournament"]
-                .as_str()
-                .is_some_and(|tournament| !tournament.is_empty());
+            let tournament = !model.online_tournament.is_empty();
             // A rematch on its way is not sent twice: its button shows it loading meanwhile.
-            if model["lastGame"].is_object() && !tournament && !online.busy {
+            if model.last_game.is_some() && !tournament && !online.busy {
                 actions.push(LiveAction::Rematch);
                 if online.new_opponent_form().is_some() {
                     actions.push(LiveAction::NewOpponent);
                 }
             }
-            if crate::game::analysable(online.setup()["variant"].as_str().unwrap_or("standard")) {
-                actions.push(LiveAction::Analyse);
-            }
+            actions.push(LiveAction::Analyse);
             actions.extend([LiveAction::NewGame, LiveAction::Flip]);
             actions
         }
@@ -86,21 +77,19 @@ pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
 fn playing_actions(online: &OnlineState) -> Vec<LiveAction> {
     let model = online.model();
     // Before each side has moved the game is aborted, not resigned.
-    let started = view::sans(&online.setup(), &online.moves()).len() >= 2;
-    let berserk = model["onlineTournament"]
-        .as_str()
-        .is_some_and(|tournament| !tournament.is_empty())
-        && model["onlineClockConfig"].is_object()
-        && model["berserked"] != json!(true)
-        && online.view()["ownMoves"].as_f64() == Some(0.);
+    let started = view::sans(online.setup(), &online.moves()).len() >= 2;
+    let berserk = !model.online_tournament.is_empty()
+        && model.online_clock_config.is_some()
+        && !model.berserked
+        && model.own_moves() == 0;
     let mut actions = Vec::new();
     if berserk {
         actions.push(LiveAction::Berserk);
     }
-    if started && model["takebackOffer"].as_str().unwrap_or("none") == "none" {
+    if started && model.takeback_offer == Offer::None {
         actions.push(LiveAction::Takeback);
     }
-    if started && model["drawOffer"].as_str().unwrap_or("none") == "none" {
+    if started && model.draw_offer == Offer::None {
         actions.push(LiveAction::OfferDraw);
     }
     actions.push(if started {
@@ -161,7 +150,7 @@ fn ask_resign(window: &mut Window, cx: &mut App) {
     });
 }
 
-/// An offer or a notice above the moves (`.offer-banner`).
+/// An offer or a notice above the moves.
 fn offer(glyph: &'static str, text: String, buttons: Vec<AnyElement>, palette: &Palette) -> Div {
     h_flex()
         .gap(px(8.))
@@ -178,8 +167,7 @@ fn offer(glyph: &'static str, text: String, buttons: Vec<AnyElement>, palette: &
         .children(buttons)
 }
 
-/// Connection quality from a round trip, in the bands Lichess uses for its signal bars
-/// (`signalFromLatency`).
+/// Connection quality from a round trip, in the bands Lichess uses for its signal bars.
 fn signal_from_latency(ms: f64) -> usize {
     match ms {
         ms if ms < 150. => 4,
@@ -191,7 +179,7 @@ fn signal_from_latency(ms: f64) -> usize {
 
 const QUALITY: [&str; 5] = ["", "Poor", "Fair", "Good", "Great"];
 
-/// The recent round trips to Lichess: the last, the average and the worst (`pingStats`).
+/// The recent round trips to Lichess: the last, the average and the worst.
 fn ping_stats(samples: &[f64]) -> Option<(f64, f64, f64)> {
     let current = *samples.last()?;
     let average = (samples.iter().sum::<f64>() / samples.len() as f64).round();
@@ -327,32 +315,27 @@ fn own_connection_panel(cx: &App, palette: &Palette) -> Stateful<Div> {
 fn opponent_connection_panel(cx: &App, palette: &Palette) -> Stateful<Div> {
     let online = crate::online::handle(cx).read(cx);
     let model = online.model();
-    let name = model["onlineOpponent"]
-        .as_str()
-        .or(model["opponentId"].as_str())
-        .unwrap_or_default()
-        .to_string();
-    let them = model["opponentId"]
-        .as_str()
-        .unwrap_or_default()
-        .to_lowercase();
+    let name = model.online_opponent.clone();
+    let them = model.opponent_id.to_lowercase();
     let entry = online
         .presence
         .as_ref()
-        .map(|report| &report["users"][&them]);
-    let (status, signal) = if model["opponentGone"] == json!(true) {
+        .and_then(|report| report.users.get(&them));
+    let (status, signal) = if model.opponent_gone {
         ("Disconnected".to_string(), "—".to_string())
     } else {
-        match entry.filter(|entry| entry.is_object()) {
+        match entry {
             None => ("Checking…".to_string(), "—".to_string()),
             Some(entry) => (
-                if entry["online"] == json!(true) {
+                if entry.online {
                     "Online".to_string()
                 } else {
                     "Offline".to_string()
                 },
-                entry["signal"]
-                    .as_u64()
+                entry
+                    .signal
+                    .as_ref()
+                    .and_then(serde_json::Number::as_u64)
                     .filter(|signal| (1..=4).contains(signal))
                     .map_or("—".into(), |signal| {
                         format!("{} · {signal} of 4", QUALITY[signal as usize])
@@ -387,7 +370,9 @@ fn connection(online: &OnlineState, mine: bool, palette: &Palette) -> Option<Any
         match online.latency.last() {
             None => ("Measuring…".to_string(), palette.text_muted),
             Some(ms) => {
-                let offline = report.is_some_and(|r| r["users"][&me]["online"] == json!(false));
+                let offline = report
+                    .and_then(|r| r.users.get(&me))
+                    .is_some_and(|entry| !entry.online);
                 (
                     format!(
                         "{} · {} ms",
@@ -402,16 +387,13 @@ fn connection(online: &OnlineState, mine: bool, palette: &Palette) -> Option<Any
                 )
             }
         }
-    } else if online.model()["opponentGone"] == json!(true) {
+    } else if online.model().opponent_gone {
         ("Away".to_string(), palette.warning)
     } else {
-        let them = online.model()["opponentId"]
-            .as_str()
-            .unwrap_or_default()
-            .to_lowercase();
-        match report.map(|r| &r["users"][&them]) {
-            Some(entry) if entry.is_object() => {
-                if entry["online"] == json!(true) {
+        let them = online.model().opponent_id.to_lowercase();
+        match report.and_then(|r| r.users.get(&them)) {
+            Some(entry) => {
+                if entry.online {
                     ("Online".to_string(), palette.success)
                 } else {
                     ("Offline".to_string(), palette.error)
@@ -446,6 +428,22 @@ fn connection(online: &OnlineState, mine: bool, palette: &Palette) -> Option<Any
         })
         .into_any_element(),
     )
+}
+
+impl Steps for OnlinePage {
+    fn steps(&self, cx: &App) -> Option<(usize, usize)> {
+        let online = crate::online::handle(cx);
+        let online = online.read(cx);
+        Some((online.ply(), online.moves().len()))
+    }
+
+    fn step_to(&mut self, ply: usize, _: &mut Window, cx: &mut Context<Self>) {
+        crate::online::handle(cx).update(cx, |online, cx| online.view_ply(ply, cx));
+    }
+
+    fn wheel(&mut self) -> &mut view::Wheel {
+        &mut self.wheel
+    }
 }
 
 impl OnlinePage {
@@ -496,18 +494,15 @@ impl OnlinePage {
         let orientation = online.orientation();
         let playing = online.phase == Phase::Playing;
         let correspondence = online.correspondence();
-        let has_clock = model["onlineClockConfig"].is_object() || correspondence;
-        let position = view::position_at(&setup, &moves, ply);
-        let live_turn = view::turn(view::position_at(&setup, &moves, moves.len()).as_ref());
+        let has_clock = model.online_clock_config.is_some() || correspondence;
+        let position = view::position_at(setup, &moves, ply);
+        let live_turn = view::turn(view::position_at(setup, &moves, moves.len()).as_ref());
         let fen = position
             .as_ref()
             .map(kchess_domain::rules::make_fen)
             .unwrap_or_default();
-        let opponent = model["onlineOpponent"]
-            .as_str()
-            .unwrap_or("Opponent")
-            .to_string();
-        let opponent_id = model["opponentId"].as_str().unwrap_or_default().to_string();
+        let opponent = model.online_opponent.clone();
+        let opponent_id = model.opponent_id.clone();
         let mut pockets = [
             crate::board::pocket(&self.board, Color::White, cx),
             crate::board::pocket(&self.board, Color::Black, cx),
@@ -515,12 +510,11 @@ impl OnlinePage {
         let mut line =
             |side: Color| {
                 let mine = side == color;
-                let rating = model[if mine {
-                    "onlineRating"
+                let rating = if mine {
+                    model.online_rating
                 } else {
-                    "onlineOpponentRating"
-                }]
-                .as_f64();
+                    model.online_opponent_rating
+                };
                 let name = match (mine, rating) {
                     (true, Some(rating)) => format!("You ({rating})"),
                     (true, None) => "You".into(),
@@ -536,7 +530,9 @@ impl OnlinePage {
                         .aria_label(link.clone())
                         .cursor_pointer()
                         .pressable_link()
-                        .on_click(move |_, window, cx| crate::shell::open_player(&link, window, cx))
+                        .on_click(move |_, window, cx| {
+                            crate::pages::players::open_player(&link, window, cx)
+                        })
                         .child(name)
                         .into_any_element()
                 } else {
@@ -570,7 +566,7 @@ impl OnlinePage {
                     connection(online, mine, &palette),
                     has_clock.then(|| {
                         widgets::clock(
-                            online.clock_text(color_name(side)).into(),
+                            online.clock_text(kchess_domain::color::name(side)).into(),
                             running,
                             &palette,
                         )
@@ -585,37 +581,15 @@ impl OnlinePage {
         board_column = board_column
             .child(line(!orientation))
             .child(crate::board::cached(&self.board))
-            // The mouse wheel over the board steps through the moves.
-            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
-                let Some(key) = this
-                    .wheel
-                    .turn(event.delta.pixel_delta(window.line_height()))
-                else {
-                    return;
-                };
-                let online = crate::online::handle(cx);
-                let (ply, count) = {
-                    let online = online.read(cx);
-                    (online.ply(), online.moves().len())
-                };
-                if let Some(next) = view::navigate(key, ply, count) {
-                    online.update(cx, |online, cx| online.view_ply(next, cx));
-                }
-                cx.stop_propagation();
-            }))
             .child(line(orientation));
+        let board_column = surface::wheel(board_column, cx);
 
-        self.layout
-            .render("online-game", board_column, panel, window, cx)
-            .track_focus(&self.focus)
-            // A click anywhere on the page gives the keys back to it (the board keeps them only
-            // from Tab), before a text field takes them for itself, as on the computer's page.
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+        let page = self
+            .layout
+            .render("online-game", board_column, panel, window, cx);
+        // A move waiting to be confirmed takes Return and Escape first.
+        surface::keys(page, &self.focus, cx)
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if !crate::board::page_has_keys(&this.focus, window, cx)
                     || event.keystroke.modifiers.modified()
                 {
@@ -629,37 +603,14 @@ impl OnlinePage {
                     }
                     if matches!(event.keystroke.key.as_str(), "enter" | "escape") {
                         cx.stop_propagation();
-                        return;
                     }
                 }
-                if crate::shell::zen_key(&event.keystroke.key, cx) {
-                    cx.stop_propagation();
-                    return;
-                }
-                if event.keystroke.key == "f" {
-                    flip(cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                let online = crate::online::handle(cx);
-                let (ply, count) = {
-                    let online = online.read(cx);
-                    (online.ply(), online.moves().len())
-                };
-                if let Some(next) = view::navigate(&event.keystroke.key, ply, count) {
-                    online.update(cx, |online, cx| online.view_ply(next, cx));
-                    cx.stop_propagation();
-                }
             }))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| window.focus(&this.focus, cx)),
-            )
             .children(self.chat_dock(cx, &palette))
     }
 
     fn disconnected(&self, online: &OnlineState, palette: &Palette) -> Div {
-        let status = online.model()["onlineStatus"].as_str().unwrap_or_default();
+        let status = online.model().online_status.as_str();
         let has_game = !online.id().is_empty();
         let id = online.id().to_string();
         let failure = connection_failure(online);
@@ -701,7 +652,7 @@ impl OnlinePage {
                                 .on_click(move |_, window, cx| {
                                     crate::online::handle(cx)
                                         .update(cx, |online, cx| online.stop(cx));
-                                    crate::shell::watch_game(&id, window, cx)
+                                    crate::pages::watch::watch_game(&id, window, cx)
                                 }),
                         )
                     })
@@ -742,7 +693,7 @@ impl OnlinePage {
     fn game_panel(
         &self,
         online: &OnlineState,
-        model: &Value,
+        model: &Model,
         page: WeakEntity<OnlinePage>,
         cx: &App,
         palette: &Palette,
@@ -752,19 +703,12 @@ impl OnlinePage {
         let moves = online.moves();
         let setup = online.setup();
         let ply = online.ply();
-        let sans = view::sans(&setup, &moves);
-        let opponent = model["onlineOpponent"]
-            .as_str()
-            .unwrap_or("Opponent")
-            .to_string();
+        let sans = view::sans(setup, &moves);
+        let opponent = model.online_opponent.clone();
         let reviewing = playing && !can_play(online);
-        let variant = setup["variant"].as_str().unwrap_or("standard");
-        let variant_name = (variant != "standard").then(|| crate::game::variant_label(variant));
-        let rated = model["onlineGameRated"] == json!(true);
-        let status = model["onlineStatus"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
+        let variant_name = (!setup.variant.is_standard()).then(|| setup.variant.label());
+        let rated = model.online_game_rated;
+        let status = model.online_status.clone();
         let banner: Option<(&'static str, String, String)> = if reviewing {
             Some((
                 "history",
@@ -791,22 +735,18 @@ impl OnlinePage {
             ))
         };
         let now = crate::online::now();
-        let seconds_until = |key: &str| {
-            model[key]
-                .as_f64()
-                .map(|at| ((at - now) / 1000.).ceil().max(0.))
-        };
-        let first_move_in = seconds_until("firstMoveBy").filter(|_| playing);
-        let claim_in = (playing && model["opponentGone"] == json!(true))
-            .then(|| seconds_until("claimAt"))
+        let seconds_until = |at: Option<f64>| at.map(|at| ((at - now) / 1000.).ceil().max(0.));
+        let first_move_in = seconds_until(model.first_move_by).filter(|_| playing);
+        let claim_in = (playing && model.opponent_gone)
+            .then(|| seconds_until(model.claim_at))
             .flatten();
-        let draw = model["drawOffer"].as_str().unwrap_or("none");
-        let takeback = model["takebackOffer"].as_str().unwrap_or("none");
+        let draw = model.draw_offer;
+        let takeback = model.takeback_offer;
         let mut notices: Vec<AnyElement> = Vec::new();
         if let Some(pending) = self.pending() {
             let mut shown = moves.clone();
             shown.push(pending.uci.clone());
-            let san = view::sans(&setup, &shown).pop().unwrap_or_default();
+            let san = view::sans(setup, &shown).pop().unwrap_or_default();
             let (confirm, cancel) = (page.clone(), page);
             notices.push(
                 offer(
@@ -859,7 +799,7 @@ impl OnlinePage {
         };
         if playing {
             match draw {
-                "theirs" => notices.push(
+                Offer::Theirs => notices.push(
                     offer(
                         "handshake",
                         format!("{opponent} offers a draw"),
@@ -871,7 +811,7 @@ impl OnlinePage {
                     )
                     .into_any_element(),
                 ),
-                "mine" => notices.push(
+                Offer::Mine => notices.push(
                     offer(
                         "handshake",
                         "You offered a draw".into(),
@@ -880,10 +820,10 @@ impl OnlinePage {
                     )
                     .into_any_element(),
                 ),
-                _ => {}
+                Offer::None => {}
             }
             match takeback {
-                "theirs" => notices.push(
+                Offer::Theirs => notices.push(
                     offer(
                         "undo-2",
                         format!("{opponent} asks to take back a move"),
@@ -895,7 +835,7 @@ impl OnlinePage {
                     )
                     .into_any_element(),
                 ),
-                "mine" => notices.push(
+                Offer::Mine => notices.push(
                     offer(
                         "undo-2",
                         "Takeback requested".into(),
@@ -904,7 +844,7 @@ impl OnlinePage {
                     )
                     .into_any_element(),
                 ),
-                _ => {}
+                Offer::None => {}
             }
         }
         if let Some(seconds) = claim_in {
@@ -934,12 +874,7 @@ impl OnlinePage {
             notices.push(
                 offer(
                     "repeat",
-                    format!(
-                        "{} wants a rematch",
-                        rematch["opponent"]["name"]
-                            .as_str()
-                            .unwrap_or("Your opponent")
-                    ),
+                    format!("{} wants a rematch", rematch.opponent.name),
                     vec![
                         Button::new("rematch-accept")
                             .xsmall()
@@ -958,7 +893,7 @@ impl OnlinePage {
                             .on_click(move |_, _, cx| {
                                 let challenge = decline.clone();
                                 crate::online::handle(cx).update(cx, |online, cx| {
-                                    online.decline(&challenge, "generic", cx)
+                                    online.decline(&challenge, DeclineReason::Generic, cx)
                                 })
                             })
                             .into_any_element(),
@@ -973,11 +908,8 @@ impl OnlinePage {
         };
         let flip: widgets::ClickHandler = Box::new(move |_, _, cx| flip(cx));
         let live = live_actions(online);
-        let tournament = model["onlineTournament"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let last_game = model["lastGame"].is_object();
+        let tournament = model.online_tournament.clone();
+        let last_game = model.last_game.is_some();
         // Sharing the row equally, as the computer's do, wrapping evenly in a narrow panel.
         let actions = if playing {
             h_flex()
@@ -1115,7 +1047,7 @@ impl OnlinePage {
                             .icon(icon("trophy"))
                             .label("Tournament")
                             .on_click(move |_, window, cx| {
-                                crate::shell::open_tournament(&tournament, window, cx)
+                                crate::pages::tournaments::open_tournament(&tournament, window, cx)
                             }),
                     )
                 })
@@ -1149,20 +1081,7 @@ impl OnlinePage {
                         if rated { "Rated" } else { "Casual" }
                     ))
                     .child(div().flex_1())
-                    .child(widgets::view_toggles(
-                        cx.global::<SettingsHandle>()
-                            .0
-                            .read(cx)
-                            .settings
-                            .frontend
-                            .blindfold,
-                        cx.global::<SettingsHandle>()
-                            .0
-                            .read(cx)
-                            .settings
-                            .frontend
-                            .zen_mode,
-                    )),
+                    .child(widgets::view_toggles(cx)),
             )
             .children(banner.map(|(glyph, title, detail)| {
                 widgets::StatusBanner::new(Tone::Plain, icon(glyph), title.into())
@@ -1185,7 +1104,7 @@ impl OnlinePage {
                 widgets::MoveSheet {
                     sans: &sans,
                     shown: ply,
-                    first: view::first_move(&setup),
+                    first: view::first_move(setup),
                 },
                 "No moves yet".into(),
                 select,
@@ -1196,7 +1115,8 @@ impl OnlinePage {
                 ply,
                 moves.len(),
                 select,
-                ("Flip board".into(), Some("F"), flip),
+                widgets::TurnButton::Flip(flip),
+                cx,
             ))
             .child(
                 div()
@@ -1207,36 +1127,28 @@ impl OnlinePage {
             )
     }
 
-    fn game_export(&self, online: &OnlineState, model: &Value) -> GameExport {
+    fn game_export(&self, online: &OnlineState, model: &Model) -> PlayedGame {
         let setup = online.setup();
         let me = online.account().to_string();
-        let opponent = model["onlineOpponent"]
-            .as_str()
-            .unwrap_or("Opponent")
-            .to_string();
+        let opponent = model.online_opponent.clone();
         let (white, black) = if online.color() == Color::White {
             (me, opponent)
         } else {
             (opponent, me)
         };
-        GameExport {
-            variant: setup["variant"].as_str().unwrap_or("standard").to_string(),
-            fen: setup["fen"].as_str().unwrap_or_default().to_string(),
-            moves: online.moves(),
-            orientation: online.orientation(),
-            white,
-            black,
+        PlayedGame {
             ply: Some(online.ply()),
-            result: Some(
-                model["onlineResult"]
-                    .as_str()
-                    .filter(|result| !result.is_empty())
-                    .unwrap_or("*")
-                    .to_string(),
-            ),
+            result: kchess_domain::games::Outcome::from_tag(&model.online_result),
+            player: Some(online.color()),
             lichess_id: Some(online.id().to_string()).filter(|id| !id.is_empty()),
-            pgn: None,
-            shown: None,
+            account: Some(model.online_account.clone()),
+            ..PlayedGame::new(
+                setup.clone(),
+                online.moves(),
+                online.orientation(),
+                white,
+                black,
+            )
         }
     }
 }
@@ -1244,30 +1156,23 @@ impl OnlinePage {
 /// The finished game on the analysis board, at the move looked at, reviewed (`analyse`).
 fn analyse(window: &mut Window, cx: &mut App) {
     let online = crate::online::handle(cx).read(cx);
-    let model = online.model().clone();
-    let setup = online.setup();
-    let moves = online.moves();
-    let ply = online.ply();
+    let model = online.model();
     let color = online.color();
-    let opponent = model["onlineOpponent"].clone();
+    let opponent = model.online_opponent.as_str();
     let (white, black) = if color == Color::White {
-        (json!("You"), opponent)
+        ("You", opponent)
     } else {
-        (opponent, json!("You"))
+        (opponent, "You")
     };
-    let origin = json!({
-        "gameId": model["onlineId"],
-        "account": model["onlineAccount"],
-        "white": white,
-        "black": black,
-        "player": color_name(color),
-    });
-    let Ok(Value::String(pgn)) = crate::game::rules("setupPgn", &[setup, json!(moves), json!({})])
-    else {
-        return;
+    let game = PlayedGame {
+        ply: Some(online.ply()),
+        player: Some(color),
+        lichess_id: Some(model.online_id.clone()),
+        account: Some(model.online_account.clone()),
+        ..PlayedGame::new(online.setup().clone(), online.moves(), color, white, black)
     };
-    crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
-        analysis.open_game(&pgn, ply, Some(color), Some(origin.clone()), true, cx)
+    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
+        analysis.open_played(&game, true, cx)
     });
 }
 
@@ -1315,13 +1220,15 @@ impl Failure {
 }
 
 fn connection_failure(online: &OnlineState) -> Failure {
-    let phase = online.model()["onlineConnection"]["phase"]
-        .as_str()
-        .unwrap_or_default();
-    match (phase, online.failure.as_deref()) {
-        ("checking", _) => Failure::Checking,
-        ("auth-required", _) | (_, Some("login")) => Failure::Login,
-        (_, Some("refused" | "notFound")) => Failure::Refused,
+    let phase = online
+        .model()
+        .online_connection
+        .as_ref()
+        .map(|connection| connection.phase);
+    match (phase, online.failure) {
+        (Some(OnlinePhase::Checking), _) => Failure::Checking,
+        (Some(OnlinePhase::AuthRequired), _) | (_, Some(ErrorKind::Login)) => Failure::Login,
+        (_, Some(ErrorKind::Refused | ErrorKind::NotFound)) => Failure::Refused,
         _ => Failure::Interrupted,
     }
 }

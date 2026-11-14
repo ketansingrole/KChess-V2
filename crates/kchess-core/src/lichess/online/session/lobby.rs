@@ -1,16 +1,18 @@
 //! The online session's idle event stream.
 
+use kchess_contracts::CoreEvent;
 use std::sync::Arc;
 
-use kchess_contracts::types::OnlinePhase;
-use serde_json::{Value, json};
+use kchess_contracts::types::{LobbyState, OnlinePhase};
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::host::Level;
+use crate::lichess::client::Auth;
+use kchess_contracts::error::CoreError;
 
-use crate::lichess::online::events::is_challenge_event;
 use crate::lichess::online::requests::{Emitter, Listen, Quiet};
-use crate::lichess::online::state::{Lane, OnlineSession, core};
+use crate::lichess::online::state::{Lane, OnlineSession};
 
 impl OnlineSession {
     /* ── The idle event stream ─────────────────────────────────────────── */
@@ -62,20 +64,11 @@ impl OnlineSession {
     }
 
     async fn lobby_task(&self, account: String, cancel: CancellationToken) {
-        let token = match self.token(&account).await {
-            Ok(token) => token,
-            Err(cause) => {
-                self.log(
-                    Level::Debug,
-                    format!("Stored login is unavailable: {account} {}", cause.message()),
-                );
-                None
-            }
-        };
+        let auth = self.login(&account).await;
         if cancel.is_cancelled() {
             return;
         }
-        let Some(token) = token else {
+        let Ok(Some(auth)) = auth else {
             self.lobby_state(
                 &account,
                 OnlinePhase::AuthRequired,
@@ -83,18 +76,18 @@ impl OnlineSession {
             );
             return;
         };
-        self.run_lobby(account, token, cancel).await;
+        self.run_lobby(account, auth, cancel).await;
     }
 
     fn lobby_state(&self, account: &str, phase: OnlinePhase, message: Option<&str>) {
-        let mut payload = json!({ "account": account, "phase": phase });
-        if let Some(message) = message {
-            payload["message"] = json!(message);
-        }
-        self.emit("online:lobby", payload);
+        self.emit(CoreEvent::OnlineLobby(LobbyState {
+            account: account.to_string(),
+            phase,
+            message: message.map(str::to_string),
+        }));
     }
 
-    async fn run_lobby(&self, account: String, token: String, cancel: CancellationToken) {
+    async fn run_lobby(&self, account: String, auth: Auth, cancel: CancellationToken) {
         let quiet_account = account.clone();
         let this_for_quiet = self.clone();
         let quiet: Quiet = Arc::new(move |phase, message| {
@@ -108,6 +101,7 @@ impl OnlineSession {
             session: 0,
             account: account.clone(),
             game_id: String::new(),
+            refused: None,
         };
         let this = self.clone();
         let (for_account, cancel_for_emit) = (account.clone(), cancel.clone());
@@ -119,7 +113,7 @@ impl OnlineSession {
             if kind == "gameStart" {
                 this.challenge_became_game(event["game"]["gameId"].as_str().unwrap_or(""));
             }
-            if is_challenge_event(&kind) {
+            if crate::lichess::online::state::CHALLENGE_TYPES.contains(&kind.as_str()) {
                 this.on_challenge(&for_account, &event);
             } else if kind == "gameStart"
                 && event["game"]["speed"].as_str() != Some("correspondence")
@@ -131,23 +125,20 @@ impl OnlineSession {
                 tokio::spawn(async move {
                     let attached = crate::tasks::caught(this.attach(&account, &game_id))
                         .await
-                        .unwrap_or_else(|_| Err(core("The game could not be opened.")));
+                        .unwrap_or_else(|_| Err(CoreError::new("The game could not be opened.")));
                     if let Err(cause) = attached {
                         this.log(
                             Level::Warn,
-                            format!(
-                                "Could not open game: {account} {game_id} {}",
-                                cause.message()
-                            ),
+                            format!("Could not open game: {account} {game_id} {}", cause.message),
                         );
-                        this.report(&cause);
+                        this.report(&cause, None);
                     }
                 });
             } else if kind == "gameStart" || kind == "gameFinish" {
                 this.ongoing_changed();
             }
         });
-        let request = Self::events_request(&token);
+        let request = Self::events_request(&auth);
         self.listen(request, cancel, emit, options).await;
     }
 }

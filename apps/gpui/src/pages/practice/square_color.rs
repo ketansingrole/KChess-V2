@@ -7,12 +7,12 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use kchess_contracts::types::RunKind;
+use serde_json::json;
 
 use super::coordinates::random_square;
-use super::run::{self, RunClock};
+use super::run::{self, Drill, DrillRun, Stage, Tally};
 use crate::assets::icon;
-use crate::game::rules;
 use crate::play_layout::{PAGE_BOTTOM, PANEL_MAX, side_padding};
 use crate::theme::{Palette, radii, tint};
 use crate::voice::control::{BarSpec, Control, DrillLog};
@@ -24,31 +24,15 @@ use crate::widgets::Pressable as _;
 const FLASH: Duration = Duration::from_millis(300);
 const COLOR_GRAMMAR: [&str; 3] = ["light", "dark", "[unk]"];
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Stage {
-    Idle,
-    Running,
-    Over,
-}
-
-/// `squareColor`: a1 is dark, h1 is light.
-fn square_color(square: &str) -> &'static str {
-    match rules("squareColor", &[json!(square)]) {
-        Ok(color) if color == "light" => "light",
-        _ => "dark",
-    }
-}
+use kchess_domain::voice::square_color;
 
 pub struct SquareColors {
-    stage: Stage,
+    run: DrillRun,
+    tally: Tally,
     square: String,
-    score: u32,
-    mistakes: u32,
     flash: Option<bool>,
-    clock: RunClock,
-    summary: Value,
-    saved: Value,
-    timers: Vec<Task<()>>,
+    /// Clears the answer's flash; the next answer replaces it, so a long run keeps only one.
+    flash_timer: Option<Task<()>>,
     voice: Control,
     voice_log: DrillLog,
     /// A start waiting for voice to load.
@@ -64,10 +48,7 @@ fn grammar() -> Vec<String> {
 
 impl SquareColors {
     pub fn new(cx: &mut Context<Self>) -> SquareColors {
-        run::load_summary("squareColor", cx, |this, summary, cx| {
-            this.summary = summary;
-            cx.notify();
-        });
+        DrillRun::load(RunKind::SquareColor, cx);
         let voice = crate::voice::handle(cx);
         let subscriptions = vec![
             cx.subscribe(&voice, |this, _, event: &VoiceEvent, cx| {
@@ -81,15 +62,11 @@ impl SquareColors {
             }),
         ];
         SquareColors {
-            stage: Stage::Idle,
+            run: DrillRun::default(),
+            tally: Tally::default(),
             square: "e4".into(),
-            score: 0,
-            mistakes: 0,
             flash: None,
-            clock: RunClock::default(),
-            summary: Value::Null,
-            saved: Value::Null,
-            timers: Vec::new(),
+            flash_timer: None,
             voice: Control::new(false, cx),
             voice_log: DrillLog::default(),
             starting: false,
@@ -100,12 +77,12 @@ impl SquareColors {
 
     /// The recognizer takes a fresh phrase for each square, during a run.
     fn sync_voice(&mut self, cx: &mut Context<Self>) {
-        let running = self.stage == Stage::Running;
+        let running = self.run.running();
         self.voice.sync(grammar(), running, cx);
     }
 
     fn voice_heard(&mut self, event: &VoiceEvent, cx: &mut Context<Self>) {
-        if !self.voice.owns(event) || self.stage != Stage::Running {
+        if !self.voice.owns(event) || !self.run.running() {
             return;
         }
         let (heard, missed) = match event {
@@ -147,58 +124,46 @@ impl SquareColors {
 
     fn start(&mut self, cx: &mut Context<Self>) {
         // The microphone and model are ready before the clock starts, as in Coordinates.
-        if self.stage == Stage::Running
-            || (self.voice.enabled && !self.voice.gate(&mut self.starting, cx))
-        {
+        if self.run.running() || (self.voice.enabled && !self.voice.gate(&mut self.starting, cx)) {
             cx.notify();
             return;
         }
         self.voice.feedback = None;
         self.question += 1;
-        self.score = 0;
-        self.mistakes = 0;
-        self.saved = Value::Null;
+        self.tally = Tally::default();
         self.square = random_square(None, None);
-        self.stage = Stage::Running;
-        self.clock.start(30);
+        self.run.begin(30, cx);
         self.sync_voice(cx);
-        self.timers = vec![run::ticker(cx, |this, cx| {
-            if this.stage != Stage::Running {
-                return false;
-            }
-            if this.clock.expired() {
-                this.finish(cx);
-                return false;
-            }
-            cx.notify();
-            true
-        })];
         cx.notify();
     }
 
     fn answer(&mut self, color: &str, cx: &mut Context<Self>) {
-        if self.stage != Stage::Running {
+        if !self.run.running() {
             return;
         }
         let correct = square_color(&self.square) == color;
         self.flash = Some(correct);
-        self.timers.push(cx.spawn(async move |this, cx| {
+        self.flash_timer = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FLASH).await;
             let _ = this.update(cx, |this, cx| {
                 this.flash = None;
                 cx.notify();
             });
         }));
-        if correct {
-            self.score += 1;
-        } else {
-            self.mistakes += 1;
+        self.tally.record(correct);
+        if !correct {
             crate::sound::play_at(crate::sound::Sound::LowTime, 0.5, cx);
         }
         self.question += 1;
         self.square = random_square(Some(&self.square), None);
         self.sync_voice(cx);
         cx.notify();
+    }
+
+    /// The timers the drill keeps: its clock and the flash of the last answer.
+    #[cfg(test)]
+    pub(crate) fn timer_count(&self) -> usize {
+        usize::from(self.run.ticking()) + usize::from(self.flash_timer.is_some())
     }
 
     pub fn key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -211,54 +176,45 @@ impl SquareColors {
             _ => {}
         }
     }
+}
 
-    fn accuracy(&self) -> u32 {
-        let total = self.score + self.mistakes;
-        if total == 0 {
-            0
-        } else {
-            (f64::from(self.score) / f64::from(total) * 100.).round() as u32
-        }
+impl Drill for SquareColors {
+    fn run(&mut self) -> &mut DrillRun {
+        &mut self.run
     }
 
     fn finish(&mut self, cx: &mut Context<Self>) {
-        if self.stage != Stage::Running {
+        if !self.run.end() {
             return;
         }
-        self.clock.stop();
-        self.stage = Stage::Over;
         self.sync_voice(cx);
         cx.notify();
-        let run = json!({
-            "kind": "squareColor",
-            "variant": "standard",
-            "score": self.score,
-            "detail": { "mistakes": self.mistakes, "accuracy": self.accuracy() },
-        });
-        run::save_run(run, cx, |this, saved, cx| {
-            this.summary = saved["summary"].clone();
-            this.saved = saved;
-            cx.notify();
-        });
+        let run = run::input(
+            RunKind::SquareColor,
+            "standard",
+            f64::from(self.tally.score),
+            json!({ "mistakes": self.tally.mistakes, "accuracy": self.tally.accuracy() }),
+        );
+        DrillRun::save(run, cx);
     }
 }
 
 impl Render for SquareColors {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let best = run::best(&self.summary, "standard");
+        let best = self.run.best("standard");
         let muted = |text: String| div().text_color(palette.text_muted).child(text);
-        let stage: Vec<AnyElement> = match self.stage {
+        let stage: Vec<AnyElement> = match self.run.stage {
             Stage::Running => vec![
                 div()
                     .text_size(px(18.))
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(if self.clock.low() {
+                    .text_color(if self.run.clock.low() {
                         palette.loss
                     } else {
                         palette.text_muted
                     })
-                    .child(self.clock.text())
+                    .child(self.run.clock.text())
                     .into_any_element(),
                 div()
                     .id("square-prompt")
@@ -269,20 +225,20 @@ impl Render for SquareColors {
                     .line_height(relative(1.))
                     .child(self.square.clone())
                     .into_any_element(),
-                muted(format!("{} correct", self.score))
+                muted(format!("{} correct", self.tally.score))
                     .id("square-score")
                     .test_support()
-                    .aria_label(format!("{} correct", self.score))
+                    .aria_label(format!("{} correct", self.tally.score))
                     .into_any_element(),
             ],
             Stage::Over => vec![
                 div()
                     .text_size(px(36.))
                     .font_weight(FontWeight::MEDIUM)
-                    .child(format!("{} correct", self.score))
+                    .child(format!("{} correct", self.tally.score))
                     .into_any_element(),
-                muted(format!("{}% accuracy", self.accuracy())).into_any_element(),
-                if self.saved["isBest"] == json!(true) {
+                muted(format!("{}% accuracy", self.tally.accuracy())).into_any_element(),
+                if self.run.is_best {
                     div()
                         .text_color(palette.success)
                         .child("New personal best")
@@ -290,7 +246,7 @@ impl Render for SquareColors {
                 } else {
                     muted(format!(
                         "Best so far: {}",
-                        best.unwrap_or(f64::from(self.score))
+                        best.unwrap_or(f64::from(self.tally.score))
                     ))
                     .into_any_element()
                 },
@@ -318,7 +274,7 @@ impl Render for SquareColors {
                 .text_size(px(11.))
                 .child(key)
         };
-        // The answers in the squares' own colors (`.answer-light`, and a solid neutral button):
+        // The answers in the squares' own colors (the light one a solid neutral button):
         // GPUI Kit's custom buttons only tint, so these are drawn here.
         let answer =
             |id: &'static str, label: &'static str, shortcut: &'static str, light: bool| {
@@ -351,7 +307,7 @@ impl Render for SquareColors {
                     .child(label)
                     .child(key(shortcut))
             };
-        let answers = if self.stage == Stage::Running {
+        let answers = if self.run.running() {
             h_flex()
                 .gap(px(8.))
                 .child(answer("answer-light", "Light", "L", true))
@@ -363,7 +319,7 @@ impl Render for SquareColors {
                     .large()
                     .flex_1()
                     .icon(icon("play"))
-                    .label(if self.stage == Stage::Over {
+                    .label(if self.run.stage == Stage::Over {
                         "Play again"
                     } else {
                         "Start"
@@ -406,7 +362,7 @@ impl Render for SquareColors {
                 BarSpec {
                     id: "square-colors-voice",
                     hint: "Say “light” or “dark”",
-                    active: self.stage == Stage::Running,
+                    active: self.run.running(),
                     grammar: grammar(),
                 },
                 cx,

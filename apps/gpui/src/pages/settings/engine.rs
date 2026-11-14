@@ -9,8 +9,7 @@ use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
-use kchess_contracts::types::{EngineStatus, ReviewAuto, Settings};
-use serde_json::{Value, json};
+use kchess_contracts::types::{EngineStatus, ReviewAuto, ReviewPause, ReviewStatus, Settings};
 
 use super::{Rows, SettingsPage, choice, info};
 use crate::assets::icon;
@@ -27,7 +26,7 @@ enum Source {
     Custom,
 }
 
-/// `engineSource`: the bundled one (no path), the one KChess downloaded, or a chosen file.
+/// The bundled one (no path), the one KChess downloaded, or a chosen file.
 fn source(settings: &Settings, status: Option<&EngineStatus>) -> Source {
     let path = &settings.core.engine_path;
     if path.is_empty() {
@@ -39,7 +38,7 @@ fn source(settings: &Settings, status: Option<&EngineStatus>) -> Source {
     }
 }
 
-/// `engineName`: which Stockfish is in use, in words; empty until it is found ready.
+/// Which Stockfish is in use, in words; empty until it is found ready.
 pub fn engine_name(status: Option<&EngineStatus>) -> String {
     let Some(status) = status.filter(|status| status.ready) else {
         return String::new();
@@ -56,11 +55,10 @@ pub fn engine_name(status: Option<&EngineStatus>) -> String {
     }
 }
 
-/// `reviewStatusText`: what the background review is doing.
-fn review_text(status: &Value, auto: ReviewAuto) -> String {
-    let waiting = status["waiting"].as_u64().unwrap_or_default();
-    let current = &status["current"];
-    if current.is_object() {
+/// What the background review is doing.
+fn review_text(status: &ReviewStatus, auto: ReviewAuto) -> String {
+    let waiting = status.waiting;
+    if let Some(current) = &status.current {
         let more = if waiting > 0 {
             format!(" · {waiting} more waiting")
         } else {
@@ -68,15 +66,14 @@ fn review_text(status: &Value, auto: ReviewAuto) -> String {
         };
         return format!(
             "Reviewing a game: {} of {} positions{more}.",
-            current["done"].as_u64().unwrap_or_default(),
-            current["total"].as_u64().unwrap_or_default()
+            current.done, current.total
         );
     }
-    match status["paused"].as_str() {
-        Some("battery") => "Paused while on battery power".into(),
-        Some("engine") => "Paused while the engine is in use".into(),
-        Some("online") => "Paused during your online game".into(),
-        Some("off") => "Games are reviewed when you ask for it".into(),
+    match status.paused {
+        Some(ReviewPause::Battery) => "Paused while on battery power".into(),
+        Some(ReviewPause::Engine) => "Paused while the engine is in use".into(),
+        Some(ReviewPause::Online) => "Paused during your online game".into(),
+        Some(ReviewPause::Off) => "Games are reviewed when you ask for it".into(),
         _ if auto == ReviewAuto::Off => "Games are reviewed when you ask for it".into(),
         _ if waiting > 0 => format!(
             "{} waiting",
@@ -87,7 +84,7 @@ fn review_text(status: &Value, auto: ReviewAuto) -> String {
 }
 
 impl SettingsPage {
-    /// Ask the core which engine it finds (`refreshEngine`).
+    /// Ask the core which engine it finds.
     pub(super) fn refresh_engine(&mut self, cx: &mut Context<Self>) {
         let status = cx
             .global::<AppCore>()
@@ -95,9 +92,7 @@ impl SettingsPage {
         cx.spawn(async move |this, cx| {
             let status = status.await;
             let _ = this.update(cx, |this, cx| {
-                this.engine = status
-                    .ok()
-                    .and_then(|status| serde_json::from_value(status).ok());
+                this.engine = status.ok();
                 cx.notify();
             });
         })
@@ -124,10 +119,7 @@ impl SettingsPage {
                 })
                 .ok();
             let Some(status) = status else { return };
-            let status: Option<EngineStatus> = status
-                .await
-                .ok()
-                .and_then(|status| serde_json::from_value(status).ok());
+            let status: Option<EngineStatus> = status.await.ok();
             let _ = this.update_in(cx, |this, window, cx| {
                 let ready = status.as_ref().is_some_and(|status| status.ready);
                 this.engine = status;
@@ -144,7 +136,7 @@ impl SettingsPage {
         .detach();
     }
 
-    /// `chooseEngine`: any file may be picked; the core trusts it as an engine path.
+    /// Any file may be picked; the core trusts it as an engine path.
     fn choose_engine(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let chosen = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -162,7 +154,7 @@ impl SettingsPage {
             let trusted = this
                 .update(cx, |_, cx| {
                     cx.global::<AppCore>()
-                        .request(calls::TrustEnginePath { path: json!(path) })
+                        .request(calls::TrustEnginePath { path: path.clone() })
                 })
                 .ok();
             if let Some(trusted) = trusted {
@@ -204,8 +196,8 @@ impl SettingsPage {
                         return;
                     }
                 };
-                let version = result["version"].as_str().unwrap_or_default().to_string();
-                if result["updated"] != json!(true) {
+                let version = result.version;
+                if !result.updated {
                     window.push_notification(
                         SharedString::from(format!(
                             "You already have the latest Stockfish ({version})"
@@ -224,8 +216,7 @@ impl SettingsPage {
                         SharedString::from(format!("Stockfish {version} downloaded")),
                         cx,
                     );
-                    let path = result["path"].as_str().unwrap_or_default().to_string();
-                    this.set_engine_path(path, false, window, cx);
+                    this.set_engine_path(result.path, false, window, cx);
                 }
                 cx.notify();
             });
@@ -460,7 +451,7 @@ impl SettingsPage {
         ));
         // The App Store's KChess runs only the Stockfish it comes with: the store forbids
         // downloading programs, and the sandbox cannot keep a chosen executable across launches.
-        if !kchess_core::app_store() {
+        if !kchess_host::app_store() {
             rows.rows.push(self.engine_option(
                 "Downloaded Stockfish",
                 downloaded,
@@ -495,15 +486,7 @@ impl SettingsPage {
                 ),
                 palette,
             )
-            .switch(
-                "review-battery",
-                "Also on battery power",
-                Some("Uses more power; reviews otherwise wait for a charger"),
-                settings.core.review_on_battery,
-                auto != ReviewAuto::Off,
-                |s, on| s.core.review_on_battery = on,
-                palette,
-            );
+            .switch("review-battery", settings, auto != ReviewAuto::Off, palette);
         // `#settings-review`: one card, its title and status above the rows.
         v_flex().gap(px(16.)).child(rows.card(palette)).child(
             review_rows.card_under(
@@ -526,6 +509,10 @@ mod tests {
     use super::{engine_name, review_text};
     use kchess_contracts::types::{EngineManaged, EngineStatus, ReviewAuto};
     use serde_json::json;
+
+    fn queue(status: serde_json::Value) -> kchess_contracts::types::ReviewStatus {
+        serde_json::from_value(status).expect("a review status")
+    }
 
     fn status(path: &str, bundled: bool) -> EngineStatus {
         EngineStatus {
@@ -557,29 +544,35 @@ mod tests {
     fn the_review_queue_is_described() {
         assert_eq!(
             review_text(
-                &json!({ "current": { "done": 3, "total": 40 }, "waiting": 2 }),
+                &queue(json!({
+                    "current": { "key": "k", "done": 3, "total": 40, "background": true },
+                    "waiting": 2
+                })),
                 ReviewAuto::All
             ),
             "Reviewing a game: 3 of 40 positions · 2 more waiting."
         );
         assert_eq!(
-            review_text(&json!({ "paused": "battery" }), ReviewAuto::All),
+            review_text(
+                &queue(json!({ "paused": "battery", "waiting": 0 })),
+                ReviewAuto::All
+            ),
             "Paused while on battery power"
         );
         assert_eq!(
-            review_text(&json!({ "waiting": 0 }), ReviewAuto::Off),
+            review_text(&queue(json!({ "waiting": 0 })), ReviewAuto::Off),
             "Games are reviewed when you ask for it"
         );
         assert_eq!(
-            review_text(&json!({ "waiting": 4 }), ReviewAuto::Recent),
+            review_text(&queue(json!({ "waiting": 4 })), ReviewAuto::Recent),
             "4 games waiting"
         );
         assert_eq!(
-            review_text(&json!({ "waiting": 1 }), ReviewAuto::Recent),
+            review_text(&queue(json!({ "waiting": 1 })), ReviewAuto::Recent),
             "1 game waiting"
         );
         assert_eq!(
-            review_text(&json!({ "waiting": 0 }), ReviewAuto::Recent),
+            review_text(&queue(json!({ "waiting": 0 })), ReviewAuto::Recent),
             "All caught up"
         );
     }

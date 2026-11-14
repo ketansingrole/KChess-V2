@@ -1,7 +1,6 @@
-//! The shared engine budget: one active lease at a
-//! time, higher priorities preempt lower ones, and the thread budget yields on battery power.
-//! Computer moves are priority 3, analysis 2, review 1. Each `Scheduler` is an independent
-//! budget; a core owns one, and tests create their own.
+//! The shared engine budget: one active lease at a time, higher priorities preempt lower ones,
+//! and the thread budget yields on battery power. Each `Scheduler` is an independent budget; a
+//! core owns one, and tests create their own.
 
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,15 +9,35 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use super::uci::{cancelled_or_pending, lock, search_cancelled, signal_aborted};
-use crate::error::Result;
+use super::uci::search_cancelled;
+use crate::tasks::{aborted as signal_aborted, lock};
+use kchess_contracts::error::Result;
 
-type Stop = Arc<dyn Fn() + Send + Sync>;
+/// Who holds the engine budget. A higher priority preempts a lower one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Priority {
+    Review,
+    Analysis,
+    Computer,
+}
+
+/// Whether the machine runs on battery power. `refresh` runs before every lease and must not
+/// wait for the answer: the lease uses the latest reading.
+pub trait Power: Send + Sync {
+    fn on_battery(&self) -> bool;
+    fn refresh(&self) {}
+}
+
+impl<F: Fn() -> bool + Send + Sync> Power for F {
+    fn on_battery(&self) -> bool {
+        self()
+    }
+}
 
 /// Shared by every clone of a `Scheduler` and by the leases it hands out.
 struct Shared {
     budget: usize,
-    on_battery: Box<dyn Fn() -> bool + Send + Sync>,
+    power: Box<dyn Power>,
     state: Mutex<State>,
     next_id: AtomicU64,
 }
@@ -31,14 +50,14 @@ struct State {
 
 struct Active {
     id: u64,
-    priority: i32,
-    stop: Stop,
+    priority: Priority,
+    stop: CancellationToken,
 }
 
 struct Waiting {
     id: u64,
-    priority: i32,
-    stop: Stop,
+    priority: Priority,
+    stop: CancellationToken,
     grant: oneshot::Sender<Lease>,
 }
 
@@ -53,69 +72,62 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-    /// `on_battery` is consulted on every `search_threads` call.
-    pub fn new(on_battery: impl Fn() -> bool + Send + Sync + 'static) -> Scheduler {
+    /// `power` is consulted on every `search_threads` call.
+    pub fn new(power: impl Power + 'static) -> Scheduler {
         let cpus = std::thread::available_parallelism().map_or(1, |count| count.get());
-        Scheduler::with_budget(default_budget(cpus), on_battery)
+        Scheduler::with_budget(default_budget(cpus), power)
     }
 
-    pub fn with_budget(
-        budget: usize,
-        on_battery: impl Fn() -> bool + Send + Sync + 'static,
-    ) -> Scheduler {
+    pub fn with_budget(budget: usize, power: impl Power + 'static) -> Scheduler {
         Scheduler {
             shared: Arc::new(Shared {
                 budget: budget.max(1),
-                on_battery: Box::new(on_battery),
+                power: Box::new(power),
                 state: Mutex::new(State::default()),
                 next_id: AtomicU64::new(1),
             }),
         }
     }
 
-    /// Whether the machine runs on battery power (`configureEngineResources`' battery callback).
+    /// Whether the machine runs on battery power.
     pub fn on_battery(&self) -> bool {
-        (self.shared.on_battery)()
+        self.shared.power.on_battery()
     }
 
-    /// `searchThreads`: the full budget, or at most two threads on battery power.
+    /// The full budget, or at most two threads on battery power.
     pub fn search_threads(&self) -> usize {
-        if (self.shared.on_battery)() {
+        if self.shared.power.on_battery() {
             self.shared.budget.min(2)
         } else {
             self.shared.budget
         }
     }
 
-    /// `acquireEngine`: waits for the lease. A higher priority calls the active lease's `stop`
-    /// at once. Cancelling `cancel` removes the waiter and reports `search_cancelled()`.
-    pub async fn acquire(
-        &self,
-        priority: i32,
-        stop: impl Fn() + Send + Sync + 'static,
-        cancel: Option<&CancellationToken>,
-    ) -> Result<Lease> {
-        if cancel.is_some_and(CancellationToken::is_cancelled) {
+    /// Waits for the lease. A higher priority cancels the active lease's `token` at once, which
+    /// stops its search. Cancelling `token` while waiting removes the waiter and reports
+    /// `search_cancelled()`.
+    pub async fn acquire(&self, priority: Priority, token: &CancellationToken) -> Result<Lease> {
+        if token.is_cancelled() {
             return Err(search_cancelled());
         }
+        self.shared.power.refresh();
         let id = self.shared.next_id.fetch_add(1, Ordering::Relaxed);
         let (grant, mut granted) = oneshot::channel();
-        let stop: Stop = Arc::new(stop);
         let preempt = {
             let mut state = lock(&self.shared.state);
             state.waiting.push(Waiting {
                 id,
                 priority,
-                stop,
+                stop: token.clone(),
                 grant,
             });
             match &state.active {
-                Some(active) if priority > active.priority => Some(Arc::clone(&active.stop)),
+                Some(active) if priority > active.priority => Some(active.stop.clone()),
                 _ => None,
             }
         };
         if let Some(stop) = preempt {
-            stop();
+            stop.cancel();
         }
         Shared::pump(&self.shared);
         let _queued = Queued {
@@ -125,21 +137,20 @@ impl Scheduler {
         tokio::select! {
             biased;
             lease = &mut granted => lease.map_err(|_| search_cancelled()),
-            _ = cancelled_or_pending(cancel) => Err(search_cancelled()),
+            () = token.cancelled() => Err(search_cancelled()),
         }
     }
 
-    /// `withEngineLease`: runs `work` while holding the lease. The lease is a guard owned by this
-    /// future, so it is released on success, failure, cancellation and panic alike.
+    /// Runs `work` while holding the lease. The lease is a guard owned by this future, so it is
+    /// released on success, failure, cancellation and panic alike.
     pub async fn with_lease<T>(
         &self,
-        priority: i32,
-        stop: impl Fn() + Send + Sync + 'static,
-        cancel: &CancellationToken,
+        priority: Priority,
+        token: &CancellationToken,
         work: impl Future<Output = Result<T>>,
     ) -> Result<T> {
-        let lease = self.acquire(priority, stop, Some(cancel)).await?;
-        if cancel.is_cancelled() {
+        let lease = self.acquire(priority, token).await?;
+        if token.is_cancelled() {
             return Err(signal_aborted());
         }
         let outcome = work.await;
@@ -162,7 +173,7 @@ impl Shared {
                 state.active = Some(Active {
                     id: next.id,
                     priority: next.priority,
-                    stop: Arc::clone(&next.stop),
+                    stop: next.stop.clone(),
                 });
                 next
             };
@@ -249,5 +260,41 @@ mod tests {
         assert_eq!(Scheduler::with_budget(4, || true).search_threads(), 2);
         assert_eq!(Scheduler::with_budget(1, || true).search_threads(), 1);
         assert_eq!(Scheduler::with_budget(4, || false).search_threads(), 4);
+    }
+
+    /// Only a higher priority stops the active lease; an equal one waits its turn.
+    #[tokio::test]
+    async fn only_a_higher_priority_preempts() {
+        let scheduler = Scheduler::with_budget(1, || false);
+        let first = CancellationToken::new();
+        let lease = scheduler.acquire(Priority::Analysis, &first).await.unwrap();
+        let (same, higher) = (CancellationToken::new(), CancellationToken::new());
+        let waiting = {
+            let scheduler = scheduler.clone();
+            let same = same.clone();
+            tokio::spawn(
+                async move { scheduler.acquire(Priority::Analysis, &same).await.map(drop) },
+            )
+        };
+        for _ in 0..3 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!first.is_cancelled(), "an equal priority preempted");
+        let computer = {
+            let scheduler = scheduler.clone();
+            let higher = higher.clone();
+            tokio::spawn(async move {
+                scheduler
+                    .acquire(Priority::Computer, &higher)
+                    .await
+                    .map(drop)
+            })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), first.cancelled())
+            .await
+            .expect("a higher priority preempts");
+        drop(lease);
+        computer.await.unwrap().unwrap();
+        waiting.await.unwrap().unwrap();
     }
 }

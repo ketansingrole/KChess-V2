@@ -4,11 +4,16 @@
 //! unfinished game in the profile, to resume it.
 
 use kchess_contracts::calls;
-use std::time::{Duration, Instant};
+use kchess_contracts::check::Moves;
+use kchess_contracts::types::EngineLevel;
+use kchess_domain::games::archive::Snapshot;
+use kchess_domain::training::clock::format_clock;
+use kchess_domain::variant::{Setup, Variant};
+use std::time::Instant;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
-use gpui_kit::component::input::{InputEvent, InputState, Undo};
+use gpui_kit::component::input::Undo;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{
     Disableable as _, IndexPath, Sizable as _, WindowExt as _, h_flex, v_flex,
@@ -16,28 +21,30 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
-use serde_json::{Value, json};
-use shakmaty::{Color, Square};
+use kchess_contracts::types::{HistoryKind, SessionDocument, SessionKind, Sessions};
+use kchess_domain::games::archive::Identity;
+use serde_json::json;
+use shakmaty::Color;
 
 use crate::assets::icon;
-use crate::board::{BoardEvent, BoardState, ChessBoard};
+use crate::board::{BoardEvent, ChessBoard};
 use crate::core::AppCore;
-use crate::export::{Exporter, GameExport};
-use crate::game::computer::{ComputerGame, Effect, Host, SearchRequest};
+use crate::export::Exporter;
 use crate::game::history::HistoryPlace;
-use crate::game::rules;
+use crate::game::played::PlayedGame;
+use crate::game::session::{Resumes, SessionSaver};
+use crate::game::surface::{self, Faces, MoveBox, Steps};
+use crate::game::view;
 use crate::pages::computer_options::{Chosen, Current, GameOptions};
 use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
+use crate::played::PlayedHandle;
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Side, Tone};
+use kchess_domain::games::Host;
+use kchess_domain::games::computer::{self, ComputerGame, Effect, SearchRequest};
 
-/// Clocks are checked this often while one runs (`useIntervalFn(…, 200)`).
-const TICK: Duration = Duration::from_millis(200);
-/// Saves wait this long for more changes (`persistSession`).
-const SAVE_DELAY: Duration = Duration::from_millis(150);
-
-/// The engine as last checked (`engineStatus`).
+/// The engine as last checked.
 #[derive(Clone, Copy, PartialEq)]
 enum Engine {
     Checking,
@@ -55,6 +62,7 @@ pub(crate) enum Action {
     Resign,
     NewGame,
     SwitchSides,
+    Flip,
     CopyPgn,
     Review,
 }
@@ -76,41 +84,81 @@ pub struct ComputerPage {
     level: Entity<SelectState<Vec<SharedString>>>,
     /// The level ids in the order `level` lists them.
     levels: Vec<String>,
-    move_input: Entity<InputState>,
-    move_message: Option<SharedString>,
+    moves: MoveBox,
     started: Instant,
     engine: Engine,
-    /// No live Lichess game blocks the engine (`assistanceAllowed`).
+    /// No live Lichess game blocks the engine.
     allowed: bool,
-    /// The unfinished game has been read from the profile; saving before it would replace it.
-    loaded: bool,
+    /// The unfinished game the profile keeps, read to resume it and saved as it changes.
+    saver: SessionSaver<ComputerPage>,
     search: Option<Task<()>>,
-    save: Option<Task<()>>,
     ticker: Option<Task<()>>,
     /// The player's low-time warning; the computer's clock runs low unannounced.
     low_time: crate::game::low_time::LowTime,
-    /// What the clocks showed at the last tick: a tick redraws only when a clock face changes.
-    ticked: Option<[Option<SharedString>; 2]>,
+    faces: Faces<[Option<SharedString>; 2]>,
     error: Option<SharedString>,
     /// Options waiting for the player to confirm throwing away the game in progress.
     pending: Option<Chosen>,
-    /// The game's place in Game history (`useGameArchive`), once the library has loaded.
+    /// The game's place in Game history, once the saved game has been read.
     history: Option<HistoryPlace>,
-    /// Spoken moves and commands, and the question voice can answer (`dialogOpen`).
+    /// Spoken moves and commands, and the question voice can answer.
     voice: crate::voice::moves::VoiceMoves,
     asked: Option<Question>,
+    /// The board turned (F) to face the computer's side.
+    flipped: bool,
     layout: PlayLayout,
-    /// The side panel, measured for `.panel-actions`' narrow rule.
+    /// The side panel, measured for its narrow layout.
     panel_area: Measured,
     focus: FocusHandle,
-    /// The mouse wheel over the board, which steps through the moves.
-    wheel: crate::game::view::Wheel,
+    wheel: view::Wheel,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Focusable for ComputerPage {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
+    }
+}
+
+impl Steps for ComputerPage {
+    fn steps(&self, _: &App) -> Option<(usize, usize)> {
+        Some((self.ply(), self.game.moves().len()))
+    }
+
+    fn step_to(&mut self, ply: usize, _: &mut Window, cx: &mut Context<Self>) {
+        self.show_ply(ply, cx);
+    }
+
+    fn wheel(&mut self) -> &mut view::Wheel {
+        &mut self.wheel
+    }
+}
+
+impl Resumes for ComputerPage {
+    fn saver(&mut self) -> &mut SessionSaver<Self> {
+        &mut self.saver
+    }
+
+    fn snapshot(&mut self, _: &mut Context<Self>) -> SessionDocument {
+        SessionDocument::Computer(self.game.session(self.host().now))
+    }
+
+    fn resume(&mut self, saved: Option<Sessions>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(mut saved) = saved {
+            if let Some(game) = saved.computer.take() {
+                match ComputerGame::resume(Some(game.into()), &self.host()) {
+                    Ok(game) => self.game = game,
+                    Err(cause) => {
+                        self.log_warn(&format!("The saved game could not be read: {cause}"))
+                    }
+                }
+            }
+            let identity = saved.take_identity(HistoryKind::Computer);
+            self.keep_history(identity, cx);
+        }
+        self.select_level(window, cx);
+        self.after_change(cx);
+        self.computer_turn(cx);
     }
 }
 
@@ -122,22 +170,21 @@ impl ComputerPage {
             allowed: true,
             ready: false,
         };
-        let game = match ComputerGame::new(None, &host) {
+        let game = match ComputerGame::resume(None, &host) {
             Ok(game) => game,
             Err(cause) => panic!("a new computer game always starts: {cause}"),
         };
-        let board = cx.new(|_| ChessBoard::new(board_state(&game, false)));
+        let board = cx
+            .new(|_| ChessBoard::new(view::board_state(game.setup(), &[], 0, game.color(), None)));
         let (levels, labels) = level_choices(cx);
-        let selected = levels
-            .iter()
-            .position(|id| Some(id.as_str()) == game.state["level"].as_str());
+        let selected = levels.iter().position(|id| id == game.level());
         let level = cx.new(|cx| SelectState::new(labels, selected.map(IndexPath::new), window, cx));
-        let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
+        let (moves, typed) = MoveBox::new(Self::typed_move, window, cx);
         let voice = crate::voice::handle(cx);
         let subscriptions = vec![
-            cx.subscribe_in(&board, window, |this, _, event: &BoardEvent, window, cx| {
+            cx.subscribe_in(&board, window, |this, _, event: &BoardEvent, _, cx| {
                 if let BoardEvent::Move(uci) = event {
-                    this.play(uci, window, cx)
+                    this.play(uci, cx)
                 }
             }),
             cx.subscribe_in(
@@ -148,6 +195,10 @@ impl ComputerPage {
                 },
             ),
             cx.observe(&voice, |_, _, cx| cx.notify()),
+            // A save that failed is said on the page until one succeeds.
+            cx.observe(&cx.global::<PlayedHandle>().0.clone(), |_, _, cx| {
+                cx.notify()
+            }),
             cx.subscribe_in(
                 &level,
                 window,
@@ -158,7 +209,8 @@ impl ComputerPage {
                     if let Some(row) = state.read(cx).selected_index(cx).map(|index| index.row)
                         && let Some(id) = this.levels.get(row)
                     {
-                        this.game.state["level"] = json!(id);
+                        let id = id.clone();
+                        this.game.set_level(&id);
                         this.changed(cx);
                     }
                 },
@@ -178,23 +230,14 @@ impl ComputerPage {
                 window,
                 |this, _, _: &crate::settings::SettingsChanged, _, cx| this.after_change(cx),
             ),
-            cx.subscribe_in(
-                &move_input,
-                window,
-                |this, _, event: &InputEvent, window, cx| {
-                    if let InputEvent::PressEnter { .. } = event {
-                        this.typed_move(window, cx);
-                    }
-                },
-            ),
+            typed,
         ];
         let mut page = ComputerPage {
             game,
             board,
             level,
             levels,
-            move_input,
-            move_message: None,
+            moves,
             started,
             engine: Engine::Checking,
             allowed: cx
@@ -202,17 +245,22 @@ impl ComputerPage {
                 .0
                 .read(cx)
                 .assistance_allowed(),
-            loaded: false,
+            saver: SessionSaver::start(
+                SessionKind::Computer,
+                &[HistoryKind::Computer.session()],
+                window,
+                cx,
+            ),
             search: None,
-            save: None,
             ticker: None,
             low_time: Default::default(),
-            ticked: None,
+            faces: Faces::default(),
             error: None,
             pending: None,
             history: None,
             voice: crate::voice::moves::VoiceMoves::new("computer", cx),
             asked: None,
+            flipped: false,
             layout: PlayLayout::default(),
             panel_area: Measured::default(),
             exporter: cx.new(|_| Exporter::default()),
@@ -220,21 +268,7 @@ impl ComputerPage {
             wheel: Default::default(),
             _subscriptions: subscriptions,
         };
-        page.load(window, cx);
         page.check_engine(cx);
-        let weak = cx.entity().downgrade();
-        crate::core::on_quit(cx, move |cx| {
-            let page = weak.upgrade()?;
-            let (session, history) = page.update(cx, |page, cx| {
-                (
-                    page.save_now(cx),
-                    page.history.as_ref().map(|history| history.flushed(cx)),
-                )
-            });
-            let pending: Vec<crate::core::BoxedSave> =
-                [session, history].into_iter().flatten().collect();
-            Some(crate::core::all_saved(pending))
-        });
         page
     }
 
@@ -246,66 +280,54 @@ impl ComputerPage {
         }
     }
 
+    /// The game keeps its place in Game history from `identity` (none: a place of its own).
+    fn keep_history(&mut self, identity: Option<Identity>, cx: &mut Context<Self>) {
+        let Some(source) = self.archive_source() else {
+            return;
+        };
+        let has_play = !self.game.moves().is_empty();
+        self.history = Some(HistoryPlace::new(
+            HistoryKind::Computer,
+            identity,
+            true,
+            source,
+            has_play,
+            cx,
+        ));
+    }
+
+    /// The game as Game history keeps it; none, and a warning, when it cannot be described.
+    fn archive_source(&self) -> Option<Snapshot> {
+        match self.game.archive_snapshot() {
+            Ok(archived) => Some(archived),
+            Err(cause) => {
+                self.log_warn(&format!(
+                    "The game could not be kept in Game history: {cause}"
+                ));
+                None
+            }
+        }
+    }
+
     /// Engine help became allowed or forbidden (a live Lichess game started or ended).
     fn availability(&mut self, cx: &mut Context<Self>) {
         let host = self.host();
         let effects = self.game.availability_changed(&host);
-        self.perform(effects, cx);
+        self.perform(Ok(effects), cx);
         self.computer_turn(cx);
         self.after_change(cx);
     }
 
-    fn core(cx: &App) -> AppCore {
-        cx.global::<AppCore>().clone()
-    }
-
-    /// Resume the unfinished game the profile keeps (`sessions.computer`).
-    fn load(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let library = Self::core(cx).request(calls::Library {});
-        cx.spawn_in(window, async move |this, cx| {
-            let library = library.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                match library {
-                    Ok(library) => {
-                        let saved = &library["sessions"]["computer"];
-                        if !saved.is_null() {
-                            match ComputerGame::new(Some(saved), &this.host()) {
-                                Ok(game) => this.game = game,
-                                Err(cause) => this.log_warn(&format!(
-                                    "The saved game could not be read: {cause}"
-                                )),
-                            }
-                        }
-                        let source = this.game.archive_snapshot(&this.host());
-                        let has_play = !this.moves().is_empty();
-                        this.history = Some(HistoryPlace::new(
-                            "computer", &library, true, source, has_play, cx,
-                        ));
-                    }
-                    Err(cause) => {
-                        this.log_warn(&format!("Loading the library failed: {}", cause.message))
-                    }
-                }
-                this.loaded = true;
-                this.select_level(window, cx);
-                this.after_change(cx);
-                this.computer_turn(cx);
-            });
-        })
-        .detach();
-    }
-
-    /// Look for the engine that plays this game's variant again (`recheckEngine`): Stockfish, or
-    /// Fairy-Stockfish for the variants it cannot play. The game resumes once it is there.
+    /// Look for the engine that plays this game's variant again: Stockfish, or Fairy-Stockfish
+    /// for the variants it cannot play. The game resumes once it is there.
     fn check_engine(&mut self, cx: &mut Context<Self>) {
         self.engine = Engine::Checking;
         cx.notify();
-        let status = Self::core(cx).request(calls::EngineStatus {
-            variant: Some(json!(self.setup_variant())),
+        let status = cx.global::<AppCore>().request(calls::EngineStatus {
+            variant: Some(self.game.setup().variant),
         });
         cx.spawn(async move |this, cx| {
-            let ready =
-                matches!(status.await, Ok(status) if status["ready"].as_bool() == Some(true));
+            let ready = matches!(status.await, Ok(status) if status.ready);
             let _ = this.update(cx, |this, cx| {
                 this.engine = if ready {
                     Engine::Ready
@@ -324,13 +346,6 @@ impl ComputerPage {
         self.interactive()
     }
 
-    /// Back to the moment before the library has loaded (a slow profile's first frames).
-    #[cfg(test)]
-    pub(crate) fn forget_loaded(&mut self, cx: &mut Context<Self>) {
-        self.loaded = false;
-        self.after_change(cx);
-    }
-
     fn log_warn(&self, message: &str) {
         crate::log::write(Level::Warn, "computer-game", message);
     }
@@ -347,7 +362,7 @@ impl ComputerPage {
         for effect in effects {
             match effect {
                 Effect::StopEngine => {
-                    let stop = Self::core(cx).request(calls::StopEngine {});
+                    let stop = cx.global::<AppCore>().request(calls::StopEngine {});
                     cx.background_executor()
                         .spawn(async move {
                             if let Err(cause) = stop.await {
@@ -366,7 +381,7 @@ impl ComputerPage {
                     // Settings decide whether this reaches the player, and how.
                     if computer {
                         crate::notifications::desktop(
-                            "computerMove",
+                            kchess_contracts::types::NotificationKind::ComputerMove,
                             "Stockfish moved",
                             &format!("{san}. Your move."),
                             cx,
@@ -377,14 +392,15 @@ impl ComputerPage {
                 Effect::Failed => {
                     self.check_engine(cx);
                 }
+                Effect::Cancelled => {}
             }
         }
     }
 
-    /// Start the engine's search when it is the engine's turn (`computerTurn`).
+    /// Start the engine's search when it is the engine's turn.
     fn computer_turn(&mut self, cx: &mut Context<Self>) {
         // The saved game comes first; loading it takes the computer's turn.
-        if !self.loaded {
+        if !self.saver.loaded() {
             return;
         }
         let host = self.host();
@@ -393,10 +409,13 @@ impl ComputerPage {
             Ok(None) => return,
             Err(cause) => return self.log_warn(&cause),
         };
-        let search = Self::core(cx).request(calls::BestMove {
-            moves: json!(request.moves),
-            level: json!(request.level),
-            options: Some(request.options.clone()),
+        let Some(level) = EngineLevel::from_key(&request.level) else {
+            return self.log_warn("Invalid engine level.");
+        };
+        let search = cx.global::<AppCore>().request(calls::BestMove {
+            moves: Moves(request.moves.clone()),
+            level,
+            options: Some((&request.options).into()),
         });
         cx.notify();
         self.search = Some(cx.spawn(async move |this, cx| {
@@ -408,338 +427,236 @@ impl ComputerPage {
     fn search_finished(
         &mut self,
         request: &SearchRequest,
-        reply: Result<Value, kchess_contracts::CoreError>,
+        reply: Result<String, kchess_contracts::CoreError>,
         cx: &mut Context<Self>,
     ) {
         let host = self.host();
         let effects = match reply {
             Ok(reply) => {
                 self.error = None;
-                self.game
-                    .search_reply(request, reply.as_str().unwrap_or_default(), &host)
+                self.game.search_reply(request, &reply, &host)
             }
             Err(cause) => {
                 if !cause.aborted {
                     self.log_warn(&format!("engine operation failed: {}", cause.message));
                     self.error = Some(cause.message.into());
                 }
-                self.game.search_failed(request, &host)
+                self.game.search_failed(request)
             }
         };
-        self.perform(effects, cx);
+        self.perform(Ok(effects), cx);
         self.changed(cx);
     }
 
-    fn play(&mut self, uci: &str, window: &mut Window, cx: &mut Context<Self>) {
+    fn play(&mut self, uci: &str, cx: &mut Context<Self>) {
+        // Not before the saved game is restored, which would replace the move.
+        if !self.saver.loaded() {
+            return self.after_change(cx);
+        }
         let host = self.host();
-        match self.game.play(uci, &host) {
-            Ok((played, effects)) => {
-                self.perform(Ok(effects), cx);
-                if !played {
-                    // Put the piece back where the position says it is.
-                    self.after_change(cx);
-                }
-            }
-            Err(cause) => self.log_warn(&cause),
+        let (played, effects) = self.game.play(uci, &host);
+        self.perform(Ok(effects), cx);
+        if !played {
+            // Put the piece back where the position says it is.
+            self.after_change(cx);
         }
         self.changed(cx);
-        let _ = window;
     }
 
-    /// A move typed as SAN or UCI (`keyboardMove`).
+    /// A move typed as SAN or UCI.
     fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.move_input.read(cx).value().trim().to_string();
-        if text.is_empty() || !self.interactive() {
+        if !self.interactive() {
             return;
         }
         let position = self.position_at(self.ply());
-        let uci = position.and_then(|position| {
-            let pos = kchess_domain::rules::setup_start(
-                &self.setup_variant(),
-                &kchess_domain::rules::make_fen(&position),
-            )?;
-            let is_uci = text.len() >= 4
-                && text.as_bytes()[0].is_ascii_lowercase()
-                && text.as_bytes()[1].is_ascii_digit()
-                && text.as_bytes()[2].is_ascii_lowercase()
-                && text.as_bytes()[3].is_ascii_digit();
-            if is_uci {
-                kchess_domain::position::play_uci(&pos, &text).map(|_| text.to_lowercase())
-            } else {
-                kchess_domain::position::play_san(&pos, &text).map(|played| played.uci)
-            }
-        });
-        match uci {
-            Some(uci) => {
-                self.move_message = None;
-                self.move_input
-                    .update(cx, |input, cx| input.set_value("", window, cx));
-                self.play(&uci, window, cx);
-            }
-            None => {
-                self.move_message = Some("Enter a legal move, such as Nf3 or g1f3".into());
-                cx.notify();
-            }
+        let variant = self.setup_variant();
+        match self.moves.take(variant, position.as_ref(), window, cx) {
+            Some(uci) => self.play(&uci, cx),
+            None => cx.notify(),
         }
     }
 
-    /// The game an Export saves, named "You" and "Stockfish" (`pgnResult` for its result).
-    fn game_export(&self) -> GameExport {
+    /// The game as its Export saves it and the analysis board opens it: "You" against
+    /// `engine`.
+    fn played_game(&self, engine: &str) -> PlayedGame {
         let user = self.user_color();
-        let setup = &self.game.state["setup"];
-        let result = self.game.result(&self.host()).map(|result| {
-            match result["kind"].as_str() {
-                Some("draw") => "1/2-1/2",
-                kind => {
-                    let winner = if kind == Some("win") { user } else { !user };
-                    if winner == Color::White { "1-0" } else { "0-1" }
-                }
-            }
-            .to_string()
-        });
-        let (white, black) = if user == Color::White {
-            ("You", "Stockfish")
-        } else {
-            ("Stockfish", "You")
-        };
-        GameExport {
-            variant: setup["variant"].as_str().unwrap_or("standard").to_string(),
-            fen: setup["fen"].as_str().unwrap_or_default().to_string(),
-            moves: self.moves(),
-            orientation: user,
-            white: white.into(),
-            black: black.into(),
-            ply: Some(self.ply()),
-            result: Some(result.unwrap_or_else(|| "*".into())),
-            lichess_id: None,
-            pgn: None,
-            shown: None,
-        }
+        let (white, black) = computer::players(user, engine);
+        let mut game = PlayedGame::new(
+            self.game.setup().clone(),
+            self.game.moves().to_vec(),
+            self.orientation(),
+            white,
+            black,
+        );
+        game.ply = Some(self.ply());
+        game.result = self.game.outcome();
+        game.player = Some(user);
+        game
     }
 
-    /// Review the game on the analysis board, opened at the move being looked at.
+    /// The game an Export saves, named "You" and "Stockfish".
+    fn game_export(&self) -> PlayedGame {
+        self.played_game("Stockfish")
+    }
+
+    /// Review the game on the analysis board, opened at the move being looked at, with the
+    /// level Stockfish played at.
     fn review_game(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let pgn = rules(
-            "setupPgn",
-            &[
-                self.game.state["setup"].clone(),
-                json!(self.moves()),
-                json!({}),
-            ],
-        )
-        .ok()
-        .and_then(|pgn| pgn.as_str().map(str::to_string));
-        let Some(pgn) = pgn else { return };
-        let (ply, color) = (self.ply(), self.user_color());
-        let computer = format!(
+        let engine = format!(
             "Stockfish ({})",
-            rules("engineLevelLabel", &[self.game.state["level"].clone()])
-                .ok()
-                .and_then(|label| label.as_str().map(str::to_string))
-                .unwrap_or_default()
+            crate::game::engine_level_label(self.game.level())
         );
-        let (white, black) = if color == Color::White {
-            ("You".to_string(), computer)
-        } else {
-            (computer, "You".to_string())
-        };
-        let origin = json!({
-            "white": white,
-            "black": black,
-            "player": if color == Color::White { "white" } else { "black" },
-        });
-        crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
-            analysis.open_game(&pgn, ply, Some(color), Some(origin.clone()), true, cx)
+        let game = self.played_game(&engine);
+        crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
+            analysis.open_played(&game, true, cx)
         });
     }
 
     fn moves(&self) -> Vec<String> {
-        serde_json::from_value(self.game.state["moves"].clone()).unwrap_or_default()
+        self.game.moves().to_vec()
     }
 
     fn ply(&self) -> usize {
-        crate::game::whole(&self.game.state["ply"]) as usize
+        self.game.ply()
     }
 
     /// Sound the low-time warning as the player's clock runs low.
     fn warn_low_time(&mut self, cx: &mut Context<Self>) {
         let host = self.host();
-        if self.game.over(&host) {
+        if self.game.over() {
             return;
         }
-        let color = if self.user_color() == Color::Black {
-            "black"
-        } else {
-            "white"
-        };
-        let initial = self.game.state["clock"]["minutes"]
-            .as_f64()
-            .unwrap_or_default()
-            * 60.;
-        let remaining = self.game.remaining(color, &host);
-        if self.low_time.crossed(color, remaining, initial) {
-            crate::sound::play(crate::sound::Sound::LowTime, cx);
-        }
+        let color = self.user_color();
+        let initial = self.game.clock().map_or(0., |clock| clock.minutes) * 60.;
+        let remaining = self.game.remaining(color, host.now);
+        self.low_time.warn(color, remaining, initial, cx);
     }
 
     fn user_color(&self) -> Color {
-        if self.game.state["color"] == "black" {
-            Color::Black
+        self.game.color()
+    }
+
+    /// The side at the bottom of the board: the player's, unless turned.
+    fn orientation(&self) -> Color {
+        if self.flipped {
+            !self.user_color()
         } else {
-            Color::White
+            self.user_color()
         }
     }
 
-    pub(crate) fn setup_variant(&self) -> String {
-        self.game.state["setup"]["variant"]
-            .as_str()
-            .unwrap_or("standard")
-            .to_string()
+    pub(crate) fn setup_variant(&self) -> Variant {
+        self.game.setup().variant
     }
 
     /// The FEN the game started from.
     #[cfg(test)]
     pub(crate) fn setup_fen(&self) -> String {
-        self.game.state["setup"]["fen"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string()
+        self.game.setup().fen.clone()
     }
 
     fn thinking(&self) -> bool {
-        self.game.state["thinking"].as_bool() == Some(true)
+        self.game.thinking()
     }
 
     /// The position after the first `ply` moves.
     fn position_at(&self, ply: usize) -> Option<shakmaty::variant::VariantPosition> {
-        let setup = &self.game.state["setup"];
-        let variant = setup["variant"].as_str().unwrap_or("standard");
-        let fen = setup["fen"].as_str().unwrap_or_default();
-        let moves = self.moves();
-        let replay =
-            kchess_domain::replay::replay_setup(variant, fen, &moves[..ply.min(moves.len())])?;
-        kchess_domain::rules::setup_start(variant, &replay.fen)
+        view::position_at(self.game.setup(), &self.moves(), ply)
     }
 
     fn sans(&self) -> Vec<String> {
-        let setup = &self.game.state["setup"];
-        kchess_domain::replay::replay_setup(
-            setup["variant"].as_str().unwrap_or("standard"),
-            setup["fen"].as_str().unwrap_or_default(),
-            &self.moves(),
-        )
-        .map(|replay| replay.played.into_iter().map(|played| played.san).collect())
-        .unwrap_or_default()
+        view::sans(self.game.setup(), &self.moves())
     }
 
-    /// The player may move now: it is their turn at the latest position (`localInteractive`), and
-    /// not before the saved game is restored, which would replace the move (and nothing is saved
-    /// before then).
+    /// The player may move now: it is their turn at the latest position, and not before the
+    /// saved game is restored, which would replace the move (and nothing is saved before then).
     fn interactive(&self) -> bool {
-        let host = self.host();
-        self.loaded
+        self.saver.loaded()
             && self.engine == Engine::Ready
             && self.allowed
-            && !self.game.over(&host)
+            && !self.game.over()
             && self.ply() == self.moves().len()
             && self
                 .position_at(self.ply())
                 .is_some_and(|position| shakmaty::Position::turn(&position) == self.user_color())
     }
 
-    /// A move of the player's is on the board (`localCanTakeback`).
+    /// A move of the player's is on the board.
     fn can_takeback(&self) -> bool {
         let moves = self.moves().len();
         let user_to_move = self
             .position_at(moves)
             .is_some_and(|position| shakmaty::Position::turn(&position) == self.user_color());
-        self.game.state["flagged"].is_null() && (moves >= 2 || (moves == 1 && !user_to_move))
+        !self.game.flagged() && (moves >= 2 || (moves == 1 && !user_to_move))
     }
 
     fn in_progress(&self) -> bool {
-        !self.moves().is_empty() && self.game.result(&self.host()).is_none()
+        !self.moves().is_empty() && self.game.result().is_none()
     }
 
     /// The game changed: show it, keep the clocks running, save it shortly and keep its place in
-    /// Game history up to date (`watch(source, () => save())`).
+    /// Game history up to date.
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.after_change(cx);
-        self.schedule_save(cx);
-        let (source, has_play) = (
-            self.game.archive_snapshot(&self.host()),
-            !self.moves().is_empty(),
-        );
-        if let Some(history) = &mut self.history {
+        SessionSaver::changed(self, cx);
+        let has_play = !self.moves().is_empty();
+        if let Some(source) = self.archive_source()
+            && let Some(history) = &mut self.history
+        {
             history.save(false, source, has_play, cx);
         }
     }
 
     /// A new game starts: the one before keeps its place in history and this one gets its own.
+    /// After a saved game that could not be read, this one is the player's to keep.
     fn reset_archive(&mut self, cx: &mut Context<Self>) {
-        let (source, has_play) = (
-            self.game.archive_snapshot(&self.host()),
-            !self.moves().is_empty(),
-        );
-        if let Some(history) = &mut self.history {
+        self.saver.open();
+        if self.history.is_none() {
+            return self.keep_history(None, cx);
+        }
+        let has_play = !self.moves().is_empty();
+        if let Some(source) = self.archive_source()
+            && let Some(history) = &mut self.history
+        {
             history.reset(source, has_play, cx);
         }
     }
 
     fn after_change(&mut self, cx: &mut Context<Self>) {
-        let mut state = board_state_at(self, self.interactive());
-        // Blindfold hides the pieces while the game is on (`settings.blindfold && !localResult`).
-        state.blindfold = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .blindfold
-            && self.game.result(&self.host()).is_none();
-        // While Stockfish thinks, a move can be queued for the next turn (`premovable`).
-        let premove = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .premove;
-        if premove
-            && !self.interactive()
-            && self.game.result(&self.host()).is_none()
-            && self.ply() == self.moves().len()
-        {
-            state.premove = Some(self.user_color());
-        }
+        let interactive = self.interactive();
+        let live = self.game.result().is_none();
+        let mut state = view::board_state(
+            self.game.setup(),
+            &self.moves(),
+            self.ply(),
+            self.orientation(),
+            interactive.then_some(self.user_color()),
+        );
+        // While Stockfish thinks, a move can be queued for the next turn.
+        let premove =
+            (!interactive && live && self.ply() == self.moves().len()).then_some(self.user_color());
+        surface::board_options(&mut state, live, premove, cx);
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
         self.sync_voice(cx);
-        let host = self.host();
-        let running = !self.game.state["times"].is_null() && !self.game.over(&host);
+        let running = self.game.timed() && !self.game.over();
         if running && self.ticker.is_none() {
-            self.ticker = Some(cx.spawn(async move |this, cx| {
-                loop {
-                    cx.background_executor().timer(TICK).await;
-                    let alive = this.update(cx, |this, cx| {
-                        let host = this.host();
-                        let effects = this.game.expire(&host);
-                        let acted = effects.as_ref().is_ok_and(|effects| !effects.is_empty());
-                        this.perform(effects, cx);
-                        this.warn_low_time(cx);
-                        let shown = ["white", "black"].map(|color| this.clock_text(color));
-                        if acted || this.ticked.as_ref() != Some(&shown) {
-                            this.ticked = Some(shown);
-                            cx.notify();
-                        }
-                        if this.game.over(&this.host()) {
-                            this.ticker = None;
-                            this.changed(cx);
-                        }
-                    });
-                    if alive.is_err() {
-                        break;
-                    }
+            self.ticker = Some(crate::timer::every(crate::timer::TICK, cx, |this, cx| {
+                let host = this.host();
+                let effects = this.game.expire(host.now);
+                let acted = !effects.is_empty();
+                this.perform(Ok(effects), cx);
+                this.warn_low_time(cx);
+                let shown = [Color::White, Color::Black].map(|color| this.clock_text(color));
+                if this.faces.changed(shown) || acted {
+                    cx.notify();
                 }
+                if this.game.over() {
+                    this.ticker = None;
+                    this.changed(cx);
+                    return false;
+                }
+                true
             }));
         } else if !running {
             self.ticker = None;
@@ -747,51 +664,9 @@ impl ComputerPage {
         cx.notify();
     }
 
-    fn schedule_save(&mut self, cx: &mut Context<Self>) {
-        if !self.loaded {
-            return;
-        }
-        self.save = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(SAVE_DELAY).await;
-            let save = this.update(cx, |this, cx| this.save_now(cx)).ok().flatten();
-            if let Some(save) = save {
-                let _ = save.await;
-            }
-        }));
-    }
-
-    /// Save the game now (`saveSession('computer', …)`); `None` before it has loaded.
-    fn save_now(&mut self, cx: &mut Context<Self>) -> Option<crate::core::BoxedSave> {
-        if !self.loaded {
-            return None;
-        }
-        self.save = None;
-        let snapshot = self.game.snapshot(&self.host());
-        let save = Self::core(cx).request(calls::SaveSession {
-            kind: json!("computer"),
-            session: snapshot,
-        });
-        let page = cx.entity().downgrade();
-        let mut cx = cx.to_async();
-        Some(Box::pin(async move {
-            let result = save
-                .await
-                .map(|_| ())
-                .map_err(|cause| format!("Automatic saving: {}", cause.message));
-            let _ = page.update(&mut cx, |page, cx| {
-                page.error = result.clone().err().map(Into::into);
-                cx.notify();
-            });
-            result
-        }))
-    }
-
     /// Show the game's level in the picker (a resumed game, or one started from the options).
     fn select_level(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let row = self
-            .levels
-            .iter()
-            .position(|id| Some(id.as_str()) == self.game.state["level"].as_str());
+        let row = self.levels.iter().position(|id| id == self.game.level());
         self.level.update(cx, |state, cx| {
             state.set_selected_index(row.map(IndexPath::new), window, cx)
         });
@@ -800,16 +675,10 @@ impl ComputerPage {
     /// New game against Stockfish, from the options the player chose.
     fn open_options(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = Current {
-            setup: self.game.state["setup"].clone(),
-            clock: self.game.state["clock"].clone(),
-            color: self.game.state["color"]
-                .as_str()
-                .unwrap_or("white")
-                .to_string(),
-            level: self.game.state["level"]
-                .as_str()
-                .unwrap_or("club")
-                .to_string(),
+            setup: self.game.setup().clone(),
+            clock: json!(self.game.clock()),
+            color: kchess_domain::color::name(self.user_color()).to_string(),
+            level: self.game.level().to_string(),
         };
         let page = cx.entity().downgrade();
         let levels = level_choices(cx);
@@ -828,32 +697,32 @@ impl ComputerPage {
     }
 
     /// Play Stockfish from a position (the board editor's, the analysis board's), as the side to
-    /// move, at the level and clock chosen last (`startComputerFrom`).
+    /// move, at the level and clock chosen last.
     pub fn start_from(
         &mut self,
-        setup: Value,
+        setup: Setup,
         color: Color,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let chosen = Chosen {
-            setup,
-            clock: self.game.state["clock"].clone(),
-            color: if color == Color::White {
-                "white"
-            } else {
-                "black"
+        SessionSaver::when_read(
+            self,
+            move |this, window, cx| {
+                let chosen = Chosen {
+                    setup,
+                    clock: json!(this.game.clock()),
+                    color: kchess_domain::color::name(color),
+                    level: this.game.level().to_string(),
+                };
+                this.start_chosen(chosen, window, cx);
             },
-            level: self.game.state["level"]
-                .as_str()
-                .unwrap_or("club")
-                .to_string(),
-        };
-        self.start_chosen(chosen, window, cx);
+            window,
+            cx,
+        );
     }
 
     /// Play Stockfish at `level` as `color` (`white`, `black` or `random`) from the start, with the
-    /// clock chosen last (the palette's `startComputerGame`).
+    /// clock chosen last.
     pub fn play_level(
         &mut self,
         level: &str,
@@ -861,36 +730,25 @@ impl ComputerPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let color = match color {
-            "random" if crate::game::random_unit() < 0.5 => "white",
-            "random" => "black",
-            "black" => "black",
-            _ => "white",
+        let color = match kchess_games::draw_color(color) {
+            Ok(color) => color,
+            Err(cause) => return self.log_warn(&cause),
         };
-        let chosen = Chosen {
-            setup: json!({
-                "variant": "standard",
-                "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-            }),
-            clock: self.game.state["clock"].clone(),
-            color,
-            level: level.to_string(),
-        };
-        self.start_chosen(chosen, window, cx);
-    }
-
-    /// A new game from `setup` as the side to move, on a clock of `minutes`, no increment.
-    #[cfg(test)]
-    pub(crate) fn play_with_clock(
-        &mut self,
-        setup: Value,
-        color: Color,
-        minutes: f64,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.game.state["clock"] = json!({ "minutes": minutes, "increment": 0 });
-        self.start_from(setup, color, window, cx);
+        let level = level.to_string();
+        SessionSaver::when_read(
+            self,
+            move |this, window, cx| {
+                let chosen = Chosen {
+                    setup: Setup::standard(),
+                    clock: json!(this.game.clock()),
+                    color: kchess_domain::color::name(color),
+                    level,
+                };
+                this.start_chosen(chosen, window, cx);
+            },
+            window,
+            cx,
+        );
     }
 
     /// Like the page's own New game, a game in progress is only thrown away when confirmed.
@@ -904,20 +762,25 @@ impl ComputerPage {
     }
 
     fn begin(&mut self, chosen: Chosen, window: &mut Window, cx: &mut Context<Self>) {
-        self.game.state["level"] = json!(chosen.level);
-        self.game.state["color"] = json!(chosen.color);
+        self.game.set_level(&chosen.level);
+        self.game.set_color(if chosen.color == "black" {
+            Color::Black
+        } else {
+            Color::White
+        });
+        self.flipped = false;
         self.reset_archive(cx);
         let host = self.host();
-        let effects = self
-            .game
-            .start(Some(chosen.setup), Some(chosen.clock), &host);
+        let setup = chosen.setup;
+        let effects = serde_json::from_value(chosen.clock)
+            .map_err(|error| format!("the chosen game: {error}"))
+            .and_then(|clock| self.game.start(Some(setup), Some(clock), &host));
         self.perform(effects, cx);
         self.select_level(window, cx);
         self.changed(cx);
         // A variant may need the other engine.
         self.check_engine(cx);
     }
-
     /// The actions its buttons allow now.
     pub(crate) fn actions(&self) -> Vec<Action> {
         let mut actions = Vec::new();
@@ -927,7 +790,7 @@ impl ComputerPage {
         if self.in_progress() {
             actions.push(Action::Resign);
         }
-        actions.extend([Action::NewGame, Action::SwitchSides]);
+        actions.extend([Action::NewGame, Action::SwitchSides, Action::Flip]);
         if !self.moves().is_empty() {
             actions.push(Action::CopyPgn);
         }
@@ -939,7 +802,7 @@ impl ComputerPage {
 
     /// The finished game can be reviewed on the analysis board.
     fn can_review(&self) -> bool {
-        self.game.result(&self.host()).is_some() && !self.moves().is_empty()
+        self.game.result().is_some() && !self.moves().is_empty()
     }
 
     /// Run an action as its button does, asking first where the button asks.
@@ -951,6 +814,7 @@ impl ComputerPage {
             Action::Resign => {}
             Action::NewGame => self.ask(Question::NewGame, window, cx),
             Action::SwitchSides => self.ask(Question::SwitchSides, window, cx),
+            Action::Flip => self.flip(cx),
             Action::CopyPgn => crate::export::copy_pgn(&self.game_export(), window, cx),
             Action::Review if self.can_review() => self.review_game(window, cx),
             Action::Review => {}
@@ -969,29 +833,31 @@ impl ComputerPage {
     fn takeback(&mut self, cx: &mut Context<Self>) {
         let host = self.host();
         let effects = self.game.takeback(&host);
-        self.perform(effects, cx);
+        self.perform(Ok(effects), cx);
         self.changed(cx);
     }
 
     fn resign(&mut self, cx: &mut Context<Self>) {
-        let host = self.host();
-        let effects = self.game.resign(&host);
-        self.perform(effects, cx);
+        let effects = self.game.resign();
+        self.perform(Ok(effects), cx);
         self.changed(cx);
     }
 
     fn switch_sides(&mut self, cx: &mut Context<Self>) {
-        let other = if self.user_color() == Color::White {
-            "black"
-        } else {
-            "white"
-        };
-        self.game.state["color"] = json!(other);
+        let other = !self.user_color();
+        self.game.set_color(other);
+        self.flipped = false;
         self.new_game(cx);
     }
 
+    /// Turn the board to look at the game from the other side; the sides stay as they are.
+    fn flip(&mut self, cx: &mut Context<Self>) {
+        self.flipped = !self.flipped;
+        self.after_change(cx);
+    }
+
     fn show_ply(&mut self, ply: usize, cx: &mut Context<Self>) {
-        self.game.state["ply"] = json!(ply.min(self.moves().len()));
+        self.game.show_ply(ply);
         self.changed(cx);
     }
 
@@ -1097,15 +963,15 @@ impl ComputerPage {
         self.voice.sync(
             &context,
             Some(self.sans()),
-            crate::voice::grammar("GAME_GRAMMAR"),
+            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Game).to_vec(),
             listening,
             cx,
         );
     }
 
-    /// What voice input says while no move is taken (`voiceIdle`).
+    /// What voice input says while no move is taken.
     fn voice_idle(&self) -> &'static str {
-        if self.game.result(&self.host()).is_some() {
+        if self.game.result().is_some() {
             "The game is over. Say “new game” to play again."
         } else if self.ply() != self.moves().len() {
             "Go to the last move to keep playing"
@@ -1125,14 +991,12 @@ impl ComputerPage {
         }
         let setup = self
             .position_at(self.moves().len())
-            .map(|position| {
-                json!({
-                    "variant": self.game.state["setup"]["variant"],
-                    "fen": kchess_domain::rules::make_fen(&position),
-                })
+            .map(|position| Setup {
+                variant: self.game.setup().variant,
+                fen: kchess_domain::rules::make_fen(&position),
             })
-            .unwrap_or(Value::Null);
-        let fen = setup["fen"].as_str().unwrap_or_default().to_string();
+            .unwrap_or_else(|| Setup::standard_at(""));
+        let fen = setup.fen.clone();
         let heard = match event {
             crate::voice::VoiceEvent::Missed { heard, .. } => {
                 self.voice.missed(heard, &fen, self.voice_taking(), cx);
@@ -1153,8 +1017,8 @@ impl ComputerPage {
                 };
                 if let Some(question) = asked {
                     let answer = crate::voice::moves::spoken_move(text, &setup);
-                    return Some(match answer["kind"].as_str() {
-                        Some("confirm") => {
+                    return Some(match answer {
+                        kchess_domain::voice::SpokenMove::Confirm => {
                             run = Some(Box::new(move |this, window, cx| {
                                 this.asked = None;
                                 window.close_dialog(cx);
@@ -1162,7 +1026,7 @@ impl ComputerPage {
                             }));
                             reply("confirm", "Done")
                         }
-                        Some("cancel") => {
+                        kchess_domain::voice::SpokenMove::Cancel => {
                             run = Some(Box::new(|this, window, cx| {
                                 this.asked = None;
                                 window.close_dialog(cx);
@@ -1177,8 +1041,8 @@ impl ComputerPage {
                         },
                     });
                 }
-                let command = crate::game::rules("spokenCommand", &[json!(text)]).ok()?;
-                let (said, question, feedback) = match command.as_str()? {
+                let command = kchess_domain::voice::game_command(text)?;
+                let (said, question, feedback) = match command {
                     "takeback" => {
                         run = Some(Box::new(|this, _, cx| {
                             if this.can_takeback() {
@@ -1227,7 +1091,7 @@ impl ComputerPage {
             run(self, window, cx);
         }
         if let crate::voice::moves::Action::Play(uci) = action {
-            self.play(&uci, window, cx);
+            self.play(&uci, cx);
         }
         cx.notify();
     }
@@ -1245,41 +1109,24 @@ impl ComputerPage {
         }
     }
 
-    /// The opening the moves on the board reached, as `(eco, name)` (`openingAt`).
+    /// The opening the moves on the board reached, as `(eco, name)`.
     fn opening(&self) -> Option<(SharedString, SharedString)> {
-        let opening = rules(
-            "openingAt",
-            &[
-                self.game.state["setup"].clone(),
-                json!(self.moves()),
-                json!(self.ply()),
-            ],
-        )
-        .ok()?;
-        Some((
-            opening["eco"].as_str()?.to_string().into(),
-            opening["name"].as_str()?.to_string().into(),
-        ))
+        let opening = crate::game::opening_at(self.game.setup(), &self.moves(), self.ply())?;
+        Some((opening.eco.into(), opening.name.into()))
     }
 
-    fn clock_text(&self, color: &str) -> Option<SharedString> {
-        if self.game.state["times"].is_null() {
+    fn clock_text(&self, color: Color) -> Option<SharedString> {
+        if !self.game.timed() {
             return None;
         }
-        let remaining = self.game.remaining(color, &self.host());
-        rules("formatClock", &[json!(remaining)])
-            .ok()
-            .and_then(|text| {
-                text.as_str()
-                    .map(|text| SharedString::from(text.to_string()))
-            })
+        let remaining = self.game.remaining(color, self.host().now);
+        Some(format_clock(remaining).into())
     }
 
     fn render_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let host = self.host();
         if self.engine == Engine::Missing {
             let checking = self.engine == Engine::Checking;
-            let standard = crate::game::standard_rules(&self.setup_variant());
+            let standard = self.setup_variant().standard_rules();
             let banner = widgets::StatusBanner::new(
                 Tone::Alert,
                 icon("triangle-alert"),
@@ -1312,41 +1159,29 @@ impl ComputerPage {
                 )
                 .into_any_element();
         }
-        if let Some(result) = self.game.result(&host) {
-            let kind = result["kind"].as_str().unwrap_or_default();
-            let (tone, glyph) = match kind {
-                "win" => (Tone::Win, icon("trophy")),
-                "loss" => (Tone::Loss, icon("flag")),
-                _ => (Tone::Plain, icon("handshake")),
+        if let Some(result) = self.game.result() {
+            let (tone, glyph) = match result.kind {
+                computer::Kind::Win => (Tone::Win, icon("trophy")),
+                computer::Kind::Loss => (Tone::Loss, icon("flag")),
+                computer::Kind::Draw => (Tone::Plain, icon("handshake")),
             };
-            return widgets::StatusBanner::new(
-                tone,
-                glyph,
-                result["title"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string()
-                    .into(),
-            )
-            .announce()
-            .when_some(
-                result["detail"]
-                    .as_str()
-                    .map(|detail| SharedString::from(detail.to_string())),
-                |banner, value| banner.detail(value),
-            )
-            .when_some(
-                self.can_review().then(|| {
-                    Button::new("review-game")
-                        .outline()
-                        .small()
-                        .label("Review game")
-                        .on_click(cx.listener(|this, _, window, cx| this.review_game(window, cx)))
-                        .into_any_element()
-                }),
-                |banner, value| banner.extra(value),
-            )
-            .into_any_element();
+            return widgets::StatusBanner::new(tone, glyph, result.title.into())
+                .announce()
+                .detail(SharedString::from(result.detail))
+                .when_some(
+                    self.can_review().then(|| {
+                        Button::new("review-game")
+                            .outline()
+                            .small()
+                            .label("Review game")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.review_game(window, cx)),
+                            )
+                            .into_any_element()
+                    }),
+                    |banner, value| banner.extra(value),
+                )
+                .into_any_element();
         }
         if self.ply() != self.moves().len() {
             return widgets::StatusBanner::new(
@@ -1399,86 +1234,32 @@ fn level_choices(cx: &App) -> (Vec<String>, Vec<SharedString>) {
         .collect();
     let labels = ids
         .iter()
-        .map(|id| {
-            rules("engineLevelLabel", &[json!(id)])
-                .ok()
-                .and_then(|label| {
-                    label
-                        .as_str()
-                        .map(|label| SharedString::from(label.to_string()))
-                })
-                .unwrap_or_else(|| id.clone().into())
+        .map(|id| match crate::game::engine_level_label(id) {
+            label if label.is_empty() => id.clone().into(),
+            label => SharedString::from(label),
         })
         .collect();
     (ids, labels)
 }
 
-fn board_state(game: &ComputerGame, interactive: bool) -> BoardState {
-    let setup = &game.state["setup"];
-    let variant = setup["variant"].as_str().unwrap_or("standard");
-    let fen = setup["fen"].as_str().unwrap_or_default();
-    let moves: Vec<String> =
-        serde_json::from_value(game.state["moves"].clone()).unwrap_or_default();
-    let ply = (crate::game::whole(&game.state["ply"]) as usize).min(moves.len());
-    let position = kchess_domain::replay::replay_setup(variant, fen, &moves[..ply])
-        .and_then(|replay| kchess_domain::rules::setup_start(variant, &replay.fen));
-    let orientation = if game.state["color"] == "black" {
-        Color::Black
-    } else {
-        Color::White
-    };
-    let last_move = ply
-        .checked_sub(1)
-        .and_then(|last| moves.get(last))
-        .and_then(|uci| {
-            let from = uci.get(0..2)?.parse::<Square>().ok()?;
-            let to = uci.get(2..4)?.parse::<Square>().ok()?;
-            Some((from, to))
-        });
-    match position {
-        Some(position) => BoardState::of(
-            &position,
-            orientation,
-            interactive.then_some(orientation),
-            last_move,
-        ),
-        None => BoardState::of(
-            &shakmaty::variant::VariantPosition::Chess(shakmaty::Chess::default()),
-            orientation,
-            None,
-            None,
-        ),
-    }
-}
-
-fn board_state_at(page: &ComputerPage, interactive: bool) -> BoardState {
-    board_state(&page.game, interactive)
-}
-
 impl Render for ComputerPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let host = self.host();
         let board_size = self.layout.board_size(window);
         let narrow = widgets::is_narrow(self.panel_area.size().width);
         let user = self.user_color();
-        let (user_name, computer_name) = if user == Color::White {
-            ("white", "black")
-        } else {
-            ("black", "white")
-        };
         let position = self.position_at(self.ply());
         let turn = position
             .as_ref()
             .map_or(Color::White, shakmaty::Position::turn);
-        let live = self.game.result(&host).is_none();
+        let live = self.game.result().is_none();
         let sans = self.sans();
         let moves = self.moves();
         let ply = self.ply();
         let interactive = self.interactive();
-        let first = crate::game::view::first_move(&self.game.state["setup"]);
+        let first = view::first_move(self.game.setup());
         let in_progress = self.in_progress();
-        let result = self.game.result(&host);
+        let result = self.game.result();
         let side_of = |color: Color| {
             if color == Color::White {
                 Side::White
@@ -1490,16 +1271,9 @@ impl Render for ComputerPage {
             .as_ref()
             .map(kchess_domain::rules::make_fen)
             .unwrap_or_default();
-        let piece_set = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .piece_set
-            .clone();
+        let piece_set = crate::settings::frontend(cx).piece_set.clone();
         // A running clock says whose turn it is; only an untimed game needs the outline.
-        let untimed = self.game.state["times"].is_null();
+        let untimed = !self.game.timed();
         let computer_line = widgets::player_line(
             h_flex()
                 .min_w_0()
@@ -1541,24 +1315,25 @@ impl Render for ComputerPage {
                     &palette,
                 )),
             None,
-            self.clock_text(computer_name).map(|text| {
+            self.clock_text(!user).map(|text| {
                 widgets::clock(text, live && turn != user && !untimed, &palette).into_any_element()
             }),
         );
-        let entry = widgets::move_entry(&self.move_input, interactive, &palette);
+        let entry = widgets::move_entry(&self.moves.input, interactive, &palette);
         let (voice, voice_line) = crate::voice::moves::board_bar(
             &self.voice,
             cx.entity().downgrade(),
             crate::voice::moves::Access {
                 write: |this: &mut Self| &mut this.voice,
-                play: |this: &mut Self, uci, window, cx| this.play(uci, window, cx),
+                play: |this: &mut Self, uci, _, cx| this.play(uci, cx),
             },
             crate::voice::moves::BoardBar {
                 id: "computer-voice",
                 hint: "Say “E four”, “Knight F three”, or “take back”",
                 active: self.voice_taking(),
                 listening: self.voice_listening(),
-                grammar: crate::voice::grammar("GAME_GRAMMAR"),
+                grammar: kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Game)
+                    .to_vec(),
             },
             cx,
         );
@@ -1579,38 +1354,28 @@ impl Render for ComputerPage {
                     &palette,
                 )),
             Some(widgets::move_row(entry, voice)),
-            self.clock_text(user_name).map(|text| {
+            self.clock_text(user).map(|text| {
                 widgets::clock(text, live && turn == user && !untimed, &palette).into_any_element()
             }),
         );
+        // The lines stay with their sides when the board turns.
+        let (top, bottom) = if self.flipped {
+            (you_line, computer_line)
+        } else {
+            (computer_line, you_line)
+        };
         let board_column = v_flex()
             .w(board_size)
             .flex_none()
             .gap(widgets::STACK_GAP)
-            .child(computer_line)
-            .child(crate::board::cached(&self.board))
-            // The mouse wheel over the board steps through the moves.
-            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
-                let Some(key) = this
-                    .wheel
-                    .turn(event.delta.pixel_delta(window.line_height()))
-                else {
-                    return;
-                };
-                if let Some(ply) = crate::game::view::navigate(key, this.ply(), this.moves().len())
-                {
-                    this.show_ply(ply, cx);
-                }
-                cx.stop_propagation();
-            }))
-            .child(you_line)
+            .child(top)
+            .child(surface::wheel(
+                div().child(crate::board::cached(&self.board)),
+                cx,
+            ))
+            .child(bottom)
             .children(voice_line)
-            .children(self.move_message.clone().map(|message| {
-                div()
-                    .text_size(px(12.))
-                    .text_color(palette.text_muted)
-                    .child(message)
-            }));
+            .children(self.moves.message(&palette));
 
         let page = cx.entity().downgrade();
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
@@ -1625,29 +1390,14 @@ impl Render for ComputerPage {
         let flip: widgets::ClickHandler = Box::new(move |_, window, cx| {
             let _ = flip_page.update(cx, |page, cx| page.ask(Question::SwitchSides, window, cx));
         });
-        let clock_label = self.game.state["clock"].as_object().map(|clock| {
-            format!(
-                "{}+{}",
-                clock
-                    .get("minutes")
-                    .and_then(Value::as_f64)
-                    .unwrap_or_default(),
-                clock
-                    .get("increment")
-                    .and_then(Value::as_f64)
-                    .unwrap_or_default()
-            )
-        });
-        let frontend = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
-        let (blindfold, zen) = (frontend.blindfold, frontend.zen_mode);
-        let show_opening = frontend.show_opening_name && self.setup_variant() == "standard";
-        let setup_label = crate::game::setup_label(&self.game.state["setup"]);
+        let clock_label = self
+            .game
+            .clock()
+            .map(|clock| widgets::time_control(clock.minutes, clock.increment));
+        let frontend = crate::settings::frontend(cx);
+        let zen = frontend.zen_mode;
+        let show_opening = frontend.show_opening_name && self.setup_variant() == Variant::Standard;
+        let setup_label = crate::game::setup_label(self.game.setup());
         let opening = show_opening.then(|| self.opening()).flatten();
         let panel = widgets::side_panel(&palette)
             .relative()
@@ -1687,10 +1437,10 @@ impl Render for ComputerPage {
                             cx,
                         ))
                     })
-                    .child(widgets::view_toggles(blindfold, zen)),
+                    .child(widgets::view_toggles(cx)),
             )
             .child(self.render_banner(cx))
-            .children(self.error.clone().map(|error| {
+            .children(self.errors(cx).into_iter().map(|error| {
                 div()
                     .text_size(px(12.))
                     .text_color(palette.error)
@@ -1717,7 +1467,8 @@ impl Render for ComputerPage {
                 ply,
                 moves.len(),
                 select,
-                (format!("Switch sides (play {other})").into(), None, flip),
+                widgets::TurnButton::Named(format!("Switch sides (play {other})").into(), flip),
+                cx,
             ))
             .child(
                 h_flex()
@@ -1764,38 +1515,119 @@ impl Render for ComputerPage {
                     ),
             );
 
-        self.layout
+        let page = self
+            .layout
             .render("computer-page", board_column, panel, window, cx)
-            .track_focus(&self.focus)
             // ⌘Z outside the move box takes back, as the button does.
             .on_action(
                 cx.listener(|this, _: &Undo, window, cx| this.act(Action::TakeBack, window, cx)),
-            )
-            // A click anywhere on the page gives the keys back to it, before a text field (the
-            // move box) takes them for itself, as on the analysis board.
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                // The arrows step through the moves when no text field has the keys.
-                if !crate::board::page_has_keys(&this.focus, window, cx)
-                    || event.keystroke.modifiers.modified()
-                {
-                    return;
-                }
-                if crate::shell::zen_key(&event.keystroke.key, cx) {
-                    cx.stop_propagation();
-                    return;
-                }
-                let moves = this.moves().len();
-                if let Some(ply) =
-                    crate::game::view::navigate(event.keystroke.key.as_str(), this.ply(), moves)
-                {
-                    this.show_ply(ply, cx);
-                    cx.stop_propagation();
-                }
-            }))
+            );
+        surface::keys(page, &self.focus, cx)
     }
+}
+
+impl ComputerPage {
+    /// What went wrong that the player should know: the engine's failure, the saved game that
+    /// could not be read, a save that failed.
+    fn errors(&self, cx: &App) -> Vec<SharedString> {
+        self.error
+            .clone()
+            .into_iter()
+            .chain(self.saver.problems(cx))
+            .collect()
+    }
+}
+
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::{ActionInfo, ActionRole};
+        match self {
+            Action::TakeBack => ActionInfo::new("computer:takeback", "Take back", "undo-2", "undo"),
+            Action::Resign => ActionInfo::new("computer:resign", "Resign", "flag", "give up"),
+            Action::NewGame => {
+                ActionInfo::new("computer:new-game", "New game", "rotate-ccw", "restart")
+                    .role(ActionRole::New)
+            }
+            Action::SwitchSides => ActionInfo::new(
+                "computer:switch-sides",
+                "Switch sides",
+                "repeat",
+                "colour color",
+            ),
+            Action::Flip => ActionInfo::flip("computer:flip"),
+            Action::CopyPgn => ActionInfo::new(
+                "computer:copy-pgn",
+                "Copy PGN",
+                "copy",
+                "game moves clipboard",
+            )
+            .role(ActionRole::Copy),
+            Action::Review => ActionInfo::new(
+                "computer:review",
+                "Review game",
+                "microscope",
+                "analyse analysis",
+            ),
+        }
+    }
+}
+
+impl crate::pages::PageView for ComputerPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Computer,
+        label: "Play with computer",
+        short: "Computer",
+        icon: "bot",
+        group: Some(crate::pages::NavGroup::Play),
+        keywords: "stockfish bot ai engine vs",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        ComputerPage::new(window, cx)
+    }
+
+    fn zen(&self, _: &App) -> bool {
+        true
+    }
+
+    fn actions(&self, _: &App) -> Vec<Action> {
+        ComputerPage::actions(self)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.act(action, window, cx));
+    }
+}
+
+/// Whether a game can start from `setup`: a standard position the engine takes (not one with
+/// too many pieces), or a legal one in its variant.
+pub(crate) fn playable(setup: &Setup) -> bool {
+    if setup.variant.standard_rules() {
+        crate::game::position_problem(&setup.fen).is_none()
+    } else {
+        setup.position().is_some()
+    }
+}
+
+/// Play Stockfish at a level and side, from Quick Pick.
+pub fn play_level(level: &str, color: &'static str, window: &mut Window, cx: &mut App) {
+    let level = level.to_string();
+    crate::shell::show::<ComputerPage>(window, cx, move |page, window, cx| {
+        page.play_level(&level, color, window, cx)
+    });
+}
+
+/// Play Stockfish (Fairy-Stockfish in another variant) from a setup's position, as the side to
+/// move. A position that cannot be played only opens the page.
+pub fn play_from(setup: Setup, window: &mut Window, cx: &mut App) {
+    let color = crate::links::side_to_move(&setup.fen);
+    if !playable(&setup) {
+        crate::shell::open(crate::pages::Page::Computer, window, cx);
+        return;
+    }
+    crate::shell::show::<ComputerPage>(window, cx, move |page, window, cx| {
+        page.start_from(setup, color, window, cx)
+    });
 }

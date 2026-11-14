@@ -1,507 +1,432 @@
-//! How a Lichess game on the board changes with each server
-//! event, connection report and network reply (see RUST_MIGRATION.md, "Stateful modules").
-//! The class keeps the state object and executes the effects; every decision lives here, including
-//! which call to make and how its reply lands. Each method takes the state, its input, and the
-//! context the host read at that moment (`now`, `activeAccount`, `chatEnabled`) as the last argument.
+//! How a Lichess game on the board changes with each server event, connection report and network
+//! reply. The host keeps the `Model` and executes the effects; every decision lives here,
+//! including which call to make and how its reply lands. Each transition takes the context the
+//! host read at that moment (`Ctx`).
 
-mod events;
-mod model;
+pub mod connection;
+pub mod events;
+pub mod model;
+pub mod server;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::js;
-use model::{Call, Ctx, Model, Run, at, string_or};
+use connection::OnlineConnection;
+use model::{
+    Call, ChatEntry, Ctx, GamePhase, Left, Model, Offer, Op, Outcome, Pending, Reply, Run, View,
+};
+use serde::Deserialize as _;
+use server::ServerEvent;
 
-/// `variantFromLichess`, for the Lichess service's challenge reader (`kchess-core`).
-pub use model::variant_from_lichess;
+impl Model {
+    /// The live position, the SAN history, the moves this side made, whether it is a
+    /// correspondence game, and the rematch's options.
+    pub fn view(&self) -> View {
+        let replayed = self.replayed();
+        View {
+            position: replayed.setup,
+            history: replayed.played,
+            own_moves: self.own_moves(),
+            correspondence: self.correspondence(),
+            rematch: self.rematch(),
+        }
+    }
 
-type Out = Result<Value, String>;
+    /// A server event of the game stream.
+    pub fn event(&mut self, event: &ServerEvent, ctx: &Ctx) -> Outcome {
+        let mut run = Run::new(self, ctx);
+        run.read_event(event);
+        run.done()
+    }
 
-/// The state of a board with no game (`onlineGameState()` and the class's private fields), for
-/// hosts that keep the state as JSON.
-pub fn idle_state() -> Value {
-    serde_json::to_value(Model::idle()).unwrap_or(Value::Null)
-}
+    /// The stream connected, failed or ended.
+    pub fn connection(&mut self, report: &OnlineConnection, ctx: &Ctx) -> Outcome {
+        let mut run = Run::new(self, ctx);
+        run.read_connection(report);
+        run.done()
+    }
 
-static NULL: Value = Value::Null;
+    /// Lichess is being asked for a game in progress.
+    pub fn checking(&mut self, ctx: &Ctx) -> Outcome {
+        let mut run = Run::new(self, ctx);
+        run.checking();
+        run.done()
+    }
 
-/// This module's methods for `api::call`; None when the method is not one of them.
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    Some(match method {
-        "onlineGameView" => view(args),
-        "onlineGameEvent" => event(args),
-        "onlineGameConnection" => connection(args),
-        "onlineGameChecking" => checking(args),
-        "onlineGameReset" => reset(args),
-        "onlineGameFinish" => finish(args),
-        "onlineGameBegin" => begin(args),
-        "onlineGameSettle" => settle(args),
-        _ => return None,
-    })
-}
+    /// Starts a network-backed operation: the state changes it makes before the call, the call,
+    /// and what the driver must hand back to `settle`.
+    pub fn begin(&mut self, op: Op, ctx: &Ctx) -> Outcome {
+        let run = Run::new(self, ctx);
+        match op {
+            Op::Start(options) => start(run, options),
+            Op::Stop => stop(run),
+            Op::Reconnect => reconnect(run),
+            Op::Open { account, id } => open(run, account, id),
+            Op::Move(uci) => move_uci(run, uci),
+            Op::Action(action) => act(run, action),
+            Op::Chat(id) => chat(run, id),
+        }
+    }
 
-/// Argument `i`; a missing argument reads as null.
-fn argument(args: &[Value], i: usize) -> &Value {
-    args.get(i).unwrap_or(&NULL)
-}
-
-fn state(args: &[Value]) -> Result<Model, String> {
-    serde_json::from_value(argument(args, 0).clone()).map_err(|e| e.to_string())
-}
-
-fn context(args: &[Value], i: usize) -> Result<Ctx, String> {
-    serde_json::from_value(argument(args, i).clone()).map_err(|e| e.to_string())
-}
-
-/// The state as the rules read it, with the context the host supplied at `i`.
-fn run(args: &[Value], i: usize) -> Result<Run, String> {
-    Ok(Run::new(state(args)?, context(args, i)?))
-}
-
-/// `position`, `history`, `ownMoves`, `correspondence` and `rematchOptions` for the state.
-fn view(args: &[Value]) -> Out {
-    let m = state(args)?;
-    let replayed = m.replayed();
-    Ok(json!({
-        "position": { "variant": replayed.setup.variant, "fen": replayed.setup.fen },
-        "history": replayed.played,
-        "ownMoves": m.own_moves(),
-        "correspondence": m.correspondence(),
-        "rematch": m.rematch(),
-    }))
-}
-
-fn event(args: &[Value]) -> Out {
-    let mut run = run(args, 2)?;
-    run.read_event(argument(args, 1));
-    run.done(None, None, None, false)
-}
-
-fn connection(args: &[Value]) -> Out {
-    let mut run = run(args, 2)?;
-    run.read_connection(argument(args, 1));
-    run.done(None, None, None, false)
-}
-
-fn checking(args: &[Value]) -> Out {
-    let mut run = run(args, 1)?;
-    run.checking();
-    run.done(None, None, None, false)
-}
-
-fn reset(args: &[Value]) -> Out {
-    let mut run = run(args, 1)?;
-    run.reset_game();
-    run.done(None, None, None, false)
-}
-
-/// `finish(winner, reason, notify)`: the public call, with its arguments in one object.
-fn finish(args: &[Value]) -> Out {
-    let mut run = run(args, 2)?;
-    let input = argument(args, 1);
-    let reason = js::to_string(input.get("reason"));
-    let notify = js::truthy(input.get("notify"));
-    run.finish(js::string(input.get("winner")), &reason, notify);
-    run.done(None, None, None, false)
-}
-
-/// Starts a network-backed operation: the state changes it makes before the call, the call, and
-/// what the driver must hand back to `settle`. `op` names the public method; `input` is its argument.
-fn begin(args: &[Value]) -> Out {
-    let run = run(args, 3)?;
-    let input = argument(args, 2);
-    match js::string(Some(argument(args, 1))).unwrap_or("") {
-        "start" => start(run, input),
-        "stop" => stop(run),
-        "reconnect" => reconnect(run),
-        "open" => open(run, input),
-        "move" => move_uci(run, input),
-        "action" => action(run, input),
-        "chat" => chat(run, input),
-        other => Err(format!("unknown online game operation {other}")),
+    /// The core's reply to a call `begin` made.
+    pub fn settle(&mut self, pending: &Pending, reply: Reply, ctx: &Ctx) -> Outcome {
+        let run = Run::new(self, ctx);
+        let value = match &reply {
+            Reply::Ok(value) => Some(value),
+            Reply::Failed => None,
+        };
+        let ok = value.is_some();
+        match pending {
+            Pending::Start {
+                generation,
+                correspondence,
+                previous,
+                left,
+            } => {
+                let current = *generation == run.m.generation;
+                settle_start(run, *correspondence, *previous, left, value, current)
+            }
+            Pending::Stop if !ok => run.rethrow(),
+            Pending::Stop => run.done(),
+            Pending::Reconnect { generation } => {
+                let current = *generation == run.m.generation;
+                settle_reconnect(run, value, current)
+            }
+            Pending::Open {
+                generation,
+                account,
+                id,
+            } => {
+                let current = *generation == run.m.generation;
+                settle_open(run, account, id, ok, current)
+            }
+            Pending::Move {
+                generation,
+                id,
+                epoch,
+                sent,
+            } => {
+                let current = same_request(&run, *generation, id, *epoch);
+                settle_move(run, *sent, ok, current)
+            }
+            Pending::Action {
+                generation,
+                id,
+                epoch,
+                action,
+            } => {
+                let current = same_request(&run, *generation, id, *epoch);
+                settle_action(run, action, ok, current)
+            }
+            Pending::Chat { id } => settle_chat(run, id, value),
+        }
     }
 }
 
-/// `start(options)`: a seek or challenge. A game being played, a seek in progress, or Lichess
+/// A seek or challenge. A game being played, a seek in progress, or Lichess
 /// still being asked for a game in progress refuses it: the seek cut that check short, and its
 /// end put the state back to idle while Lichess held the seek.
-fn start(mut run: Run, options: &Value) -> Out {
-    let phase = run.m.online_phase.clone();
+fn start(mut run: Run, options: Value) -> Outcome {
+    let phase = run.m.online_phase;
     // What `checking` (and the core's report of the check) leaves; a report left over once the
     // phase moved on (a finished game, idle) does not hold seeks back.
-    let checking = phase == "disconnected"
-        && run.m.online_connection.as_ref().is_some_and(|connection| {
-            js::string(connection.get("lane")) == Some("game")
-                && js::string(connection.get("phase")) == Some("checking")
-        });
-    let refused = (phase == "disconnected" && !run.m.online_id.is_empty())
-        || (phase == "playing" && !run.m.correspondence())
-        || phase == "seeking"
+    let checking = phase == GamePhase::Disconnected
+        && run
+            .m
+            .online_connection
+            .as_ref()
+            .is_some_and(OnlineConnection::checking);
+    let refused = (phase == GamePhase::Disconnected && !run.m.online_id.is_empty())
+        || (phase == GamePhase::Playing && !run.m.correspondence())
+        || phase == GamePhase::Seeking
         || checking;
     if refused {
-        return run.done(Some(json!(false)), None, None, false);
+        return run.answer(false);
     }
     let generation = run.next_generation();
     let correspondence = options.get("days").is_some();
     // A real-time seek from a correspondence game being played: the game it leaves, to go back to
     // if the seek fails.
-    let left = (phase == "playing")
-        .then(|| json!({ "id": run.m.online_id, "account": run.m.online_account }));
+    let left = (phase == GamePhase::Playing).then(|| Left {
+        id: run.m.online_id.clone(),
+        account: run.m.online_account.clone(),
+    });
     if !correspondence {
         run.m.online_id.clear();
-        run.m.online_account = string_or(options.get("account"), &run.ctx.active_account);
-        run.m.online_phase = "seeking".into();
+        run.m.online_account = options
+            .get("account")
+            .and_then(Value::as_str)
+            .map_or_else(|| run.ctx.active_account.clone(), str::to_string);
+        run.m.online_phase = GamePhase::Seeking;
         run.m.online_status = "Looking for an opponent…".into();
     }
-    let mut pending = json!({
-        "op": "start",
-        "generation": generation,
-        "correspondence": correspondence,
-        "previous": phase,
-    });
-    if let Some(left) = left {
-        pending["left"] = left;
-    }
-    run.done(
-        None,
-        Some(Call::new("startOnline", vec![options.clone()])),
-        Some(pending),
-        false,
-    )
+    let pending = Pending::Start {
+        generation,
+        correspondence,
+        previous: phase,
+        left,
+    };
+    run.call(Call::StartOnline(options), pending)
 }
 
-/// `stop()`: cancel the seek, and leave a game that is not being played.
-fn stop(mut run: Run) -> Out {
+/// Cancel the seek, and leave a game that is not being played.
+fn stop(mut run: Run) -> Outcome {
     run.next_generation();
-    if run.m.online_phase != "disconnected" && run.m.online_phase != "playing" {
-        run.m.online_phase = "idle".into();
+    if !matches!(
+        run.m.online_phase,
+        GamePhase::Disconnected | GamePhase::Playing
+    ) {
+        run.m.online_phase = GamePhase::Idle;
         run.m.online_status.clear();
     }
-    run.done(
-        None,
-        Some(Call::new("cancelOnline", Vec::new())),
-        Some(json!({ "op": "stop" })),
-        false,
-    )
+    run.call(Call::CancelOnline, Pending::Stop)
 }
 
-/// `reconnect()`: ask Lichess for the game in progress.
-fn reconnect(mut run: Run) -> Out {
+/// Ask Lichess for the game in progress.
+fn reconnect(mut run: Run) -> Outcome {
     let generation = run.next_generation();
     run.checking();
-    run.done(
-        None,
-        Some(Call::new("resumeOnline", Vec::new())),
-        Some(json!({ "op": "reconnect", "generation": generation })),
-        false,
-    )
+    run.call(Call::ResumeOnline, Pending::Reconnect { generation })
 }
 
-/// `open(account, id)`: open one of the account's games on the board.
-fn open(mut run: Run, input: &Value) -> Out {
+/// Open one of the account's games on the board.
+fn open(mut run: Run, account: String, id: String) -> Outcome {
     let generation = run.next_generation();
-    let account = js::string(input.get("account")).unwrap_or("").to_string();
-    let id = js::string(input.get("id")).unwrap_or("").to_string();
-    run.done(
-        None,
-        Some(Call::new(
-            "openGame",
-            vec![account.clone().into(), id.clone().into()],
-        )),
-        Some(json!({ "op": "open", "generation": generation, "account": account, "id": id })),
-        false,
+    let call = Call::OpenGame {
+        account: account.clone(),
+        id: id.clone(),
+    };
+    run.call(
+        call,
+        Pending::Open {
+            generation,
+            account,
+            id,
+        },
     )
 }
 
-/// `onlineMove(uci)`: a move on the board. It is sent once; a failed reply is never retried.
-fn move_uci(run: Run, input: &Value) -> Out {
-    if run.m.online_id.is_empty() || run.m.online_phase != "playing" {
-        return run.done(None, None, None, false);
+/// A move on the board. It is sent once; a failed reply is never retried.
+fn move_uci(run: Run, uci: String) -> Outcome {
+    if run.m.online_id.is_empty() || run.m.online_phase != GamePhase::Playing {
+        return run.done();
     }
     let id = run.m.online_id.clone();
-    let uci = js::string(Some(input)).unwrap_or("").to_string();
-    let pending = json!({
-        "op": "move",
-        "generation": run.m.generation,
-        "id": id,
-        "epoch": run.m.state_epoch,
-        "sent": run.ctx.now,
-    });
-    run.done(
-        None,
-        Some(Call::new("playOnline", vec![id.into(), uci.into()])),
-        Some(pending),
-        false,
-    )
+    let pending = Pending::Move {
+        generation: run.m.generation,
+        id: id.clone(),
+        epoch: run.m.state_epoch,
+        sent: run.ctx.now,
+    };
+    run.call(Call::PlayOnline { id, uci }, pending)
 }
 
-/// `onlineAction(action)`: resign, offer or answer a draw or takeback, claim, berserk.
-fn action(run: Run, input: &Value) -> Out {
+/// Resign, offer or answer a draw or takeback, claim, berserk.
+fn act(run: Run, action: String) -> Outcome {
     if run.m.online_id.is_empty() {
-        return run.done(None, None, None, false);
+        return run.done();
     }
     let id = run.m.online_id.clone();
-    let action = js::string(Some(input)).unwrap_or("").to_string();
-    let pending = json!({
-        "op": "action",
-        "generation": run.m.generation,
-        "id": id,
-        "epoch": run.m.state_epoch,
-        "action": action,
-    });
-    run.done(
-        None,
-        Some(Call::new("onlineAction", vec![id.into(), action.into()])),
-        Some(pending),
-        false,
-    )
+    let pending = Pending::Action {
+        generation: run.m.generation,
+        id: id.clone(),
+        epoch: run.m.state_epoch,
+        action: action.clone(),
+    };
+    run.call(Call::OnlineAction { id, action }, pending)
 }
 
-/// `loadChat(id)`: the chat so far. A courtesy: a failure leaves the game running.
-fn chat(run: Run, input: &Value) -> Out {
+/// The chat so far. A courtesy: a failure leaves the game running.
+fn chat(run: Run, id: String) -> Outcome {
     if !run.ctx.chat_enabled {
-        return run.done(None, None, None, false);
+        return run.done();
     }
-    let id = js::string(Some(input)).unwrap_or("").to_string();
-    let pending = json!({ "op": "chat", "id": id });
-    run.done(
-        None,
-        Some(Call::new("onlineChat", vec![id.into()])),
-        Some(pending),
-        false,
-    )
-}
-
-/// The network reply to a call `begin` made: `outcome` is `{ ok, value }`, or `{ ok: false }`
-/// when the call threw (the driver keeps the cause for the effects and any rethrow).
-fn settle(args: &[Value]) -> Out {
-    let run = run(args, 3)?;
-    let pending = argument(args, 1);
-    let outcome = argument(args, 2);
-    let ok = outcome.get("ok").and_then(Value::as_bool).unwrap_or(false);
-    let value = outcome.get("value");
-    let current = pending.get("generation").and_then(Value::as_f64) == Some(run.m.generation);
-    match js::string(pending.get("op")).unwrap_or("") {
-        "start" => settle_start(run, pending, ok, value, current),
-        "stop" => {
-            if !ok {
-                return run.done(None, None, None, true);
-            }
-            run.done(None, None, None, false)
-        }
-        "reconnect" => settle_reconnect(run, ok, value, current),
-        "open" => settle_open(run, pending, ok, current),
-        "move" => settle_move(run, pending, ok, current),
-        "action" => settle_action(run, pending, ok, current),
-        "chat" => settle_chat(run, pending, ok, value),
-        other => Err(format!("unknown online game operation {other}")),
-    }
+    let pending = Pending::Chat { id: id.clone() };
+    run.call(Call::OnlineChat { id }, pending)
 }
 
 /// Whether a reply to a move or action still applies: the same request, game and epoch, and the
 /// game not over. A late reply once it finished turned the result back into "The move could not
 /// be confirmed", or showed a draw or takeback offer on a finished game.
-fn same_request(run: &Run, pending: &Value, current: bool) -> bool {
-    current
-        && run.m.online_phase != "finished"
-        && js::string(pending.get("id")) == Some(run.m.online_id.as_str())
-        && pending.get("epoch").and_then(Value::as_f64) == Some(run.m.state_epoch)
+fn same_request(run: &Run, generation: f64, id: &str, epoch: f64) -> bool {
+    generation == run.m.generation
+        && run.m.online_phase != GamePhase::Finished
+        && id == run.m.online_id
+        && epoch == run.m.state_epoch
 }
 
 fn settle_start(
     mut run: Run,
-    pending: &Value,
-    ok: bool,
+    correspondence: bool,
+    previous: GamePhase,
+    left: &Option<Left>,
     value: Option<&Value>,
     current: bool,
-) -> Out {
-    let correspondence = pending
-        .get("correspondence")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if !ok {
+) -> Outcome {
+    let Some(value) = value else {
         run.warn("[onlineGame] starting game failed:");
         if !current {
-            return run.done(Some(json!(false)), None, None, false);
+            return run.answer(false);
         }
-        if !correspondence && run.m.online_phase == "seeking" {
-            let left = pending.get("left").filter(|left| left.is_object());
-            run.m.online_phase = match js::string(pending.get("previous")) {
+        if !correspondence && run.m.online_phase == GamePhase::Seeking {
+            run.m.online_phase = match previous {
                 // Back to the correspondence game the seek left, which went on meanwhile.
-                Some("playing") if left.is_some() => "playing",
-                Some("finished") => "finished",
-                _ => "idle",
-            }
-            .into();
+                GamePhase::Playing if left.is_some() => GamePhase::Playing,
+                GamePhase::Finished => GamePhase::Finished,
+                _ => GamePhase::Idle,
+            };
             if let Some(left) = left {
-                run.m.online_id = js::string(left.get("id")).unwrap_or("").to_string();
-                run.m.online_account = js::string(left.get("account")).unwrap_or("").to_string();
+                run.m.online_id = left.id.clone();
+                run.m.online_account = left.account.clone();
             }
             run.m.online_status.clear();
         }
-        return run.done(None, None, None, true);
-    }
+        return run.rethrow();
+    };
     if !current {
-        return run.done(Some(json!(false)), None, None, false);
+        return run.answer(false);
     }
-    if !correspondence && run.m.online_phase == "seeking" {
-        run.m.online_status = if js::truthy(at(value, "url")) {
+    if !correspondence && run.m.online_phase == GamePhase::Seeking {
+        run.m.online_status = if js::truthy(value.get("url")) {
             "Challenge sent. Waiting for acceptance…"
         } else {
             "Looking for an opponent…"
         }
         .into();
     }
-    run.done(Some(json!(true)), None, None, false)
+    run.answer(true)
 }
 
-fn settle_reconnect(mut run: Run, ok: bool, value: Option<&Value>, current: bool) -> Out {
-    if !ok {
-        return run.done(None, None, None, true);
-    }
+fn settle_reconnect(run: Run, value: Option<&Value>, current: bool) -> Outcome {
+    let Some(value) = value else {
+        return run.rethrow();
+    };
     if current {
-        match value.filter(|resumed| js::truthy(Some(*resumed))) {
-            Some(resumed) => {
-                run.m.online_account = js::to_string(resumed.get("account"));
-                run.m.online_id = js::to_string(resumed.get("id"));
-                run.m.online_status = "Reconnecting…".into();
-            }
-            None => {
-                run.m.online_phase = "idle".into();
-                run.m.online_id.clear();
-                run.m.online_status = "No game in progress. You can find another game.".into();
-            }
+        if js::truthy(Some(value)) {
+            run.m.online_account = js::to_string(value.get("account"));
+            run.m.online_id = js::to_string(value.get("id"));
+            run.m.online_status = "Reconnecting…".into();
+        } else {
+            run.m.online_phase = GamePhase::Idle;
+            run.m.online_id.clear();
+            run.m.online_status = "No game in progress. You can find another game.".into();
         }
     }
-    run.done(None, None, None, false)
+    run.done()
 }
 
-fn settle_open(mut run: Run, pending: &Value, ok: bool, current: bool) -> Out {
+fn settle_open(mut run: Run, account: &str, id: &str, ok: bool, current: bool) -> Outcome {
     if !ok {
-        return run.done(None, None, None, true);
+        return run.rethrow();
     }
     if current {
-        let id = js::string(pending.get("id")).unwrap_or("").to_string();
         if run.m.shown_game != id {
             run.reset_game();
         }
         run.m.shown_game.clear();
-        run.m.online_account = js::string(pending.get("account")).unwrap_or("").to_string();
-        run.m.online_id = id;
+        run.m.online_account = account.to_string();
+        run.m.online_id = id.to_string();
         run.m.online_status = "Opening game…".into();
-        if run.m.online_phase != "playing" {
-            run.m.online_phase = "disconnected".into();
+        if run.m.online_phase != GamePhase::Playing {
+            run.m.online_phase = GamePhase::Disconnected;
         }
     }
-    run.done(None, None, None, false)
+    run.done()
 }
 
-fn settle_move(mut run: Run, pending: &Value, ok: bool, current: bool) -> Out {
-    let current = same_request(&run, pending, current);
+fn settle_move(mut run: Run, sent: f64, ok: bool, current: bool) -> Outcome {
     if ok {
         if current {
-            let sent = pending.get("sent").and_then(Value::as_f64).unwrap_or(0.0);
             let ms = js::round(run.ctx.now - sent);
             run.effect(model::Effect::MoveAcknowledged { ms });
         }
-        return run.done(None, None, None, false);
+        return run.done();
     }
     // The server may have accepted the move before the reply was lost. Never replay it.
     run.warn("[onlineGame] request failed:");
     if !current {
-        return run.done(None, None, None, false);
+        return run.done();
     }
-    run.m.online_phase = "disconnected".into();
+    run.m.online_phase = GamePhase::Disconnected;
     run.m.online_status =
         "The move could not be confirmed. Reconnect to check the server position.".into();
     run.clock_pause();
     run.effect(model::Effect::Failed);
-    run.done(None, None, None, false)
+    run.done()
 }
 
-fn settle_action(mut run: Run, pending: &Value, ok: bool, current: bool) -> Out {
+fn settle_action(mut run: Run, action: &str, ok: bool, current: bool) -> Outcome {
     if !ok {
         run.warn("[onlineGame] request failed:");
         run.effect(model::Effect::Failed);
-        return run.done(None, None, None, false);
+        return run.done();
     }
-    if same_request(&run, pending, current) {
-        match js::string(pending.get("action")).unwrap_or("") {
-            "offerDraw" => run.m.draw_offer = "mine".into(),
-            "declineDraw" | "acceptDraw" => run.m.draw_offer = "none".into(),
+    if current {
+        match action {
+            "offerDraw" => run.m.draw_offer = Offer::Mine,
+            "declineDraw" | "acceptDraw" => run.m.draw_offer = Offer::None,
             "takeback" => {
-                run.m.takeback_offer = if run.m.takeback_offer == "theirs" {
-                    "none"
+                run.m.takeback_offer = if run.m.takeback_offer == Offer::Theirs {
+                    Offer::None
                 } else {
-                    "mine"
+                    Offer::Mine
                 }
-                .into()
             }
-            "declineTakeback" => run.m.takeback_offer = "none".into(),
+            "declineTakeback" => run.m.takeback_offer = Offer::None,
             "berserk" => run.m.berserked = true,
             _ => {}
         }
     }
-    run.done(None, None, None, false)
+    run.done()
 }
 
-fn settle_chat(mut run: Run, pending: &Value, ok: bool, value: Option<&Value>) -> Out {
-    if !ok {
+fn settle_chat(mut run: Run, id: &str, value: Option<&Value>) -> Outcome {
+    let Some(value) = value else {
         run.warn("[onlineGame] request failed:");
-        return run.done(None, None, None, false);
-    }
-    let id = js::string(pending.get("id")).unwrap_or("");
+        return run.done();
+    };
     if run.m.online_id == id {
-        let mut chat: Vec<Value> = value.and_then(Value::as_array).cloned().unwrap_or_default();
-        chat.extend(
-            run.m
-                .chat
-                .iter()
-                .filter(|line| line.get("room") != Some(&Value::from("player")))
-                .cloned(),
-        );
+        let mut chat: Vec<ChatEntry> = Vec::deserialize(value).unwrap_or_default();
+        chat.extend(run.m.chat.iter().filter(|line| !line.players()).cloned());
         run.m.chat = chat;
     }
-    run.done(None, None, None, false)
+    run.done()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::model::Setup;
+    use serde_json::json;
+
+    use super::model::{ChatRoom, ClockConfig, Effect, Setup};
+    use super::server::ServerEvent;
     use super::*;
 
-    fn state_json(model: &Model) -> Value {
-        serde_json::to_value(model).unwrap()
+    fn ctx(now: f64) -> Ctx {
+        Ctx {
+            now,
+            active_account: "Alice".into(),
+            chat_enabled: true,
+        }
     }
 
-    fn ctx(now: f64) -> Value {
-        json!({ "now": now, "activeAccount": "Alice", "chatEnabled": true })
+    fn seek() -> Op {
+        Op::Start(json!({ "minutes": 5, "increment": 0, "color": "random", "rated": false }))
     }
 
-    fn transition(method: &str, args: Vec<Value>) -> Value {
-        call(method, &args).unwrap().unwrap()
-    }
-
-    fn effects(result: &Value) -> Vec<Value> {
-        result["effects"].as_array().unwrap().clone()
+    fn playing() -> Model {
+        let mut model = Model::idle();
+        model.online_phase = GamePhase::Playing;
+        model.online_id = "AbCd1234".into();
+        model.online_setup = Setup::standard();
+        model
     }
 
     #[test]
     fn a_seek_is_refused_while_a_game_is_played() {
-        let mut model = Model::idle();
-        model.online_phase = "playing".into();
-        model.online_id = "AbCd1234".into();
-        let result = transition(
-            "onlineGameBegin",
-            vec![
-                state_json(&model),
-                json!("start"),
-                json!({ "minutes": 5, "increment": 0, "color": "random", "rated": false }),
-                ctx(0.0),
-            ],
-        );
-        assert_eq!(result["ret"], json!(false));
-        assert!(result.get("call").is_none());
+        let mut model = playing();
+        let result = model.begin(seek(), &ctx(0.0));
+        assert_eq!(result.ret, Some(false));
+        assert!(result.call.is_none());
     }
 
     /// Lichess is still asked for a game in progress (after signing in): a seek begun then cut
@@ -509,133 +434,101 @@ mod tests {
     /// seek. Once Lichess has answered, a seek goes out.
     #[test]
     fn a_seek_waits_for_the_check_for_a_game_in_progress() {
-        let seek = json!({ "minutes": 10, "increment": 0, "color": "random", "rated": false });
-        let checking = transition(
-            "onlineGameChecking",
-            vec![state_json(&Model::idle()), ctx(0.0)],
+        let mut model = Model::idle();
+        model.checking(&ctx(0.0));
+        let phase = model.online_phase;
+        let refused = model.begin(seek(), &ctx(0.0));
+        assert_eq!(refused.ret, Some(false));
+        assert!(refused.call.is_none());
+        assert_eq!(model.online_phase, phase);
+        model.connection(
+            &serde_json::from_value(json!({
+                "session": 0, "account": "Alice", "gameId": "", "lane": "game", "phase": "idle",
+            }))
+            .unwrap(),
+            &ctx(0.0),
         );
-        let refused = transition(
-            "onlineGameBegin",
-            vec![
-                checking["state"].clone(),
-                json!("start"),
-                seek.clone(),
-                ctx(0.0),
-            ],
-        );
-        assert_eq!(refused["ret"], json!(false));
-        assert!(refused.get("call").is_none());
-        assert_eq!(
-            refused["state"]["onlinePhase"],
-            checking["state"]["onlinePhase"]
-        );
-        let answered = transition(
-            "onlineGameConnection",
-            vec![
-                checking["state"].clone(),
-                json!({ "session": 0, "account": "Alice", "gameId": "", "lane": "game", "phase": "idle" }),
-                ctx(0.0),
-            ],
-        );
-        let begun = transition(
-            "onlineGameBegin",
-            vec![answered["state"].clone(), json!("start"), seek, ctx(0.0)],
-        );
-        assert_eq!(begun["call"]["method"], json!("startOnline"));
-        assert_eq!(begun["state"]["onlinePhase"], json!("seeking"));
+        let begun = model.begin(seek(), &ctx(0.0));
+        assert!(matches!(begun.call, Some(Call::StartOnline(_))));
+        assert_eq!(model.online_phase, GamePhase::Seeking);
     }
 
     #[test]
     fn a_seek_reply_after_a_stop_is_ignored() {
-        let model = Model::idle();
-        let begun = transition(
-            "onlineGameBegin",
-            vec![
-                state_json(&model),
-                json!("start"),
-                json!({ "minutes": 5, "increment": 0, "color": "random", "rated": false }),
-                ctx(0.0),
-            ],
-        );
-        assert_eq!(begun["call"]["method"], json!("startOnline"));
-        let stopped = transition(
-            "onlineGameBegin",
-            vec![begun["state"].clone(), json!("stop"), Value::Null, ctx(0.0)],
-        );
-        let late = transition(
-            "onlineGameSettle",
-            vec![
-                stopped["state"].clone(),
-                begun["pending"].clone(),
-                json!({ "ok": true, "value": { "url": "https://lichess.org/x" } }),
-                ctx(0.0),
-            ],
-        );
-        assert_eq!(late["ret"], json!(false));
-        assert_eq!(late["state"]["onlinePhase"], json!("idle"));
-    }
-
-    fn playing() -> Model {
         let mut model = Model::idle();
-        model.online_phase = "playing".into();
-        model.online_id = "AbCd1234".into();
-        model.online_setup = Setup::standard();
-        model
-    }
-
-    fn finished(state: &Value) -> Value {
-        let mut state = state.clone();
-        state["onlinePhase"] = json!("finished");
-        state
+        let begun = model.begin(seek(), &ctx(0.0));
+        assert!(matches!(begun.call, Some(Call::StartOnline(_))));
+        model.begin(Op::Stop, &ctx(0.0));
+        let late = model.settle(
+            &begun.pending.unwrap(),
+            Reply::Ok(json!({ "url": "https://lichess.org/x" })),
+            &ctx(0.0),
+        );
+        assert_eq!(late.ret, Some(false));
+        assert_eq!(model.online_phase, GamePhase::Idle);
     }
 
     /// A draw offer answered after the game ended showed "offered a draw" on the finished game.
     #[test]
     fn a_late_offer_reply_leaves_a_finished_game_alone() {
-        let begun = transition(
-            "onlineGameBegin",
-            vec![
-                state_json(&playing()),
-                json!("action"),
-                json!("offerDraw"),
-                ctx(10.0),
-            ],
+        let mut model = playing();
+        let begun = model.begin(Op::Action("offerDraw".into()), &ctx(10.0));
+        model.online_phase = GamePhase::Finished;
+        model.settle(&begun.pending.unwrap(), Reply::Ok(json!(true)), &ctx(20.0));
+        assert_eq!(model.draw_offer, Offer::None);
+    }
+
+    /// A takeback asked for is ours, unless it answers theirs, which it accepts; declining
+    /// clears theirs.
+    #[test]
+    fn a_takeback_reply_sets_the_offer() {
+        for (action, before, after) in [
+            ("takeback", Offer::None, Offer::Mine),
+            ("takeback", Offer::Theirs, Offer::None),
+            ("declineTakeback", Offer::Theirs, Offer::None),
+        ] {
+            let mut model = playing();
+            model.takeback_offer = before;
+            let begun = model.begin(Op::Action(action.into()), &ctx(10.0));
+            model.settle(&begun.pending.unwrap(), Reply::Ok(json!(true)), &ctx(20.0));
+            assert_eq!(model.takeback_offer, after, "{action} after {before:?}");
+        }
+    }
+
+    /// The players' chat comes from Lichess; the spectators' lines already shown are kept.
+    #[test]
+    fn a_chat_reply_replaces_the_players_lines_and_keeps_the_spectators() {
+        let line = |text: &str, room: ChatRoom| ChatEntry {
+            user: Some("Bob".into()),
+            text: Some(text.into()),
+            room,
+        };
+        let mut model = playing();
+        model.chat = vec![
+            line("old", ChatRoom::Player),
+            line("watching", ChatRoom::Spectator),
+        ];
+        let begun = model.begin(Op::Chat("AbCd1234".into()), &ctx(0.0));
+        let reply = json!([{ "user": "Bob", "text": "new", "room": "player" }]);
+        model.settle(&begun.pending.unwrap(), Reply::Ok(reply), &ctx(1.0));
+        assert_eq!(
+            model.chat,
+            [
+                line("new", ChatRoom::Player),
+                line("watching", ChatRoom::Spectator)
+            ]
         );
-        let late = transition(
-            "onlineGameSettle",
-            vec![
-                finished(&begun["state"]),
-                begun["pending"].clone(),
-                json!({ "ok": true, "value": true }),
-                ctx(20.0),
-            ],
-        );
-        assert_eq!(late["state"]["drawOffer"], json!("none"));
     }
 
     /// A move whose reply failed after the game ended turned the result into "The move could not
     /// be confirmed. Reconnect…".
     #[test]
     fn a_late_failed_move_leaves_a_finished_game_alone() {
-        let begun = transition(
-            "onlineGameBegin",
-            vec![
-                state_json(&playing()),
-                json!("move"),
-                json!("e2e4"),
-                ctx(10.0),
-            ],
-        );
-        let late = transition(
-            "onlineGameSettle",
-            vec![
-                finished(&begun["state"]),
-                begun["pending"].clone(),
-                json!({ "ok": false }),
-                ctx(20.0),
-            ],
-        );
-        assert_eq!(late["state"]["onlinePhase"], json!("finished"));
+        let mut model = playing();
+        let begun = model.begin(Op::Move("e2e4".into()), &ctx(10.0));
+        model.online_phase = GamePhase::Finished;
+        model.settle(&begun.pending.unwrap(), Reply::Failed, &ctx(20.0));
+        assert_eq!(model.online_phase, GamePhase::Finished);
     }
 
     /// A real-time seek from a correspondence game cleared that game from the board; when the
@@ -645,233 +538,194 @@ mod tests {
         let mut model = playing();
         model.online_days_per_turn = Some(3.0);
         model.online_account = "Alice".into();
-        let begun = transition(
-            "onlineGameBegin",
-            vec![
-                state_json(&model),
-                json!("start"),
-                json!({ "minutes": 5, "increment": 0, "color": "random", "rated": false }),
-                ctx(0.0),
-            ],
-        );
-        assert_eq!(begun["state"]["onlinePhase"], json!("seeking"));
-        let failed = transition(
-            "onlineGameSettle",
-            vec![
-                begun["state"].clone(),
-                begun["pending"].clone(),
-                json!({ "ok": false }),
-                ctx(1.0),
-            ],
-        );
-        assert_eq!(failed["state"]["onlinePhase"], json!("playing"));
-        assert_eq!(failed["state"]["onlineId"], json!("AbCd1234"));
-        assert_eq!(failed["state"]["onlineAccount"], json!("Alice"));
+        let begun = model.begin(seek(), &ctx(0.0));
+        assert_eq!(model.online_phase, GamePhase::Seeking);
+        model.settle(&begun.pending.unwrap(), Reply::Failed, &ctx(1.0));
+        assert_eq!(model.online_phase, GamePhase::Playing);
+        assert_eq!(model.online_id, "AbCd1234");
+        assert_eq!(model.online_account, "Alice");
     }
 
     /// The reply to a move says how long the server took to confirm it.
     #[test]
     fn a_confirmed_move_reports_how_long_the_server_took() {
-        let begun = transition(
-            "onlineGameBegin",
-            vec![
-                state_json(&playing()),
-                json!("move"),
-                json!("e2e4"),
-                ctx(1000.0),
-            ],
+        let mut model = playing();
+        let begun = model.begin(Op::Move("e2e4".into()), &ctx(1000.0));
+        let confirmed = model.settle(
+            &begun.pending.unwrap(),
+            Reply::Ok(json!(true)),
+            &ctx(1250.0),
         );
-        let confirmed = transition(
-            "onlineGameSettle",
-            vec![
-                begun["state"].clone(),
-                begun["pending"].clone(),
-                json!({ "ok": true, "value": true }),
-                ctx(1250.0),
-            ],
+        assert!(
+            confirmed
+                .effects
+                .contains(&Effect::MoveAcknowledged { ms: 250.0 })
         );
-        let ack = effects(&confirmed)
-            .into_iter()
-            .find(|e| e["effect"] == json!("moveAcknowledged"))
-            .expect("acknowledged");
-        assert_eq!(ack["ms"].as_f64(), Some(250.0));
     }
 
     #[test]
     fn an_unconfirmed_move_fails_and_is_not_retried() {
-        let mut model = Model::idle();
-        model.online_phase = "playing".into();
-        model.online_id = "AbCd1234".into();
-        model.online_setup = Setup::standard();
-        let begun = transition(
-            "onlineGameBegin",
-            vec![state_json(&model), json!("move"), json!("e2e4"), ctx(10.0)],
-        );
-        assert_eq!(begun["call"]["args"], json!(["AbCd1234", "e2e4"]));
-        let failed = transition(
-            "onlineGameSettle",
-            vec![
-                begun["state"].clone(),
-                begun["pending"].clone(),
-                json!({ "ok": false }),
-                ctx(20.0),
-            ],
-        );
-        assert_eq!(failed["state"]["onlinePhase"], json!("disconnected"));
-        let names: Vec<Value> = effects(&failed)
-            .iter()
-            .map(|e| e["effect"].clone())
-            .collect();
+        let mut model = playing();
+        let begun = model.begin(Op::Move("e2e4".into()), &ctx(10.0));
         assert_eq!(
-            names,
-            vec![json!("warn"), json!("clockPause"), json!("failed")]
+            begun.call,
+            Some(Call::PlayOnline {
+                id: "AbCd1234".into(),
+                uci: "e2e4".into()
+            })
         );
-        let again = transition(
-            "onlineGameBegin",
+        let failed = model.settle(&begun.pending.unwrap(), Reply::Failed, &ctx(20.0));
+        assert_eq!(model.online_phase, GamePhase::Disconnected);
+        assert_eq!(
+            failed.effects,
             vec![
-                failed["state"].clone(),
-                json!("move"),
-                json!("e2e4"),
-                ctx(30.0),
-            ],
+                Effect::Warn {
+                    message: "[onlineGame] request failed:"
+                },
+                Effect::ClockPause,
+                Effect::Failed
+            ]
         );
-        assert!(again.get("call").is_none());
+        let again = model.begin(Op::Move("e2e4".into()), &ctx(30.0));
+        assert!(again.call.is_none());
     }
 
     #[test]
     fn a_finished_game_says_who_won_and_how_in_one_line() {
         use super::events::outcome_line;
+        use crate::color::Color::{Black, White};
         assert_eq!(
-            outcome_line(Some("white"), "mate", "white"),
+            outcome_line(Some("white"), "mate", White),
             "You won by checkmate"
         );
         assert_eq!(
-            outcome_line(Some("white"), "outoftime", "black"),
+            outcome_line(Some("white"), "outoftime", Black),
             "You lost on time"
         );
+        assert_eq!(outcome_line(None, "stalemate", White), "Draw by stalemate");
+        assert_eq!(outcome_line(None, "draw", Black), "Draw by agreement");
+        assert_eq!(outcome_line(None, "aborted", White), "Game aborted");
         assert_eq!(
-            outcome_line(None, "stalemate", "white"),
-            "Draw by stalemate"
-        );
-        assert_eq!(outcome_line(None, "draw", "black"), "Draw by agreement");
-        assert_eq!(outcome_line(None, "aborted", "white"), "Game aborted");
-        assert_eq!(
-            outcome_line(Some("black"), "unknownFinish", "black"),
+            outcome_line(Some("black"), "unknownFinish", Black),
             "You won"
         );
-        assert_eq!(outcome_line(None, "finished", "white"), "Game over");
+        assert_eq!(outcome_line(None, "finished", White), "Game over");
         // A status that contradicts the result is left out rather than stated.
-        assert_eq!(outcome_line(None, "mate", "white"), "Game over");
-        assert_eq!(outcome_line(Some("white"), "stalemate", "white"), "You won");
+        assert_eq!(outcome_line(None, "mate", White), "Game over");
+        assert_eq!(outcome_line(Some("white"), "stalemate", White), "You won");
     }
 
     /// A 5+5 game: neither clock runs until both sides have moved, as on Lichess. A clock that
     /// ran from the start snapped back to 5:00 when the first move arrived.
     #[test]
     fn the_clocks_start_once_both_sides_have_moved() {
-        let mut model = Model::idle();
-        model.online_phase = "playing".into();
-        model.online_id = "AbCd1234".into();
+        let mut model = playing();
         model.online_account = "Alice".into();
-        model.online_color = "white".into();
-        let clock_after = |model: &Model, moves: &str| {
-            let result = transition(
-                "onlineGameEvent",
-                vec![
-                    state_json(model),
-                    json!({
-                        "type": "gameState",
-                        "moves": moves,
-                        "wtime": 300_000,
-                        "btime": 300_000,
-                        "status": "started",
-                    }),
-                    ctx(0.0),
-                ],
+        model.online_color = crate::color::Color::White;
+        let mut ticking_after = |moves: &str| {
+            let result = model.event(
+                &ServerEvent::read(&json!({
+                    "type": "gameState",
+                    "moves": moves,
+                    "wtime": 300_000,
+                    "btime": 300_000,
+                    "status": "started",
+                })),
+                &ctx(0.0),
             );
-            let set = effects(&result)
+            result
+                .effects
                 .into_iter()
-                .find(|effect| effect["effect"] == json!("clockSet"))
-                .expect("the clocks are set");
-            (set["ticking"].clone(), result["state"].clone())
+                .find_map(|effect| match effect {
+                    Effect::ClockSet { ticking, .. } => Some(ticking),
+                    _ => None,
+                })
+                .expect("the clocks are set")
         };
-        let (ticking, state) = clock_after(&model, "");
-        assert_eq!(ticking, Value::Null, "before White's first move");
-        let model: Model = serde_json::from_value(state).unwrap();
-        let (ticking, state) = clock_after(&model, "e2e4");
-        assert_eq!(ticking, Value::Null, "before Black's first move");
-        let model: Model = serde_json::from_value(state).unwrap();
-        let (ticking, _) = clock_after(&model, "e2e4 e7e5");
-        assert_eq!(ticking, json!("white"));
+        assert_eq!(ticking_after(""), None, "before White's first move");
+        assert_eq!(ticking_after("e2e4"), None, "before Black's first move");
+        assert_eq!(ticking_after("e2e4 e7e5"), Some("white"));
     }
 
     #[test]
     fn a_game_reads_both_players_ratings() {
-        let mut model = Model::idle();
-        model.online_phase = "playing".into();
-        model.online_id = "AbCd1234".into();
+        let mut model = playing();
         model.online_account = "Alice".into();
-        let result = transition(
-            "onlineGameEvent",
-            vec![
-                state_json(&model),
-                json!({
-                    "type": "gameFull",
-                    "id": "AbCd1234",
-                    "white": { "id": "bob", "name": "Bob", "rating": 1590 },
-                    "black": { "id": "alice", "name": "Alice", "rating": 1580 },
-                    "state": { "moves": "" },
-                }),
-                ctx(0.0),
-            ],
+        model.event(
+            &ServerEvent::read(&json!({
+                "type": "gameFull",
+                "id": "AbCd1234",
+                "white": { "id": "bob", "name": "Bob", "rating": 1590 },
+                "black": { "id": "alice", "name": "Alice", "rating": 1580 },
+                "state": { "moves": "" },
+            })),
+            &ctx(0.0),
         );
-        assert_eq!(result["state"]["onlineColor"], json!("black"));
-        assert_eq!(result["state"]["onlineRating"], json!(1580.0));
-        assert_eq!(result["state"]["onlineOpponentRating"], json!(1590.0));
+        assert_eq!(model.online_color, crate::color::Color::Black);
+        assert_eq!(model.online_rating, Some(1580.0));
+        assert_eq!(model.online_opponent_rating, Some(1590.0));
     }
 
     #[test]
     fn a_finished_game_announces_its_result_and_is_kept_for_a_rematch() {
-        let mut model = Model::idle();
-        model.online_phase = "playing".into();
-        model.online_id = "AbCd1234".into();
+        let mut model = playing();
         model.opponent_id = "bob".into();
         model.online_opponent = "Bob".into();
-        model.online_color = "white".into();
+        model.online_color = crate::color::Color::White;
         model.online_account = "Alice".into();
-        model.online_clock_config = Some(model::ClockConfig {
+        model.online_clock_config = Some(ClockConfig {
             initial: 300.0,
             increment: 3.0,
         });
-        let result = transition(
-            "onlineGameFinish",
-            vec![
-                state_json(&model),
-                json!({ "winner": "black", "reason": "resign", "notify": true }),
-                ctx(0.0),
-            ],
-        );
-        assert_eq!(result["state"]["onlinePhase"], json!("finished"));
-        assert_eq!(
-            result["state"]["onlineStatus"],
-            json!("You lost by resignation")
-        );
+        let context = ctx(0.0);
+        let mut run = Run::new(&mut model, &context);
+        run.finish(Some("black"), "resign", true);
+        let result = run.done();
+        assert_eq!(model.online_phase, GamePhase::Finished);
+        assert_eq!(model.online_status, "You lost by resignation");
         // Exports and saved games need the result itself, not only the sentence.
-        assert_eq!(result["state"]["onlineResult"], json!("0-1"));
+        assert_eq!(model.online_result, "0-1");
         assert_eq!(
-            effects(&result)[1],
-            json!({
-                "effect": "notify",
-                "kind": "gameEvents",
-                "title": "You lost",
-                "body": "Against Bob · resign.",
-            })
+            result.effects[1],
+            Effect::Notify {
+                kind: crate::misc::constants::NotificationKind::GameEvents,
+                title: "You lost".into(),
+                body: "Against Bob · resign.".into(),
+            }
         );
-        let view = call("onlineGameView", &[result["state"].clone()])
-            .unwrap()
-            .unwrap();
-        assert_eq!(view["rematch"]["color"], json!("black"));
-        assert_eq!(view["rematch"]["minutes"], json!(5.0));
-        assert_eq!(view["rematch"]["increment"], json!(3.0));
+        let rematch = model.view().rematch.unwrap();
+        assert_eq!(rematch["color"], json!("black"));
+        assert_eq!(rematch["minutes"], json!(5.0));
+        assert_eq!(rematch["increment"], json!(3.0));
+    }
+
+    /// An opponent's move that cannot be replayed has no SAN: the notice said
+    /// "undefined. Your move.".
+    #[test]
+    fn an_opponent_move_without_a_san_still_says_it_is_your_move() {
+        let mut model = playing();
+        model.online_account = "Alice".into();
+        model.online_opponent = "Bob".into();
+        model.online_color = shakmaty::Color::White;
+        model.online_moves = vec!["z9z9".into()];
+        let result = model.event(
+            &ServerEvent::read(&json!({
+                "type": "gameState",
+                "moves": "z9z9 e7e5",
+                "wtime": 300_000,
+                "btime": 300_000,
+                "status": "started",
+            })),
+            &ctx(0.0),
+        );
+        let bodies: Vec<String> = result
+            .effects
+            .into_iter()
+            .filter_map(|effect| match effect {
+                Effect::Notify { title, body, .. } if title == "Bob moved" => Some(body),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(bodies, ["Your move."]);
     }
 }

@@ -3,9 +3,8 @@
 //! the state is plain data and the rules are deterministic.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
-use super::{Out, num_out, pad2, text_arg, to_value, value_arg};
+use super::pad2;
 use crate::js;
 
 /// A value per side.
@@ -16,7 +15,7 @@ pub struct Sides<T> {
 }
 
 impl<T: Copy> Sides<T> {
-    fn get(&self, color: &str) -> Option<T> {
+    pub fn get(&self, color: &str) -> Option<T> {
         match color {
             "white" => Some(self.white),
             "black" => Some(self.black),
@@ -45,7 +44,7 @@ pub struct ClockState {
     pub alerted: Sides<bool>,
 }
 
-/// `set(data)`: the server's times for both sides.
+/// The server's times for both sides.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetData {
@@ -84,7 +83,6 @@ impl ClockState {
         }
     }
 
-    /// `set`
     pub fn set(&mut self, data: &SetData, now: f64) {
         self.times = Sides {
             white: js::max(0.0, data.white),
@@ -100,7 +98,7 @@ impl ClockState {
         }
     }
 
-    /// `pause`: freezes both clocks at their remaining times.
+    /// Freezes both clocks at their remaining times.
     pub fn pause(&mut self, now: f64) {
         self.times = Sides {
             white: self.remaining("white", now),
@@ -109,7 +107,6 @@ impl ClockState {
         self.ticking = None;
     }
 
-    /// `remaining(color, now)`
     pub fn remaining(&self, color: &str, now: f64) -> f64 {
         let elapsed = if self.ticking.as_deref() == Some(color) {
             js::max(0.0, now - self.last_update)
@@ -119,7 +116,7 @@ impl ClockState {
         js::max(0.0, self.times.get(color).unwrap_or(f64::NAN) - elapsed)
     }
 
-    /// `lowTimeAlert(color, now)`: true once per player, when that clock drops below the threshold.
+    /// True once per player, when that clock drops below the threshold.
     pub fn low_time_alert(&mut self, color: &str, now: f64) -> bool {
         let alerted = self.alerted.get(color).unwrap_or(true);
         if alerted || self.remaining(color, now) > self.emerg_ms {
@@ -130,7 +127,7 @@ impl ClockState {
     }
 }
 
-/// `formatClock`: tenths under ten seconds, `m:ss` under an hour, `h:mm:ss` past an
+/// Tenths under ten seconds, `m:ss` under an hour, `h:mm:ss` past an
 /// hour, and days plus hours for correspondence clocks.
 pub fn format_clock(millis: f64) -> String {
     let millis = js::max(0.0, millis);
@@ -166,44 +163,6 @@ pub fn format_clock(millis: f64) -> String {
             pad2(seconds % 60.0)
         )
     }
-}
-
-fn state_arg(args: &[Value]) -> Result<ClockState, String> {
-    value_arg(args, 0, "state")
-}
-
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result = match method {
-        "clockInitial" => to_value(ClockState::initial()),
-        "clockSet" => state_arg(args).and_then(|mut state| {
-            let data: SetData = value_arg(args, 1, "data")?;
-            state.set(&data, super::number_arg(args, 2));
-            to_value(state)
-        }),
-        "clockPause" => state_arg(args).and_then(|mut state| {
-            state.pause(super::number_arg(args, 1));
-            to_value(state)
-        }),
-        "clockRemaining" => state_arg(args).and_then(|state| {
-            let color = text_arg(args, 1, "color")?;
-            to_value(num_out(state.remaining(color, super::number_arg(args, 2))))
-        }),
-        "clockLowTimeAlert" => state_arg(args).and_then(|mut state| {
-            let color = text_arg(args, 1, "color")?;
-            let result = state.low_time_alert(color, super::number_arg(args, 2));
-            to_value(Stepped { state, result })
-        }),
-        "formatClock" => Ok(Value::String(format_clock(super::number_arg(args, 0)))),
-        _ => return None,
-    };
-    Some(result)
-}
-
-/// A transition's new state and its own result.
-#[derive(Serialize)]
-struct Stepped<T> {
-    state: ClockState,
-    result: T,
 }
 
 #[cfg(test)]

@@ -5,10 +5,10 @@ use crate::fixtures;
 use std::sync::{Arc, Mutex};
 
 use fixtures::{MemoryStore, MemoryTokens, Recording, Reply, form_field, lichess_service, serve};
+use kchess_contracts::types::StudySyncRequest;
 use kchess_core::lichess::accounts::Reply as Outcome;
 use kchess_core::lichess::studies::{
-    StudySyncRequest, export_to_lichess_study, lichess_studies, lichess_study_chapters, split_pgn,
-    sync_lichess_study,
+    export_to_lichess_study, lichess_studies, lichess_study_chapters, split_pgn, sync_lichess_study,
 };
 
 const BASELINE: &str = "[Site \"https://lichess.org/study/Study001/Chapter1\"]\n[Event \"Example\"]\n[Result \"*\"]\n\n1. e4 {Keep} e5 (1... c5 $1) *";
@@ -59,7 +59,7 @@ fn service(base: &str) -> Arc<kchess_core::lichess::accounts::Lichess> {
     )
 }
 
-fn posts(fixture: &fixtures::Fixture) -> Vec<fixtures::Seen> {
+fn posts(fixture: &fixtures::Fixture) -> Vec<fixtures::Request> {
     fixture
         .requests()
         .into_iter()
@@ -137,7 +137,7 @@ async fn does_not_retry_an_ambiguous_mutation() {
     let error = sync_lichess_study(&lichess, &request(&edited))
         .await
         .unwrap_err();
-    assert_eq!(error.kind, Some(kchess_core::ErrorKind::Unavailable));
+    assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::Unavailable));
     assert!(!error.message.contains("/api/"), "{}", error.message);
     assert_eq!(posts(&fixture).len(), 1);
 }
@@ -252,6 +252,7 @@ async fn appends_new_chapters_to_the_linked_cloud_study_without_duplicating_the_
         panic!("the account needs reconnecting");
     };
     assert_eq!(chapters.len(), 2);
+    crate::support::wire::assert_wire("syncLichessStudy.appended", &chapters);
     let posts = posts(&fixture);
     assert_eq!(posts.len(), 1);
     assert_eq!(posts[0].path(), "/api/study/Study001/import-pgn");
@@ -369,6 +370,7 @@ async fn names_chapters_from_their_tags_and_numbers_the_rest() {
         .map(|chapter| chapter.name.as_str())
         .collect();
     assert_eq!(names, ["Example", "Other", "Named"]);
+    crate::support::wire::assert_wire("lichessStudyChapters.named", &chapters);
 }
 
 #[tokio::test]
@@ -407,7 +409,7 @@ fn splits_a_study_into_chapters() {
 }
 
 /// A malformed study record fails the listing as it arrives: the stream stays open, yet the
-/// listing ends with the record's error (`JSON.parse` in the TypeScript line callback).
+/// listing ends with the record's error.
 #[tokio::test]
 async fn a_malformed_study_record_fails_the_listing_as_it_arrives() {
     let (lines_tx, lines_rx) = tokio::sync::mpsc::unbounded_channel::<String>();

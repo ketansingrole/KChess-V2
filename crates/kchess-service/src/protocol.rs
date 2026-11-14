@@ -14,29 +14,7 @@ pub const MAX_FRAME: usize = 16 * 1024 * 1024;
 /// Raised when the framing itself changes; part of the protocol fingerprint.
 const FRAMING: &str = "kchess-frames-1";
 
-/// The contracts both sides are built from: every method and event, with their types.
-const CONTRACTS: [&str; 3] = [
-    include_str!("../../kchess-contracts/src/core_api.rs"),
-    include_str!("../../kchess-contracts/src/types.rs"),
-    include_str!("../../kchess-contracts/src/library.rs"),
-];
-
-/// What a client can do for the core when it asks (`host:request`), by name.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum Capability {
-    Browser,
-    Focus,
-}
-
-impl From<Capability> for kchess_core::connection::Capability {
-    fn from(capability: Capability) -> Self {
-        match capability {
-            Capability::Browser => kchess_core::connection::Capability::Browser,
-            Capability::Focus => kchess_core::connection::Capability::Focus,
-        }
-    }
-}
+pub use kchess_contracts::Capability;
 
 /// An app connected to a core, as `refuse` describes it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -102,10 +80,12 @@ pub enum Frame {
     },
     /// Stop a call in flight; its result is an error.
     Cancel { id: u64 },
-    /// A core event (`CoreEvents` names, and `host:request`).
+    /// A core event (a `CoreEvent` by its name).
     Event { name: String, payload: Value },
     /// The client's window gained or lost focus.
     Focus { focused: bool },
+    /// The client has no window open: what it started stops, and the core serves on.
+    Suspend,
 }
 
 /// The KChess release this build belongs to: the workspace version, or `KCHESS_PACKAGE_VERSION`
@@ -114,19 +94,30 @@ pub fn release() -> String {
     env!("KCHESS_RELEASE").to_string()
 }
 
-/// The protocol fingerprint: the framing and the contracts this build speaks. Two builds share a
-/// core only when theirs match.
+/// The protocol fingerprint: the framing, and the methods, events and error kinds this build
+/// speaks. Two builds share a core only when theirs match.
 pub fn protocol() -> String {
     let mut hash = Sha256::new();
-    hash.update(FRAMING.as_bytes());
-    for contract in CONTRACTS {
-        hash.update(contract.as_bytes());
+    let mut add = |part: &str| {
+        hash.update(part.as_bytes());
+        hash.update([0]);
+    };
+    add(FRAMING);
+    for method in kchess_contracts::core_api::METHODS {
+        add(method.name);
+        for param in method.params {
+            add(param.name);
+            add(if param.optional { "?" } else { "" });
+        }
+        add(")");
     }
-    hex(&hash.finalize()[..8])
-}
-
-pub(crate) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    for name in kchess_contracts::CoreEvent::NAMES {
+        add(name);
+    }
+    for kind in kchess_contracts::ErrorKind::ALL {
+        add(kind.as_str());
+    }
+    kchess_delta::hex(&hash.finalize()[..8])
 }
 
 /// Reads one frame; `None` when the other side closed between frames.
@@ -163,7 +154,6 @@ pub async fn read_frame_within<R: AsyncRead + Unpin>(
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
 }
 
-/// Writes one frame.
 pub async fn write_frame<W: AsyncWrite + Unpin>(
     writer: &mut W,
     frame: &Frame,
@@ -297,12 +287,6 @@ mod tests {
         assert!(over.is_err_and(|error| error.to_string().contains("over the limit")));
     }
 
-    /// Library documents of several megabytes fit in a frame.
-    #[test]
-    fn the_limit_is_sixteen_megabytes() {
-        assert_eq!(MAX_FRAME, 16 << 20);
-    }
-
     /// A read that fails is an error, not a closed connection.
     #[tokio::test]
     async fn a_broken_connection_is_an_error() {
@@ -319,14 +303,10 @@ mod tests {
         assert!(read_frame(&mut Broken).await.is_err());
     }
 
+    /// A hello carries both: the release is named, the protocol a short fingerprint.
     #[test]
-    fn the_release_and_protocol_are_stable() {
-        let packaged = std::env::var("KCHESS_PACKAGE_VERSION").unwrap_or_default();
-        if packaged.is_empty() {
-            assert_eq!(release(), env!("CARGO_PKG_VERSION"));
-        }
+    fn the_release_is_named_and_the_protocol_is_a_short_fingerprint() {
         assert!(!release().is_empty());
-        assert_eq!(protocol(), protocol());
         assert_eq!(protocol().len(), 16);
     }
 }

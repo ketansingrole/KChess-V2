@@ -85,11 +85,14 @@ fn the_timeline() {
             cx.update(|cx| {
                 crate::settings::change(cx, move |s| s.frontend.appearance = appearance)
             });
-            let players =
-                serde_json::json!(["thibault", "EricRosen", "DrNykterstein", "penguingim1"]);
+            let players = kchess_contracts::check::FriendList(
+                ["thibault", "EricRosen", "DrNykterstein", "penguingim1"]
+                    .map(String::from)
+                    .to_vec(),
+            );
             let added = cx.update(|cx| {
                 cx.global::<crate::core::AppCore>()
-                    .call("addFriends", vec![players])
+                    .request(kchess_contracts::calls::AddFriends { usernames: players })
             });
             cx.foreground_executor()
                 .block_test(added)
@@ -97,7 +100,7 @@ fn the_timeline() {
             // Synced, and then two of them finish a game: theirs are new.
             let synced = cx.update(|cx| {
                 cx.global::<crate::core::AppCore>()
-                    .call("syncGames", vec![])
+                    .request(kchess_contracts::calls::SyncGames { username: None })
             });
             cx.foreground_executor()
                 .block_test(synced)
@@ -116,7 +119,7 @@ fn the_timeline() {
                 .expect("a screenshot")
                 .save(out.join(format!("{name}-{width}.png")))
                 .expect("the screenshot saves");
-            let quit = cx.update(crate::core::quit);
+            let quit = cx.update(crate::quit::quit);
             cx.foreground_executor().block_test(quit);
             crate::profile::TEST_DATA_DIR.set(None);
         }
@@ -163,7 +166,7 @@ fn settings_sidebar() {
             cx.update_window(window, |_, window, cx| window.click("sidebar-toggle", cx))
                 .expect("the window");
             shoot(&mut cx, "-rail");
-            let quit = cx.update(crate::core::quit);
+            let quit = cx.update(crate::quit::quit);
             cx.foreground_executor().block_test(quit);
             crate::profile::TEST_DATA_DIR.set(None);
         }
@@ -184,7 +187,7 @@ fn settings_sections() {
         let profile = tempfile::tempdir().expect("a temporary profile");
         let (mut cx, window) = start(profile.path(), width, 880.);
         cx.update(|cx| crate::settings::change(cx, |s| s.frontend.appearance = Appearance::Dark));
-        for (section, label, _) in crate::pages::settings::sections() {
+        for (section, label) in crate::pages::settings::Section::ALL.map(|s| (s, s.label())) {
             cx.update_window(window, |_, window, cx| {
                 crate::shell::open_settings(section, window, cx)
             })
@@ -195,7 +198,7 @@ fn settings_sections() {
                 .save(out.join(format!("{width}-{}.png", label.to_lowercase())))
                 .expect("the screenshot saves");
         }
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -221,20 +224,22 @@ fn crazyhouse() {
         .expect("the window");
         settle(&mut cx, window);
         cx.update_window(window, |_, window, cx| {
-            let local = crate::shell::view_of::<crate::pages::local::LocalPage>(Page::Local, cx)
-                .expect("the page");
+            let local = crate::shell::view::<crate::pages::local::LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
-                let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
+                let setup = kchess_domain::variant::Setup {
+                    variant: kchess_domain::variant::Variant::Crazyhouse,
+                    fen: fen.into(),
+                };
                 local.replace_game(setup, serde_json::Value::Null, window, cx);
                 for uci in [
                     "e2e4", "d7d5", "e4d5", "d8d5", "b1c3", "d5a5", "f1b5", "c7c6", "b5c6",
                 ] {
-                    local.play(uci, window, cx);
+                    local.play(uci, cx);
                 }
                 // Black takes back with the knight: White holds two pawns, Black a pawn and a
                 // bishop.
-                local.play("b8c6", window, cx);
+                local.play("b8c6", cx);
             });
         })
         .expect("the window");
@@ -248,7 +253,7 @@ fn crazyhouse() {
             .expect("a screenshot")
             .save(out.join(format!("{name}.png")))
             .expect("the screenshot saves");
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -278,15 +283,14 @@ fn figurines() {
         })
         .expect("the window");
         settle(&mut cx, window);
-        cx.update_window(window, |_, window, cx| {
-            let local = crate::shell::view_of::<crate::pages::local::LocalPage>(Page::Local, cx)
-                .expect("the page");
+        cx.update_window(window, |_, _, cx| {
+            let local = crate::shell::view::<crate::pages::local::LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 for uci in [
                     "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5c6", "d7c6", "e1g1", "f7f6",
                     "d2d4", "c8g4", "d4e5", "d8d1", "f1d1",
                 ] {
-                    local.play(uci, window, cx);
+                    local.play(uci, cx);
                 }
             });
         })
@@ -305,7 +309,7 @@ fn figurines() {
             .expect("a screenshot")
             .save(out.join(format!("{name}-settings.png")))
             .expect("the screenshot saves");
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -331,11 +335,13 @@ fn computer_variant() {
         settle(&mut cx, window);
         cx.update_window(window, |_, window, cx| {
             let page =
-                crate::shell::view_of::<crate::pages::computer::ComputerPage>(Page::Computer, cx)
-                    .expect("the page");
+                crate::shell::view::<crate::pages::computer::ComputerPage>(cx).expect("the page");
             page.update(cx, |page, cx| {
                 let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
-                let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
+                let setup = kchess_domain::variant::Setup {
+                    variant: kchess_domain::variant::Variant::Crazyhouse,
+                    fen: fen.into(),
+                };
                 page.start_from(setup, shakmaty::Color::White, window, cx);
             });
         })
@@ -355,7 +361,7 @@ fn computer_variant() {
             .expect("a screenshot")
             .save(out.join(format!("options-{width}.png")))
             .expect("the screenshot saves");
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -398,11 +404,20 @@ fn home() {
                     crate::shell::open(Page::Dashboard, window, cx);
                     if turn {
                         crate::online::handle(cx).update(cx, |online, cx| {
-                            online.ongoing = vec![serde_json::json!({
-                                "gameId": "corr1",
-                                "speed": "correspondence",
-                                "isMyTurn": true,
-                            })];
+                            online.ongoing = vec![
+                                serde_json::from_value(serde_json::json!({
+                                    "gameId": "corr1",
+                                    "account": "",
+                                    "opponent": { "name": "" },
+                                    "color": "white",
+                                    "fen": "",
+                                    "variant": "standard",
+                                    "speed": "correspondence",
+                                    "rated": false,
+                                    "isMyTurn": true,
+                                }))
+                                .expect("a game in progress"),
+                            ];
                             cx.notify();
                         });
                     }
@@ -419,7 +434,7 @@ fn home() {
                     .expect("a screenshot")
                     .save(out.join(format!("{state}-{name}-{width}{suffix}.png")))
                     .expect("the screenshot saves");
-                let quit = cx.update(crate::core::quit);
+                let quit = cx.update(crate::quit::quit);
                 cx.foreground_executor().block_test(quit);
                 crate::profile::TEST_DATA_DIR.set(None);
             }
@@ -500,7 +515,7 @@ fn players_search() {
                 if state == "player" {
                     connect_showcase(&mut cx, window, profile.path(), "Rattiestword5");
                     cx.update_window(window, |_, window, cx| {
-                        crate::shell::open_player("Rattiestword5", window, cx)
+                        crate::pages::players::open_player("Rattiestword5", window, cx)
                     })
                     .expect("the window");
                 }
@@ -512,7 +527,7 @@ fn players_search() {
                     .expect("a screenshot")
                     .save(out.join(format!("{state}-{name}-{width}.png")))
                     .expect("the screenshot saves");
-                let quit = cx.update(crate::core::quit);
+                let quit = cx.update(crate::quit::quit);
                 cx.foreground_executor().block_test(quit);
                 crate::profile::TEST_DATA_DIR.set(None);
             }
@@ -541,10 +556,8 @@ fn lichess_history_search() {
                 connect_showcase(&mut cx, window, profile.path(), "Rattiestword5");
                 cx.update_window(window, |_, window, cx| {
                     crate::shell::open(Page::History, window, cx);
-                    if let Some(page) = crate::shell::view_of::<crate::pages::history::HistoryPage>(
-                        Page::History,
-                        cx,
-                    ) {
+                    if let Some(page) = crate::shell::view::<crate::pages::history::HistoryPage>(cx)
+                    {
                         page.update(cx, |page, cx| page.search_lichess(search, window, cx));
                     }
                 })
@@ -557,7 +570,7 @@ fn lichess_history_search() {
                     .expect("a screenshot")
                     .save(out.join(format!("{state}-{name}-{width}.png")))
                     .expect("the screenshot saves");
-                let quit = cx.update(crate::core::quit);
+                let quit = cx.update(crate::quit::quit);
                 cx.foreground_executor().block_test(quit);
                 crate::profile::TEST_DATA_DIR.set(None);
             }
@@ -584,24 +597,33 @@ fn home_sizes() -> Vec<(f32, f32)> {
 
 /// A few finished games played here, and an unfinished one against the computer if `unfinished`.
 fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
-    use crate::game::computer::{ComputerGame, Host};
+    use kchess_domain::games::Host;
+    use kchess_domain::games::computer::ComputerGame;
     let host = Host {
         now: 0.,
         allowed: true,
         ready: false,
     };
-    let session = serde_json::json!({
-        "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4"],
-        "color": "white",
-        "level": "club",
-    });
-    let snapshot = ComputerGame::new(Some(&session), &host)
-        .expect("the computer game")
-        .snapshot(&host);
+    let saved = kchess_domain::games::computer::Saved {
+        moves: Some(
+            ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4"]
+                .map(str::to_string)
+                .to_vec(),
+        ),
+        ..Default::default()
+    };
+    let session = kchess_contracts::types::SessionDocument::Computer(
+        ComputerGame::resume(Some(saved), &host)
+            .expect("the computer game")
+            .session(host.now),
+    );
     if unfinished {
         let saved = cx.update(|cx| {
             cx.global::<crate::core::AppCore>()
-                .call("saveSession", vec![serde_json::json!("computer"), snapshot])
+                .request(kchess_contracts::calls::SaveSession {
+                    kind: kchess_contracts::types::SessionKind::Computer,
+                    session: kchess_contracts::check::SessionObject::of(&session),
+                })
         });
         cx.foreground_executor()
             .block_test(saved)
@@ -625,7 +647,7 @@ fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
                 let length = moves.len() - index * 2;
                 let at = now - (index as u64 + 1) * 20 * 3_600_000;
                 played.save(
-                    serde_json::json!({
+                    serde_json::from_value(serde_json::json!({
                         "id": format!("home-{index}"),
                         "source": source,
                         "setup": { "variant": "standard", "fen": crate::game::STANDARD_FEN },
@@ -638,7 +660,8 @@ fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
                         "timeControl": "300+3",
                         "startedAt": at,
                         "updatedAt": at,
-                    }),
+                    }))
+                    .expect("a played game"),
                     cx,
                 );
             }
@@ -685,7 +708,7 @@ fn account_menu() {
                 .expect("the window");
             settle(&mut cx, window);
             shoot(&mut cx, "-rail");
-            let quit = cx.update(crate::core::quit);
+            let quit = cx.update(crate::quit::quit);
             cx.foreground_executor().block_test(quit);
             crate::profile::TEST_DATA_DIR.set(None);
         }
@@ -716,7 +739,7 @@ fn shortcuts() {
                 .expect("a screenshot")
                 .save(out.join(format!("{name}-{width}.png")))
                 .expect("the screenshot saves");
-            let quit = cx.update(crate::core::quit);
+            let quit = cx.update(crate::quit::quit);
             cx.foreground_executor().block_test(quit);
             crate::profile::TEST_DATA_DIR.set(None);
         }
@@ -740,16 +763,15 @@ fn low_clock() {
         cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
         cx.update_window(window, |_, window, cx| {
             crate::shell::open(Page::Local, window, cx);
-            let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+            let local = crate::shell::view::<LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
-                let setup =
-                    serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+                let setup = kchess_domain::variant::Setup::standard();
                 let clock = serde_json::json!({
                     "white": { "minutes": 0.15, "increment": 0 },
                     "black": { "minutes": 0.15, "increment": 0 },
                 });
                 local.replace_game(setup, clock, window, cx);
-                local.play("e2e4", window, cx);
+                local.play("e2e4", cx);
             });
         })
         .expect("the window");
@@ -758,7 +780,7 @@ fn low_clock() {
             .expect("a screenshot")
             .save(out.join(format!("{name}.png")))
             .expect("the screenshot saves");
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -782,17 +804,16 @@ fn over_the_board() {
         cx.update(|cx| crate::settings::change(cx, |s| s.frontend.appearance = Appearance::Dark));
         cx.update_window(window, |_, window, cx| {
             crate::shell::open(Page::Local, window, cx);
-            let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+            let local = crate::shell::view::<LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
-                let setup =
-                    serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+                let setup = kchess_domain::variant::Setup::standard();
                 let clock = serde_json::json!({
                     "white": { "minutes": 5, "increment": 3 },
                     "black": { "minutes": 5, "increment": 3 },
                 });
                 local.replace_game(setup, clock, window, cx);
-                local.play("e2e4", window, cx);
-                local.play("e7e5", window, cx);
+                local.play("e2e4", cx);
+                local.play("e7e5", cx);
             });
         })
         .expect("the window");
@@ -807,7 +828,7 @@ fn over_the_board() {
                 .save(out.join(format!("{width}-{mode}.png")))
                 .expect("the screenshot saves");
         }
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -832,7 +853,7 @@ fn import_dialog() {
         .expect("the window");
         settle(&mut cx, window);
         cx.update_window(window, |_, window, cx| {
-            let board = crate::shell::analysis_board(window, cx).expect("the analysis board");
+            let board = crate::pages::analysis::board(window, cx).expect("the analysis board");
             board.update(cx, |board, cx| board.open_import(window, cx));
         })
         .expect("the window");
@@ -841,7 +862,7 @@ fn import_dialog() {
             .expect("a screenshot")
             .save(out.join(format!("{width}.png")))
             .expect("the screenshot saves");
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -886,7 +907,7 @@ fn drop_zone() {
             .expect("a screenshot")
             .save(out.join(format!("{name}.png")))
             .expect("the screenshot saves");
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }
@@ -953,7 +974,7 @@ fn content(out: &Path, appearance: Appearance) {
             for (index, result) in results.iter().enumerate() {
                 let length = moves.len() - index * 2;
                 played.save(
-                    serde_json::json!({
+                    serde_json::from_value(serde_json::json!({
                         "id": format!("seed-{index}"),
                         "source": "computer",
                         "setup": { "variant": "standard", "fen": crate::game::STANDARD_FEN },
@@ -966,7 +987,8 @@ fn content(out: &Path, appearance: Appearance) {
                         "timeControl": "300+3",
                         "startedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
                         "updatedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
-                    }),
+                    }))
+                    .expect("a played game"),
                     cx,
                 );
             }
@@ -999,7 +1021,7 @@ fn content(out: &Path, appearance: Appearance) {
     shoot(&mut cx, "history", 1);
     let line = moves.clone();
     cx.update_window(window, move |_, window, cx| {
-        crate::shell::open_analysis_line(line, window, cx)
+        crate::pages::analysis::open_line(line, window, cx)
     })
     .expect("the window");
     shoot(&mut cx, "analysis-moves", 1);
@@ -1017,16 +1039,19 @@ fn content(out: &Path, appearance: Appearance) {
         open(&mut cx, page);
         shoot(&mut cx, name, 5);
     }
-    click(&mut cx, ("watch-tabs", 2usize).into());
+    click(
+        &mut cx,
+        super::tab("watch-tabs", crate::pages::watch::Tab::Broadcasts).into(),
+    );
     shoot(&mut cx, "watch-broadcasts", 5);
     open(&mut cx, Page::Players);
     shoot(&mut cx, "players-leaderboard", 4);
     cx.update_window(window, |_, window, cx| {
-        crate::shell::open_player("thibault", window, cx)
+        crate::pages::players::open_player("thibault", window, cx)
     })
     .expect("the window");
     shoot(&mut cx, "player", 6);
-    let quit = cx.update(crate::core::quit);
+    let quit = cx.update(crate::quit::quit);
     cx.foreground_executor().block_test(quit);
     crate::profile::TEST_DATA_DIR.set(None);
 }
@@ -1071,8 +1096,8 @@ fn tabs(out: &Path, appearance: Appearance) {
             .save(out.join(format!("{name}.png")))
             .expect("the screenshot saves");
     };
-    for (page, label, _) in crate::shell::nav().iter() {
-        let (page, label) = (*page, *label);
+    for page in Page::in_sidebar() {
+        let label = page.info().label;
         cx.update_window(window, |_, window, cx| crate::shell::open(page, window, cx))
             .expect("the window");
         let name = slug(label);
@@ -1097,14 +1122,14 @@ fn tabs(out: &Path, appearance: Appearance) {
             shoot(&mut cx, format!("{name}--{}", slug(&tab)));
         }
     }
-    for (section, label, _) in crate::pages::settings::sections() {
+    for (section, label) in crate::pages::settings::Section::ALL.map(|s| (s, s.label())) {
         cx.update_window(window, |_, window, cx| {
             crate::shell::open_settings(section, window, cx)
         })
         .expect("the window");
         shoot(&mut cx, format!("settings--{}", slug(label)));
     }
-    let quit = cx.update(crate::core::quit);
+    let quit = cx.update(crate::quit::quit);
     cx.foreground_executor().block_test(quit);
     crate::profile::TEST_DATA_DIR.set(None);
 }
@@ -1119,11 +1144,8 @@ fn capture(out: &Path, width: f32, height: f32, differ: &mut Vec<String>) {
     std::fs::create_dir_all(out).expect("the screenshot folder");
     let profile = tempfile::tempdir().expect("a temporary profile");
     let (mut cx, window) = start(profile.path(), width, height);
-    let mut pages: Vec<(Page, &str)> = crate::shell::nav()
-        .iter()
-        .map(|(page, label, _)| (*page, *label))
-        .collect();
-    pages.push((Page::Settings, "Settings"));
+    let pages: Vec<(Page, &'static str)> =
+        Page::all().map(|page| (page, page.info().label)).collect();
     for (page, label) in pages {
         cx.update_window(window, |_, window, cx| crate::shell::open(page, window, cx))
             .expect("the window");
@@ -1145,7 +1167,7 @@ fn capture(out: &Path, width: f32, height: f32, differ: &mut Vec<String>) {
             differ.push(format!("{label} at {width}×{height}"));
         }
     }
-    let quit = cx.update(crate::core::quit);
+    let quit = cx.update(crate::quit::quit);
     cx.foreground_executor().block_test(quit);
     crate::profile::TEST_DATA_DIR.set(None);
 }
@@ -1179,7 +1201,7 @@ fn board_coordinates() {
                     .expect("the screenshot saves");
             }
         }
-        let quit = cx.update(crate::core::quit);
+        let quit = cx.update(crate::quit::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);
     }

@@ -3,18 +3,17 @@
 //! (the first on a tie, like Lichess), and the names form the family tree the openings page browses.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use shakmaty::Position;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use super::{Out, js_slice_end, to_value, value_arg};
-use crate::{js, position, rules};
+use super::js_slice_end;
+use crate::variant::Variant;
+use crate::{position, rules};
 
 const OPENINGS_JSON: &str = include_str!("../../data/openings.json");
-const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+use crate::rules::INITIAL_FEN as START;
 
-/// `OpeningName`
 #[derive(Debug, Serialize)]
 pub struct OpeningName {
     pub eco: String,
@@ -28,7 +27,7 @@ struct Line {
     moves: Vec<String>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 struct Data {
     lines: Vec<(String, String, String)>,
 }
@@ -36,7 +35,7 @@ struct Data {
 fn lines() -> &'static [Line] {
     static LINES: OnceLock<Vec<Line>> = OnceLock::new();
     LINES.get_or_init(|| {
-        let data: Data = serde_json::from_str(OPENINGS_JSON).unwrap_or_default();
+        let data: Data = crate::embedded::parse("openings", OPENINGS_JSON);
         data.lines
             .into_iter()
             .map(|(eco, name, moves)| Line {
@@ -53,7 +52,7 @@ fn table() -> &'static HashMap<String, usize> {
     static TABLE: OnceLock<HashMap<String, usize>> = OnceLock::new();
     TABLE.get_or_init(|| {
         let mut table: HashMap<String, usize> = HashMap::new();
-        let Some(start) = rules::setup_start("standard", START) else {
+        let Some(start) = rules::setup_start(Variant::Standard, START) else {
             return table;
         };
         let all = lines();
@@ -69,7 +68,7 @@ fn table() -> &'static HashMap<String, usize> {
             if !played {
                 continue;
             }
-            let key = repetition_key(&rules::make_fen(&pos)).to_string();
+            let key = rules::repetition_key(&rules::make_fen(&pos)).to_string();
             let shorter = table
                 .get(&key)
                 .is_none_or(|&known| line.moves.len() < all[known].moves.len());
@@ -97,7 +96,7 @@ fn placement_hash(pos: &impl Position) -> u64 {
 fn placements() -> &'static std::collections::HashSet<u64> {
     static PLACEMENTS: OnceLock<std::collections::HashSet<u64>> = OnceLock::new();
     PLACEMENTS.get_or_init(|| {
-        let Some(start) = rules::setup_start("standard", START) else {
+        let Some(start) = rules::setup_start(Variant::Standard, START) else {
             return std::collections::HashSet::new();
         };
         let mut placements = std::collections::HashSet::new();
@@ -116,21 +115,7 @@ fn placements() -> &'static std::collections::HashSet<u64> {
     })
 }
 
-/// `repetitionKey`: the first four FEN fields, borrowed from the FEN.
-fn repetition_key(fen: &str) -> &str {
-    let mut seen = 0;
-    for (index, byte) in fen.bytes().enumerate() {
-        if byte == b' ' {
-            seen += 1;
-            if seen == 4 {
-                return &fen[..index];
-            }
-        }
-    }
-    fen
-}
-
-/// `openingAt`: the name of the opening reached after `ply` moves. As Lichess suggests, step back
+/// The name of the opening reached after `ply` moves. As Lichess suggests, step back
 /// from the position until a named one is found. Only games under standard rules have names.
 pub fn opening_at<S: AsRef<str>>(
     variant: &str,
@@ -141,7 +126,7 @@ pub fn opening_at<S: AsRef<str>>(
     if variant != "standard" {
         return None;
     }
-    let mut pos = rules::setup_start("standard", fen)?;
+    let mut pos = rules::setup_start(Variant::Standard, fen)?;
     let books = table();
     let placements = placements();
     let named = lines();
@@ -152,7 +137,7 @@ pub fn opening_at<S: AsRef<str>>(
             return None;
         }
         books
-            .get(repetition_key(&rules::make_fen(pos)))
+            .get(rules::repetition_key(&rules::make_fen(pos)))
             .map(|&index| &named[index])
     };
     let end = js_slice_end(moves.len(), ply);
@@ -176,7 +161,7 @@ pub fn opening_at<S: AsRef<str>>(
     })
 }
 
-/// `OpeningNode`: one entry of the openings tree. A family (`King's Gambit`) holds the families
+/// One entry of the openings tree. A family (`King's Gambit`) holds the families
 /// named after it (`King's Gambit Accepted`, labelled `Accepted`) and its variations, which hold
 /// their subvariations. An entry no line is named for exactly has no `eco` or `moves`.
 #[derive(Debug, Serialize)]
@@ -221,7 +206,7 @@ impl OpeningNode {
     }
 }
 
-/// `openingTree`: every named opening by family, alphabetically at each level.
+/// Every named opening by family, alphabetically at each level.
 pub fn opening_tree() -> &'static Vec<OpeningNode> {
     static TREE: OnceLock<Vec<OpeningNode>> = OnceLock::new();
     TREE.get_or_init(build_opening_tree)
@@ -297,7 +282,7 @@ pub fn wikibooks_title<S: AsRef<str>>(moves: &[S]) -> Option<String> {
     if moves.is_empty() || moves.len() > WIKIBOOKS_PLIES {
         return None;
     }
-    let start = rules::setup_start("standard", START)?;
+    let start = rules::setup_start(Variant::Standard, START)?;
     let (_, line) = position::line(start, moves, false, false);
     if line.len() != moves.len() {
         return None;
@@ -314,7 +299,7 @@ pub fn wikibooks_title<S: AsRef<str>>(moves: &[S]) -> Option<String> {
 /// The positions (FENs) a line from the starting position reaches, the start first. None when a
 /// move is illegal.
 pub fn line_fens<S: AsRef<str>>(moves: &[S]) -> Option<Vec<String>> {
-    let start = rules::setup_start("standard", START)?;
+    let start = rules::setup_start(Variant::Standard, START)?;
     let first = rules::make_fen(&start);
     let (_, line) = position::line(start, moves, false, false);
     if line.len() != moves.len() {
@@ -327,7 +312,7 @@ pub fn line_fens<S: AsRef<str>>(moves: &[S]) -> Option<Vec<String>> {
     )
 }
 
-/// `openingKey`: the key Lichess names an opening's puzzles by: its family and first variation
+/// The key Lichess names an opening's puzzles by: its family and first variation
 /// (the depth of puzzles' `OpeningTags`), without accents or punctuation, spaces as underscores.
 /// `King's Gambit Accepted: Kieseritzky Gambit, Long Whip` → `Kings_Gambit_Accepted_Kieseritzky_Gambit`.
 pub fn opening_key(name: &str) -> String {
@@ -376,7 +361,7 @@ const REPLIES_COVER: f64 = 0.8;
 /// …each played in at least this share of them.
 const REPLY_SHARE_MIN: f64 = 0.05;
 
-/// `openingReplies`: the moves an opening drill continues with from a position the explorer knows.
+/// The moves an opening drill continues with from a position the explorer knows.
 /// The player is expected to play the most played move; the opponent answers with the popular
 /// replies (up to three, until they cover most games, none rarer than one game in twenty).
 pub fn opening_replies(moves: &[ExplorerMove], yours: bool) -> Vec<String> {
@@ -407,59 +392,23 @@ pub fn opening_replies(moves: &[ExplorerMove], yours: bool) -> Vec<String> {
     picked
 }
 
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result = match method {
-        "openingAt" => opening_at_call(args),
-        "openingTree" => to_value(opening_tree()),
-        "openingReplies" => opening_replies_call(args),
-        "openingKey" => {
-            super::text_arg(args, 0, "name").and_then(|name| to_value(opening_key(name)))
-        }
-        _ => return None,
-    };
-    Some(result)
-}
-
-fn opening_at_call(args: &[Value]) -> Out {
-    let setup: Value = value_arg(args, 0, "setup")?;
-    let variant = setup.get("variant").and_then(Value::as_str).unwrap_or("");
-    let fen = setup.get("fen").and_then(Value::as_str).unwrap_or("");
-    let moves: Vec<String> = value_arg(args, 1, "moves")?;
-    // `ply` defaults to the number of moves; a non-finite one arrives as its text.
-    let ply = match args.get(2).filter(|v| !v.is_null()) {
-        Some(_) => js::to_number(args.get(2)),
-        None => moves.len() as f64,
-    };
-    to_value(opening_at(variant, fen, &moves, ply))
-}
-
-fn opening_replies_call(args: &[Value]) -> Out {
-    let moves: Vec<ExplorerMove> = value_arg(args, 0, "moves")?;
-    let yours = super::arg(args, 1)
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    to_value(opening_replies(&moves, yours))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
     /// The lookup as it was: a FEN written and looked up after every move.
     fn opening_written_out(moves: &[String]) -> Option<(String, String)> {
-        let mut pos = rules::setup_start("standard", START)?;
+        let mut pos = rules::setup_start(Variant::Standard, START)?;
         let (books, named) = (table(), lines());
         let mut found = books
-            .get(repetition_key(&rules::make_fen(&pos)))
+            .get(rules::repetition_key(&rules::make_fen(&pos)))
             .map(|&index| &named[index]);
         for text in moves {
             let Some(m) = rules::parse_uci(text).and_then(|u| rules::legal_move(&pos, u)) else {
                 break;
             };
             pos.play_unchecked(m);
-            if let Some(&index) = books.get(repetition_key(&rules::make_fen(&pos))) {
+            if let Some(&index) = books.get(rules::repetition_key(&rules::make_fen(&pos))) {
                 found = Some(&named[index]);
             }
         }
@@ -483,7 +432,7 @@ mod tests {
         }
         let mut seed = 0x2545_F491_4F6C_DD1Du64;
         for _ in 0..300 {
-            let mut pos = rules::setup_start("standard", START).expect("start");
+            let mut pos = rules::setup_start(Variant::Standard, START).expect("start");
             let mut moves = Vec::new();
             for _ in 0..60 {
                 let legal = pos.legal_moves();
@@ -514,7 +463,7 @@ mod tests {
     /// are written out.
     #[test]
     fn only_named_placements_pass_the_filter() {
-        let mut pos = rules::setup_start("standard", START).expect("start");
+        let mut pos = rules::setup_start(Variant::Standard, START).expect("start");
         for uci in &lines()[0].moves {
             let m = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u));
             pos.play_unchecked(m.expect("a legal move"));
@@ -523,7 +472,8 @@ mod tests {
             placements().contains(&placement_hash(&pos)),
             "a named line's end"
         );
-        let far = rules::setup_start("standard", "8/8/8/4k3/8/8/4P3/4K3 w - - 0 40").expect("fen");
+        let far =
+            rules::setup_start(Variant::Standard, "8/8/8/4k3/8/8/4P3/4K3 w - - 0 40").expect("fen");
         assert!(!placements().contains(&placement_hash(&far)), "an endgame");
         assert_ne!(placement_hash(&pos), placement_hash(&far));
     }

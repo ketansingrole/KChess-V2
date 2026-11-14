@@ -3,6 +3,11 @@
 //! review of its main line, or of the game before moves were added to it.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::{Fen, Moves, ReviewKey, Side};
+use kchess_contracts::types::{
+    Drill, Judgment, MistakeGame, ReviewCurrent, ReviewRequest, ReviewSource, StoredReview,
+};
+use kchess_domain::review::{Classification, GameAnalysis, PhaseAccuracy};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
@@ -11,13 +16,13 @@ use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
-use serde_json::{Value, json};
+use serde_json::{Number, Value, json};
 use shakmaty::Color;
 
 use super::{AnalysisPage, TOOL, stop_analysis};
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::rules;
+use crate::game::played::{GameOrigin, PlayedGame};
 use crate::game::tree::{moves_of, path_of};
 use crate::reviews::ReviewHandle;
 use crate::theme::{Palette, judgment_color, radii};
@@ -25,14 +30,13 @@ use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
 
-/// What a move's label looks like (`MOVE_CLASSIFICATIONS`): its name, glyph and colour.
+/// What a move's label looks like: its name, glyph and colour.
 /// The NAG of a review's judgment: ?! dubious, ? mistake, ?? blunder.
-fn tried_nag(judgment: &str) -> Option<i64> {
+fn tried_nag(judgment: Judgment) -> i64 {
     match judgment {
-        "inaccuracy" => Some(6),
-        "mistake" => Some(2),
-        "blunder" => Some(4),
-        _ => None,
+        Judgment::Inaccuracy => 6,
+        Judgment::Mistake => 2,
+        Judgment::Blunder => 4,
     }
 }
 
@@ -49,10 +53,10 @@ pub fn classification_look(classification: &str, dark: bool) -> (&'static str, &
     }
 }
 
-/// `analyseReview` of a review, and `reviewClassifications`: each move's label.
-pub type Analysed = (Value, Vec<Option<String>>);
+/// A review's analysis, and each move's label.
+pub type Analysed = (GameAnalysis, Vec<Option<Classification>>);
 /// The evaluation chart: White's chances per position (the start first), and each move's label.
-pub type Chart = (Vec<Option<f64>>, Vec<Option<String>>);
+pub type Chart = (Vec<Option<f64>>, Vec<Option<Judgment>>);
 
 /// What the review says about one main-line move (`ReviewMark`).
 #[derive(Clone)]
@@ -60,15 +64,27 @@ pub struct ReviewMark {
     /// The move's index in the game (0 is the first move).
     pub index: usize,
     pub color: Color,
-    pub classification: Option<String>,
+    pub classification: Option<Classification>,
 }
 
-/// The review state of the board.
+/// How a game opens on the board.
+#[derive(Clone, Default)]
+pub struct Opening {
+    /// The move shown.
+    pub ply: usize,
+    /// How the board faces; as it was when `None`.
+    pub orientation: Option<Color>,
+    /// Where the game came from.
+    pub origin: Option<GameOrigin>,
+    /// Review it once open.
+    pub review: bool,
+}
+
 #[derive(Default)]
 pub struct ReviewState {
-    /// Where the game on the board came from (`GameOrigin`): its players, your side, its Lichess
-    /// game. Nothing for a game set up or typed here.
-    pub origin: Option<Value>,
+    /// Where the game on the board came from: its players, your side, its Lichess game. Nothing
+    /// for a game set up or typed here.
+    pub origin: Option<GameOrigin>,
     /// The review shown: of the main line, or of the game before moves were added to it.
     pub shown: String,
     /// The main line it was last looked up for.
@@ -83,13 +99,13 @@ pub struct ReviewState {
     tried: HashSet<String>,
     pub practice_feedback: Option<String>,
     /// The positions in practice (`MistakeExercise`), as the core keeps them.
-    pub mistakes: Vec<Value>,
-    /// The last `analyseReview` and `reviewClassifications`, by review and its last update.
-    analysed: RefCell<Option<(String, f64, Analysed)>>,
+    pub mistakes: Vec<Drill>,
+    /// The last review analysed, by review and its last update.
+    analysed: RefCell<Option<(String, i64, Analysed)>>,
 }
 
 impl ReviewState {
-    pub fn new(mistakes: Vec<Value>) -> ReviewState {
+    pub fn new(mistakes: Vec<Drill>) -> ReviewState {
         ReviewState {
             mistakes,
             ..ReviewState::default()
@@ -103,17 +119,17 @@ impl AnalysisPage {
         moves_of(&self.root.line_end(""))
     }
 
-    /// `reviewKey`: the same moves from the same start (and in the same variant) share one review.
+    /// The same moves from the same start (and in the same variant) share one review.
     pub fn mainline_key(&self) -> String {
-        let mut args = vec![json!(self.root.fen), json!(self.mainline())];
-        args.extend(self.fairy_variant().map(|variant| json!(variant)));
-        rules("reviewKey", &args)
-            .ok()
-            .and_then(|key| key.as_str().map(str::to_string))
-            .unwrap_or_default()
+        kchess_domain::records::review::review_key(
+            &self.root.fen,
+            &self.mainline(),
+            self.fairy_variant(),
+        )
     }
 
-    pub(super) fn review(&self, cx: &App) -> Option<Value> {
+    /// The review shown.
+    pub(super) fn review(&self, cx: &App) -> Option<StoredReview> {
         cx.global::<ReviewHandle>()
             .0
             .read(cx)
@@ -135,26 +151,28 @@ impl AnalysisPage {
             let moves = self.mainline();
             if store.read(cx).get(&key).is_none() && !moves.is_empty() {
                 let found = cx.global::<AppCore>().request(calls::ReviewGet {
-                    fen: json!(self.root.fen),
-                    moves: json!(moves),
-                    variant: self.fairy_variant().map(|variant| json!(variant)),
+                    fen: Fen(self.root.fen.clone()),
+                    moves: Moves(moves),
+                    variant: self
+                        .fairy_variant()
+                        .map(|variant| variant.key().to_string()),
                 });
                 let store = store.clone();
                 cx.spawn(async move |this, cx| match found.await {
-                    Ok(review) if !review.is_null() => {
+                    Ok(Some(review)) => {
                         let _ = this.update(cx, |this, cx| {
+                            let shown = review.key.clone();
                             store.update(cx, |store, cx| {
-                                store.cache.remember(review.clone());
+                                store.cache.remember(review);
                                 cx.notify();
                             });
                             if this.mainline_key() == key {
-                                this.review.shown =
-                                    review["key"].as_str().unwrap_or_default().to_string();
+                                this.review.shown = shown;
                                 this.reviewed(cx);
                             }
                         });
                     }
-                    Ok(_) => {}
+                    Ok(None) => {}
                     Err(cause) => crate::log::write(
                         Level::Warn,
                         "review",
@@ -176,30 +194,27 @@ impl AnalysisPage {
     }
 
     /// How many main-line moves the review covers (it may be of a shorter or diverging line).
-    pub(super) fn reviewed_plies(&self, review: &Value) -> usize {
-        let mainline = self.mainline();
-        review["moves"].as_array().map_or(0, |moves| {
-            moves
-                .iter()
-                .zip(&mainline)
-                .take_while(|(reviewed, played)| reviewed.as_str() == Some(played.as_str()))
-                .count()
-        })
+    pub(super) fn reviewed_plies(&self, review: &StoredReview) -> usize {
+        review
+            .moves
+            .iter()
+            .zip(&self.mainline())
+            .take_while(|(reviewed, played)| reviewed == played)
+            .count()
     }
 
     /// The summary applies: the review is of this main line, or of the start of it.
-    pub(super) fn review_whole(&self, review: &Value) -> bool {
-        self.reviewed_plies(review) == review["moves"].as_array().map_or(0, Vec::len)
+    pub(super) fn review_whole(&self, review: &StoredReview) -> bool {
+        self.reviewed_plies(review) == review.moves.len()
     }
 
-    /// `analyseReview` and `reviewClassifications` of the review shown, worked out once per update.
+    /// The analysis and classifications of the review shown, worked out once per update.
     pub(super) fn game_analysis(&self, cx: &App) -> Option<Analysed> {
         let review = self.review(cx)?;
-        if !Self::assistance_allowed(cx) || review["fen"] != json!(self.root.fen) {
+        if !Self::assistance_allowed(cx) || review.fen != self.root.fen {
             return None;
         }
-        let key = review["key"].as_str().unwrap_or_default().to_string();
-        let updated = review["updatedAt"].as_f64().unwrap_or(0.);
+        let (key, updated) = (review.key.clone(), review.updated_at);
         let mut memo = self.review.analysed.borrow_mut();
         if let Some((known, at, analysed)) = memo.as_ref()
             && *known == key
@@ -207,14 +222,8 @@ impl AnalysisPage {
         {
             return Some(analysed.clone());
         }
-        let analysis = rules("analyseReview", std::slice::from_ref(&review)).ok()?;
-        if analysis.is_null() {
-            return None;
-        }
-        let classes: Vec<Option<String>> = rules("reviewClassifications", &[review])
-            .ok()
-            .and_then(|classes| serde_json::from_value(classes).ok())
-            .unwrap_or_default();
+        let analysis = kchess_domain::review::analyse(&review).ok()?;
+        let classes = kchess_domain::review::classifications(&review).unwrap_or_default();
         *memo = Some((key, updated, (analysis.clone(), classes.clone())));
         Some((analysis, classes))
     }
@@ -228,20 +237,15 @@ impl AnalysisPage {
         };
         let mainline = self.mainline();
         for index in 0..self.reviewed_plies(&review) {
-            let mover = &analysis["moves"][index];
-            if mover.is_null() {
+            let Some(verdict) = analysis.moves.get(index) else {
                 break;
-            }
+            };
             marks.insert(
                 path_of(&mainline[..=index]),
                 ReviewMark {
                     index,
-                    color: if mover["color"] == json!("black") {
-                        Color::Black
-                    } else {
-                        Color::White
-                    },
-                    classification: classes.get(index).cloned().flatten(),
+                    color: verdict.color,
+                    classification: classes.get(index).copied().flatten(),
                 },
             );
         }
@@ -257,14 +261,11 @@ impl AnalysisPage {
         if plies == 0 {
             return None;
         }
-        let moves: Vec<&Value> = analysis["moves"].as_array()?.iter().take(plies).collect();
-        let points = std::iter::once(analysis["startChances"].as_f64())
-            .chain(moves.iter().map(|mover| mover["chances"].as_f64()))
+        let moves = &analysis.moves[..plies.min(analysis.moves.len())];
+        let points = std::iter::once(analysis.start_chances)
+            .chain(moves.iter().map(|verdict| verdict.chances))
             .collect();
-        let judgments = moves
-            .iter()
-            .map(|mover| mover["judgment"].as_str().map(str::to_string))
-            .collect();
+        let judgments = moves.iter().map(|verdict| verdict.judgment).collect();
         Some((points, judgments))
     }
 
@@ -290,7 +291,7 @@ impl AnalysisPage {
     }
 
     /// The review queue is working on this game.
-    pub(super) fn reviewing(&self, cx: &App) -> Option<Value> {
+    pub(super) fn reviewing(&self, cx: &App) -> Option<ReviewCurrent> {
         cx.global::<ReviewHandle>()
             .0
             .read(cx)
@@ -298,7 +299,7 @@ impl AnalysisPage {
             .cloned()
     }
 
-    /// Review the main line now (`requestReview`); the engine makes way for it.
+    /// Review the main line now; the engine makes way for it.
     pub fn request_review(&mut self, cx: &mut Context<Self>) {
         crate::prefs::set(cx, TOOL, "review");
         self.review.request_error = None;
@@ -309,16 +310,17 @@ impl AnalysisPage {
         self.review.requested = self.mainline_key();
         self.wanted.clear();
         stop_analysis(false, cx);
-        let origin = self.review.origin.clone().unwrap_or(Value::Null);
-        let mut request = json!({ "fen": self.root.fen, "moves": moves });
-        // Fairy-Stockfish reviews the other variants.
-        if let Some(variant) = self.fairy_variant() {
-            request["variant"] = json!(variant);
-        }
-        if let Some(id) = origin["gameId"].as_str() {
-            request["gameId"] = json!(id);
-            request["account"] = origin["account"].clone();
-        }
+        let origin = self.review.origin.clone().unwrap_or_default();
+        let request = ReviewRequest {
+            fen: self.root.fen.clone(),
+            moves,
+            // Fairy-Stockfish reviews the other variants.
+            variant: self
+                .fairy_variant()
+                .map(|variant| variant.key().to_string()),
+            account: origin.game_id.as_ref().and(origin.account.clone()),
+            game_id: origin.game_id,
+        };
         let asked = cx
             .global::<AppCore>()
             .request(calls::ReviewRequest { request });
@@ -329,11 +331,13 @@ impl AnalysisPage {
             let _ = this.update(cx, |this, cx| {
                 match asked {
                     Ok(stored) => {
-                        let key = stored["key"].as_str().map(str::to_string);
-                        store.update(cx, |store, cx| {
-                            store.cache.remember(stored);
-                            cx.notify();
-                        });
+                        let key = stored.as_ref().map(|stored| stored.key.clone());
+                        if let Some(stored) = stored {
+                            store.update(cx, |store, cx| {
+                                store.cache.remember(stored);
+                                cx.notify();
+                            });
+                        }
                         this.review.shown = key.unwrap_or(fallback);
                     }
                     Err(cause) => {
@@ -356,7 +360,7 @@ impl AnalysisPage {
     fn cancel_review(&mut self, cx: &mut Context<Self>) {
         self.review.requested.clear();
         let cancel = cx.global::<AppCore>().request(calls::ReviewCancel {
-            key: json!(self.mainline_key()),
+            key: ReviewKey(self.mainline_key()),
         });
         cx.background_executor()
             .spawn(async move {
@@ -381,27 +385,25 @@ impl AnalysisPage {
             .review
             .origin
             .as_ref()
-            .and_then(|origin| origin["player"].as_str().map(str::to_string))
+            .and_then(|origin| origin.player)
+            .map(|player| kchess_domain::color::name(player).to_string())
         else {
             return;
         };
-        let key = review["key"].as_str().unwrap_or_default().to_string();
-        if review["complete"] != json!(true)
-            || !self.review_whole(&review)
-            || self.review.saved_mistakes == key
-        {
+        let key = review.key.clone();
+        if !review.complete || !self.review_whole(&review) || self.review.saved_mistakes == key {
             return;
         }
         self.review.saved_mistakes = key.clone();
         let added = cx.global::<AppCore>().request(calls::AddMistakes {
-            review_key: json!(key),
-            color: Some(json!(player)),
+            review_key: ReviewKey(key),
+            color: kchess_domain::color::from_name(&player).map(Side),
         });
         cx.spawn(async move |this, cx| {
             let added = added.await;
             let _ = this.update(cx, |this, cx| match added {
                 Ok(result) => {
-                    this.review.mistakes = result["items"].as_array().cloned().unwrap_or_default();
+                    this.review.mistakes = result.items;
                     cx.notify();
                 }
                 Err(cause) => {
@@ -420,20 +422,16 @@ impl AnalysisPage {
     /// This review's positions already in practice, and the sides they are from.
     fn saved_positions(&self, key: &str) -> (usize, HashSet<&'static str>) {
         let prefix = format!("{key}:");
-        let items: Vec<&Value> = self
+        let items: Vec<&Drill> = self
             .review
             .mistakes
             .iter()
-            .filter(|item| {
-                item["id"]
-                    .as_str()
-                    .is_some_and(|id| id.starts_with(&prefix))
-            })
+            .filter(|item| item.id.starts_with(&prefix))
             .collect();
         let sides = items
             .iter()
             .map(|item| {
-                if item["fen"].as_str().and_then(|fen| fen.split(' ').nth(1)) == Some("b") {
+                if item.fen.split(' ').nth(1) == Some("b") {
                     "black"
                 } else {
                     "white"
@@ -445,25 +443,19 @@ impl AnalysisPage {
 
     /// The sides whose labelled moves the review puts into practice: yours, or both in a game you
     /// did not play.
-    fn practice_sides(&self, analysis: &Value) -> Vec<&'static str> {
-        let player = self
-            .review
-            .origin
-            .as_ref()
-            .and_then(|origin| origin["player"].as_str())
-            .map(|player| if player == "black" { "black" } else { "white" });
-        let sides: Vec<&'static str> = match player {
+    fn practice_sides(&self, analysis: &GameAnalysis) -> Vec<&'static str> {
+        let player = self.review.origin.as_ref().and_then(|origin| origin.player);
+        let sides = match player {
             Some(player) => vec![player],
-            None => vec!["white", "black"],
+            None => vec![Color::White, Color::Black],
         };
         sides
             .into_iter()
             .filter(|color| {
-                let side = &analysis[*color];
-                ["inaccuracy", "mistake", "blunder"]
-                    .iter()
-                    .any(|kind| side[*kind].as_f64().unwrap_or(0.) > 0.)
+                let side = analysis.side(*color);
+                side.inaccuracy + side.mistake + side.blunder > 0
             })
+            .map(kchess_domain::color::name)
             .collect()
     }
 
@@ -472,7 +464,7 @@ impl AnalysisPage {
         let (Some(review), Some((analysis, _))) = (self.review(cx), self.game_analysis(cx)) else {
             return;
         };
-        let key = review["key"].as_str().unwrap_or_default().to_string();
+        let key = review.key.clone();
         self.review.practice_feedback = None;
         let (_, saved) = self.saved_positions(&key);
         let sides: Vec<&'static str> = self
@@ -488,17 +480,15 @@ impl AnalysisPage {
             for color in sides {
                 match core
                     .request(calls::AddMistakes {
-                        review_key: json!(key),
-                        color: Some(json!(color)),
+                        review_key: ReviewKey(key.clone()),
+                        color: kchess_domain::color::from_name(color).map(Side),
                     })
                     .await
                 {
                     Ok(result) => {
-                        let added = result["added"].as_f64().unwrap_or(0.);
-                        let items = result["items"].as_array().cloned().unwrap_or_default();
                         let _ = this.update(cx, |this, _| {
-                            this.review.mistakes = items;
-                            if added == 0. {
+                            this.review.mistakes = result.items;
+                            if result.added == 0 {
                                 this.review.tried.insert(format!("{key}:{color}"));
                             }
                         });
@@ -530,49 +520,53 @@ impl AnalysisPage {
         .detach();
     }
 
-    /// Open a game on the board (`loadPgn`) at a move, facing as it was played, with where it came
-    /// from, and review it when asked (`startReview`).
-    pub fn open_game(
-        &mut self,
-        pgn: &str,
-        ply: usize,
-        orientation: Option<Color>,
-        origin: Option<Value>,
-        review: bool,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    /// Open a game document on the board, as `opening` says: at a move, facing as it was played,
+    /// with where it came from, and reviewed when asked.
+    pub fn open_pgn(&mut self, pgn: &str, opening: Opening, cx: &mut Context<Self>) -> bool {
         if !self.load_pgn(pgn, cx) {
             return false;
         }
-        if let Some(orientation) = orientation {
+        if let Some(orientation) = opening.orientation {
             self.orientation = orientation;
         }
-        self.review.origin = origin;
-        self.go_to_ply(ply, cx);
-        if review {
+        self.review.origin = opening.origin;
+        self.go_to_ply(opening.ply, cx);
+        if opening.review {
             self.request_review(cx);
         }
         true
     }
 
-    /// Study a puzzle (`usePuzzleAnalysis().open`): its solution is the line, each move tried
+    /// Open a game a page played or showed, at the move it shows, facing as it does; `review`
+    /// reviews it.
+    pub fn open_played(&mut self, game: &PlayedGame, review: bool, cx: &mut Context<Self>) -> bool {
+        let opening = Opening {
+            ply: game.ply.unwrap_or(game.moves.len()),
+            orientation: Some(game.orientation),
+            origin: Some(game.origin()),
+            review,
+        };
+        let Some(pgn) = game.analysis_pgn() else {
+            return false;
+        };
+        self.open_pgn(&pgn, opening, cx)
+    }
+
+    /// Study a puzzle: its solution is the line, each move tried
     /// instead in that attempt a variation beside it marked "Your move", and the solution is
     /// reviewed like a game.
     pub fn open_puzzle(
         &mut self,
-        puzzle: &Value,
-        wrong_moves: &[Value],
+        puzzle: &kchess_contracts::types::Puzzle,
+        wrong_moves: &[kchess_contracts::types::PuzzleWrongMove],
         cx: &mut Context<Self>,
     ) -> bool {
-        let solution: Vec<String> =
-            serde_json::from_value(puzzle["solution"].clone()).unwrap_or_default();
-        let Ok(Value::String(pgn)) = crate::game::rules(
-            "setupPgn",
-            &[
-                serde_json::json!({ "variant": "standard", "fen": puzzle["fen"] }),
-                serde_json::json!(solution),
-                serde_json::json!({}),
-            ],
+        let solution = &puzzle.solution;
+        let Ok(pgn) = kchess_domain::pgn::setup_pgn(
+            kchess_domain::variant::Variant::Standard,
+            &puzzle.fen,
+            solution,
+            &[],
         ) else {
             return false;
         };
@@ -583,10 +577,7 @@ impl AnalysisPage {
         self.tried_done.clear();
         let mut tried = Vec::new();
         for wrong in wrong_moves {
-            let index = crate::game::whole(&wrong["index"]) as usize;
-            let Some(uci) = wrong["uci"].as_str() else {
-                continue;
-            };
+            let (index, uci) = (wrong.index as usize, wrong.uci.as_str());
             if index > solution.len() || solution.get(index).map(String::as_str) == Some(uci) {
                 continue;
             }
@@ -597,7 +588,7 @@ impl AnalysisPage {
                 tried.push((path, fen, uci.to_string()));
             }
         }
-        self.orientation = crate::game::puzzle::OnBoard::start(puzzle).player_color();
+        self.orientation = kchess_domain::training::puzzle::player_color(&puzzle.fen);
         self.review.origin = None;
         self.go_to_ply(0, cx);
         self.request_review(cx);
@@ -621,12 +612,19 @@ impl AnalysisPage {
         cx: &mut Context<Self>,
     ) {
         let asked = cx.global::<AppCore>().request(calls::ReviewRequest {
-            request: json!({ "fen": fen, "moves": [uci] }),
+            request: ReviewRequest {
+                fen,
+                moves: vec![uci],
+                variant: None,
+                game_id: None,
+                account: None,
+            },
         });
         let store = cx.global::<ReviewHandle>().0.clone();
         cx.spawn(async move |this, cx| {
             let stored = match asked.await {
-                Ok(stored) => stored,
+                Ok(Some(stored)) => stored,
+                Ok(None) => return,
                 Err(cause) => {
                     crate::log::write(
                         Level::Warn,
@@ -640,7 +638,7 @@ impl AnalysisPage {
                 if this.apply_tried(&start, &path, &stored, cx) {
                     return;
                 }
-                let key = stored["key"].as_str().unwrap_or_default().to_string();
+                let key = stored.key.clone();
                 store.update(cx, |store, cx| {
                     store.cache.remember(stored);
                     cx.notify();
@@ -663,27 +661,23 @@ impl AnalysisPage {
         &mut self,
         start: &str,
         path: &str,
-        review: &Value,
+        review: &StoredReview,
         cx: &mut Context<Self>,
     ) -> bool {
         if self.tried_done.iter().any(|done| done == path) {
             return true;
         }
-        if review["complete"] != json!(true) {
+        if !review.complete {
             return false;
         }
         self.tried_done.push(path.to_string());
-        let judgment = rules("analyseReview", std::slice::from_ref(review))
+        let judgment = kchess_domain::review::analyse(review)
             .ok()
-            .and_then(|analysis| {
-                analysis["moves"][0]["judgment"]
-                    .as_str()
-                    .map(str::to_string)
-            });
+            .and_then(|analysis| analysis.moves.first()?.judgment);
         // The board still holds this puzzle and the variation was not deleted.
         let held =
             self.root.fen == start && self.root.nodes_along(path).len() == moves_of(path).len() + 1;
-        if let (Some(nag), true) = (judgment.as_deref().and_then(tried_nag), held) {
+        if let (Some(nag), true) = (judgment.map(tried_nag), held) {
             let node = self.root.node_at_mut(path);
             node.nags = super::notes::with_glyph(node.nags.as_deref(), Some(nag));
             self.redraw(cx);
@@ -693,46 +687,41 @@ impl AnalysisPage {
         true
     }
 
-    /// Practise a reviewed game's positions on the board (`usePracticeGame`): `game` is a
+    /// Practise a reviewed game's positions on the board: `game` is a
     /// `MistakeGame`, `items` the positions in practice. A game already on the board is kept as
     /// it is, variations and all.
     pub fn practise_game(
         &mut self,
-        game: &Value,
-        items: Vec<Value>,
+        game: &MistakeGame,
+        items: Vec<Drill>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let key = game["key"].as_str().unwrap_or_default().to_string();
+        let key = game.key.clone();
         if self.mainline_key() != key {
             let mut headers = serde_json::Map::new();
-            for (field, header) in [("white", "White"), ("black", "Black")] {
-                if let Some(name) = game[field].as_str() {
+            for (name, header) in [(&game.white, "White"), (&game.black, "Black")] {
+                if let Some(name) = name {
                     headers.insert(header.into(), json!(name));
                 }
             }
-            let pgn = rules(
-                "setupPgn",
-                &[
-                    json!({ "variant": "standard", "fen": game["fen"] }),
-                    game["moves"].clone(),
-                    Value::Object(headers),
-                ],
-            )
-            .ok()
-            .and_then(|pgn| pgn.as_str().map(str::to_string));
+            let pgn = crate::game::setup_pgn(
+                &kchess_domain::variant::Setup::standard_at(game.fen.clone()),
+                &game.moves,
+                &Value::Object(headers),
+            );
             let Some(pgn) = pgn else {
                 return false;
             };
             if !self.load_pgn(&pgn, cx) {
                 return false;
             }
-            self.review.origin = Some(json!({
-                "gameId": game["gameId"],
-                "account": game["account"],
-                "white": game["white"],
-                "black": game["black"],
-                "player": game["player"],
-            }));
+            self.review.origin = Some(GameOrigin {
+                white: game.white.clone(),
+                black: game.black.clone(),
+                player: game.player,
+                game_id: game.game_id.clone(),
+                account: game.account.clone(),
+            });
         }
         self.review.mistakes = items;
         self.start_practice(&key, cx);
@@ -742,15 +731,10 @@ impl AnalysisPage {
 
     /// The players' names: from where the game came from, or else its PGN headers.
     pub(super) fn player_name(&self, color: Color) -> String {
-        let key = if color == Color::White {
-            "white"
-        } else {
-            "black"
-        };
         self.review
             .origin
             .as_ref()
-            .and_then(|origin| origin[key].as_str())
+            .and_then(|origin| origin.name(color))
             .map(str::to_string)
             .or_else(|| {
                 let header = self.header(if color == Color::White {
@@ -771,11 +755,11 @@ impl AnalysisPage {
     }
 
     /// Jump to the next move of `color` with this label, after the one on the board (wrapping).
-    fn next_labelled(&mut self, color: Color, label: &str, cx: &mut Context<Self>) {
+    fn next_labelled(&mut self, color: Color, label: Classification, cx: &mut Context<Self>) {
         let marks = self.review_marks(cx);
         let mut indices: Vec<usize> = marks
             .values()
-            .filter(|mark| mark.color == color && mark.classification.as_deref() == Some(label))
+            .filter(|mark| mark.color == color && mark.classification == Some(label))
             .map(|mark| mark.index)
             .collect();
         indices.sort_unstable();
@@ -792,7 +776,6 @@ impl AnalysisPage {
         }
     }
 
-    /// The Review tab.
     pub(super) fn render_review(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
         let key = self.mainline_key();
         let review = self.review(cx);
@@ -803,7 +786,7 @@ impl AnalysisPage {
             .or_else(|| self.review.request_error.clone());
         let complete = review
             .as_ref()
-            .is_some_and(|review| review["complete"] == json!(true) && self.review_whole(review));
+            .is_some_and(|review| review.complete && self.review_whole(review));
         let queued =
             self.review.requested == key && progress.is_none() && !complete && failure.is_none();
         // A Lichess game can be reviewed from Lichess's analysis even without a local engine.
@@ -812,16 +795,16 @@ impl AnalysisPage {
                 .review
                 .origin
                 .as_ref()
-                .and_then(|origin| origin["gameId"].as_str())
+                .and_then(|origin| origin.game_id.as_deref())
                 .is_some_and(|id| !kchess_domain::chesscom::is_game_id(id));
         let reviewed = review
             .as_ref()
             .map_or(0, |review| self.reviewed_plies(review));
         let source = match &review {
             Some(review) if reviewed > 0 => {
-                if review["source"] == json!("lichess") {
+                if review.source == ReviewSource::Lichess {
                     Some("From Lichess")
-                } else if review["complete"] != json!(true) && progress.is_none() {
+                } else if !review.complete && progress.is_none() {
                     Some("Partly reviewed")
                 } else {
                     None
@@ -886,8 +869,8 @@ impl AnalysisPage {
                 .child(text)
         };
         let progress_row = progress.as_ref().map(|current| {
-            let done = current["done"].as_f64().unwrap_or(0.);
-            let total = current["total"].as_f64().unwrap_or(1.).max(1.);
+            let done = current.done as f64;
+            let total = (current.total as f64).max(1.);
             h_flex()
                 .gap(px(8.))
                 .text_size(px(11.))
@@ -910,18 +893,13 @@ impl AnalysisPage {
         });
         let analysis = self.game_analysis(cx);
         let marks = self.review_marks(cx);
-        let whole = review
+        let table = review
             .as_ref()
-            .is_some_and(|review| self.review_whole(review));
-        let table = analysis.as_ref().filter(|_| whole).map(|(analysis, _)| {
-            self.render_review_table(
-                &review.clone().unwrap_or_default(),
-                analysis,
-                &marks,
-                cx,
-                palette,
-            )
-        });
+            .filter(|review| self.review_whole(review))
+            .zip(analysis.as_ref())
+            .map(|(review, (analysis, _))| {
+                self.render_review_table(review, analysis, &marks, cx, palette)
+            });
         let can_practice = complete
             && analysis.as_ref().is_some_and(|(analysis, _)| {
                 let (count, _) = self.saved_positions(&key);
@@ -961,7 +939,7 @@ impl AnalysisPage {
                                 .review
                                 .origin
                                 .as_ref()
-                                .is_some_and(|origin| origin["player"].is_string())
+                                .is_some_and(|origin| origin.player.is_some())
                             {
                                 "Practice your mistakes"
                             } else {
@@ -996,12 +974,10 @@ impl AnalysisPage {
         let ply = self.review_ply(self.reviewed_plies(&review))?;
         let index = ply.checked_sub(1)?;
         let (analysis, _) = self.game_analysis(cx)?;
-        let judgment = analysis["moves"][index]["judgment"].as_str()?;
-        if !matches!(judgment, "inaccuracy" | "mistake" | "blunder") {
-            return None;
-        }
-        let moment = rules("reviewMoment", &[review, json!(index)]).ok()?;
+        analysis.moves.get(index)?.judgment?;
+        let moment = kchess_domain::coach::review_moment(&review, index)?;
         let reason = moment["reason"].as_str().map(str::to_string);
+        let request = serde_json::from_value(moment["request"].clone()).ok()?;
         Some(
             v_flex()
                 .gap(px(6.))
@@ -1010,7 +986,7 @@ impl AnalysisPage {
                     "review",
                     "Explain",
                     &self.explainer,
-                    moment["request"].clone(),
+                    request,
                     None,
                     cx,
                     palette,
@@ -1021,25 +997,18 @@ impl AnalysisPage {
 
     fn render_review_table(
         &self,
-        review: &Value,
-        analysis: &Value,
+        review: &StoredReview,
+        analysis: &GameAnalysis,
         marks: &HashMap<String, ReviewMark>,
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> AnyElement {
         let sides = [Color::White, Color::Black];
-        let side_of = |color: Color| {
-            &analysis[if color == Color::White {
-                "white"
-            } else {
-                "black"
-            }]
-        };
         let brilliant = |color: Color| {
             marks
                 .values()
                 .filter(|mark| {
-                    mark.color == color && mark.classification.as_deref() == Some("brilliant")
+                    mark.color == color && mark.classification == Some(Classification::Brilliant)
                 })
                 .count()
         };
@@ -1091,34 +1060,47 @@ impl AnalysisPage {
                     div()
                         .text_size(px(16.))
                         .font_weight(FontWeight::MEDIUM)
-                        .child(percent(side_of(color)["accuracy"].as_f64()))
+                        .child(percent(
+                            analysis
+                                .side(color)
+                                .accuracy
+                                .as_ref()
+                                .and_then(Number::as_f64),
+                        ))
                         .into_any_element(),
                 )
             }));
         let dark = palette.dark;
-        let kinds: Vec<(&'static str, &'static str)> = [
-            ("brilliant", "Brilliant"),
-            ("inaccuracy", "Inaccuracies"),
-            ("mistake", "Mistakes"),
-            ("blunder", "Blunders"),
+        let kinds: Vec<(Classification, &'static str)> = [
+            (Classification::Brilliant, "Brilliant"),
+            (Classification::Inaccuracy, "Inaccuracies"),
+            (Classification::Mistake, "Mistakes"),
+            (Classification::Blunder, "Blunders"),
         ]
         .into_iter()
         // Brilliant moves are rare: their row shows only when there is one.
-        .filter(|(kind, _)| *kind != "brilliant" || sides.iter().any(|color| brilliant(*color) > 0))
+        .filter(|(kind, _)| {
+            *kind != Classification::Brilliant || sides.iter().any(|color| brilliant(*color) > 0)
+        })
         .collect();
         let counts = kinds.into_iter().map(|(kind, title)| {
-            let (_, _, color) = classification_look(kind, dark);
+            let (_, _, color) = classification_look(kind.as_str(), dark);
             h_flex()
                 .child(label(title.into(), Some(color)))
                 .children(sides.map(|side| {
-                    let count = if kind == "brilliant" {
-                        brilliant(side)
-                    } else {
-                        side_of(side)[kind].as_f64().unwrap_or(0.) as usize
+                    let counts = analysis.side(side);
+                    let count = match kind {
+                        Classification::Inaccuracy => counts.inaccuracy as usize,
+                        Classification::Mistake => counts.mistake as usize,
+                        Classification::Blunder => counts.blunder as usize,
+                        _ => brilliant(side),
                     };
                     cell(
                         div()
-                            .id(SharedString::from(format!("count-{kind}-{side:?}")))
+                            .id(SharedString::from(format!(
+                                "count-{}-{side:?}",
+                                kind.as_str()
+                            )))
                             .role(Role::Button)
                             .keyboard_focus(palette.primary)
                             .aria_label(format!("Next {title}: {count}"))
@@ -1154,33 +1136,38 @@ impl AnalysisPage {
                 cell(
                     div()
                         .child(
-                            side_of(color)["acpl"]
-                                .as_f64()
+                            analysis
+                                .side(color)
+                                .acpl
+                                .as_ref()
+                                .and_then(Number::as_f64)
                                 .map_or_else(|| "—".to_string(), |acpl| acpl.to_string()),
                         )
                         .into_any_element(),
                 )
             }));
-        let phases = rules("reviewPhases", std::slice::from_ref(review)).unwrap_or(Value::Null);
+        let phases = kchess_domain::review::phases(review).unwrap_or_default();
         let phase_rows: Vec<AnyElement> = [
-            ("opening", "Opening"),
-            ("middlegame", "Middlegame"),
-            ("endgame", "Endgame"),
+            (
+                "Opening",
+                (|p| p.opening) as fn(&PhaseAccuracy) -> Option<f64>,
+            ),
+            ("Middlegame", |p| p.middlegame),
+            ("Endgame", |p| p.endgame),
         ]
         .into_iter()
-        .filter(|(key, _)| !phases["white"][key].is_null() || !phases["black"][key].is_null())
-        .map(|(key, title)| {
+        .filter(|(_, figure)| {
+            sides
+                .iter()
+                .any(|color| figure(phases.side(*color)).is_some())
+        })
+        .map(|(title, figure)| {
             h_flex()
                 .child(label(title.into(), None))
                 .children(sides.map(|color| {
-                    let side = if color == Color::White {
-                        "white"
-                    } else {
-                        "black"
-                    };
                     cell(
                         div()
-                            .child(percent(phases[side][key].as_f64()))
+                            .child(percent(figure(phases.side(color))))
                             .into_any_element(),
                     )
                 }))
@@ -1216,7 +1203,7 @@ impl AnalysisPage {
 /// from the bottom, the review's labels sit on the curve, and a click goes to that move.
 pub(super) fn eval_chart(
     points: Vec<Option<f64>>,
-    judgments: Vec<Option<String>>,
+    judgments: Vec<Option<Judgment>>,
     current: Option<usize>,
     page: WeakEntity<AnalysisPage>,
     palette: &Palette,
@@ -1343,7 +1330,7 @@ pub(super) fn eval_chart(
                                     point(center.x - radius, center.y - radius),
                                     size(radius * 2., radius * 2.),
                                 ),
-                                judgment_color(judgment, dark),
+                                judgment_color(judgment.as_str(), dark),
                             )
                             .corner_radii(radius)
                             .border_widths(px(1.))
@@ -1359,18 +1346,20 @@ pub(super) fn eval_chart(
 #[cfg(test)]
 mod tests {
     use super::tried_nag;
-    use crate::game::rules;
-    use serde_json::json;
+    use kchess_contracts::types::Judgment;
+    use kchess_domain::trainer::analysis_tree::move_glyph;
 
-    /// A tried move is labelled as the app labels it (`NAGS`), and
+    /// A tried move is labelled as the app labels it, and
     /// the glyph the rules give that NAG is the one the move list shows.
     #[test]
     fn a_judged_tried_move_gets_its_glyph() {
-        for (judgment, glyph) in [("inaccuracy", "?!"), ("mistake", "?"), ("blunder", "??")] {
-            let nag = tried_nag(judgment).unwrap();
-            let shown = rules("moveGlyph", &[json!([nag])]).unwrap();
-            assert_eq!(shown["glyph"], json!(glyph), "{judgment}");
+        for (judgment, glyph) in [
+            (Judgment::Inaccuracy, "?!"),
+            (Judgment::Mistake, "?"),
+            (Judgment::Blunder, "??"),
+        ] {
+            let shown = move_glyph(&[tried_nag(judgment) as f64]).unwrap();
+            assert_eq!(shown.glyph, glyph, "{judgment:?}");
         }
-        assert_eq!(tried_nag("good"), None);
     }
 }

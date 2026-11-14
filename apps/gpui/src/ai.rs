@@ -8,7 +8,10 @@ use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::{Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
 use kchess_contracts::calls;
-use serde_json::{Value, json};
+use kchess_contracts::check::AiModelName;
+use kchess_contracts::types::{
+    AiConnection, AiEffort, AiExplanation, AiModelList, AiProblem, AiRequest,
+};
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -19,7 +22,7 @@ pub const USAGE_SETTINGS: &str = "https://chatgpt.com/#settings";
 
 /// The connection, and the models it may use.
 pub struct Ai {
-    pub status: Value,
+    pub status: AiConnection,
     /// Slug and display name.
     pub models: Vec<(String, String)>,
     pub busy: bool,
@@ -32,7 +35,7 @@ impl Global for AiHandle {}
 
 pub fn init(cx: &mut App) {
     let ai = cx.new(|_| Ai {
-        status: Value::Null,
+        status: AiConnection::default(),
         models: Vec::new(),
         busy: false,
     });
@@ -46,11 +49,11 @@ pub fn handle(cx: &App) -> Entity<Ai> {
 
 impl Ai {
     pub fn connected(&self) -> bool {
-        self.status["connected"] == json!(true)
+        self.status.connected
     }
 
-    fn adopt(&mut self, status: Value, cx: &mut Context<Self>) {
-        let connected = status["connected"] == json!(true);
+    fn adopt(&mut self, status: AiConnection, cx: &mut Context<Self>) {
+        let connected = status.connected;
         self.status = status;
         if connected {
             self.load_models(cx);
@@ -73,15 +76,14 @@ impl Ai {
         let read = cx.global::<AppCore>().request(calls::AiModels {});
         cx.spawn(async move |this, cx| {
             let Ok(answer) = read.await else { return };
-            let models = answer["models"].as_array().cloned().unwrap_or_default();
+            let models = match answer {
+                AiModelList::Listed { models } => models,
+                AiModelList::Refused { .. } => Vec::new(),
+            };
             let _ = this.update(cx, |this, cx| {
                 this.models = models
-                    .iter()
-                    .filter_map(|model| {
-                        let slug = model["slug"].as_str()?.to_string();
-                        let name = model["name"].as_str().unwrap_or(&slug).to_string();
-                        Some((slug, name))
-                    })
+                    .into_iter()
+                    .map(|model| (model.slug, model.name))
                     .collect();
                 cx.notify();
             });
@@ -96,7 +98,7 @@ impl Ai {
         }
         self.busy = true;
         cx.notify();
-        let first = self.status["registered"] != json!(true);
+        let first = !self.status.registered;
         let connected = cx.global::<AppCore>().request(calls::AiConnect {});
         cx.spawn_in(window, async move |this, cx| {
             let result = connected.await;
@@ -127,10 +129,10 @@ impl Ai {
     }
 
     /// The model and effort every AI feature uses.
-    pub fn choose(&mut self, model: Option<String>, effort: String, cx: &mut Context<Self>) {
+    pub fn choose(&mut self, model: Option<String>, effort: AiEffort, cx: &mut Context<Self>) {
         let saved = cx.global::<AppCore>().request(calls::AiSetOptions {
-            model: json!(model),
-            effort: json!(effort),
+            model: model.map(AiModelName),
+            effort,
         });
         cx.spawn(async move |this, cx| {
             let Ok(status) = saved.await else { return };
@@ -163,14 +165,15 @@ pub type OnAnswer = std::rc::Rc<dyn Fn(&mut App)>;
 enum Phase {
     Asking,
     Said(SharedString),
-    /// `problem` of a refused answer, or a failure's own message.
-    Refused(String),
+    Refused(AiProblem),
+    /// A failure's own message.
+    Failed(String),
 }
 
 /// One explanation at a time: what was asked and how it stands. A page keeps one and hands
 /// `explain_block` the request of what it shows, so moving on simply shows another request.
 pub struct Explainer {
-    request: Value,
+    request: Option<AiRequest>,
     phase: Option<Phase>,
     asked: u64,
 }
@@ -178,16 +181,16 @@ pub struct Explainer {
 impl Explainer {
     pub fn new() -> Explainer {
         Explainer {
-            request: Value::Null,
+            request: None,
             phase: None,
             asked: 0,
         }
     }
 
-    pub fn ask(&mut self, request: Value, on_answer: Option<OnAnswer>, cx: &mut Context<Self>) {
+    pub fn ask(&mut self, request: AiRequest, on_answer: Option<OnAnswer>, cx: &mut Context<Self>) {
         self.asked += 1;
         let asked = self.asked;
-        self.request = request.clone();
+        self.request = Some(request.clone());
         self.phase = Some(Phase::Asking);
         cx.notify();
         let answer = cx.global::<AppCore>().request(calls::AiExplain { request });
@@ -198,21 +201,14 @@ impl Explainer {
                     return;
                 }
                 this.phase = Some(match result {
-                    Ok(answer) => match answer["text"].as_str() {
-                        Some(text) => {
-                            if let Some(on_answer) = &on_answer {
-                                on_answer(cx);
-                            }
-                            Phase::Said(text.to_string().into())
+                    Ok(AiExplanation::Told { text }) => {
+                        if let Some(on_answer) = &on_answer {
+                            on_answer(cx);
                         }
-                        None => Phase::Refused(
-                            answer["problem"]
-                                .as_str()
-                                .unwrap_or("unavailable")
-                                .to_string(),
-                        ),
-                    },
-                    Err(cause) => Phase::Refused(cause.message),
+                        Phase::Said(text.into())
+                    }
+                    Ok(AiExplanation::Refused { problem }) => Phase::Refused(problem),
+                    Err(cause) => Phase::Failed(cause.message),
                 });
                 cx.notify();
                 handle(cx).update(cx, |ai, cx| ai.refresh(cx));
@@ -223,15 +219,14 @@ impl Explainer {
 }
 
 /// What a refusal says.
-fn refusal_text(problem: &str) -> &str {
+fn refusal_text(problem: AiProblem) -> &'static str {
     match problem {
-        "connect" => "Sign in to ChatGPT again.",
-        "limit" => "ChatGPT usage limit reached.",
-        "ineligible" => "This ChatGPT plan can't be used here.",
-        "unsupported" => "This model can't answer here.",
-        "unverified" => "No reliable explanation for this one.",
-        "unavailable" => "ChatGPT is unavailable. Try again.",
-        other => other,
+        AiProblem::Connect => "Sign in to ChatGPT again.",
+        AiProblem::Limit => "ChatGPT usage limit reached.",
+        AiProblem::Ineligible => "This ChatGPT plan can't be used here.",
+        AiProblem::Unsupported => "This model can't answer here.",
+        AiProblem::Unverified => "No reliable explanation for this one.",
+        AiProblem::Unavailable => "ChatGPT is unavailable. Try again.",
     }
 }
 
@@ -249,14 +244,17 @@ pub fn explain_block(
     id: &'static str,
     label: &'static str,
     explainer: &Entity<Explainer>,
-    request: Value,
+    request: AiRequest,
     on_answer: Option<OnAnswer>,
     cx: &App,
     palette: &Palette,
 ) -> Option<AnyElement> {
     let ai = handle(cx);
     let state = explainer.read(cx);
-    let phase = state.phase.clone().filter(|_| state.request == request);
+    let phase = state
+        .phase
+        .clone()
+        .filter(|_| state.request.as_ref() == Some(&request));
     if !ai.read(cx).connected() && phase.is_none() {
         return None;
     }
@@ -301,8 +299,8 @@ pub fn explain_block(
             )
             .into_any_element(),
         Some(Phase::Refused(problem)) => {
-            let action = match problem.as_str() {
-                "connect" => Some(
+            let action = match problem {
+                AiProblem::Connect => Some(
                     Button::new("ai-connect-again")
                         .outline()
                         .small()
@@ -312,8 +310,8 @@ pub fn explain_block(
                         })
                         .into_any_element(),
                 ),
-                "limit" => Some(manage_usage("ai-limit-usage").into_any_element()),
-                "unavailable" => Some(
+                AiProblem::Limit => Some(manage_usage("ai-limit-usage").into_any_element()),
+                AiProblem::Unavailable => Some(
                     Button::new("ai-retry")
                         .outline()
                         .small()
@@ -323,13 +321,12 @@ pub fn explain_block(
                 ),
                 _ => None,
             };
-            panel(
-                div()
-                    .child(refusal_text(&problem).to_string())
-                    .into_any_element(),
-            )
-            .children(action)
-            .into_any_element()
+            panel(div().child(refusal_text(problem)).into_any_element())
+                .children(action)
+                .into_any_element()
+        }
+        Some(Phase::Failed(message)) => {
+            panel(div().child(message).into_any_element()).into_any_element()
         }
     })
 }

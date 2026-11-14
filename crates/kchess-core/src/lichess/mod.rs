@@ -1,5 +1,4 @@
-//! Lichess: accounts, online play, challenges, tournaments, studies, spectating and lookups (see
-//! RUST_MIGRATION.md).
+//! Lichess: accounts, online play, challenges, tournaments, studies, spectating and lookups.
 
 pub mod accounts;
 pub mod adapters;
@@ -18,3 +17,11 @@ pub mod stream;
 pub mod studies;
 pub mod tournaments;
 pub mod watch;
+
+/// Whether `text` is a Lichess id of a game, study, chapter or puzzle: eight ASCII letters or
+/// digits.
+pub fn is_lichess_id(text: &str) -> bool {
+    text.len() == 8 && text.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+pub(crate) use crate::tasks::aborted;

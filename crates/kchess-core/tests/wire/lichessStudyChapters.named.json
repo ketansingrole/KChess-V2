@@ -1,0 +1,1 @@
+[{"name":"Example","pgn":"[Site \"https://lichess.org/study/Study001/Chapter1\"]\n[Event \"Example\"]\n[Result \"*\"]\n\n1. e4 {Keep} e5 (1... c5 $1) *"},{"name":"Other","pgn":"[Event \"Other\"]\n\n1. d4 *"},{"name":"Named","pgn":"[ChapterName \"Named\"]\n\n1. c4 *"}]

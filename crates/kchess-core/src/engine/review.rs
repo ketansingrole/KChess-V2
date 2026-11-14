@@ -6,9 +6,8 @@
 //! use, and (unless allowed) not on battery. A Lichess game is first looked up on Lichess, in
 //! case it was already analysed there.
 //!
-//! The TypeScript module state lives in `Reviews`' `State`, one per core instance. Storage is
-//! reached through `ReviewStorage` and the host through `ReviewHost`, so the core can plug in the
-//! real store and event delivery later. Battery state comes from the engine scheduler.
+//! Reviews are stored through `ReviewStore` and the host is reached through `ReviewHost`. Battery
+//! state comes from the engine scheduler.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,18 +15,27 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
+use kchess_domain::records::review::{Score, is_reviewable_perf};
 use kchess_domain::replay::{ReplayedPosition, replay_positions_in};
+use kchess_domain::variant::Variant;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use tokio::sync::watch;
 use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::status::{engine_identity, engine_status, fairy_variant, variant_engine_status};
-use super::uci::{UciController, lock, search_cancelled, signal_aborted};
-use super::{EngineContext, after, clear_timer, domain, now_ms, parse_info, replace_timer};
-use crate::error::{CoreError, Result};
+use super::job;
+use super::scheduler::Priority;
+use super::slot::{EngineSlot, OpenEngine};
+use super::status::fairy_variant;
+use super::uci::search_cancelled;
+use super::{EngineContext, after, clear_timer, replace_timer};
 use crate::host::Level;
+use crate::store::{Database, StoreContext, reviews};
+use crate::tasks::{aborted as signal_aborted, lock};
+use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result};
+use kchess_domain::training::uci_info::parse_info;
 
 /// Depth of the quick first pass, and of the review that is kept.
 const QUICK_DEPTH: u32 = 10;
@@ -40,19 +48,16 @@ const SAVE_EVERY: usize = 6;
 /// How often paused automatic reviews look again whether they may run.
 const RECHECK_MS: u64 = 30_000;
 /// Free the engine after this long with nothing to review.
-const IDLE_MS: u64 = 60_000;
+const IDLE: Duration = Duration::from_secs(60);
 /// Automatic reviews of games from this long ago (`reviewAuto: 'recent'`).
 const RECENT_MS: i64 = 30 * 86_400_000;
 /// Principal variation moves kept per evaluation.
 const PV_LENGTH: usize = 10;
-/// The message of a review that failed without one of its own.
-const NO_ENGINE: &str = "Stockfish could not be found. Choose an engine in Settings.";
 
-/// The settings a review reads (`CoreSettings`' review fields).
+/// The settings a review reads.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewSettings {
-    /// `'off'`, `'recent'` or `'all'`.
     #[serde(default)]
     pub review_auto: String,
     #[serde(default)]
@@ -61,117 +66,13 @@ pub struct ReviewSettings {
     pub engine_path: String,
 }
 
-/// Why automatic reviews are on hold (`ReviewStatus.paused`). `busy` reports only `Engine` and
-/// `Online`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Pause {
-    Battery,
-    Engine,
-    Online,
-    Off,
-}
+use kchess_contracts::types::ReviewSource;
+pub use kchess_contracts::types::{
+    ReviewCurrent as ReviewProgress, ReviewEval, ReviewFailure, ReviewPause as Pause,
+    ReviewRequest, ReviewStatus, ReviewUpdate, StoredReview,
+};
 
-/// The score of one position (`ReviewEval`).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewEval {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cp: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mate: Option<f64>,
-    /// The engine's move in this position (UCI).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub best: Option<String>,
-    /// The line the engine expects after its move.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pv: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub depth: Option<f64>,
-}
-
-/// A review as stored (`StoredReview`). Fields this module does not read are kept in `extra`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StoredReview {
-    /// `reviewKey(fen, moves)`: the same moves from the same start share one review.
-    pub key: String,
-    pub fen: String,
-    /// UCI, from `fen`.
-    pub moves: Vec<String>,
-    /// `'local'` or `'lichess'`.
-    pub source: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub engine: Option<String>,
-    /// Index 0 is the starting position, index i the position after move i.
-    pub evals: Vec<Option<ReviewEval>>,
-    pub depth: u32,
-    pub complete: bool,
-    pub updated_at: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub game_id: Option<String>,
-    #[serde(flatten)]
-    pub extra: Map<String, Value>,
-}
-
-/// What a store answers when it saves a review: the review kept and its summary.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ReviewUpdate {
-    pub review: StoredReview,
-    /// `ReviewSummary`, as the store computes it.
-    pub summary: Value,
-}
-
-/// The review being worked on (`ReviewStatus.current`).
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewProgress {
-    pub key: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub game_id: Option<String>,
-    pub done: usize,
-    pub total: usize,
-    pub background: bool,
-}
-
-/// The last review asked for that could not be done (`ReviewStatus.failed`).
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ReviewFailure {
-    pub key: String,
-    pub message: String,
-}
-
-/// The payload of `review:status`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewStatus {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub current: Option<ReviewProgress>,
-    /// Reviews waiting, asked for and automatic.
-    pub waiting: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub paused: Option<Pause>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub failed: Option<ReviewFailure>,
-}
-
-/// A game someone asked to review (`ReviewRequest`).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewRequest {
-    pub fen: String,
-    pub moves: Vec<String>,
-    /// A Lichess game: its own analysis is fetched first when it has one.
-    #[serde(default)]
-    pub game_id: Option<String>,
-    #[serde(default)]
-    pub account: Option<String>,
-    /// The Lichess key of a variant game's variant, which Fairy-Stockfish reviews.
-    #[serde(default)]
-    pub variant: Option<String>,
-}
-
-/// A synced game that may be reviewed automatically (`GameToReview`).
+/// A synced game that may be reviewed automatically.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GameToReview {
@@ -185,67 +86,97 @@ pub struct GameToReview {
     pub checked: bool,
 }
 
-/// The store the review reads and writes (the functions the review calls). Implementations must be safe to call from any thread.
-///
-/// Async since the store moved off the executor (`Database::call_async`): every method returns a
-/// boxed future, so out-of-tree implementers wrap each body in `Box::pin(async move { ... })` and
-/// `.await` the trait at call sites. The `write_review_if`/`mark_checked_if` helpers keep their
-/// default bodies; only the five base methods need implementing.
-pub trait ReviewStorage: Send + Sync + 'static {
-    /// `readReview(key)`.
-    fn read_review<'a>(
-        &'a self,
-        key: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, Result<Option<StoredReview>>>;
-    /// `writeReview(review)`: saves `review` unless a better one is stored (a Lichess review
-    /// beats a local one, a finished one beats one in progress), links its game, and returns
-    /// what is stored with its summary.
-    fn write_review<'a>(
-        &'a self,
-        review: StoredReview,
-    ) -> futures_util::future::BoxFuture<'a, Result<ReviewUpdate>>;
-    /// Rechecks the owner after waiting for storage admission, before writing.
-    fn write_review_if<'a>(
-        &'a self,
-        review: StoredReview,
-        current: &'a (dyn Fn() -> bool + Sync),
-    ) -> BoxFuture<'a, Result<ReviewUpdate>> {
-        Box::pin(async move {
-            if !current() {
-                return Err(CoreError::new("Review was discarded."));
-            }
-            self.write_review(review).await
-        })
+/// The automatic reviews look at most this many games per pass.
+const REVIEW_LIMIT: usize = 300;
+
+/// The reviews in `kchess.db`, through the one shared connection.
+#[derive(Clone)]
+pub struct ReviewStore(Arc<Database>);
+
+pub(crate) fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
+    serde_json::from_value(value).map_err(|cause| CoreError::new(cause.to_string()))
+}
+
+impl ReviewStore {
+    pub fn new(database: Arc<Database>) -> ReviewStore {
+        ReviewStore(database)
     }
-    /// `hasAccount(username)`: whether the account is still on this device.
-    fn has_account<'a>(
-        &'a self,
-        username: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, Result<bool>>;
-    /// `markChecked(ids)`: Lichess was asked for these games' analysis.
-    fn mark_checked<'a>(
-        &'a self,
-        ids: &'a [String],
-    ) -> futures_util::future::BoxFuture<'a, Result<()>>;
-    fn mark_checked_if<'a>(
-        &'a self,
-        ids: &'a [String],
-        current: &'a (dyn Fn() -> bool + Sync),
-    ) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
-            if !current() {
-                return Err(CoreError::aborted("Review was discarded."));
-            }
-            self.mark_checked(ids).await
-        })
+
+    /// The review stored under `key`.
+    pub async fn read_review(&self, key: &str) -> Result<Option<StoredReview>> {
+        let key = key.to_string();
+        self.0
+            .read_async(move |ctx| reviews::read_review(ctx.host, ctx.db, &key))
+            .await
     }
-    /// `gamesToReview(accounts, since)`: finished games of these accounts with no finished
-    /// review, newest first, played after `since` (ms).
-    fn games_to_review<'a>(
-        &'a self,
-        accounts: &'a [String],
+
+    /// Saves `review` unless a better one is stored (a Lichess review beats a local one, a
+    /// finished one beats one in progress), links its game, and returns what is stored with its
+    /// summary. Nothing is written, and None returned, when `current` no longer holds once the
+    /// database admits the write.
+    pub async fn write_review_if(
+        &self,
+        review: StoredReview,
+        current: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Option<ReviewUpdate>> {
+        self.0
+            .write_admitted(|| {
+                let wanted = current();
+                Ok(move |ctx: &StoreContext| {
+                    wanted
+                        .then(|| reviews::write_review(ctx.host, ctx.db, review))
+                        .transpose()
+                })
+            })
+            .await
+    }
+
+    /// Whether the account is still on this device.
+    pub async fn has_account(&self, username: &str) -> Result<bool> {
+        let username = username.to_string();
+        self.0
+            .read_async(move |ctx| reviews::has_account(ctx.db, &username))
+            .await
+    }
+
+    /// Marks these games as looked up on Lichess, unless `current` no longer holds once the
+    /// database admits the write. Whether they were marked.
+    pub async fn mark_checked_if(
+        &self,
+        ids: &[String],
+        current: &(dyn Fn() -> bool + Sync),
+    ) -> Result<bool> {
+        let ids = ids.to_vec();
+        self.0
+            .write_admitted(|| {
+                let wanted = current();
+                let at = now_ms() as f64;
+                Ok(move |ctx: &StoreContext| {
+                    if wanted {
+                        reviews::mark_checked(ctx.db, &ids, at)?;
+                    }
+                    Ok(wanted)
+                })
+            })
+            .await
+    }
+
+    /// Finished games of these accounts with no finished review, newest first, played after
+    /// `since` (ms).
+    pub async fn games_to_review(
+        &self,
+        accounts: &[String],
         since: i64,
-    ) -> futures_util::future::BoxFuture<'a, Result<Vec<GameToReview>>>;
+    ) -> Result<Vec<GameToReview>> {
+        let accounts = accounts.to_vec();
+        let value = self
+            .0
+            .read_async(move |ctx| {
+                reviews::games_to_review(ctx.db, &accounts, since as f64, REVIEW_LIMIT as f64)
+            })
+            .await?;
+        parse(value)
+    }
 }
 
 /// The host the review talks to: settings, the accounts, what else needs the computer, Lichess,
@@ -264,9 +195,7 @@ pub trait ReviewHost: Send + Sync + 'static {
         account: &str,
         ids: &[String],
     ) -> BoxFuture<'_, Result<Vec<StoredReview>>>;
-    /// `review:update`.
     fn update(&self, update: ReviewUpdate);
-    /// `review:status`.
     fn status(&self, status: ReviewStatus);
 }
 
@@ -292,12 +221,6 @@ struct Job {
     requested: u64,
 }
 
-#[derive(Clone)]
-struct ReviewEngine {
-    key: String,
-    uci: Arc<UciController>,
-}
-
 /// The review service's state.
 #[derive(Default)]
 struct State {
@@ -318,16 +241,15 @@ struct State {
     skipped: HashSet<String>,
     pumping: bool,
     recheck: Option<AbortHandle>,
-    engine: Option<ReviewEngine>,
-    /// The search in progress, with the ticket that identifies it (`searchController`).
+    /// The search in progress, with the ticket that identifies it.
     search: Option<(u64, CancellationToken)>,
     search_ticket: u64,
-    idle: Option<AbortHandle>,
 }
 
 struct Shared {
     ctx: EngineContext,
-    storage: Arc<dyn ReviewStorage>,
+    engine: Arc<EngineSlot>,
+    storage: ReviewStore,
     state: Mutex<State>,
     /// `true` while no pump runs; `stop_reviews` waits for it (`drain`).
     idle_tx: watch::Sender<bool>,
@@ -354,10 +276,12 @@ pub struct Reviews {
 }
 
 impl Reviews {
-    pub fn new(ctx: EngineContext, storage: Arc<dyn ReviewStorage>) -> Reviews {
+    pub fn new(ctx: EngineContext, database: Arc<Database>) -> Reviews {
+        let storage = ReviewStore::new(database);
         let (idle_tx, _) = watch::channel(true);
         Reviews {
             shared: Arc::new(Shared {
+                engine: EngineSlot::new(ctx.clone(), IDLE),
                 ctx,
                 storage,
                 state: Mutex::new(State::default()),
@@ -366,18 +290,17 @@ impl Reviews {
         }
     }
 
-    /// `setupReviews`: installs the host and looks for automatic work soon.
+    /// Installs the host and looks for automatic work soon.
     pub fn setup_reviews(&self, host: Arc<dyn ReviewHost>) {
         lock(&self.shared.state).host = Some(host);
         schedule_recheck(&self.shared, 10_000);
     }
 
-    /// `reviewStatus`.
     pub fn review_status(&self) -> ReviewStatus {
         review_status_of(&self.shared)
     }
 
-    /// `getReview(fen, moves)`: the stored review of these moves, if any.
+    /// The stored review of these moves, if any.
     pub async fn get_review(
         &self,
         fen: &str,
@@ -390,11 +313,11 @@ impl Reviews {
             return Ok(None);
         }
         let upto = (positions.len() - 1).min(moves.len());
-        let key = review_key(&positions[0].fen, &moves[..upto], variant)?;
+        let key = review_key(&positions[0].fen, &moves[..upto], variant);
         self.shared.storage.read_review(&key).await
     }
 
-    /// `requestReview(request)`: reviews a game now, ahead of automatic reviews. Returns what is
+    /// Reviews a game now, ahead of automatic reviews. Returns what is
     /// already stored (complete or not); updates arrive as the review goes on.
     pub async fn request_review(&self, request: ReviewRequest) -> Result<Option<StoredReview>> {
         let s = &self.shared;
@@ -429,17 +352,16 @@ impl Reviews {
             Some(game) => {
                 let mut base = cached.unwrap_or_else(|| empty_review(&job));
                 base.game_id = Some(game.clone());
-                match s.storage.write_review_if(base, &current).await {
-                    Ok(update) => Some(update.review),
-                    Err(_) if !current() => return Ok(None),
-                    Err(cause) => return Err(cause),
+                match s.storage.write_review_if(base, &current).await? {
+                    Some(update) => Some(update.review),
+                    None => return Ok(None),
                 }
             }
             None => cached,
         };
         if let Some(review) = &stored
             && review.complete
-            && review.source == "lichess"
+            && review.source == ReviewSource::Lichess
         {
             return Ok(Some(review.clone()));
         }
@@ -472,7 +394,7 @@ impl Reviews {
         Ok(stored)
     }
 
-    /// `cancelReview(key)`: stops reviewing these moves (what is done so far is kept).
+    /// Stops reviewing these moves (what is done so far is kept).
     pub fn cancel_review(&self, key: &str) {
         {
             let mut state = lock(&self.shared.state);
@@ -492,7 +414,7 @@ impl Reviews {
         send_status(&self.shared);
     }
 
-    /// `discardAccountReviews(accounts)`: logout must prevent an interrupted review from restoring
+    /// Logout must prevent an interrupted review from restoring
     /// deleted account data. Queued reviews of these accounts go, and the one running is
     /// cancelled and its output dropped.
     pub fn discard_account_reviews(&self, accounts: &[String]) {
@@ -521,22 +443,22 @@ impl Reviews {
         send_status(&self.shared);
     }
 
-    /// `reviewsChanged`: settings changed or a sync finished; look again for work.
+    /// Settings changed or a sync finished; look again for work.
     pub fn reviews_changed(&self) {
         kick(&self.shared);
     }
 
-    /// `restartReviewEngine`: the engine was deleted or replaced. The review in progress stops,
+    /// The engine was deleted or replaced. The review in progress stops,
     /// keeping its work, and the engine is dropped.
     pub fn restart_review_engine(&self) {
-        let mut state = lock(&self.shared.state);
+        let state = lock(&self.shared.state);
         if let Some(running) = &state.running {
             running.cancelled.store(true, Ordering::SeqCst);
         }
-        close_engine_locked(&mut state);
+        close_engine_locked(&self.shared, &state);
     }
 
-    /// `stopReviews`: the app is quitting. The queue empties, the running review stops, and this
+    /// The app is quitting. The queue empties, the running review stops, and this
     /// returns once no pump is running.
     pub async fn stop_reviews(&self) {
         let s = &self.shared;
@@ -551,13 +473,13 @@ impl Reviews {
                 running.cancelled.store(true, Ordering::SeqCst);
             }
             clear_timer(&mut state.recheck);
-            close_engine_locked(&mut state);
+            close_engine_locked(s, &state);
             state.host = None;
         }
         let mut idle = s.idle_tx.subscribe();
         let _ = idle.wait_for(|idle| *idle).await;
+        s.engine.close();
         let mut state = lock(&s.state);
-        clear_timer(&mut state.idle);
         state.skipped.clear();
         state.progress = None;
         state.paused = None;
@@ -566,31 +488,25 @@ impl Reviews {
     }
 }
 
-/// The variant a review plays by: a variant Fairy-Stockfish reviews, or empty for standard chess
-/// and Chess960.
-fn fairy_key(variant: Option<&str>) -> &str {
+/// The variant a review plays by: a variant Fairy-Stockfish reviews, or standard chess (for
+/// Chess960 too).
+fn fairy_key(variant: Option<&str>) -> Variant {
     variant
-        .filter(|variant| fairy_variant(variant).is_some())
-        .unwrap_or("")
+        .and_then(Variant::from_key)
+        .filter(|variant| variant.fairy_name().is_some())
+        .unwrap_or_default()
 }
 
-/// `reviewKey(fen, moves, variant)` for a list of moves.
-fn review_key(fen: &str, moves: &[String], variant: &str) -> Result<String> {
-    let mut args = vec![json!(fen), json!(moves)];
-    if !variant.is_empty() {
-        args.push(json!(variant));
-    }
-    let key = domain("reviewKey", args)?;
-    key.as_str()
-        .map(str::to_string)
-        .ok_or_else(|| CoreError::new("reviewKey returned no key"))
+/// The key a review of `moves` from `fen` is stored under.
+fn review_key(fen: &str, moves: &[String], variant: Variant) -> String {
+    kchess_domain::records::review::review_key(fen, moves, Some(variant))
 }
 
-/// `jobFor(request, background)`: the job for a request, or None when its moves reach no position.
+/// The job for a request, or None when its moves reach no position.
 /// `requested` orders requests (0 for automatic reviews).
 fn job_for(request: &ReviewRequest, background: bool, requested: u64) -> Result<Option<Job>> {
-    let variant = fairy_key(request.variant.as_deref()).to_string();
-    let positions = replay_positions_in(&variant, &request.fen, &request.moves);
+    let variant = fairy_key(request.variant.as_deref());
+    let positions = replay_positions_in(variant, &request.fen, &request.moves);
     if positions.len() < 2 {
         return Ok(None);
     }
@@ -607,10 +523,14 @@ fn job_for(request: &ReviewRequest, background: bool, requested: u64) -> Result<
         }
         prefixes.push(format!(" moves {acc}"));
     }
-    let key = review_key(&fen, &moves, &variant)?;
+    let key = review_key(&fen, &moves, variant);
     Ok(Some(Job {
         key,
-        variant,
+        variant: if variant.is_standard() {
+            String::new()
+        } else {
+            variant.key().to_string()
+        },
         fen,
         moves,
         positions,
@@ -631,60 +551,53 @@ fn account_in(job: &Job, names: &HashSet<String>) -> bool {
 }
 
 fn empty_review(job: &Job) -> StoredReview {
-    let mut extra = Map::new();
-    if !job.variant.is_empty() {
-        extra.insert("variant".into(), json!(job.variant));
-    }
     StoredReview {
         key: job.key.clone(),
         fen: job.fen.clone(),
         moves: job.moves.clone(),
-        source: "local".to_string(),
+        source: ReviewSource::Local,
         engine: None,
         evals: vec![None; job.positions.len()],
         depth: FULL_DEPTH,
         complete: false,
         updated_at: now_ms(),
         game_id: job.game_id.clone(),
-        extra,
+        judgments: None,
+        accuracy: None,
+        variant: (!job.variant.is_empty()).then(|| job.variant.clone()),
+        rest: Map::new(),
     }
 }
 
-/// `hasScore`: whether the evaluation carries a score (the rules decide).
+/// Whether the evaluation carries a score.
 fn has_score(score: Option<&ReviewEval>) -> bool {
-    let value = score.map_or(Value::Null, |score| {
-        serde_json::to_value(score).unwrap_or(Value::Null)
-    });
-    domain("hasScore", vec![value])
-        .ok()
-        .and_then(|result| result.as_bool())
-        .unwrap_or(false)
+    score.is_some_and(|score| score.cp.is_some() || score.mate.is_some())
 }
 
-/// `endEval(end, turn)`: the score of a finished game's last position.
-fn end_eval(end: &str, turn: &str) -> Result<ReviewEval> {
-    let score = domain("endEval", vec![json!(end), json!(turn)])?;
-    serde_json::from_value(score).map_err(|cause| CoreError::new(cause.to_string()))
+/// The score of a finished game's last position.
+fn end_eval(end: &str, turn: &str) -> ReviewEval {
+    let (cp, mate) = match kchess_domain::records::review::end_eval(end, turn) {
+        Score::Cp(cp) => (Some(cp), None),
+        Score::Mate(mate) => (None, Some(mate)),
+    };
+    ReviewEval {
+        cp,
+        mate,
+        ..ReviewEval::default()
+    }
 }
 
 /// The variant a synced game of `perf` is reviewed in, if it is reviewed automatically: standard
 /// chess for the standard speeds, else the variant its perf names (Stockfish reviews Chess960,
 /// Fairy-Stockfish the others).
-fn synced_variant(perf: &str) -> Result<Option<&str>> {
-    Ok(if is_reviewable_perf(perf)? {
+fn synced_variant(perf: &str) -> Option<&str> {
+    if is_reviewable_perf(perf) {
         Some("standard")
     } else if perf == "chess960" || fairy_variant(perf).is_some() {
         Some(perf)
     } else {
         None
-    })
-}
-
-/// `isReviewablePerf(perf)`: standard speeds only.
-fn is_reviewable_perf(perf: &str) -> Result<bool> {
-    Ok(domain("isReviewablePerf", vec![json!(perf)])?
-        .as_bool()
-        .unwrap_or(false))
+    }
 }
 
 fn host_of(s: &Shared) -> Option<Arc<dyn ReviewHost>> {
@@ -705,7 +618,7 @@ fn review_status_of(s: &Shared) -> ReviewStatus {
     }
 }
 
-/// `sendStatus`: the host hears of the status outside the state lock.
+/// The host hears of the status outside the state lock.
 fn send_status(s: &Shared) {
     let Some(host) = host_of(s) else { return };
     host.status(review_status_of(s));
@@ -719,7 +632,7 @@ fn kick(s: &Arc<Shared>) {
     runtime.spawn(pump(Arc::clone(s)));
 }
 
-/// `scheduleRecheck(ms)`: looks again for work after `ms`.
+/// Looks again for work after `ms`.
 fn schedule_recheck(s: &Arc<Shared>, ms: u64) {
     let weak: Weak<Shared> = Arc::downgrade(s);
     let timer = after(ms, move || {
@@ -730,22 +643,19 @@ fn schedule_recheck(s: &Arc<Shared>, ms: u64) {
     replace_timer(&mut lock(&s.state).recheck, timer);
 }
 
-/// `closeEngine` under the state lock: forgets the engine and stops its search.
-fn close_engine_locked(state: &mut State) {
-    clear_timer(&mut state.idle);
+/// Under the state lock: stops the search and closes the engine.
+fn close_engine_locked(s: &Shared, state: &State) {
     if let Some((_, token)) = &state.search {
         token.cancel();
     }
-    if let Some(engine) = state.engine.take() {
-        engine.uci.close();
-    }
+    s.engine.close();
 }
 
 fn close_engine(s: &Shared) {
-    close_engine_locked(&mut lock(&s.state));
+    close_engine_locked(s, &lock(&s.state));
 }
 
-/// Why automatic reviews may not run now, if they may not (`backgroundBlock`).
+/// Why automatic reviews may not run now, if they may not.
 async fn background_block(s: &Arc<Shared>) -> Result<Option<Pause>> {
     let Some(host) = host_of(s) else {
         return Ok(Some(Pause::Off));
@@ -763,17 +673,18 @@ async fn background_block(s: &Arc<Shared>) -> Result<Option<Pause>> {
     Ok(None)
 }
 
-/// The next synced game to review automatically, looking it up on Lichess first.
+/// The next synced game to review automatically, looking it up on Lichess first. Stopping clears
+/// the host and moves the epoch together, so an unchanged epoch says the pass is still wanted.
 async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
     let current_epoch = |s: &Shared| lock(&s.state).review_epoch;
     loop {
         let epoch = current_epoch(s);
-        let current = || epoch == current_epoch(s) && host_of(s).is_some();
+        let current = || epoch == current_epoch(s);
         let Some(host) = host_of(s) else {
             return Ok(None);
         };
         let settings = host.settings().await?;
-        if host_of(s).is_none() || epoch != current_epoch(s) {
+        if epoch != current_epoch(s) {
             return Ok(None);
         }
         let accounts = host.accounts().await?;
@@ -788,7 +699,7 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
         let skipped = lock(&s.state).skipped.clone();
         let mut games = Vec::new();
         for game in s.storage.games_to_review(&accounts, since).await? {
-            if !skipped.contains(&game.id) && synced_variant(&game.perf)?.is_some() {
+            if !skipped.contains(&game.id) && synced_variant(&game.perf).is_some() {
                 games.push(game);
             }
         }
@@ -811,10 +722,9 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
                         return Ok(None);
                     }
                     for review in found {
-                        let update = match s.storage.write_review_if(review, &current).await {
-                            Ok(update) => update,
-                            Err(_) if !current() => return Ok(None),
-                            Err(cause) => return Err(cause),
+                        let Some(update) = s.storage.write_review_if(review, &current).await?
+                        else {
+                            return Ok(None);
                         };
                         host.update(update);
                     }
@@ -831,27 +741,28 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
                     if epoch != current_epoch(s) {
                         return Ok(None);
                     }
-                    match s.storage.mark_checked_if(&ids, &current).await {
-                        Ok(()) => {}
-                        Err(_) if !current() => return Ok(None),
-                        Err(cause) => return Err(cause),
+                    if !s.storage.mark_checked_if(&ids, &current).await? {
+                        return Ok(None);
                     }
                 }
             }
             continue;
         }
         for game in games {
-            let (fen, moves) = match synced_variant(&game.perf)? {
+            let (fen, moves) = match synced_variant(&game.perf) {
                 Some("standard") | None => {
                     kchess_domain::review::lichess_line(&game.moves, game.pgn.as_deref(), None)
                 }
-                Some(variant) => kchess_domain::review::lichess_line_in(
-                    variant,
-                    &game.moves,
-                    game.pgn.as_deref(),
-                    None,
-                )
-                .unwrap_or_default(),
+                Some(variant) => Variant::from_key(variant)
+                    .and_then(|variant| {
+                        kchess_domain::review::lichess_line_in(
+                            variant,
+                            &game.moves,
+                            game.pgn.as_deref(),
+                            None,
+                        )
+                    })
+                    .unwrap_or_default(),
             };
             let variant = fairy_variant(&game.perf).map(|_| game.perf.clone());
             let request = ReviewRequest {
@@ -869,20 +780,12 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
                         return Ok(None);
                     }
                     if let Some(existing) = existing.filter(|review| review.complete) {
-                        match s
-                            .storage
-                            .write_review_if(
-                                StoredReview {
-                                    game_id: Some(game.id.clone()),
-                                    ..existing
-                                },
-                                &current,
-                            )
-                            .await
-                        {
-                            Ok(_) => {}
-                            Err(_) if !current() => return Ok(None),
-                            Err(cause) => return Err(cause),
+                        let linked = StoredReview {
+                            game_id: Some(game.id.clone()),
+                            ..existing
+                        };
+                        if s.storage.write_review_if(linked, &current).await?.is_none() {
+                            return Ok(None);
                         }
                         continue;
                     }
@@ -902,7 +805,7 @@ fn host_log(s: &Shared, level: Level, message: &str) {
     s.ctx.host.log(level, "review", message);
 }
 
-/// `pump`: works through the queue while nothing else needs the computer. Only one pump runs.
+/// Works through the queue while nothing else needs the computer. Only one pump runs.
 async fn pump(s: Arc<Shared>) {
     {
         let mut state = lock(&s.state);
@@ -937,12 +840,10 @@ async fn pump(s: Arc<Shared>) {
     send_status(&s);
     let (arm_idle, asked) = {
         let state = lock(&s.state);
-        let present = state.host.is_some();
-        // The countdown only closes the engine: with none open (a pass that found nothing to
-        // review) it would just hold a task for a minute after every automatic look.
-        (
-            present && state.running.is_none() && state.asked.is_empty() && state.engine.is_some(),
-            present && !state.asked.is_empty(),
+        after_pass(
+            state.host.is_some(),
+            state.running.is_some(),
+            !state.asked.is_empty(),
         )
     };
     // A review asked for while this pass was deciding it had nothing to do found it still
@@ -952,14 +853,14 @@ async fn pump(s: Arc<Shared>) {
         kick(&s);
     }
     if arm_idle {
-        let weak = Arc::downgrade(&s);
-        let timer = after(IDLE_MS, move || {
-            if let Some(shared) = weak.upgrade() {
-                close_engine(&shared);
-            }
-        });
-        replace_timer(&mut lock(&s.state).idle, timer);
+        s.engine.release();
     }
+}
+
+/// After a pass, with the queue still set up (`present`): whether the engine's idle countdown
+/// starts (nothing runs or is asked for), and whether reviews are asked for.
+fn after_pass(present: bool, running: bool, asked: bool) -> (bool, bool) {
+    (present && !running && !asked, present && asked)
 }
 
 /// Works through the queue; whether it ended because it found nothing to do. A pass that ends
@@ -1025,10 +926,8 @@ async fn publish(s: &Shared, job: &Job, review: StoredReview) -> Result<()> {
         return Ok(());
     };
     let current = || !job.discarded.load(Ordering::SeqCst) && host_of(s).is_some();
-    let update = match s.storage.write_review_if(review, &current).await {
-        Ok(update) => update,
-        Err(_) if !current() => return Ok(()),
-        Err(cause) => return Err(cause),
+    let Some(update) = s.storage.write_review_if(review, &current).await? else {
+        return Ok(());
     };
     // A live game began meanwhile: keep what was done, but tell no window until it is over
     // (the pages read it again then).
@@ -1084,22 +983,16 @@ async fn run(s: &Arc<Shared>, job: Arc<Job>) {
             return;
         }
     };
-    if review.source == "lichess" && review.complete {
+    if review.source == ReviewSource::Lichess && review.complete {
         lock(&s.state).running = None;
         return;
     }
     if let Err(cause) = run_job(s, &job, &mut review).await {
-        let search_aborted = {
-            let state = lock(&s.state);
-            state
-                .search
-                .as_ref()
-                .is_some_and(|(_, token)| token.is_cancelled())
-                && state
-                    .engine
-                    .as_ref()
-                    .is_none_or(|engine| engine.uci.failed().is_none())
-        };
+        let search_aborted = lock(&s.state)
+            .search
+            .as_ref()
+            .is_some_and(|(_, token)| token.is_cancelled())
+            && s.engine.healthy();
         let interrupted = job.cancelled.load(Ordering::SeqCst) || cause.aborted || search_aborted;
         if interrupted {
             host_log(
@@ -1200,9 +1093,7 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
         return Ok(());
     }
     if !job.variant.is_empty() {
-        review
-            .extra
-            .insert("variant".into(), json!(job.variant.clone()));
+        review.variant = Some(job.variant.clone());
     }
     let target = open_engine(s, &settings.engine_path, &job.variant).await?;
     if review.engine.as_deref() != Some(target.key.as_str()) {
@@ -1211,7 +1102,6 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
         review.evals = vec![None; total];
     }
     target.uci.write("ucinewgame")?;
-    target.uci.write("setoption name Hash value 64")?;
     let passes: Vec<(u32, u64)> = if job.background.load(Ordering::SeqCst) {
         vec![(FULL_DEPTH, FULL_MS)]
     } else {
@@ -1222,7 +1112,7 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
         for index in 0..total {
             let known = review.evals[index].clone();
             if let Some(end) = job.positions[index].end {
-                review.evals[index] = Some(end_eval(end, job.positions[index].turn)?);
+                review.evals[index] = Some(end_eval(end, job.positions[index].turn));
             } else if !has_score(known.as_ref())
                 || known.as_ref().and_then(|known| known.depth).unwrap_or(0.0) < f64::from(depth)
             {
@@ -1270,42 +1160,12 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
     Ok(())
 }
 
-/// The review engine for `configured`, started or reused (`openEngine`).
-/// A variant game (`variant`, a Lichess key) gets the bundled Fairy-Stockfish.
-async fn open_engine(s: &Arc<Shared>, configured: &str, variant: &str) -> Result<ReviewEngine> {
-    clear_timer(&mut lock(&s.state).idle);
-    let status = if variant.is_empty() {
-        engine_status(&*s.ctx.host, &s.ctx.locations, configured).await
-    } else {
-        variant_engine_status(&*s.ctx.host, &s.ctx.locations).await
-    };
-    if !status.ready {
-        return Err(CoreError::new(if variant.is_empty() {
-            NO_ENGINE
-        } else {
-            "Fairy-Stockfish, which reviews this variant, is missing."
-        }));
-    }
-    let key = engine_identity(&status).await?;
-    let engine = {
-        let mut state = lock(&s.state);
-        let current = state
-            .engine
-            .as_ref()
-            .is_some_and(|engine| engine.key == key && engine.uci.failed().is_none());
-        if !current {
-            close_engine_locked(&mut state);
-            let uci = Arc::new(s.ctx.spawn(&status)?);
-            state.engine = Some(ReviewEngine {
-                key: key.clone(),
-                uci,
-            });
-        }
-        state
-            .engine
-            .clone()
-            .ok_or_else(|| CoreError::new("The engine is unavailable."))?
-    };
+/// The review engine for `configured`, started or reused. A variant game (`variant`, a Lichess
+/// key) gets the bundled Fairy-Stockfish.
+async fn open_engine(s: &Arc<Shared>, configured: &str, variant: &str) -> Result<OpenEngine> {
+    s.engine.keep();
+    let located = s.engine.locate(configured, !variant.is_empty()).await?;
+    let engine = s.engine.open(&located)?;
     engine.uci.ready().await?;
     Ok(engine)
 }
@@ -1313,7 +1173,7 @@ async fn open_engine(s: &Arc<Shared>, configured: &str, variant: &str) -> Result
 /// One position's score at `depth` within `ms` (`search`). Cancelling it reaches the engine.
 async fn search(
     s: &Arc<Shared>,
-    target: &ReviewEngine,
+    target: &OpenEngine,
     job: &Arc<Job>,
     index: usize,
     depth: u32,
@@ -1346,7 +1206,7 @@ async fn search(
 
 async fn search_once(
     s: &Arc<Shared>,
-    target: &ReviewEngine,
+    target: &OpenEngine,
     job: &Arc<Job>,
     index: usize,
     depth: u32,
@@ -1354,9 +1214,8 @@ async fn search_once(
     token: &CancellationToken,
 ) -> Result<ReviewEval> {
     let score = Arc::new(Mutex::new(ReviewEval::default()));
-    let stop_token = token.clone();
     s.ctx
-        .lease(1, move || stop_token.cancel(), token, async {
+        .lease(Priority::Review, token, async {
             let host = host_of(s);
             if job.cancelled.load(Ordering::SeqCst)
                 || host
@@ -1367,9 +1226,9 @@ async fn search_once(
             }
             // Threads follows the job: 1 in the background, the budget once someone asks for it
             // (a promoted job speeds up mid-review). `ensure_options` sends it only when it
-            // changes, so there is no round-trip per position. Chess960 is always on, as for
-            // analysis: castling is king-takes-rook in the moves, and an engine in standard mode
-            // reads that as an illegal move (the bundled engine then never answers `go`).
+            // changes, so there is no round-trip per position. The rules are as for analysis
+            // (`job::rules_option`): a standard-mode engine never answers `go` after a
+            // king-takes-rook castling.
             let threads = if job.background.load(Ordering::SeqCst) {
                 1
             } else {
@@ -1377,13 +1236,10 @@ async fn search_once(
             };
             let threads_text = threads.to_string();
             // A variant game tells Fairy-Stockfish its variant instead.
-            let rules = match fairy_variant(&job.variant) {
-                Some(name) => ("UCI_Variant", name),
-                None => ("UCI_Chess960", "true"),
-            };
+            let rules = job::rules_option(fairy_variant(&job.variant));
             target
                 .uci
-                .ensure_options(&[("Threads", threads_text.as_str()), rules])
+                .ensure_options(&[("Threads", threads_text.as_str()), ("Hash", "64"), rules])
                 .await?;
             if token.is_cancelled() {
                 return Err(signal_aborted());
@@ -1422,4 +1278,50 @@ async fn search_once(
             Ok(result)
         })
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_score_is_centipawns_or_mate() {
+        let cp = ReviewEval {
+            cp: Some(0.0),
+            ..ReviewEval::default()
+        };
+        let mate = ReviewEval {
+            mate: Some(2.0),
+            ..ReviewEval::default()
+        };
+        assert!(has_score(Some(&cp)) && has_score(Some(&mate)));
+        assert!(!has_score(Some(&ReviewEval::default())));
+        assert!(!has_score(None));
+    }
+
+    #[test]
+    fn the_engine_idles_only_when_nothing_runs_or_is_asked_for() {
+        for (present, running, asked, expected) in [
+            (true, false, false, (true, false)),
+            (true, false, true, (false, true)),
+            (true, true, false, (false, false)),
+            (false, false, false, (false, false)),
+            (false, false, true, (false, false)),
+        ] {
+            assert_eq!(
+                after_pass(present, running, asked),
+                expected,
+                "{present} {running} {asked}"
+            );
+        }
+    }
+
+    /// A game's end needs no engine: a draw is level, a mate is mate.
+    #[test]
+    fn the_end_of_a_game_is_scored_without_the_engine() {
+        assert_eq!(end_eval("stalemate", "white").cp, Some(0.0));
+        assert_eq!(end_eval("stalemate", "white").mate, None);
+        assert_eq!(end_eval("checkmate", "black").mate, Some(0.0));
+        assert_eq!(end_eval("checkmate", "black").cp, None);
+    }
 }

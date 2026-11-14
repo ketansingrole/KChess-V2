@@ -3,7 +3,7 @@
 //! a system notification in the background. An alert about the board being looked at is dropped.
 
 use gpui_kit::App;
-use kchess_contracts::types::Settings;
+use kchess_contracts::types::{NotificationKind, Settings};
 
 use crate::pages::Page;
 
@@ -79,7 +79,7 @@ fn open_from(tag: &str, action: Option<&str>, cx: &mut App) {
     if let Some(game) = tag.strip_prefix(CONFIRM_TAG) {
         return confirm_move(tag, game, action, cx);
     }
-    show_page(game_page(tag), cx);
+    show_page(NotificationKind::from_key(tag).and_then(game_page), cx);
 }
 
 /// KChess comes forward, on `page` when there is one.
@@ -106,11 +106,17 @@ fn answer_challenge(id: &str, action: Option<&str>, cx: &mut App) {
         .read(cx)
         .challenges
         .iter()
-        .find(|challenge| challenge["id"].as_str() == Some(id))
+        .find(|challenge| challenge.id == id)
         .cloned();
     match (action, challenge) {
         (Some("decline"), Some(challenge)) => {
-            online.update(cx, |online, cx| online.decline(&challenge, "generic", cx));
+            online.update(cx, |online, cx| {
+                online.decline(
+                    &challenge,
+                    kchess_contracts::types::DeclineReason::Generic,
+                    cx,
+                )
+            });
         }
         (Some("accept"), Some(challenge)) => {
             show_page(Some(Page::Online), cx);
@@ -139,12 +145,12 @@ fn move_actions() -> Vec<gpui_kit::SystemNotificationAction> {
 
 /// Alert the player that it is their move in correspondence `game`, which they can answer from
 /// the notification where the system takes typed text (Windows, macOS).
-pub fn your_move(game: &serde_json::Value, cx: &mut App) -> Outcome {
-    let account = game["account"].as_str().unwrap_or_default();
-    let id = game["gameId"].as_str().unwrap_or_default();
-    let opponent = game["opponent"]["name"].as_str().unwrap_or("your opponent");
+pub fn your_move(game: &kchess_contracts::types::OngoingGame, cx: &mut App) -> Outcome {
+    let account = &game.account;
+    let id = &game.game_id;
+    let opponent = &game.opponent.name;
     alert(
-        "opponentMove",
+        NotificationKind::OpponentMove,
         Some((format!("{MOVE_TAG}{account}/{id}"), move_actions())),
         &format!("Your move against {opponent}"),
         &format!("Correspondence game · @{account}"),
@@ -178,9 +184,9 @@ fn answer_move(game: &str, action: Option<&str>, cx: &mut App) {
         .read(cx)
         .ongoing
         .iter()
-        .find(|listed| listed["gameId"].as_str() == Some(id))
+        .find(|listed| listed.game_id == id)
         .cloned();
-    let Some(listed) = listed.filter(|listed| listed["isMyTurn"] == serde_json::json!(true)) else {
+    let Some(listed) = listed.filter(|listed| listed.is_my_turn) else {
         return post_tagged(
             format!("{MOVE_TAG}{game}"),
             "That game has moved on",
@@ -211,12 +217,7 @@ fn answer_move(game: &str, action: Option<&str>, cx: &mut App) {
         None => post_tagged(
             format!("{MOVE_TAG}{game}"),
             &format!("{text} is not a legal move"),
-            &format!(
-                "Your move against {}",
-                listed["opponent"]["name"]
-                    .as_str()
-                    .unwrap_or("your opponent")
-            ),
+            &format!("Your move against {}", listed.opponent.name),
             move_actions(),
             false,
             cx,
@@ -302,12 +303,12 @@ fn button(id: &str, label: &str) -> gpui_kit::SystemNotificationAction {
 }
 
 /// A system notification about `kind`, tagged with it; a game's offers Go to board.
-pub(crate) fn post(kind: &str, title: &str, body: &str, sound: bool, cx: &mut App) {
+pub(crate) fn post(kind: NotificationKind, title: &str, body: &str, sound: bool, cx: &mut App) {
     let actions = game_page(kind)
         .map(|_| button("open", "Go to board"))
         .into_iter()
         .collect();
-    post_tagged(kind.to_string(), title, body, actions, sound, cx);
+    post_tagged(kind.as_str().to_string(), title, body, actions, sound, cx);
 }
 
 /// Alert the player to a challenge `id` they received, with Accept and Decline where the system
@@ -315,7 +316,13 @@ pub(crate) fn post(kind: &str, title: &str, body: &str, sound: bool, cx: &mut Ap
 pub fn challenge(id: &str, title: &str, body: &str, cx: &mut App) -> Outcome {
     let tag = format!("{CHALLENGE_TAG}{id}");
     let actions = vec![button("accept", "Accept"), button("decline", "Decline")];
-    alert("challenge", Some((tag, actions)), title, body, cx)
+    alert(
+        NotificationKind::Challenge,
+        Some((tag, actions)),
+        title,
+        body,
+        cx,
+    )
 }
 
 /// Why an alert was not shown, or how it was.
@@ -330,34 +337,36 @@ pub enum Outcome {
 }
 
 /// The Settings switch for each kind; a test follows only the master switch.
-fn category(settings: &Settings, kind: &str) -> bool {
+fn category(settings: &Settings, kind: NotificationKind) -> bool {
     let core = &settings.frontend;
     match kind {
-        "opponentMove" => core.notify_opponent_move,
-        "lowTime" => core.notify_low_time,
-        "gameEvents" => core.notify_game_events,
-        "computerMove" => core.notify_computer_move,
-        "challenge" => core.notify_challenges,
-        _ => true,
+        NotificationKind::OpponentMove => core.notify_opponent_move,
+        NotificationKind::LowTime => core.notify_low_time,
+        NotificationKind::GameEvents => core.notify_game_events,
+        NotificationKind::ComputerMove => core.notify_computer_move,
+        NotificationKind::Challenge => core.notify_challenges,
+        NotificationKind::Test => true,
     }
 }
 
-/// The page that shows the game an alert is about (`GAME_PAGE`).
-fn game_page(kind: &str) -> Option<Page> {
+/// The page that shows the game an alert is about.
+fn game_page(kind: NotificationKind) -> Option<Page> {
     match kind {
-        "opponentMove" | "lowTime" | "gameEvents" => Some(Page::Online),
-        "computerMove" => Some(Page::Computer),
-        _ => None,
+        NotificationKind::OpponentMove
+        | NotificationKind::LowTime
+        | NotificationKind::GameEvents => Some(Page::Online),
+        NotificationKind::ComputerMove => Some(Page::Computer),
+        NotificationKind::Challenge | NotificationKind::Test => None,
     }
 }
 
 /// Whether to alert, and how: `away` is KChess in the background, `page` the page shown.
-pub fn decide(settings: &Settings, kind: &str, away: bool, page: Page) -> Outcome {
+pub fn decide(settings: &Settings, kind: NotificationKind, away: bool, page: Page) -> Outcome {
     let core = &settings.frontend;
     if !core.notifications_enabled {
         return Outcome::Disabled;
     }
-    if kind != "test" {
+    if kind != NotificationKind::Test {
         if !category(settings, kind) {
             return Outcome::CategoryOff;
         }
@@ -402,14 +411,14 @@ fn sender() -> String {
 #[cfg(target_os = "macos")]
 const DEV_SENDER: &str = "com.kchess.app.dev";
 
-/// Alert the player about `kind` (`notifyDesktop`).
-pub fn desktop(kind: &str, title: &str, body: &str, cx: &mut App) -> Outcome {
+/// Alert the player about `kind`.
+pub fn desktop(kind: NotificationKind, title: &str, body: &str, cx: &mut App) -> Outcome {
     alert(kind, None, title, body, cx)
 }
 
 /// `desktop`, with a system notification's own tag and buttons in place of its kind's.
 fn alert(
-    kind: &str,
+    kind: NotificationKind,
     tagged: Option<(String, Vec<gpui_kit::SystemNotificationAction>)>,
     title: &str,
     body: &str,
@@ -475,7 +484,7 @@ fn alert(
 mod tests {
     use super::{Outcome, decide};
     use crate::pages::Page;
-    use kchess_contracts::types::Settings;
+    use kchess_contracts::types::{NotificationKind, Settings};
 
     fn settings() -> Settings {
         let mut settings: Settings =
@@ -501,26 +510,32 @@ mod tests {
     #[test]
     fn alerts_follow_the_switches_and_the_window() {
         let mut on = settings();
-        assert_eq!(decide(&on, "lowTime", true, Page::Online), Outcome::System);
         assert_eq!(
-            decide(&on, "lowTime", false, Page::Dashboard),
+            decide(&on, NotificationKind::LowTime, true, Page::Online),
+            Outcome::System
+        );
+        assert_eq!(
+            decide(&on, NotificationKind::LowTime, false, Page::Dashboard),
             Outcome::InApp
         );
         // The board in front already shows it.
         assert_eq!(
-            decide(&on, "lowTime", false, Page::Online),
+            decide(&on, NotificationKind::LowTime, false, Page::Online),
             Outcome::Redundant
         );
         on.frontend.notify_low_time = false;
         assert_eq!(
-            decide(&on, "lowTime", true, Page::Online),
+            decide(&on, NotificationKind::LowTime, true, Page::Online),
             Outcome::CategoryOff
         );
         // A test needs only the master switch.
-        assert_eq!(decide(&on, "test", false, Page::Settings), Outcome::InApp);
+        assert_eq!(
+            decide(&on, NotificationKind::Test, false, Page::Settings),
+            Outcome::InApp
+        );
         on.frontend.notifications_enabled = false;
         assert_eq!(
-            decide(&on, "test", false, Page::Settings),
+            decide(&on, NotificationKind::Test, false, Page::Settings),
             Outcome::Disabled
         );
     }

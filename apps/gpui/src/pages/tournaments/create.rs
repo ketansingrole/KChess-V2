@@ -7,13 +7,14 @@ use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::Variant;
 use kchess_contracts::calls;
-use serde_json::{Value, json};
+use kchess_contracts::check::Username;
+use kchess_contracts::types::{NewArena, Reply};
 
 use super::TournamentsPage;
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::rules;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice};
 
@@ -29,26 +30,10 @@ const DURATIONS: [f64; 28] = [
     240., 270., 300., 330., 360., 420., 480., 540., 600., 720.,
 ];
 const WAITS: [f64; 10] = [1., 2., 3., 5., 10., 15., 20., 30., 45., 60.];
-const VARIANTS: [(&str, &str); 9] = [
-    ("standard", "Standard"),
-    ("chess960", "Chess960"),
-    ("kingOfTheHill", "King of the Hill"),
-    ("threeCheck", "Three-check"),
-    ("antichess", "Antichess"),
-    ("atomic", "Atomic"),
-    ("horde", "Horde"),
-    ("racingKings", "Racing Kings"),
-    ("crazyhouse", "Crazyhouse"),
-];
 const LATER: &str = "later";
 
 fn minutes_label(minutes: f64) -> String {
-    match minutes {
-        0.25 => "¼ min".into(),
-        0.5 => "½ min".into(),
-        0.75 => "¾ min".into(),
-        m => format!("{m} min"),
-    }
+    format!("{} min", crate::widgets::clock_minutes(minutes))
 }
 
 fn duration_label(minutes: f64) -> String {
@@ -146,9 +131,9 @@ impl CreateArena {
             key(60.),
         );
         let variant = select(
-            VARIANTS
+            kchess_domain::variant::Variant::ALL
                 .iter()
-                .map(|(value, label)| Choice::new(*value, *label))
+                .map(|variant| Choice::new(variant.key(), variant.label()))
                 .collect(),
             "standard".into(),
         );
@@ -222,7 +207,7 @@ impl CreateArena {
         if !self.later(cx) {
             return None;
         }
-        let soon = chrono::Utc::now().timestamp_millis() as f64 + 60_000.;
+        let soon = kchess_games::now_ms() + 60_000.;
         match parse_start(&self.start_at.read(cx).value()) {
             Some(at) if at >= soon => None,
             _ => Some("Pick a start time in the future"),
@@ -231,46 +216,35 @@ impl CreateArena {
 
     /// Lichess lets third-party apps play only Rapid and Classical arena games.
     fn playable_here(&self, cx: &App) -> bool {
-        rules(
-            "canBoardSeek",
-            &[
-                json!(Self::number(&self.clock, cx)),
-                json!(Self::number(&self.increment, cx)),
-            ],
+        kchess_domain::records::time_control::can_board_seek(
+            Self::number(&self.clock, cx),
+            Self::number(&self.increment, cx),
         )
-        .ok()
-            == Some(json!(true))
     }
 
-    fn arena(&self, cx: &App) -> Value {
-        let mut arena = json!({
-            "clockTime": Self::number(&self.clock, cx),
-            "clockIncrement": Self::number(&self.increment, cx),
-            "minutes": Self::number(&self.duration, cx),
-            "variant": self.variant.read(cx).selected_value().map_or("standard".into(), |v| v.to_string()),
-            "rated": self.rated,
-        });
-        // Unset fields are left out: the validators reject null.
-        let name = self.name.read(cx).value().trim().to_string();
-        if !name.is_empty() {
-            arena["name"] = json!(name);
+    fn arena(&self, cx: &App) -> NewArena {
+        let filled = |text: String| Some(text).filter(|text| !text.is_empty());
+        let later = self.later(cx);
+        NewArena {
+            name: filled(self.name.read(cx).value().trim().to_string()),
+            clock_time: Self::number(&self.clock, cx),
+            clock_increment: Self::number(&self.increment, cx),
+            minutes: Self::number(&self.duration, cx),
+            wait_minutes: (!later).then(|| Self::number(&self.start, cx)),
+            start_date: later
+                .then(|| parse_start(&self.start_at.read(cx).value()))
+                .flatten()
+                .map(|at| at as i64),
+            variant: self
+                .variant
+                .read(cx)
+                .selected_value()
+                .and_then(|key| Variant::from_key(key))
+                .unwrap_or(Variant::Standard),
+            rated: self.rated,
+            password: filled(self.password.read(cx).value().to_string()),
+            description: filled(self.description.read(cx).value().trim().to_string()),
         }
-        if self.later(cx) {
-            if let Some(at) = parse_start(&self.start_at.read(cx).value()) {
-                arena["startDate"] = json!(at);
-            }
-        } else {
-            arena["waitMinutes"] = json!(Self::number(&self.start, cx));
-        }
-        let password = self.password.read(cx).value().to_string();
-        if !password.is_empty() {
-            arena["password"] = json!(password);
-        }
-        let description = self.description.read(cx).value().trim().to_string();
-        if !description.is_empty() {
-            arena["description"] = json!(description);
-        }
-        arena
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -282,7 +256,7 @@ impl CreateArena {
         self.reconnect = false;
         cx.notify();
         let call = cx.global::<AppCore>().request(calls::CreateTournament {
-            account: json!(self.account),
+            account: Username(self.account.clone()),
             arena: self.arena(cx),
         });
         let page = self.page.clone();
@@ -291,8 +265,8 @@ impl CreateArena {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match answer {
-                    Ok(result) if result.get("needsReconnect").is_some() => this.reconnect = true,
-                    Ok(created) => {
+                    Ok(Reply::NeedsReconnect) => this.reconnect = true,
+                    Ok(Reply::Done(created)) => {
                         window.close_dialog(cx);
                         let _ = page.update(cx, |page, cx| page.created(&created, window, cx));
                     }

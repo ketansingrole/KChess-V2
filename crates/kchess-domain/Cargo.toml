@@ -7,7 +7,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-thiserror.workspace = true
 shakmaty.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
@@ -21,6 +20,8 @@ regex-syntax = "0.8"
 # Reads the rules corpus (tests/rules_corpus.rs).
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 sha2 = { version = "0.11", default-features = false }
+# The core's argument check, which the corpus pins for the methods it recorded.
+kchess-contracts = { path = "../kchess-contracts" }
 
 [lints]
 workspace = true

@@ -17,10 +17,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GPUI_LINUX_LIBS: >-
-    libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev
-    libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
-    desktop-file-utils
 
 jobs:
   validate:
@@ -34,9 +30,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # The workspace includes the app, which builds against these system headers.
-      - name: Install GPUI build libraries
-        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - uses: ./.github/actions/install-gpui-libs
       # Its CI ran `cargo xtask check` on this very commit.
       - name: Verify release metadata and the commit's CI
         run: cargo xtask release-verify
@@ -67,9 +61,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Install GPUI build libraries
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - uses: ./.github/actions/install-gpui-libs
       - name: Install NSIS
         if: runner.os == 'Windows'
         uses: ./.github/actions/install-nsis

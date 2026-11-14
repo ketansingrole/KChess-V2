@@ -1,4 +1,5 @@
-//! The `cargo xtask` binary itself: its help and its refusal of an unknown command.
+//! The `cargo xtask` binary itself: its help, its refusal of an unknown command, `sweep` on a
+//! scratch build folder and `ci-times`' refusal of a bad argument.
 
 use std::process::Command;
 
@@ -10,19 +11,13 @@ fn xtask(args: &[&str]) -> std::process::Output {
 }
 
 #[test]
-fn help_names_the_commands() {
-    let out = xtask(&["help"]);
-    assert!(out.status.success());
-    let help = String::from_utf8_lossy(&out.stdout);
-    assert!(help.starts_with("cargo xtask <command>"), "{help}");
-    for command in [
-        "check-fast",
-        "ci-times [--days <n>]",
-        "mutants [--plan] [--base <ref>]",
-        "release-verify",
-        "sweep [--dry-run]",
-    ] {
-        assert!(help.contains(command), "help misses {command}");
+fn help_is_printed_for_no_command_and_for_help() {
+    for args in [&[][..], &["help"], &["--help"]] {
+        let out = xtask(args);
+        assert!(out.status.success());
+        let help = String::from_utf8_lossy(&out.stdout);
+        assert!(help.starts_with("cargo xtask <command>"), "{help}");
+        assert!(help.contains("\n  check-fast "), "{help}");
     }
 }
 
@@ -112,4 +107,49 @@ fn ci_times_refuses_a_bad_number_of_days_before_asking_github() {
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("--days needs a number of days, not week.")
     );
+}
+
+/// The Cargo xtask runs builds as a plain `cargo` does: without the package variables `cargo run`
+/// gave xtask itself. With them, ring's build script reran, so a build under `check-fast` and a
+/// CLI test's nested build rebuilt kchess-core's scripted engine back and forth while kchess-core's
+/// tests ran it (2026-11-11). `sweep` asks Cargo for the workspace's targets; a stand-in `cargo`
+/// first on the path writes down what it was given.
+#[cfg(unix)]
+#[test]
+fn cargo_run_by_xtask_sees_none_of_xtasks_package_variables() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let bin = tempfile::tempdir().unwrap();
+    let seen = bin.path().join("environment");
+    let cargo = bin.path().join("cargo");
+    std::fs::write(
+        &cargo,
+        format!("#!/bin/sh\nenv > '{}'\nexit 1\n", seen.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let target = tempfile::tempdir().unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin.path().to_path_buf())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["sweep", "--dry-run"])
+        .env("PATH", path)
+        .env("CARGO_TARGET_DIR", target.path())
+        .env("CARGO_MANIFEST_DIR", "/xtask")
+        .env("CARGO_PKG_NAME", "xtask")
+        .env("OUT_DIR", "/xtask/out")
+        .output()
+        .expect("xtask runs");
+    assert!(out.status.success(), "{out:?}");
+    let seen = std::fs::read_to_string(&seen).expect("xtask ran cargo");
+    let names: Vec<&str> = seen
+        .lines()
+        .filter_map(|line| line.split_once('=').map(|(name, _)| name))
+        .collect();
+    for name in ["CARGO_MANIFEST_DIR", "CARGO_PKG_NAME", "OUT_DIR"] {
+        assert!(!names.contains(&name), "cargo saw {name}");
+    }
+    assert!(names.contains(&"CARGO_TARGET_DIR"), "{seen}");
 }

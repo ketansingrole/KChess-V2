@@ -21,8 +21,8 @@ fn a_count_of_one_takes_the_singular() {
 }
 
 /// The large ticking times (the chess clock's faces, Puzzle Rush, timed practice runs) used
-/// proportional figures, so their digits shifted sideways on every tick; all draw through
-/// `timer`.
+/// proportional figures, so their digits shifted sideways on every tick; a `timer` has
+/// tabular ones (xtask's `boundaries` checks those clocks draw through it).
 #[test]
 fn large_ticking_times_hold_still() {
     use gpui_kit::Styled as _;
@@ -32,92 +32,6 @@ fn large_ticking_times_hold_still() {
         Some(super::tabular()),
         "tabular figures"
     );
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pages");
-    for page in ["puzzles/rush.rs", "practice/run.rs", "local.rs"] {
-        let text = std::fs::read_to_string(src.join(page)).expect("the page's source");
-        assert!(
-            text.contains("widgets::timer("),
-            "{page} draws its clock as a timer"
-        );
-    }
-    // The title bar's "Updating N%" is anchored on the right, so a proportional figure
-    // moved the button's left edge with every percent.
-    // A Windows checkout may end its lines in CRLF.
-    let shell = std::fs::read_to_string(src.join("../shell.rs"))
-        .expect("the shell's source")
-        .replace("\r\n", "\n");
-    let button = &shell[shell.find("fn update_button").expect("the update button")..];
-    assert!(
-        button[..button.find("\n}\n").expect("its end")]
-            .contains(".font_features(crate::widgets::tabular())"),
-        "the update button's percentage holds still"
-    );
-}
-
-/// Every wait turns: the loader icon appears only inside `spinner`, never as a still glyph
-/// (the Lichess seek card once showed one that never moved), and "Loading…" lines come
-/// with it through `loading`.
-#[test]
-fn every_loader_is_the_turning_spinner() {
-    fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
-        for entry in std::fs::read_dir(dir).expect("the source folder") {
-            let path = entry.expect("an entry").path();
-            if path.is_dir() {
-                walk(&path, found);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                let text = std::fs::read_to_string(&path).expect("a source file");
-                let uses = text.matches("icon(\"loader-circle\")").count();
-                let allowed = usize::from(path.ends_with("src/widgets/status.rs"));
-                // A wait written as a plain hint has no spinner: `loading` has one.
-                let still_text = text.contains("hint(\"Loading");
-                if uses > allowed || still_text {
-                    found.push(path.display().to_string());
-                }
-            }
-        }
-    }
-    let mut found = Vec::new();
-    walk(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut found,
-    );
-    assert!(found.is_empty(), "a still loader in {found:?}");
-}
-
-/// A select's placeholder and value are never its accessible name (GPUI Kit 0.9), so each one
-/// is named where it is built. Most of the unnamed ones sat behind a connected account, where
-/// the end-to-end audit cannot reach.
-#[test]
-fn every_select_is_named() {
-    fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
-        for entry in std::fs::read_dir(dir).expect("the source folder") {
-            let path = entry.expect("an entry").path();
-            if path.is_dir() {
-                if !path.ends_with("e2e") {
-                    walk(&path, found);
-                }
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                let text = std::fs::read_to_string(&path).expect("a source file");
-                let lines: Vec<&str> = text.lines().collect();
-                for (index, line) in lines.iter().enumerate() {
-                    if !line.contains("Select::new(") || line.trim_start().starts_with("//") {
-                        continue;
-                    }
-                    // The builder chain that follows, up to where the element is handed on.
-                    let chain = lines[index..lines.len().min(index + 8)].join("\n");
-                    if !chain.contains("accessibility_label") {
-                        found.push(format!("{}:{}", path.display(), index + 1));
-                    }
-                }
-            }
-        }
-    }
-    let mut found = Vec::new();
-    walk(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut found,
-    );
-    assert!(found.is_empty(), "an unnamed select at {found:?}");
 }
 
 /// A move list in a window whose page holds the keys, as a game page's does.
@@ -148,8 +62,6 @@ impl Render for Page {
     }
 }
 
-/// The list numbered every game from 1: one set up at Black's 30th move showed "1. … Nf6"
-/// where the scoresheet reads "30. … Nf6".
 /// GPUI announces nothing by itself: a move or a result was heard only when the reader went
 /// back to the board. Each adapter speaks a live node's text when it changes: macOS its value,
 /// Windows and Linux its name.

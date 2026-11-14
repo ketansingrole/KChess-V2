@@ -8,7 +8,7 @@ use gpui_kit::component::v_flex;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
-use serde_json::Value;
+use kchess_contracts::types::Puzzle;
 
 use super::{Theme, status_panel};
 use crate::assets::icon;
@@ -26,7 +26,7 @@ pub enum DailyEvent {
 impl EventEmitter<DailyEvent> for DailyPuzzle {}
 
 pub struct DailyPuzzle {
-    puzzle: Option<Value>,
+    puzzle: Option<Puzzle>,
     error: Option<String>,
     loading: bool,
     /// The UTC day the puzzle was fetched on.
@@ -67,7 +67,7 @@ impl DailyPuzzle {
         }
     }
 
-    /// `loadDaily`: fetch today's puzzle unless it is already shown (`force` fetches again).
+    /// Fetch today's puzzle unless it is already shown (`force` fetches again).
     pub fn load(&mut self, force: bool, cx: &mut Context<Self>) {
         // A failed fetch stays on screen for Try again: the page draws this on every frame.
         if self.loading
@@ -92,9 +92,9 @@ impl DailyPuzzle {
         self.error = None;
         self.puzzle = None;
         cx.notify();
-        let puzzle = cx
-            .global::<AppCore>()
-            .request(calls::PuzzleById { id: id.into() });
+        let puzzle = cx.global::<AppCore>().request(calls::PuzzleById {
+            id: kchess_contracts::check::PuzzleId(id),
+        });
         self.fetch(puzzle, String::new(), cx);
     }
 
@@ -116,7 +116,9 @@ impl DailyPuzzle {
 
     fn fetch(
         &mut self,
-        request: impl std::future::Future<Output = Result<Value, kchess_contracts::CoreError>> + 'static,
+        request: impl std::future::Future<
+            Output = Result<kchess_contracts::types::Puzzle, kchess_contracts::CoreError>,
+        > + 'static,
         day: String,
         cx: &mut Context<Self>,
     ) {
@@ -133,7 +135,7 @@ impl DailyPuzzle {
                 match daily {
                     Ok(puzzle) => {
                         this.board
-                            .update(cx, |board, cx| board.start(&puzzle, None, cx));
+                            .update(cx, |board, cx| board.start(puzzle.clone(), None, cx));
                         this.puzzle = Some(puzzle);
                         this.day = day;
                     }

@@ -7,11 +7,12 @@ use gpui_kit::component::input::{Textarea, TextareaState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use kchess_domain::training::clock::format_clock;
 
 use super::AnalysisPage;
 use crate::assets::icon;
-use crate::game::rules;
+use kchess_domain::trainer::analysis_tree;
+
 use crate::game::tree::{comment_text, move_number};
 use crate::theme::{Palette, radii, tint};
 use crate::widgets::KeyboardFocus as _;
@@ -27,23 +28,15 @@ pub const MOVE_GLYPHS: [(i64, &str, &str); 6] = [
     (6, "?!", "Dubious move"),
 ];
 
-fn text(method: &str, args: &[Value]) -> String {
-    rules(method, args)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_string))
+/// The NAGs with `nag` as the move's annotation (or none); `None` when nothing is left.
+pub(super) fn with_glyph(nags: Option<&[u32]>, nag: Option<i64>) -> Option<Vec<u32>> {
+    let nags: Vec<f64> = nags
         .unwrap_or_default()
-}
-
-/// The NAGs with `nag` as the move's annotation (or none); `None` when nothing is left. The rules
-/// answer numbers as floats.
-pub(super) fn with_glyph(nags: Option<&[i64]>, nag: Option<i64>) -> Option<Vec<i64>> {
-    let nags = rules("setMoveGlyph", &[json!(nags), json!(nag)]).ok()?;
-    let nags: Vec<i64> = nags
-        .as_array()?
         .iter()
-        .map(|nag| crate::game::whole(nag) as i64)
+        .map(|&n| f64::from(n))
         .collect();
-    (!nags.is_empty()).then_some(nags)
+    let nags = analysis_tree::set_move_glyph(&nags, nag.map(|n| n as f64))?;
+    Some(nags.into_iter().map(|n| n as u32).collect())
 }
 
 /// The notes field and what it was last filled for.
@@ -96,10 +89,7 @@ impl AnalysisPage {
         if typed == self.shown_comment() {
             return;
         }
-        let next = text(
-            "withCommentText",
-            &[json!(self.raw_comment()), json!(typed)],
-        );
+        let next = analysis_tree::with_comment_text(&self.raw_comment(), &typed);
         let path = self.path.clone();
         self.root.node_at_mut(&path).comments = (!next.is_empty()).then(|| vec![next]);
         self.typing_comment = Some(path);
@@ -133,6 +123,7 @@ impl AnalysisPage {
             .flatten()
             .copied()
             .find(|nag| (1..=6).contains(nag))
+            .map(i64::from)
     }
 
     pub(super) fn render_notes(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
@@ -140,12 +131,14 @@ impl AnalysisPage {
         let subject = if self.path.is_empty() {
             "the starting position".to_string()
         } else {
-            format!("{} {}", move_number(node.ply - 1., true), node.san)
+            format!(
+                "{} {}",
+                move_number(node.ply.saturating_sub(1), true),
+                node.san
+            )
         };
-        let clock = rules("commentClock", &[json!(self.raw_comment())])
-            .ok()
-            .and_then(|seconds| seconds.as_f64())
-            .map(|seconds| text("formatClock", &[json!(seconds * 1000.)]));
+        let clock = kchess_domain::position::comment_clock(&self.raw_comment())
+            .map(|seconds| format_clock(seconds * 1000.));
         let current = self.glyph_of(&self.path);
         let open = self.notes.editing || !self.shown_comment().is_empty();
         let glyphs = (!self.path.is_empty()).then(|| {

@@ -1,5 +1,5 @@
-//! The regular expressions the validators use, as hand-written matchers. Each takes the same
-//! strings the TypeScript pattern accepts (anchored, JavaScript `\d` and `\w` are ASCII).
+//! The patterns the validators use, as hand-written matchers. Each is anchored, and `\d` and `\w`
+//! are ASCII.
 
 use super::unicode_tables::{LETTERS, NUMBERS};
 
@@ -164,18 +164,7 @@ pub fn fen(s: &str) -> bool {
 /// `^[a-h][1-8][a-h][1-8][qrbn]?$`: a move in UCI notation, or a Crazyhouse drop
 /// (`^[PNBRQ]@[a-h][1-8]$`).
 pub fn uci_move(s: &str) -> bool {
-    let b = s.as_bytes();
-    let square =
-        |file: u8, rank: u8| (b'a'..=b'h').contains(&file) && (b'1'..=b'8').contains(&rank);
-    if b.len() == 4 && b[1] == b'@' {
-        return matches!(b[0], b'P' | b'N' | b'B' | b'R' | b'Q') && square(b[2], b[3]);
-    }
-    if !matches!(b.len(), 4 | 5) {
-        return false;
-    }
-    square(b[0], b[1])
-        && square(b[2], b[3])
-        && (b.len() == 4 || matches!(b[4], b'q' | b'r' | b'b' | b'n'))
+    crate::rules::is_uci_text(s) || crate::rules::is_drop_text(s)
 }
 
 fn in_ranges(ranges: &[(char, char)], c: char) -> bool {

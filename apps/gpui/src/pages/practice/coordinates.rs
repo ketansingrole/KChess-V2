@@ -2,26 +2,28 @@
 //! named, or name one shown on the board. A timed run keeps a best score per mode and length; untimed
 //! practice, or practising only some files and ranks, keeps none.
 
+use crate::loading::Epoch;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::types::CoordinateMode;
+use kchess_contracts::types::{CoordinateMode, RunKind, RunRecord};
 use serde_json::{Value, json};
 use shakmaty::{Color, Square};
 
-use super::run::{self, RunClock};
+use super::run::{self, Drill, DrillRun, Stage, Tally};
 use crate::assets::icon;
 use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
-use crate::game::{STANDARD_FEN, random_unit, rules};
+use crate::game::STANDARD_FEN;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets::{self, Pill, Tone};
+use kchess_games::random_unit;
 
 const FILES: [&str; 8] = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const RANKS: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
@@ -46,25 +48,17 @@ enum Mode {
 
 const MODES: [Mode; 3] = [Mode::Find, Mode::Name, Mode::Voice];
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Stage {
-    Idle,
-    Running,
-    Over,
-}
-
-/// `randomSquare`: a square that is not `previous`, from `allowed` when given; the rules pick from
-/// the draws in order, and want one more draw each time the first ones give `previous`.
+/// A square that is not `previous`, from `allowed` when given; the rules pick from the draws in
+/// order, and want one more draw each time the first ones give `previous`.
 pub fn random_square(previous: Option<&str>, allowed: Option<&[String]>) -> String {
     let mut draws: Vec<f64> = Vec::new();
     loop {
-        draws.push(random_unit());
-        if let Ok(square) = rules(
-            "randomSquare",
-            &[json!(previous), json!(draws), json!(allowed)],
-        ) && let Some(square) = square.as_str()
-        {
-            return square.to_string();
+        let Some(draw) = crate::game::drawn(random_unit()) else {
+            return "e4".into();
+        };
+        draws.push(draw);
+        if let Some(square) = kchess_domain::voice::random_square(previous, &draws, allowed) {
+            return square;
         }
         if draws.len() > 64 {
             return "e4".into();
@@ -73,7 +67,7 @@ pub fn random_square(previous: Option<&str>, allowed: Option<&[String]>) -> Stri
 }
 
 /// White text over the board, readable on light and dark squares alike: GPUI text has no shadow,
-/// so dark copies set just around it stand in for `.coord-prompt`'s text shadow.
+/// so dark copies set just around it stand in for a text shadow.
 fn shadowed(text: String, size: Pixels, weight: FontWeight, opacity: f32) -> impl IntoElement {
     let copy = |dx: f32, dy: f32, alpha: f32| {
         div()
@@ -131,22 +125,17 @@ fn toggled(list: &[String], item: &str) -> Vec<String> {
 
 pub struct Coordinates {
     mode: Mode,
-    stage: Stage,
+    run: DrillRun,
+    tally: Tally,
     side: &'static str,
     orientation: Color,
     target: String,
     upcoming: String,
-    score: u32,
-    mistakes: u32,
     pending_file: Option<String>,
     flash: Option<(String, bool)>,
     run_limited: bool,
-    clock: RunClock,
-    summary: Value,
-    saved: Value,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
-    timers: Vec<Task<()>>,
     /// Clears the answer's flash; the next answer replaces it, so a long run keeps only one.
     flash_timer: Option<Task<()>>,
     /// Say the square: the voice switch, its log, and a start waiting for voice to load.
@@ -154,7 +143,7 @@ pub struct Coordinates {
     voice_log: DrillLog,
     starting: bool,
     /// The run and the question within it, which name what each phrase answered.
-    run_epoch: u32,
+    run_epoch: Epoch,
     question: u32,
     _subscriptions: Vec<Subscription>,
 }
@@ -163,7 +152,11 @@ impl Coordinates {
     pub fn new(cx: &mut Context<Self>) -> Coordinates {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 None,
                 None,
@@ -190,34 +183,26 @@ impl Coordinates {
         ];
         let mut drill = Coordinates {
             mode: Mode::Find,
-            stage: Stage::Idle,
+            run: DrillRun::default(),
+            tally: Tally::default(),
             side: "white",
             orientation: Color::White,
             target: "e4".into(),
             upcoming: "d5".into(),
-            score: 0,
-            mistakes: 0,
             pending_file: None,
             flash: None,
             run_limited: false,
-            clock: RunClock::default(),
-            summary: Value::Null,
-            saved: Value::Null,
             board,
             layout: PlayLayout::default(),
-            timers: Vec::new(),
             flash_timer: None,
             voice: Control::new(false, cx),
             voice_log: DrillLog::default(),
             starting: false,
-            run_epoch: 0,
+            run_epoch: Epoch::default(),
             question: 0,
             _subscriptions: subscriptions,
         };
-        run::load_summary("coordinates", cx, |this, summary, cx| {
-            this.summary = summary;
-            cx.notify();
-        });
+        DrillRun::load(RunKind::Coordinates, cx);
         drill.redraw(cx);
         drill
     }
@@ -261,53 +246,36 @@ impl Coordinates {
     }
 
     fn start(&mut self, cx: &mut Context<Self>) {
-        if self.stage == Stage::Running
+        if self.run.running()
             || (self.mode == Mode::Voice && !self.voice.gate(&mut self.starting, cx))
         {
             cx.notify();
             return;
         }
-        self.run_epoch += 1;
+        self.run_epoch.invalidate();
         self.question = 0;
         self.voice.feedback = None;
-        self.orientation = match self.side {
-            "black" => Color::Black,
-            "random" if random_unit() < 0.5 => Color::White,
-            "random" => Color::Black,
-            _ => Color::White,
-        };
-        self.score = 0;
-        self.mistakes = 0;
+        if let Some(orientation) = crate::game::drawn(kchess_games::draw_color(self.side)) {
+            self.orientation = orientation;
+        }
+        self.tally = Tally::default();
         self.pending_file = None;
-        self.saved = Value::Null;
         self.run_limited = crate::prefs::get(cx, LIMITED, false);
         let allowed = Self::allowed(cx);
         self.target = random_square(None, allowed.as_deref());
         self.upcoming = random_square(Some(&self.target), allowed.as_deref());
-        self.stage = Stage::Running;
-        self.clock.start(Self::length(cx));
-        self.timers = vec![run::ticker(cx, |this, cx| {
-            if this.stage != Stage::Running {
-                return false;
-            }
-            if this.clock.expired() {
-                this.finish(cx);
-                return false;
-            }
-            cx.notify();
-            true
-        })];
+        self.run.begin(Self::length(cx), cx);
         self.redraw(cx);
     }
 
     /// The timers the drill keeps: its clock and the flash of the last answer.
     #[cfg(test)]
     pub(crate) fn timer_count(&self) -> usize {
-        self.timers.len() + usize::from(self.flash_timer.is_some())
+        usize::from(self.run.ticking()) + usize::from(self.flash_timer.is_some())
     }
 
     fn answer(&mut self, square: &str, cx: &mut Context<Self>) {
-        if self.stage != Stage::Running {
+        if !self.run.running() {
             return;
         }
         let correct = square == self.target;
@@ -319,15 +287,14 @@ impl Coordinates {
                 this.redraw(cx);
             });
         }));
+        self.tally.record(correct);
         if correct {
-            self.score += 1;
             self.question += 1;
             let allowed = Self::allowed(cx);
             self.target = std::mem::take(&mut self.upcoming);
             self.upcoming = random_square(Some(&self.target), allowed.as_deref());
             self.pending_file = None;
         } else {
-            self.mistakes += 1;
             self.pending_file = None;
             crate::sound::play_at(crate::sound::Sound::LowTime, 0.5, cx);
         }
@@ -335,19 +302,18 @@ impl Coordinates {
     }
 
     fn voice_heard(&mut self, event: &VoiceEvent, cx: &mut Context<Self>) {
-        if !self.voice.owns(event) || self.stage != Stage::Running || self.mode != Mode::Voice {
+        if !self.voice.owns(event) || !self.run.running() || self.mode != Mode::Voice {
             return;
         }
-        let asked = format!("{}:{}", self.run_epoch, self.question);
+        let asked = format!("{}:{}", self.run_epoch.current(), self.question);
         let target = self.target.clone();
         let (heard, missed) = match event {
             VoiceEvent::Heard { heard, .. } => (heard, false),
             VoiceEvent::Missed { heard, .. } => (heard, true),
         };
         let square = (!missed)
-            .then(|| rules("spokenSquare", &[json!(heard.text)]).ok())
-            .flatten()
-            .and_then(|square| square.as_str().map(str::to_string));
+            .then(|| kchess_domain::voice::spoken_square(&heard.text))
+            .flatten();
         let outcome = match &square {
             _ if missed => "unclear",
             None => "invalid",
@@ -382,7 +348,7 @@ impl Coordinates {
 
     /// Name mode: a file then a rank, from the buttons or the keyboard.
     fn press(&mut self, key: &str, cx: &mut Context<Self>) {
-        if self.mode != Mode::Name || self.stage != Stage::Running {
+        if self.mode != Mode::Name || !self.run.running() {
             return;
         }
         if FILES.contains(&key) {
@@ -405,47 +371,10 @@ impl Coordinates {
         }
     }
 
-    fn accuracy(&self) -> u32 {
-        let total = self.score + self.mistakes;
-        if total == 0 {
-            0
-        } else {
-            (f64::from(self.score) / f64::from(total) * 100.).round() as u32
-        }
-    }
-
-    fn finish(&mut self, cx: &mut Context<Self>) {
-        if self.stage != Stage::Running {
-            return;
-        }
-        self.clock.stop();
-        self.stage = Stage::Over;
-        self.redraw(cx);
-        // An untimed score only grows with time, and some files and ranks are easier: never records.
-        if self.clock.untimed || self.run_limited {
-            return;
-        }
-        let run = json!({
-            "kind": "coordinates",
-            "variant": self.record_variant(cx),
-            "score": self.score,
-            "detail": {
-                "mistakes": self.mistakes,
-                "accuracy": self.accuracy(),
-                "side": if self.orientation == Color::White { "white" } else { "black" },
-            },
-        });
-        run::save_run(run, cx, |this, saved, cx| {
-            this.summary = saved["summary"].clone();
-            this.saved = saved;
-            cx.notify();
-        });
-    }
-
     fn redraw(&mut self, cx: &mut Context<Self>) {
-        let running = self.stage == Stage::Running;
+        let running = self.run.running();
         self.voice.sync(
-            crate::voice::grammar("COORDINATE_GRAMMAR"),
+            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Coordinate).to_vec(),
             running && self.mode == Mode::Voice,
             cx,
         );
@@ -464,8 +393,11 @@ impl Coordinates {
                 _ => self.orientation,
             }
         };
-        let position =
-            kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default();
+        let position = kchess_domain::rules::setup_start(
+            kchess_domain::variant::Variant::Standard,
+            STANDARD_FEN,
+        )
+        .unwrap_or_default();
         let mut state = BoardState::of(&position, orientation, None, None);
         // An empty board is no legal position: the board draws the FEN's pieces, none here.
         state.fen = fen.to_string();
@@ -512,19 +444,20 @@ impl Coordinates {
     /// Each side's recent timed runs of this mode and length, oldest first, and their average.
     fn side_scores(&self, cx: &App) -> Vec<(&'static str, Vec<f64>, f64)> {
         let variant = self.record_variant(cx);
-        let runs: Vec<&Value> = self.summary["recent"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|entry| entry["variant"] == variant.as_str())
+        let runs: Vec<&RunRecord> = self
+            .run
+            .summary
+            .iter()
+            .flat_map(|summary| &summary.recent)
+            .filter(|entry| entry.variant == variant)
             .collect();
         ["white", "black"]
             .into_iter()
             .filter_map(|color| {
                 let mut scores: Vec<f64> = runs
                     .iter()
-                    .filter(|entry| entry["detail"]["side"] == color)
-                    .filter_map(|entry| entry["score"].as_f64())
+                    .filter(|entry| entry.detail.get("side").and_then(Value::as_str) == Some(color))
+                    .map(|entry| entry.score)
                     .collect();
                 scores.reverse();
                 if scores.is_empty() {
@@ -583,10 +516,38 @@ impl Coordinates {
     }
 }
 
+impl Drill for Coordinates {
+    fn run(&mut self) -> &mut DrillRun {
+        &mut self.run
+    }
+
+    fn finish(&mut self, cx: &mut Context<Self>) {
+        if !self.run.end() {
+            return;
+        }
+        self.redraw(cx);
+        // An untimed score only grows with time, and some files and ranks are easier: never records.
+        if self.run.clock.untimed || self.run_limited {
+            return;
+        }
+        let run = run::input(
+            RunKind::Coordinates,
+            self.record_variant(cx),
+            f64::from(self.tally.score),
+            json!({
+                "mistakes": self.tally.mistakes,
+                "accuracy": self.tally.accuracy(),
+                "side": if self.orientation == Color::White { "white" } else { "black" },
+            }),
+        );
+        DrillRun::save(run, cx);
+    }
+}
+
 impl Render for Coordinates {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let running = self.stage == Stage::Running;
+        let running = self.run.running();
         // The board alone in its column: no player lines take height.
         let board_size = self
             .layout
@@ -621,13 +582,6 @@ impl Render for Coordinates {
             .relative()
             .child(crate::board::cached(&self.board))
             .children(prompt);
-        let frontend = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
         let page = cx.entity().downgrade();
         let modes = widgets::wrapping_pills(
             "coordinates-mode",
@@ -704,8 +658,8 @@ impl Render for Coordinates {
         // The run first: with limits showing, the settings fill the panel.
         let mut drill = v_flex().gap(px(12.));
         drill = drill.child(run::hud(
-            &self.clock,
-            f64::from(self.score),
+            &self.run.clock,
+            f64::from(self.tally.score),
             "correct",
             &palette,
         ));
@@ -767,7 +721,7 @@ impl Render for Coordinates {
                                     .text_color(palette.highlighted)
                                     .child("Mode"),
                             )
-                            .child(widgets::view_toggles(frontend.blindfold, frontend.zen_mode)),
+                            .child(widgets::view_toggles(cx)),
                     )
                     .child(modes),
             )
@@ -828,34 +782,42 @@ impl Render for Coordinates {
                 cx,
             ))
             .when(self.mode == Mode::Voice, |panel| {
-                panel.child(self.voice.bar(
-                    page.clone(),
-                    |this: &mut Self| &mut this.voice,
-                    BarSpec {
-                        id: "coordinates-voice",
-                        hint: "Say “E four” or “Echo four”",
-                        active: running,
-                        grammar: crate::voice::grammar("COORDINATE_GRAMMAR"),
-                    },
-                    cx,
-                ))
+                panel.child(
+                    self.voice.bar(
+                        page.clone(),
+                        |this: &mut Self| &mut this.voice,
+                        BarSpec {
+                            id: "coordinates-voice",
+                            hint: "Say “E four” or “Echo four”",
+                            active: running,
+                            grammar: kchess_domain::voice::grammar(
+                                kchess_domain::voice::Grammar::Coordinate,
+                            )
+                            .to_vec(),
+                        },
+                        cx,
+                    ),
+                )
             })
             .when(!running, |panel| {
                 panel.child(div().h(px(1.)).bg(palette.border))
             });
         if !running {
             let variant = self.record_variant(cx);
-            let best = run::best(&self.summary, &variant);
-            if self.stage == Stage::Over {
-                let is_best = !self.clock.untimed && self.saved["isBest"] == json!(true);
+            let best = self.run.best(&variant);
+            if self.run.stage == Stage::Over {
+                let is_best = !self.run.clock.untimed && self.run.is_best;
                 let detail = if self.run_limited {
                     "Not saved: some files & ranks only".to_string()
-                } else if self.clock.untimed {
-                    format!("in {}", self.clock.text())
+                } else if self.run.clock.untimed {
+                    format!("in {}", self.run.clock.text())
                 } else if is_best {
                     "New personal best".to_string()
                 } else {
-                    format!("Best so far: {}", best.unwrap_or(f64::from(self.score)))
+                    format!(
+                        "Best so far: {}",
+                        best.unwrap_or(f64::from(self.tally.score))
+                    )
                 };
                 panel = panel.child(
                     widgets::StatusBanner::new(
@@ -865,7 +827,12 @@ impl Render for Coordinates {
                         } else {
                             icon("timer")
                         },
-                        format!("{} correct · {}% accuracy", self.score, self.accuracy()).into(),
+                        format!(
+                            "{} correct · {}% accuracy",
+                            self.tally.score,
+                            self.tally.accuracy()
+                        )
+                        .into(),
                     )
                     .announce()
                     .detail(detail.into()),
@@ -894,7 +861,7 @@ impl Render for Coordinates {
                     );
                 }
             }
-            if self.stage != Stage::Over && length != 0 {
+            if self.run.stage != Stage::Over && length != 0 {
                 panel = panel.child(
                     div()
                         .text_size(px(12.))
@@ -917,7 +884,7 @@ impl Render for Coordinates {
                     .large()
                     .w_full()
                     .icon(icon("play"))
-                    .label(if self.stage == Stage::Over {
+                    .label(if self.run.stage == Stage::Over {
                         "Play again"
                     } else {
                         "Start"

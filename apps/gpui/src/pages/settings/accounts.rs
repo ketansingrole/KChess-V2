@@ -6,7 +6,7 @@ use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use kchess_contracts::types::Account;
 
 use super::SettingsPage;
 use crate::accounts::{Accounts, AccountsHandle};
@@ -98,25 +98,24 @@ fn identity(
 }
 
 /// When an account last synced.
-fn synced_line(account: &Value) -> String {
-    account["lastSyncedAt"]
-        .as_f64()
-        .map(|at| format!("Last synced {}", crate::game::game_date(at)))
+fn synced_line(last_synced_at: Option<i64>) -> String {
+    last_synced_at
+        .map(|at| format!("Last synced {}", crate::game::game_date(at as f64)))
         .unwrap_or_else(|| "Not synced yet".into())
 }
 
 /// An account, what it keeps and downloaded, and what can be done with it.
 fn account_row(
-    account: &Value,
+    account: &Account,
     accounts: &Accounts,
     several: bool,
     active: Option<&str>,
     palette: &Palette,
 ) -> AnyElement {
-    let username = account["username"].as_str().unwrap_or_default().to_string();
-    let connected = account["connected"] == json!(true);
+    let username = account.username.clone();
+    let connected = account.connected;
     let plays = several && active == Some(username.as_str());
-    let synced = synced_line(account);
+    let synced = synced_line(account.last_synced_at);
     let (games, stored) = accounts.stored(&username);
     let usage = format!(
         "{} games · {} stored · {} downloaded",
@@ -214,10 +213,11 @@ impl SettingsPage {
         let accounts = handle.read(cx);
         let connected = accounts.connected();
         let active = accounts.active(cx);
-        let rows: Vec<Value> = accounts
+        let rows: Vec<Account> = accounts
             .all()
-            .into_iter()
-            .filter(|account| account["connected"] == json!(true))
+            .iter()
+            .filter(|account| account.connected)
+            .cloned()
             .collect();
         let several = connected.len() > 1;
         let target = handle.downgrade();
@@ -271,7 +271,7 @@ impl SettingsPage {
         let rows: Vec<Div> = players
             .iter()
             .map(|player| {
-                let username = player["username"].as_str().unwrap_or_default().to_string();
+                let username = player.username.clone();
                 let (games, stored) = accounts.stored(&format!(
                     "{username}{}",
                     kchess_domain::chesscom::ACCOUNT_SUFFIX
@@ -292,7 +292,7 @@ impl SettingsPage {
                     .child(identity(
                         &username,
                         [],
-                        [synced_line(player), usage],
+                        [synced_line(player.last_synced_at), usage],
                         palette,
                     ))
                     .child(

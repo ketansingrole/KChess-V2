@@ -181,24 +181,28 @@ fn moves_can_be_shown_with_piece_symbols(cx: &mut gpui_kit::TestAppContext) {
 /// ⌘K finds a category by any row title it shows, so a new row is found as soon as it is added.
 #[gpui_kit::test]
 fn every_settings_row_is_found_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::settings::{DRAWN_TITLES, SettingsPage, section_keywords, sections};
+    use crate::pages::settings::{Section, section_keywords};
+    use gpui_kit::test::TestQueryExt as _;
     let mut app = Harness::start(cx);
     let mut checked = 0;
-    for (section, label, _) in sections() {
+    for (section, label) in Section::ALL.map(|s| (s, s.label())) {
         app.open_settings(label);
-        app.with_window(|_, _| ());
-        // Only this category's titles: redraw it on its own.
-        DRAWN_TITLES.with(|titles| titles.borrow_mut().clear());
-        app.with_window(|_, cx| {
-            if let Some(page) =
-                crate::shell::view_of::<SettingsPage>(crate::pages::Page::Settings, cx)
-            {
-                page.update(cx, |_, cx| cx.notify());
-            }
+        let titles: Vec<String> = app.with_window(|window, _| {
+            window
+                .elements()
+                .iter()
+                .filter_map(|element| match element.path().last()? {
+                    gpui_kit::ElementId::NamedChild(parent, title)
+                        if **parent == gpui_kit::ElementId::Name("setting-title".into()) =>
+                    {
+                        Some(title.to_string())
+                    }
+                    _ => None,
+                })
+                .collect()
         });
-        app.with_window(|_, _| ());
         let keywords = section_keywords(section).to_lowercase();
-        for title in DRAWN_TITLES.with(|titles| titles.borrow().clone()) {
+        for title in titles {
             assert!(
                 keywords.contains(&title.to_lowercase()),
                 "{label}: {title:?} is missing from section_keywords"
@@ -258,15 +262,72 @@ fn a_setting_saved_elsewhere_is_shown(cx: &mut gpui_kit::TestAppContext) {
     let base = app.saved_settings();
     let mut edited = base.clone();
     edited["soundEnabled"] = json!(false);
-    let core = app
-        .cx
-        .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
-    core.call_now("saveDesktopSettings", vec![edited, base])
-        .expect("another window saves");
+    let settings = |value| serde_json::from_value(value).expect("settings");
+    app.request(kchess_contracts::calls::SaveDesktopSettings {
+        settings: settings(edited),
+        base: Some(settings(base)),
+    });
     app.wait_for("the saved setting", |window, _| {
         use gpui_kit::test::TestWindowExt as _;
         window
             .try_find(gpui_kit::ElementId::from("sound"))
             .is_some_and(|sound| sound.checked() == Some(false))
+    });
+}
+
+/// Another window logged a spoken phrase: the open voice history lists it. It stayed empty
+/// until Refresh or the category was opened again.
+#[gpui_kit::test]
+fn voice_practice_in_another_window_shows_in_the_history(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_contracts::types::{
+        ProfileArea, VoiceAttemptInput, VoiceOutcome, VoiceSource, VoiceWord,
+    };
+    let mut app = Harness::start(cx);
+    app.open_settings("Voice input");
+    app.find("voice-history-clear");
+    assert!(!app.enabled("voice-history-clear"), "nothing logged yet");
+    app.request(kchess_contracts::calls::SaveVoiceAttempt {
+        attempt: VoiceAttemptInput {
+            source: VoiceSource::Coordinates,
+            heard: "e four".into(),
+            confidence: 0.9,
+            words: vec![VoiceWord {
+                word: "e".into(),
+                conf: 0.9,
+            }],
+            outcome: VoiceOutcome::Correct,
+            parsed: Some("e4".into()),
+            expected: Some("e4".into()),
+            fen: None,
+            retry_of: None,
+        },
+    });
+    app.changed_elsewhere(&[ProfileArea::VoiceHistory]);
+    app.wait_for("the logged phrase", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find(gpui_kit::ElementId::from("voice-history-clear"))
+            .is_some_and(|clear| clear.disabled() != Some(true))
+    });
+}
+
+/// Another window installed or deleted the engine: Engine shows what the core finds now.
+#[gpui_kit::test]
+fn an_engine_changed_in_another_window_is_read_again(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Chess engine");
+    let settings = || crate::shell::view::<crate::pages::settings::SettingsPage>;
+    app.wait_for("the engine's status", |_, cx| {
+        settings()(cx).is_some_and(|page| page.read(cx).engine_status().is_some())
+    });
+    // Forget it, as if it were stale: only a report of the change reads it again.
+    app.cx.update(|cx| {
+        settings()(cx)
+            .expect("the Settings page")
+            .update(cx, |page, _| page.forget_engine_status())
+    });
+    app.changed_elsewhere(&[kchess_contracts::types::ProfileArea::Engine]);
+    app.wait_for("the engine read again", |_, cx| {
+        settings()(cx).is_some_and(|page| page.read(cx).engine_status().is_some())
     });
 }

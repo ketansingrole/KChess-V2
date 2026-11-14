@@ -37,15 +37,22 @@ pub fn labelled_switch(
         )
 }
 
-pub fn view_toggles(blindfold: bool, zen: bool) -> impl IntoElement {
+/// Blindfold and zen mode, as a board page offers them; zen mode's tooltip names its key.
+pub fn view_toggles(cx: &App) -> impl IntoElement {
+    let frontend = crate::settings::frontend(cx);
+    let (blindfold, zen) = (frontend.blindfold, frontend.zen_mode);
+    let zen_label: SharedString = match crate::menu::keys(&crate::menu::ToggleZen, cx) {
+        Some(key) => format!("Zen mode ({key})").into(),
+        None => "Zen mode".into(),
+    };
     let toggle =
-        |id: &'static str, glyph: gpui_kit::component::Icon, label: &'static str, on: bool| {
+        |id: &'static str, glyph: gpui_kit::component::Icon, label: SharedString, on: bool| {
             Button::new(id)
                 .small()
                 .when(on, |button| button.primary())
                 .when(!on, |button| button.ghost())
                 .icon(glyph)
-                .tooltip(label)
+                .tooltip(label.clone())
                 .accessibility_label(label)
         };
     h_flex()
@@ -54,7 +61,7 @@ pub fn view_toggles(blindfold: bool, zen: bool) -> impl IntoElement {
             toggle(
                 "blindfold",
                 icon("eye-off"),
-                "Blindfold: hide the pieces",
+                "Blindfold: hide the pieces".into(),
                 blindfold,
             )
             .on_click(|_, _, cx| {
@@ -62,7 +69,7 @@ pub fn view_toggles(blindfold: bool, zen: bool) -> impl IntoElement {
             }),
         )
         .child(
-            toggle("zen", icon("maximize"), "Zen mode (Z)", zen).on_click(|_, _, cx| {
+            toggle("zen", icon("maximize"), zen_label, zen).on_click(|_, _, cx| {
                 crate::settings::change(cx, |s| s.frontend.zen_mode = !s.frontend.zen_mode)
             }),
         )
@@ -74,15 +81,21 @@ pub fn setting_info(
     hint: Option<SharedString>,
     palette: &Palette,
 ) -> Div {
+    let title = title.into();
     v_flex()
         .gap(px(4.))
         .min_w_0()
         .child(
             div()
+                .id(ElementId::NamedChild(
+                    std::sync::Arc::new("setting-title".into()),
+                    title.clone(),
+                ))
+                .test_support()
                 .text_size(px(14.))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(palette.highlighted)
-                .child(title.into()),
+                .child(title),
         )
         .children(hint.map(|hint| {
             div()

@@ -17,7 +17,7 @@ KChess is a desktop app that stores a Lichess login on the user's computer, so t
 - Leaking or mishandling Lichess OAuth tokens (they are encrypted with the operating
   system's credential storage and never leave the main process).
 - Ways for renderer content to run code or choose which executable the main process starts
-  (every core method validates its arguments in `crates/kchess-domain/src/misc/validate/`).
+  (every core method checks its arguments by their types in `crates/kchess-contracts/src/check/`).
 - Flaws in the OAuth loopback callback or in verifying downloaded Stockfish builds.
 
 Vulnerabilities in GPUI, Stockfish, Vosk or other dependencies should be reported to those

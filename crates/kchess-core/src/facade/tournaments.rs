@@ -1,127 +1,150 @@
-//! The facade's tournaments (`run_facade` arms, moved without changes).
+//! Lichess tournaments.
 
-use super::args::{arg, normal, now_ms};
+use kchess_contracts::check::{
+    OptionalAccount, StandingPage, TournamentId, TournamentPassword, Username,
+};
+use kchess_contracts::core_api::TournamentsApi;
+use kchess_contracts::types::JoinedTournament;
+use kchess_contracts::types::{
+    NewArena, Reply, TournamentDetail, TournamentList, TournamentStatus, TournamentSummary,
+    TournamentSystem,
+};
+
 use crate::core::Core;
-use crate::error::{CoreError, Result};
 use crate::host::Level;
-use serde_json::{Value, json};
+use crate::lichess::tournaments;
+use crate::store::library;
+use crate::time::now_ms;
+use kchess_contracts::error::Result;
 
 impl Core {
-    /// Answers the facade's tournaments methods.
-    pub(crate) async fn run_tournaments(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "tournaments" => {
-                let account = normal("assertOptionalAccount", &arg(args, 0))?;
-                self.inner("tournaments.list", vec![account]).await
-            }
-            "tournament" => {
-                let system = normal("assertTournamentSystem", &arg(args, 0))?;
-                let id = normal("assertTournamentId", &arg(args, 1))?;
-                let account = normal("assertOptionalAccount", &arg(args, 2))?;
-                let page = match arg(args, 3).as_i64() {
-                    Some(page) if (1..=200).contains(&page) => page,
-                    _ => 1,
-                };
-                let detail = self
-                    .inner(
-                        "tournaments.get",
-                        vec![system.clone(), id.clone(), account.clone(), json!(page)],
-                    )
+    /// Forgets one account's membership of a tournament, or every account's without one.
+    async fn forget_tournament(
+        &self,
+        system: TournamentSystem,
+        id: &str,
+        account: Option<&str>,
+    ) -> Result<()> {
+        let id = id.to_owned();
+        let account = account.map(str::to_owned);
+        self.database
+            .write_async(move |ctx| {
+                library::forget_tournament(ctx.host, ctx.db, system, &id, account.as_deref())
+            })
+            .await
+    }
+}
+
+/// A call's `Reply<()>` as the facade answers it: `true` once done.
+fn done<E: Into<kchess_contracts::error::CoreError>>(
+    reply: std::result::Result<Reply<()>, E>,
+) -> Result<Reply<bool>> {
+    Ok(match reply.map_err(Into::into)? {
+        Reply::Done(()) => Reply::Done(true),
+        Reply::NeedsReconnect => Reply::NeedsReconnect,
+    })
+}
+
+impl TournamentsApi for Core {
+    async fn tournaments(&self, account: OptionalAccount) -> Result<TournamentList> {
+        tournaments::tournaments(self.services.lichess(), &account.0).await
+    }
+
+    async fn tournament(
+        &self,
+        system: TournamentSystem,
+        id: TournamentId,
+        account: OptionalAccount,
+        page: Option<StandingPage>,
+    ) -> Result<TournamentDetail> {
+        let page = page.map_or(1, |page| page.0 as u32);
+        let lichess = self.services.lichess();
+        let detail = tournaments::tournament(lichess, system, &id.0, &account.0, page).await?;
+        if system == TournamentSystem::Arena {
+            // An arena that is over is over for every account.
+            if detail.summary.status == TournamentStatus::Finished {
+                self.forget_tournament(system, &id.0, None).await?;
+            } else if !account.0.is_empty() && detail.me.as_ref().is_none_or(|me| me.withdraw) {
+                // `me` is the looked-up account's place only: another account's stays.
+                self.forget_tournament(system, &id.0, Some(&account.0))
                     .await?;
-                if system.as_str() == Some("arena") {
-                    // An arena that is over is over for every account.
-                    if detail["status"].as_str() == Some("finished") {
-                        self.inner("store.library.forgetTournament", vec![system, id])
-                            .await?;
-                    } else if account.as_str().is_some_and(|name| !name.is_empty())
-                        && (detail["me"].is_null()
-                            || detail["me"]["withdraw"].as_bool() == Some(true))
-                    {
-                        // `me` is the looked-up account's place only: another account's stays.
-                        self.inner("store.library.forgetTournament", vec![system, id, account])
-                            .await?;
-                    }
-                }
-                Ok(detail)
             }
-            "joinTournament" => {
-                let name = normal("assertUsername", &arg(args, 2))?;
-                let system = normal("assertTournamentSystem", &arg(args, 0))?;
-                let id = normal("assertTournamentId", &arg(args, 1))?;
-                let password = normal("assertTournamentPassword", &arg(args, 3))?;
-                let result = self
-                    .inner(
-                        "tournaments.join",
-                        vec![system.clone(), id.clone(), name.clone(), password],
-                    )
-                    .await?;
-                if result != json!(true) {
-                    return Ok(result);
-                }
-                // Pairings arrive on the event stream: keep it open while in the tournament.
-                self.inner("online.stayConnected", vec![name.clone()])
-                    .await?;
-                let now = now_ms();
-                // Arenas end at `finishesAt`; Swiss events have no fixed end, so allow a day.
-                let mut entry = json!({
-                    "system": system,
-                    "id": id,
-                    "account": name,
-                    "name": id,
-                    "until": now + 86_400_000i64,
-                });
-                match self
-                    .inner(
-                        "tournaments.get",
-                        vec![system.clone(), id.clone(), name.clone(), json!(1)],
-                    )
-                    .await
-                {
-                    Ok(detail) => {
-                        entry["name"] = detail["name"].clone();
-                        entry["until"] = if detail["finishesAt"].is_null() {
-                            entry["until"].clone()
-                        } else {
-                            detail["finishesAt"].clone()
-                        };
-                    }
-                    Err(cause) => self.host.log(
-                        Level::Warn,
-                        "tournaments",
-                        &format!(
-                            "Joined tournament details are unavailable: id={} {}",
-                            id.as_str().unwrap_or_default(),
-                            cause.message
-                        ),
-                    ),
-                }
-                self.database
-                    .call_async("store.library.rememberTournament", &[entry, json!(now)])
-                    .await?;
-                Ok(result)
-            }
-            "leaveTournament" => {
-                let system = normal("assertTournamentSystem", &arg(args, 0))?;
-                let id = normal("assertTournamentId", &arg(args, 1))?;
-                let account = normal("assertUsername", &arg(args, 2))?;
-                let result = self
-                    .inner(
-                        "tournaments.leave",
-                        vec![system.clone(), id.clone(), account.clone()],
-                    )
-                    .await?;
-                if result == json!(true) {
-                    self.inner("store.library.forgetTournament", vec![system, id, account])
-                        .await?;
-                }
-                Ok(result)
-            }
-            "createTournament" => {
-                let account = normal("assertUsername", &arg(args, 0))?;
-                let arena = normal("assertNewArena", &arg(args, 1))?;
-                self.inner("tournaments.create", vec![account, arena]).await
-            }
-            _ => Err(CoreError::new(format!("Unknown core method {method}."))),
         }
+        Ok(detail)
+    }
+
+    async fn join_tournament(
+        &self,
+        system: TournamentSystem,
+        id: TournamentId,
+        account: Username,
+        password: Option<TournamentPassword>,
+    ) -> Result<Reply<bool>> {
+        let (id, name) = (id.0, account.0);
+        let password = password.as_ref().map(|password| password.0.as_str());
+        let lichess = self.services.lichess();
+        let result =
+            done(tournaments::join_tournament(lichess, system, &id, &name, password).await)?;
+        if result != Reply::Done(true) {
+            return Ok(result);
+        }
+        // Pairings arrive on the event stream: keep it open while in the tournament.
+        self.services.online().stay_connected(&name);
+        let now = now_ms();
+        // Arenas end at `finishesAt`; Swiss events have no fixed end, so allow a day.
+        let mut entry = JoinedTournament {
+            system,
+            id: id.clone(),
+            account: name.clone(),
+            name: id.clone(),
+            until: (now + 86_400_000i64) as f64,
+        };
+        match tournaments::tournament(lichess, system, &id, &name, 1).await {
+            Ok(detail) => {
+                entry.name = detail.summary.name;
+                if let Some(finishes_at) = detail.summary.finishes_at {
+                    entry.until = finishes_at as f64;
+                }
+            }
+            Err(cause) => self.host.log(
+                Level::Warn,
+                "tournaments",
+                &format!(
+                    "Joined tournament details are unavailable: id={id} {}",
+                    cause.message
+                ),
+            ),
+        }
+        self.database
+            .write_async(move |ctx| {
+                library::remember_tournament(ctx.host, ctx.db, &entry, now as f64)
+            })
+            .await?;
+        Ok(result)
+    }
+
+    async fn leave_tournament(
+        &self,
+        system: TournamentSystem,
+        id: TournamentId,
+        account: Username,
+    ) -> Result<Reply<bool>> {
+        let lichess = self.services.lichess();
+        let left = tournaments::leave_tournament(lichess, system, &id.0, &account.0).await;
+        let result = done(left)?;
+        if result == Reply::Done(true) {
+            self.forget_tournament(system, &id.0, Some(&account.0))
+                .await?;
+        }
+        Ok(result)
+    }
+
+    async fn create_tournament(
+        &self,
+        account: Username,
+        arena: NewArena,
+    ) -> Result<Reply<TournamentSummary>> {
+        let lichess = self.services.lichess();
+        tournaments::create_tournament(lichess, &account.0, &arena).await
     }
 }

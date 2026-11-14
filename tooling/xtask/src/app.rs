@@ -27,41 +27,21 @@ fn page_file() -> PathBuf {
     root().join(".data/gpui-page")
 }
 
-/// The profiles of real installations, which a development run must never open.
-fn real_profiles() -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let mut profiles: Vec<PathBuf> = home
-        .iter()
-        .flat_map(|home| {
-            [
-                home.join("Library/Application Support/KChess"),
-                home.join(".config/KChess"),
-            ]
-        })
-        .collect();
-    profiles.extend(std::env::var_os("APPDATA").map(|dir| PathBuf::from(dir).join("KChess")));
-    profiles
+/// Whether `profile` is the real installation's, which a development run must never open: the
+/// app's own profile as the app finds it, from the environment `var`.
+fn is_real_profile(profile: &Path, var: impl Fn(&str) -> Option<std::ffi::OsString>) -> bool {
+    let real = kchess_delta::installed::own_profile(var);
+    let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    canonical(profile) == canonical(&real)
 }
 
-fn is_real_profile(profile: &Path, real: &[PathBuf]) -> bool {
-    let profile = profile
-        .canonicalize()
-        .unwrap_or_else(|_| profile.to_path_buf());
-    real.iter()
-        .any(|real| real.canonicalize().unwrap_or_else(|_| real.clone()) == profile)
-}
-
-/// `KCHESS_ENGINE_PATH`, else the Stockfish in `.data/stockfish`, fetched there when missing.
+/// `KCHESS_ENGINE_PATH`, else the pinned Stockfish in `.data/stockfish`, fetched there unless it
+/// is there already.
 pub fn engine() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("KCHESS_ENGINE_PATH") {
         return Ok(PathBuf::from(path));
     }
-    let dir = root().join(".data/stockfish");
-    let cached = dir.join(crate::util::exe("stockfish"));
-    if cached.is_file() {
-        return Ok(cached);
-    }
-    crate::engines::stockfish(&dir, false)
+    crate::engines::stockfish(&root().join(".data/stockfish"), false)
 }
 
 /// Builds the app, the core service it starts and the speech helper, staged where the app finds
@@ -169,7 +149,9 @@ fn outdated_service(info: &str, built: SystemTime) -> Option<u32> {
 /// was staged, which the next client then starts: it outlives the app, so its code and the helper
 /// it was told about would otherwise stay as they were.
 fn stop_outdated_service(profile: &Path, binary: &Path) -> Result {
-    let service = binary.with_file_name(crate::util::exe("kchess-service"));
+    let service = binary.with_file_name(kchess_delta::installed::program(
+        kchess_delta::installed::SERVICE,
+    ));
     let (Ok(info), Ok(built)) = (
         std::fs::read_to_string(profile.join("core.json")),
         std::fs::metadata(&service).and_then(|file| file.modified()),
@@ -196,12 +178,22 @@ fn stop_outdated_service(profile: &Path, binary: &Path) -> Result {
 }
 
 fn check_startable(profile: &Path) -> Result {
-    if let Some(pid) = running() {
+    startable(profile, running(), |name| std::env::var_os(name))
+}
+
+/// Whether the app may start on `profile`, made if missing: not while one already runs as
+/// `running`, nor on the real profile (`var` reads the environment).
+fn startable(
+    profile: &Path,
+    running: Option<u32>,
+    var: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Result {
+    if let Some(pid) = running {
         return Err(format!(
             "KChess already runs (pid {pid}); `cargo xtask app --stop` first."
         ));
     }
-    if is_real_profile(profile, &real_profiles()) {
+    if is_real_profile(profile, var) {
         return Err(format!(
             "{} is a real profile; development runs use a scratch one.",
             profile.display()
@@ -456,18 +448,56 @@ mod tests {
         assert_ne!(before, after);
     }
 
+    /// 2026-11-11: the guard named `~/.config/KChess` itself, so on Linux with
+    /// `XDG_CONFIG_HOME` set the real profile, which the app keeps there, was not refused.
     #[test]
     fn refuses_a_real_profile() {
-        let real = [PathBuf::from(
-            "/Users/me/Library/Application Support/KChess",
-        )];
-        assert!(is_real_profile(
-            Path::new("/Users/me/Library/Application Support/KChess"),
-            &real
-        ));
-        assert!(!is_real_profile(
-            Path::new("/repo/.data/gpui-profile"),
-            &real
-        ));
+        let env = |name: &str| {
+            [
+                ("HOME", "/home/me"),
+                ("XDG_CONFIG_HOME", "/xdg"),
+                ("APPDATA", "/appdata"),
+            ]
+            .into_iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| std::ffi::OsString::from(value))
+        };
+        let real = if cfg!(target_os = "macos") {
+            "/home/me/Library/Application Support/KChess"
+        } else if cfg!(windows) {
+            "/appdata/KChess"
+        } else {
+            "/xdg/KChess"
+        };
+        assert!(is_real_profile(Path::new(real), env));
+        assert!(!is_real_profile(Path::new("/repo/.data/gpui-profile"), env));
+    }
+
+    /// The app starts on a scratch profile, made if missing, and refuses while one runs or on the
+    /// real profile.
+    #[test]
+    fn the_app_starts_only_once_and_only_on_a_scratch_profile() {
+        let scratch = tempfile::tempdir().unwrap();
+        let home = scratch.path().join("home");
+        let env = |name: &str| {
+            [
+                ("HOME", &home),
+                ("XDG_CONFIG_HOME", &home),
+                ("APPDATA", &home),
+            ]
+            .into_iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value.clone().into_os_string())
+        };
+        let profile = scratch.path().join("profile");
+        let running = startable(&profile, Some(42), env).unwrap_err();
+        assert!(running.contains("pid 42"), "{running}");
+        assert!(!profile.exists());
+        startable(&profile, None, env).unwrap();
+        assert!(profile.is_dir());
+        let real = kchess_delta::installed::own_profile(env);
+        let refused = startable(&real, None, env).unwrap_err();
+        assert!(refused.contains("is a real profile"), "{refused}");
+        assert!(!real.exists());
     }
 }

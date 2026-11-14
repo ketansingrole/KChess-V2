@@ -15,7 +15,7 @@ crate they depend on directly is named here.
 | ------- | ------- | -------- |
 | [`shakmaty`](https://github.com/niklasf/shakmaty)                                                                                                 | GPL-3.0-or-later                                                       | Chess and variant rules in the core's native rules (`crates/kchess-domain`)            |
 | [`serde`](https://serde.rs), `serde_json`                                                                                                         | MIT OR Apache-2.0                                                      | Documents passed between the core and its native rules                                 |
-| [`thiserror`](https://github.com/dtolnay/thiserror)                                                                                               | MIT OR Apache-2.0                                                      | Typed rule errors (`DomainError`) in the native rules (`crates/kchess-domain`)         |
+| [`thiserror`](https://github.com/dtolnay/thiserror)                                                                                               | MIT OR Apache-2.0                                                      | Error types in the app's UI toolkit (`gpui`)                                           |
 | [`memchr`](https://github.com/BurntSushi/memchr)                                                                                                  | MIT OR Unlicense                                                       | Scanning the puzzle database CSV in the native rules                                   |
 | [`rusqlite`](https://github.com/rusqlite/rusqlite) (bundled SQLite)                                                                               | MIT (SQLite: public domain)                                            | The core's game library, studies, settings and puzzle database                         |
 | [`tokio`](https://tokio.rs), `tokio-util`                                                                                                         | MIT                                                                    | The core's async runtime, engine processes and cancellation                            |
@@ -43,6 +43,7 @@ crate they depend on directly is named here.
 | [`objc2`](https://github.com/madsmtm/objc2) (`objc2-foundation`, `objc2-av-foundation`, `block2`)                                                                 | MIT                                    | Reading and asking for microphone access on macOS                                                                             |
 | [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) (`@fluentui/svg-icons` 1.1.345), Copyright (c) 2020 Microsoft Corporation | MIT | Interface icons (SVG files in `apps/gpui/assets/icons`, written by `cargo xtask icons`) |
 | [`regex`](https://github.com/rust-lang/regex) | MIT OR Apache-2.0 | Matching typed and spoken input in the app |
+| [`url`](https://github.com/servo/rust-url) | MIT OR Apache-2.0 | Checking that a link opens in the browser only when it is a web page |
 | [`objc2-app-kit`](https://github.com/madsmtm/objc2) | MIT | The Dock icon on macOS |
 | [`nix`](https://github.com/nix-rust/nix) | MIT | The benchmark's CPU time and peak memory on macOS |
 | [`libloading`](https://github.com/nagisa/rust_libloading) | ISC | Loading libvosk into the speech recognition helper |
@@ -98,22 +99,19 @@ app's own engine download is. Its source is available from
 
 ## Fairy-Stockfish
 
-The variant engine is Fairy-Stockfish, compiled from its source at commit
-`2f1959e1f0b44d4648ff35015b89d8e918a5c746` when KChess is packaged (`cargo xtask fairy-stockfish`),
-the source archive verified against a pinned SHA-256. It is built unmodified and without a neural
+The variant engine is Fairy-Stockfish, compiled from its source at the commit pinned in
+`tooling/xtask/src/pinned.rs` when KChess is packaged (`cargo xtask fairy-stockfish`), the source
+archive verified against its pinned SHA-256. It is built unmodified and without a neural
 network. Its source is available from <https://github.com/fairy-stockfish/Fairy-Stockfish>.
 
 ## AppImage runtime
 
 The Linux AppImage starts with the AppImage type-2 runtime, the launcher that mounts the app and
 runs it, by the AppImage project under the MIT license. It is the unmodified official
-`runtime-x86_64` of release
-[20251108](https://github.com/AppImage/type2-runtime/releases/tag/20251108) (commit
-`dd6cebedcbddde9c82f89b011e8e1d40b6e43868`), verified when KChess is packaged against the pinned
-SHA-256 `2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d`. It is linked statically
-with musl libc (MIT), libfuse (LGPL-2.1), squashfuse (BSD-2-Clause), zstd (BSD-3-Clause) and zlib
-(zlib license), as its [license file](https://github.com/AppImage/type2-runtime/blob/dd6cebedcbddde9c82f89b011e8e1d40b6e43868/LICENSE)
-lists; its source and build scripts are at <https://github.com/AppImage/type2-runtime>.
+`runtime-x86_64` of the release pinned in `tooling/xtask/src/pinned.rs`, verified when KChess is
+packaged against its pinned SHA-256. It is linked statically with musl libc (MIT), libfuse
+(LGPL-2.1), squashfuse (BSD-2-Clause), zstd (BSD-3-Clause) and zlib (zlib license), as its
+[license file](https://github.com/AppImage/type2-runtime/blob/main/LICENSE) lists; its source and build scripts are at <https://github.com/AppImage/type2-runtime>.
 
 ## Offline voice recognition
 
@@ -121,8 +119,8 @@ The speech recognition helper (`crates/kchess-voice`) loads `libvosk`, the offic
 [Vosk](https://github.com/alphacep/vosk-api) library by Alpha Cephei Inc. and contributors
 (Apache-2.0), which includes [Kaldi](https://github.com/kaldi-asr/kaldi) and
 [OpenFst](https://www.openfst.org) (Apache-2.0). KChess ships it unchanged from the Vosk
-release archives (0.3.42 for macOS, of which only the arm64 slice is kept; 0.3.45 for Linux and
-Windows), each pinned by SHA-256 in `tooling/xtask/src/voice.rs`. On Windows, libvosk needs the
+release archives, each pinned by version and SHA-256 in `tooling/xtask/src/pinned.rs` (of the
+macOS library only the arm64 slice is kept). On Windows, libvosk needs the
 MinGW-w64 runtime beside it: `libstdc++-6.dll` and `libgcc_s_seh-1.dll` (GPL-3.0 with the GCC
 Runtime Library Exception) and `libwinpthread-1.dll` (MIT and BSD-3-Clause), from the same
 archive. Attribution and the Apache license ship beside the helper (`voice/NOTICE.txt`,
@@ -131,8 +129,7 @@ code; no Lichess voice application code is copied.
 
 The optionally downloaded `vosk-model-small-en-us-0.15` model is from
 [Alpha Cephei's model catalog](https://alphacephei.com/vosk/models) and is Apache-2.0.
-Its official ZIP archive has SHA-256
-`30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498`.
+Its official ZIP archive's SHA-256 is pinned in `crates/kchess-core/src/voice/mod.rs`.
 The app verifies this digest on download and unpacks the unchanged model files into the
 app's data folder, recording each file's SHA-256; the cached files are verified before reuse.
 

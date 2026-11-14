@@ -52,10 +52,12 @@ async fn analyse(
 }
 
 #[tokio::test]
+#[cfg_attr(
+    not(kchess_fairy_stockfish),
+    ignore = "needs Fairy-Stockfish: set KCHESS_VARIANT_ENGINE_PATH"
+)]
 async fn crazyhouse_lines_drop_pieces_from_the_pockets() {
-    let Some(engine) = support::fairy_stockfish() else {
-        return;
-    };
+    let engine = support::engine("KCHESS_VARIANT_ENGINE_PATH");
     // 1. e4 d5 2. exd5 Qxd5: a pawn each in hand.
     let update = analyse(
         engine,
@@ -80,10 +82,12 @@ async fn crazyhouse_lines_drop_pieces_from_the_pockets() {
 }
 
 #[tokio::test]
+#[cfg_attr(
+    not(kchess_fairy_stockfish),
+    ignore = "needs Fairy-Stockfish: set KCHESS_VARIANT_ENGINE_PATH"
+)]
 async fn an_atomic_capture_that_explodes_the_king_is_mate() {
-    let Some(engine) = support::fairy_stockfish() else {
-        return;
-    };
+    let engine = support::engine("KCHESS_VARIANT_ENGINE_PATH");
     // Qxf7 explodes the king beside f7: White wins at once, which standard rules would not see.
     let update = analyse(
         engine,
@@ -104,12 +108,14 @@ async fn an_atomic_capture_that_explodes_the_king_is_mate() {
 /// A Crazyhouse game with a drop is reviewed by Fairy-Stockfish to the end (standard rules stop
 /// at the drop), under a key of its own: the same moves in standard chess are another game.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(
+    not(kchess_fairy_stockfish),
+    ignore = "needs Fairy-Stockfish: set KCHESS_VARIANT_ENGINE_PATH"
+)]
 async fn a_crazyhouse_game_is_reviewed_with_its_drops() {
     use kchess_core::engine::review::{ReviewRequest, ReviewSettings, Reviews};
-    use support::review_store::{MemoryStore, ScriptedHost};
-    let Some(engine) = support::fairy_stockfish() else {
-        return;
-    };
+    use support::reviews::{ReviewDb, ScriptedHost};
+    let engine = support::engine("KCHESS_VARIANT_ENGINE_PATH");
     let host = support::host();
     let mut locations = support::locations();
     locations.variant = engine;
@@ -119,8 +125,8 @@ async fn a_crazyhouse_game_is_reviewed_with_its_drops() {
         support::scheduler(4, false),
         locations,
     );
-    let store = MemoryStore::new();
-    let reviews = Reviews::new(ctx, store.clone());
+    let store = ReviewDb::new();
+    let reviews = Reviews::new(ctx, store.database.clone());
     let review_host = ScriptedHost::new(
         store,
         ReviewSettings {
@@ -147,7 +153,7 @@ async fn a_crazyhouse_game_is_reviewed_with_its_drops() {
     let done = wait_until_review(&review_host).await;
     assert_eq!(done.evals.len(), moves.len() + 1);
     assert!(done.evals.iter().all(Option::is_some), "{:?}", done.evals);
-    assert_eq!(done.extra.get("variant"), Some(&json!("crazyhouse")));
+    assert_eq!(done.variant.as_deref(), Some("crazyhouse"));
     assert!(
         done.engine
             .as_deref()
@@ -155,9 +161,8 @@ async fn a_crazyhouse_game_is_reviewed_with_its_drops() {
         "{:?}",
         done.engine
     );
-    let standard =
-        kchess_domain::api::call("reviewKey", &json!([fen, moves]).to_string()).expect("a key");
-    assert_ne!(json!(done.key).to_string(), standard);
+    let standard = kchess_domain::records::review::review_key(fen, &moves, None);
+    assert_ne!(done.key, standard);
     // The stored review is found again by its variant.
     let found = reviews
         .get_review(fen, &moves, Some("crazyhouse"))
@@ -168,7 +173,7 @@ async fn a_crazyhouse_game_is_reviewed_with_its_drops() {
 }
 
 async fn wait_until_review(
-    host: &support::review_store::ScriptedHost,
+    host: &support::reviews::ScriptedHost,
 ) -> kchess_core::engine::review::StoredReview {
     support::wait_until(Duration::from_secs(60), "the complete review", || {
         host.complete_updates().into_iter().next()
@@ -194,10 +199,12 @@ fn variant_search(engine: std::path::PathBuf, random: f64) -> kchess_core::engin
 /// The computer plays Crazyhouse and Horde by their rules, from their own starts: its moves
 /// (best or random) are legal there, and a drop is among the moves it is given.
 #[tokio::test]
+#[cfg_attr(
+    not(kchess_fairy_stockfish),
+    ignore = "needs Fairy-Stockfish: set KCHESS_VARIANT_ENGINE_PATH"
+)]
 async fn the_computer_plays_a_variant_by_its_rules() {
-    let Some(engine) = support::fairy_stockfish() else {
-        return;
-    };
+    let engine = support::engine("KCHESS_VARIANT_ENGINE_PATH");
     let zh = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
     let horde = "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1";
     let games = [
@@ -224,7 +231,11 @@ async fn the_computer_plays_a_variant_by_its_rules() {
             let mut line: Vec<String> = moves.iter().map(|mv| mv.to_string()).collect();
             line.push(reply.clone());
             assert_eq!(
-                kchess_domain::replay::replay_setup_count(variant, fen, &line),
+                kchess_domain::replay::replay_setup_count(
+                    kchess_domain::variant::Variant::from_key(variant).unwrap(),
+                    fen,
+                    &line
+                ),
                 Some(line.len()),
                 "{variant} {level} played {reply}"
             );

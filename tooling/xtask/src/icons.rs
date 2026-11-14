@@ -1,4 +1,5 @@
-//! The icons the app names (`icon("name")` in apps/gpui/src), as SVG files in
+//! The icons the app names (`icon("name")` in apps/gpui/src, or a table's `"name"` that is in
+//! `ICONS`), as SVG files in
 //! `apps/gpui/assets/icons`: Microsoft's Fluent UI System Icons (MIT, `THIRD_PARTY_NOTICES.md`),
 //! each drawn for its own sizes on that size's pixel grid, and KChess's own drawings in
 //! `tooling/xtask/icons` for what Fluent has no icon for (chess pieces, swords, variants), drawn
@@ -22,7 +23,6 @@ use crate::util::{Result, root, say};
 const PACKAGE: &str = "https://registry.npmjs.org/@fluentui/svg-icons/-/svg-icons-1.1.345.tgz";
 const INTEGRITY: &str = "sha512-Mz5e5BFKtvRN5Yiwrs5JqZRKgd8Rt8S3YiCAuwOWudmm7NA14Y8Ijr8QzMrE6gtNdoUP6/om7ue0lBQJLL57Mw==";
 
-/// The sizes Fluent draws icons at.
 const SIZES: [u32; 7] = [12, 16, 20, 24, 28, 32, 48];
 
 /// Each icon the app names, and the Fluent icon drawn for it (`None`: KChess's own drawing).
@@ -173,7 +173,6 @@ const ICONS: &[(&str, Option<&str>)] = &[
     ("square", Some("square")),
     ("square-arrow-out-up-right", Some("open")),
     ("sun", Some("weather_sunny")),
-    ("sun-moon", Some("brightness_high")),
     ("swatch-book", Some("paint_brush")),
     ("swords", None),
     ("target", Some("target")),
@@ -214,7 +213,6 @@ fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Every name written as `icon("…")`.
 pub fn named(text: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     let mut rest = text;
@@ -238,13 +236,22 @@ pub fn named(text: &str) -> BTreeSet<String> {
     names
 }
 
+/// The `ICONS` names `text` writes as a whole string literal: the tables that keep an icon's
+/// name beside its label (`("Sound", "volume-2", …)`) and hand it to `icon` later.
+pub fn listed(text: &str) -> BTreeSet<String> {
+    text.split('"')
+        .filter(|piece| ICONS.iter().any(|(name, _)| name == piece))
+        .map(str::to_string)
+        .collect()
+}
+
 fn wanted() -> BTreeSet<String> {
     let mut files = Vec::new();
     sources(&root().join("apps/gpui/src"), &mut files);
     files
         .iter()
         .filter_map(|path| std::fs::read_to_string(path).ok())
-        .flat_map(|text| named(&text))
+        .flat_map(|text| named(&text).into_iter().chain(listed(&text)))
         .collect()
 }
 
@@ -398,7 +405,7 @@ pub fn write() -> Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{icon_of, named};
+    use super::{icon_of, listed, named, wanted};
 
     #[test]
     fn finds_icon_names_written_as_literals() {
@@ -406,6 +413,22 @@ mod tests {
             r#"icon("circle-dot"); crate::assets::icon("x2"); my_icon("not-this"); icon(name)"#;
         let names: Vec<String> = named(text).into_iter().collect();
         assert_eq!(names, ["circle-dot", "x2"]);
+    }
+
+    #[test]
+    fn finds_icon_names_kept_in_tables() {
+        let text = r#"("Sound", "volume-2", G::Interface), quick("x", "hand", "gesture"), "sound""#;
+        let names: Vec<String> = listed(text).into_iter().collect();
+        assert_eq!(names, ["hand", "volume-2", "x"]);
+    }
+
+    /// The app's own sources: an icon named by `icon("…")` and one only a table names.
+    #[test]
+    fn the_app_wants_the_icons_it_calls_and_the_ones_its_tables_name() {
+        let wanted = wanted();
+        assert!(wanted.contains("refresh-cw"), "{wanted:?}");
+        assert!(wanted.contains("swatch-book"), "{wanted:?}");
+        assert!(!wanted.contains(""), "{wanted:?}");
     }
 
     #[test]

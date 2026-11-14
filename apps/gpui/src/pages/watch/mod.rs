@@ -2,23 +2,30 @@
 //! players are playing, and tournament broadcasts. One feed streams at a time, and only while the
 //! page is shown: leaving it stops the stream.
 
+use crate::loading::Epoch;
+use kchess_contracts::ErrorKind;
 use kchess_contracts::calls;
+use kchess_contracts::check::{Bounded, LichessId, PresenceUsers};
+use kchess_contracts::types::{TvChannel, UserPresence, WatchPhase, WatchPlayer, WatchTarget};
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
 use shakmaty::Color;
 
 use crate::assets::icon;
-use crate::core::{AppCore, CoreEvent};
+use crate::core::{AppCore, ClientEvent, CoreEvent};
+use crate::game::surface::{Faces, Steps};
 use crate::online::OnlineHandle;
+use crate::pages::{
+    ActionInfo, NavGroup, Page, PageAction, PageCommand, PageInfo, PageTab, PageView, TabInfo,
+};
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
-use crate::widgets::{self, KeyboardFocus as _, Look, Pill};
+use crate::widgets::{self, KeyboardFocus as _, Look};
 
 mod broadcast_engine;
 mod broadcasts;
@@ -29,15 +36,17 @@ use live::Live;
 
 pub(crate) const TAB_KEY: &str = "kchess:watch-tab";
 pub(crate) const CHANNEL_KEY: &str = "kchess:watch-channel";
-/// Clocks are redrawn this often while something is being watched.
+/// Clocks are looked at this often while something is being watched: slower than
+/// `timer::TICK`, as a broadcast's tick redraws every board of the round.
 const TICK: Duration = Duration::from_millis(500);
 /// The tabs' row and the gap under it, above the board.
 const HEADER: Pixels = px(48.);
 /// Updates that arrive before the core says which session they belong to (kept, newest last).
 const EARLY_KEPT: usize = 8;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Tab {
+/// Watch's tabs, in order.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Tab {
     Tv,
     Friends,
     Broadcasts,
@@ -45,18 +54,38 @@ enum Tab {
 
 impl Tab {
     fn key(self) -> &'static str {
-        match self {
-            Tab::Tv => "tv",
-            Tab::Friends => "friends",
-            Tab::Broadcasts => "broadcasts",
-        }
+        self.info().key
     }
+}
 
-    fn of(key: &str) -> Tab {
-        match key {
-            "friends" => Tab::Friends,
-            "broadcasts" => Tab::Broadcasts,
-            _ => Tab::Tv,
+impl PageTab for Tab {
+    const ALL: &'static [Tab] = &[Tab::Tv, Tab::Friends, Tab::Broadcasts];
+    const KEY: &'static str = TAB_KEY;
+
+    fn info(self) -> TabInfo {
+        let (key, label, title, icon, keywords) = match self {
+            Tab::Tv => ("tv", "TV", "Lichess TV", "tv", "channels top rated"),
+            Tab::Friends => (
+                "friends",
+                "Following",
+                "Following games",
+                "users",
+                "friends players live",
+            ),
+            Tab::Broadcasts => (
+                "broadcasts",
+                "Broadcasts",
+                "Broadcasts",
+                "radio",
+                "over the board events rounds",
+            ),
+        };
+        TabInfo {
+            key,
+            label,
+            title,
+            icon,
+            keywords,
         }
     }
 }
@@ -69,10 +98,10 @@ enum Target {
 }
 
 impl Target {
-    fn json(&self) -> Value {
+    fn contract(&self) -> WatchTarget {
         match self {
-            Target::Channel(channel) => json!({ "channel": channel }),
-            Target::Game(id) => json!({ "gameId": id }),
+            Target::Channel(channel) => WatchTarget::Channel(channel.clone()),
+            Target::Game(id) => WatchTarget::Game(id.clone()),
         }
     }
 }
@@ -84,7 +113,7 @@ enum Pending {
     Round,
 }
 
-/// `TvChannel`'s icon (`CHANNEL_ICONS`).
+/// `TvChannel`'s icon.
 pub fn channel_icon(key: &str) -> gpui_kit::component::Icon {
     match key {
         "best" => icon("crown"),
@@ -108,14 +137,45 @@ pub fn channel_icon(key: &str) -> gpui_kit::component::Icon {
 }
 
 /// "GM Name (2800)": a player as Lichess labels them.
-pub fn label(player: &Value) -> String {
+pub fn label(player: &WatchPlayer) -> String {
+    player_label(player.title.as_deref(), &player.name, player.rating)
+}
+
+/// The player on `side` of a game.
+fn player_of<'a>(white: &'a WatchPlayer, black: &'a WatchPlayer, side: Color) -> &'a WatchPlayer {
+    match side {
+        Color::White => white,
+        Color::Black => black,
+    }
+}
+
+/// A watched game's players, as the analysis board names them.
+fn origin_of(white: &WatchPlayer, black: &WatchPlayer) -> crate::game::played::GameOrigin {
+    crate::game::played::GameOrigin {
+        white: Some(white.name.clone()),
+        black: Some(black.name.clone()),
+        ..Default::default()
+    }
+}
+
+/// The side to move in a FEN.
+fn turn_of(fen: &str) -> Color {
+    if fen.split(' ').nth(1) == Some("b") {
+        Color::Black
+    } else {
+        Color::White
+    }
+}
+
+/// "GM Carlsen (2850)": a player's title, name and rating.
+fn player_label(title: Option<&str>, name: &str, rating: Option<f64>) -> String {
     let mut text = String::new();
-    if let Some(title) = player["title"].as_str() {
+    if let Some(title) = title {
         text.push_str(title);
         text.push(' ');
     }
-    text.push_str(player["name"].as_str().unwrap_or("?"));
-    if let Some(rating) = player["rating"].as_f64() {
+    text.push_str(name);
+    if let Some(rating) = rating {
         text.push_str(&format!(" ({rating})"));
     }
     text
@@ -123,25 +183,27 @@ pub fn label(player: &Value) -> String {
 
 pub struct WatchPage {
     tab: Tab,
-    channels: Vec<Value>,
+    channels: Vec<TvChannel>,
     target: Option<Target>,
     /// The connection to the feed (`WatchState`), once known.
-    phase: Option<String>,
-    /// The kind of failure (`ErrorKind`) the feed's last state reported.
-    failure: Option<String>,
+    phase: Option<WatchPhase>,
+    /// The kind of failure the feed's last state reported.
+    failure: Option<ErrorKind>,
     error: Option<SharedString>,
     /// Why TV's channel list did not load, shown on the TV tab only.
     channels_error: Option<SharedString>,
-    session: Option<f64>,
-    round_session: Option<f64>,
+    session: Option<u64>,
+    round_session: Option<u64>,
     pending: Option<Pending>,
     early: Vec<CoreEvent>,
     /// Each request; answers to an older one are dropped.
-    epoch: u64,
+    epoch: Epoch,
+    /// Settles once the core has answered the last feed asked of it (`next_feed`).
+    feed_started: Option<FeedStarted>,
     live: Live,
     broadcasts: Broadcasts,
     /// Followed players' presence by lowercase name.
-    presence: std::collections::HashMap<String, Value>,
+    presence: std::collections::HashMap<String, UserPresence>,
     presence_error: Option<SharedString>,
     /// The live game's panel beside the board, drawn as a cached view of its own
     /// (`render_live_panel`), so a sliding move redraws the page around the board alone.
@@ -150,8 +212,9 @@ pub struct WatchPage {
     live_list: Entity<crate::part::Part<WatchPage>>,
     /// White's and Black's clock faces (`render_live_face`): a tick redraws only these.
     live_faces: [Entity<crate::part::Part<WatchPage>>; 2],
-    /// What the clock faces showed at the last tick.
-    live_faces_shown: [Option<(String, bool)>; 2],
+    /// What the clock faces showed at the last tick, and whether each had a clock.
+    live_faces_shown: Faces<[Option<(String, bool)>; 2]>,
+    live_clocks: Faces<[bool; 2]>,
     layout: PlayLayout,
     shown: bool,
     focus: FocusHandle,
@@ -179,17 +242,22 @@ impl WatchPage {
         let accounts = crate::accounts::handle(cx);
         let covers = crate::remote_image::handle(cx);
         let subscriptions = vec![
-            cx.subscribe_in(&events, window, |this, _, event: &CoreEvent, window, cx| {
-                if event.name.starts_with("watch:") {
-                    this.receive(event.clone(), cx);
-                }
-                if event.name == "engine:analysis" {
-                    this.engine_update(&event.payload, cx);
-                }
-                if event.name == crate::core::RECONNECTED {
-                    this.reconnected(window, cx);
-                }
-            }),
+            cx.subscribe_in(
+                &events,
+                window,
+                |this, _, event: &ClientEvent, window, cx| match event {
+                    ClientEvent::Event(
+                        event @ (CoreEvent::WatchFrame(_)
+                        | CoreEvent::WatchState(_)
+                        | CoreEvent::WatchBroadcast(_)),
+                    ) => this.receive(event.clone(), cx),
+                    ClientEvent::Event(CoreEvent::Analysis(update)) => {
+                        this.engine_update(update, cx)
+                    }
+                    ClientEvent::Reconnected => this.reconnected(window, cx),
+                    _ => {}
+                },
+            ),
             // The player's own game pauses the engine and leaves an explored line.
             cx.observe(&online, |this, online, cx| {
                 if !online.read(cx).assistance_allowed() {
@@ -203,7 +271,7 @@ impl WatchPage {
             // A broadcast's cover arrived.
             cx.observe(&covers, |_, _, cx| cx.notify()),
         ];
-        let tab = Tab::of(&crate::prefs::get::<String>(cx, TAB_KEY, "tv".into()));
+        let tab = Tab::stored(cx);
         WatchPage {
             tab,
             channels: Vec::new(),
@@ -216,7 +284,8 @@ impl WatchPage {
             round_session: None,
             pending: None,
             early: Vec::new(),
-            epoch: 0,
+            epoch: Epoch::default(),
+            feed_started: None,
             live: Live::new(cx),
             broadcasts: Broadcasts::new(window, cx),
             presence: std::collections::HashMap::new(),
@@ -233,7 +302,8 @@ impl WatchPage {
                 crate::part::Part::new(|this, _, cx| this.render_live_face(Color::White, cx), cx),
                 crate::part::Part::new(|this, _, cx| this.render_live_face(Color::Black, cx), cx),
             ],
-            live_faces_shown: [None, None],
+            live_faces_shown: Faces::default(),
+            live_clocks: Faces::default(),
             layout: PlayLayout::default(),
             shown: false,
             focus: cx.focus_handle(),
@@ -267,40 +337,30 @@ impl WatchPage {
     }
 
     fn start_ticking(&mut self, cx: &mut Context<Self>) {
-        self._tick = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(TICK).await;
-                let live = this
-                    .update(cx, |this, cx| {
-                        if this.broadcasts.ticking() {
-                            cx.notify();
-                        } else if this.live.frame.is_some() {
-                            this.redraw_faces_if_ticked(cx);
-                        }
-                    })
-                    .is_ok();
-                if !live {
-                    return;
-                }
+        self._tick = Some(crate::timer::every(TICK, cx, |this, cx| {
+            if this.broadcasts.ticking() {
+                cx.notify();
+            } else if this.live.frame.is_some() {
+                this.redraw_faces_if_ticked(cx);
             }
+            true
         }));
     }
 
     /// A tick redraws a live clock face only when it shows something else, and only that face;
     /// the page when a clock comes or goes.
     fn redraw_faces_if_ticked(&mut self, cx: &mut Context<Self>) {
-        let connected = self.phase.as_deref() == Some("connected");
-        for (ix, color) in [Color::White, Color::Black].into_iter().enumerate() {
-            let shown = self.live.clock(color, connected);
-            if shown == self.live_faces_shown[ix] {
-                continue;
-            }
-            let came_or_went = shown.is_some() != self.live_faces_shown[ix].is_some();
-            self.live_faces_shown[ix] = shown;
-            if came_or_went {
-                cx.notify();
-            } else {
-                self.live_faces[ix].update(cx, |_, cx| cx.notify());
+        let connected = self.phase == Some(WatchPhase::Connected);
+        let shown = [Color::White, Color::Black].map(|color| self.live.clock(color, connected));
+        let clocks = shown.each_ref().map(Option::is_some);
+        let changed = self.live_faces_shown.each_changed(shown);
+        if self.live_clocks.changed(clocks) {
+            cx.notify();
+            return;
+        }
+        for (face, changed) in self.live_faces.iter().zip(changed) {
+            if changed {
+                face.update(cx, |_, cx| cx.notify());
             }
         }
     }
@@ -332,8 +392,8 @@ impl WatchPage {
         match self.tab {
             Tab::Tv if self.target.is_none() => {
                 let channel = crate::prefs::get::<String>(cx, CHANNEL_KEY, "best".into());
-                let known = self.channels.is_empty()
-                    || self.channels.iter().any(|c| c["key"] == json!(channel));
+                let known =
+                    self.channels.is_empty() || self.channels.iter().any(|c| c.key == channel);
                 self.watch_channel(if known { channel } else { "best".into() }, cx);
             }
             Tab::Broadcasts => {
@@ -346,9 +406,9 @@ impl WatchPage {
         }
     }
 
-    /// Show a tab by its key (`tv`, `friends` or `broadcasts`), as its pill does.
-    pub fn show_tab(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.choose_tab(Tab::of(key), window, cx);
+    /// Show a tab, as its pill does.
+    pub fn show_tab(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) {
+        self.choose_tab(tab, window, cx);
     }
 
     fn choose_tab(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) {
@@ -386,20 +446,19 @@ impl WatchPage {
         };
         self.stop(cx);
         self.error = None;
-        let epoch = self.epoch;
-        let found = cx
-            .global::<AppCore>()
-            .request(calls::BroadcastRound { id: json!(round) });
+        let epoch = self.epoch.current();
+        let found = cx.global::<AppCore>().request(calls::BroadcastRound {
+            id: LichessId(round.clone()),
+        });
         cx.spawn_in(window, async move |this, cx| {
             let answer = found.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
                     Ok(found) => {
-                        let tour = found["tourId"].as_str().unwrap_or_default().to_string();
-                        this.open_tour_at(tour, Some(round), game, window, cx);
+                        this.open_tour_at(found.tour_id, Some(round), game, window, cx);
                     }
                     Err(cause) => this.error = Some(cause.message.into()),
                 }
@@ -419,7 +478,7 @@ impl WatchPage {
         }
     }
 
-    /// Watch a live game (`watchGame`): the Following tab, streaming it.
+    /// Watch a live game: the Following tab, streaming it.
     pub fn watch_game(&mut self, id: &str, cx: &mut Context<Self>) {
         self.tab = Tab::Friends;
         crate::prefs::set(cx, TAB_KEY, "friends");
@@ -434,7 +493,7 @@ impl WatchPage {
                 match answer {
                     Ok(channels) => {
                         this.channels_error = None;
-                        this.channels = channels.as_array().cloned().unwrap_or_default()
+                        this.channels = channels
                     }
                     Err(cause) => this.channels_error = Some(cause.message.into()),
                 }
@@ -451,8 +510,7 @@ impl WatchPage {
 
     /// `watch`: stream a channel or a game; its updates carry the session the core answers.
     fn watch(&mut self, target: Target, cx: &mut Context<Self>) {
-        self.epoch += 1;
-        let epoch = self.epoch;
+        let epoch = self.epoch.next();
         self.early.clear();
         self.session = None;
         self.round_session = None;
@@ -462,22 +520,31 @@ impl WatchPage {
         self.target = Some(target.clone());
         self.pending = Some(Pending::Watch);
         cx.notify();
-        let call = cx.global::<AppCore>().request(calls::Watch {
-            target: target.json(),
-        });
+        let (before, started) = self.next_feed();
         cx.spawn(async move |this, cx| {
+            if let Some(before) = before {
+                before.await;
+            }
+            let Ok(call) = this.update(cx, |_, cx| {
+                cx.global::<AppCore>().request(calls::Watch {
+                    target: target.contract(),
+                })
+            }) else {
+                return;
+            };
             let answer = call.await;
+            drop(started);
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     // The page moved on while the core started it: that watch ends now.
-                    if let Ok(session) = &answer {
-                        stop_watching(session.as_f64(), cx);
+                    if let Ok(session) = answer {
+                        stop_watching(Some(session), cx);
                     }
                     return;
                 }
                 match answer {
                     Ok(session) => {
-                        this.session = session.as_f64();
+                        this.session = Some(session);
                         this.replay_early(cx);
                     }
                     Err(cause) => {
@@ -493,9 +560,23 @@ impl WatchPage {
         .detach();
     }
 
+    /// Wait for the feed asked for before to have started, then ask for the next: the core
+    /// follows one feed at a time (a channel, a game or a broadcast round), and two requests sent
+    /// together could reach it in either order. Under load the older one then started last,
+    /// replacing the feed the page waited for, and was stopped as stale, leaving none.
+    /// `started` is to be dropped once the core has answered.
+    fn next_feed(&mut self) -> (Option<FeedStarted>, futures::channel::oneshot::Sender<()>) {
+        use futures::FutureExt as _;
+        let (started, answered) = futures::channel::oneshot::channel::<()>();
+        let before = self
+            .feed_started
+            .replace(answered.map(|_| ()).boxed().shared());
+        (before, started)
+    }
+
     /// `stop`: no feed, no frame.
     fn stop(&mut self, cx: &mut Context<Self>) {
-        self.epoch += 1;
+        self.epoch.invalidate();
         self.early.clear();
         self.pending = None;
         // Only the watches this page knows: a bare stop handled after a newer watch began would
@@ -518,7 +599,7 @@ impl WatchPage {
 
     /// A feed's update: a frame, the connection's state, or a broadcast round's games.
     fn receive(&mut self, event: CoreEvent, cx: &mut Context<Self>) {
-        let round = event.name == "watch:broadcast";
+        let round = matches!(event, CoreEvent::WatchBroadcast(_));
         if self.pending
             == Some(if round {
                 Pending::Round
@@ -532,28 +613,24 @@ impl WatchPage {
             }
             return;
         }
-        let session = event.payload["session"].as_f64();
-        match event.name.as_str() {
-            "watch:frame" if session.is_some() && session == self.session => {
-                self.phase = Some("connected".into());
-                self.live.set_frame(event.payload, cx);
+        match event {
+            CoreEvent::WatchFrame(frame) if Some(frame.session) == self.session => {
+                self.phase = Some(WatchPhase::Connected);
+                self.live.set_frame(*frame, cx);
             }
-            "watch:state" if session.is_some() && session == self.session => {
-                let phase = event.payload["phase"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string();
-                if phase != "connected" && self.phase.as_deref() == Some("connected") {
+            CoreEvent::WatchState(state) if Some(state.session) == self.session => {
+                let connected = Some(WatchPhase::Connected);
+                if Some(state.phase) != connected && self.phase == connected {
                     self.live.freeze_clock();
                 }
-                if let Some(message) = event.payload["message"].as_str() {
-                    self.error = Some(message.to_string().into());
+                if let Some(message) = state.message {
+                    self.error = Some(message.into());
                 }
-                self.failure = event.payload["kind"].as_str().map(str::to_string);
-                self.phase = Some(phase);
+                self.failure = state.kind;
+                self.phase = Some(state.phase);
             }
-            "watch:broadcast" if session.is_some() && session == self.round_session => {
-                if let Some(error) = self.broadcasts.update(&event.payload) {
+            CoreEvent::WatchBroadcast(update) if Some(update.session) == self.round_session => {
+                if let Some(error) = self.broadcasts.update(&update) {
                     self.error = Some(error.into());
                 }
                 self.engine_games_changed(cx);
@@ -568,22 +645,22 @@ impl WatchPage {
         let names: Vec<String> = crate::accounts::handle(cx)
             .read(cx)
             .tracked()
-            .iter()
-            .filter_map(|friend| friend["username"].as_str().map(str::to_string))
+            .into_iter()
+            .map(|friend| friend.username)
             .collect();
         let core = cx.global::<AppCore>().clone();
         self.presence_error = None;
         for chunk in names.chunks(50) {
             let presence = core.request(calls::Presence {
-                usernames: json!(chunk),
+                usernames: PresenceUsers(chunk.to_vec()),
             });
             cx.spawn(async move |this, cx| {
                 let answer = presence.await;
                 let _ = this.update(cx, |this, cx| {
                     match answer {
                         Ok(report) => {
-                            for (name, entry) in report["users"].as_object().into_iter().flatten() {
-                                this.presence.insert(name.to_lowercase(), entry.clone());
+                            for (name, entry) in report.users {
+                                this.presence.insert(name.to_lowercase(), entry);
                             }
                         }
                         Err(cause) => this.presence_error = Some(cause.message.into()),
@@ -595,8 +672,10 @@ impl WatchPage {
         }
     }
 
+    /// The channel list as Lichess would answer it, for the end-to-end tests: the fake Lichess
+    /// leaves the list unanswered, which TV's unreachable state needs, and every test shares it.
     #[cfg(test)]
-    pub(crate) fn show_channels(&mut self, channels: Vec<Value>, cx: &mut Context<Self>) {
+    pub(crate) fn show_channels(&mut self, channels: Vec<TvChannel>, cx: &mut Context<Self>) {
         self.channels = channels;
         cx.notify();
     }
@@ -613,11 +692,8 @@ impl WatchPage {
         };
         self.channels
             .iter()
-            .filter_map(|channel| {
-                let key = channel["key"].as_str()?;
-                let name = channel["label"].as_str()?;
-                (current != Some(key)).then(|| (key.to_string(), name.to_string()))
-            })
+            .filter(|channel| current != Some(channel.key.as_str()))
+            .map(|channel| (channel.key.clone(), channel.label.clone()))
             .collect()
     }
 
@@ -658,18 +734,16 @@ impl WatchPage {
                     .gap(px(2.))
                     .overflow_y_scroll()
                     .children(self.channels.iter().enumerate().map(|(index, channel)| {
-                        let key = channel["key"].as_str().unwrap_or_default().to_string();
+                        let key = channel.key.clone();
                         let chosen = current.as_deref() == Some(key.as_str());
-                        let sub = if channel["player"].is_object() {
-                            label(&channel["player"])
-                        } else {
-                            "No game".into()
-                        };
+                        let sub = channel.player.as_ref().map_or("No game".into(), |player| {
+                            player_label(player.title.as_deref(), &player.name, player.rating)
+                        });
                         h_flex()
                             .id(("watch-channel", index))
                             .role(Role::Button)
                             .keyboard_focus(palette.primary)
-                            .aria_label(channel["label"].as_str().unwrap_or_default().to_string())
+                            .aria_label(channel.label.clone())
                             .aria_selected(chosen)
                             .gap(px(12.))
                             .p(px(8.))
@@ -701,12 +775,7 @@ impl WatchPage {
                                             .text_size(px(14.))
                                             .font_weight(FontWeight::MEDIUM)
                                             .truncate()
-                                            .child(
-                                                channel["label"]
-                                                    .as_str()
-                                                    .unwrap_or_default()
-                                                    .to_string(),
-                                            ),
+                                            .child(channel.label.clone()),
                                     )
                                     .child(
                                         div()
@@ -726,24 +795,19 @@ impl WatchPage {
         let online = friends
             .iter()
             .filter(|friend| {
-                friend["username"].as_str().is_some_and(|name| {
-                    self.presence
-                        .get(&name.to_lowercase())
-                        .is_some_and(|p| p["online"] == json!(true))
-                })
+                self.presence
+                    .get(&friend.username.to_lowercase())
+                    .is_some_and(|p| p.online)
             })
             .count();
         let playing: Vec<(String, Option<String>)> = friends
             .iter()
             .filter_map(|friend| {
-                let name = friend["username"].as_str()?;
+                let name = friend.username.as_str();
                 let presence = self.presence.get(&name.to_lowercase())?;
-                (presence["playing"] == json!(true)).then(|| {
-                    (
-                        name.to_string(),
-                        presence["playingId"].as_str().map(str::to_string),
-                    )
-                })
+                presence
+                    .playing
+                    .then(|| (name.to_string(), presence.playing_id.clone()))
             })
             .collect();
         let header = h_flex()
@@ -872,18 +936,14 @@ impl WatchPage {
             );
         }
         // A finished game's feed ends with it: there is nothing to retry.
-        let over = self
-            .live
-            .frame
-            .as_ref()
-            .is_some_and(|frame| frame["finished"] == json!(true));
+        let over = self.live.frame.as_ref().is_some_and(|frame| frame.finished);
         // A retry helps a feed that dropped, not one Lichess refused or has no game for.
-        let failed = match self.phase.as_deref() {
-            Some("error") => !matches!(
-                self.failure.as_deref(),
-                Some("refused" | "notFound" | "login")
+        let failed = match self.phase {
+            Some(WatchPhase::Error) => !matches!(
+                self.failure,
+                Some(ErrorKind::Refused | ErrorKind::NotFound | ErrorKind::Login)
             ),
-            Some("ended") => !over,
+            Some(WatchPhase::Ended) => !over,
             _ => false,
         };
         if let (true, Some(target)) = (failed, self.target.clone()) {
@@ -918,18 +978,10 @@ fn list_card(palette: &Palette) -> Div {
 impl Render for WatchPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let tabs = [
-            (Tab::Tv, "TV", icon("tv")),
-            (Tab::Friends, "Following", icon("users")),
-            (Tab::Broadcasts, "Broadcasts", icon("radio")),
-        ];
-        let selected = tabs
-            .iter()
-            .position(|(tab, _, _)| *tab == self.tab)
-            .unwrap_or(0);
+        let selected = self.tab.index();
         let page = cx.entity().downgrade();
         let choose = move |index: usize, window: &mut Window, cx: &mut App| {
-            let tab = [Tab::Tv, Tab::Friends, Tab::Broadcasts][index];
+            let tab = Tab::ALL[index];
             let _ = page.update(cx, |page, cx| page.choose_tab(tab, window, cx));
         };
         let header = h_flex()
@@ -943,14 +995,7 @@ impl Render for WatchPage {
             )
             .child(widgets::header_pills(
                 "watch-tabs",
-                tabs.into_iter()
-                    .map(|(_, label, glyph)| Pill {
-                        icon: Some(glyph),
-                        label: label.into(),
-                        badge: None,
-                        disabled: false,
-                    })
-                    .collect(),
+                Tab::pills(),
                 selected,
                 choose,
                 &palette,
@@ -961,15 +1006,8 @@ impl Render for WatchPage {
             Tab::Tv | Tab::Friends => self.live_layout(window, cx, &palette),
             Tab::Broadcasts => self.broadcasts_body(window, cx, &palette),
         };
-        div()
-            .id("watch-page")
-            .track_focus(&self.focus)
+        crate::game::surface::keys(div().id("watch-page"), &self.focus, cx)
             .on_key_down(cx.listener(Self::key))
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
             .size_full()
             .relative()
             .overflow_y_scroll()
@@ -1028,7 +1066,8 @@ impl WatchPage {
         self.layout.probe(cx)
     }
 
-    /// ←/→ and ↑/↓ step through the shown game; F turns the board.
+    /// Escape steps back out of a broadcast, and L turns its engine on or off; the arrows step
+    /// through the shown game (`surface::keys`).
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if event.keystroke.modifiers.modified() {
             return;
@@ -1050,18 +1089,7 @@ impl WatchPage {
             cx.notify();
             return;
         }
-        let handled = match self.tab {
-            Tab::Broadcasts if key == "l" => self.toggle_broadcast_engine(cx),
-            Tab::Broadcasts => {
-                let handled = self.broadcasts.key(key, cx);
-                if handled {
-                    self.engine_changed(cx);
-                }
-                handled
-            }
-            _ => self.live.key(key, cx),
-        };
-        if handled {
+        if self.tab == Tab::Broadcasts && key == "l" && self.toggle_broadcast_engine(cx) {
             cx.stop_propagation();
             cx.notify();
         }
@@ -1080,12 +1108,15 @@ fn live_badge(palette: &Palette) -> Div {
 }
 
 /// `stopWatching` for `session` alone, if there is one.
-pub(super) fn stop_watching(session: Option<f64>, cx: &mut App) {
+/// Settles once the core has answered a feed's request.
+type FeedStarted = futures::future::Shared<futures::future::BoxFuture<'static, ()>>;
+
+pub(super) fn stop_watching(session: Option<u64>, cx: &mut App) {
     let Some(session) = session else {
         return;
     };
     let stopping = cx.global::<AppCore>().request(calls::StopWatching {
-        session: Some(json!(session as u64)),
+        session: Some(Bounded(session)),
     });
     cx.background_spawn(async move {
         if let Err(cause) = stopping.await {
@@ -1097,4 +1128,149 @@ pub(super) fn stop_watching(session: Option<f64>, cx: &mut App) {
         }
     })
     .detach();
+}
+
+/// Watch's actions: the watched game's, as its panel's buttons offer them, and the other TV
+/// channels.
+#[derive(Clone, PartialEq, Debug)]
+pub(crate) enum Action {
+    Live(live::Action),
+    /// A channel's key and name.
+    Channel(String, String),
+}
+
+impl PageAction for Action {
+    fn info(&self) -> ActionInfo {
+        match self {
+            Action::Live(action) => {
+                let (id, label, glyph, keywords) = match action {
+                    live::Action::Flip => return ActionInfo::flip("watch:flip"),
+                    live::Action::AllBoards => {
+                        ("all-boards", "All boards", "layout-grid", "round broadcast")
+                    }
+                    live::Action::Analyse => ("analyse", "Analyse", "microscope", "analysis"),
+                    live::Action::Stop => ("stop", "Stop watching", "square", "close end"),
+                };
+                ActionInfo::new(format!("watch:{id}"), label, glyph, keywords)
+            }
+            Action::Channel(key, name) => ActionInfo::new(
+                format!("watch:channel:{key}"),
+                format!("Watch {name}"),
+                "tv",
+                "tv channel",
+            ),
+        }
+    }
+}
+
+impl Steps for WatchPage {
+    fn steps(&self, _: &App) -> Option<(usize, usize)> {
+        match self.tab {
+            Tab::Broadcasts => self.broadcasts.steps(),
+            Tab::Tv | Tab::Friends => self.live.steps(),
+        }
+    }
+
+    fn step_to(&mut self, ply: usize, _: &mut Window, cx: &mut Context<Self>) {
+        match self.tab {
+            Tab::Broadcasts => {
+                self.broadcasts.go_to(ply, cx);
+                self.engine_changed(cx);
+            }
+            Tab::Tv | Tab::Friends => self.live.go_to(ply, cx),
+        }
+        cx.notify();
+    }
+
+    fn wheel(&mut self) -> &mut crate::game::view::Wheel {
+        &mut self.wheel
+    }
+}
+
+impl PageView for WatchPage {
+    const INFO: PageInfo = PageInfo {
+        page: Page::Watch,
+        label: "Watch",
+        short: "Watch",
+        icon: "tv",
+        group: Some(NavGroup::Lichess),
+        keywords: "tv broadcast",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        WatchPage::new(window, cx)
+    }
+
+    /// Watching streams only while Watch is shown.
+    fn shown(this: &Entity<Self>, again: bool, window: &mut Window, cx: &mut App) {
+        if !again {
+            this.update(cx, |watch, cx| watch.shown(window, cx));
+        }
+    }
+
+    fn hidden(this: &Entity<Self>, _window: &mut Window, cx: &mut App) {
+        this.update(cx, |watch, cx| watch.hidden(cx));
+    }
+
+    fn can_step(&self, direction: crate::swipe::Direction, _cx: &App) -> bool {
+        WatchPage::can_step(self, direction)
+    }
+
+    fn step(
+        &mut self,
+        direction: crate::swipe::Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        WatchPage::step(self, direction, window, cx);
+    }
+
+    fn search_fields(&self) -> Vec<Entity<gpui_kit::component::input::InputState>> {
+        WatchPage::search_fields(self)
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        WatchPage::actions(self)
+            .into_iter()
+            .map(Action::Live)
+            .chain(
+                self.other_channels(cx)
+                    .into_iter()
+                    .map(|(key, name)| Action::Channel(key, name)),
+            )
+            .collect()
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        match action {
+            Action::Live(action) => this.update(cx, |watch, cx| watch.act(action, window, cx)),
+            Action::Channel(key, _) => open_channel(key, window, cx),
+        }
+    }
+
+    fn places(_: &App) -> Vec<PageCommand> {
+        crate::pages::tab_places::<Self, Tab>("watch", WatchPage::show_tab)
+    }
+}
+
+/// Watch a Lichess TV channel.
+pub fn open_channel(channel: String, window: &mut Window, cx: &mut App) {
+    crate::shell::show::<WatchPage>(window, cx, move |watch, window, cx| {
+        watch.open_channel(channel, window, cx)
+    });
+}
+
+/// Watch a game being played on Lichess.
+pub fn watch_game(id: &str, window: &mut Window, cx: &mut App) {
+    let id = id.to_string();
+    crate::shell::show::<WatchPage>(window, cx, move |watch, _, cx| watch.watch_game(&id, cx));
+}
+
+/// Open a Lichess broadcast link on Watch → Broadcasts.
+pub fn open_broadcast(link: crate::game::BroadcastLink, window: &mut Window, cx: &mut App) {
+    crate::shell::show::<WatchPage>(window, cx, move |watch, window, cx| {
+        watch.open_broadcast(link, window, cx)
+    });
 }

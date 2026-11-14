@@ -1,23 +1,37 @@
-//! The live Lichess game, app-wide (over `OnlineGame`): every decision is the rules' (`onlineGame*`); this
+//! The live Lichess game, app-wide: every decision is the rules' (`kchess_domain::online_game`); this
 //! keeps their state, makes the calls they ask for, and runs their effects (clock, sounds,
 //! notices). Beside it: the challenges, the lobby stream and the games in progress.
 //! Engine help stays off while a game is live or being looked for, and
-//! until the core has said whether one was left running (`assistanceAllowed`).
+//! until the core has said whether one was left running.
 
+use crate::loading::Epoch;
 use kchess_contracts::calls;
+use kchess_contracts::check::OptionalAccount;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+use futures::FutureExt as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
-use kchess_contracts::Level;
+use kchess_contracts::check::{GameId, PresenceUsers, Uci, Username, Validate};
+use kchess_contracts::types::{
+    ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, LobbyState, NotificationKind,
+    OngoingGame, PresenceReport,
+};
+use kchess_contracts::types::{Lane, OnlineConnection, OnlinePhase};
+use kchess_contracts::{CoreError, ErrorKind, Level};
+use kchess_domain::online_game::model::{
+    Call, Ctx, Effect, GamePhase, Model, Op, Outcome, Reply, View,
+};
+use kchess_domain::online_game::server::ServerEvent;
+use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
+use kchess_domain::training::clock::{ClockState, SetData, format_clock};
+use kchess_domain::variant::{Setup, Variant};
 use serde_json::{Value, json};
 
-use crate::core::{AppCore, CoreEvent};
-use crate::game::rules;
+use crate::core::{AppCore, ClientEvent, CoreEvent};
+use crate::game::surface::Faces;
 
-/// Clocks and the low-time alert are read this often during a game.
-const TICK: Duration = Duration::from_millis(250);
 /// Lichess's view of both players' connections, asked this often during a real-time game.
 pub const PRESENCE_EVERY: Duration = Duration::from_secs(5);
 /// Round trips kept for the connection panel.
@@ -34,7 +48,7 @@ pub enum Phase {
     Disconnected,
 }
 
-/// The find-a-game form (`onlineMinutes` and the rest).
+/// The find-a-game form.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Form {
     pub minutes: f64,
@@ -43,7 +57,7 @@ pub struct Form {
     /// `random`, `white` or `black`.
     pub color: String,
     pub rated: bool,
-    pub variant: String,
+    pub variant: Variant,
     pub correspondence: bool,
     pub days: f64,
 }
@@ -56,14 +70,14 @@ impl Default for Form {
             target: String::new(),
             color: "random".into(),
             rated: false,
-            variant: "standard".into(),
+            variant: Variant::Standard,
             correspondence: false,
             days: 3.,
         }
     }
 }
 
-/// `performance.now()`: milliseconds on a clock that only goes forward.
+/// Milliseconds on a clock that only goes forward.
 pub fn now() -> f64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.
@@ -83,39 +97,38 @@ pub fn notice(cx: &mut App, text: impl Into<gpui_kit::SharedString>) {
 
 pub struct OnlineState {
     pub phase: Phase,
-    /// The rules' state: `onlineGameState()` and the class's private fields.
-    model: Value,
-    /// `ClockState`.
-    clock: Value,
+    /// The rules' state of the game.
+    model: Model,
+    clock: ClockState,
     /// The position looked at while reviewing; `None` follows the game.
     pub view_ply: Option<usize>,
     pub flipped: bool,
     pub form: Form,
     /// `PresenceReport` for both players, and recent round trips.
-    pub presence: Option<Value>,
+    pub presence: Option<PresenceReport>,
     pub latency: Vec<f64>,
     pub move_ack: Option<f64>,
-    presence_epoch: u64,
+    presence_epoch: Epoch,
     presence_pending: bool,
     /// Something the rules started is waiting for Lichess (`busy`).
     pub busy: bool,
-    pub challenges: Vec<Value>,
-    pub lobby: Option<Value>,
-    pub ongoing: Vec<Value>,
+    pub challenges: Vec<ChallengeInfo>,
+    pub lobby: Option<LobbyState>,
+    pub ongoing: Vec<OngoingGame>,
     pub ongoing_loaded: bool,
     pub ongoing_error: Option<String>,
     /// Each games-in-progress request; an answer to an earlier one is dropped.
     ongoing_request: u64,
-    /// The kind of failure that ended the game's connection (`ErrorKind`), until it recovers.
-    pub failure: Option<String>,
+    /// The kind of failure that ended the game's connection, until it recovers.
+    pub failure: Option<ErrorKind>,
     /// The game connection's state that ended it for good, kept until the game connects again.
-    failed_state: Option<Value>,
+    failed_state: Option<OnlineConnection>,
     pub busy_challenge: String,
     /// Turn flags seen at the last check, to say only when it becomes your turn.
     turns: std::collections::HashMap<String, bool>,
     _ticker: Option<Task<()>>,
     /// What the game showed by the clock at the last tick (`tick`).
-    ticked: Option<([String; 2], [Option<i64>; 2])>,
+    ticked: Faces<([String; 2], [Option<i64>; 2])>,
     _presence: Option<Task<()>>,
     _ongoing_poll: Option<Task<()>>,
     /// Which `resumeOnline` answer is current: a later one (after a reconnect) replaces it.
@@ -126,7 +139,7 @@ impl OnlineState {
     /// The core session whose reports the board follows.
     #[cfg(test)]
     pub(crate) fn state_epoch(&self) -> f64 {
-        self.model["stateEpoch"].as_f64().unwrap_or_default()
+        self.model.state_epoch
     }
 
     /// The engine may help: no live game, and none still being looked for.
@@ -134,7 +147,7 @@ impl OnlineState {
         matches!(self.phase, Phase::Idle | Phase::Finished)
     }
 
-    /// A game of the account's is using the connection (`playingOwnGame`).
+    /// A game of the account's is using the connection.
     pub fn busy_with_game(&self) -> bool {
         match self.phase {
             Phase::Playing | Phase::Seeking => true,
@@ -143,32 +156,28 @@ impl OnlineState {
         }
     }
 
-    pub fn model(&self) -> &Value {
+    pub fn model(&self) -> &Model {
         &self.model
     }
 
     pub fn id(&self) -> &str {
-        self.model["onlineId"].as_str().unwrap_or_default()
+        &self.model.online_id
     }
 
     pub fn account(&self) -> &str {
-        self.model["onlineAccount"].as_str().unwrap_or_default()
+        &self.model.online_account
     }
 
     pub fn moves(&self) -> Vec<String> {
-        serde_json::from_value(self.model["onlineMoves"].clone()).unwrap_or_default()
+        self.model.online_moves.clone()
     }
 
-    pub fn setup(&self) -> Value {
-        self.model["onlineSetup"].clone()
+    pub fn setup(&self) -> &Setup {
+        &self.model.online_setup
     }
 
     pub fn color(&self) -> shakmaty::Color {
-        if self.model["onlineColor"] == json!("black") {
-            shakmaty::Color::Black
-        } else {
-            shakmaty::Color::White
-        }
+        self.model.online_color
     }
 
     pub fn orientation(&self) -> shakmaty::Color {
@@ -192,8 +201,6 @@ impl OnlineState {
         cx.notify();
     }
 
-    /// `onlineGameView`: the live position, the SAN history, the moves this side made, whether
-    /// it is a correspondence game, and the rematch's options.
     /// A real-time game of the account's is on, its clock running on Lichess whether or not
     /// KChess stays open (`beforeunload` on lichess.org asks first too).
     pub fn live_game_on(&self) -> bool {
@@ -205,99 +212,83 @@ impl OnlineState {
         on && !self.correspondence()
     }
 
-    pub fn view(&self) -> Value {
-        rules("onlineGameView", std::slice::from_ref(&self.model)).unwrap_or(Value::Null)
+    /// The live position, the SAN history, the moves this side made, whether it is a
+    /// correspondence game, and the rematch's options.
+    pub fn view(&self) -> View {
+        self.model.view()
     }
 
     pub fn correspondence(&self) -> bool {
-        self.view()["correspondence"] == json!(true)
+        self.model.correspondence()
     }
 
     /// Milliseconds left on `color`'s clock.
     pub fn remaining(&self, color: &str) -> f64 {
-        rules(
-            "clockRemaining",
-            &[self.clock.clone(), json!(color), json!(now())],
-        )
-        .ok()
-        .and_then(|value| value.as_f64())
-        .unwrap_or_default()
+        self.clock.remaining(color, now())
     }
 
     pub fn clock_running(&self) -> Option<&str> {
-        self.clock["ticking"].as_str()
+        self.clock.ticking.as_deref()
     }
 
     pub fn clock_text(&self, color: &str) -> String {
-        rules("formatClock", &[json!(self.remaining(color))])
-            .ok()
-            .and_then(|text| text.as_str().map(str::to_string))
-            .unwrap_or_default()
+        format_clock(self.remaining(color))
     }
 
-    fn context(cx: &App) -> Value {
+    fn context(cx: &App) -> Ctx {
         let chat = cx
             .try_global::<crate::settings::SettingsHandle>()
             .is_none_or(|settings| settings.0.read(cx).settings.core.online_chat);
-        json!({
-            "now": now(),
-            "activeAccount": crate::accounts::handle(cx).read(cx).active(cx).unwrap_or_default(),
-            "chatEnabled": chat,
-        })
+        Ctx {
+            now: now(),
+            active_account: crate::accounts::handle(cx)
+                .read(cx)
+                .active(cx)
+                .unwrap_or_default(),
+            chat_enabled: chat,
+        }
     }
 
-    /// Asks the rules for the next state, keeps it, then runs its effects in order.
+    /// Lets the rules move the state on, then runs their effects in order.
     fn transition(
         &mut self,
-        method: &str,
-        args: Vec<Value>,
+        step: impl FnOnce(&mut Model, &Ctx) -> Outcome,
         cause: Option<&str>,
         cx: &mut Context<Self>,
-    ) -> Value {
-        let mut all = vec![self.model.clone()];
-        all.extend(args);
-        all.push(Self::context(cx));
-        let next = match rules(method, &all) {
-            Ok(next) => next,
-            Err(error) => {
-                log(&format!("{method} failed: {error}"));
-                return Value::Null;
-            }
-        };
-        if next["state"].is_object() {
-            self.model = next["state"].clone();
-            self.sync_phase(cx);
-        }
-        for effect in next["effects"].as_array().cloned().unwrap_or_default() {
-            self.run(&effect, cause, cx);
+    ) -> Outcome {
+        let ctx = Self::context(cx);
+        let outcome = step(&mut self.model, &ctx);
+        self.sync_phase(cx);
+        for effect in &outcome.effects {
+            self.run(effect, cause, cx);
         }
         cx.notify();
-        next
+        outcome
     }
 
     /// Put the state in a phase as the rules would (tests): the model too, which the phase is
     /// derived from again whenever a late answer lands.
     #[cfg(test)]
-    pub(crate) fn set_phase(&mut self, phase: &str, cx: &mut Context<Self>) {
-        self.model["onlinePhase"] = json!(phase);
+    pub(crate) fn set_phase(&mut self, phase: GamePhase, cx: &mut Context<Self>) {
+        self.model.online_phase = phase;
         self.sync_phase(cx);
         cx.notify();
     }
 
     fn sync_phase(&mut self, cx: &mut Context<Self>) {
         let before = self.phase;
-        self.phase = match self.model["onlinePhase"].as_str() {
-            Some("seeking") => Phase::Seeking,
-            Some("playing") => Phase::Playing,
-            Some("finished") => Phase::Finished,
-            Some("disconnected") => Phase::Disconnected,
-            _ if self.phase == Phase::Checking => Phase::Checking,
-            _ => Phase::Idle,
+        self.phase = match self.model.online_phase {
+            GamePhase::Seeking => Phase::Seeking,
+            GamePhase::Playing => Phase::Playing,
+            GamePhase::Finished => Phase::Finished,
+            GamePhase::Disconnected => Phase::Disconnected,
+            GamePhase::Idle if self.phase == Phase::Checking => Phase::Checking,
+            GamePhase::Idle => Phase::Idle,
         };
         if before == self.phase {
             return;
         }
-        self.presence_epoch += 1;
+        self.presence_epoch.invalidate();
         if self.phase == Phase::Playing {
             self.start_ticking(cx);
             self.poll_presence(cx);
@@ -314,120 +305,108 @@ impl OnlineState {
         }
     }
 
-    fn run(&mut self, effect: &Value, cause: Option<&str>, cx: &mut Context<Self>) {
-        match effect["effect"].as_str().unwrap_or_default() {
-            "warn" => log(&format!(
-                "{} {}",
-                effect["message"].as_str().unwrap_or_default(),
-                cause.unwrap_or_default()
-            )),
-            "notify" => {
-                let title = effect["title"].as_str().unwrap_or_default().to_string();
-                let body = effect["body"].as_str().unwrap_or_default().to_string();
-                crate::notifications::desktop(
-                    effect["kind"].as_str().unwrap_or_default(),
-                    &title,
-                    &body,
-                    cx,
-                );
+    fn run(&mut self, effect: &Effect, cause: Option<&str>, cx: &mut Context<Self>) {
+        match effect {
+            Effect::Warn { message } => log(&format!("{message} {}", cause.unwrap_or_default())),
+            Effect::Notify { kind, title, body } => {
+                crate::notifications::desktop(*kind, title, body, cx);
             }
-            "moved" => {
-                let capture = effect["san"].as_str().is_some_and(|san| san.contains('x'));
-                crate::sound::play(
-                    if capture {
-                        crate::sound::Sound::Capture
-                    } else {
-                        crate::sound::Sound::Move
-                    },
-                    cx,
-                );
+            Effect::Moved { san } => {
+                crate::sound::move_sound(san.as_deref().unwrap_or_default(), cx)
             }
-            "resetView" => {
+            Effect::ResetView => {
                 self.view_ply = None;
                 self.flipped = false;
                 self.presence = None;
             }
-            "connectionChanged" => self.presence_epoch += 1,
-            "moveAcknowledged" => self.move_ack = effect["ms"].as_f64(),
-            "failed" => {
+            Effect::ConnectionChanged => self.presence_epoch.invalidate(),
+            Effect::MoveAcknowledged { ms } => self.move_ack = Some(*ms),
+            Effect::Failed => {
                 if let Some(cause) = cause {
                     notice(cx, cause.to_string());
                 }
             }
-            "clockPause" => {
-                if let Ok(clock) = rules("clockPause", &[self.clock.clone(), json!(now())]) {
-                    self.clock = clock;
-                }
+            Effect::ClockPause => self.clock.pause(now()),
+            Effect::ClockSet {
+                white,
+                black,
+                ticking,
+                initial_seconds,
+            } => {
+                let data = SetData {
+                    white: *white,
+                    black: *black,
+                    ticking: ticking.map(str::to_string),
+                    initial_seconds: *initial_seconds,
+                    delay_centis: None,
+                };
+                self.clock.set(&data, now());
             }
-            "clockSet" => {
-                let mut data = json!({
-                    "white": effect["white"],
-                    "black": effect["black"],
-                });
-                for key in ["ticking", "initialSeconds"] {
-                    if !effect[key].is_null() {
-                        data[key] = effect[key].clone();
-                    }
-                }
-                if let Ok(clock) = rules("clockSet", &[self.clock.clone(), data, json!(now())]) {
-                    self.clock = clock;
-                }
-            }
-            "loadChat" => {
-                let id = effect["id"].clone();
-                self.perform("chat", id, cx).detach();
-            }
-            _ => {}
+            Effect::LoadChat { id } => self.perform(Op::Chat(id.clone()), cx).detach(),
         }
     }
 
     /// A network-backed operation: the rules start it, the core makes the call, the rules settle
-    /// it. The task gives what the rules return.
-    pub fn perform(
-        &mut self,
-        operation: &str,
-        input: Value,
-        cx: &mut Context<Self>,
-    ) -> Task<Value> {
-        let begun = self.transition("onlineGameBegin", vec![json!(operation), input], None, cx);
-        let Some(method) = begun["call"]["method"].as_str() else {
-            return Task::ready(begun["ret"].clone());
+    /// it. The task gives what the rules answer.
+    pub fn perform(&mut self, op: Op, cx: &mut Context<Self>) -> Task<Option<bool>> {
+        let begun = self.transition(|model, ctx| model.begin(op, ctx), None, cx);
+        let (Some(call), Some(pending)) = (begun.call, begun.pending) else {
+            return Task::ready(begun.ret);
         };
-        let args = begun["call"]["args"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        let call = cx.global::<AppCore>().call(method, args);
-        let pending = begun["pending"].clone();
+        let core = cx.global::<AppCore>();
+        // The rules keep their calls and answers as JSON: each is typed on its way to the core.
+        let call = match call {
+            Call::StartOnline(options) => match typed(&options) {
+                Ok(options) => answer(core.request(calls::StartOnline { options })),
+                Err(refused) => futures::future::ready(Err(refused)).boxed_local(),
+            },
+            Call::CancelOnline => answer(core.request(calls::CancelOnline {})),
+            Call::ResumeOnline => answer(core.request(calls::ResumeOnline {})),
+            Call::OpenGame { account, id } => answer(core.request(calls::OpenGame {
+                account: Username(account),
+                id: GameId(id),
+            })),
+            Call::PlayOnline { id, uci } => answer(core.request(calls::PlayOnline {
+                id: GameId(id),
+                r#move: Uci(uci),
+            })),
+            Call::OnlineAction { id, action } => match typed(&json!(action)) {
+                Ok(action) => answer(core.request(calls::OnlineAction {
+                    id: GameId(id),
+                    action,
+                })),
+                Err(refused) => futures::future::ready(Err(refused)).boxed_local(),
+            },
+            Call::OnlineChat { id } => answer(core.request(calls::OnlineChat { id: GameId(id) })),
+        };
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             this.update(cx, |this, cx| {
-                let (outcome, cause) = match answer {
-                    Ok(value) => (json!({ "ok": true, "value": value }), None),
-                    Err(error) => (json!({ "ok": false }), Some(error.message)),
+                let (reply, cause) = match answer {
+                    Ok(value) => (Reply::Ok(value), None),
+                    Err(error) => (Reply::Failed, Some(error.message)),
                 };
                 let settled = this.transition(
-                    "onlineGameSettle",
-                    vec![pending, outcome],
+                    |model, ctx| model.settle(&pending, reply, ctx),
                     cause.as_deref(),
                     cx,
                 );
-                if settled["rethrow"] == json!(true)
+                if settled.rethrow
                     && let Some(cause) = cause
                 {
                     notice(cx, cause);
                 }
-                settled["ret"].clone()
+                settled.ret
             })
-            .unwrap_or(Value::Null)
+            .unwrap_or(None)
         })
     }
 
-    /// `run`: an operation that shows the app busy until it settles.
-    fn run_busy(&mut self, operation: &str, input: Value, cx: &mut Context<Self>) -> Task<Value> {
+    /// An operation that shows the app busy until it settles.
+    fn run_busy(&mut self, op: Op, cx: &mut Context<Self>) -> Task<Option<bool>> {
         self.busy = true;
         cx.notify();
-        let task = self.perform(operation, input, cx);
+        let task = self.perform(op, cx);
         cx.spawn(async move |this, cx| {
             let value = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -439,6 +418,18 @@ impl OnlineState {
     }
 
     /// `startOnline`: the form's game, or a rematch's options over it.
+    /// Seek a real-time game against anyone: this clock, rated or casual, either colour.
+    pub fn seek(&mut self, minutes: f64, increment: f64, rated: bool, cx: &mut Context<Self>) {
+        let form = &mut self.form;
+        form.minutes = minutes;
+        form.increment = increment;
+        form.rated = rated;
+        form.color = "random".into();
+        form.target.clear();
+        form.correspondence = false;
+        self.start(None, cx);
+    }
+
     pub fn start(&mut self, rematch: Option<Value>, cx: &mut Context<Self>) {
         let form = self.form.clone();
         let correspondence = match &rematch {
@@ -466,7 +457,7 @@ impl OnlineState {
         if !account.is_empty() {
             wanted["account"] = json!(account);
         }
-        if form.variant != "standard" {
+        if form.variant != Variant::Standard {
             wanted["variant"] = json!(form.variant);
         }
         if correspondence && rematch.is_none() {
@@ -480,10 +471,10 @@ impl OnlineState {
             }
         }
         let target = wanted["target"].as_str().map(str::to_string);
-        let started = self.run_busy("start", wanted, cx);
+        let started = self.run_busy(Op::Start(wanted), cx);
         cx.spawn(async move |_, cx| {
             let started = started.await;
-            if started == json!(true) && correspondence {
+            if started == Some(true) && correspondence {
                 cx.update(|cx| {
                     notice(
                         cx,
@@ -502,13 +493,12 @@ impl OnlineState {
 
     pub fn stop(&mut self, cx: &mut Context<Self>) {
         self.view_ply = None;
-        self.perform("stop", Value::Null, cx).detach();
+        self.perform(Op::Stop, cx).detach();
     }
 
     /// Offer the last opponent the same game again, colours swapped.
     pub fn rematch(&mut self, cx: &mut Context<Self>) {
-        let options = self.view()["rematch"].clone();
-        if options.is_object() {
+        if let Some(options) = self.view().rematch {
             self.start(Some(options), cx);
         }
     }
@@ -517,8 +507,8 @@ impl OnlineState {
     /// rating and variant, either colour. None for one a seek cannot repeat: correspondence, or
     /// from a set-up position.
     pub fn new_opponent_form(&self) -> Option<Form> {
-        let options = self.view()["rematch"].clone();
-        if !options.is_object() || !options["days"].is_null() || !options["fen"].is_null() {
+        let options = self.view().rematch?;
+        if !options["days"].is_null() || !options["fen"].is_null() {
             return None;
         }
         Some(Form {
@@ -527,10 +517,7 @@ impl OnlineState {
             target: String::new(),
             color: "random".into(),
             rated: options["rated"] == json!(true),
-            variant: options["variant"]
-                .as_str()
-                .unwrap_or("standard")
-                .to_string(),
+            variant: Variant::from_lichess(options["variant"].as_str())?,
             correspondence: false,
             days: self.form.days,
         })
@@ -547,33 +534,41 @@ impl OnlineState {
     }
 
     pub fn reconnect(&mut self, cx: &mut Context<Self>) {
-        self.run_busy("reconnect", Value::Null, cx).detach();
+        self.run_busy(Op::Reconnect, cx).detach();
     }
 
-    /// `openOngoing`: one of the account's games in progress on the board.
+    /// One of the account's games in progress on the board.
     pub fn open(&mut self, account: &str, id: &str, cx: &mut Context<Self>) {
-        self.run_busy("open", json!({ "account": account, "id": id }), cx)
-            .detach();
+        let op = Op::Open {
+            account: account.to_string(),
+            id: id.to_string(),
+        };
+        self.run_busy(op, cx).detach();
     }
 
     pub fn play(&mut self, uci: String, cx: &mut Context<Self>) {
-        self.perform("move", json!(uci), cx).detach();
+        self.perform(Op::Move(uci), cx).detach();
     }
 
     /// `onlineAction`: resign, abort, draw and takeback offers, claiming the win, berserk.
     pub fn action(&mut self, action: &str, cx: &mut Context<Self>) {
-        self.perform("action", json!(action), cx).detach();
+        self.perform(Op::Action(action.to_string()), cx).detach();
     }
 
-    pub fn send_chat(&mut self, text: String, room: &str, cx: &mut Context<Self>) -> Task<bool> {
+    pub fn send_chat(
+        &mut self,
+        text: String,
+        room: ChatRoom,
+        cx: &mut Context<Self>,
+    ) -> Task<bool> {
         let id = self.id().to_string();
         if id.is_empty() || text.trim().is_empty() {
             return Task::ready(false);
         }
         let call = cx.global::<AppCore>().request(calls::SendChat {
-            id: json!(id),
-            room: json!(room),
-            text: json!(text.trim()),
+            id: GameId(id),
+            room,
+            text: kchess_contracts::check::ChatText(text.trim().to_string()),
         });
         cx.spawn(async move |_, cx| match call.await {
             Ok(_) => true,
@@ -584,31 +579,21 @@ impl OnlineState {
         })
     }
 
-    /// `prepareForGame`: an accepted challenge's game is about to start.
+    /// An accepted challenge's game is about to start.
     fn prepare_for_game(&mut self, account: &str, id: &str) {
-        self.model["onlineAccount"] = json!(account);
-        self.model["onlineId"] = json!(id);
-        self.model["onlineStatus"] = json!("Starting the game…");
+        self.model.online_account = account.to_string();
+        self.model.online_id = id.to_string();
+        self.model.online_status = "Starting the game…".into();
     }
 
     fn start_ticking(&mut self, cx: &mut Context<Self>) {
-        self._ticker = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(TICK).await;
-                let alive = this.update(cx, |this, cx| this.tick(cx)).is_ok();
-                if !alive {
-                    return;
-                }
-            }
+        self._ticker = Some(crate::timer::every(crate::timer::TICK, cx, |this, cx| {
+            this.tick(cx);
+            true
         }));
-        self._presence = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(PRESENCE_EVERY).await;
-                let alive = this.update(cx, |this, cx| this.poll_presence(cx)).is_ok();
-                if !alive {
-                    return;
-                }
-            }
+        self._presence = Some(crate::timer::every(PRESENCE_EVERY, cx, |this, cx| {
+            this.poll_presence(cx);
+            true
         }));
     }
 
@@ -617,43 +602,36 @@ impl OnlineState {
         if self.phase != Phase::Playing {
             return;
         }
-        if self.model["onlineClockConfig"].is_object()
+        if self.model.online_clock_config.is_some()
             && let Some(turn) = self.clock_running().map(str::to_string)
-            && let Ok(alert) = rules(
-                "clockLowTimeAlert",
-                &[self.clock.clone(), json!(turn), json!(now())],
-            )
+            && self.clock.low_time_alert(&turn, now())
         {
-            self.clock = alert["state"].clone();
-            if alert["result"] == json!(true) {
-                crate::sound::play(crate::sound::Sound::LowTime, cx);
-                let mine = self.model["onlineColor"] == json!(turn);
-                if mine {
-                    let left = self.clock_text(&turn);
-                    let opponent = self.model["onlineOpponent"].as_str().unwrap_or_default();
-                    crate::notifications::desktop(
-                        "lowTime",
-                        "Low on time",
-                        &format!("{left} left against {opponent}"),
-                        cx,
-                    );
-                }
+            crate::sound::play(crate::sound::Sound::LowTime, cx);
+            let mine = kchess_domain::color::name(self.model.online_color) == turn;
+            if mine {
+                let left = self.clock_text(&turn);
+                let opponent = &self.model.online_opponent;
+                crate::notifications::desktop(
+                    NotificationKind::LowTime,
+                    "Low on time",
+                    &format!("{left} left against {opponent}"),
+                    cx,
+                );
             }
         }
         // Redraw only when something the game shows by the clock changes: a clock face (each
         // second, each tenth in the last ten) or a countdown to abort or claim.
         let now = now();
-        let seconds_until = |key: &str| {
-            self.model[key]
-                .as_f64()
-                .map(|at| ((at - now) / 1000.).ceil().max(0.) as i64)
-        };
+        let seconds_until =
+            |at: Option<f64>| at.map(|at| ((at - now) / 1000.).ceil().max(0.) as i64);
         let shown = (
             [self.clock_text("white"), self.clock_text("black")],
-            [seconds_until("firstMoveBy"), seconds_until("claimAt")],
+            [
+                seconds_until(self.model.first_move_by),
+                seconds_until(self.model.claim_at),
+            ],
         );
-        if self.ticked.as_ref() != Some(&shown) {
-            self.ticked = Some(shown);
+        if self.ticked.changed(shown) {
             cx.notify();
         }
     }
@@ -676,16 +654,13 @@ impl OnlineState {
         {
             return;
         }
-        let opponent = self.model["opponentId"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
+        let opponent = self.model.opponent_id.clone();
         let ids = if opponent.is_empty() {
-            json!([me])
+            PresenceUsers(vec![me])
         } else {
-            json!([me, opponent])
+            PresenceUsers(vec![me, opponent])
         };
-        let epoch = self.presence_epoch;
+        let epoch = self.presence_epoch.current();
         self.presence_pending = true;
         let call = cx
             .global::<AppCore>()
@@ -694,16 +669,14 @@ impl OnlineState {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
                 this.presence_pending = false;
-                if epoch != this.presence_epoch || this.phase != Phase::Playing {
+                if !this.presence_epoch.is_current(epoch) || this.phase != Phase::Playing {
                     return;
                 }
                 // A missed poll leaves the last reading; a later one recovers.
                 if let Ok(report) = answer {
-                    if let Some(ms) = report["latencyMs"].as_f64() {
-                        this.latency.push(ms);
-                        if this.latency.len() > LATENCY_KEPT {
-                            this.latency.remove(0);
-                        }
+                    this.latency.push(report.latency_ms as f64);
+                    if this.latency.len() > LATENCY_KEPT {
+                        this.latency.remove(0);
                     }
                     this.presence = Some(report);
                     cx.notify();
@@ -735,12 +708,11 @@ impl OnlineState {
                 }
                 match answer {
                     Ok(games) => {
-                        let games = games.as_array().cloned().unwrap_or_default();
                         for game in &games {
-                            let id = game["gameId"].as_str().unwrap_or_default().to_string();
-                            let mine = game["isMyTurn"] == json!(true);
+                            let id = game.game_id.clone();
+                            let mine = game.is_my_turn;
                             let before = this.turns.get(&id).copied();
-                            if game["speed"] == json!("correspondence")
+                            if game.speed == "correspondence"
                                 && mine
                                 && before == Some(false)
                                 && id != this.id()
@@ -774,23 +746,18 @@ impl OnlineState {
             .unwrap_or_default();
         let core = cx.global::<AppCore>().clone();
         cx.spawn(async move |this, cx| {
-            let joined = joined.await.unwrap_or(json!([]));
-            let now = chrono::Utc::now().timestamp_millis() as f64;
-            let current: Vec<&Value> = joined
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|entry| entry["until"].as_f64().is_some_and(|until| until > now))
-                .collect();
+            let joined = joined.await.unwrap_or_default();
+            let now = kchess_games::now_ms();
+            let current: Vec<_> = joined.iter().filter(|entry| entry.until > now).collect();
             let participant = current
                 .iter()
-                .find(|entry| entry["account"].as_str() == Some(active.as_str()))
+                .find(|entry| entry.account == active)
                 .or(current.last())
-                .and_then(|entry| entry["account"].as_str().map(str::to_string));
+                .map(|entry| entry.account.clone());
             let account = participant.unwrap_or(if wanted { active } else { String::new() });
             if let Err(cause) = core
                 .request(calls::StayConnected {
-                    account: json!(account),
+                    account: OptionalAccount(account.clone()),
                 })
                 .await
             {
@@ -811,7 +778,7 @@ impl OnlineState {
         cx.spawn(async move |this, cx| {
             if let Ok(list) = call.await {
                 let _ = this.update(cx, |this, cx| {
-                    this.challenges = list.as_array().cloned().unwrap_or_default();
+                    this.challenges = list;
                     cx.notify();
                 });
             }
@@ -822,13 +789,11 @@ impl OnlineState {
     fn challenge_act(
         &mut self,
         id: String,
-        method: &'static str,
-        args: Vec<Value>,
+        call: impl Future<Output = Result<(), CoreError>> + 'static,
         cx: &mut Context<Self>,
     ) -> Task<bool> {
         self.busy_challenge = id;
         cx.notify();
-        let call = cx.global::<AppCore>().call(method, args);
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             this.update(cx, |this, cx| {
@@ -847,17 +812,17 @@ impl OnlineState {
     }
 
     /// Accept a challenge: a live one opens on the board; a correspondence one joins the games.
-    pub fn accept(&mut self, challenge: &Value, cx: &mut Context<Self>) -> Task<bool> {
-        let id = challenge["id"].as_str().unwrap_or_default().to_string();
-        let live = challenge["timeControl"]["type"] == json!("clock");
+    pub fn accept(&mut self, challenge: &ChallengeInfo, cx: &mut Context<Self>) -> Task<bool> {
+        let id = challenge.id.clone();
+        let live = matches!(challenge.time_control, ChallengeTimeControl::Clock { .. });
         if live {
-            self.prepare_for_game(challenge["account"].as_str().unwrap_or_default(), &id);
+            self.prepare_for_game(&challenge.account, &id);
         }
-        let opponent = challenge["opponent"]["name"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let done = self.challenge_act(id.clone(), "acceptChallenge", vec![json!(id)], cx);
+        let opponent = challenge.opponent.name.clone();
+        let call = cx.global::<AppCore>().request(calls::AcceptChallenge {
+            id: GameId(id.clone()),
+        });
+        let done = self.challenge_act(id, call, cx);
         cx.spawn(async move |this, cx| {
             let done = done.await;
             if done && !live {
@@ -873,50 +838,62 @@ impl OnlineState {
         })
     }
 
-    pub fn decline(&mut self, challenge: &Value, reason: &str, cx: &mut Context<Self>) {
-        let id = challenge["id"].as_str().unwrap_or_default().to_string();
-        self.challenge_act(
-            id.clone(),
-            "declineChallenge",
-            vec![json!(id), json!(reason)],
-            cx,
-        )
-        .detach();
+    pub fn decline(
+        &mut self,
+        challenge: &ChallengeInfo,
+        reason: DeclineReason,
+        cx: &mut Context<Self>,
+    ) {
+        let id = challenge.id.clone();
+        let call = cx.global::<AppCore>().request(calls::DeclineChallenge {
+            id: GameId(id.clone()),
+            reason,
+        });
+        self.challenge_act(id, call, cx).detach();
     }
 
-    pub fn withdraw(&mut self, challenge: &Value, cx: &mut Context<Self>) {
-        let id = challenge["id"].as_str().unwrap_or_default().to_string();
-        self.challenge_act(id.clone(), "cancelChallenge", vec![json!(id)], cx)
-            .detach();
+    pub fn withdraw(&mut self, challenge: &ChallengeInfo, cx: &mut Context<Self>) {
+        let id = challenge.id.clone();
+        let call = cx.global::<AppCore>().request(calls::CancelChallenge {
+            id: GameId(id.clone()),
+        });
+        self.challenge_act(id, call, cx).detach();
     }
 
     /// The opponent's rematch offer for the game just finished.
-    pub fn rematch_offer(&self) -> Option<Value> {
-        let last = self.model["lastGame"]["id"].as_str()?;
+    pub fn rematch_offer(&self) -> Option<ChallengeInfo> {
+        let last = self.model.last_game.as_ref()?.id.as_str();
         self.challenges
             .iter()
-            .find(|c| c["direction"] == json!("in") && c["rematchOf"].as_str() == Some(last))
+            .find(|c| {
+                c.direction == kchess_contracts::types::ChallengeDirection::In
+                    && c.rematch_of.as_deref() == Some(last)
+            })
             .cloned()
     }
 
     fn receive(&mut self, event: &CoreEvent, cx: &mut Context<Self>) {
-        match event.name.as_str() {
-            "online:event" => {
-                // Not for a game the Board API cannot play, such as one started on another device.
-                let starts = event.payload["type"] == json!("gameStart")
-                    && event.payload["game"]["speed"] != json!("correspondence")
-                    && event.payload["game"]["compat"]["board"] != json!(false);
-                self.transition("onlineGameEvent", vec![event.payload.clone()], None, cx);
+        match event {
+            CoreEvent::OnlineEvent(payload) => {
+                let event = ServerEvent::read(payload);
+                let started = match &event {
+                    ServerEvent::GameStart { game } => Some(game.clone().unwrap_or_default()),
+                    _ => None,
+                };
+                self.transition(|model, ctx| model.event(&event, ctx), None, cx);
+                let Some(game) = started else {
+                    return;
+                };
                 // The event stream announces a game whose board stream already failed for good
                 // (on launch the two race): the failure stands, as the core opens no new stream.
-                if event.payload["type"] == json!("gameStart")
-                    && let Some(failed) = self.failed_state.clone()
-                    && failed["gameId"] == event.payload["game"]["gameId"]
+                if let Some(failed) = self.failed_state.clone()
+                    && game.game_id.as_ref() == Some(&failed.game_id)
                 {
-                    self.transition("onlineGameConnection", vec![failed], None, cx);
+                    self.transition(|model, ctx| model.connection(&failed, ctx), None, cx);
                 }
-                // A pairing or an accepted challenge takes you to the board, as Lichess does.
-                if starts {
+                // A pairing or an accepted challenge takes you to the board, as Lichess does; not
+                // for a game the Board API cannot play, such as one started on another device.
+                if !game.correspondence() && game.board_compatible() {
                     cx.defer(|cx| {
                         if let Some(window) =
                             cx.active_window().or_else(|| cx.windows().first().copied())
@@ -928,49 +905,39 @@ impl OnlineState {
                     });
                 }
             }
-            "online:state" => {
-                let kind = event.payload["kind"].as_str().map(str::to_string);
-                if event.payload["lane"] == json!("game") {
+            CoreEvent::OnlineState(report) => {
+                let kind = report.kind;
+                if report.lane == Lane::Game {
                     // Only a failure that ended the stream carries a kind.
-                    self.failed_state = kind.is_some().then(|| event.payload.clone());
+                    self.failed_state = kind.is_some().then(|| report.clone());
                     self.failure = kind;
                 } else if kind.is_some() {
                     // The event stream's own states never clear the game's failure.
                     self.failure = kind;
                 }
-                self.transition(
-                    "onlineGameConnection",
-                    vec![event.payload.clone()],
-                    None,
-                    cx,
-                );
+                self.transition(|model, ctx| model.connection(report, ctx), None, cx);
             }
-            "online:error" => {
-                if let Some(message) = event.payload.as_str() {
-                    notice(cx, message.to_string());
-                }
-            }
-            "online:lobby" => {
-                self.lobby = Some(event.payload.clone()).filter(|lobby| !lobby.is_null());
+            CoreEvent::OnlineError(message) => notice(cx, message.clone()),
+            CoreEvent::OnlineLobby(lobby) => {
+                self.lobby = Some(lobby.clone());
                 cx.notify();
             }
-            "online:ongoing-changed" => self.refresh_ongoing(cx),
-            "challenges:update" => {
-                self.challenges = event.payload.as_array().cloned().unwrap_or_default();
+            CoreEvent::OngoingChanged(()) => self.refresh_ongoing(cx),
+            CoreEvent::ChallengesUpdate(challenges) => {
+                self.challenges = challenges.clone();
                 cx.notify();
             }
             // A new challenge for one of the accounts: Accept and Decline from its notification.
-            "challenge:received" if event.payload["direction"] == json!("in") => {
-                let challenge = &event.payload;
-                let (title, body) = challenge_alert(challenge);
+            CoreEvent::ChallengeReceived(challenge) => {
+                let challenge = ChallengeInfo::clone(challenge);
+                if challenge.direction != kchess_contracts::types::ChallengeDirection::In {
+                    return;
+                }
+                let (title, body) = challenge_alert(&challenge);
                 // The notification's buttons find it here, before the inbox's next update.
-                let id = challenge["id"].as_str().unwrap_or_default().to_string();
-                if !self
-                    .challenges
-                    .iter()
-                    .any(|known| known["id"] == challenge["id"])
-                {
-                    self.challenges.push(challenge.clone());
+                let id = challenge.id.clone();
+                if !self.challenges.iter().any(|known| known.id == challenge.id) {
+                    self.challenges.push(challenge);
                 }
                 crate::notifications::challenge(&id, &title, &body, cx);
             }
@@ -989,16 +956,9 @@ impl OnlineState {
             return;
         }
         let every = Duration::from_secs_f64(minutes.max(1.) * 60.);
-        self._ongoing_poll = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(every).await;
-                if this
-                    .update(cx, |this, cx| this.refresh_ongoing(cx))
-                    .is_err()
-                {
-                    return;
-                }
-            }
+        self._ongoing_poll = Some(crate::timer::every(every, cx, |this, cx| {
+            this.refresh_ongoing(cx);
+            true
         }));
     }
 }
@@ -1012,25 +972,22 @@ pub fn handle(cx: &App) -> Entity<OnlineState> {
     cx.global::<OnlineHandle>().0.clone()
 }
 
-/// The account Lichess actions use (`activeOnlineAccount`): the one chosen for online play when it
+/// The account Lichess actions use: the one chosen for online play when it
 /// is connected, else the first connected one.
-pub fn active_account(accounts: &[Value], cx: &App) -> Option<String> {
+pub fn active_account(accounts: &[kchess_contracts::types::Account], cx: &App) -> Option<String> {
     let preferred = crate::prefs::get::<String>(cx, crate::accounts::ONLINE_ACCOUNT, String::new());
-    let listed: Vec<Value> = accounts
+    let listed: Vec<ListedAccount> = accounts
         .iter()
-        .map(
-            |account| json!({ "username": account["username"], "connected": account["connected"] }),
-        )
+        .map(|account| ListedAccount {
+            username: Some(account.username.as_str()),
+            connected: account.connected,
+        })
         .collect();
-    let index = crate::game::rules("connectedAccountIndex", &[json!(listed), json!(preferred)])
-        .ok()
-        .filter(|index| !index.is_null())?;
-    accounts.get(crate::game::whole(&index) as usize)?["username"]
-        .as_str()
-        .map(str::to_string)
+    let index = connected_account_index(&listed, Some(&preferred))?;
+    listed[index].username.map(str::to_string)
 }
 
-/// Which connected account plays (`setOnlineAccount`).
+/// Which connected account plays.
 pub fn set_active_account(account: &str, cx: &mut App) {
     crate::prefs::set(cx, crate::accounts::ONLINE_ACCOUNT, account.to_string());
 }
@@ -1039,15 +996,15 @@ pub fn init(cx: &mut App) {
     let state = cx.new(|cx| {
         let mut state = OnlineState {
             phase: Phase::Checking,
-            model: kchess_domain::online_game::idle_state(),
-            clock: rules("clockInitial", &[]).unwrap_or(Value::Null),
+            model: Model::idle(),
+            clock: ClockState::initial(),
             view_ply: None,
             flipped: false,
             form: Form::default(),
             presence: None,
             latency: Vec::new(),
             move_ack: None,
-            presence_epoch: 0,
+            presence_epoch: Epoch::default(),
             presence_pending: false,
             busy: false,
             challenges: Vec::new(),
@@ -1061,23 +1018,20 @@ pub fn init(cx: &mut App) {
             busy_challenge: String::new(),
             turns: std::collections::HashMap::new(),
             _ticker: None,
-            ticked: None,
+            ticked: Faces::default(),
             _presence: None,
             _ongoing_poll: None,
             resumes: 0,
         };
-        state.transition("onlineGameChecking", Vec::new(), None, cx);
+        state.transition(Model::checking, None, cx);
         state
     });
     cx.set_global(OnlineHandle(state.clone()));
     let events = cx.global::<AppCore>().events.clone();
     cx.subscribe(&events, {
         let state = state.clone();
-        move |_, event: &CoreEvent, cx| {
-            if event.name.starts_with("online:")
-                || event.name == "challenges:update"
-                || event.name == "challenge:received"
-            {
+        move |_, event: &ClientEvent, cx| {
+            if let Some(event) = event.core() {
                 state.update(cx, |state, cx| state.receive(event, cx));
             }
         }
@@ -1087,18 +1041,20 @@ pub fn init(cx: &mut App) {
     // never replaying a move that was pending on the old core.
     cx.subscribe(&events, {
         let state = state.clone();
-        move |_, event: &CoreEvent, cx| {
-            if event.name != crate::core::RECONNECTED {
+        move |_, event: &ClientEvent, cx| {
+            if *event != ClientEvent::Reconnected {
                 return;
             }
             state.update(cx, |state, cx| {
                 // The new core counts its sessions from the start: the old core's epoch would
                 // drop every report it sends. The old connection's events all came before this.
-                state.model["stateEpoch"] = json!(0);
-                let phase = state.model["onlinePhase"].as_str().unwrap_or_default();
-                if matches!(phase, "playing" | "seeking" | "disconnected") {
+                state.model.state_epoch = 0.0;
+                if matches!(
+                    state.model.online_phase,
+                    GamePhase::Playing | GamePhase::Seeking | GamePhase::Disconnected
+                ) {
                     state.phase = Phase::Checking;
-                    state.transition("onlineGameChecking", Vec::new(), None, cx);
+                    state.transition(Model::checking, None, cx);
                 }
             });
             resume(state.clone(), cx);
@@ -1112,13 +1068,13 @@ pub fn init(cx: &mut App) {
 /// stays; the connection follows it.
 pub fn account_connected(cx: &mut App) {
     let state = handle(cx);
-    let phase = state.read(cx).model["onlinePhase"].as_str();
-    if !matches!(phase, Some("playing" | "seeking")) {
+    let phase = state.read(cx).model.online_phase;
+    if !matches!(phase, GamePhase::Playing | GamePhase::Seeking) {
         // Checking from now, not from the core's first report: a seek begun before that report
         // cut the check short, and the check's end put the page back to its form while Lichess
         // still held the seek.
         state.update(cx, |state, cx| {
-            state.transition("onlineGameChecking", Vec::new(), None, cx);
+            state.transition(Model::checking, None, cx);
         });
         resume_quietly(state, true, cx);
     }
@@ -1141,7 +1097,9 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
     let resume = async move {
         if quiet_first {
             let _ = core
-                .request(calls::StayConnected { account: json!("") })
+                .request(calls::StayConnected {
+                    account: OptionalAccount(String::new()),
+                })
                 .await;
         }
         core.request(calls::ResumeOnline {}).await
@@ -1153,24 +1111,25 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
                 return;
             }
             match resumed {
-                Ok(game) if game.is_object() => {
+                Ok(Some(game)) => {
                     // The game may belong to any connected account; it becomes the active one.
-                    let account = game["account"].as_str().unwrap_or_default().to_string();
-                    set_active_account(&account, cx);
-                    state.model["onlineAccount"] = json!(account);
-                    state.model["onlineId"] = game["id"].clone();
-                    if state.model["onlinePhase"] != json!("playing") {
-                        state.model["onlinePhase"] = json!("disconnected");
+                    set_active_account(&game.account, cx);
+                    state.model.online_account = game.account;
+                    state.model.online_id = game.id;
+                    if state.model.online_phase != GamePhase::Playing {
+                        state.model.online_phase = GamePhase::Disconnected;
                     }
                 }
-                Ok(_) => state.model["onlinePhase"] = json!("idle"),
+                Ok(_) => state.model.online_phase = GamePhase::Idle,
                 Err(cause) => {
                     log(&format!("resuming online game failed: {}", cause.message));
-                    if state.model["onlineConnection"]["phase"] == json!("checking") {
-                        state.model["onlineConnection"]["phase"] = json!("disconnected");
+                    if let Some(connection) = state.model.online_connection.as_mut()
+                        && connection.phase == OnlinePhase::Checking
+                    {
+                        connection.phase = OnlinePhase::Disconnected;
                     }
-                    if state.model["onlinePhase"] != json!("playing") {
-                        state.model["onlinePhase"] = json!("idle");
+                    if state.model.online_phase != GamePhase::Playing {
+                        state.model.online_phase = GamePhase::Idle;
                     }
                 }
             }
@@ -1187,28 +1146,40 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
     .detach();
 }
 
+/// A call the rules made, as its contract type: refused as the core would refuse it.
+fn typed<T: Validate>(value: &Value) -> Result<T, CoreError> {
+    T::validate(value.into()).map_err(CoreError::new)
+}
+
+/// A typed answer as the rules read it.
+fn answer<T: serde::Serialize + 'static>(
+    call: impl Future<Output = Result<T, CoreError>> + 'static,
+) -> futures::future::LocalBoxFuture<'static, Result<Value, CoreError>> {
+    call.map(|answer| answer.map(|answer| serde_json::to_value(answer).unwrap_or_default()))
+        .boxed_local()
+}
+
 /// A challenge's notification: who sent it, then its clock, variant and whether it is rated
 /// ("Alice (1800) challenges you", "5+3 · Standard · Rated").
-pub fn challenge_alert(challenge: &Value) -> (String, String) {
-    let opponent = &challenge["opponent"];
-    let name = opponent["name"].as_str().unwrap_or("Someone");
-    let title = match opponent["rating"].as_f64() {
+pub fn challenge_alert(challenge: &ChallengeInfo) -> (String, String) {
+    let opponent = &challenge.opponent;
+    let name = &opponent.name;
+    let title = match opponent
+        .rating
+        .as_ref()
+        .and_then(serde_json::Number::as_f64)
+    {
         Some(rating) => format!("{name} ({rating}) challenges you"),
         None => format!("{name} challenges you"),
     };
-    let variant = challenge["variantName"].as_str().unwrap_or("Standard");
-    let rated = if challenge["rated"] == json!(true) {
-        "Rated"
-    } else {
-        "Casual"
-    };
-    let control = crate::pages::online::lists::describe_control(challenge);
+    let variant = &challenge.variant_name;
+    let rated = if challenge.rated { "Rated" } else { "Casual" };
+    let control = crate::pages::online::lists::describe_control(&challenge.time_control);
     (title, format!("{control} · {variant} · {rated}"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Form;
     use crate::e2e::Harness;
 
     /// Signing out while the games in progress loaded kept that request current: its answer
@@ -1232,13 +1203,5 @@ mod tests {
         });
         assert!(!stale);
         assert_eq!(error, None);
-    }
-
-    #[test]
-    fn the_form_starts_at_15_plus_10() {
-        let form = Form::default();
-        assert_eq!((form.minutes, form.increment), (15., 10.));
-        assert_eq!(form.color, "random");
-        assert!(!form.rated && !form.correspondence);
     }
 }

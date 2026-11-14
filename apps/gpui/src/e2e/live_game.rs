@@ -263,7 +263,7 @@ fn switching_accounts_moves_the_event_stream(cx: &mut gpui_kit::TestAppContext) 
 
     app.open("Play on Lichess");
     app.click_label("Account");
-    super::analysis::settle(&mut app);
+    app.settle();
     app.press("down");
     app.press("enter");
     app.wait_for("the first account's stream again", |_, _| {
@@ -407,9 +407,7 @@ fn a_finished_game_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppContext
     app.type_text(">Analyse");
     super::palette::wait_for_first(&mut app, "Analyse");
     app.press("enter");
-    app.wait_for("the analysis board", |_, cx| {
-        crate::shell::current_page(cx) == Some(crate::pages::Page::Analysis)
-    });
+    app.wait_for_page(crate::pages::Page::Analysis);
 }
 
 /// While a seek waits for an opponent, Quick Pick cancels it as the page's Cancel does.
@@ -456,7 +454,7 @@ fn a_seek_waits_for_the_check_for_a_game_in_progress(cx: &mut gpui_kit::TestAppC
     app.open("Play on Lichess");
     assert!(!app.shows("online-start"));
     // Quick pick's Play online, while Lichess has not answered.
-    app.with_window(|window, cx| crate::shell::play_online(10., 0., false, window, cx));
+    app.with_window(|window, cx| crate::pages::online::play(10., 0., false, window, cx));
     app.settle();
     assert_ne!(
         app.with_window(|_, cx| crate::online::handle(cx).read(cx).phase),
@@ -570,7 +568,7 @@ fn new_opponent_seeks_the_same_game_against_anyone(cx: &mut gpui_kit::TestAppCon
     // The seek is still on: the finished game was not announced again as the seek's game when
     // the seek reopened the event stream (it was, and taking it up cancelled the seek, sometimes
     // before it was even sent).
-    super::analysis::settle(&mut app);
+    app.settle();
     assert_eq!(
         app.cx.update(|cx| crate::online::handle(cx).read(cx).phase),
         crate::online::Phase::Seeking,
@@ -605,20 +603,9 @@ fn a_challenge_is_answered_from_its_notification(cx: &mut gpui_kit::TestAppConte
     };
     let shown = |app: &mut Harness, id: &str| {
         let tag = format!("challenge:{id}");
-        let mut found = None;
-        for _ in 0..400 {
-            found = app
-                .cx
-                .shown_system_notifications()
-                .into_iter()
-                .find(|shown| shown.tag.as_ref() == tag);
-            if found.is_some() {
-                break;
-            }
-            app.cx.run_until_parked();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        found.expect("the challenge's notification")
+        app.wait_for_notification("the challenge's notification", |shown| {
+            shown.tag.as_ref() == tag
+        })
     };
     lichess.lock().events.push(challenge("Decline01"));
     let declined = shown(&mut app, "Decline01");
@@ -669,7 +656,7 @@ fn a_correspondence_move_is_played_from_its_notification(cx: &mut gpui_kit::Test
             .read(cx)
             .ongoing
             .iter()
-            .any(|game| game["gameId"] == serde_json::json!("E2eCorr1"))
+            .any(|game| game.game_id == "E2eCorr1")
     });
     gpui_kit::VisualTestContext::from_window(app.window, &app.cx).deactivate_window();
     app.with_window(|_, cx| {
@@ -677,7 +664,7 @@ fn a_correspondence_move_is_played_from_its_notification(cx: &mut gpui_kit::Test
             .read(cx)
             .ongoing
             .iter()
-            .find(|game| game["gameId"] == serde_json::json!("E2eCorr1"))
+            .find(|game| game.game_id == "E2eCorr1")
             .cloned()
             .expect("the game");
         crate::notifications::your_move(&game, cx);
@@ -719,16 +706,9 @@ fn a_correspondence_move_is_played_from_its_notification(cx: &mut gpui_kit::Test
     // The game moved on before Play: nothing is sent.
     lichess.lock().correspondence_turn = false;
     answer(&mut app, "confirm:Tester/E2eCorr1", "play");
-    let mut refused = None;
-    for _ in 0..400 {
-        let shown = last(&mut app);
-        if shown.title.as_ref() == "e4 was not played" {
-            refused = Some(shown);
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    refused.expect("the move refused");
+    app.wait_for_notification("the move refused", |shown| {
+        shown.title.as_ref() == "e4 was not played"
+    });
     assert!(writes(&lichess).is_empty(), "{:?}", writes(&lichess));
     // On your move again: typed, confirmed and played once.
     lichess.lock().correspondence_turn = true;
@@ -738,20 +718,27 @@ fn a_correspondence_move_is_played_from_its_notification(cx: &mut gpui_kit::Test
     app.wait_for("the move to reach Lichess", |_, _| {
         writes(&lichess) == ["POST /api/board/game/E2eCorr1/move/e2e4"]
     });
-    let mut played = None;
-    for _ in 0..400 {
-        let shown = last(&mut app);
-        if shown.title.as_ref() == "Played e4 against Opponent" {
-            played = Some(shown);
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    played.expect("the move confirmed");
+    app.wait_for_notification("the move confirmed", |shown| {
+        shown.title.as_ref() == "Played e4 against Opponent"
+    });
     // Play again on the same confirmation sends nothing more.
     answer(&mut app, "confirm:Tester/E2eCorr1", "play");
     assert_eq!(
         writes(&lichess),
         ["POST /api/board/game/E2eCorr1/move/e2e4"]
     );
+}
+
+/// Zen mode reaches a Lichess game: Z and the Zen button hide the sidebar there, as on a game
+/// against the computer. Both lit up and left the sidebar in place.
+#[gpui_kit::test]
+fn zen_mode_hides_the_sidebar_in_a_lichess_game(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = in_a_game(cx);
+    app.find("sidebar");
+    app.press("z");
+    app.wait_gone("sidebar");
+    app.click("zen");
+    app.find("sidebar");
+    app.click("zen");
+    app.wait_gone("sidebar");
 }

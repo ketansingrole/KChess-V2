@@ -1,19 +1,19 @@
-//! Library documents: the session decoders and the session
-//! checks a frontend's library calls pass through; the other document checks are in
-//! `validate/`. Each decoder accepts and rejects what the TypeScript decoder does, and returns
-//! the same normalized value.
+//! Library documents: the session decoders and the session checks a frontend's library calls
+//! pass through; a method's arguments are checked by their types (`kchess_contracts::check`).
 
 use std::cell::RefCell;
 
 use super::constants::*;
 use super::value::{J, own_entries};
 use crate::js;
+use crate::keyed::Keyed;
 use crate::replay;
+use crate::training::repetition::RepertoireMisses;
 use crate::tree::{self, TreeNode};
+use crate::variant::Variant;
 
-pub type Handler = fn(Vec<J>) -> Result<J, String>;
-
-const STANDARD_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+/// A document check: the arguments, normalized, or the message it rejected them with.
+pub type Check = fn(Vec<J>) -> Result<J, String>;
 
 fn arg(args: &[J], i: usize) -> &J {
     args.get(i).unwrap_or(&J::Undef)
@@ -23,7 +23,6 @@ fn object_or_none(v: &J) -> Option<&J> {
     v.is_object().then_some(v)
 }
 
-/// `Number.isInteger(v)` for a number.
 fn integer_of(v: Option<&J>) -> Option<f64> {
     match v {
         Some(J::Num(n)) if n.is_finite() && n.fract() == 0.0 => Some(*n),
@@ -31,7 +30,7 @@ fn integer_of(v: Option<&J>) -> Option<f64> {
     }
 }
 
-/// `text(v, max)`: a string no longer than `max` UTF-16 units.
+/// A string no longer than `max` UTF-16 units.
 fn text_of(v: Option<&J>, max: usize) -> Option<&str> {
     match v {
         Some(J::Str(s)) if js::utf16_len(s) <= max => Some(s),
@@ -39,7 +38,6 @@ fn text_of(v: Option<&J>, max: usize) -> Option<&str> {
     }
 }
 
-/// `Number.isFinite(v)` for a number.
 fn finite_of(v: Option<&J>) -> Option<f64> {
     match v {
         Some(J::Num(n)) if n.is_finite() => Some(*n),
@@ -47,26 +45,24 @@ fn finite_of(v: Option<&J>) -> Option<f64> {
     }
 }
 
-/// `typeof n === 'number' && Number.isFinite(n) ? Math.max(0, n) : 0`
+/// A finite number, at least 0; anything else is 0.
 fn ms(v: Option<&J>) -> f64 {
     finite_of(v).map_or(0.0, |n| n.max(0.0))
 }
 
-fn variant_of(setup: Option<&J>) -> Option<&str> {
-    let variant = setup?.get("variant")?.str()?;
-    VARIANTS.contains(&variant).then_some(variant)
+fn variant_of(setup: Option<&J>) -> Option<Variant> {
+    Variant::from_key(setup?.get("variant")?.str()?)
 }
 
-/// `{ variant, fen }` from a decoded setup.
-fn setup_object(variant: &str, fen: &str) -> J {
+fn setup_object(variant: Variant, fen: &str) -> J {
     J::Obj(vec![
-        ("variant".into(), J::Str(variant.into())),
+        ("variant".into(), J::Str(variant.key().into())),
         ("fen".into(), J::Str(fen.into())),
     ])
 }
 
-/// `playable(setup, moves)`: a list of legal UCI moves from the setup's position.
-fn playable(variant: &str, fen: &str, moves: Option<&J>) -> Option<Vec<String>> {
+/// A list of legal UCI moves from the setup's position.
+fn playable(variant: Variant, fen: &str, moves: Option<&J>) -> Option<Vec<String>> {
     let Some(J::Arr(items)) = moves else {
         return None;
     };
@@ -90,12 +86,13 @@ fn moves_value(moves: &[String]) -> J {
     J::Arr(moves.iter().map(|m| J::Str(m.clone())).collect())
 }
 
-/// `clockSide(raw)`: `{ minutes, increment }` when both are whole minutes from 0 to 180.
+/// `{ minutes, increment }` when both are whole minutes from 0 to 180.
 fn clock_side(raw: Option<&J>) -> Option<(f64, f64)> {
     let raw = object_or_none(raw?)?;
     let minutes = integer_of(raw.get("minutes"))?;
     let increment = integer_of(raw.get("increment"))?;
-    ((0.0..=180.0).contains(&minutes) && (0.0..=180.0).contains(&increment))
+    crate::games::Clock { minutes, increment }
+        .fits()
         .then_some((minutes, increment))
 }
 
@@ -127,7 +124,6 @@ thread_local! {
     static PARSED: RefCell<Option<(String, Option<TreeNode>)>> = const { RefCell::new(None) };
 }
 
-/// `decodeAnalysisSession`
 fn decode_analysis(raw: &J) -> Option<J> {
     let raw = object_or_none(raw)?;
     if raw.get("version") != Some(&J::Num(1.0)) {
@@ -183,7 +179,6 @@ fn decode_analysis(raw: &J) -> Option<J> {
 
 /* ── Local sessions ── */
 
-/// `decodeLocalSession`
 fn decode_local(raw: &J) -> Option<J> {
     if raw.get("version") != Some(&J::Num(1.0)) {
         return None;
@@ -233,7 +228,7 @@ fn decode_local(raw: &J) -> Option<J> {
     ]))
 }
 
-/// `value.slice(0, max)` in UTF-16 units; a character straddling the limit is left out.
+/// The first `max` UTF-16 units; a character straddling the limit is left out.
 fn utf16_prefix(s: &str, max: usize) -> String {
     let mut units = 0;
     let mut out = String::new();
@@ -249,15 +244,14 @@ fn utf16_prefix(s: &str, max: usize) -> String {
 
 /* ── Computer sessions ── */
 
-/// `decodeComputerSession`
 fn decode_computer(raw: &J) -> Option<J> {
     let raw = object_or_none(raw)?;
     let version = integer_of(raw.get("version"));
     let setup_source = raw.get("setup").filter(|s| s.truthy());
     // Another variant's FEN (Crazyhouse's pockets) may run as long as an over-the-board game's.
     let limit = match variant_of(setup_source) {
-        Some("standard" | "chess960") | None => 100,
-        Some(_) => 120,
+        Some(variant) if !variant.standard_rules() => 120,
+        _ => 100,
     };
     // Version 1 games began at the standard start and had no clock.
     let (variant, fen) = match (
@@ -266,7 +260,7 @@ fn decode_computer(raw: &J) -> Option<J> {
         setup_source.and_then(|s| text_of(s.get("fen"), limit)),
     ) {
         (Some(2.0), Some(variant), Some(fen)) => (variant, fen),
-        _ => ("standard", STANDARD_FEN),
+        _ => (Variant::Standard, crate::rules::INITIAL_FEN),
     };
     if !matches!(version, Some(v) if v == 1.0 || v == 2.0) {
         return None;
@@ -276,7 +270,7 @@ fn decode_computer(raw: &J) -> Option<J> {
     let level = raw
         .get("level")
         .and_then(J::str)
-        .filter(|l| ENGINE_LEVELS.contains(l))?;
+        .filter(|level| EngineLevel::from_key(level).is_some())?;
     let color = raw.get("color")?;
     if !matches!(js_string(color).as_str(), "white" | "black") {
         return None;
@@ -309,7 +303,7 @@ fn decode_computer(raw: &J) -> Option<J> {
     ]))
 }
 
-/// `String(value)`: the text a value takes in string coercion.
+/// The text a value takes in string coercion.
 fn js_string(v: &J) -> String {
     match v {
         J::Undef => "undefined".into(),
@@ -331,7 +325,6 @@ fn js_string(v: &J) -> String {
 
 /* ── Archive identities ── */
 
-/// `decodeArchiveIdentity`
 fn decode_archive_identity(raw: &J) -> Option<J> {
     let raw = object_or_none(raw)?;
     let id = text_of(raw.get("id"), 80).filter(|id| !id.is_empty())?;
@@ -342,30 +335,35 @@ fn decode_archive_identity(raw: &J) -> Option<J> {
     ]))
 }
 
-/// `SESSION_VERSION`: the on-disk version of each kind; archives have none.
-fn session_version(kind: &str) -> Option<Option<f64>> {
-    Some(match kind {
-        "analysis" | "local" => Some(1.0),
-        "computer" => Some(2.0),
-        "archive:computer" | "archive:board" | "archive:clock" => None,
-        _ => return None,
-    })
+/// The on-disk version of each kind; archives have none.
+fn session_version(kind: SessionKind) -> Option<f64> {
+    match kind {
+        SessionKind::Analysis | SessionKind::Local => Some(1.0),
+        SessionKind::Computer => Some(2.0),
+        SessionKind::ArchiveComputer | SessionKind::ArchiveBoard | SessionKind::ArchiveClock => {
+            None
+        }
+    }
 }
 
-/// `decodeStoredSession(kind, raw)`; an unknown kind fails as the TypeScript table lookup did.
-fn decode_stored(kind: &str, raw: &J) -> Result<Option<J>, String> {
+/// A stored session of `kind`, decoded; none when it is not one. An unknown kind is an error.
+pub fn decode_stored(kind: &str, raw: &J) -> Result<Option<J>, String> {
+    let Some(kind) = SessionKind::from_key(kind) else {
+        return Err("SESSION_DECODERS[kind] is not a function".into());
+    };
     Ok(match kind {
-        "analysis" => decode_analysis(raw),
-        "local" => decode_local(raw),
-        "computer" => decode_computer(raw),
-        "archive:computer" | "archive:board" | "archive:clock" => decode_archive_identity(raw),
-        _ => return Err("SESSION_DECODERS[kind] is not a function".into()),
+        SessionKind::Analysis => decode_analysis(raw),
+        SessionKind::Local => decode_local(raw),
+        SessionKind::Computer => decode_computer(raw),
+        SessionKind::ArchiveComputer | SessionKind::ArchiveBoard | SessionKind::ArchiveClock => {
+            decode_archive_identity(raw)
+        }
     })
 }
 
-/// `encodeSession(kind, session)`: `{ version, ...session }` for kinds with a version.
-fn encode_session(kind: &str, session: &J) -> J {
-    let Some(Some(version)) = session_version(kind) else {
+/// A session as stored: `{ version, ...session }` for kinds with a version.
+pub fn encode_session(kind: &str, session: &J) -> J {
+    let Some(version) = SessionKind::from_key(kind).and_then(session_version) else {
         return session.clone();
     };
     let mut fields = vec![("version".to_string(), J::Num(version))];
@@ -385,8 +383,8 @@ fn encode_session(kind: &str, session: &J) -> J {
 
 /* ── Joined tournaments and repertoire misses ── */
 
-/// `decodeJoinedTournaments`
-fn decode_joined_tournaments(raw: &J) -> J {
+/// The tournaments joined, as stored: at most 100, each one complete.
+pub fn decode_joined_tournaments(raw: &J) -> J {
     let J::Arr(entries) = raw else {
         return J::Arr(Vec::new());
     };
@@ -399,9 +397,7 @@ fn decode_joined_tournaments(raw: &J) -> J {
                     return None;
                 }
                 let system = entry.get("system").and_then(J::str)?;
-                if !TOURNAMENT_SYSTEMS.contains(&system) {
-                    return None;
-                }
+                TournamentSystem::from_key(system)?;
                 let id = text_of(entry.get("id"), 20)?;
                 let account = text_of(entry.get("account"), 40)?;
                 let name = text_of(entry.get("name"), 200)?;
@@ -433,7 +429,7 @@ fn entries_of(v: &J) -> Vec<(String, &J)> {
 
 /// `Object.keys` order for a built object: whole-number keys ascending first, then the rest in
 /// insertion order.
-fn js_key_order(fields: Vec<(String, J)>) -> Vec<(String, J)> {
+fn js_key_order<V>(fields: Vec<(String, V)>) -> Vec<(String, V)> {
     let index = |k: &str| {
         let canonical = k == "0"
             || (!k.starts_with('0') && !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()));
@@ -448,34 +444,41 @@ fn js_key_order(fields: Vec<(String, J)>) -> Vec<(String, J)> {
     numbered.into_iter().chain(named).collect()
 }
 
-/// `decodeRepertoireMisses`: `studyId:color` → FEN → missed count.
-fn decode_repertoire_misses(raw: &J) -> J {
+/// The repertoire misses, as stored: `studyId:color` → FEN → missed count.
+pub fn decode_repertoire_misses(raw: &J) -> RepertoireMisses {
     let J::Obj(_) = raw else {
-        return J::Obj(Vec::new());
+        return Keyed::default();
     };
-    let mut result: Vec<(String, J)> = Vec::new();
+    let mut result = Vec::new();
     for (key, table) in entries_of(raw).into_iter().take(200) {
         if js::utf16_len(&key) > 200 || !table.truthy() || !table.is_object() {
             continue;
         }
-        let mut counts: Vec<(String, J)> = Vec::new();
+        let mut counts = Vec::new();
         for (fen, count) in entries_of(table).into_iter().take(2000) {
             let whole = integer_of(Some(count)).filter(|n| *n > 0.0);
             if let Some(n) = whole
                 && js::utf16_len(&fen) <= 100
             {
-                counts.push((fen, J::Num(n)));
+                counts.push((fen, n));
             }
         }
-        result.push((key, J::Obj(js_key_order(counts))));
+        let counts = js_key_order(counts)
+            .into_iter()
+            .filter_map(|(fen, n)| match super::value::number_value(n) {
+                serde_json::Value::Number(n) => Some((fen, n)),
+                _ => None,
+            })
+            .collect();
+        result.push((key, Keyed(counts)));
     }
-    J::Obj(js_key_order(result))
+    Keyed(js_key_order(result))
 }
 
 /* ── Session checks ── */
 
-/// `assertSession(kind, value)`: the value, decoded as its kind's document.
-fn assert_session(args: Vec<J>) -> Result<J, String> {
+/// `[kind, value]`: the value, decoded as its kind's document.
+pub fn assert_session(args: Vec<J>) -> Result<J, String> {
     let kind = arg(&args, 0).str().unwrap_or_default().to_string();
     let value = arg(&args, 1);
     let decoded = if value.truthy() && value.is_object() {
@@ -487,47 +490,7 @@ fn assert_session(args: Vec<J>) -> Result<J, String> {
     decoded.ok_or_else(|| "This session cannot be saved.".to_string())
 }
 
-/// `assertArchivedGameShape`: an object; the core service checks its fields.
-fn assert_archived_game_shape(args: Vec<J>) -> Result<J, String> {
-    let value = arg(&args, 0);
-    if !value.truthy() || !value.is_object() {
-        return Err("This game cannot be saved.".into());
-    }
-    Ok(value.clone())
-}
-
-fn handler_of(method: &str) -> Option<Handler> {
-    Some(match method {
-        "decodeAnalysisSession" => |a| Ok(decode_analysis(arg(&a, 0)).unwrap_or(J::Null)),
-        "decodeLocalSession" => |a| Ok(decode_local(arg(&a, 0)).unwrap_or(J::Null)),
-        "decodeComputerSession" => |a| Ok(decode_computer(arg(&a, 0)).unwrap_or(J::Null)),
-        "decodeArchiveIdentity" => |a| Ok(decode_archive_identity(arg(&a, 0)).unwrap_or(J::Null)),
-        "decodeStoredSession" => |a| {
-            let kind = arg(&a, 0).str().unwrap_or_default().to_string();
-            Ok(decode_stored(&kind, arg(&a, 1))?.unwrap_or(J::Null))
-        },
-        "encodeSession" => |a| {
-            let kind = arg(&a, 0).str().unwrap_or_default().to_string();
-            Ok(encode_session(&kind, arg(&a, 1)))
-        },
-        "isSessionKind" => |a| {
-            Ok(J::Bool(
-                arg(&a, 0).str().is_some_and(|k| SESSION_KINDS.contains(&k)),
-            ))
-        },
-        "assertSession" => assert_session,
-        "decodeJoinedTournaments" => |a| Ok(decode_joined_tournaments(arg(&a, 0))),
-        "decodeRepertoireMisses" => |a| Ok(decode_repertoire_misses(arg(&a, 0))),
-        "assertArchivedGameShape" => assert_archived_game_shape,
-        _ => return None,
-    })
-}
-
-/// The document validators and decoders by their TypeScript names.
-pub fn handler(method: &str) -> Option<Handler> {
-    handler_of(method)
-}
-
+/// A document check by the name the core's contracts give it.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,7 +506,7 @@ mod tests {
             ]),
         )]);
         assert_eq!(
-            decode_repertoire_misses(&raw).into_value(),
+            serde_json::to_value(decode_repertoire_misses(&raw)).unwrap(),
             serde_json::json!({ "study:white": { "fen-a": 2 } })
         );
     }
@@ -592,9 +555,33 @@ mod tests {
         assert_eq!(kept["setup"]["variant"], "crazyhouse");
         assert_eq!(kept["moves"].as_array().map(Vec::len), Some(5));
         assert_eq!(
-            check(session("standard", STANDARD_FEN)),
+            check(session("standard", crate::rules::INITIAL_FEN)),
             Err("This session cannot be saved.".into())
         );
+    }
+
+    /// Another variant's FEN may run past a standard one's 100 characters, up to 120: a full
+    /// Crazyhouse board with full pockets is kept, and a standard FEN that long is not read.
+    #[test]
+    fn a_variant_fen_may_run_longer_than_a_standard_one() {
+        let decoded = |variant: &str, fen: &str| {
+            let raw = serde_json::json!({
+                "version": 2,
+                "setup": { "variant": variant, "fen": fen },
+                "moves": [],
+                "level": "club",
+                "color": "white",
+            });
+            decode_computer(&crate::misc::from_json(&raw)).map(J::into_value)
+        };
+        let zh = "r1b1k1n1/p1p1p1p1/1p1p1p1p/n1b1q1r1/N1B1Q1R1/1P1P1P1P/P1P1P1P1/R1B1K1N1\
+                  [PPPPPPPPNNBBRRQQppppppppnnbbrrqq] w - - 0 1";
+        assert!((101..=120).contains(&zh.len()), "{}", zh.len());
+        let kept = decoded("crazyhouse", zh).expect("a long Crazyhouse FEN is kept");
+        assert_eq!(kept["setup"]["fen"], zh);
+        let long = "x".repeat(110);
+        let kept = decoded("standard", &long).expect("read from the usual start");
+        assert_eq!(kept["setup"]["fen"], crate::rules::INITIAL_FEN);
     }
 
     #[test]

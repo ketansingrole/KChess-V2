@@ -4,7 +4,7 @@
 
 ## How I checked it
 
-- [ ] `cargo xtask check` passes
+- [ ] `cargo xtask check-fast` passes (CI runs the full `cargo xtask check`)
 - [ ] Bug fixes include a regression for the failure sequence
 - [ ] I tried it in the running app (screenshots for UI changes)
 

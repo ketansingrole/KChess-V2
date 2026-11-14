@@ -3,6 +3,7 @@
 //! and the best scores the core keeps for each drill (`runSummary`, `saveRun`).
 
 use kchess_contracts::calls;
+use kchess_contracts::types::{RunInput, RunKind, RunSaved, RunSummary};
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::h_flex;
@@ -10,11 +11,10 @@ use gpui_kit::component::v_flex;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::rules;
 use crate::theme::{Palette, radii, tint};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill};
@@ -27,9 +27,6 @@ pub const LENGTHS: [(u32, &str); 5] = [
     (300, "5 min"),
     (0, "Untimed"),
 ];
-
-/// How often a running clock is redrawn (`useCountdown` ticks every 100 ms).
-const TICK: Duration = Duration::from_millis(100);
 
 /// The clock of one run: a countdown from its length, or a stopwatch when untimed.
 #[derive(Default)]
@@ -68,7 +65,7 @@ impl RunClock {
         !self.untimed && self.started.is_some() && self.left().is_zero()
     }
 
-    /// What the clock shows: time left, or time spent when untimed (`formatRunClock`).
+    /// What the clock shows: time left, or time spent when untimed.
     pub fn text(&self) -> String {
         let ms = if self.untimed {
             self.elapsed()
@@ -76,15 +73,134 @@ impl RunClock {
             self.left()
         }
         .as_millis() as f64;
-        rules("formatRunClock", &[json!(ms)])
-            .ok()
-            .and_then(|text| text.as_str().map(str::to_string))
-            .unwrap_or_default()
+        kchess_domain::training::rush::format_run_clock(ms)
     }
 
     /// Under ten seconds left.
     pub fn low(&self) -> bool {
         !self.untimed && self.left() < Duration::from_secs(10)
+    }
+}
+
+/// Where a drill is: choosing, in a run, or showing the run that ended.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum Stage {
+    #[default]
+    Idle,
+    Running,
+    Over,
+}
+
+/// A timed drill: its run, and what it does when the run ends.
+pub trait Drill: Sized + 'static {
+    fn run(&mut self) -> &mut DrillRun;
+    fn finish(&mut self, cx: &mut Context<Self>);
+}
+
+/// What every timed drill keeps of its run: the stage, the clock and its ticks, and the saved
+/// runs with whether the last one is a best.
+#[derive(Default)]
+pub struct DrillRun {
+    pub stage: Stage,
+    pub clock: RunClock,
+    pub summary: Option<RunSummary>,
+    pub is_best: bool,
+    ticker: Option<Task<()>>,
+}
+
+impl DrillRun {
+    pub fn running(&self) -> bool {
+        self.stage == Stage::Running
+    }
+
+    /// Start a run of `seconds` (0 is untimed): the view redraws each tick and finishes when the
+    /// countdown ends.
+    pub fn begin<V: Drill>(&mut self, seconds: u32, cx: &mut Context<V>) {
+        self.stage = Stage::Running;
+        self.is_best = false;
+        self.clock.start(seconds);
+        self.ticker = Some(crate::timer::every(
+            crate::timer::TICK,
+            cx,
+            |view: &mut V, cx| {
+                let run = view.run();
+                if !run.running() {
+                    return false;
+                }
+                if run.clock.expired() {
+                    view.finish(cx);
+                    return false;
+                }
+                cx.notify();
+                true
+            },
+        ));
+    }
+
+    /// End the run; false when none was running.
+    pub fn end(&mut self) -> bool {
+        if !self.running() {
+            return false;
+        }
+        self.clock.stop();
+        self.stage = Stage::Over;
+        true
+    }
+
+    /// Read the drill's saved runs into its `summary`.
+    pub fn load<V: Drill>(kind: RunKind, cx: &mut Context<V>) {
+        load_summary(kind, cx, |view: &mut V, summary, cx| {
+            view.run().summary = Some(summary);
+            cx.notify();
+        });
+    }
+
+    /// Save a finished run, and keep whether it is a best.
+    pub fn save<V: Drill>(run: RunInput, cx: &mut Context<V>) {
+        save_run(run, cx, |view: &mut V, saved, cx| {
+            let run = view.run();
+            run.is_best = saved.is_best;
+            run.summary = Some(saved.summary);
+            cx.notify();
+        });
+    }
+
+    /// The best score of a variant in the saved runs.
+    pub fn best(&self, variant: &str) -> Option<f64> {
+        best(self.summary.as_ref(), variant)
+    }
+
+    /// Whether the clock is ticking.
+    #[cfg(test)]
+    pub fn ticking(&self) -> bool {
+        self.ticker.is_some()
+    }
+}
+
+/// Right answers and mistakes in a run.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct Tally {
+    pub score: u32,
+    pub mistakes: u32,
+}
+
+impl Tally {
+    pub fn record(&mut self, correct: bool) {
+        if correct {
+            self.score += 1;
+        } else {
+            self.mistakes += 1;
+        }
+    }
+
+    /// Right answers as a percentage of all answers, rounded.
+    pub fn accuracy(&self) -> u32 {
+        let total = self.score + self.mistakes;
+        if total == 0 {
+            0
+        } else {
+            (f64::from(self.score) / f64::from(total) * 100.).round() as u32
+        }
     }
 }
 
@@ -106,31 +222,13 @@ pub fn record_variant(base: &str, seconds: u32, default_seconds: u32) -> String 
     }
 }
 
-/// Redraw a drill while its clock runs; `tick` says whether to keep going.
-pub fn ticker<V: 'static>(
-    cx: &mut Context<V>,
-    tick: fn(&mut V, &mut Context<V>) -> bool,
-) -> Task<()> {
-    cx.spawn(async move |this, cx| {
-        loop {
-            cx.background_executor().timer(TICK).await;
-            match this.update(cx, tick) {
-                Ok(true) => {}
-                _ => break,
-            }
-        }
-    })
-}
-
 /// A drill's saved runs (`RunSummary`), read when it opens.
 pub fn load_summary<V: 'static>(
-    kind: &'static str,
+    kind: RunKind,
     cx: &mut Context<V>,
-    keep: fn(&mut V, Value, &mut Context<V>),
+    keep: fn(&mut V, RunSummary, &mut Context<V>),
 ) {
-    let summary = cx
-        .global::<AppCore>()
-        .request(calls::RunSummary { kind: json!(kind) });
+    let summary = cx.global::<AppCore>().request(calls::RunSummary { kind });
     cx.spawn(async move |this, cx| match summary.await {
         Ok(summary) => {
             let _ = this.update(cx, |view, cx| keep(view, summary, cx));
@@ -146,9 +244,9 @@ pub fn load_summary<V: 'static>(
 
 /// Save a finished run; `keep` gets the `RunSaved` (its summary, and whether it is a best).
 pub fn save_run<V: 'static>(
-    run: Value,
+    run: RunInput,
     cx: &mut Context<V>,
-    keep: fn(&mut V, Value, &mut Context<V>),
+    keep: fn(&mut V, RunSaved, &mut Context<V>),
 ) {
     let saved = cx.global::<AppCore>().request(calls::SaveRun { run });
     cx.spawn(async move |this, cx| match saved.await {
@@ -166,11 +264,24 @@ pub fn save_run<V: 'static>(
 }
 
 /// The best score of a variant in a summary.
-pub fn best(summary: &Value, variant: &str) -> Option<f64> {
-    summary["best"][variant]["score"].as_f64()
+pub fn best(summary: Option<&RunSummary>, variant: &str) -> Option<f64> {
+    Some(summary?.best.get(variant)?.score)
 }
 
-/// `.field` with its label above the control.
+/// A finished run of `kind` to save; `detail` is an object of numbers, words and flags.
+pub fn input(kind: RunKind, variant: impl Into<String>, score: f64, detail: Value) -> RunInput {
+    RunInput {
+        kind,
+        variant: variant.into(),
+        score,
+        detail: match detail {
+            Value::Object(detail) => detail,
+            _ => serde_json::Map::new(),
+        },
+    }
+}
+
+/// A form field: its label above the control.
 pub fn field(
     label: &'static str,
     control: impl IntoElement,
@@ -188,7 +299,6 @@ pub fn field(
         .child(control)
 }
 
-/// The run-length picker.
 pub fn length_picker(
     id: &'static str,
     seconds: u32,
@@ -221,7 +331,7 @@ pub fn length_picker(
     )
 }
 
-/// `.run-hud`: the clock, and the score with what it counts.
+/// The clock, and the score with what it counts.
 pub fn hud(
     clock: &RunClock,
     score: f64,
@@ -385,7 +495,26 @@ pub fn sparkline(scores: Vec<f64>, palette: &Palette) -> impl IntoElement {
 
 #[cfg(test)]
 mod tests {
-    use super::{Duration, RunClock, length_label, record_variant};
+    use super::{Duration, RunClock, Tally, length_label, record_variant};
+
+    #[test]
+    fn a_tally_counts_answers_and_rounds_its_accuracy() {
+        let mut tally = Tally::default();
+        assert_eq!(tally.accuracy(), 0);
+        tally.record(true);
+        tally.record(true);
+        tally.record(false);
+        assert_eq!(
+            tally,
+            Tally {
+                score: 2,
+                mistakes: 1
+            }
+        );
+        assert_eq!(tally.accuracy(), 67);
+        tally.record(true);
+        assert_eq!(tally.accuracy(), 75);
+    }
 
     #[test]
     fn records_keep_their_names_per_length() {

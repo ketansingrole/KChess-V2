@@ -12,7 +12,7 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use kchess_delta::{APPIMAGE, Arch, Asset, Node, Tree, WINDOWS_INSTALLER};
+use kchess_delta::{APPIMAGE, Arch, Asset, Node, Tree, Version, WINDOWS_INSTALLER};
 
 use crate::util::{Result, output, root, run_with, say, version};
 
@@ -22,21 +22,11 @@ const PREVIOUS: usize = 3;
 /// A patch is published only while it is at most this share of the whole package.
 const WORTH: f64 = 0.75;
 
-/// What a patch carries beside the files, by name.
 type Extras = Vec<(String, Vec<u8>)>;
 
 /// A package installations update from, by its name: its kind, version and architecture.
 fn package(name: &str) -> Option<(Asset, &str, Arch)> {
     Asset::parse(name).filter(|(kind, ..)| kind.patched())
-}
-
-fn parse(version: &str) -> Option<[u64; 3]> {
-    let mut parts = version.trim_start_matches('v').split('.');
-    let mut out = [0; 3];
-    for slot in &mut out {
-        *slot = parts.next()?.parse().ok()?;
-    }
-    parts.next().is_none().then_some(out)
 }
 
 /// The `count` newest published releases before `current`, newest first, from GitHub's release
@@ -46,31 +36,31 @@ fn previous(
     releases: &serde_json::Value,
     count: usize,
 ) -> Vec<(String, Vec<String>)> {
-    let Some(now) = parse(current) else {
+    let Some(now) = Version::parse(current) else {
         return Vec::new();
     };
-    let mut found: Vec<([u64; 3], String, Vec<String>)> = releases
+    let mut found: Vec<(Version, Vec<String>)> = releases
         .as_array()
         .into_iter()
         .flatten()
         .filter(|release| release["draft"] != true && release["prerelease"] != true)
         .filter_map(|release| {
             let tag = release["tag_name"].as_str()?;
-            let parsed = parse(tag).filter(|parsed| *parsed < now)?;
+            let version = Version::of_release_tag(tag).filter(|version| *version < now)?;
             let assets = release["assets"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .filter_map(|asset| asset["name"].as_str().map(str::to_string))
                 .collect();
-            Some((parsed, tag.trim_start_matches('v').to_string(), assets))
+            Some((version, assets))
         })
         .collect();
     found.sort_by_key(|release| std::cmp::Reverse(release.0));
     found
         .into_iter()
         .take(count)
-        .map(|(_, version, assets)| (version, assets))
+        .map(|(version, assets)| (version.to_string(), assets))
         .collect()
 }
 
@@ -104,8 +94,8 @@ fn zip_tree(bytes: &[u8]) -> Result<Tree> {
         };
         tree.insert(path, node);
     }
-    let name = format!("{}.app", crate::package::NAME);
-    let bundle = tree.under(&name);
+    let name = kchess_delta::installed::MAC_BUNDLE;
+    let bundle = tree.under(name);
     if bundle.is_empty() {
         return Err(format!("The zip holds no {name}."));
     }
@@ -138,7 +128,7 @@ fn installed_folder(work: &Path) -> PathBuf {
 fn installed_tree(installer: &Path, work: &Path) -> Result<Tree> {
     let folder = installed_folder(work);
     let _ = std::fs::remove_dir_all(&folder);
-    forget_installation();
+    forget_installation()?;
     // `/D=` is the last argument, unquoted, as NSIS reads it.
     run_with(
         Command::new(installer)
@@ -168,14 +158,33 @@ fn installed_tree(installer: &Path, work: &Path) -> Result<Tree> {
 /// next one installs where `/D=` says: an installer upgrades a recorded installation in place,
 /// as it should on a person's machine, and NSIS takes `/D=` off the command line it reads. Only
 /// the machines that make patches run installers (the Windows package job, a disposable runner).
-fn forget_installation() {
-    if cfg!(windows) {
-        let guid = crate::package::GUID;
-        let _ = Command::new("reg")
-            .args(["delete", &format!("HKCU\\Software\\{guid}"), "/f"])
+/// A key already absent is forgotten; one `reg` could not delete is refused, since the
+/// installer would then upgrade the recorded installation instead.
+fn forget_installation() -> Result {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    let key = format!("HKCU\\Software\\{}", crate::package::GUID);
+    let reg = |args: &[&str]| {
+        Command::new("reg")
+            .args(args)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .status();
+            .status()
+            .is_ok_and(|status| status.success())
+    };
+    // Queried only when the delete failed.
+    forgotten(&key, reg(&["delete", &key, "/f"]), || reg(&["query", &key]))
+}
+
+/// Whether the installation `key` is forgotten: deleted, or not there to delete.
+fn forgotten(key: &str, deleted: bool, present: impl FnOnce() -> bool) -> Result {
+    if deleted || !present() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Could not delete {key}: the installer would upgrade the installation it records."
+        ))
     }
 }
 
@@ -286,17 +295,13 @@ fn between(old_path: &Path, new_path: &Path, stage: Option<&Path>) -> Result {
 }
 
 /// `deltas --apply <patch> <installed folder> <out>`: what the Windows updater stages from a
-/// patch: the rebuilt files in `<out>/files` and the update installer beside them as
-/// `KChess-update.exe` (the Windows upgrade test runs it as an installed KChess does).
+/// patch, with its own code (`kchess_delta::stage_windows`), so the Windows upgrade test runs
+/// the update installer as an installed KChess does.
 fn apply(delta: &Path, installed: &Path, out: &Path) -> Result {
     let text = |cause: kchess_delta::Error| cause.0;
     let mut patch = kchess_delta::Delta::open(delta).map_err(text)?;
     let _ = std::fs::remove_dir_all(out);
-    patch
-        .rebuild(|path| installed.join(path), &out.join("files"))
-        .map_err(text)?;
-    let installer = patch.extra(WINDOWS_INSTALLER).map_err(text)?;
-    std::fs::write(out.join("KChess-update.exe"), installer).map_err(|cause| cause.to_string())?;
+    kchess_delta::stage_windows(&mut patch, installed, out).map_err(text)?;
     say(&format!(
         "{} to {} staged in {}.",
         patch.header.from,
@@ -434,6 +439,16 @@ pub fn run(args: &[String]) -> Result {
 mod tests {
     use super::*;
 
+    /// An installation is forgotten once deleted or when there was none; one still recorded is
+    /// refused. The record is looked up only when the delete failed.
+    #[test]
+    fn an_installation_still_recorded_is_refused() {
+        assert_eq!(forgotten("K", true, || panic!("not queried")), Ok(()));
+        assert_eq!(forgotten("K", false, || false), Ok(()));
+        let refused = forgotten("K", false, || true).unwrap_err();
+        assert!(refused.starts_with("Could not delete K:"), "{refused}");
+    }
+
     /// `--apply` stages a Windows patch as the updater does: the files, and the update installer
     /// beside them.
     #[test]
@@ -468,7 +483,7 @@ mod tests {
             b"voice"
         );
         assert_eq!(
-            std::fs::read(out.join("KChess-update.exe")).unwrap(),
+            std::fs::read(out.join(kchess_delta::UPDATE_EXE)).unwrap(),
             b"MZ update"
         );
         std::fs::remove_file(installed.join("voice/vosk.dll")).unwrap();
@@ -839,7 +854,7 @@ mod tests {
         );
         assert_eq!(std::fs::read(out.join("files/KChess.exe")).unwrap(), b"new");
         assert_eq!(
-            std::fs::read(out.join("KChess-update.exe")).unwrap(),
+            std::fs::read(out.join(kchess_delta::UPDATE_EXE)).unwrap(),
             b"MZ update"
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -879,7 +894,7 @@ mod tests {
         assert!(
             patches(
                 &dist,
-                "1.0.2",
+                "2026.11.2",
                 &serde_json::json!([]),
                 &work,
                 &|_, _, _| Ok(())
@@ -889,11 +904,11 @@ mod tests {
         let program: Vec<u8> = (0..100_000u32).map(|n| (n * 7 % 251) as u8).collect();
         let mut next = program.clone();
         next[500] ^= 1;
-        std::fs::write(dist.join("KChess-1.0.2-linux-x86_64.AppImage"), &next).unwrap();
+        std::fs::write(dist.join("KChess-2026.11.2-linux-x86_64.AppImage"), &next).unwrap();
         std::fs::write(dist.join("SHA256SUMS.txt"), b"").unwrap();
         let releases = serde_json::json!([
-            { "tag_name": "v1.0.1", "assets": [{ "name": "KChess-1.0.1-linux-x86_64.AppImage" }] },
-            { "tag_name": "v1.0.0", "assets": [{ "name": "KChess-1.0.0-mac-arm64.zip" }] },
+            { "tag_name": "v2026.11.1", "assets": [{ "name": "KChess-2026.11.1-linux-x86_64.AppImage" }] },
+            { "tag_name": "v2026.11.0", "assets": [{ "name": "KChess-2026.11.0-mac-arm64.zip" }] },
         ]);
         let fetched = std::cell::RefCell::new(Vec::new());
         let download = |from: &str, name: &str, folder: &Path| -> Result {
@@ -901,25 +916,25 @@ mod tests {
             std::fs::write(folder.join(name), &program).map_err(|cause| cause.to_string())
         };
         assert_eq!(
-            patches(&dist, "1.0.2", &releases, &work, &download).unwrap(),
+            patches(&dist, "2026.11.2", &releases, &work, &download).unwrap(),
             1
         );
         assert!(
-            dist.join("KChess-1.0.2-linux-x86_64.from-1.0.1.delta")
+            dist.join("KChess-2026.11.2-linux-x86_64.from-2026.11.1.delta")
                 .exists()
         );
         assert!(
             !dist
-                .join("KChess-1.0.2-linux-x86_64.from-1.0.0.delta")
+                .join("KChess-2026.11.2-linux-x86_64.from-2026.11.0.delta")
                 .exists()
         );
         assert_eq!(
             *fetched.borrow(),
-            ["1.0.1 KChess-1.0.1-linux-x86_64.AppImage"]
+            ["2026.11.1 KChess-2026.11.1-linux-x86_64.AppImage"]
         );
         // A package already fetched is not fetched again.
         assert_eq!(
-            patches(&dist, "1.0.2", &releases, &work, &download).unwrap(),
+            patches(&dist, "2026.11.2", &releases, &work, &download).unwrap(),
             1
         );
         assert_eq!(fetched.borrow().len(), 1);

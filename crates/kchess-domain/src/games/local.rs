@@ -1,14 +1,17 @@
-//! `LocalGame`: two people at one board, with optional clocks
-//! and a stand-alone chess clock for a real board.
+//! Two people at one board, with optional clocks.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use shakmaty::Color;
 
-use super::{
-    Clock, Clocked, Done, Flow, Reads, Session, Setup, Times, arg, board_result, opponent,
-    optional_arg, pgn_result, timeout_winner, to_value, transition, with_move,
-};
+use super::archive::Snapshot;
+use super::session::LocalSession;
+use super::{Board, Clock, Clocking, Outcome, Setup, Times};
 use crate::js;
+use crate::misc::constants::HistoryKind;
+use crate::records::games::GameEnd;
+
+/// Its PGN's `Event`.
+pub const EVENT: &str = "Over the board (KChess)";
 
 /// Both sides' clocks, as a session keeps them.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -17,15 +20,16 @@ pub struct LocalClock {
     pub black: Clock,
 }
 
-/// A decided result: the winner, when there is one, and why.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct GameResult {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub winner: Option<String>,
-    pub reason: String,
+impl LocalClock {
+    pub fn side(&self, color: Color) -> Clock {
+        match color {
+            Color::White => self.white,
+            Color::Black => self.black,
+        }
+    }
 }
 
-/// `LocalState`: the session document and its pause flag.
+/// The session document and its pause flag.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct State {
@@ -33,147 +37,196 @@ pub struct State {
     pub moves: Vec<String>,
     pub clock: Option<LocalClock>,
     pub times: Option<Times>,
-    pub result: Option<GameResult>,
+    pub result: Option<GameEnd>,
     pub paused: bool,
 }
 
-/// The private field the TypeScript class kept beside its state.
+/// What the game keeps beside the state: when the turn began.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Runtime {
     pub turn_started: f64,
 }
 
-/// A saved session as `localState` accepts it: every field may be missing.
-#[derive(Default, Deserialize)]
+/// A saved session: every field may be missing when it is read back.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Saved {
-    setup: Option<Setup>,
-    moves: Option<Vec<String>>,
-    clock: Option<LocalClock>,
-    times: Option<Times>,
-    result: Option<GameResult>,
+pub struct Saved {
+    pub setup: Option<Setup>,
+    pub moves: Option<Vec<String>>,
+    pub clock: Option<LocalClock>,
+    pub times: Option<Times>,
+    pub result: Option<GameEnd>,
 }
 
-/// `localState(saved?)`: a fresh state from a saved session.
-pub fn state(args: &[Value]) -> Result<Value, String> {
-    let saved: Saved = optional_arg(args, 0)?.unwrap_or_default();
-    to_value(&State {
-        setup: saved.setup.unwrap_or_else(|| Setup {
-            variant: "standard".into(),
-            fen: super::INITIAL_FEN.into(),
-        }),
-        moves: saved.moves.unwrap_or_default(),
-        clock: saved.clock,
-        times: saved.times,
-        result: saved.result,
-        paused: true,
-    })
+impl State {
+    /// A fresh state from a saved session, its clocks paused.
+    pub fn from_saved(saved: Saved) -> State {
+        State {
+            setup: saved.setup.unwrap_or_else(Setup::standard),
+            moves: saved.moves.unwrap_or_default(),
+            clock: saved.clock,
+            times: saved.times,
+            result: saved.result,
+            paused: true,
+        }
+    }
 }
 
-/// One board game during a transition.
-type Game = Session<State, Runtime>;
+/// Two people at one board.
+#[derive(Clone, Debug)]
+pub struct LocalGame {
+    state: State,
+    runtime: Runtime,
+    board: Board,
+}
 
-impl Clocked for Game {
-    fn setup(&self) -> &Setup {
+impl LocalGame {
+    /// The game of a state and its runtime; an illegal setup is refused.
+    pub fn new(state: State, runtime: Runtime) -> Result<LocalGame, String> {
+        let board = Board::new(state.setup.clone(), state.moves.clone())?;
+        Ok(LocalGame {
+            state,
+            runtime,
+            board,
+        })
+    }
+
+    /// A game from a saved session, or a new one; a session on an illegal setup is refused.
+    pub fn resume(saved: Option<Saved>, now: f64) -> Result<LocalGame, String> {
+        LocalGame::new(
+            State::from_saved(saved.unwrap_or_default()),
+            Runtime { turn_started: now },
+        )
+    }
+
+    /// The game's start.
+    pub fn setup(&self) -> &Setup {
         &self.state.setup
     }
-    fn moves(&self) -> &[String] {
+
+    pub fn moves(&self) -> &[String] {
         &self.state.moves
     }
-    fn times(&self) -> Option<Times> {
-        self.state.times
-    }
-    fn turn_started(&self) -> f64 {
-        self.rt.turn_started
+
+    /// The clocks chosen, none when untimed.
+    pub fn clock(&self) -> Option<LocalClock> {
+        self.state.clock
     }
 
-    /// `running`: a clock is set, the game goes on, and it has started.
-    fn running(&self) -> Result<bool, String> {
-        Ok(self.state.times.is_some()
-            && !self.over()?
+    pub fn timed(&self) -> bool {
+        self.state.times.is_some()
+    }
+
+    pub fn paused(&self) -> bool {
+        self.state.paused
+    }
+
+    /// The result once the game has ended, from the winner it names.
+    pub fn outcome(&self) -> Option<Outcome> {
+        let result = self.result()?;
+        Some(result.winner.map_or(Outcome::Draw, Outcome::Wins))
+    }
+
+    pub fn state(&self) -> &State {
+        &self.state
+    }
+
+    pub fn runtime(&self) -> &Runtime {
+        &self.runtime
+    }
+
+    pub fn board(&self) -> &Board {
+        &self.board
+    }
+
+    fn set_board(&mut self, board: Board) {
+        self.state.moves = board.moves().to_vec();
+        self.board = board;
+    }
+
+    /// The decided result, else how the position ended; none while the game goes on.
+    pub fn result(&self) -> Option<&GameEnd> {
+        self.state.result.as_ref().or(self.board.end())
+    }
+
+    pub fn over(&self) -> bool {
+        self.result().is_some()
+    }
+
+    /// A clock is set, the game goes on, and it has started.
+    pub fn running(&self) -> bool {
+        self.state.times.is_some()
+            && !self.over()
             && !self.state.paused
-            && !self.state.moves.is_empty())
+            && !self.state.moves.is_empty()
     }
-}
 
-impl Game {
-    /// `result`: the decided result, else how the position ended, else null.
-    fn result(&self) -> Result<Value, String> {
-        if let Some(result) = &self.state.result {
-            return to_value(result);
+    fn clocking(&self) -> Clocking {
+        Clocking {
+            times: self.state.times,
+            turn_started: self.runtime.turn_started,
+            running: self.running(),
+            turn: self.board.turn(),
         }
-        let info = self.info()?;
-        let draw = self.draw()?;
-        board_result(&self.state.setup.variant, &info.fen, draw.as_deref())
     }
 
-    fn over(&self) -> Result<bool, String> {
-        Ok(!self.result()?.is_null())
+    /// A side's clock in milliseconds at `at`.
+    pub fn remaining(&self, color: Color, at: f64) -> f64 {
+        self.clocking().remaining(color, at)
     }
 
-    /// `expire(at)`: the side on the clock has run out of time.
-    fn expire_at(&mut self, at: f64) -> Result<bool, String> {
-        let Some(turn) = self.out_of_time(at)? else {
-            return Ok(false);
+    /// The side on the clock has run out of time at `at`: whether its flag fell now.
+    pub fn expire(&mut self, at: f64) -> bool {
+        let Some(turn) = self.clocking().out_of_time(at) else {
+            return false;
         };
         if let Some(times) = self.state.times.as_mut() {
             times.set(turn, 0.0);
         }
-        self.wrote("times");
-        let info = self.info()?;
-        let result = match timeout_winner(&self.state.setup.variant, &info.fen, turn)? {
-            Some(winner) => GameResult {
+        self.state.result = Some(match self.board.timeout_winner(turn) {
+            Some(winner) => GameEnd {
                 winner: Some(winner),
                 reason: "Time out".into(),
             },
-            None => GameResult {
+            None => GameEnd {
                 winner: None,
                 reason: "Time out, but mate was impossible".into(),
             },
-        };
-        self.state.result = Some(result);
-        self.wrote("result");
-        self.fx.push(json!({ "type": "flagged" }));
-        Ok(true)
+        });
+        true
     }
 
-    fn clock_increment(&self, color: &str) -> f64 {
-        match self.state.clock {
-            Some(clock) if color == "white" => clock.white.increment,
-            Some(clock) => clock.black.increment,
-            None => 0.0,
-        }
+    fn increment(&self, color: Color) -> f64 {
+        self.state
+            .clock
+            .map_or(0.0, |clock| clock.side(color).increment)
     }
 
-    /// `move(uci)`: the move's SAN, or none when the move is not legal now.
-    fn play(&mut self, reads: &mut Reads, uci: &str) -> Flow<Option<String>> {
-        if self.over()? {
-            return Ok(None);
+    /// Play a move at `at`: its SAN, or none when it is not legal now, and whether a flag fell.
+    pub fn play(&mut self, uci: &str, at: f64) -> (Option<String>, bool) {
+        if self.over() {
+            return (None, false);
         }
-        let at = reads.now()?;
-        if self.expire_at(at)? {
-            return Ok(None);
+        if self.expire(at) {
+            return (None, true);
         }
-        let Some((moves, san)) = with_move(&self.state.setup, &self.state.moves, uci) else {
-            return Ok(None);
+        let Some((board, san)) = self.board.with_move(uci) else {
+            return (None, false);
         };
-        let mover = self.turn()?;
+        let mover = self.board.turn();
         let increment = if self.state.moves.is_empty() {
             0.0
         } else {
-            self.clock_increment(mover) * 1000.0
+            self.increment(mover) * 1000.0
         };
-        if let Some(times) = self.charged(mover, at, increment)? {
+        if let Some(times) = self.clocking().charged(mover, at, increment) {
             self.state.times = Some(times);
-            self.wrote("times");
         }
-        self.rt.turn_started = at;
+        self.runtime.turn_started = at;
         self.state.paused = false;
-        self.wrote("paused");
-        self.state.moves = moves;
-        self.wrote("moves");
-        Ok(Some(san))
+        self.set_board(board);
+        (Some(san), false)
     }
 
     /// A side's clock ran out: a time-out ends the game for good.
@@ -183,102 +236,111 @@ impl Game {
             .is_some_and(|times| times.white <= 0.0 || times.black <= 0.0)
     }
 
-    /// `takeback()`: undo the last move. A time-out is final: undoing it left the flagged side on
+    /// Undo the last move. A time-out is final: undoing it left the flagged side on
     /// 0 ms, and it lost on time again as soon as it was back on move.
-    fn takeback(&mut self, reads: &mut Reads) -> Flow<()> {
+    pub fn takeback(&mut self, now: f64) {
         if self.state.moves.is_empty() || self.timed_out() {
-            return Ok(());
+            return;
         }
-        self.state.moves.pop();
-        self.wrote("moves");
+        let mut moves = self.state.moves.clone();
+        moves.pop();
+        if let Ok(board) = Board::new(self.state.setup.clone(), moves) {
+            self.set_board(board);
+        }
         self.state.result = None;
-        self.wrote("result");
-        self.rt.turn_started = reads.now()?;
-        Ok(())
+        self.runtime.turn_started = now;
     }
 
-    fn start(&mut self, reads: &mut Reads, setup: Setup, clock: Option<LocalClock>) -> Flow<()> {
+    /// A new game from `setup` with `clock`; an illegal setup or clock is refused.
+    pub fn start(
+        &mut self,
+        setup: Setup,
+        clock: Option<LocalClock>,
+        now: f64,
+    ) -> Result<(), String> {
+        if let Some(clock) = clock {
+            clock.white.checked()?;
+            clock.black.checked()?;
+        }
+        let board = Board::new(setup.clone(), Vec::new())?;
         self.state.setup = setup;
-        self.wrote("setup");
         self.state.clock = clock;
-        self.wrote("clock");
-        self.state.moves = Vec::new();
-        self.wrote("moves");
+        self.set_board(board);
         self.state.result = None;
-        self.wrote("result");
         self.state.paused = true;
-        self.wrote("paused");
         self.state.times = clock.map(|clock| Times {
             white: clock.white.minutes * 60000.0,
             black: clock.black.minutes * 60000.0,
         });
-        self.wrote("times");
-        self.rt.turn_started = reads.now()?;
+        self.runtime.turn_started = now;
         Ok(())
     }
 
-    fn resign(&mut self, color: &str) -> Flow<()> {
-        if self.over()? {
-            return Ok(());
+    pub fn resign(&mut self, color: Color) {
+        if self.over() {
+            return;
         }
-        let side = if color == "white" { "White" } else { "Black" };
-        self.state.result = Some(GameResult {
-            winner: Some(opponent(color)?),
+        let side = match color {
+            Color::White => "White",
+            Color::Black => "Black",
+        };
+        self.state.result = Some(GameEnd {
+            winner: Some(!color),
             reason: format!("{side} resigned"),
         });
-        self.wrote("result");
-        Ok(())
     }
 
-    fn agree_draw(&mut self) -> Flow<()> {
-        if self.over()? {
-            return Ok(());
+    pub fn agree_draw(&mut self) {
+        if self.over() {
+            return;
         }
-        self.state.result = Some(GameResult {
+        self.state.result = Some(GameEnd {
             winner: None,
             reason: "Draw agreed".into(),
         });
-        self.wrote("result");
-        Ok(())
     }
 
-    fn toggle_pause(&mut self, reads: &mut Reads) -> Flow<()> {
-        let at = reads.now()?;
-        if self.state.times.is_none() || self.over()? || self.expire_at(at)? {
-            return Ok(());
+    /// Pause or resume the clocks at `at`: whether a flag fell instead.
+    pub fn toggle_pause(&mut self, at: f64) -> bool {
+        if self.state.times.is_none() || self.over() {
+            return false;
+        }
+        if self.expire(at) {
+            return true;
         }
         if !self.state.paused {
-            self.state.times = Some(self.times_at(at)?);
-            self.wrote("times");
+            self.state.times = Some(self.clocking().times_at(at));
         }
         self.state.paused = !self.state.paused;
-        self.wrote("paused");
-        self.rt.turn_started = at;
-        Ok(())
+        self.runtime.turn_started = at;
+        false
     }
 
-    /// `snapshot()`: the saved session, with each side's remaining time.
-    fn snapshot(&self, reads: &mut Reads) -> Flow<Value> {
-        let times = self.saved_times(reads)?;
-        Ok(json!({
-            "setup": self.state.setup.json(),
-            "moves": self.state.moves,
-            "clock": to_value(&self.state.clock)?,
-            "times": times,
-            "result": to_value(&self.state.result)?,
-        }))
+    /// The session to save, with each side's remaining time at `at`.
+    pub fn snapshot(&self, at: f64) -> Saved {
+        Saved {
+            setup: Some(self.state.setup.clone()),
+            moves: Some(self.state.moves.clone()),
+            clock: self.state.clock,
+            times: self.state.times.map(|_| self.clocking().times_at(at)),
+            result: self.state.result.clone(),
+        }
     }
 
-    /// `archiveSnapshot()`: the game as the archive stores it.
-    fn archive_snapshot(&self) -> Result<Value, String> {
-        let result = self.result()?;
-        let over = !result.is_null();
-        let winner = result.get("winner").and_then(Value::as_str);
-        let pgn = pgn_result(over, winner)?;
-        let reason = result
-            .get("reason")
-            .and_then(Value::as_str)
-            .unwrap_or("In progress");
+    /// The session to save, as the library keeps it.
+    pub fn session(&self, at: f64) -> LocalSession {
+        LocalSession {
+            setup: self.state.setup.clone(),
+            moves: self.state.moves.clone(),
+            clock: self.state.clock,
+            times: self.state.times.map(|_| self.clocking().times_at(at)),
+            result: self.state.result.clone(),
+        }
+    }
+
+    /// The game as the archive stores it.
+    pub fn archive_snapshot(&self) -> Snapshot {
+        let result = self.result();
         let time_control = match self.state.clock {
             Some(clock) => format!(
                 "{}+{} / {}+{}",
@@ -289,110 +351,210 @@ impl Game {
             ),
             None => "-".to_string(),
         };
-        Ok(json!({
-            "source": "board",
-            "setup": self.state.setup.json(),
-            "moves": self.state.moves,
-            "white": "White",
-            "black": "Black",
-            "result": pgn,
-            "reason": reason,
-            "timeControl": time_control,
-        }))
-    }
-
-    /// The getters, by name.
-    fn view(&self, reads: &mut Reads, query: &Value) -> Flow<Value> {
-        let name = query
-            .get("view")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        Ok(match name {
-            "over" => json!(self.over()?),
-            "result" => self.result()?,
-            "running" => json!(self.running()?),
-            "remaining" => self.remaining_view(reads, query)?,
-            "snapshot" => self.snapshot(reads)?,
-            "archiveSnapshot" => self.archive_snapshot()?,
-            other => {
-                return Err(super::Stop::Error(format!(
-                    "unknown local game view {other}"
-                )));
-            }
-        })
-    }
-}
-
-/// The runtime of a new game: the clock as the host reports it now.
-pub fn init(args: &[Value]) -> Result<Value, String> {
-    transition(args, |_, reads| {
-        let runtime = Runtime {
-            turn_started: reads.now()?,
-        };
-        Ok(Done {
-            runtime: Some(to_value(&runtime)?),
-            ..Done::default()
-        })
-    })
-}
-
-/// A getter of the game (`localView`), without changing it.
-pub fn view(args: &[Value]) -> Result<Value, String> {
-    Game::query(args, |game, reads, query| game.view(reads, query))
-}
-
-pub fn expire(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, inputs, reads| {
-        let at = reads.now_or(inputs.get(2).and_then(Value::as_f64))?;
-        Ok(json!(game.expire_at(at)?))
-    })
-}
-
-pub fn play(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, inputs, reads| {
-        let uci: String = arg(inputs, 2, "uci")?;
-        Ok(json!(game.play(reads, &uci)?))
-    })
-}
-
-pub fn takeback(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, _, reads| {
-        game.takeback(reads)?;
-        Ok(Value::Null)
-    })
-}
-
-pub fn start(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, inputs, reads| {
-        let setup: Setup = arg(inputs, 2, "setup")?;
-        let clock: Option<LocalClock> = optional_arg(inputs, 3)?;
-        if let Some(clock) = clock {
-            clock.white.checked()?;
-            clock.black.checked()?;
+        Snapshot {
+            source: HistoryKind::Board,
+            setup: self.state.setup.clone(),
+            moves: self.state.moves.clone(),
+            white: "White".into(),
+            black: "Black".into(),
+            result: Outcome::tag(self.outcome()).into(),
+            reason: result.map_or_else(|| "In progress".to_string(), |r| r.reason.clone()),
+            time_control,
+            clock_summary: None,
         }
-        game.start(reads, setup, clock)?;
-        Ok(Value::Null)
-    })
+    }
 }
 
-pub fn resign(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, inputs, _| {
-        let color: String = arg(inputs, 2, "color")?;
-        game.resign(&color)?;
-        Ok(Value::Null)
-    })
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
-pub fn agree_draw(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, _, _| {
-        game.agree_draw()?;
-        Ok(Value::Null)
-    })
-}
+    fn clock(minutes: f64, increment: f64) -> Clock {
+        Clock { minutes, increment }
+    }
 
-pub fn toggle_pause(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, _, reads| {
-        game.toggle_pause(reads)?;
-        Ok(Value::Null)
-    })
+    fn one_minute() -> Option<LocalClock> {
+        Some(LocalClock {
+            white: clock(1., 0.),
+            black: clock(1., 0.),
+        })
+    }
+
+    /// Taking back after a flag fell left that side on 0 ms: it lost on time again as soon as it
+    /// was back on move. As on Lichess, a time-out is final.
+    #[test]
+    fn a_time_out_is_not_taken_back() {
+        let mut game = LocalGame::resume(None, 0.).unwrap();
+        game.start(Setup::standard(), one_minute(), 0.).unwrap();
+        game.play("e2e4", 1.);
+        game.play("e7e5", 2.);
+        assert!(game.expire(200_000.));
+        game.takeback(200_001.);
+        assert!(game.over());
+        assert_eq!(game.moves(), ["e2e4", "e7e5"]);
+    }
+
+    #[test]
+    fn both_sides_move_and_a_resignation_ends_the_game() {
+        let mut game = LocalGame::resume(None, 0.).unwrap();
+        assert_eq!(game.play("e2e4", 1.).0.as_deref(), Some("e4"));
+        assert_eq!(game.play("e7e5", 2.).0.as_deref(), Some("e5"));
+        assert_eq!(game.play("e2e4", 3.).0, None);
+        game.resign(Color::White);
+        assert!(game.over());
+        assert_eq!(game.result().unwrap().winner, Some(Color::Black));
+        assert_eq!(Outcome::tag(game.outcome()), "0-1");
+        assert_eq!(Outcome::tag(game.outcome()), game.archive_snapshot().result);
+    }
+
+    /// A flag falls only when the time is up, and the snapshots describe the finished game.
+    #[test]
+    fn a_flag_falls_when_the_time_is_up() {
+        let mut game = LocalGame::resume(None, 0.).unwrap();
+        assert!(!game.over());
+        game.start(Setup::standard(), one_minute(), 0.).unwrap();
+        let (_, flagged) = game.play("e2e4", 1_000.);
+        assert!(!flagged);
+        assert!(!game.expire(30_000.));
+        assert!(game.expire(100_000.));
+        assert!(game.over());
+        assert_eq!(json!(game.snapshot(100_000.))["moves"], json!(["e2e4"]));
+        let archived = json!(game.archive_snapshot());
+        assert_eq!(archived["source"], "board");
+        assert_eq!(archived["result"], "1-0");
+    }
+
+    /// What the clock views read: the clocks chosen, whether the game is timed and paused.
+    #[test]
+    fn a_game_reports_its_clocks_and_pause() {
+        let mut game = LocalGame::resume(None, 0.).unwrap();
+        assert_eq!(game.clock(), None);
+        assert!(!game.timed());
+        let clocks = LocalClock {
+            white: clock(5., 3.),
+            black: clock(3., 2.),
+        };
+        game.start(Setup::standard(), Some(clocks), 0.).unwrap();
+        assert_eq!(game.clock(), Some(clocks));
+        assert!(game.timed());
+        assert!(game.paused());
+        game.play("e2e4", 1.);
+        assert!(!game.paused());
+        assert!(!game.toggle_pause(2.));
+        assert!(game.paused());
+    }
+
+    #[test]
+    fn a_clock_runs_from_the_first_move_and_pauses() {
+        let mut game = LocalGame::resume(None, 0.).unwrap();
+        game.start(Setup::standard(), one_minute(), 0.).unwrap();
+        assert_eq!(game.remaining(Color::White, 10_000.), 60_000.);
+        game.play("e2e4", 1_000.);
+        assert!(game.remaining(Color::Black, 11_000.) < 60_000.);
+        game.toggle_pause(11_000.);
+        let paused = game.remaining(Color::Black, 11_000.);
+        assert_eq!(game.remaining(Color::Black, 40_000.), paused);
+    }
+
+    #[test]
+    fn a_flag_falls_once_the_side_to_move_runs_out() {
+        let mut game = LocalGame::resume(None, 0.).unwrap();
+        game.start(Setup::standard(), one_minute(), 0.).unwrap();
+        game.play("e2e4", 1_000.);
+        assert!(!game.expire(30_000.));
+        assert!(!game.over());
+        assert!(game.expire(62_000.));
+        assert!(game.over());
+        assert_eq!(game.result().unwrap().winner, Some(Color::White));
+    }
+
+    #[test]
+    fn an_agreed_draw_ends_the_game_without_a_winner() {
+        let mut game = LocalGame::resume(None, 0.).unwrap();
+        game.play("e2e4", 1.);
+        game.agree_draw();
+        assert!(game.over());
+        assert_eq!(game.result().unwrap().winner, None);
+    }
+
+    #[test]
+    fn a_takeback_undoes_the_last_move() {
+        let mut game = LocalGame::resume(None, 0.).unwrap();
+        game.play("e2e4", 1.);
+        game.takeback(2.);
+        // White is to move again, so e4 is legal once more and e5 is not.
+        assert_eq!(game.play("e7e5", 3.).0, None);
+        assert_eq!(game.play("e2e4", 4.).0.as_deref(), Some("e4"));
+    }
+
+    #[test]
+    fn checkmate_ends_the_game() {
+        let mut game = LocalGame::resume(None, 0.).unwrap();
+        for (ply, uci) in ["f2f3", "e7e5", "g2g4", "d8h4"].iter().enumerate() {
+            assert!(!game.over());
+            game.play(uci, ply as f64);
+        }
+        assert!(game.over());
+        assert_eq!(game.result().unwrap().winner, Some(Color::Black));
+    }
+
+    /// A board game as the library stores it today reads back exactly, its winner named as
+    /// before.
+    #[test]
+    fn a_stored_session_reads_and_writes_as_before() {
+        let stored = json!({
+            "setup": { "variant": "standard", "fen": crate::rules::INITIAL_FEN },
+            "moves": ["f2f3", "e7e5", "g2g4", "d8h4"],
+            "clock": null,
+            "times": null,
+            "result": { "winner": "black", "reason": "Checkmate" },
+        });
+        let game =
+            LocalGame::resume(Some(serde_json::from_value(stored.clone()).unwrap()), 0.).unwrap();
+        assert_eq!(game.outcome(), Some(Outcome::Wins(Color::Black)));
+        assert_eq!(json!(game.snapshot(0.)), stored);
+        let drawn = json!({ "result": { "reason": "Draw agreed" } });
+        let game = LocalGame::resume(Some(serde_json::from_value(drawn).unwrap()), 0.).unwrap();
+        assert_eq!(
+            json!(game.snapshot(0.))["result"],
+            json!({ "reason": "Draw agreed" })
+        );
+    }
+
+    #[test]
+    fn a_saved_game_resumes_where_it_was_left() {
+        let mut game = LocalGame::resume(None, 0.).unwrap();
+        game.play("e2e4", 1.);
+        game.play("e7e5", 2.);
+        let saved = game.session(3.);
+        let mut resumed = LocalGame::resume(Some(saved.into()), 3.).unwrap();
+        assert_eq!(resumed.play("e2e4", 4.).0, None);
+        assert_eq!(resumed.play("g1f3", 5.).0.as_deref(), Some("Nf3"));
+    }
+
+    /// `1e306` minutes made both times infinite, stored as `null`: every later move failed to
+    /// read the state, and the game could only be reset. Negative minutes flagged at once.
+    #[test]
+    fn a_clock_no_game_can_have_is_refused_at_the_start() {
+        let mut game = LocalGame::resume(None, 0.).unwrap();
+        for (minutes, increment) in [(1e306, 0.), (-5., 0.), (5., -1.), (181., 0.), (5., 1e9)] {
+            let clock = LocalClock {
+                white: clock(minutes, increment),
+                black: clock(5., 0.),
+            };
+            assert!(
+                game.start(Setup::standard(), Some(clock), 0.).is_err(),
+                "{minutes} {increment}"
+            );
+            assert_eq!(game.play("e2e4", 1.).0.as_deref(), Some("e4"));
+            game.takeback(2.);
+        }
+        let clock = LocalClock {
+            white: clock(180., 180.),
+            black: clock(0., 0.),
+        };
+        game.start(Setup::standard(), Some(clock), 0.)
+            .expect("the longest and shortest clocks");
+    }
 }

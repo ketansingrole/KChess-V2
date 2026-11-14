@@ -10,52 +10,36 @@
 //!
 //! What leaves this module, on the host's `emit`: `online:state`, `online:event`, `online:error`,
 //! `online:lobby`, `online:ongoing-changed` (debounced 750 ms), `challenge:received` and
-//! `challenges:update` (from the inbox). Payloads are the TypeScript shapes; absent optional
-//! fields are left out, as `JSON.stringify` drops `undefined`.
+//! `challenges:update` (from the inbox); absent optional fields are left out.
 //!
-//! Deviations kept on purpose and documented: the stream opener is in this file (the shared
-//! client has no open hook or form-body stream), so it calls the same policy and error mapping;
-//! bodyless POSTs send an empty form body; the presence cache keeps finished answers only.
+//! Bodyless POSTs send an empty form body; the presence cache keeps finished answers only.
 
-pub mod events;
 pub mod ongoing;
 pub mod requests;
 pub mod session;
 pub mod state;
 
 pub use state::{
-    ChatLine, Lane, OngoingGame, OnlineAction, OnlineOptions, OnlineSession, PresenceReport, Res,
+    ChatLine, Lane, OngoingGame, OnlineAction, OnlineOptions, OnlineSession, PresenceReport,
     Resumed, StartResult, UserPresence, js_number,
 };
 
 #[cfg(test)]
 mod tests {
-    use super::events::truncate;
     use super::requests::game_body;
-    use super::state::{OnlineOptions, js_number};
-
-    #[test]
-    fn js_numbers_print_as_javascript_does() {
-        assert_eq!(js_number(600.0), "600");
-        assert_eq!(js_number(0.25), "0.25");
-        assert_eq!(js_number(0.0), "0");
-    }
-
-    #[test]
-    fn truncation_counts_utf16_units() {
-        assert_eq!(truncate("abcdef", 3), "abc");
-        assert_eq!(truncate("a😀b", 2), "a");
-    }
+    use super::state::OnlineOptions;
+    use kchess_contracts::types::ChallengeColor;
+    use kchess_domain::variant::Variant;
 
     #[test]
     fn game_body_follows_the_board_api_rules() {
         let mut options = OnlineOptions {
-            minutes: 10.0,
-            increment: 0.0,
+            minutes: 10,
+            increment: 0,
             days: None,
-            variant: Some("chess960".into()),
+            variant: Some(Variant::Chess960),
             fen: None,
-            color: "random".into(),
+            color: ChallengeColor::Random,
             rated: false,
             target: None,
             account: None,
@@ -68,7 +52,7 @@ mod tests {
                 ("variant", "chess960".to_string()),
             ]
         );
-        options.variant = Some("standard".into());
+        options.variant = Some(Variant::Standard);
         options.fen = Some("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1".into());
         let body = game_body(&options);
         assert!(body.contains(&("variant", "fromPosition".to_string())));

@@ -1,8 +1,11 @@
 //! Importing onto the analysis board: pasted or dropped PGN and FEN, files, and Lichess games
 //! and studies fetched by link.
 
+use super::Opening;
 use super::*;
+use crate::game::played::GameOrigin;
 use kchess_contracts::calls;
+use kchess_contracts::check::{GameId, LichessId, StudyId};
 
 impl AnalysisPage {
     pub(crate) fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -101,7 +104,7 @@ impl AnalysisPage {
             let Some(path) = paths.first() else {
                 return;
             };
-            let text = crate::shell::read_game_file(path);
+            let text = crate::links::read_game_file(path);
             let _ = this.update_in(cx, |this, window, cx| match text {
                 Some(text) => {
                     this.import
@@ -131,23 +134,24 @@ impl AnalysisPage {
         self.run_import(window, cx);
     }
 
-    /// `runImport`: a FEN starts a new analysis there; a Lichess game link fetches that game;
+    /// A FEN starts a new analysis there; a Lichess game link fetches that game;
     /// otherwise the text is read as one PGN game.
     pub(super) fn run_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.import.read(cx).value().trim().to_string();
         if text.is_empty() {
             return;
         }
-        if let Some(link) = crate::game::game_link(&text) {
-            return self.import_game(link, window, cx);
-        }
-        if let Some((study, chapter)) = crate::game::study_link(&text) {
-            return self.import_study(study, chapter, window, cx);
+        // A Lichess game or study link is read as Paste and Quick Pick read it.
+        match crate::links::classify(&text) {
+            Some(crate::links::Link::Game(link)) => return self.import_game(link, window, cx),
+            Some(crate::links::Link::StudyChapter { study, chapter }) => {
+                return self.import_study(study, chapter, window, cx);
+            }
+            _ => {}
         }
         self.importing = None;
-        if let Some(fen) = crate::game::editor_setup(&text)
-            .and_then(|setup| crate::game::rules("setupFen", &[setup]).ok())
-            .and_then(|fen| fen.as_str().map(str::to_string))
+        if let Some(fen) =
+            kchess_domain::editor::EditorSetup::from_fen(&text).map(|setup| setup.fen())
         {
             if let Some(problem) = crate::game::position_problem(&fen) {
                 self.import_error = Some(problem.into());
@@ -180,20 +184,23 @@ impl AnalysisPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let export = cx
-            .global::<AppCore>()
-            .request(calls::ExportGame { id: json!(link.id) });
+        let export = cx.global::<AppCore>().request(calls::ExportGame {
+            id: GameId(link.id.clone()),
+        });
         let pgn = async move {
             match export.await {
-                Ok(Value::String(pgn)) => Ok(Some(pgn)),
-                Ok(_) => Ok(None),
+                Ok(pgn) => Ok(Some(pgn)),
                 Err(cause) => Err(format!("Could not fetch that game: {}", cause.message)),
             }
         };
-        let origin = json!({ "gameId": link.id });
-        // A link without a move opens at the start, as Lichess does.
-        let ply = link.ply.unwrap_or(0);
-        self.import_fetched(pgn, ply, Some(link.orientation), Some(origin), window, cx);
+        let opening = Opening {
+            // A link without a move opens at the start, as Lichess does.
+            ply: link.ply.unwrap_or(0),
+            orientation: Some(link.orientation),
+            origin: Some(GameOrigin::lichess(link.id)),
+            review: false,
+        };
+        self.import_fetched(pgn, opening, window, cx);
     }
 
     /// Fetch a public Lichess study's chapter by its link and open it as the study shows it.
@@ -205,25 +212,23 @@ impl AnalysisPage {
         cx: &mut Context<Self>,
     ) {
         let fetch = cx.global::<AppCore>().request(calls::LichessStudyChapter {
-            id: json!(study),
-            chapter: json!(chapter),
+            id: LichessId(study),
+            chapter: StudyId(chapter),
         });
         let pgn = async move {
             match fetch.await {
-                Ok(found) => Ok(found["pgn"].as_str().map(str::to_string)),
+                Ok(found) => Ok(Some(found.pgn)),
                 Err(cause) => Err(format!("Could not fetch that study: {}", cause.message)),
             }
         };
-        self.import_fetched(pgn, 0, None, None, window, cx);
+        self.import_fetched(pgn, Opening::default(), window, cx);
     }
 
     /// Open a game being fetched for the import (`None` when Lichess sent nothing readable).
     pub(super) fn import_fetched(
         &mut self,
         pgn: impl std::future::Future<Output = Result<Option<String>, String>> + 'static,
-        ply: usize,
-        orientation: Option<Color>,
-        origin: Option<Value>,
+        mut opening: Opening,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -244,9 +249,10 @@ impl AnalysisPage {
                 let unplayable = matches!(&pgn, Ok(Some(pgn)) if !crate::game::pgn_analysable(pgn));
                 let opened = match pgn {
                     Ok(Some(pgn)) => {
-                        let orientation =
-                            orientation.or_else(|| crate::game::pgn_orientation(&pgn));
-                        this.open_game(&pgn, ply, orientation, origin, false, cx)
+                        opening.orientation = opening
+                            .orientation
+                            .or_else(|| crate::game::pgn_orientation(&pgn));
+                        this.open_pgn(&pgn, opening, cx)
                     }
                     Ok(None) => false,
                     Err(message) => {

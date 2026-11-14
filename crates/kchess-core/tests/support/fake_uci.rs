@@ -23,7 +23,8 @@
 //! - `quick`: `search`, but `go movetime M` waits at most `QUICK_MOVETIME_MS`: for tests that need
 //!   the computer's move, not its clock (a level's move takes a second or more).
 //!
-//! With no arguments, the name of a copy names the mode (`engine-search`), else `handshake`.
+//! With no arguments, the name of a copy names the mode (`engine-search`), else `handshake`, and
+//! the copy logs what it receives beside itself (`engine-search.log`).
 //!
 //! When a log path is given, every received line is appended to it before any reply, so a test
 //! that has read a reply knows the command was received.
@@ -209,8 +210,9 @@ fn main() {
     let mut args = std::env::args().skip(1);
     // Started as an app starts its engine, with no arguments, the mode comes from a copy's name
     // (`engine-search`, `support::engine_copy` and the GPUI app's end-to-end tests).
-    let mode = args
-        .next()
+    let named = args.next();
+    let started_as_copy = named.is_none();
+    let mode = named
         .or_else(|| {
             let exe = std::env::current_exe().ok()?;
             let stem = exe.file_stem()?.to_str()?;
@@ -226,12 +228,12 @@ fn main() {
     } else {
         mode
     };
-    let log = args.next();
-    let searching = matches!(mode.as_str(), "search" | "review" | "stall");
-    let state = Mutex::new(Search {
-        multipv: 1,
-        ..Search::default()
+    let log = args.next().or_else(|| {
+        let exe = std::env::current_exe().ok()?;
+        started_as_copy.then(|| exe.with_extension("log").display().to_string())
     });
+    let searching = matches!(mode.as_str(), "search" | "review" | "stall");
+    let state = Mutex::new(Search::default());
 
     #[cfg(unix)]
     if mode == "ignore-term" && std::env::var_os(TERM_IGNORED).is_none() {
@@ -257,7 +259,11 @@ fn main() {
                 .append(true)
                 .open(path)
                 .expect("open the fake engine's command log");
-            writeln!(file, "{line}").expect("write the fake engine's command log");
+            // One write per line: `writeln!` on an unbuffered file writes the line and its newline
+            // separately, and an engine closing as the next starts wrote "stop" and "uci" as
+            // "stopuci".
+            file.write_all(format!("{line}\n").as_bytes())
+                .expect("write the fake engine's command log");
         }
         if line == "quit" {
             break;
@@ -268,6 +274,11 @@ fn main() {
             }
             search_command(&mode, &line, &state);
             continue;
+        }
+        // `long-line`: a line past the controller's limit (a million bytes) before any reply, so
+        // before `uciok`: the controller gives up at the first.
+        if mode == "long-line" {
+            emit(&"x".repeat(1_000_001));
         }
         let reply = match (mode.as_str(), line.as_str()) {
             ("silent", _) => None,

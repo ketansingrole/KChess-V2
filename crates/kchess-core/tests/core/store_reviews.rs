@@ -7,12 +7,14 @@ use crate::support;
 use std::path::Path;
 use std::sync::Arc;
 
+use kchess_contracts::CoreError;
+use kchess_contracts::types::StoredReview;
 use kchess_core::engine::review::GameToReview;
+use kchess_core::store::{StoreContext, insights, reviews};
 use kchess_core::{Config, Core};
-use kchess_domain::api;
 use rusqlite::Connection;
 use serde_json::{Value, json};
-use support::Recording;
+use support::{Recording, wire};
 
 const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -27,9 +29,10 @@ fn profile() -> Profile {
     let dir = tempfile::tempdir().expect("temporary profile");
     let path = dir.path().to_path_buf();
     let mut config = Config::new(path.clone());
-    config.bundled_engine_path = Some(path.join("no-engine.js"));
+    config.bundled_engine_path = Some(path.join("no-engine"));
     let core = Core::open(config, Arc::new(Recording::default())).expect("the profile opens");
-    core.call_sync("store.open", vec![])
+    core.database_for_tests()
+        .read(|_| Ok(()))
         .expect("the database opens");
     Profile {
         _dir: dir,
@@ -43,48 +46,67 @@ impl Profile {
         database(&self.path).execute_batch(sql).expect("seeding");
     }
 
-    fn sync(&self, method: &str, args: Vec<Value>) -> Value {
-        self.core
-            .call_sync(method, args)
-            .unwrap_or_else(|cause| panic!("{method} failed: {cause}"))
+    fn read<T: serde::Serialize>(
+        &self,
+        work: impl FnOnce(&StoreContext) -> Result<T, CoreError>,
+    ) -> Value {
+        let value = self.core.database_for_tests().read(work).expect("read");
+        serde_json::to_value(value).expect("json")
+    }
+
+    fn write_reviews(&self, reviews: &Value) -> Result<Value, CoreError> {
+        let reviews: Vec<StoredReview> =
+            serde_json::from_value(reviews.clone()).expect("stored reviews");
+        let stored = self
+            .core
+            .database_for_tests()
+            .write(|c| reviews::write_reviews(c.host, c.db, &reviews))?;
+        Ok(serde_json::to_value(stored).expect("json"))
     }
 
     fn write_review(&self, review: &Value) -> Value {
-        self.sync("store.reviewStore.writeReview", vec![review.clone()])
+        let review: StoredReview = serde_json::from_value(review.clone()).expect("a stored review");
+        let update = self
+            .core
+            .database_for_tests()
+            .write(|c| reviews::write_review(c.host, c.db, review))
+            .expect("writeReview");
+        serde_json::to_value(update).expect("json")
     }
 
     fn read_review(&self, key: &str) -> Value {
-        self.sync("store.reviewStore.readReview", vec![json!(key)])
+        self.read(|c| reviews::read_review(c.host, c.db, key))
     }
 
     fn review_summaries(&self, ids: &[&str]) -> Value {
-        self.sync("store.reviewStore.reviewSummaries", vec![json!(ids)])
+        let ids: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+        self.read(|c| reviews::review_summaries(c.host, c.db, &ids))
     }
 
     fn games_to_review(&self, accounts: &[&str]) -> Value {
-        self.sync(
-            "store.reviewStore.gamesToReview",
-            vec![json!(accounts), json!(0), json!(300)],
-        )
+        let accounts: Vec<String> = accounts.iter().map(|name| name.to_string()).collect();
+        self.read(|c| reviews::games_to_review(c.db, &accounts, 0.0, 300.0))
     }
 
     fn insights(&self, account: &str) -> Value {
-        self.sync(
-            "store.insights.insights",
-            vec![json!({ "account": account })],
-        )
+        let query = support::store::insights_query(&json!({ "account": account }));
+        self.read(|c| insights::insights(c.host, c.db, &query, kchess_core::time::now_ms() as f64))
     }
 
-    /// `reviews.request`, which answers from the store when a review is known and otherwise
+    /// `reviewRequest`, which answers from the store when a review is known and otherwise
     /// queues a search (there is no engine here).
     async fn request_review(&self, request: Value) -> Value {
         self.core
-            .call("reviews.request", vec![request])
+            .call("resumeOnline", vec![])
+            .await
+            .expect("no game to resume");
+        self.core
+            .call("reviewRequest", vec![request])
             .await
             .expect("the review request answers")
     }
 
-    /// Inserts a game the way the TypeScript test did: a resigned game of 1 ms, as White.
+    /// Inserts a resigned game of 1 ms, as White.
     fn game(&self, id: &str, account: &str) {
         self.exec(&format!(
             "INSERT INTO games (account,id,createdAt,lastMoveAt,rated,speed,perf,status,color,opponent,moves) VALUES ('{account}', '{id}', 1,1,0,'blitz','blitz','resign','white','Bob','e4 e5')"
@@ -134,14 +156,9 @@ fn review(game: Option<&str>, overrides: &[(&str, Value)]) -> Value {
     review
 }
 
-/// The position's review key, from the rules (`reviewKey`).
+/// The position's review key, from the rules.
 fn review_key() -> String {
-    let answer = api::call(
-        "reviewKey",
-        &json!([INITIAL_FEN, ["e2e4", "e7e5"]]).to_string(),
-    )
-    .expect("the rule answers");
-    serde_json::from_str(&answer).expect("the key is a string")
+    kchess_domain::records::review::review_key(INITIAL_FEN, &["e2e4", "e7e5"], None)
 }
 
 fn moves() -> Value {
@@ -169,6 +186,39 @@ fn all_associations_are_retained_through_updates_and_each_account_copy_leaves_th
     );
     assert_eq!(profile.games_to_review(&["Alice", "Bob"]), json!([]));
     assert_eq!(profile.insights("Alice")["accuracy"]["games"], json!(2));
+}
+
+/// A review written over a stored one replaces it unless the stored one ranks higher: a finished
+/// review beats one in progress, and then Lichess's own beats ours.
+#[test]
+fn a_stored_review_is_kept_only_over_a_lower_ranked_one() {
+    let profile = fresh();
+    // (complete, Lichess's), in rank order.
+    let ranked = [(false, false), (false, true), (true, false), (true, true)];
+    let of = |(complete, lichess): (bool, bool), depth: u32| {
+        let source = if lichess { "lichess" } else { "local" };
+        review(
+            None,
+            &[
+                ("complete", json!(complete)),
+                ("source", json!(source)),
+                ("depth", json!(depth)),
+            ],
+        )
+    };
+    for (stored_rank, stored) in ranked.iter().enumerate() {
+        for (written_rank, written) in ranked.iter().enumerate() {
+            profile.clear();
+            profile.write_review(&of(*stored, 11));
+            profile.write_review(&of(*written, 22));
+            let kept = if stored_rank > written_rank { 11 } else { 22 };
+            assert_eq!(
+                profile.read_review(&review_key())["depth"],
+                json!(kept),
+                "{stored:?} stored, {written:?} written"
+            );
+        }
+    }
 }
 
 /// The queue parses these rows as `GameToReview` (`engine::bridge`): a floating-point
@@ -210,6 +260,7 @@ async fn a_requesting_game_is_linked_before_a_cached_lichess_review_is_returned(
         .request_review(json!({ "fen": INITIAL_FEN, "moves": moves(), "gameId": "Game0002" }))
         .await;
     assert_eq!(answer["gameId"], json!("Game0002"));
+    wire::assert_wire_steady("reviewRequest.cached-lichess", &answer, &["updatedAt"]);
     assert_eq!(
         profile
             .review_summaries(&["Game0001", "Game0002"])
@@ -217,6 +268,62 @@ async fn a_requesting_game_is_linked_before_a_cached_lichess_review_is_returned(
             .map(|map| map.len()),
         Some(2)
     );
+    let summaries = profile
+        .core
+        .call("reviewSummaries", vec![json!(["Game0002", "Game0001"])])
+        .await
+        .expect("the summaries");
+    wire::assert_wire("reviewSummaries.two-games", &summaries);
+    let found = profile
+        .core
+        .call("reviewGet", vec![json!(INITIAL_FEN), moves()])
+        .await
+        .expect("the stored review");
+    wire::assert_wire_steady("reviewGet.lichess", &found, &["updatedAt"]);
+    let missing = profile
+        .core
+        .call("reviewGet", vec![json!(INITIAL_FEN), json!(["d2d4"])])
+        .await
+        .expect("no review");
+    wire::assert_wire("reviewGet.none", &missing);
+    profile.core.close().await;
+}
+
+/// A review Lichess made keeps its own labels and accuracy figures, as Lichess sent them.
+#[tokio::test]
+async fn a_lichess_review_is_read_with_its_labels_and_accuracy() {
+    let profile = fresh();
+    profile.write_review(&review(
+        Some("Game0001"),
+        &[
+            ("source", json!("lichess")),
+            ("depth", json!(0)),
+            (
+                "evals",
+                json!([{ "cp": 15 }, { "cp": 20, "best": "g1f3", "pv": ["g1f3"] }, null]),
+            ),
+            ("judgments", json!([null, "mistake"])),
+            ("accuracy", json!({ "white": 87, "black": 64.5 })),
+        ],
+    ));
+    profile
+        .core
+        .call("resumeOnline", vec![])
+        .await
+        .expect("no game to resume");
+    let found = profile
+        .core
+        .call("reviewGet", vec![json!(INITIAL_FEN), moves()])
+        .await
+        .expect("the stored review");
+    wire::assert_wire_steady("reviewGet.lichess-labels", &found, &["updatedAt"]);
+    let summaries = profile
+        .core
+        .call("reviewSummaries", vec![json!(["Game0001"])])
+        .await
+        .expect("the summaries");
+    wire::assert_wire("reviewSummaries.lichess", &summaries);
+    profile.core.close().await;
 }
 
 #[tokio::test]
@@ -237,11 +344,7 @@ async fn both_associations_are_retained_when_identical_searches_are_queued_befor
             .map(|map| map.len()),
         Some(2)
     );
-    profile
-        .core
-        .call("close", vec![])
-        .await
-        .expect("the core closes");
+    profile.core.close().await;
 }
 
 #[test]
@@ -257,17 +360,23 @@ fn a_review_batch_writes_atomically_and_a_failed_batch_keeps_the_previous_review
         second["key"] = json!("batch-second-key");
         second
     };
-    let bad = json!({ "fen": INITIAL_FEN });
-    let outcome = profile
-        .core
-        .call_sync("store.reviewStore.writeReviews", vec![json!([second, bad])]);
+    let bad = review(
+        None,
+        &[
+            ("key", json!("batch-bad-key")),
+            ("fen", json!("8/8/8/8/8/8/8/8 w - - 0 1")),
+        ],
+    );
+    let outcome = profile.write_reviews(&json!([second, bad]));
     assert!(outcome.is_err(), "a malformed batch member fails the batch");
     assert!(
         profile.read_review("batch-second-key").is_null(),
         "the failed batch keeps the previous reviews"
     );
     // A well-formed batch writes every member in one transaction.
-    let stored = profile.sync("store.reviewStore.writeReviews", vec![json!([second])]);
+    let stored = profile
+        .write_reviews(&json!([second]))
+        .expect("writeReviews");
     assert_eq!(stored.as_array().map(Vec::len), Some(1));
     assert_eq!(
         profile.read_review("batch-second-key")["gameId"],
@@ -324,5 +433,37 @@ fn time_use_counts_blunders_made_short_of_time() {
             "short": { "moves": 1, "blunders": 1 },
             "spare": { "moves": 2, "blunders": 0 },
         })
+    );
+}
+
+/// A complete review whose summary is empty is left out of the accuracy report, as an unreadable
+/// one is, instead of failing all of Insights.
+#[test]
+fn an_empty_review_summary_leaves_insights_working() {
+    let profile = fresh();
+    profile.game("Reviewed", "Alice");
+    profile.write_review(&review(Some("Reviewed"), &[]));
+    profile.exec("UPDATE reviews SET summary = 'null'");
+    let report = profile.insights("Alice");
+    assert_eq!(report["total"], json!(1));
+}
+
+/// A saved game on neither side is named in the error.
+#[test]
+fn insights_name_a_saved_game_on_neither_side() {
+    let profile = fresh();
+    profile.exec(
+        "INSERT INTO games (account,id,createdAt,lastMoveAt,rated,speed,perf,status,color,opponent,moves) \
+         VALUES ('Alice','Sideless',1,1,0,'blitz','blitz','resign','green','Bob','e4 e5')",
+    );
+    let query = support::store::insights_query(&json!({ "account": "Alice" }));
+    let refused = profile
+        .core
+        .database_for_tests()
+        .read(|c| insights::insights(c.host, c.db, &query, kchess_core::time::now_ms() as f64))
+        .expect_err("a game on neither side");
+    assert_eq!(
+        refused.message,
+        "A saved game was played as \"green\", which is neither white nor black."
     );
 }

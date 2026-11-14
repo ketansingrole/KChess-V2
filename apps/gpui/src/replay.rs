@@ -5,19 +5,21 @@
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::*;
-use serde_json::Value;
+use kchess_domain::variant::Setup;
 use shakmaty::{Color, Position as _};
 
 use crate::assets::icon;
 use crate::board::ChessBoard;
+use crate::game::surface::{self, Steps};
 use crate::game::view;
+use crate::menu::FlipBoard;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::widgets::{self, Side};
 
 pub struct GameReplay {
-    setup: Value,
+    setup: Setup,
     moves: Vec<String>,
     sans: Vec<String>,
     ply: usize,
@@ -42,7 +44,7 @@ impl Focusable for GameReplay {
 
 impl GameReplay {
     pub fn new(
-        setup: Value,
+        setup: Setup,
         moves: Vec<String>,
         orientation: Color,
         player: impl Into<SharedString>,
@@ -104,20 +106,19 @@ impl GameReplay {
             .update(cx, |board, cx| board.set_state(state, cx));
         cx.notify();
     }
+}
 
-    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !crate::board::page_has_keys(&self.focus, window, cx)
-            || event.keystroke.modifiers.modified()
-        {
-            return;
-        }
-        if event.keystroke.key == "f" {
-            self.flip(cx);
-            cx.stop_propagation();
-        } else if let Some(ply) = view::navigate(&event.keystroke.key, self.ply, self.moves.len()) {
-            self.show(ply, cx);
-            cx.stop_propagation();
-        }
+impl Steps for GameReplay {
+    fn steps(&self, _: &App) -> Option<(usize, usize)> {
+        Some((self.ply, self.moves.len()))
+    }
+
+    fn step_to(&mut self, ply: usize, _: &mut Window, cx: &mut Context<Self>) {
+        self.show(ply, cx);
+    }
+
+    fn wheel(&mut self) -> &mut view::Wheel {
+        &mut self.wheel
     }
 }
 
@@ -185,20 +186,8 @@ impl Render for GameReplay {
             .gap(widgets::STACK_GAP)
             .child(line(!orientation))
             .child(crate::board::cached(&self.board))
-            // The mouse wheel over the board steps through the moves.
-            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
-                let Some(key) = this
-                    .wheel
-                    .turn(event.delta.pixel_delta(window.line_height()))
-                else {
-                    return;
-                };
-                if let Some(ply) = view::navigate(key, this.ply, this.moves.len()) {
-                    this.show(ply, cx);
-                }
-                cx.stop_propagation();
-            }))
             .child(line(orientation));
+        let board_column = surface::wheel(board_column, cx);
 
         let page = cx.entity().downgrade();
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
@@ -236,16 +225,11 @@ impl Render for GameReplay {
                 self.ply,
                 self.moves.len(),
                 select,
-                ("Flip board".into(), Some("F"), flip),
+                widgets::TurnButton::Flip(flip),
+                cx,
             ));
-        div()
-            .size_full()
-            .track_focus(&self.focus)
-            .on_key_down(cx.listener(Self::key))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| window.focus(&this.focus, cx)),
-            )
+        surface::keys(div().size_full(), &self.focus, cx)
+            .on_action(cx.listener(|this, _: &FlipBoard, _, cx| this.flip(cx)))
             .child(
                 self.layout
                     .render("replay", board_column, panel, window, cx),

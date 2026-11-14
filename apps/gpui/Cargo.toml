@@ -18,6 +18,7 @@ bench = ["gpui-kit/profiler"]
 
 [dependencies]
 kchess-core = { path = "../../crates/kchess-core" }
+kchess-host = { path = "../../crates/kchess-host" }
 # The shared core: one core per profile for every KChess window (docs/shared-core.md).
 kchess-service = { path = "../../crates/kchess-service" }
 kchess-domain = { path = "../../crates/kchess-domain" }
@@ -55,9 +56,6 @@ sha2 = { version = "0.11", default-features = false }
 # .deb of them for the package manager (tar, already in Cargo.lock through the tooling).
 kchess-delta = { path = "../../crates/kchess-delta" }
 tar = { version = "0.4", default-features = false }
-# Verifying the Ed25519 signature on a release's SHA256SUMS.txt (`updates.rs`); already in
-# Cargo.lock under rustls.
-ring = "0.17"
 # Desktop notifications while KChess is in the background (already in Cargo.lock through GPUI).
 notify-rust = "4.18"
 # Voice input: the microphone (cpal, already in Cargo.lock through rodio) and the PCM the core's
@@ -108,6 +106,13 @@ embed-resource = "3"
 gpui-kit = { version = "=0.9.0", features = ["test-support"] }
 # A fresh profile per end-to-end test (`src/e2e`).
 tempfile = "3"
+# The stand-in Lichess and Chess.com the end-to-end tests talk to (`src/e2e/fake_*.rs`).
+kchess-testkit = { path = "../../crates/kchess-testkit" }
+# Release keys that sign the updater tests' checksums (`src/updates/tests.rs`).
+ring = "0.17"
+# A profile document the core cannot read, written beside the running core (`src/e2e`); the
+# core's own version, already in Cargo.lock.
+rusqlite = { version = "0.41", features = ["bundled"] }
 
 # Real text shaping for the offscreen screenshots (`src/e2e/screens.rs`), without the Mac platform
 # that only the main thread may create; already in Cargo.lock under gpui-kit.

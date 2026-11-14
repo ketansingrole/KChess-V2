@@ -13,21 +13,8 @@ use kchess_delta::Asset;
 
 use super::{Built, Identity};
 use crate::deb::{ar, gzip, tarball, xz};
+use crate::pinned::{APPIMAGE_RUNTIME, APPIMAGETOOL};
 use crate::util::{Result, download, pinned, root, run_with, say};
-
-// The pins below change only in a reviewed pull request, which CI packages and tests. The
-// weekly Pins workflow (`cargo xtask pins --check`) opens an issue when either has a newer release.
-pub const APPIMAGETOOL: &str =
-    "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage";
-pub const APPIMAGETOOL_SHA256: &str =
-    "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0";
-/// The runtime appimagetool puts at the front of every AppImage: the launcher that mounts the
-/// app and starts it. Without `--runtime-file`, appimagetool would fetch the moving `continuous`
-/// release on every build, unverified.
-pub const APPIMAGE_RUNTIME: &str =
-    "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64";
-pub const APPIMAGE_RUNTIME_SHA256: &str =
-    "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d";
 
 /// What the app needs from the system (GPUI on X11 or Wayland with Vulkan, ALSA for sound).
 const DEPENDS: &str = "libc6 (>= 2.35), libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, \
@@ -51,18 +38,19 @@ fn stage_folder(identity: &Identity, built: &Built, folder: &Path) -> Result {
 fn appimage(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<PathBuf> {
     let tools = AppImageTools {
         cache: root().join("target/package"),
-        appimagetool: (APPIMAGETOOL, APPIMAGETOOL_SHA256),
-        runtime: (APPIMAGE_RUNTIME, APPIMAGE_RUNTIME_SHA256),
+        appimagetool: (APPIMAGETOOL.url(), APPIMAGETOOL.sha256),
+        runtime: (APPIMAGE_RUNTIME.url(), APPIMAGE_RUNTIME.sha256),
         fetch: download,
     };
     appimage_with(identity, built, stage, out, &tools)
 }
 
-/// Where the AppImage step keeps its pinned tools, each as (URL, SHA-256), and how it fetches them.
+/// Where the AppImage step keeps its pinned tools (`pinned.rs`), each as (URL, SHA-256), and how
+/// it fetches them.
 struct AppImageTools<F> {
     cache: PathBuf,
-    appimagetool: (&'static str, &'static str),
-    runtime: (&'static str, &'static str),
+    appimagetool: (String, &'static str),
+    runtime: (String, &'static str),
     fetch: F,
 }
 
@@ -74,12 +62,12 @@ fn appimage_with(
     tools: &AppImageTools<impl Fn(&str, &Path) -> Result>,
 ) -> Result<PathBuf> {
     let tool = tools.cache.join("appimagetool-x86_64.AppImage");
-    let (url, sha256) = tools.appimagetool;
-    pinned("appimagetool", url, sha256, &tool, &tools.fetch)?;
+    let (url, sha256) = &tools.appimagetool;
+    pinned(APPIMAGETOOL.name, url, sha256, &tool, &tools.fetch)?;
     super::executable(&tool)?;
     let runtime = tools.cache.join("appimage-runtime-x86_64");
-    let (url, sha256) = tools.runtime;
-    pinned("the AppImage runtime", url, sha256, &runtime, &tools.fetch)?;
+    let (url, sha256) = &tools.runtime;
+    pinned(APPIMAGE_RUNTIME.name, url, sha256, &runtime, &tools.fetch)?;
     let dir = stage.join("AppDir");
     stage_folder(identity, built, &dir)?;
     let icon = format!("{}.png", identity.linux_exe);
@@ -128,7 +116,7 @@ pub fn control(identity: &Identity, installed_kb: u64) -> String {
         identity.package,
         identity.version,
         super::AUTHOR,
-        super::HOMEPAGE,
+        kchess_delta::WEBSITE,
         super::SYNOPSIS,
         super::DESCRIPTION
     )
@@ -177,8 +165,8 @@ fn deb(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<P
             .map_err(|cause| cause.to_string())?,
         0o644,
     ));
-    let cli = format!("/opt/{}/kchess-cli", identity.name);
-    let cli_link = "kchess-cli";
+    let cli = format!("/opt/{}/{}", identity.name, kchess_delta::installed::CLI);
+    let cli_link = kchess_delta::installed::CLI;
     let postinst = format!(
         "#!/bin/sh\nset -e\nif type update-alternatives >/dev/null 2>&1; then\n  update-alternatives --install '/usr/bin/{exe}' '{exe}' '{exec}' 100 || ln -sf '{exec}' '/usr/bin/{exe}'\n  update-alternatives --install '/usr/bin/{cli_link}' '{cli_link}' '{cli}' 100 || ln -sf '{cli}' '/usr/bin/{cli_link}'\nelse\n  ln -sf '{exec}' '/usr/bin/{exe}'\n  ln -sf '{cli}' '/usr/bin/{cli_link}'\nfi\nif type update-desktop-database >/dev/null 2>&1; then update-desktop-database -q /usr/share/applications || true; fi\n",
         exe = identity.linux_exe
@@ -258,10 +246,10 @@ base: core24
 grade: stable
 confinement: strict
 license: GPL-3.0-or-later
-website: {homepage}
-source-code: https://github.com/{repository}
-issues: https://github.com/{repository}/issues
-contact: https://github.com/{repository}/issues
+website: {website}
+source-code: {source}
+issues: {issues}
+contact: {issues}
 platforms:
   amd64:
 
@@ -297,8 +285,9 @@ parts:
       - libasound2t64
 "#,
         super::DESCRIPTION,
-        homepage = super::HOMEPAGE,
-        repository = crate::util::REPOSITORY,
+        website = kchess_delta::WEBSITE,
+        source = kchess_delta::SOURCE,
+        issues = kchess_delta::ISSUES,
     )
 }
 
@@ -418,8 +407,8 @@ mod tests {
         let runtime = b"the pinned runtime";
         let tools = AppImageTools {
             cache: scratch.join("cache"),
-            appimagetool: ("https://example.test/appimagetool", digest(tool)),
-            runtime: ("https://example.test/runtime", digest(runtime)),
+            appimagetool: ("https://example.test/appimagetool".into(), digest(tool)),
+            runtime: ("https://example.test/runtime".into(), digest(runtime)),
             fetch: |url: &str, to: &Path| -> Result {
                 std::fs::create_dir_all(to.parent().unwrap()).unwrap();
                 let bytes: &[u8] = if url.ends_with("/runtime") {
@@ -470,15 +459,11 @@ mod tests {
 
     #[test]
     fn the_appimage_pins_name_fixed_releases() {
-        for url in [APPIMAGETOOL, APPIMAGE_RUNTIME] {
-            assert!(!url.contains("/continuous/"), "{url} is a moving release");
-        }
-        for digest in [APPIMAGETOOL_SHA256, APPIMAGE_RUNTIME_SHA256] {
-            assert_eq!(digest.len(), 64);
+        for pin in [APPIMAGETOOL, APPIMAGE_RUNTIME] {
             assert!(
-                digest
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                !pin.url().contains("/continuous/"),
+                "{} is a moving release",
+                pin.url()
             );
         }
     }

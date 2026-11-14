@@ -6,7 +6,8 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use kchess_contracts::types::{ChallengeInfo, ChallengeTimeControl, DeclineReason, OnlinePhase};
+use serde_json::Number;
 
 use super::OnlinePage;
 use crate::assets::icon;
@@ -18,52 +19,48 @@ use crate::theme::Palette;
 use crate::widgets;
 
 /// The reasons a challenge can be declined with (`DECLINE`).
-const DECLINE: [(&str, &str); 9] = [
-    ("generic", "Decline"),
-    ("later", "Not now, maybe later"),
-    ("tooFast", "Too fast for me"),
-    ("tooSlow", "Too slow for me"),
-    ("timeControl", "Not this time control"),
-    ("rated", "Send a rated challenge instead"),
-    ("casual", "Send a casual challenge instead"),
-    ("standard", "Standard chess only, please"),
-    ("variant", "Not this variant"),
+const DECLINE: [(DeclineReason, &str); 9] = [
+    (DeclineReason::Generic, "Decline"),
+    (DeclineReason::Later, "Not now, maybe later"),
+    (DeclineReason::TooFast, "Too fast for me"),
+    (DeclineReason::TooSlow, "Too slow for me"),
+    (DeclineReason::TimeControl, "Not this time control"),
+    (DeclineReason::Rated, "Send a rated challenge instead"),
+    (DeclineReason::Casual, "Send a casual challenge instead"),
+    (DeclineReason::Standard, "Standard chess only, please"),
+    (DeclineReason::Variant, "Not this variant"),
 ];
 
-/// "5+3", "3 days per move", "No clock" (`describeControl`).
-pub fn describe_control(challenge: &Value) -> String {
-    let control = &challenge["timeControl"];
-    match control["type"].as_str() {
-        Some("clock") => {
-            let minutes = control["limit"].as_f64().unwrap_or_default() / 60.;
-            let minutes = if minutes.fract() == 0. {
-                format!("{minutes:.0}")
-            } else {
-                format!("{minutes:.1}")
-            };
-            format!(
-                "{minutes}+{}",
-                control["increment"].as_f64().unwrap_or_default()
-            )
-        }
-        Some("correspondence") => {
-            let days = control["days"].as_f64().unwrap_or_default();
+/// "5+3", "3 days per move", "No clock".
+pub fn describe_control(control: &ChallengeTimeControl) -> String {
+    match control {
+        ChallengeTimeControl::Clock { limit, increment } => crate::widgets::time_control(
+            limit.as_f64().unwrap_or_default() / 60.,
+            increment.as_f64().unwrap_or_default(),
+        ),
+        ChallengeTimeControl::Correspondence { days } => {
+            let days = days.as_f64().unwrap_or_default();
             format!(
                 "{days} {} per move",
                 if days == 1. { "day" } else { "days" }
             )
         }
-        _ => "No clock".into(),
+        ChallengeTimeControl::Unlimited => "No clock".into(),
     }
 }
 
-/// "you play white", "random colours" (`colorText`): the colour is the challenger's.
-pub fn color_text(challenge: &Value) -> String {
-    let color = challenge["color"].as_str().unwrap_or("random");
+/// A player's rating as it reads: "1800", not "1800.0".
+fn rating(rating: &Option<Number>) -> Option<f64> {
+    rating.as_ref().and_then(Number::as_f64)
+}
+
+/// "you play white", "random colours": the colour is the challenger's.
+pub fn color_text(challenge: &ChallengeInfo) -> String {
+    let color = challenge.color.as_str();
     if color == "random" {
         return "random colours".into();
     }
-    let yours = if challenge["direction"] == json!("out") {
+    let yours = if challenge.direction == kchess_contracts::types::ChallengeDirection::Out {
         color
     } else if color == "white" {
         "black"
@@ -130,26 +127,23 @@ impl OnlinePage {
                 "Listening for challenges while a game is open".to_string(),
                 palette.text_muted,
             ),
-            Some(lobby) => match lobby["phase"].as_str() {
-                Some("connected") => (
-                    format!(
-                        "Listening for challenges to @{}",
-                        lobby["account"].as_str().unwrap_or_default()
-                    ),
+            Some(lobby) => match lobby.phase {
+                OnlinePhase::Connected => (
+                    format!("Listening for challenges to @{}", lobby.account),
                     palette.success,
                 ),
-                Some("auth-required") => (
-                    lobby["message"]
-                        .as_str()
-                        .unwrap_or("Sign in to Lichess again in Settings")
-                        .to_string(),
+                OnlinePhase::AuthRequired => (
+                    lobby
+                        .message
+                        .clone()
+                        .unwrap_or_else(|| "Sign in to Lichess again in Settings".into()),
                     palette.error,
                 ),
-                Some("disconnected") => (
-                    lobby["message"]
-                        .as_str()
-                        .unwrap_or("Not connected to Lichess")
-                        .to_string(),
+                OnlinePhase::Disconnected => (
+                    lobby
+                        .message
+                        .clone()
+                        .unwrap_or_else(|| "Not connected to Lichess".into()),
                     palette.error,
                 ),
                 _ => ("Connecting to Lichess…".to_string(), palette.text_muted),
@@ -179,34 +173,27 @@ impl OnlinePage {
             .children(
                 challenges
                     .iter()
-                    .filter(|c| c["direction"] == json!("in"))
+                    .filter(|c| c.direction == kchess_contracts::types::ChallengeDirection::In)
                     .enumerate()
                     .map(|(index, challenge)| {
-                        let opponent = &challenge["opponent"];
+                        let opponent = &challenge.opponent;
                         let mut sub = String::new();
-                        if challenge["rematchOf"].is_string() {
+                        if challenge.rematch_of.is_some() {
                             sub.push_str("Rematch · ");
                         }
                         sub.push_str(&format!(
                             "{} · {} · {} · {}",
-                            challenge["variantName"].as_str().unwrap_or("Standard"),
-                            describe_control(challenge),
-                            if challenge["rated"] == json!(true) {
-                                "Rated"
-                            } else {
-                                "Casual"
-                            },
+                            challenge.variant_name,
+                            describe_control(&challenge.time_control),
+                            if challenge.rated { "Rated" } else { "Casual" },
                             color_text(challenge)
                         ));
                         if several {
-                            sub.push_str(&format!(
-                                " · to @{}",
-                                challenge["account"].as_str().unwrap_or_default()
-                            ));
+                            sub.push_str(&format!(" · to @{}", challenge.account));
                         }
-                        let id = challenge["id"].as_str().unwrap_or_default().to_string();
+                        let id = challenge.id.clone();
                         let (accept, decline) = (challenge.clone(), challenge.clone());
-                        row(if challenge["rematchOf"].is_string() {
+                        row(if challenge.rematch_of.is_some() {
                             "repeat"
                         } else {
                             "swords"
@@ -219,16 +206,16 @@ impl OnlinePage {
                                     h_flex()
                                         .gap(px(4.))
                                         .font_weight(FontWeight::MEDIUM)
-                                        .children(opponent["title"].as_str().map(|t| t.to_string()))
+                                        .children(opponent.title.clone())
                                         .child(player_link(
                                             ("challenge-from", index),
-                                            opponent["name"].as_str().unwrap_or("?").to_string(),
+                                            opponent.name.clone(),
                                             palette.primary,
                                         ))
-                                        .children(opponent["rating"].as_f64().map(|rating| {
+                                        .children(rating(&opponent.rating).map(|rating| {
                                             div().text_color(palette.text_muted).child(format!(
                                                 "({rating}{})",
-                                                if opponent["provisional"] == json!(true) {
+                                                if opponent.provisional == Some(true) {
                                                     "?"
                                                 } else {
                                                     ""
@@ -242,11 +229,11 @@ impl OnlinePage {
                                         .text_color(palette.text_muted)
                                         .child(sub),
                                 )
-                                .children(challenge["problem"].as_str().map(|problem| {
+                                .children(challenge.problem.clone().map(|problem| {
                                     div()
                                         .text_size(px(12.))
                                         .text_color(palette.warning)
-                                        .child(problem.to_string())
+                                        .child(problem)
                                 })),
                         )
                         .child(
@@ -256,7 +243,7 @@ impl OnlinePage {
                                 .icon(icon("check"))
                                 .label("Accept")
                                 .loading(busy == id)
-                                .disabled(challenge["playable"] == json!(false))
+                                .disabled(!challenge.playable)
                                 .on_click(move |_, window, cx| {
                                     let challenge = accept.clone();
                                     let opened = crate::online::handle(cx)
@@ -288,7 +275,7 @@ impl OnlinePage {
                                                 crate::online::handle(cx).update(
                                                     cx,
                                                     |online, cx| {
-                                                        online.decline(&challenge, reason, cx)
+                                                        online.decline(&challenge, *reason, cx)
                                                     },
                                                 )
                                             },
@@ -301,10 +288,10 @@ impl OnlinePage {
             .children(
                 challenges
                     .iter()
-                    .filter(|c| c["direction"] == json!("out"))
+                    .filter(|c| c.direction == kchess_contracts::types::ChallengeDirection::Out)
                     .enumerate()
                     .map(|(index, challenge)| {
-                        let id = challenge["id"].as_str().unwrap_or_default().to_string();
+                        let id = challenge.id.clone();
                         let withdraw = challenge.clone();
                         row("send")
                             .child(
@@ -318,10 +305,7 @@ impl OnlinePage {
                                             .child("To")
                                             .child(player_link(
                                                 ("challenge-to", index),
-                                                challenge["opponent"]["name"]
-                                                    .as_str()
-                                                    .unwrap_or("?")
-                                                    .to_string(),
+                                                challenge.opponent.name.clone(),
                                                 palette.primary,
                                             )),
                                     )
@@ -331,15 +315,9 @@ impl OnlinePage {
                                             .text_color(palette.text_muted)
                                             .child(format!(
                                                 "{} · {} · {} · {} · waiting",
-                                                challenge["variantName"]
-                                                    .as_str()
-                                                    .unwrap_or("Standard"),
-                                                describe_control(challenge),
-                                                if challenge["rated"] == json!(true) {
-                                                    "Rated"
-                                                } else {
-                                                    "Casual"
-                                                },
+                                                challenge.variant_name,
+                                                describe_control(&challenge.time_control),
+                                                if challenge.rated { "Rated" } else { "Casual" },
                                                 color_text(challenge)
                                             )),
                                     ),
@@ -372,22 +350,22 @@ impl OnlinePage {
         let several = crate::accounts::handle(cx).read(cx).connected().len() > 1;
         // Boards of games no longer ongoing are let go.
         self.previews
-            .retain(|id, _| games.iter().any(|game| game["gameId"].as_str() == Some(id)));
+            .retain(|id, _| games.iter().any(|game| game.game_id == *id));
         let rows: Vec<AnyElement> = games
             .iter()
             .enumerate()
             .map(|(index, game)| {
-                let id = game["gameId"].as_str().unwrap_or_default().to_string();
-                let orientation = if game["color"] == json!("black") {
+                let id = game.game_id.clone();
+                let orientation = if game.color == "black" {
                     shakmaty::Color::Black
                 } else {
                     shakmaty::Color::White
                 };
                 let mut state = BoardState::shown(
-                    game["fen"].as_str().unwrap_or_default(),
-                    "standard",
+                    &game.fen,
+                    kchess_domain::variant::Variant::Standard,
                     orientation,
-                    game["lastMove"].as_str().filter(|uci| uci.len() >= 4),
+                    game.last_move.as_deref().filter(|uci| uci.len() >= 4),
                 );
                 state.preview = true;
                 let board = match self.previews.get(&id) {
@@ -401,8 +379,8 @@ impl OnlinePage {
                         board
                     }
                 };
-                let mine = game["isMyTurn"] == json!(true);
-                let speed = game["speed"].as_str().unwrap_or_default();
+                let mine = game.is_my_turn;
+                let speed = game.speed.as_str();
                 let mut sub = format!(
                     "{} · {} · you play {}",
                     if speed == "correspondence" {
@@ -410,21 +388,14 @@ impl OnlinePage {
                     } else {
                         speed
                     },
-                    if game["rated"] == json!(true) {
-                        "Rated"
-                    } else {
-                        "Casual"
-                    },
-                    game["color"].as_str().unwrap_or("white")
+                    if game.rated { "Rated" } else { "Casual" },
+                    game.color
                 );
                 if several {
-                    sub.push_str(&format!(
-                        " · @{}",
-                        game["account"].as_str().unwrap_or_default()
-                    ));
+                    sub.push_str(&format!(" · @{}", game.account));
                 }
                 // Lichess lets apps play only some games; the others are watched here.
-                let playable = game["playable"] != json!(false);
+                let playable = game.playable;
                 let mut turn = if !playable {
                     "Played elsewhere".to_string()
                 } else if mine {
@@ -432,11 +403,11 @@ impl OnlinePage {
                 } else {
                     "Waiting for opponent".to_string()
                 };
-                if let Some(left) = time_left(game["secondsLeft"].as_f64()) {
+                if let Some(left) = time_left(game.seconds_left.as_ref().and_then(Number::as_f64)) {
                     turn.push_str(&format!(" · {left}"));
                 }
                 let open_now = current.as_deref() == Some(id.as_str());
-                let account = game["account"].as_str().unwrap_or_default().to_string();
+                let account = game.account.clone();
                 h_flex()
                     .gap(px(8.))
                     .py(px(8.))
@@ -454,13 +425,10 @@ impl OnlinePage {
                                     .font_weight(FontWeight::MEDIUM)
                                     .child(player_link(
                                         ("ongoing-opponent", index),
-                                        game["opponent"]["name"]
-                                            .as_str()
-                                            .unwrap_or("?")
-                                            .to_string(),
+                                        game.opponent.name.clone(),
                                         palette.primary,
                                     ))
-                                    .children(game["opponent"]["rating"].as_f64().map(|rating| {
+                                    .children(rating(&game.opponent.rating).map(|rating| {
                                         div()
                                             .text_color(palette.text_muted)
                                             .child(format!("({rating})"))
@@ -497,7 +465,7 @@ impl OnlinePage {
                             })
                             .on_click(move |_, window, cx| {
                                 if !playable {
-                                    crate::shell::watch_game(&id, window, cx);
+                                    crate::pages::watch::watch_game(&id, window, cx);
                                     return;
                                 }
                                 if !open_now {
@@ -545,43 +513,45 @@ impl OnlinePage {
 #[cfg(test)]
 mod tests {
     use super::{color_text, describe_control, time_left};
-    use serde_json::json;
+    use kchess_contracts::types::{ChallengeInfo, ChallengeTimeControl};
+    use serde_json::{Number, json};
+
+    fn challenge(color: &str, direction: &str) -> ChallengeInfo {
+        serde_json::from_value(json!({
+            "id": "c1", "account": "me", "direction": direction, "opponent": { "name": "Bob" },
+            "variant": "standard", "variantName": "Standard", "rated": false, "speed": "blitz",
+            "timeControl": { "type": "unlimited" }, "color": color, "playable": true,
+            "receivedAt": 0,
+        }))
+        .expect("a challenge")
+    }
+
+    fn clock(limit: u64, increment: u64) -> ChallengeTimeControl {
+        ChallengeTimeControl::Clock {
+            limit: Number::from(limit),
+            increment: Number::from(increment),
+        }
+    }
 
     #[test]
     fn controls_read_like_lichess() {
+        assert_eq!(describe_control(&clock(300, 3)), "5+3");
+        assert_eq!(describe_control(&clock(90, 0)), "1.5+0");
+        let days = ChallengeTimeControl::Correspondence {
+            days: Number::from(1),
+        };
+        assert_eq!(describe_control(&days), "1 day per move");
         assert_eq!(
-            describe_control(
-                &json!({ "timeControl": { "type": "clock", "limit": 300, "increment": 3 } })
-            ),
-            "5+3"
-        );
-        assert_eq!(
-            describe_control(
-                &json!({ "timeControl": { "type": "clock", "limit": 90, "increment": 0 } })
-            ),
-            "1.5+0"
-        );
-        assert_eq!(
-            describe_control(&json!({ "timeControl": { "type": "correspondence", "days": 1 } })),
-            "1 day per move"
-        );
-        assert_eq!(
-            describe_control(&json!({ "timeControl": { "type": "unlimited" } })),
+            describe_control(&ChallengeTimeControl::Unlimited),
             "No clock"
         );
     }
 
     #[test]
     fn an_incoming_challenges_colour_is_the_other_one() {
-        assert_eq!(
-            color_text(&json!({ "color": "white", "direction": "in" })),
-            "you play black"
-        );
-        assert_eq!(
-            color_text(&json!({ "color": "white", "direction": "out" })),
-            "you play white"
-        );
-        assert_eq!(color_text(&json!({ "color": "random" })), "random colours");
+        assert_eq!(color_text(&challenge("white", "in")), "you play black");
+        assert_eq!(color_text(&challenge("white", "out")), "you play white");
+        assert_eq!(color_text(&challenge("random", "in")), "random colours");
     }
 
     #[test]

@@ -1,5 +1,4 @@
-//! The spectator: one watch at a time, its streams and what it reports (moved from `watch.rs`
-//! without changes).
+//! The spectator: one watch at a time, its streams and what it reports.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -8,18 +7,20 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
-use super::feed::{player_of, position_key, take_utf16, uci_or_none, variant_from_lichess};
+use super::feed::{player_of, position_key, uci_or_none};
 use super::{
     BroadcastGame, BroadcastUpdate, LineUpTiming, MAX_PGN, PAST_GAMES, TvGame, TvPastGame,
     WatchFrame, WatchSink, WatchState, WatchTarget, align_tv_moves, broadcast_game, display_fen,
     parse_game_details, parse_tv_game,
 };
-use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
 use crate::lichess::accounts::{Lichess, path_segment};
-use crate::lichess::client::{Failure, Ndjson, parse_json};
+use crate::lichess::client::{Auth, Lane};
 use crate::lichess::decode::{Loose, read};
 use crate::lichess::stream::STALLED;
+use kchess_contracts::error::{CoreError, Result as CoreResult};
+use kchess_contracts::types::{UsageKind, WatchPhase, WatchSource};
+use kchess_domain::color::Color;
 
 /// A TV feed record, `{ t, d }`: a featured game or a move. Other kinds, and records whose
 /// `d` is not an object, are ignored; each field is read when it has the right type.
@@ -111,6 +112,8 @@ const FEED_PANICKED: &str = "The feed stopped after an internal error. Retry to 
 #[derive(Default)]
 struct Control {
     session: u64,
+    /// The running session's token, cancelled whenever `session` moves on, in the same lock: a
+    /// cancelled token is a session no longer current.
     cancel: Option<CancellationToken>,
     /// Earlier games per TV channel, kept for the app's lifetime.
     past: HashMap<String, Vec<TvPastGame>>,
@@ -186,9 +189,8 @@ impl Spectator {
         let (session, token) = self.inner.begin();
         let inner = Arc::clone(&self.inner);
         tokio::spawn(async move {
-            inner.report(session, &token, "connecting", None);
-            let lichess = Arc::clone(&inner.lichess);
-            let followed = lichess.client().policy().with_usage("", "watch", async {
+            inner.report(session, &token, WatchPhase::Connecting, None);
+            let followed = async {
                 match &target {
                     WatchTarget::Channel(channel) => inner
                         .follow_tv(channel, session, &token)
@@ -196,37 +198,26 @@ impl Spectator {
                         .map(|()| false),
                     WatchTarget::Game(id) => inner.follow_game(id, session, &token).await,
                 }
-            });
-            // A panic ends the feed as a failure, so the viewer is offered a retry.
-            let result = crate::tasks::caught(followed)
-                .await
-                .unwrap_or_else(|_| Err(CoreError::new(FEED_PANICKED)));
-            match result {
+            };
+            let label = match &target {
+                WatchTarget::Channel(channel) | WatchTarget::Game(channel) => channel,
+            };
+            let what = format!("Watch failed: {label}");
+            match inner.outcome(&token, &what, followed).await {
+                None => {}
                 // Lichess closes a game's stream once the game is over: nothing to reconnect to.
-                Ok(true) => inner.report(session, &token, "ended", None),
-                Ok(false) => inner.report(
+                Some(Ok(true)) => inner.report(session, &token, WatchPhase::Ended, None),
+                Some(Ok(false)) => inner.report(
                     session,
                     &token,
-                    "ended",
+                    WatchPhase::Ended,
                     Some("The feed ended. Retry to reconnect."),
                 ),
-                // Stopped, or replaced by another watch: nothing failed.
-                Err(_) if token.is_cancelled() => {}
-                Err(cause) => {
-                    let label = match &target {
-                        WatchTarget::Channel(channel) => channel.clone(),
-                        WatchTarget::Game(id) => id.clone(),
-                    };
-                    inner.host_log(
-                        Level::Warn,
-                        &format!("Watch failed: {label} {}", cause.message),
-                    );
-                    let kind = cause.kind.unwrap_or(crate::error::ErrorKind::Offline);
-                    let message = if cause.message.is_empty() {
-                        "The feed disconnected.".to_string()
-                    } else {
-                        cause.message
-                    };
+                Some(Err(cause)) => {
+                    let kind = cause
+                        .kind
+                        .unwrap_or(kchess_contracts::error::ErrorKind::Offline);
+                    let message = said_or(cause, "The feed disconnected.");
                     inner.report_failure(session, &token, &message, kind);
                 }
             }
@@ -240,55 +231,63 @@ impl Spectator {
         let inner = Arc::clone(&self.inner);
         let round_id = round_id.to_string();
         tokio::spawn(async move {
-            let lichess = Arc::clone(&inner.lichess);
-            let followed = lichess.client().policy().with_usage(
-                "",
-                "watch",
-                inner.follow_round(&round_id, session, &token),
-            );
-            let result = crate::tasks::caught(followed)
-                .await
-                .unwrap_or_else(|_| Err(CoreError::new(FEED_PANICKED)));
-            match result {
-                Ok(()) => {
-                    if inner.is_current(session) {
-                        inner.sink.broadcast(BroadcastUpdate {
-                            session,
-                            round_id: round_id.clone(),
-                            games: Vec::new(),
-                            ended: Some(true),
-                            error: None,
-                        });
-                    }
-                }
-                Err(_) if token.is_cancelled() => {}
-                Err(cause) => {
-                    inner.host_log(
-                        Level::Warn,
-                        &format!("Broadcast feed failed: {round_id} {}", cause.message),
-                    );
-                    if inner.is_current(session) && !token.is_cancelled() {
-                        let message = if cause.message.is_empty() {
-                            "The broadcast feed stopped.".to_string()
-                        } else {
-                            cause.message
-                        };
-                        inner.sink.broadcast(BroadcastUpdate {
-                            session,
-                            round_id: round_id.clone(),
-                            games: Vec::new(),
-                            ended: Some(true),
-                            error: Some(message),
-                        });
-                    }
-                }
+            let followed = inner.follow_round(&round_id, session, &token);
+            let what = format!("Broadcast feed failed: {round_id}");
+            let Some(outcome) = inner.outcome(&token, &what, followed).await else {
+                return;
+            };
+            if inner.is_current(session) && !token.is_cancelled() {
+                inner.sink.broadcast(BroadcastUpdate {
+                    session,
+                    round_id: round_id.clone(),
+                    games: Vec::new(),
+                    ended: Some(true),
+                    error: outcome
+                        .err()
+                        .map(|cause| said_or(cause, "The broadcast feed stopped.")),
+                });
             }
         });
         session
     }
 }
 
+/// A failure's message, or `fallback` when it says nothing.
+fn said_or(cause: CoreError, fallback: &str) -> String {
+    if cause.message.is_empty() {
+        fallback.to_string()
+    } else {
+        cause.message
+    }
+}
+
 impl Inner {
+    /// How a feed ended: a panic as a failure, so the viewer is offered a retry; a stop or a
+    /// newer watch as `None`, since nothing failed; and a failure logged as `what`.
+    async fn outcome<T>(
+        &self,
+        token: &CancellationToken,
+        what: &str,
+        followed: impl std::future::Future<Output = CoreResult<T>>,
+    ) -> Option<CoreResult<T>> {
+        let result = crate::tasks::caught(followed)
+            .await
+            .unwrap_or_else(|_| Err(CoreError::new(FEED_PANICKED)));
+        match result {
+            Err(_) if token.is_cancelled() => None,
+            Err(cause) => {
+                self.host_log(Level::Warn, &format!("{what} {}", cause.message));
+                Some(Err(cause))
+            }
+            done => Some(done),
+        }
+    }
+
+    /// Who the watch's requests are made as: nobody, counted as watching.
+    fn watcher(&self) -> Auth {
+        self.lichess.anonymous(UsageKind::Watch)
+    }
+
     /// Starts a session: stops the running one and returns the new session and its token.
     fn begin(&self) -> (u64, CancellationToken) {
         let mut control = lock(&self.control);
@@ -322,7 +321,7 @@ impl Inner {
         &self,
         session: u64,
         token: &CancellationToken,
-        phase: &'static str,
+        phase: WatchPhase,
         message: Option<&str>,
     ) {
         if !token.is_cancelled() && self.is_current(session) {
@@ -341,14 +340,14 @@ impl Inner {
         session: u64,
         token: &CancellationToken,
         message: &str,
-        kind: crate::error::ErrorKind,
+        kind: kchess_contracts::error::ErrorKind,
     ) {
         if !token.is_cancelled() && self.is_current(session) {
             self.sink.state(WatchState {
                 session,
-                phase: "error",
+                phase: WatchPhase::Error,
                 message: Some(message.to_string()),
-                kind: Some(kind.as_str()),
+                kind: Some(kind),
             });
         }
     }
@@ -380,15 +379,11 @@ impl Inner {
             let followed = self
                 .lichess
                 .client()
-                .ndjson(
-                    Ndjson {
-                        method: reqwest::Method::GET,
-                        path: &path,
-                        query: &[],
-                        body: None,
-                        auth: None,
-                    },
-                    token,
+                .get(&path, &self.watcher())
+                .lane(Lane::Live)
+                .cancel(token)
+                .lines(
+                    || {},
                     move |line| {
                         if token_for_lines.is_cancelled() || !inner.is_current(session) {
                             return Ok(());
@@ -408,11 +403,11 @@ impl Inner {
             match followed {
                 // The TV feed has no keep-alive: it is silent while a player thinks. A new
                 // request answers with the featured game at once.
-                Err(Failure::Core(cause))
+                Err(cause)
                     if cause.message == STALLED
                         && !token.is_cancelled()
                         && self.is_current(session) => {}
-                other => return other.map_err(Into::into),
+                other => return other,
             }
         }
     }
@@ -445,7 +440,7 @@ impl Inner {
                 let Some(id) = data.id.0.as_deref() else {
                     return Ok(());
                 };
-                let game_id = take_utf16(id, 12);
+                let game_id = kchess_domain::js::slice_utf16(id, 12).to_string();
                 let white = side("white");
                 let black = side("black");
                 let mut state = lock(live);
@@ -457,15 +452,15 @@ impl Inner {
                 }
                 let frame = WatchFrame {
                     session,
-                    source: "tv",
+                    source: WatchSource::Tv,
                     channel: Some(channel.to_string()),
                     game_id: game_id.clone(),
                     white: player_of(white.as_ref()),
                     black: player_of(black.as_ref()),
                     orientation: if data.orientation.0.as_deref() == Some("black") {
-                        "black"
+                        Color::Black
                     } else {
-                        "white"
+                        Color::White
                     },
                     fen: fen.clone(),
                     last_move: None,
@@ -477,7 +472,12 @@ impl Inner {
                         .as_ref()
                         .and_then(|p| p.get("seconds"))
                         .and_then(Value::as_f64),
-                    variant: channel.to_string(),
+                    // A variant's channel shows that variant; any other (a speed, the best
+                    // players, bots) shows standard chess until the export says otherwise.
+                    variant: kchess_domain::variant::Variant::from_key(channel)
+                        .unwrap_or_default()
+                        .key()
+                        .to_string(),
                     speed: None,
                     rated: None,
                     clock: None,
@@ -497,7 +497,7 @@ impl Inner {
                 drop(state);
                 self.sink.state(WatchState {
                     session,
-                    phase: "connected",
+                    phase: WatchPhase::Connected,
                     message: None,
                     kind: None,
                 });
@@ -507,15 +507,8 @@ impl Inner {
                 let token = token.clone();
                 let channel = channel.to_string();
                 tokio::spawn(async move {
-                    let lichess = Arc::clone(&inner.lichess);
-                    lichess
-                        .client()
-                        .policy()
-                        .with_usage(
-                            "",
-                            "watch",
-                            inner.line_up(&channel, &live, &track, &game_id, session, &token),
-                        )
+                    inner
+                        .line_up(&channel, &live, &track, &game_id, session, &token)
                         .await;
                 });
                 Ok(())
@@ -555,7 +548,7 @@ impl Inner {
                 drop(state);
                 self.sink.state(WatchState {
                     session,
-                    phase: "connected",
+                    phase: WatchPhase::Connected,
                     message: None,
                     kind: None,
                 });
@@ -637,7 +630,7 @@ impl Inner {
         current.speed = game.details.speed.clone();
         current.clock = game.details.clock;
         if let Some(setup) = &game.setup {
-            current.variant = setup.variant.to_string();
+            current.variant = setup.variant.key().to_string();
         }
         if let (Some(setup), Some(moves)) = (&game.setup, moves) {
             current.start_fen = Some(setup.fen.clone());
@@ -649,7 +642,6 @@ impl Inner {
     }
 
     async fn fetch_tv_game(&self, id: &str, token: &CancellationToken) -> CoreResult<TvGame> {
-        let path = "/api/games/export/_ids";
         let query = [
             ("moves", "true".to_string()),
             ("tags", "false".to_string()),
@@ -658,17 +650,24 @@ impl Inner {
             ("opening", "false".to_string()),
         ];
         // Lichess exports games as PGN unless the request asks for NDJSON: one line per game.
+        // One game does not wait for the bulk export lane.
         let text = self
             .lichess
             .client()
-            .export_one(id, &query, "application/x-ndjson", token)
-            .await
-            .map_err(CoreError::from)?;
+            .post("/api/games/export/_ids", &self.watcher())
+            .query(&query)
+            .accept("application/x-ndjson")
+            .text(id)
+            .cancel(token)
+            .read_text(None)
+            .await?;
         let line = text
             .lines()
             .find(|line| !line.trim().is_empty())
-            .unwrap_or("");
-        let raw: Value = parse_json(line, path).map_err(CoreError::from)?;
+            .ok_or_else(|| CoreError::new("Lichess has no such game."))?;
+        let raw: Value = serde_json::from_str(line).map_err(|cause| {
+            CoreError::new(format!("Lichess sent an unreadable game record: {cause}"))
+        })?;
         Ok(parse_tv_game(&raw))
     }
 
@@ -704,12 +703,7 @@ impl Inner {
         let channel = channel.to_string();
         let token = token.clone();
         tokio::spawn(async move {
-            let lichess = Arc::clone(&inner.lichess);
-            let result = lichess
-                .client()
-                .policy()
-                .with_usage("", "watch", inner.fetch_tv_game(&entry.game_id, &token))
-                .await;
+            let result = inner.fetch_tv_game(&entry.game_id, &token).await;
             match result {
                 Ok(game) => {
                     let mut control = lock(&inner.control);
@@ -745,17 +739,14 @@ impl Inner {
         let mut current: Option<WatchFrame> = None;
         self.lichess
             .client()
-            .ndjson(
-                Ndjson {
-                    method: reqwest::Method::GET,
-                    path: &path,
-                    query: &[],
-                    body: None,
-                    auth: None,
-                },
-                token,
+            .get(&path, &self.watcher())
+            .lane(Lane::Live)
+            .cancel(token)
+            .lines(
+                || {},
                 |line| {
-                    if token.is_cancelled() || !self.is_current(session) {
+                    // Its token is cancelled as its session stops being current (`Control`).
+                    if token.is_cancelled() {
                         return Ok(());
                     }
                     // A malformed record ends the game as it arrives.
@@ -776,31 +767,31 @@ impl Inner {
                         // The description of the game: first, and again when it ends.
                         let status = record.status.0.and_then(|status| status.name.0);
                         let players = record.players.0.unwrap_or_default();
-                        let winner = match record.winner.0.as_deref() {
-                            Some("white") => Some("white"),
-                            Some("black") => Some("black"),
-                            _ => None,
-                        };
+                        let winner = record
+                            .winner
+                            .0
+                            .as_deref()
+                            .and_then(kchess_domain::color::from_name);
                         let finished = status
                             .as_deref()
                             .is_some_and(|status| status != "created" && status != "started");
                         let details = parse_game_details(&data);
                         current = Some(WatchFrame {
                             session,
-                            source: "game",
+                            source: WatchSource::Game,
                             channel: None,
-                            game_id: take_utf16(id, 12),
+                            game_id: kchess_domain::js::slice_utf16(id, 12).to_string(),
                             white: player_of(players.get("white")),
                             black: player_of(players.get("black")),
-                            orientation: current.as_ref().map_or("white", |c| c.orientation),
+                            orientation: current.as_ref().map_or(Color::White, |c| c.orientation),
                             fen,
                             last_move: uci_or_none(record.last_move.as_ref()),
                             white_clock: current.as_ref().and_then(|c| c.white_clock),
                             black_clock: current.as_ref().and_then(|c| c.black_clock),
                             variant: {
                                 let key = record.variant.0.and_then(|variant| variant.key.0);
-                                variant_from_lichess(key.as_deref())
-                                    .map_or_else(|| key.unwrap_or_default(), String::from)
+                                kchess_domain::variant::Variant::from_lichess(key.as_deref())
+                                    .map_or_else(|| key.unwrap_or_default(), |v| v.key().into())
                             },
                             speed: details.speed,
                             rated: details.rated,
@@ -824,7 +815,7 @@ impl Inner {
                     if let Some(frame) = current.clone() {
                         self.sink.state(WatchState {
                             session,
-                            phase: "connected",
+                            phase: WatchPhase::Connected,
                             message: None,
                             kind: None,
                         });
@@ -837,7 +828,7 @@ impl Inner {
         Ok(current.is_some_and(|frame| frame.finished))
     }
 
-    /// `watchRound`'s feed (`readPgnStream`): the PGN text is read as it arrives and split at the
+    /// `watchRound`'s feed: the PGN text is read as it arrives and split at the
     /// two blank lines Lichess ends every game with. Each read hands over the games that parsed,
     /// so the sink gets one batch per chunk; the last part of the feed is taken at its end.
     async fn follow_round(
@@ -861,7 +852,10 @@ impl Inner {
         };
         self.lichess
             .client()
-            .stream_chunks(&path, None, token, |chunk| {
+            .get(&path, &self.watcher())
+            .lane(Lane::Live)
+            .cancel(token)
+            .chunks(|chunk| {
                 if token.is_cancelled() || !self.is_current(session) {
                     return Ok(());
                 }
@@ -882,7 +876,7 @@ impl Inner {
     }
 }
 
-/// The games of a PGN buffer (`flush` in `readPgnStream`): every part before the last two-blank-line
+/// The games of a PGN buffer: every part before the last two-blank-line
 /// separator parses into a game; the last part stays in the buffer until more text arrives, unless
 /// the feed has ended, when it is parsed too.
 fn take_pgn_games(buffer: &mut String, finished: bool) -> Vec<BroadcastGame> {

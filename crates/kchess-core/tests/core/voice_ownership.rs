@@ -3,25 +3,16 @@
 //! A single-thread runtime makes the release task run only when the test yields, so the
 //! interleavings below are deterministic. The helper is the scripted `kchess-fake-voice`.
 
-use std::sync::Arc;
-
 use kchess_core::connection::ClientInfo;
-use kchess_core::{Config, Core, Host, Level};
-use serde_json::{Value, json};
-
-struct Quiet;
-
-impl Host for Quiet {
-    fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-
-    fn emit(&self, _event: &str, _payload: Value) {}
-}
+use kchess_core::test_host::TestHost;
+use kchess_core::{Config, Core};
+use serde_json::json;
 
 fn open(dir: &tempfile::TempDir) -> Core {
     std::fs::create_dir_all(kchess_core::voice::model_dir(dir.path())).expect("model folder");
     let mut config = Config::new(dir.path().into());
     config.voice_helper_path = Some(env!("CARGO_BIN_EXE_kchess-fake-voice").into());
-    Core::open(config, Arc::new(Quiet)).expect("core")
+    Core::open(config, TestHost::quiet()).expect("core")
 }
 
 /// Silent audio: the scripted helper answers a partial "e" while it is listening.
@@ -48,7 +39,7 @@ async fn a_disconnect_keeps_the_session_another_client_started_since() {
         .await
         .expect("B is still listening");
     assert_eq!(heard["partial"], "e");
-    core.call("close", vec![]).await.expect("close");
+    core.close().await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -68,7 +59,7 @@ async fn a_suspension_keeps_the_session_another_client_started_since() {
     core.call_as(b, "voiceAccept", vec![json!(SILENCE)])
         .await
         .expect("B is still listening");
-    core.call("close", vec![]).await.expect("close");
+    core.close().await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -88,7 +79,7 @@ async fn a_disconnect_still_stops_its_own_session() {
         .await
         .expect_err("A's session is stopped");
     assert_eq!(refused.message, "Voice input isn’t listening.");
-    core.call("close", vec![]).await.expect("close");
+    core.close().await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -122,5 +113,22 @@ async fn another_clients_audio_finish_and_stop_leave_the_owner_listening() {
     core.call_as(b, "voiceAccept", vec![json!(SILENCE)])
         .await
         .expect("B is still listening");
-    core.call("close", vec![]).await.expect("close");
+    core.close().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_owners_stop_ends_its_session() {
+    let dir = tempfile::tempdir().expect("data folder");
+    let core = open(&dir);
+    let a = core.connect(ClientInfo::app());
+    core.call_as(a, "voiceStart", vec![json!(["e four"]), json!(16000)])
+        .await
+        .expect("A starts");
+    core.call_as(a, "voiceStop", vec![]).await.expect("A stops");
+    let refused = core
+        .call_as(a, "voiceAccept", vec![json!(SILENCE)])
+        .await
+        .expect_err("the session is stopped");
+    assert_eq!(refused.message, "Voice input isn’t listening.");
+    core.close().await;
 }

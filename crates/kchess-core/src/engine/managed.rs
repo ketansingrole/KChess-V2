@@ -9,25 +9,30 @@
 #[cfg(test)]
 mod tests;
 
+use kchess_contracts::CoreEvent;
 use std::collections::HashMap;
 use std::fs;
 use std::future::Future;
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::{Mutex as AsyncMutex, watch};
+use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex as AsyncMutex;
+use tokio_util::sync::CancellationToken;
 
-use crate::archive::{self, Member, hex};
-use crate::error::{CoreError, Result};
+use super::uci::{EngineHub, UciController};
+use crate::archive::{self, Refusal};
+use crate::download;
 use crate::host::{Host, Level};
+use crate::usage::{Meter, Unmetered};
+use kchess_contracts::error::{CoreError, Result};
+use kchess_delta::hex;
 
 /// The GitHub endpoint for the latest official Stockfish release.
 pub const RELEASE_URL: &str =
@@ -35,58 +40,10 @@ pub const RELEASE_URL: &str =
 /// Where every official asset downloads from: `<tag>/<asset name>` follows.
 const DOWNLOAD_BASE: &str = "https://github.com/official-stockfish/Stockfish/releases/download/";
 
-/// A release fixed in this source, for what KChess ships: the tag and each platform's asset with
-/// its SHA-256, so a release changed upstream after it was checked is refused instead of being
-/// signed into a KChess package (`fetch_stockfish`, `cargo xtask package`).
-pub struct PinnedRelease {
-    pub tag: &'static str,
-    /// `(platform, arch, asset name, SHA-256)`, as `Target` names them.
-    pub assets: &'static [(&'static str, &'static str, &'static str, &'static str)],
-}
-
-/// The Stockfish KChess packages, checked 2026-11-06 against the files GitHub served. Move it to
-/// a newer release by updating the tag and every digest together.
-pub const SHIPPED: PinnedRelease = PinnedRelease {
-    tag: "sf_19",
-    assets: &[
-        (
-            "darwin",
-            "arm64",
-            "stockfish-macos-universal.tar.gz",
-            "a1f0e3bcc5a6927a11fe6fc8e54a779754645f3c2bae2cf13420fd1957adaa77",
-        ),
-        (
-            "darwin",
-            "x64",
-            "stockfish-macos-universal.tar.gz",
-            "a1f0e3bcc5a6927a11fe6fc8e54a779754645f3c2bae2cf13420fd1957adaa77",
-        ),
-        (
-            "win32",
-            "x64",
-            "stockfish-windows-x86-64-universal.zip",
-            "3c8bf1f9ea66a09350a40df4f632288285ac206d99f33ab5842c408fc30b48a7",
-        ),
-        (
-            "win32",
-            "arm64",
-            "stockfish-windows-arm64-universal.zip",
-            "8372ad3f0d7276deb2c70f801f541ec7db463219fc6d9c7592864e542aa4f401",
-        ),
-        (
-            "linux",
-            "x64",
-            "stockfish-linux-x86-64-universal.tar.gz",
-            "9defc0d4e55d49c65a6d042f3e571a39fcea499ade6dbe741b53b8c65e03611f",
-        ),
-        (
-            "linux",
-            "arm64",
-            "stockfish-linux-arm64-universal.tar.gz",
-            "fe26cfd1d9db4c8af3d21e24d9ff34cacb31c1f940085a7583da11796f2bac01",
-        ),
-    ],
-};
+// The pin has a file of its own: CI keys its engine cache on it, and `cargo xtask pins --check`
+// reads it (`tooling/xtask/src/pinned.rs`).
+mod shipped;
+pub use shipped::{PinnedRelease, SHIPPED};
 
 /// Whether `url` may be downloaded for `asset` of release `tag`, found at `release_url`: an
 /// official release's asset comes from the official repository's downloads alone, whatever
@@ -112,12 +69,8 @@ const RELEASE_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 const EXTRACT_TIMEOUT: Duration = Duration::from_secs(60);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
-/// How long the handoff may take to stop the engine owners before the install gives up.
-pub const DEFAULT_EXIT_DEADLINE: Duration = Duration::from_secs(4);
-const PROBE_OUTPUT_LIMIT: usize = 1_000_000;
 const VERSION_FILE: &str = "VERSION";
 
-const EXIT_TIMEOUT_MESSAGE: &str = "Stockfish did not exit. The previous engine was retained.";
 const COULD_NOT_START: &str =
     "The downloaded Stockfish could not start. The previous engine was retained.";
 
@@ -138,8 +91,8 @@ pub fn default_dir(data_dir: &Path, managed_override: Option<&Path>) -> PathBuf 
         .unwrap_or_else(|| data_dir.join("engines").join("stockfish").join("current"))
 }
 
-/// The Node names of the running platform (`process.platform` / `process.arch`), which the
-/// asset choice is written in. Unsupported values map to "", which matches no asset.
+/// The running platform as the asset choice names it (`darwin`, `win32`, `linux`). Unsupported
+/// values map to "", which matches no asset.
 pub fn node_platform() -> &'static str {
     match std::env::consts::OS {
         "macos" => "darwin",
@@ -192,12 +145,14 @@ pub struct ManagedLocation {
     pub target: Target,
     /// Suspends engine owners while the verified replacement is published.
     pub handoff: Option<Arc<dyn EngineHandoff>>,
-    /// Cancels a running install or delete (`true` cancels).
-    pub cancel: Option<watch::Receiver<bool>>,
+    /// Cancels a running install.
+    pub cancel: CancellationToken,
     /// How long the handoff may take to stop the owners before the install fails.
     pub exit_deadline: Duration,
     /// A release fixed in source (`SHIPPED`): only its tag and its digests are accepted.
     pub pinned: Option<&'static PinnedRelease>,
+    /// Where the download's traffic is counted.
+    pub meter: Arc<dyn Meter>,
 }
 
 impl ManagedLocation {
@@ -208,9 +163,10 @@ impl ManagedLocation {
             github_token: None,
             target: Target::current(),
             handoff: None,
-            cancel: None,
-            exit_deadline: DEFAULT_EXIT_DEADLINE,
+            cancel: CancellationToken::new(),
+            exit_deadline: super::uci::EXIT_DEADLINE,
             pinned: None,
+            meter: Arc::new(Unmetered),
         }
     }
 
@@ -233,16 +189,7 @@ pub trait EngineHandoff: Send + Sync {
 /// Held for the duration of one replacement; dropping it resumes the engine owners.
 pub type EngineGuard = Box<dyn Send>;
 
-/// What the managed directory holds (`ManagedEngine` in the TypeScript contracts).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ManagedEngine {
-    pub installed: bool,
-    pub path: PathBuf,
-    /// Release tag recorded when it was downloaded, e.g. `sf_17.1`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-}
+pub use kchess_contracts::types::EngineManaged as ManagedEngine;
 
 /// The result of `install_managed_engine`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -273,14 +220,14 @@ pub async fn managed_engine(host: &dyn Host, dir: &Path) -> ManagedEngine {
     let path = dir.join(executable_name());
     match tokio::fs::metadata(&path).await {
         Ok(metadata) if metadata.is_file() => {}
-        Ok(_) => return ManagedEngine::absent(path),
+        Ok(_) => return absent(&path),
         Err(cause) => {
             host.log(
                 Level::Debug,
                 "managed-engine",
                 &format!("Managed engine check failed: {} {cause}", dir.display()),
             );
-            return ManagedEngine::absent(path);
+            return absent(&path);
         }
     }
     let version = tokio::fs::read_to_string(dir.join(VERSION_FILE))
@@ -290,18 +237,16 @@ pub async fn managed_engine(host: &dyn Host, dir: &Path) -> ManagedEngine {
         .filter(|text| !text.is_empty());
     ManagedEngine {
         installed: true,
-        path,
+        path: path.to_string_lossy().into_owned(),
         version,
     }
 }
 
-impl ManagedEngine {
-    fn absent(path: PathBuf) -> ManagedEngine {
-        ManagedEngine {
-            installed: false,
-            path,
-            version: None,
-        }
+fn absent(path: &Path) -> ManagedEngine {
+    ManagedEngine {
+        installed: false,
+        path: path.to_string_lossy().into_owned(),
+        version: None,
     }
 }
 
@@ -316,10 +261,7 @@ impl ManagedEngine {
 fn dir_lock(dir: &Path) -> Arc<AsyncMutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>> = OnceLock::new();
     let locks = LOCKS.get_or_init(Default::default);
-    let mut locks = match locks.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let mut locks = crate::tasks::lock(locks);
     locks.retain(|_, lock| lock.strong_count() > 0);
     if let Some(lock) = locks.get(dir).and_then(Weak::upgrade) {
         return lock;
@@ -387,7 +329,7 @@ where
     };
     let guard = tokio::time::timeout(location.exit_deadline, handoff.suspend())
         .await
-        .map_err(|_| CoreError::new(EXIT_TIMEOUT_MESSAGE))??;
+        .map_err(|_| CoreError::new(super::uci::EXIT_TIMEOUT_MESSAGE))??;
     let result = commit().await;
     drop(guard);
     result
@@ -398,33 +340,29 @@ async fn install(
     location: &ManagedLocation,
     held: tokio::sync::OwnedMutexGuard<()>,
 ) -> Result<InstallResult> {
-    if crate::app_store() {
+    if kchess_host::app_store() {
         return Err(CoreError::new(
             "The App Store version uses the Stockfish it comes with.",
         ));
     }
     let dir = location.dir.clone();
-    let mut cancel = location.cancel.clone();
-    let client = reqwest::Client::builder()
-        .user_agent(crate::USER_AGENT)
-        // Byte-exact: the digest and the progress total are of the file as published.
-        .no_gzip()
-        .build()
+    let cancel = &location.cancel;
+    let client = download::client(None)
         .map_err(|_| CoreError::new("Could not start the Stockfish download."))?;
 
     let release = fetch_release(
-        host,
+        &*location.meter,
         &client,
         &location.release_url,
         location.github_token.as_deref(),
-        &mut cancel,
+        cancel,
     )
     .await?;
     let current = managed_engine(host, &dir).await;
     if current.installed && current.version.as_deref() == Some(release.tag.as_str()) {
         return Ok(InstallResult {
             installed: true,
-            path: current.path,
+            path: current.path.into(),
             version: release.tag,
             updated: false,
         });
@@ -484,10 +422,8 @@ async fn install(
         .tempdir()
         .map_err(|cause| CoreError::new(format!("Could not create a staging folder: {cause}")))?;
     let archive = staging.path().join(&asset.name);
-    let mut received = 0_u64;
-    let downloaded = download_archive(&client, &url, &archive, &mut cancel, &mut received).await;
-    usage(host, 0, received);
-    let digest = downloaded?;
+    let (digest, received) =
+        download_archive(&*location.meter, &client, &url, &archive, cancel).await?;
     if received as f64 != size {
         return Err(CoreError::new("Stockfish download was incomplete."));
     }
@@ -504,7 +440,7 @@ async fn install(
 
     tokio::fs::create_dir_all(&dir)
         .await
-        .map_err(|cause| io_error("Could not create the Stockfish folder", cause))?;
+        .map_err(|cause| CoreError::wrap("Could not create the Stockfish folder", cause))?;
     let path = dir.join(executable_name());
     let pending = dir.join(format!("{}.pending", executable_name()));
     let pending_version = dir.join(format!("{VERSION_FILE}.pending"));
@@ -512,14 +448,14 @@ async fn install(
     let prepared = async {
         tokio::fs::copy(&source, &pending)
             .await
-            .map_err(|cause| io_error("Could not stage the Stockfish executable", cause))?;
+            .map_err(|cause| CoreError::wrap("Could not stage the Stockfish executable", cause))?;
         set_executable(&pending)?;
         // Verify UCI before replacing the working engine; this catches wrong architecture and
         // broken downloads.
         probe_engine(&pending).await?;
         tokio::fs::write(&pending_version, &version_text)
             .await
-            .map_err(|cause| io_error("Could not stage the Stockfish version", cause))
+            .map_err(|cause| CoreError::wrap("Could not stage the Stockfish version", cause))
     }
     .await;
     if let Err(error) = prepared {
@@ -534,7 +470,7 @@ async fn install(
         Some(handoff) => {
             let suspended = tokio::time::timeout(location.exit_deadline, handoff.suspend())
                 .await
-                .map_err(|_| CoreError::new(EXIT_TIMEOUT_MESSAGE))
+                .map_err(|_| CoreError::new(super::uci::EXIT_TIMEOUT_MESSAGE))
                 .and_then(|suspended| suspended);
             match suspended {
                 Ok(suspended) => Some(suspended),
@@ -551,10 +487,11 @@ async fn install(
         let (pending_version, version_path) = (pending_version.clone(), dir.join(VERSION_FILE));
         tokio::task::spawn_blocking(move || {
             let _guards = (held, suspended);
-            std::fs::rename(&pending, &path)
-                .map_err(|cause| io_error("Could not replace the Stockfish executable", cause))?;
+            std::fs::rename(&pending, &path).map_err(|cause| {
+                CoreError::wrap("Could not replace the Stockfish executable", cause)
+            })?;
             std::fs::rename(&pending_version, &version_path)
-                .map_err(|cause| io_error("Could not record the Stockfish version", cause))
+                .map_err(|cause| CoreError::wrap("Could not record the Stockfish version", cause))
         })
     };
     let committed = renamed
@@ -579,14 +516,49 @@ struct Release {
     assets: Vec<ReleaseAsset>,
 }
 
+/// How the release check words its failures.
+const RELEASE_WORDING: download::Wording = download::Wording {
+    network: |cause| {
+        if cause.is_timeout() {
+            "Could not check Stockfish releases (timed out).".into()
+        } else {
+            "Could not check Stockfish releases (network error).".into()
+        }
+    },
+    status: |status| format!("Could not check Stockfish releases ({status})."),
+    too_large: "Invalid Stockfish release metadata.",
+};
+
+/// How the download words its failures.
+const DOWNLOAD_WORDING: download::Wording = download::Wording {
+    network: |cause| {
+        if cause.is_timeout() {
+            "Stockfish download timed out.".into()
+        } else {
+            "Stockfish download failed (network error).".into()
+        }
+    },
+    status: |status| format!("Stockfish download failed ({status})."),
+    too_large: "Stockfish download is unexpectedly large.",
+};
+
+/// The most the release metadata may take.
+const MAX_RELEASE_BYTES: u64 = 10 * 1024 * 1024;
+
+fn usage(meter: &dyn Meter) -> download::Usage<'_> {
+    download::Usage {
+        meter,
+        kind: kchess_contracts::types::UsageKind::Other,
+    }
+}
+
 async fn fetch_release(
-    host: &dyn Host,
+    meter: &dyn Meter,
     client: &reqwest::Client,
     url: &str,
     token: Option<&str>,
-    cancel: &mut Option<watch::Receiver<bool>>,
+    cancel: &CancellationToken,
 ) -> Result<Release> {
-    let deadline = std::time::Instant::now() + RELEASE_TIMEOUT;
     let request = || {
         let request = client
             .get(url)
@@ -596,29 +568,22 @@ async fn fetch_release(
             None => request,
         }
     };
-    // A brief GitHub failure (a 504) is asked again rather than failing the install.
-    let response = until_cancelled(cancel, async {
-        crate::download::send_retrying(request, Some(deadline))
-            .await
-            .map_err(|cause| {
-                CoreError::new(if cause.is_timeout() {
-                    "Could not check Stockfish releases (timed out)."
-                } else {
-                    "Could not check Stockfish releases (network error)."
-                })
-            })
-    })
+    let limits = download::Limits {
+        max_bytes: MAX_RELEASE_BYTES,
+        deadline: Some(std::time::Instant::now() + RELEASE_TIMEOUT),
+    };
+    let body = download::open(
+        client,
+        request,
+        limits,
+        cancel,
+        usage(meter),
+        &RELEASE_WORDING,
+    )
+    .await?
+    .bytes()
     .await?;
-    usage(host, 1, 0);
-    if !response.status().is_success() {
-        return Err(CoreError::new(format!(
-            "Could not check Stockfish releases ({}).",
-            response.status().as_u16()
-        )));
-    }
-    let value: Value = response
-        .json()
-        .await
+    let value: Value = serde_json::from_slice(&body)
         .map_err(|_| CoreError::new("Invalid Stockfish release metadata."))?;
     let tag = value.get("tag_name").and_then(Value::as_str);
     let assets = value.get("assets").and_then(Value::as_array);
@@ -635,97 +600,41 @@ async fn fetch_release(
     })
 }
 
-/// Stream the download into `archive`, hashing as it goes. `received` counts the bytes kept.
+/// Streams the download into `archive`, hashing as it goes: its digest and the bytes kept.
 async fn download_archive(
+    meter: &dyn Meter,
     client: &reqwest::Client,
     url: &str,
     archive: &Path,
-    cancel: &mut Option<watch::Receiver<bool>>,
-    received: &mut u64,
-) -> Result<String> {
-    let deadline = std::time::Instant::now() + DOWNLOAD_TIMEOUT;
-    let response = until_cancelled(cancel, async {
-        crate::download::send_retrying(|| client.get(url), Some(deadline))
-            .await
-            .map_err(|cause| {
-                CoreError::new(if cause.is_timeout() {
-                    "Stockfish download timed out."
-                } else {
-                    "Stockfish download failed (network error)."
-                })
-            })
-    })
+    cancel: &CancellationToken,
+) -> Result<(String, u64)> {
+    let limits = download::Limits {
+        max_bytes: MAX_DOWNLOAD_BYTES,
+        deadline: Some(std::time::Instant::now() + DOWNLOAD_TIMEOUT),
+    };
+    let mut body = download::open(
+        client,
+        || client.get(url),
+        limits,
+        cancel,
+        usage(meter),
+        &DOWNLOAD_WORDING,
+    )
     .await?;
-    if !response.status().is_success() {
-        return Err(CoreError::new(format!(
-            "Stockfish download failed ({}).",
-            response.status().as_u16()
-        )));
-    }
     let mut file = tokio::fs::File::create(archive)
         .await
-        .map_err(|cause| io_error("Could not stage the Stockfish download", cause))?;
+        .map_err(|cause| CoreError::wrap("Could not stage the Stockfish download", cause))?;
     let mut hasher = Sha256::new();
-    // A dropped connection picks up at the byte it reached instead of starting over.
-    let mut body = crate::download::Resumable::new(client, response, Some(deadline));
-    loop {
-        let chunk = until_cancelled(cancel, async {
-            body.chunk().await.map_err(|cause| {
-                CoreError::new(if cause.is_timeout() {
-                    "Stockfish download timed out."
-                } else {
-                    "Stockfish download failed (network error)."
-                })
-            })
-        })
-        .await?;
-        let Some(chunk) = chunk else { break };
-        *received += chunk.len() as u64;
-        if *received > MAX_DOWNLOAD_BYTES {
-            return Err(CoreError::new("Stockfish download is unexpectedly large."));
-        }
+    while let Some(chunk) = body.next().await? {
         hasher.update(&chunk);
         file.write_all(&chunk)
             .await
-            .map_err(|cause| io_error("Could not stage the Stockfish download", cause))?;
+            .map_err(|cause| CoreError::wrap("Could not stage the Stockfish download", cause))?;
     }
     file.flush()
         .await
-        .map_err(|cause| io_error("Could not stage the Stockfish download", cause))?;
-    Ok(hex(&hasher.finalize()))
-}
-
-fn usage(host: &dyn Host, requests: u32, bytes: u64) {
-    host.emit(
-        "host:usage",
-        json!({ "account": "", "category": "other", "requests": requests, "bytes": bytes }),
-    );
-}
-
-/// Run `work` unless the install is cancelled first; a cancelled install fails as an abort.
-async fn until_cancelled<T>(
-    cancel: &mut Option<watch::Receiver<bool>>,
-    work: impl Future<Output = Result<T>>,
-) -> Result<T> {
-    tokio::select! {
-        biased;
-        _ = cancelled(cancel) => Err(CoreError::aborted("This operation was aborted")),
-        result = work => result,
-    }
-}
-
-async fn cancelled(cancel: &mut Option<watch::Receiver<bool>>) {
-    if let Some(receiver) = cancel {
-        loop {
-            if *receiver.borrow() {
-                return;
-            }
-            if receiver.changed().await.is_err() {
-                break;
-            }
-        }
-    }
-    std::future::pending::<()>().await
+        .map_err(|cause| CoreError::wrap("Could not stage the Stockfish download", cause))?;
+    Ok((hex(&hasher.finalize()), body.received()))
 }
 
 /// The lowercase hex digest from GitHub's `sha256:<hex>` form, or `None` if absent or malformed.
@@ -761,135 +670,84 @@ fn archive_kind(name: &str) -> Option<ArchiveKind> {
     }
 }
 
-/// Extract the archive and locate the engine executable inside it, off the async runtime.
+/// Extract the archive and locate the engine executable inside it, off the async runtime. On
+/// timeout the extraction is told to stop at its next member and awaited, so nothing writes to
+/// the staging folder once this returns.
 async fn extract_engine(
     kind: ArchiveKind,
     archive: PathBuf,
     extracted: PathBuf,
 ) -> Result<PathBuf> {
-    let work = tokio::task::spawn_blocking(move || -> Result<Option<PathBuf>> {
-        extract(kind, &archive, &extracted)?;
+    let stop = CancellationToken::new();
+    let flag = stop.clone();
+    let mut work = tokio::task::spawn_blocking(move || -> Result<Option<PathBuf>> {
+        extract(kind, &archive, &extracted, Some(&flag))?;
         find_binary(&extracted)
     });
-    let found = tokio::time::timeout(EXTRACT_TIMEOUT, work)
-        .await
-        .map_err(|_| CoreError::new("Stockfish archive could not be extracted."))?
-        .map_err(|_| CoreError::new("Stockfish archive could not be extracted."))??;
+    let failed = || CoreError::new("Stockfish archive could not be extracted.");
+    let found = match tokio::time::timeout(EXTRACT_TIMEOUT, &mut work).await {
+        Ok(joined) => joined.map_err(|_| failed())??,
+        Err(_) => {
+            stop.cancel();
+            let _ = work.await;
+            return Err(failed());
+        }
+    };
     found.ok_or_else(|| CoreError::new("Stockfish executable was missing from the release."))
 }
 
-/// Extract `archive` into `root`. Only regular files and directories are written, with paths
-/// kept strictly inside `root`; links, devices and absolute or `..` paths fail the extraction.
-fn extract(kind: ArchiveKind, archive: &Path, root: &Path) -> Result<()> {
-    fs::create_dir_all(root)
-        .map_err(|cause| io_error("Could not extract the Stockfish archive", cause))?;
-    let file = fs::File::open(archive)
-        .map_err(|cause| io_error("Could not read the Stockfish archive", cause))?;
-    let mut budget = MAX_EXTRACTED_BYTES;
-    match kind {
-        ArchiveKind::Zip => unpack_zip(BufReader::new(file), root, &mut budget),
-        ArchiveKind::TarGz => unpack_tar(
-            flate2::read::GzDecoder::new(BufReader::new(file)),
-            root,
-            &mut budget,
-        ),
-        ArchiveKind::Tar => unpack_tar(BufReader::new(file), root, &mut budget),
-    }
-}
-
-fn unpack_tar<R: Read>(reader: R, root: &Path, budget: &mut u64) -> Result<()> {
-    let mut archive = tar::Archive::new(reader);
-    archive.set_preserve_permissions(false);
-    archive.set_preserve_mtime(false);
-    let entries = archive.entries().map_err(|cause| extract_error(&cause))?;
-    for entry in entries {
-        let mut entry = entry.map_err(|cause| extract_error(&cause))?;
-        let name = entry
-            .path()
-            .map_err(|cause| extract_error(&cause))?
-            .to_string_lossy()
-            .into_owned();
-        let relative = safe_relative(&name)?;
-        let kind = entry.header().entry_type();
-        if kind.is_symlink() || kind.is_hard_link() {
-            return Err(CoreError::new("Stockfish archive contains a link."));
-        }
-        if kind.is_dir() {
-            create_dir(root, &relative)?;
-        } else if kind.is_file() {
-            write_file(root, &relative, &mut entry, budget)?;
-        } else {
-            return Err(CoreError::new(
-                "Stockfish archive contains an unsupported entry.",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn unpack_zip<R: Read + io::Seek>(reader: R, root: &Path, budget: &mut u64) -> Result<()> {
-    let mut archive = zip::ZipArchive::new(reader).map_err(|cause| extract_error(&cause))?;
-    for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|cause| extract_error(&cause))?;
-        if entry.unix_mode().is_some_and(archive::is_symlink_mode) {
-            return Err(CoreError::new("Stockfish archive contains a link."));
-        }
-        let name = entry.name().map_err(|cause| extract_error(&cause))?;
-        let relative = safe_relative(&name)?;
-        if entry.is_dir() {
-            create_dir(root, &relative)?;
-        } else {
-            write_file(root, &relative, &mut entry, budget)?;
-        }
-    }
-    Ok(())
-}
-
-/// A member name as a path inside the archive root (see `archive::safe_relative`).
-fn safe_relative(name: &str) -> Result<PathBuf> {
-    archive::safe_relative(name)
-        .ok_or_else(|| CoreError::new("Stockfish archive has an unsafe path."))
-}
-
-fn create_dir(root: &Path, relative: &Path) -> Result<()> {
-    fs::create_dir_all(root.join(relative))
-        .map_err(|cause| io_error("Could not extract the Stockfish archive", cause))
-}
-
-fn write_file(
+/// Extract `archive` into `root`: regular files and folders only, each strictly inside `root`.
+fn extract(
+    kind: ArchiveKind,
+    archive: &Path,
     root: &Path,
-    relative: &Path,
-    reader: &mut impl Read,
-    budget: &mut u64,
+    cancel: Option<&CancellationToken>,
 ) -> Result<()> {
-    if relative.as_os_str().is_empty() {
-        return Err(CoreError::new("Stockfish archive has an unsafe path."));
-    }
-    match archive::write_member(root, relative, reader, budget)
-        .map_err(|cause| io_error("Could not extract the Stockfish archive", cause))?
-    {
-        Member::Written => Ok(()),
-        Member::OverBudget => Err(CoreError::new("Stockfish archive is unexpectedly large.")),
-    }
-}
-
-fn extract_error(cause: &dyn std::fmt::Display) -> CoreError {
-    CoreError::new(format!("Could not extract the Stockfish archive: {cause}"))
+    fs::create_dir_all(root)
+        .map_err(|cause| CoreError::wrap("Could not extract the Stockfish archive", cause))?;
+    let file = fs::File::open(archive)
+        .map_err(|cause| CoreError::wrap("Could not read the Stockfish archive", cause))?;
+    let to = archive::Unpack {
+        root,
+        budget: MAX_EXTRACTED_BYTES,
+        prefix: None,
+        cancel,
+    };
+    let unpacked = match kind {
+        ArchiveKind::Zip => archive::unpack_zip(BufReader::new(file), &to),
+        ArchiveKind::TarGz => {
+            archive::unpack_tar(flate2::read::GzDecoder::new(BufReader::new(file)), &to)
+        }
+        ArchiveKind::Tar => archive::unpack_tar(BufReader::new(file), &to),
+    };
+    unpacked.map(|_| ()).map_err(|refusal| match refusal {
+        Refusal::Unreadable(cause) => {
+            CoreError::new(format!("Could not extract the Stockfish archive: {cause}"))
+        }
+        Refusal::Link => CoreError::new("Stockfish archive contains a link."),
+        Refusal::UnsafePath | Refusal::Outside => {
+            CoreError::new("Stockfish archive has an unsafe path.")
+        }
+        Refusal::Unsupported => CoreError::new("Stockfish archive contains an unsupported entry."),
+        Refusal::TooLarge => CoreError::new("Stockfish archive is unexpectedly large."),
+        Refusal::Cancelled => CoreError::new("Stockfish archive could not be extracted."),
+        Refusal::Io(cause) => CoreError::wrap("Could not extract the Stockfish archive", cause),
+    })
 }
 
 /// The executable inside an extracted release: the first `stockfish*` file that is not
 /// documentation. Links are not followed.
 fn find_binary(root: &Path) -> Result<Option<PathBuf>> {
-    let entries = fs::read_dir(root)
-        .map_err(|cause| io_error("Could not read the extracted Stockfish archive", cause))?;
+    let entries = fs::read_dir(root).map_err(|cause| {
+        CoreError::wrap("Could not read the extracted Stockfish archive", cause)
+    })?;
     for entry in entries {
-        let entry = entry
-            .map_err(|cause| io_error("Could not read the extracted Stockfish archive", cause))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|cause| io_error("Could not read the extracted Stockfish archive", cause))?;
+        let entry = entry.map_err(|cause| {
+            CoreError::wrap("Could not read the extracted Stockfish archive", cause)
+        })?;
+        let file_type = entry.file_type().map_err(|cause| {
+            CoreError::wrap("Could not read the extracted Stockfish archive", cause)
+        })?;
         let path = entry.path();
         if file_type.is_dir() {
             if let Some(found) = find_binary(&path)? {
@@ -908,103 +766,29 @@ fn find_binary(root: &Path) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-/// Run the candidate executable and require a `uciok` line within the probe deadline.
+/// Runs the candidate executable through the UCI handshake within the probe deadline. The probe
+/// has a registry of its own: the core's refuses new engines while the executable is replaced.
 async fn probe_engine(path: &Path) -> Result<()> {
-    match tokio::time::timeout(PROBE_TIMEOUT, run_probe(path)).await {
-        Ok(result) => result,
-        Err(_) => Err(CoreError::new(COULD_NOT_START)),
+    struct Quiet;
+    impl Host for Quiet {
+        fn log(&self, _: Level, _: &str, _: &str) {}
+        fn emit(&self, _event: CoreEvent) {}
     }
-}
-
-/// Start the staged executable. On Linux, a process forked elsewhere in this process while the
-/// file was still open for writing keeps that write descriptor until it execs, and `execve`
-/// fails with `ETXTBSY` meanwhile; the window is brief, so busy spawns are retried (the probe
-/// deadline still bounds the whole probe).
-async fn spawn_probe(path: &Path) -> Result<tokio::process::Child> {
-    let mut delay = Duration::from_millis(5);
-    loop {
-        let spawned = crate::process::no_window(&mut tokio::process::Command::new(path))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn();
-        match spawned {
-            Ok(child) => return Ok(child),
-            Err(cause) if cause.kind() == io::ErrorKind::ExecutableFileBusy => {
-                tokio::time::sleep(delay).await;
-                delay = (delay * 2).min(Duration::from_millis(200));
-            }
-            Err(_) => return Err(CoreError::new(COULD_NOT_START)),
-        }
-    }
-}
-
-async fn run_probe(path: &Path) -> Result<()> {
-    let mut child = spawn_probe(path).await?;
-    if let Some(mut stdin) = child.stdin.take() {
-        // A broken build can exit before reading: the write then fails, and the exit below
-        // reports the probe as failed.
-        let _ = stdin.write_all(b"uci\n").await;
-    }
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| CoreError::new(COULD_NOT_START))?;
-    let mut output = String::new();
-    let mut scanned = 0_usize;
-    let mut verified = false;
-    let mut buffer = [0_u8; 8192];
-    let mut outcome = Ok(());
-    while let Ok(read) = stdout.read(&mut buffer).await {
-        if read == 0 {
-            // The end of output is the end of a last line without a newline.
-            verified = is_uciok(&output[scanned..]);
-            break;
-        }
-        output.push_str(&String::from_utf8_lossy(&buffer[..read]));
-        let mut start = scanned;
-        while let Some(offset) = output[start..].find('\n') {
-            if is_uciok(&output[start..start + offset]) {
-                verified = true;
-                break;
-            }
-            start += offset + 1;
-        }
-        scanned = start;
-        if verified || is_uciok(&output[scanned..]) {
-            verified = true;
-            break;
-        }
-        if output.len() > PROBE_OUTPUT_LIMIT {
-            outcome = Err(CoreError::new("Invalid Stockfish output."));
-            break;
-        }
-    }
-    let _ = child.start_kill();
-    let _ = child.wait().await;
-    if verified {
-        return Ok(());
-    }
-    outcome.and(Err(CoreError::new(COULD_NOT_START)))
-}
-
-/// `/^uciok\s*$/` on one line.
-fn is_uciok(line: &str) -> bool {
-    line.strip_prefix("uciok")
-        .is_some_and(|rest| rest.trim().is_empty())
-}
-
-fn io_error(context: &str, cause: io::Error) -> CoreError {
-    CoreError::new(format!("{context}: {cause}"))
+    let hub = EngineHub::new(Arc::new(Quiet));
+    let engine = UciController::start(&hub, tokio::process::Command::new(path), PROBE_TIMEOUT)
+        .map_err(|_| CoreError::new(COULD_NOT_START))?;
+    let ready = engine.ready().await;
+    engine.close();
+    ready.map_err(|_| CoreError::new(COULD_NOT_START))
 }
 
 fn set_executable(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-            .map_err(|cause| io_error("Could not make the Stockfish executable runnable", cause))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).map_err(|cause| {
+            CoreError::wrap("Could not make the Stockfish executable runnable", cause)
+        })?;
     }
     #[cfg(not(unix))]
     let _ = path;
@@ -1017,7 +801,8 @@ async fn discard(paths: &[PathBuf]) {
     }
 }
 
-/// The asset of a release for `platform` (a Node `process.platform`) and `arch` (`process.arch`).
+/// The asset of a release for `platform` and `arch`, named as `node_platform` and `node_arch`
+/// name them.
 pub fn pick_stockfish_asset<'a>(
     assets: &'a [ReleaseAsset],
     platform: &str,
@@ -1071,7 +856,7 @@ pub fn pick_mac_asset<'a>(assets: &'a [ReleaseAsset], arch: &str) -> Option<&'a 
         })
 }
 
-/// `/first.*second/i` on one name: `second` occurs somewhere after `first`, ignoring ASCII case.
+/// Whether `second` occurs somewhere after `first`, ignoring ASCII case.
 fn matches_in_order(name: &str, first: &str, second: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower

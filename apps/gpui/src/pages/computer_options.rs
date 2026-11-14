@@ -12,22 +12,12 @@ use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
-use crate::game::{chess960, position_problem, variants};
+use crate::game::chess960;
 use crate::theme::Palette;
 use crate::widgets;
+use kchess_domain::variant::{Setup, Variant};
 
 const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
-/// The clocks offered (`CLOCKS`), as minutes and increment.
-const CLOCKS: &[(&str, Option<(f64, f64)>)] = &[
-    ("No clock", None),
-    ("3+2", Some((3., 2.))),
-    ("5+3", Some((5., 3.))),
-    ("10+5", Some((10., 5.))),
-    ("15+10", Some((15., 10.))),
-    ("30+0", Some((30., 0.))),
-    ("60+30", Some((60., 30.))),
-];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Start {
@@ -38,15 +28,15 @@ enum Start {
 }
 
 /// The variants Fairy-Stockfish plays, in the variant list's order.
-fn fairy_variants() -> impl Iterator<Item = &'static crate::game::VariantText> {
-    variants()
-        .iter()
-        .filter(|text| !crate::game::standard_rules(&text.key))
+fn fairy_variants() -> impl Iterator<Item = Variant> {
+    Variant::ALL
+        .into_iter()
+        .filter(|variant| !variant.standard_rules())
 }
 
 /// What the dialog starts: the setup, the clock, the player's side and Stockfish's level.
 pub struct Chosen {
-    pub setup: Value,
+    pub setup: Setup,
     pub clock: Value,
     pub color: &'static str,
     pub level: String,
@@ -73,7 +63,7 @@ type OnStart = Box<dyn Fn(Chosen, &mut Window, &mut App)>;
 
 /// The current game's options, to open on.
 pub struct Current {
-    pub setup: Value,
+    pub setup: Setup,
     pub clock: Value,
     pub color: String,
     pub level: String,
@@ -87,14 +77,11 @@ impl GameOptions {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> GameOptions {
-        let variant = current.setup["variant"].as_str().unwrap_or("standard");
-        let fen = current.setup["fen"]
-            .as_str()
-            .unwrap_or(INITIAL_FEN)
-            .to_string();
-        let start = if variant == "chess960" {
+        let variant = current.setup.variant;
+        let fen = current.setup.fen.clone();
+        let start = if variant == Variant::Chess960 {
             Start::Chess960
-        } else if variant != "standard" {
+        } else if variant != Variant::Standard {
             Start::Variant
         } else if fen == INITIAL_FEN {
             Start::Standard
@@ -102,12 +89,12 @@ impl GameOptions {
             Start::Fen
         };
         let variant_row = fairy_variants()
-            .position(|text| text.key == variant)
+            .position(|fairy| fairy == variant)
             .unwrap_or(0);
         let variant_select = cx.new(|cx| {
             SelectState::new(
                 fairy_variants()
-                    .map(|text| SharedString::from(text.label.clone()))
+                    .map(|variant| SharedString::from(variant.label()))
                     .collect(),
                 Some(IndexPath::new(variant_row)),
                 window,
@@ -129,15 +116,13 @@ impl GameOptions {
         });
         // A variant game from another position (the analysis board's "Play from here") opens
         // with that position.
-        let default_fen = crate::game::rules("defaultFen", &[json!(variant)])
-            .ok()
-            .and_then(|fen| fen.as_str().map(str::to_string));
+        let default_fen = variant.default_fen();
         let variant_fen = cx.new(|cx| {
             let label = fairy_variants()
                 .nth(variant_row)
-                .map_or("Variant", |text| text.label.as_str());
+                .map_or("Variant", Variant::label);
             let mut input = InputState::new(window, cx).placeholder(format!("{label} start"));
-            if start == Start::Variant && default_fen.as_deref() != Some(fen.as_str()) {
+            if start == Start::Variant && default_fen != fen {
                 input.set_value(fen.clone(), window, cx);
             }
             input
@@ -155,13 +140,13 @@ impl GameOptions {
                     .unwrap_or_default()
             )
         });
-        let clock_row = CLOCKS
+        let clock_row = crate::game::CLOCKS
             .iter()
             .position(|(label, _)| Some(*label) == clock_text.as_deref())
             .unwrap_or(0);
         let clock = cx.new(|cx| {
             SelectState::new(
-                CLOCKS
+                crate::game::CLOCKS
                     .iter()
                     .map(|(label, _)| SharedString::from(*label))
                     .collect(),
@@ -200,13 +185,13 @@ impl GameOptions {
                 |this, _, _: &SelectEvent<Vec<SharedString>>, window, cx| {
                     let label = this
                         .variant_text(cx)
-                        .map_or("Variant start".to_string(), |text| {
-                            format!("{} start", text.label)
+                        .map_or("Variant start".to_string(), |variant| {
+                            format!("{} start", variant.label())
                         });
                     // A position the new variant refuses is the old variant's: it goes.
                     let refused = match (this.variant_text(cx), this.variant_fen(cx)) {
-                        (Some(text), Some(fen)) => {
-                            kchess_domain::rules::setup_start(&text.key, &fen).is_none()
+                        (Some(variant), Some(fen)) => {
+                            kchess_domain::rules::setup_start(variant, &fen).is_none()
                         }
                         _ => false,
                     };
@@ -261,7 +246,7 @@ impl GameOptions {
     }
 
     /// The variant chosen under _Variant_.
-    fn variant_text(&self, cx: &App) -> Option<&'static crate::game::VariantText> {
+    fn variant_text(&self, cx: &App) -> Option<Variant> {
         let row = self
             .variant
             .read(cx)
@@ -289,9 +274,7 @@ impl GameOptions {
         if self.start == Start::Variant {
             let variant = self.variant_text(cx)?;
             let fen = self.variant_fen(cx)?;
-            return kchess_domain::rules::setup_start(&variant.key, &fen)
-                .is_none()
-                .then(|| "That FEN is not a legal position".into());
+            return crate::game::setup_problem(variant, &fen).map(SharedString::from);
         }
         if self.start != Start::Fen {
             return None;
@@ -300,12 +283,7 @@ impl GameOptions {
         if text.is_empty() {
             return Some("Paste a FEN, or set up the position in the board editor".into());
         }
-        if let Some(problem) = position_problem(&text) {
-            return Some(problem.into());
-        }
-        kchess_domain::rules::setup_start("standard", &text)
-            .is_none()
-            .then(|| "That FEN is not a legal position".into())
+        crate::game::setup_problem(Variant::Standard, &text).map(SharedString::from)
     }
 
     fn number_problem(&self, cx: &App) -> Option<SharedString> {
@@ -315,22 +293,17 @@ impl GameOptions {
 
     fn chosen(&self, cx: &App) -> Chosen {
         let setup = match self.start {
-            Start::Standard => json!({ "variant": "standard", "fen": INITIAL_FEN }),
-            Start::Chess960 => json!({
-                "variant": "chess960",
-                "fen": chess960(self.number960(cx).unwrap_or(518)),
-            }),
+            Start::Standard => Setup::standard(),
+            Start::Chess960 => Setup {
+                variant: Variant::Chess960,
+                fen: chess960(self.number960(cx).unwrap_or(518)),
+            },
             Start::Variant => {
-                let variant = self
-                    .variant_text(cx)
-                    .map_or("crazyhouse", |text| text.key.as_str());
-                let fen = self.variant_fen(cx).unwrap_or_else(|| {
-                    crate::game::rules("defaultFen", &[json!(variant)])
-                        .ok()
-                        .and_then(|fen| fen.as_str().map(str::to_string))
-                        .unwrap_or_default()
-                });
-                json!({ "variant": variant, "fen": fen })
+                let variant = self.variant_text(cx).unwrap_or(Variant::Crazyhouse);
+                let fen = self
+                    .variant_fen(cx)
+                    .unwrap_or_else(|| variant.default_fen());
+                Setup { variant, fen }
             }
             // A Chess960 position pasted here castles as Chess960 (`setup_from_fen`).
             Start::Fen => crate::game::setup_from_fen(self.fen.read(cx).value().trim()),
@@ -341,7 +314,7 @@ impl GameOptions {
                 .selected_index(cx)
                 .map_or(0, |index| index.row)
         };
-        let clock = CLOCKS
+        let clock = crate::game::CLOCKS
             .get(row(&self.clock))
             .and_then(|(_, clock)| *clock)
             .map_or(
@@ -374,7 +347,9 @@ impl GameOptions {
     }
 
     fn randomize(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let n = crate::game::random_chess960();
+        let Some(n) = crate::game::drawn(kchess_games::random_chess960()) else {
+            return;
+        };
         self.number
             .update(cx, |input, cx| input.set_value(n.to_string(), window, cx));
         self.refresh_preview(cx);
@@ -382,8 +357,13 @@ impl GameOptions {
 }
 
 fn preview_state(fen: &str) -> BoardState {
-    let position = kchess_domain::rules::setup_start("chess960", fen)
-        .or_else(|| kchess_domain::rules::setup_start("standard", INITIAL_FEN));
+    let position = kchess_domain::rules::setup_start(
+        kchess_domain::variant::Variant::Chess960,
+        fen,
+    )
+    .or_else(|| {
+        kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, INITIAL_FEN)
+    });
     match position {
         Some(position) => BoardState::of(&position, shakmaty::Color::White, None, None),
         None => BoardState::of(
@@ -407,7 +387,9 @@ impl Render for GameOptions {
             Start::Variant => 2,
             Start::Fen => 3,
         };
-        let hint = self.variant_text(cx).map(|text| text.hint.clone());
+        let hint = self
+            .variant_text(cx)
+            .map(|variant| variant.hint().to_string());
         v_flex()
             .gap(px(16.))
             .child(widgets::field(

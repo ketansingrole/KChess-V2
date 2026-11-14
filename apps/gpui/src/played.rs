@@ -1,4 +1,4 @@
-//! The games played in this app, as Game history lists them (`useGameArchiveStore`): one list for
+//! The games played in this app, as Game history lists them: one list for
 //! every page, changed at once and written to the profile in order by one writer, off the UI
 //! thread so the app can wait for it while it quits. A write the core refuses shows what the
 //! profile keeps again, and is tried again before the app quits.
@@ -8,27 +8,29 @@ use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
 use kchess_contracts::Level;
 use kchess_contracts::calls;
-use serde_json::{Value, json};
+use kchess_contracts::check::{ArchivedGame, LibraryId, SessionObject};
+use kchess_contracts::types::{Library, PlayedGame, ProfileArea, SessionDocument, SessionKind};
 
-use crate::core::{Answer, AppCore, BoxedSave, Reads};
+use crate::core::{Answer, AppCore, Reads};
+use crate::quit::BoxedSave;
 
 enum Write {
-    Game(Value),
+    Game(PlayedGame),
     Remove(String),
-    /// A page's place in history (`archive:<kind>`), kept with the games it names.
-    Session(String, Value),
+    /// A page's session, or its place in history, kept with the games it names.
+    Session(SessionKind, SessionDocument),
     /// Done once every write before it was answered (with `true`, after those refused were tried
     /// again): with why one still failed, if any did.
-    Flushed(oneshot::Sender<crate::core::Saved>, bool),
+    Flushed(oneshot::Sender<crate::quit::Saved>, bool),
 }
 
 impl Write {
     /// What a later write replaces: a game (saved or removed), or a page's session.
     fn key(&self) -> String {
         match self {
-            Self::Game(game) => format!("game:{}", game["id"]),
-            Self::Remove(id) => format!("game:{}", json!(id)),
-            Self::Session(key, _) => format!("session:{key}"),
+            Self::Game(game) => format!("game:{}", game.id),
+            Self::Remove(id) => format!("game:{id}"),
+            Self::Session(kind, _) => format!("session:{}", kind.as_str()),
             Self::Flushed(..) => String::new(),
         }
     }
@@ -36,7 +38,7 @@ impl Write {
 
 pub struct PlayedGames {
     /// Newest saved first, as the core lists them.
-    games: Vec<Value>,
+    games: Vec<PlayedGame>,
     /// Counts the changes to `games`, so a page can keep what it works out of them until the next.
     revision: u64,
     /// Why the last write failed, until one succeeds.
@@ -52,8 +54,8 @@ pub struct PlayedHandle(pub Entity<PlayedGames>);
 impl Global for PlayedHandle {}
 
 /// Start from the games of the library read before the first page opens, and start the writer.
-pub fn init(library: &Value, cx: &mut App) {
-    let games = library["games"].as_array().cloned().unwrap_or_default();
+pub fn init(library: &Library, cx: &mut App) {
+    let games = library.games.clone();
     let (writes, queue) = mpsc::unbounded();
     let entity = cx.new(|_| PlayedGames {
         games,
@@ -63,12 +65,12 @@ pub fn init(library: &Value, cx: &mut App) {
         reads: Reads::default(),
     });
     write_in_order(entity.downgrade(), queue, cx);
-    crate::core::on_quit(cx, {
+    crate::quit::on_quit(cx, {
         let entity = entity.clone();
         move |cx| Some(entity.read(cx).flushed())
     });
     // Another window saved or removed a game: show the profile's.
-    crate::core::on_profile_change(cx, &["playedGames"], {
+    crate::core::on_profile_change(cx, &[ProfileArea::PlayedGames], {
         let entity = entity.downgrade();
         move |cx| {
             let _ = entity.update(cx, |games, cx| games.reload(cx));
@@ -130,24 +132,29 @@ fn write_in_order(
     .detach();
 }
 
-async fn send(core: &AppCore, write: &Write) -> Result<Value, kchess_contracts::CoreError> {
+/// Sends a write; what the core answers is not read, only whether it went through.
+async fn send(core: &AppCore, write: &Write) -> Result<(), kchess_contracts::CoreError> {
     match write {
-        Write::Game(game) => {
-            core.request(calls::SaveArchivedGame { game: game.clone() })
-                .await
-        }
+        Write::Game(game) => core
+            .request(calls::SaveArchivedGame {
+                game: ArchivedGame::of(game),
+            })
+            .await
+            .map(drop),
         Write::Remove(id) => {
-            core.request(calls::RemoveArchivedGame { id: json!(id) })
-                .await
-        }
-        Write::Session(key, value) => {
-            core.request(calls::SaveSession {
-                kind: json!(key),
-                session: value.clone(),
+            core.request(calls::RemoveArchivedGame {
+                id: LibraryId(id.clone()),
             })
             .await
         }
-        Write::Flushed(..) => Ok(Value::Null),
+        Write::Session(kind, session) => {
+            core.request(calls::SaveSession {
+                kind: *kind,
+                session: SessionObject::of(session),
+            })
+            .await
+        }
+        Write::Flushed(..) => Ok(()),
     }
 }
 
@@ -156,7 +163,7 @@ async fn send(core: &AppCore, write: &Write) -> Result<Value, kchess_contracts::
 /// writes are failing now.
 fn settle(
     write: Write,
-    result: Result<Value, kchess_contracts::CoreError>,
+    result: Result<(), kchess_contracts::CoreError>,
     failing: bool,
     refused: &mut Vec<(Write, String)>,
     outcomes: &mpsc::UnboundedSender<Option<String>>,
@@ -183,7 +190,7 @@ fn settle(
 }
 
 impl PlayedGames {
-    pub fn games(&self) -> &[Value] {
+    pub fn games(&self) -> &[PlayedGame] {
         &self.games
     }
 
@@ -192,15 +199,13 @@ impl PlayedGames {
         self.revision
     }
 
-    /// The games changed.
     fn changed(&mut self) {
         self.revision += 1;
     }
 
     /// Save a game: it shows at once, ahead of the rest.
-    pub fn save(&mut self, game: Value, cx: &mut Context<Self>) {
-        let id = game["id"].clone();
-        self.games.retain(|entry| entry["id"] != id);
+    pub fn save(&mut self, game: PlayedGame, cx: &mut Context<Self>) {
+        self.games.retain(|entry| entry.id != game.id);
         self.games.insert(0, game.clone());
         self.changed();
         self.reads.edited();
@@ -209,8 +214,8 @@ impl PlayedGames {
     }
 
     /// Remove a game: the game and where it was listed, for `restore`, if it was listed.
-    pub fn remove(&mut self, id: &str, cx: &mut Context<Self>) -> Option<(usize, Value)> {
-        let index = self.games.iter().position(|entry| entry["id"] == id)?;
+    pub fn remove(&mut self, id: &str, cx: &mut Context<Self>) -> Option<(usize, PlayedGame)> {
+        let index = self.games.iter().position(|entry| entry.id == id)?;
         let game = self.games.remove(index);
         self.changed();
         self.reads.edited();
@@ -220,9 +225,8 @@ impl PlayedGames {
     }
 
     /// Put a removed game back where it was listed (Undo).
-    pub fn restore(&mut self, index: usize, game: Value, cx: &mut Context<Self>) {
-        let id = game["id"].clone();
-        self.games.retain(|entry| entry["id"] != id);
+    pub fn restore(&mut self, index: usize, game: PlayedGame, cx: &mut Context<Self>) {
+        self.games.retain(|entry| entry.id != game.id);
         self.games.insert(index.min(self.games.len()), game.clone());
         self.changed();
         self.reads.edited();
@@ -231,8 +235,8 @@ impl PlayedGames {
     }
 
     /// Keep a page's session after the game writes sent before it.
-    pub fn save_session(&self, key: String, value: Value) {
-        let _ = self.writes.unbounded_send(Write::Session(key, value));
+    pub fn save_session(&self, kind: SessionKind, session: SessionDocument) {
+        let _ = self.writes.unbounded_send(Write::Session(kind, session));
     }
 
     /// Wait for every write sent so far, trying refused ones again: with why one still failed.
@@ -262,10 +266,8 @@ impl PlayedGames {
             }) else {
                 return;
             };
-            if let Ok(library) = library.await
-                && let Some(games) = library["games"].as_array()
-            {
-                let games = games.clone();
+            if let Ok(library) = library.await {
+                let games = library.games;
                 let _ = this.update(cx, |this, cx| match this.reads.answer(read) {
                     Answer::Show => {
                         this.games = games;

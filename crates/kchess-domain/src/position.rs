@@ -10,7 +10,7 @@ use crate::js;
 use crate::pgn::{Game, make_pgn, parse_pgn};
 use crate::rules::{self, UciMove};
 
-/// `isVariantEnd()`. Antichess ends only when the side to move has no pieces left.
+/// Antichess ends only when the side to move has no pieces left.
 fn variant_end(pos: &VariantPosition) -> bool {
     match pos {
         VariantPosition::Antichess(_) => pos.us().is_empty(),
@@ -18,7 +18,7 @@ fn variant_end(pos: &VariantPosition) -> bool {
     }
 }
 
-/// `allDests()`'s moves: none once the variant has ended.
+/// The legal moves: none once the variant has ended.
 fn moves(pos: &VariantPosition) -> shakmaty::MoveList {
     if variant_end(pos) {
         shakmaty::MoveList::new()
@@ -27,7 +27,7 @@ fn moves(pos: &VariantPosition) -> shakmaty::MoveList {
     }
 }
 
-/// `outcome()`: `Some(None)` is a draw.
+/// `Some(None)` is a draw.
 fn outcome(pos: &VariantPosition, no_moves: bool) -> Option<Option<Color>> {
     let ended = variant_end(pos);
     if let VariantPosition::Antichess(_) = pos {
@@ -50,11 +50,7 @@ fn outcome(pos: &VariantPosition, no_moves: bool) -> Option<Option<Color>> {
     }
 }
 
-fn color_name(color: Color) -> &'static str {
-    rules::turn_name(color)
-}
-
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Info {
     pub fen: String,
@@ -62,13 +58,13 @@ pub struct Info {
     pub check: bool,
     pub checkmate: bool,
     pub stalemate: bool,
-    /// `isInsufficientMaterial()`: neither side can win.
+    /// Neither side can win.
     pub insufficient: bool,
-    /// `hasInsufficientMaterial(color)` for each side.
+    /// Each side that has too little material to win.
     pub cannot_win: CannotWin,
     pub variant_end: bool,
     pub end: bool,
-    /// `outcome()`: absent while the game goes on, `{}` for a draw.
+    /// Absent while the game goes on, `{}` for a draw.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outcome: Option<Value>,
     pub halfmoves: u32,
@@ -79,7 +75,7 @@ pub struct Info {
     pub pieces: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct CannotWin {
     pub white: bool,
     pub black: bool,
@@ -92,7 +88,7 @@ pub fn info(pos: &VariantPosition) -> Info {
     let check = pos.is_check();
     Info {
         fen: rules::make_fen(pos),
-        turn: color_name(pos.turn()),
+        turn: crate::color::name(pos.turn()),
         check,
         checkmate: !ended && check && no_moves,
         stalemate: !ended && !check && no_moves,
@@ -104,7 +100,7 @@ pub fn info(pos: &VariantPosition) -> Info {
         variant_end: ended,
         end: ended || pos.is_insufficient_material() || no_moves,
         outcome: outcome(pos, no_moves).map(|winner| match winner {
-            Some(color) => json!({ "winner": color_name(color) }),
+            Some(color) => json!({ "winner": crate::color::name(color) }),
             None => json!({}),
         }),
         halfmoves: pos.halfmoves(),
@@ -136,10 +132,9 @@ pub fn drop_dests(pos: &VariantPosition) -> Vec<(Role, Vec<Square>)> {
 /// How destinations are listed.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DestMode {
-    /// `allDests()`, and `chessgroundDests(pos, { chess960: true })`: castling onto the rook
-    /// only.
+    /// Castling onto the rook only.
     Rules,
-    /// `chessgroundDests(pos)`: standard castling also onto the king's square.
+    /// Standard castling also onto the king's square.
     Board,
 }
 
@@ -160,7 +155,7 @@ pub fn dests(pos: &VariantPosition, mode: DestMode) -> Vec<(Square, Vec<Square>)
         }
         let mut list: Vec<Square> = squares.into_iter().collect();
         if mode == DestMode::Board && Some(from) == king && from.file() == shakmaty::File::E {
-            // Chessground needs both kinds of castling destination.
+            // The board takes both kinds of castling destination.
             if squares.contains(Square::A1) {
                 list.push(Square::C1);
             } else if squares.contains(Square::A8) {
@@ -257,7 +252,7 @@ pub fn legal_sans(pos: &VariantPosition) -> Vec<String> {
     sans
 }
 
-/// A move played: `makeUci` of the move (castling king-to-rook), its SAN and the result.
+/// A move played: its UCI (castling king-to-rook), its SAN and the result.
 #[derive(Debug, Serialize)]
 pub struct Played {
     pub uci: String,
@@ -276,7 +271,7 @@ fn played(pos: &VariantPosition, m: shakmaty::Move) -> Played {
     }
 }
 
-/// `uci` played as `normalizeMove` + `isLegal` + `play` would (castling either way).
+/// `uci` played when it is legal (castling onto the king's square or the rook's).
 pub fn play_uci(pos: &VariantPosition, uci: &str) -> Option<Played> {
     let m = rules::parse_uci(uci).and_then(|u| rules::legal_move(pos, u))?;
     Some(played(pos, m))
@@ -296,7 +291,7 @@ pub struct LineMove {
 }
 
 /// Moves (UCI, or SAN with `san`) played one after another until one is not legal.
-/// UCI moves are trimmed first with `trim`, as `replaySetup` reads them.
+/// UCI moves are trimmed first.
 pub fn line<S: AsRef<str>>(
     mut pos: VariantPosition,
     moves: &[S],
@@ -329,49 +324,98 @@ pub fn line<S: AsRef<str>>(
 
 /* ── Typed positions (the board editor) ── */
 
-/// `parseFen` without validation: the placement field and side to move as written.
-pub fn fen_setup(fen: &str) -> Option<Value> {
+/// A FEN's placement field and side to move.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BoardSetup {
+    pub board: String,
+    pub turn: &'static str,
+}
+
+/// A FEN read without validation: the placement field and side to move as written.
+pub fn fen_setup(fen: &str) -> Option<BoardSetup> {
     let setup = rules::parse_fen(fen)?;
     let written = rules::make_setup_fen(&setup);
     let board = written.split(' ').next().unwrap_or_default().to_string();
-    Some(json!({ "board": board, "turn": color_name(setup.turn) }))
+    Some(BoardSetup {
+        board,
+        turn: crate::color::name(setup.turn),
+    })
 }
 
-/// Why `Chess.fromSetup(parseFen(fen))` refuses a FEN, in its order of checks:
-/// `fen` (unreadable), `empty`, `kings`, `oppositeCheck`, `pawnsOnBackrank` or `illegal`.
-pub fn fen_problem(fen: &str) -> Option<&'static str> {
+/// Why a FEN is not a standard chess position Stockfish can analyse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FenProblem {
+    /// Not readable as a FEN.
+    Fen,
+    Empty,
+    Kings,
+    OppositeCheck,
+    PawnsOnBackrank,
+    TooManyPieces,
+    /// Refused for a reason none of the others names.
+    Illegal,
+}
+
+impl FenProblem {
+    /// Its code, as the rules corpus records it.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            FenProblem::Fen => "fen",
+            FenProblem::Empty => "empty",
+            FenProblem::Kings => "kings",
+            FenProblem::OppositeCheck => "oppositeCheck",
+            FenProblem::PawnsOnBackrank => "pawnsOnBackrank",
+            FenProblem::TooManyPieces => "tooManyPieces",
+            FenProblem::Illegal => "illegal",
+        }
+    }
+
+    /// What the app tells a player about it.
+    pub const fn message(self) -> &'static str {
+        match self {
+            FenProblem::Fen => "That is not a valid FEN",
+            FenProblem::Empty => "The board is empty",
+            FenProblem::Kings => "Each side needs exactly one king",
+            FenProblem::PawnsOnBackrank => "Pawns can’t stand on the first or last rank",
+            FenProblem::TooManyPieces => "Each side can have at most 16 pieces",
+            FenProblem::OppositeCheck => "The side not to move is in check",
+            FenProblem::Illegal => "This position is not legal",
+        }
+    }
+}
+
+/// Why `Chess.fromSetup(parseFen(fen))` refuses a FEN, in its order of checks; a standard
+/// position with more than 16 pieces a side is refused too.
+pub fn fen_problem(fen: &str) -> Option<FenProblem> {
     let Some(setup) = rules::parse_fen(fen) else {
-        return Some("fen");
+        return Some(FenProblem::Fen);
     };
     if rules::standard_from_fen(fen).is_some() {
         // Stockfish refuses more than 16 pieces for a side, and quits rather than analyse them.
         let crowded = setup.board.white().count() > 16 || setup.board.black().count() > 16;
-        return crowded.then_some("tooManyPieces");
+        return crowded.then_some(FenProblem::TooManyPieces);
     }
     let board = &setup.board;
     let turn = setup.turn;
     if board.occupied().is_empty() {
-        return Some("empty");
+        return Some(FenProblem::Empty);
     }
-    if board.kings().count() != 2 || board.king_of(turn).is_none() {
-        return Some("kings");
-    }
-    let Some(other) = board.king_of(!turn) else {
-        return Some("kings");
+    // A side's king is one king of its colour, so two of them are the board's two kings.
+    let (Some(_), Some(other)) = (board.king_of(turn), board.king_of(!turn)) else {
+        return Some(FenProblem::Kings);
     };
     if board.attacks_to(other, turn, board.occupied()).any() {
-        return Some("oppositeCheck");
+        return Some(FenProblem::OppositeCheck);
     }
     let backranks = Bitboard::from_rank(Rank::First) | Bitboard::from_rank(Rank::Eighth);
     if board.pawns().intersects(backranks) {
-        return Some("pawnsOnBackrank");
+        return Some(FenProblem::PawnsOnBackrank);
     }
-    Some("illegal")
+    Some(FenProblem::Illegal)
 }
 
 /* ── PGN games ── */
 
-/// `startingPosition(headers)`.
 pub fn starting_position(game: &Game) -> Option<VariantPosition> {
     let variant = rules::pgn_variant(game.header("Variant"))?;
     match game.header("FEN").filter(|fen| !fen.is_empty()) {
@@ -400,28 +444,30 @@ fn game_problem(game: &Game) -> Option<&'static str> {
     None
 }
 
-fn headers(game: &Game) -> Value {
-    Value::Array(game.headers.iter().map(|(k, v)| json!([k, v])).collect())
+/// One game of a PGN document.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PgnGame {
+    /// Its headers, in order, as name and value.
+    pub headers: Vec<(String, String)>,
+    /// Its text as the PGN writer writes it.
+    pub pgn: String,
+    /// Why it cannot be replayed, if it cannot.
+    pub problem: Option<&'static str>,
 }
 
-/// `parsePgn`: each game's headers, its text as `makePgn` writes it, and why it cannot
-/// be replayed (`game_problem`), if it cannot.
-pub fn pgn_games(text: &str) -> Value {
-    Value::Array(
-        parse_pgn(text)
-            .iter()
-            .map(|game| {
-                json!({
-                    "headers": headers(game),
-                    "pgn": make_pgn(game),
-                    "problem": game_problem(game),
-                })
-            })
-            .collect(),
-    )
+/// Each game of a PGN document.
+pub fn pgn_games(text: &str) -> Vec<PgnGame> {
+    parse_pgn(text)
+        .iter()
+        .map(|game| PgnGame {
+            headers: game.headers.clone(),
+            pgn: make_pgn(game),
+            problem: game_problem(game),
+        })
+        .collect()
 }
 
-/// The value of the last `[%clk h:mm:ss]` in a comment, as `parseComment` reads it.
+/// The value of the last `[%clk h:mm:ss]` in a comment.
 pub fn comment_clock(comment: &str) -> Option<f64> {
     let mut clock = None;
     let mut rest = comment;
@@ -465,54 +511,70 @@ fn clock_value(text: &str) -> Option<f64> {
     Some(hours * 3600.0 + minutes * 60.0 + seconds)
 }
 
+/// One move of a game's main line.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MainlineMove {
+    pub san: String,
+    pub uci: String,
+    pub fen: String,
+    /// The colour that played it.
+    pub mover: &'static str,
+    /// Whether it gives check.
+    pub check: bool,
+    /// The clock its comment records, in seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clock: Option<f64>,
+}
+
+/// A game's main line, from its start.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Mainline {
+    pub headers: Vec<(String, String)>,
+    /// The start's FEN; none when the game's own start cannot be set up.
+    pub start: Option<String>,
+    /// Whether the side to move is in check at the start.
+    pub start_check: bool,
+    pub moves: Vec<MainlineMove>,
+}
+
 /// The first game's main line, played from its start (the usual start when its own cannot be
-/// set up, so `start` is null) until a move is illegal, at most `limit` moves. `check` is
-/// `isCheck()` after each move (`startCheck` before the first).
-pub fn pgn_mainline(text: &str, limit: usize) -> Value {
+/// set up) until a move is illegal, at most `limit` moves.
+pub fn pgn_mainline(text: &str, limit: usize) -> Option<Mainline> {
     let games = parse_pgn(text);
-    let Some(game) = games.first() else {
-        return Value::Null;
-    };
+    let game = games.first()?;
     let start = starting_position(game);
     let mut pos = start
         .clone()
         .unwrap_or_else(|| rules::default_position(shakmaty::variant::Variant::Chess));
     let start_check = pos.is_check();
     let mut moves = Vec::new();
-    let mut node = 0;
-    while let Some(child) = game.children(node).next() {
-        if moves.len() >= limit {
-            break;
-        }
-        node = child;
+    for child in game.main_line().take(limit) {
         let data = &game.nodes[child];
         let Some(m) = rules::parse_san(&pos, data.san.as_str()) else {
             break;
         };
-        let mover = color_name(pos.turn());
+        let mover = crate::color::name(pos.turn());
         let uci = rules::make_uci(&m);
         pos.play_unchecked(m);
         let clock = data
             .comments
             .as_ref()
             .and_then(|comments| comment_clock(&comments.join(" ")));
-        let mut entry = json!({
-            "san": data.san.as_str(),
-            "uci": uci,
-            "fen": rules::make_fen(&pos),
-            "mover": mover,
-            "check": pos.is_check(),
+        moves.push(MainlineMove {
+            san: data.san.as_str().to_string(),
+            uci,
+            fen: rules::make_fen(&pos),
+            mover,
+            check: pos.is_check(),
+            clock,
         });
-        if let Some(clock) = clock {
-            entry["clock"] = json!(clock);
-        }
-        moves.push(entry);
     }
-    json!({
-        "headers": headers(game),
-        "start": start.as_ref().map(rules::make_fen),
-        "startCheck": start_check,
-        "moves": moves,
+    Some(Mainline {
+        headers: game.headers.clone(),
+        start: start.as_ref().map(rules::make_fen),
+        start_check,
+        moves,
     })
 }
 
@@ -623,33 +685,73 @@ mod tests {
 
     #[test]
     fn explains_unplayable_fens() {
-        assert_eq!(fen_problem(START), None);
-        assert_eq!(fen_problem("nonsense"), Some("fen"));
-        assert_eq!(fen_problem("8/8/8/8/8/8/8/8 w - - 0 1"), Some("empty"));
-        assert_eq!(fen_problem("8/8/8/8/8/8/8/4K3 w - - 0 1"), Some("kings"));
-        assert_eq!(fen_problem("k7/8/8/8/8/8/8/K6K w - - 0 1"), Some("kings"));
-        assert_eq!(fen_problem("K7/8/8/8/8/8/8/8 b - - 0 1"), Some("kings"));
+        assert_eq!(fen_problem(START).map(FenProblem::as_str), None);
+        assert_eq!(fen_problem("nonsense").map(FenProblem::as_str), Some("fen"));
+        assert_eq!(
+            fen_problem("8/8/8/8/8/8/8/8 w - - 0 1").map(FenProblem::as_str),
+            Some("empty")
+        );
+        assert_eq!(
+            fen_problem("8/8/8/8/8/8/8/4K3 w - - 0 1").map(FenProblem::as_str),
+            Some("kings")
+        );
+        assert_eq!(
+            fen_problem("k7/8/8/8/8/8/8/K6K w - - 0 1").map(FenProblem::as_str),
+            Some("kings")
+        );
+        assert_eq!(
+            fen_problem("K7/8/8/8/8/8/8/8 b - - 0 1").map(FenProblem::as_str),
+            Some("kings")
+        );
         // Black's seventeenth piece counts as much as White's.
         assert_eq!(
-            fen_problem("K7/8/8/8/8/1q6/pppppppp/qqqqqqqk b - - 0 1"),
+            fen_problem("K7/8/8/8/8/1q6/pppppppp/qqqqqqqk b - - 0 1").map(FenProblem::as_str),
             Some("tooManyPieces")
         );
         assert_eq!(
-            fen_problem("4k3/4Q3/8/8/8/8/8/4K3 w - - 0 1"),
+            fen_problem("4k3/4Q3/8/8/8/8/8/4K3 w - - 0 1").map(FenProblem::as_str),
             Some("oppositeCheck")
         );
         assert_eq!(
-            fen_problem("P3k3/8/8/8/8/8/8/4K3 w - - 0 1"),
+            fen_problem("P3k3/8/8/8/8/8/8/4K3 w - - 0 1").map(FenProblem::as_str),
             Some("pawnsOnBackrank")
         );
         // A queen added to a full set: Stockfish quit on it ("More than 32 pieces").
         assert_eq!(
-            fen_problem("rnbqkbnr/pppppppp/8/8/3q3N/4K3/1PPPPPPP/RNBQ1BNR w kq - 0 1"),
+            fen_problem("rnbqkbnr/pppppppp/8/8/3q3N/4K3/1PPPPPPP/RNBQ1BNR w kq - 0 1")
+                .map(FenProblem::as_str),
             Some("tooManyPieces")
         );
         assert_eq!(
-            fen_problem("4k3/8/8/8/8/PPPPPPPP/PPPPPPPP/RNBQKBNR w - - 0 1"),
+            fen_problem("4k3/8/8/8/8/PPPPPPPP/PPPPPPPP/RNBQKBNR w - - 0 1").map(FenProblem::as_str),
             Some("tooManyPieces")
+        );
+    }
+
+    /// Each problem tells the player what is wrong in its own words.
+    #[test]
+    fn each_fen_problem_has_its_own_message() {
+        let messages = [
+            FenProblem::Fen,
+            FenProblem::Empty,
+            FenProblem::Kings,
+            FenProblem::OppositeCheck,
+            FenProblem::PawnsOnBackrank,
+            FenProblem::TooManyPieces,
+            FenProblem::Illegal,
+        ]
+        .map(FenProblem::message);
+        assert_eq!(
+            messages,
+            [
+                "That is not a valid FEN",
+                "The board is empty",
+                "Each side needs exactly one king",
+                "The side not to move is in check",
+                "Pawns can’t stand on the first or last rank",
+                "Each side can have at most 16 pieces",
+                "This position is not legal",
+            ]
         );
     }
 
@@ -670,16 +772,39 @@ mod tests {
         let line = pgn_mainline(
             "1. e4 { [%clk 0:01:00] } e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# *",
             3,
-        );
-        assert_eq!(line["moves"].as_array().unwrap().len(), 3);
-        assert_eq!(line["moves"][0]["clock"], json!(60.0));
-        assert_eq!(line["start"], json!(START));
+        )
+        .unwrap();
+        assert_eq!(line.moves.len(), 3);
+        assert_eq!(line.moves[0].clock, Some(60.0));
+        assert_eq!(line.start.as_deref(), Some(START));
+    }
+
+    /// A board's destinations castle onto the king's square too, a Chess960 board's onto the
+    /// rook only, as the rules do.
+    #[test]
+    fn dests_castle_as_the_board_asks() {
+        let pos = rules::setup_start(
+            crate::variant::Variant::Standard,
+            "4k3/8/8/8/8/8/8/4K2R w K - 0 1",
+        )
+        .unwrap();
+        let king = |mode| {
+            dests(&pos, mode)
+                .into_iter()
+                .find(|(from, _)| *from == Square::E1)
+                .unwrap()
+                .1
+        };
+        assert!(king(DestMode::Board).contains(&Square::G1));
+        let squares = king(DestMode::Rules);
+        assert!(squares.contains(&Square::H1));
+        assert!(!squares.contains(&Square::G1));
     }
 
     #[test]
     fn crazyhouse_drops_list_each_pocket_piece_and_its_squares() {
         let pos = crate::rules::setup_start(
-            "crazyhouse",
+            crate::variant::Variant::Crazyhouse,
             "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3",
         )
         .unwrap();
@@ -695,7 +820,7 @@ mod tests {
         assert!(
             super::drop_dests(
                 &crate::rules::setup_start(
-                    "standard",
+                    crate::variant::Variant::Standard,
                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
                 )
                 .unwrap()

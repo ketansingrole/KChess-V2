@@ -1,26 +1,27 @@
-//! Settings, accounts, the game library, the Lichess API cache and the
-//! account lifecycle, as `store.games.<name>` methods over `kchess.db`.
-//!
-//! Each method takes its arguments as a JSON array and returns its result as
-//! JSON (`undefined` is `null` or an omitted key, as `JSON.stringify` writes it). Not mirrored yet:
-//! `saveLogin` and `getToken` (the host's credential encryption is not a core capability yet), the
-//! Lichess reviews that `saveGames`/`saveGamesPage` write (`store/reviews.rs`),
-//! the one-time JSON and legacy imports that run before the first read (they need the data
-//! directory and the legacy path, which the dispatch does not carry), and the in-memory caches
-//! (`snapshot`, `pageTotals`): they only save recounting, so results are the same.
-//! A callback argument (`stillCurrent`) is passed as its boolean result, read just before the call.
+//! Settings, accounts, the game library, the Lichess API cache and the account lifecycle in
+//! `kchess.db`. Logins arrive already encrypted: the caller seals them with the operating system's
+//! credential store.
 
-use std::collections::{BTreeMap, HashMap};
+use crate::time::now_ms;
+use std::collections::BTreeMap;
 
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::{Map, Value, json};
 
 use super::StoreContext;
-use crate::error::{CoreError, Result};
+use super::sql::{Sql as _, transaction};
 use crate::host::{Host, Level};
+use kchess_contracts::check::{Username, check};
+use kchess_contracts::error::{CoreError, Result};
+use kchess_contracts::types::{
+    Account, AppData, GameLibraryOverview, GamePage, GamePageQuery, GameRecord, LichessGame,
+    RatingSeries, Settings, StoredReview,
+};
 use kchess_domain::calendar::civil_from_days;
+use kchess_domain::color::Color;
+use kchess_domain::misc::value::J;
 
 /// Games kept per account.
 pub const MAX_GAMES: i64 = 5000;
@@ -28,53 +29,6 @@ pub const MAX_GAMES: i64 = 5000;
 /// Must match the indexed expression in `migrations.rs` verbatim, or SQLite falls back to a scan.
 pub const RESULT_SQL: &str =
     "CASE WHEN winner IS NULL THEN 'draw' WHEN winner = color THEN 'win' ELSE 'loss' END";
-
-/// Every persisted setting, in column order (`SETTINGS_KEYS`).
-const SETTINGS_KEYS: [&str; 43] = [
-    "appearance",
-    "boardTheme",
-    "lightTheme",
-    "darkTheme",
-    "pieceSet",
-    "pieceAnimation",
-    "coordinates",
-    "soundEnabled",
-    "soundVolume",
-    "enginePath",
-    "premove",
-    "promotion",
-    "showLegalMoves",
-    "notificationsEnabled",
-    "notifyActive",
-    "notifyBackground",
-    "notifyOpponentMove",
-    "notifyLowTime",
-    "notifyGameEvents",
-    "notifyComputerMove",
-    "notifySound",
-    "voicePushToTalk",
-    "voiceConfirmMoves",
-    "voiceHistory",
-    "updateAutoCheck",
-    "updateAutoDownload",
-    "updateInstallOnQuit",
-    "engineLevels",
-    "reviewAuto",
-    "reviewOnBattery",
-    "receiveChallenges",
-    "notifyChallenges",
-    "onlineChat",
-    "correspondencePoll",
-    "zenMode",
-    "blindfold",
-    "cloudEval",
-    "showOpeningName",
-    "swipeNavigation",
-    "swipeIndicator",
-    "puzzleAutoNext",
-    "confirmCorrespondence",
-    "figurineNotation",
-];
 
 /// Every persisted game field, in column order (`GAME_KEYS`).
 pub(super) const GAME_KEYS: [&str; 17] = [
@@ -98,402 +52,61 @@ pub(super) const GAME_KEYS: [&str; 17] = [
 ];
 
 /// The list view never shows the PGN; it is fetched per game when reviewed.
-const LIST_COLUMNS: &str = "account, id, createdAt, lastMoveAt, rated, speed, perf, status, winner, color, opponent, opponentRating, playerRating, ratingDiff, opening, moves";
-
-const PIECE_ANIMATIONS: [&str; 4] = ["none", "fast", "normal", "slow"];
-const REVIEW_AUTO: [&str; 3] = ["off", "recent", "all"];
+fn list_columns() -> String {
+    GAME_KEYS
+        .iter()
+        .filter(|key| **key != "pgn")
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// `DEFAULT_SETTINGS`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Settings {
-    pub appearance: String,
-    pub board_theme: String,
-    pub light_theme: String,
-    pub dark_theme: String,
-    pub piece_set: String,
-    pub piece_animation: String,
-    pub coordinates: String,
-    pub sound_enabled: bool,
-    pub sound_volume: f64,
-    pub engine_path: String,
-    pub premove: bool,
-    pub promotion: String,
-    pub show_legal_moves: bool,
-    pub notifications_enabled: bool,
-    pub notify_active: bool,
-    pub notify_background: bool,
-    pub notify_opponent_move: bool,
-    pub notify_low_time: bool,
-    pub notify_game_events: bool,
-    pub notify_computer_move: bool,
-    pub notify_sound: bool,
-    pub voice_push_to_talk: bool,
-    pub voice_confirm_moves: bool,
-    pub voice_history: bool,
-    pub update_auto_check: bool,
-    pub update_auto_download: bool,
-    pub update_install_on_quit: bool,
-    pub engine_levels: Vec<String>,
-    pub review_auto: String,
-    pub review_on_battery: bool,
-    pub receive_challenges: bool,
-    pub notify_challenges: bool,
-    pub online_chat: bool,
-    pub correspondence_poll: f64,
-    pub zen_mode: bool,
-    pub blindfold: bool,
-    pub cloud_eval: bool,
-    pub show_opening_name: bool,
-    pub swipe_navigation: bool,
-    pub swipe_indicator: bool,
-    pub puzzle_auto_next: bool,
-    pub confirm_correspondence: bool,
-    pub figurine_notation: bool,
+/// The default settings, as the contracts define them.
+pub fn default_settings() -> Settings {
+    // The contracts' defaults read the domain's bundled engine levels, which are known levels.
+    kchess_contracts::defaults::default_settings()
+        .unwrap_or_else(|cause| unreachable!("the bundled default settings are valid: {cause}"))
 }
 
-pub(super) fn default_settings() -> Settings {
-    Settings {
-        appearance: "system".into(),
-        board_theme: "brown".into(),
-        light_theme: "kchess".into(),
-        dark_theme: "kchess".into(),
-        piece_set: "cburnett".into(),
-        piece_animation: "normal".into(),
-        coordinates: "inside".into(),
-        sound_enabled: true,
-        sound_volume: 0.7,
-        engine_path: String::new(),
-        premove: true,
-        promotion: "ask".into(),
-        show_legal_moves: true,
-        notifications_enabled: true,
-        notify_active: false,
-        notify_background: true,
-        notify_opponent_move: true,
-        notify_low_time: true,
-        notify_game_events: true,
-        notify_computer_move: true,
-        notify_sound: false,
-        voice_push_to_talk: false,
-        voice_confirm_moves: true,
-        voice_history: true,
-        update_auto_check: true,
-        update_auto_download: true,
-        update_install_on_quit: true,
-        engine_levels: ["beginner", "club", "expert", "fm", "im", "gm", "max"]
-            .map(String::from)
-            .to_vec(),
-        review_auto: "recent".into(),
-        review_on_battery: false,
-        receive_challenges: true,
-        notify_challenges: true,
-        online_chat: true,
-        correspondence_poll: 5.0,
-        zen_mode: false,
-        blindfold: false,
-        cloud_eval: false,
-        show_opening_name: true,
-        swipe_navigation: true,
-        swipe_indicator: true,
-        puzzle_auto_next: false,
-        confirm_correspondence: true,
-        figurine_notation: false,
-    }
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AppData {
-    pub settings: Settings,
-    pub accounts: Vec<Account>,
-    pub game_count: i64,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Account {
-    pub username: String,
-    pub connected: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_synced_at: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub synced_play_time: Option<i64>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LichessGame {
-    pub id: String,
-    pub account: String,
-    pub created_at: i64,
-    pub last_move_at: i64,
-    pub rated: bool,
-    pub speed: String,
-    pub perf: String,
-    pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub winner: Option<String>,
-    pub color: String,
-    pub opponent: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub opponent_rating: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub player_rating: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rating_diff: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub opening: Option<String>,
-    pub moves: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pgn: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GamePage {
-    pub games: Vec<LichessGame>,
-    pub total: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GameRecord {
-    pub total: i64,
-    pub win: i64,
-    pub loss: Option<i64>,
-    pub draw: Option<i64>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GameLibraryOverview {
-    pub by_account: BTreeMap<String, GameRecord>,
-    pub versus: BTreeMap<String, GameRecord>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RatingSeries {
-    pub name: String,
-    pub points: Vec<[i64; 4]>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GamePageQuery {
-    account: Option<String>,
-    result: Option<String>,
-    rated: Option<bool>,
-    search: Option<String>,
-    // Validated whole numbers; the validator hands them back as JSON numbers, which may be floats.
-    offset: f64,
-    limit: f64,
-}
-
-/// Lets the `?` operator carry SQLite failures as the core's errors.
-pub(super) trait StorageResult<T> {
-    fn sql(self) -> Result<T>;
-}
-
-impl<T> StorageResult<T> for rusqlite::Result<T> {
-    fn sql(self) -> Result<T> {
-        self.map_err(|cause| CoreError::new(cause.to_string()))
-    }
-}
-
-/// This module's storage methods; None when the method is not one of them.
-pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
-    let db = ctx.db;
-    let name = method.strip_prefix("store.games.")?;
-    Some(match name {
-        "getSettings" => get_settings(db),
-        "loadData" => load_app_data(db).and_then(as_json),
-        "gamePage" => arg(args, 0, "query").and_then(|query| game_page(ctx, query)),
-        "gameLibraryOverview" => game_library_overview(ctx),
-        "gameRatingHistory" => arg(args, 0, "account")
-            .and_then(|account: String| rating_history(db, &account))
-            .and_then(as_json),
-        "pendingGameIds" => arg(args, 0, "account")
-            .and_then(|account: String| pending_game_ids(db, &account))
-            .and_then(as_json),
-        "gamePgn" => arg(args, 0, "account").and_then(|account: String| {
-            arg(args, 1, "id").and_then(|id: String| game_pgn(db, &account, &id))
-        }),
-        "readApiCache" => {
-            arg(args, 0, "key").and_then(|key: String| read_api_cache(ctx.host, db, &key))
-        }
-        "writeApiCache" => arg(args, 0, "key").and_then(|key: String| {
-            write_api_cache(
-                db,
-                &key,
-                args.get(1).unwrap_or(&Value::Null),
-                current(args, 2),
-            )
-        }),
-        "saveSettings" => arg(args, 0, "settings").and_then(|settings: Settings| {
-            write_settings(db, &settings)?;
-            as_json(settings)
-        }),
-        "addAccount" => arg(args, 0, "username").and_then(|username: String| {
-            let connected = args.get(1).and_then(Value::as_bool).unwrap_or(false);
-            add_account(db, &username, connected)
-        }),
-        "addFriends" => arg(args, 0, "usernames")
-            .and_then(|usernames: Vec<Value>| add_friends(ctx.host, db, &usernames))
-            .and_then(as_json),
-        "dismissedFriends" => dismissed_friends(db).and_then(as_json),
-        "logoutAccounts" => optional_arg::<String>(args, 0, "username")
-            .and_then(|username| logout_accounts(ctx.host, db, username.as_deref()))
-            .and_then(as_json),
-        // A legacy token that could not be re-encrypted: forget the token, keep the games.
-        "disconnectAccount" => optional_arg::<String>(args, 0, "username").and_then(|username| {
-            let Some(username) = username else {
-                return Ok(Value::Null);
-            };
-            transaction(ctx.host, db, || {
-                db.execute(
-                    "UPDATE accounts SET connected = 0 WHERE username = ? COLLATE NOCASE",
-                    [&username],
-                )
-                .sql()?;
-                db.execute(
-                    "DELETE FROM tokens WHERE username = ? COLLATE NOCASE",
-                    [&username],
-                )
-                .sql()?;
-                Ok(())
-            })
-            .map(|()| Value::Null)
-        }),
-        "removeAccount" => arg(args, 0, "username")
-            .and_then(|username: String| remove_account(ctx.host, db, &username))
-            .and_then(as_json),
-        "clearAccountData" => arg(args, 0, "username")
-            .and_then(|username: String| clear_account_data(ctx.host, db, &username))
-            .and_then(as_json),
-        "saveGamesPage" => arg(args, 0, "username").and_then(|username: String| {
-            let games: Vec<Value> = arg(args, 1, "games")?;
-            let reviews: Vec<Value> = optional_arg(args, 2, "reviews")?.unwrap_or_default();
-            save_games_page(ctx.host, db, &username, &games, &reviews, current(args, 3))
-        }),
-        "saveGames" => arg(args, 0, "username").and_then(|username: String| {
-            let games: Vec<Value> = arg(args, 1, "games")?;
-            let synced_at: Option<i64> = optional_arg(args, 2, "syncedAt")?;
-            save_games(ctx.host, db, &username, &games, synced_at, current(args, 3))
-        }),
-        "saveSyncedPlayTime" => arg(args, 0, "username").and_then(|username: String| {
-            let play_time: i64 = arg(args, 1, "playTime")?;
-            save_synced_play_time(db, &username, play_time, current(args, 2))
-        }),
-        // The one-time import from an earlier release, run by the first read (`ensureMigrated`).
-        // The plaintext tokens it finds go back to the caller, which encrypts and stores them.
-        "legacyImportPending" => super::import::legacy_import_pending(ctx).map(Value::Bool),
-        "scrubLegacyTokens" => super::import::scrub_legacy_tokens(ctx).map(|()| Value::Null),
-        "migrate" => optional_arg::<bool>(args, 0, "encryptionAvailable")
-            .and_then(|flag| super::import::migrate(ctx, flag.unwrap_or(false)))
-            .map(|tokens| {
-                json!({
-                    "legacyTokens": tokens
-                        .into_iter()
-                        .map(|token| json!({ "account": token.account, "token": token.token }))
-                        .collect::<Vec<_>>(),
-                })
-            }),
-        "importTokenCiphertext" => {
-            optional_arg::<String>(args, 0, "username").and_then(|username| {
-                arg(args, 1, "encrypted").and_then(|encrypted: String| {
-                    db.execute(
-                        "INSERT OR REPLACE INTO tokens (username, encrypted) VALUES (?, ?)",
-                        params![username, encrypted],
-                    )
-                    .sql()
-                    .map(|_| Value::Null)
-                })
-            })
-        }
-        "saveTokenCiphertext" => arg(args, 0, "username").and_then(|username: String| {
-            arg(args, 1, "encrypted")
-                .and_then(|encrypted: String| save_login(ctx.host, db, &username, &encrypted))
-        }),
-        "tokenCiphertext" => {
-            arg(args, 0, "username").and_then(|username: String| token_ciphertext(db, &username))
-        }
-        // Cache resets only drop in-memory state, which this port does not keep.
-        "resetStore" => Ok(Value::Null),
-        _ => return None,
-    })
-}
-
-pub(super) fn as_json<T: Serialize>(value: T) -> Result<Value> {
+pub fn as_json<T: Serialize>(value: T) -> Result<Value> {
     serde_json::to_value(value).map_err(|cause| CoreError::new(cause.to_string()))
 }
 
-pub(super) fn arg<T: DeserializeOwned>(args: &[Value], index: usize, name: &str) -> Result<T> {
-    serde_json::from_value(args.get(index).cloned().unwrap_or(Value::Null))
-        .map_err(|cause| CoreError::new(format!("Invalid {name}: {cause}")))
+/// A legacy token that could not be sealed again: the token goes, the account and games stay.
+pub fn disconnect_account(db: &Connection, username: &str) -> Result<()> {
+    transaction(db, || {
+        db.execute(
+            "UPDATE accounts SET connected = 0 WHERE username = ? COLLATE NOCASE",
+            [username],
+        )
+        .sql()?;
+        db.execute(
+            "DELETE FROM tokens WHERE username = ? COLLATE NOCASE",
+            [username],
+        )
+        .sql()?;
+        Ok(())
+    })
 }
 
-/// An argument that may be absent or `null`.
-pub(super) fn optional_arg<T: DeserializeOwned>(
-    args: &[Value],
-    index: usize,
-    name: &str,
-) -> Result<Option<T>> {
-    match args.get(index) {
-        None | Some(Value::Null) => Ok(None),
-        Some(value) => serde_json::from_value(value.clone())
-            .map(Some)
-            .map_err(|cause| CoreError::new(format!("Invalid {name}: {cause}"))),
-    }
-}
-
-/// `stillCurrent`, as the boolean the caller evaluated: absent means still current.
-pub(super) fn current(args: &[Value], index: usize) -> bool {
-    !matches!(args.get(index), Some(Value::Bool(false)))
-}
-
-pub(super) fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
-        })
-}
-
-/// A validator or domain rule from `kchess-domain`, by its TypeScript name.
-fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
-    crate::engine::domain(method, args)
-}
-
-/// `rulesLossless(name, value)` with no special values to carry.
-fn validate(method: &str, value: &Value) -> Result<Value> {
-    domain(method, vec![json!([]), value.clone()])
-}
-
-/// Runs `work` inside `BEGIN IMMEDIATE`, committing on success and rolling back on any failure.
-pub(super) fn transaction<T>(
-    host: &dyn Host,
+/// Stores a sealed token from the one-time import, without touching its account.
+pub fn import_token_ciphertext(
     db: &Connection,
-    work: impl FnOnce() -> Result<T>,
-) -> Result<T> {
-    db.execute_batch("BEGIN IMMEDIATE").sql()?;
-    match work().and_then(|value| db.execute_batch("COMMIT").sql().map(|()| value)) {
-        Ok(value) => Ok(value),
-        Err(cause) => {
-            if let Err(rollback) = db.execute_batch("ROLLBACK") {
-                host.log(
-                    Level::Debug,
-                    "store",
-                    &format!("Rollback failed: {rollback}"),
-                );
-            }
-            Err(cause)
-        }
-    }
+    username: Option<&str>,
+    encrypted: &str,
+) -> Result<()> {
+    db.execute(
+        "INSERT OR REPLACE INTO tokens (username, encrypted) VALUES (?, ?)",
+        params![username, encrypted],
+    )
+    .sql()?;
+    Ok(())
 }
 
-// ---- Values: SQLite and JavaScript semantics ------------------------------------------------
+// ---- Stored values --------------------------------------------------------------------------
 
-/// A JSON value bound as SQL, as `toSql` binds it: null and undefined as NULL, booleans as 1/0,
+/// A JSON value bound as SQL: null and absent as NULL, booleans as 1/0,
 /// lists joined with commas, numbers as doubles.
 pub(super) fn to_sql(value: Option<&Value>) -> Result<SqlValue> {
     Ok(match value {
@@ -515,192 +128,146 @@ pub(super) fn to_sql(value: Option<&Value>) -> Result<SqlValue> {
     })
 }
 
-/// `String(v)` for a stored value (`null` gives an empty string where the caller defaults it).
-fn text_of(value: &SqlValue) -> String {
-    match value {
-        SqlValue::Text(text) => text.clone(),
-        SqlValue::Integer(number) => number.to_string(),
-        SqlValue::Real(number) if number.fract() == 0.0 && number.abs() < 1e21 => {
-            format!("{number:.0}")
-        }
-        SqlValue::Real(number) => number.to_string(),
-        SqlValue::Null | SqlValue::Blob(_) => String::new(),
+// ---- Settings -------------------------------------------------------------------------------
+
+/// The settings as `default_settings` serializes them: the one list of stored settings, each a
+/// `settings` column of the same name, with its default value.
+fn default_object() -> Map<String, Value> {
+    match serde_json::to_value(default_settings()) {
+        Ok(Value::Object(object)) => object,
+        _ => unreachable!("the settings serialize as an object"),
     }
 }
 
-/// `Number(v)` for a stored value that is not null; NaN where JavaScript gives NaN.
-fn number_of(value: &SqlValue) -> Option<f64> {
+/// A stored number: a number, or text that reads as one (blank text is 0).
+fn stored_number(value: &Value) -> Option<f64> {
     match value {
-        SqlValue::Integer(number) => Some(*number as f64),
-        SqlValue::Real(number) => Some(*number),
-        SqlValue::Text(text) => {
-            let trimmed = text.trim();
-            Some(if trimmed.is_empty() {
-                0.0
-            } else {
-                trimmed.parse::<f64>().unwrap_or(f64::NAN)
-            })
-        }
-        SqlValue::Null => None,
-        SqlValue::Blob(_) => Some(f64::NAN),
-    }
-}
-
-/// A stored number, and only a number (JavaScript's strict equality never matches text).
-fn strict_number(value: &SqlValue) -> Option<f64> {
-    match value {
-        SqlValue::Integer(number) => Some(*number as f64),
-        SqlValue::Real(number) => Some(*number),
+        Value::Number(number) => number.as_f64(),
+        Value::String(text) if text.trim().is_empty() => Some(0.0),
+        Value::String(text) => Some(text.trim().parse::<f64>().unwrap_or(f64::NAN)),
         _ => None,
     }
 }
 
-/// `row.x === 1`.
-fn is_one(value: &SqlValue) -> bool {
-    strict_number(value) == Some(1.0)
-}
-
-/// `row.x !== 0`.
-fn is_not_zero(value: &SqlValue) -> bool {
-    strict_number(value) != Some(0.0)
-}
-
-// ---- Settings -------------------------------------------------------------------------------
-
-fn settings_select() -> String {
-    format!(
-        "SELECT {} FROM settings WHERE id = 1",
-        SETTINGS_KEYS.join(", ")
-    )
-}
-
-/// `rowToSettings` followed by `normalizeSettings`.
-fn settings_from_values(values: &[SqlValue]) -> Result<Settings> {
-    let by_key: HashMap<&str, &SqlValue> =
-        SETTINGS_KEYS.iter().copied().zip(values.iter()).collect();
-    let column = |key: &str| by_key.get(key).copied().cloned().unwrap_or(SqlValue::Null);
-    let text = |key: &str| text_of(&column(key));
-    let poll = match column("correspondencePoll") {
-        SqlValue::Null => 5.0,
-        value => number_of(&value).unwrap_or(f64::NAN),
-    };
-    // `Number(x) || 0` turns NaN into 0, then the value is clamped to 0..=120.
-    let poll = if poll.is_nan() { 0.0 } else { poll };
-    let levels: Vec<String> = text("engineLevels").split(',').map(str::to_owned).collect();
-    let engine_levels: Vec<String> =
-        serde_json::from_value(domain("normalizeEngineLevels", vec![json!(levels)])?)
-            .map_err(|cause| CoreError::new(cause.to_string()))?;
-    let coordinates = text("coordinates");
-    let promotion = text("promotion");
-    let piece_animation = text("pieceAnimation");
-    let review_auto = text("reviewAuto");
-    let mut settings = Settings {
-        appearance: text("appearance"),
-        board_theme: text("boardTheme"),
-        light_theme: text("lightTheme"),
-        dark_theme: text("darkTheme"),
-        piece_set: text("pieceSet"),
-        piece_animation: if PIECE_ANIMATIONS.contains(&piece_animation.as_str()) {
-            piece_animation
-        } else {
-            "normal".into()
+/// One stored setting as its wire value, converted from how it is stored: flags as 1 or 0, the
+/// computer levels as comma-separated text, a volume as a percentage. `None` keeps the default.
+fn stored_setting(key: &str, default: &Value, value: &Value) -> Option<Value> {
+    match (key, default) {
+        ("engineLevels", _) => {
+            let levels: Vec<String> = match value {
+                Value::String(text) => text.split(',').map(str::to_owned).collect(),
+                other => serde_json::from_value(other.clone()).ok()?,
+            };
+            Some(json!(kchess_domain::training::engine_levels::normalize(
+                &levels
+            )))
+        }
+        ("soundVolume", _) => {
+            let volume = stored_number(value).filter(|volume| !volume.is_nan())?;
+            let volume = if volume > 1.0 {
+                (volume / 100.0).min(1.0)
+            } else {
+                volume
+            };
+            serde_json::Number::from_f64(volume).map(Value::Number)
+        }
+        ("correspondencePoll", _) => {
+            let minutes = stored_number(value)?;
+            let minutes = if minutes.is_nan() { 0.0 } else { minutes };
+            serde_json::Number::from_f64(minutes.clamp(0.0, 120.0)).map(Value::Number)
+        }
+        (_, Value::Bool(_)) => match value {
+            Value::Bool(flag) => Some(Value::Bool(*flag)),
+            Value::Number(number) if number.as_f64() == Some(1.0) => Some(Value::Bool(true)),
+            Value::Number(number) if number.as_f64() == Some(0.0) => Some(Value::Bool(false)),
+            _ => None,
         },
-        coordinates: if matches!(coordinates.as_str(), "none" | "outside") {
-            coordinates
-        } else {
-            "inside".into()
-        },
-        sound_enabled: is_one(&column("soundEnabled")),
-        sound_volume: number_of(&column("soundVolume")).unwrap_or(f64::NAN),
-        engine_path: text("enginePath"),
-        premove: is_one(&column("premove")),
-        promotion: if matches!(promotion.as_str(), "queen" | "premove") {
-            promotion
-        } else {
-            "ask".into()
-        },
-        show_legal_moves: is_one(&column("showLegalMoves")),
-        notifications_enabled: is_one(&column("notificationsEnabled")),
-        notify_active: is_one(&column("notifyActive")),
-        notify_background: is_one(&column("notifyBackground")),
-        notify_opponent_move: is_one(&column("notifyOpponentMove")),
-        notify_low_time: is_one(&column("notifyLowTime")),
-        notify_game_events: is_one(&column("notifyGameEvents")),
-        notify_computer_move: is_one(&column("notifyComputerMove")),
-        notify_sound: is_one(&column("notifySound")),
-        voice_push_to_talk: is_one(&column("voicePushToTalk")),
-        voice_confirm_moves: is_not_zero(&column("voiceConfirmMoves")),
-        voice_history: is_not_zero(&column("voiceHistory")),
-        update_auto_check: is_not_zero(&column("updateAutoCheck")),
-        update_auto_download: is_not_zero(&column("updateAutoDownload")),
-        update_install_on_quit: is_not_zero(&column("updateInstallOnQuit")),
-        engine_levels,
-        review_auto: if REVIEW_AUTO.contains(&review_auto.as_str()) {
-            review_auto
-        } else {
-            "recent".into()
-        },
-        review_on_battery: is_one(&column("reviewOnBattery")),
-        receive_challenges: is_not_zero(&column("receiveChallenges")),
-        notify_challenges: is_not_zero(&column("notifyChallenges")),
-        online_chat: is_not_zero(&column("onlineChat")),
-        correspondence_poll: poll.clamp(0.0, 120.0),
-        zen_mode: is_one(&column("zenMode")),
-        blindfold: is_one(&column("blindfold")),
-        cloud_eval: is_one(&column("cloudEval")),
-        show_opening_name: is_not_zero(&column("showOpeningName")),
-        swipe_navigation: is_not_zero(&column("swipeNavigation")),
-        swipe_indicator: is_not_zero(&column("swipeIndicator")),
-        puzzle_auto_next: is_not_zero(&column("puzzleAutoNext")),
-        confirm_correspondence: is_not_zero(&column("confirmCorrespondence")),
-        figurine_notation: is_one(&column("figurineNotation")),
-    };
-    if settings.sound_volume > 1.0 {
-        settings.sound_volume = (settings.sound_volume / 100.0).min(1.0);
+        (_, Value::String(_)) => value.is_string().then(|| value.clone()),
+        (_, Value::Number(_)) => stored_number(value)
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number),
+        _ => None,
     }
-    Ok(settings)
+}
+
+/// Settings from what was stored, by key (the `settings` row, or a backup's settings object):
+/// a setting missing, of the wrong kind or no longer offered keeps its default.
+pub(super) fn settings_from_stored(stored: &Map<String, Value>) -> Settings {
+    let defaults = default_object();
+    let mut settings = defaults.clone();
+    for (key, default) in &defaults {
+        let Some(value) = stored
+            .get(key)
+            .filter(|value| !value.is_null())
+            .and_then(|value| stored_setting(key, default, value))
+        else {
+            continue;
+        };
+        settings.insert(key.clone(), value);
+        if serde_json::from_value::<Settings>(Value::Object(settings.clone())).is_err() {
+            settings.insert(key.clone(), default.clone());
+        }
+    }
+    serde_json::from_value(Value::Object(settings)).unwrap_or_else(|_| default_settings())
+}
+
+/// A SQLite value as JSON; a blob is null, and so is a number JSON cannot hold.
+pub(super) fn sql_json(value: SqlValue) -> Value {
+    match value {
+        SqlValue::Null | SqlValue::Blob(_) => Value::Null,
+        SqlValue::Integer(number) => json!(number),
+        SqlValue::Real(number) => {
+            serde_json::Number::from_f64(number).map_or(Value::Null, Value::Number)
+        }
+        SqlValue::Text(text) => Value::String(text),
+    }
 }
 
 fn read_settings(db: &Connection) -> Result<Option<Settings>> {
-    let values: Option<Vec<SqlValue>> = db
-        .query_row(&settings_select(), [], |row| {
-            (0..SETTINGS_KEYS.len())
-                .map(|index| row.get::<_, SqlValue>(index))
-                .collect::<rusqlite::Result<Vec<_>>>()
-        })
+    let keys: Vec<String> = default_object().into_iter().map(|(key, _)| key).collect();
+    let stored: Option<Map<String, Value>> = db
+        .query_row(
+            &format!("SELECT {} FROM settings WHERE id = 1", keys.join(", ")),
+            [],
+            |row| {
+                keys.iter()
+                    .enumerate()
+                    .map(|(index, key)| Ok((key.clone(), sql_json(row.get(index)?))))
+                    .collect::<rusqlite::Result<Map<_, _>>>()
+            },
+        )
         .optional()
         .sql()?;
-    values
-        .map(|values| settings_from_values(&values))
-        .transpose()
+    Ok(stored.map(|stored| settings_from_stored(&stored)))
 }
 
-fn write_settings(db: &Connection, settings: &Settings) -> Result<()> {
-    let object =
-        serde_json::to_value(settings).map_err(|cause| CoreError::new(cause.to_string()))?;
-    write_settings_json(db, &object)
-}
-
-/// `writeSettings`: every persisted setting of a settings object, as `toSql` binds it.
-pub(super) fn write_settings_json(db: &Connection, object: &Value) -> Result<()> {
-    let params = SETTINGS_KEYS
-        .iter()
-        .map(|key| to_sql(object.get(*key)))
+/// Stores every setting, each bound as `to_sql` binds it; the settings as stored.
+pub fn save_settings(db: &Connection, settings: &Settings) -> Result<Settings> {
+    let Value::Object(object) = as_json(settings)? else {
+        return Err(CoreError::new("The settings are not an object."));
+    };
+    let keys: Vec<&String> = object.keys().collect();
+    let params = object
+        .values()
+        .map(|value| to_sql(Some(value)))
         .collect::<Result<Vec<_>>>()?;
-    let placeholders = vec!["?"; SETTINGS_KEYS.len()].join(", ");
     let sql = format!(
-        "INSERT OR REPLACE INTO settings (id, {}) VALUES (1, {placeholders})",
-        SETTINGS_KEYS.join(", ")
+        "INSERT OR REPLACE INTO settings (id, {}) VALUES (1, {})",
+        keys.iter()
+            .map(|key| key.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+        vec!["?"; keys.len()].join(", ")
     );
     db.execute(&sql, params_from_iter(params)).sql()?;
-    Ok(())
+    Ok(settings.clone())
 }
 
-fn get_settings(db: &Connection) -> Result<Value> {
-    as_json(read_settings(db)?.unwrap_or_else(default_settings))
+pub fn get_settings(db: &Connection) -> Result<Settings> {
+    Ok(read_settings(db)?.unwrap_or_else(default_settings))
 }
 
-fn load_app_data(db: &Connection) -> Result<AppData> {
+pub fn load_app_data(db: &Connection) -> Result<AppData> {
     let mut statement = db
         .prepare(
             "SELECT username, connected, lastSyncedAt, syncedPlayTime FROM accounts ORDER BY rowid",
@@ -722,16 +289,16 @@ fn load_app_data(db: &Connection) -> Result<AppData> {
         .query_row("SELECT COUNT(*) AS total FROM games", [], |row| row.get(0))
         .sql()?;
     Ok(AppData {
-        settings: read_settings(db)?.unwrap_or_else(default_settings),
+        settings: get_settings(db)?.core,
         accounts,
         game_count,
     })
 }
 
-/// `saveLogin`'s write: the stored login and its connected account, in one transaction. The token
+/// The stored login and its connected account, in one transaction. The token
 /// arrives already encrypted; the caller encrypts it with the operating system's credential store.
-fn save_login(host: &dyn Host, db: &Connection, username: &str, encrypted: &str) -> Result<Value> {
-    transaction(host, db, || {
+pub fn save_login(db: &Connection, username: &str, encrypted: &str) -> Result<AppData> {
+    transaction(db, || {
         db.execute(
             "INSERT OR REPLACE INTO tokens (username, encrypted) VALUES (?, ?)",
             params![username, encrypted],
@@ -757,20 +324,18 @@ fn save_login(host: &dyn Host, db: &Connection, username: &str, encrypted: &str)
         .sql()?;
         Ok(())
     })?;
-    as_json(load_app_data(db)?)
+    load_app_data(db)
 }
 
-/// `getToken`'s read: the stored ciphertext for an account, or null.
-fn token_ciphertext(db: &Connection, username: &str) -> Result<Value> {
-    let encrypted: Option<String> = db
-        .query_row(
-            "SELECT encrypted FROM tokens WHERE username = ? COLLATE NOCASE",
-            [username],
-            |row| row.get(0),
-        )
-        .optional()
-        .sql()?;
-    Ok(encrypted.map_or(Value::Null, Value::String))
+/// The sealed token stored for an account.
+pub fn token_ciphertext(db: &Connection, username: &str) -> Result<Option<String>> {
+    db.query_row(
+        "SELECT encrypted FROM tokens WHERE username = ? COLLATE NOCASE",
+        [username],
+        |row| row.get(0),
+    )
+    .optional()
+    .sql()
 }
 
 // ---- Games ----------------------------------------------------------------------------------
@@ -787,11 +352,12 @@ fn game_from_row(row: &Row<'_>) -> rusqlite::Result<LichessGame> {
         status: row.get("status")?,
         winner: row
             .get::<_, Option<String>>("winner")?
-            .filter(|winner| winner == "white" || winner == "black"),
+            .as_deref()
+            .and_then(kchess_domain::color::from_name),
         color: if row.get::<_, String>("color")? == "black" {
-            "black".into()
+            Color::Black
         } else {
-            "white".into()
+            Color::White
         },
         opponent: row.get("opponent")?,
         opponent_rating: row.get("opponentRating")?,
@@ -803,12 +369,9 @@ fn game_from_row(row: &Row<'_>) -> rusqlite::Result<LichessGame> {
     })
 }
 
-/// `gamePage`: a bounded page of list rows, with the total for the same filters.
-fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
+/// A bounded page of list rows, with the total for the same filters.
+pub fn game_page(ctx: &StoreContext, query: &GamePageQuery) -> Result<GamePage> {
     let db = ctx.db;
-    let query: GamePageQuery =
-        serde_json::from_value(domain("assertGamePageQuery", vec![json!([]), input])?)
-            .map_err(|cause| CoreError::new(cause.to_string()))?;
     let mut clauses: Vec<String> = Vec::new();
     let mut params: Vec<SqlValue> = Vec::new();
     if let Some(account) = query
@@ -819,9 +382,9 @@ fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
         clauses.push("account = ? COLLATE NOCASE".into());
         params.push(SqlValue::Text(account.to_owned()));
     }
-    if let Some(result) = query.result.as_deref().filter(|result| !result.is_empty()) {
+    if let Some(result) = query.result {
         clauses.push(format!("({RESULT_SQL}) = ?"));
-        params.push(SqlValue::Text(result.to_owned()));
+        params.push(SqlValue::Text(result.as_str().to_owned()));
     }
     if let Some(rated) = query.rated {
         clauses.push("rated = ?".into());
@@ -855,11 +418,7 @@ fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
             .as_deref()
             .filter(|account| !account.is_empty())
             .unwrap_or(""),
-        query
-            .result
-            .as_deref()
-            .filter(|result| !result.is_empty())
-            .unwrap_or(""),
+        query.result.map_or("", |result| result.as_str()),
         query
             .rated
             .map_or("any".to_string(), |rated| rated.to_string()),
@@ -884,7 +443,8 @@ fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
     page_params.push(SqlValue::Integer(query.offset as i64));
     let mut statement = db
         .prepare(&format!(
-            "SELECT {LIST_COLUMNS} FROM games {filter} ORDER BY createdAt DESC, account, id LIMIT ? OFFSET ?"
+            "SELECT {} FROM games {filter} ORDER BY createdAt DESC, account, id LIMIT ? OFFSET ?",
+            list_columns()
         ))
         .sql()?;
     let games = statement
@@ -892,7 +452,7 @@ fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
         .sql()?
         .collect::<rusqlite::Result<Vec<_>>>()
         .sql()?;
-    as_json(GamePage { games, total })
+    Ok(GamePage { games, total })
 }
 
 fn game_record(row: &Row<'_>) -> rusqlite::Result<(String, GameRecord)> {
@@ -901,8 +461,8 @@ fn game_record(row: &Row<'_>) -> rusqlite::Result<(String, GameRecord)> {
         GameRecord {
             total: row.get("total")?,
             win: row.get::<_, Option<i64>>("win")?.unwrap_or(0),
-            loss: row.get("loss")?,
-            draw: row.get("draw")?,
+            loss: row.get::<_, Option<i64>>("loss")?.unwrap_or(0),
+            draw: row.get::<_, Option<i64>>("draw")?.unwrap_or(0),
         },
     ))
 }
@@ -917,7 +477,7 @@ fn game_records(db: &Connection, sql: &str) -> Result<BTreeMap<String, GameRecor
     Ok(records.into_iter().collect())
 }
 
-fn game_library_overview(ctx: &StoreContext) -> Result<Value> {
+pub fn game_library_overview(ctx: &StoreContext) -> Result<GameLibraryOverview> {
     if let Some(cached) = ctx.cache.overview() {
         return Ok(cached);
     }
@@ -947,14 +507,13 @@ fn game_library_overview(ctx: &StoreContext) -> Result<Value> {
             ),
         )?,
     };
-    let value = as_json(overview)?;
-    ctx.cache.remember_overview(&value);
-    Ok(value)
+    ctx.cache.remember_overview(&overview);
+    Ok(overview)
 }
 
-/// `gameRatingHistory`: the last rated rating each day, per variant. A Chess.com game records the
+/// The last rated rating each day, per variant. A Chess.com game records the
 /// player's rating after it and no change, so its rating stands as it is.
-fn rating_history(db: &Connection, account: &str) -> Result<Vec<RatingSeries>> {
+pub fn rating_history(db: &Connection, account: &str) -> Result<Vec<RatingSeries>> {
     let after_game = kchess_domain::chesscom::username_of(account).is_some();
     let mut statement = db
         .prepare(
@@ -996,7 +555,7 @@ fn rating_history(db: &Connection, account: &str) -> Result<Vec<RatingSeries>> {
     Ok(series)
 }
 
-fn pending_game_ids(db: &Connection, account: &str) -> Result<Vec<String>> {
+pub fn pending_game_ids(db: &Connection, account: &str) -> Result<Vec<String>> {
     let mut statement = db
         .prepare("SELECT id FROM pending_game_sync WHERE account = ? COLLATE NOCASE ORDER BY id")
         .sql()?;
@@ -1007,7 +566,7 @@ fn pending_game_ids(db: &Connection, account: &str) -> Result<Vec<String>> {
         .sql()
 }
 
-fn game_pgn(db: &Connection, account: &str, id: &str) -> Result<Value> {
+pub fn game_pgn(db: &Connection, account: &str, id: &str) -> Result<Option<String>> {
     let pgn = db
         .query_row(
             "SELECT pgn FROM games WHERE account = ? COLLATE NOCASE AND id = ?",
@@ -1016,11 +575,11 @@ fn game_pgn(db: &Connection, account: &str, id: &str) -> Result<Value> {
         )
         .optional()
         .sql()?;
-    Ok(json!(pgn.flatten()))
+    Ok(pgn.flatten())
 }
 
-/// `readApiCache`: a cached document, or null when absent or unreadable.
-fn read_api_cache(host: &dyn Host, db: &Connection, key: &str) -> Result<Value> {
+/// A cached document as `{ value, fetchedAt }`, or null when absent or unreadable.
+pub fn read_api_cache(host: &dyn Host, db: &Connection, key: &str) -> Result<Value> {
     let row = db
         .query_row(
             "SELECT value, fetchedAt FROM api_cache WHERE key = ?",
@@ -1050,15 +609,7 @@ pub const EXPORTED_GAME_CACHE: &str = "exportGame:";
 /// How many of those are kept, newest first.
 const EXPORTED_GAMES_KEPT: i64 = 200;
 
-fn write_api_cache(
-    db: &Connection,
-    key: &str,
-    value: &Value,
-    still_current: bool,
-) -> Result<Value> {
-    if !still_current {
-        return Ok(Value::Null);
-    }
+pub fn write_api_cache(db: &Connection, key: &str, value: &Value) -> Result<()> {
     db.execute(
         "INSERT OR REPLACE INTO api_cache (key, value, fetchedAt) VALUES (?, ?, ?)",
         params![key, value.to_string(), now_ms()],
@@ -1073,12 +624,18 @@ fn write_api_cache(
         )
         .sql()?;
     }
-    Ok(Value::Null)
+    Ok(())
 }
 
-fn add_account(db: &Connection, username: &str, connected: bool) -> Result<Value> {
-    let normalized: String = serde_json::from_value(validate("assertUsername", &json!(username))?)
-        .map_err(|cause| CoreError::new(cause.to_string()))?;
+/// A Lichess username as the accounts keep it (trimmed), or why it is not one.
+fn username(name: &str) -> Result<String> {
+    check::<Username>(J::Str(name.to_owned()))
+        .map(|Username(name)| name)
+        .map_err(CoreError::new)
+}
+
+pub fn add_account(db: &Connection, username_: &str, connected: bool) -> Result<AppData> {
+    let normalized = username(username_)?;
     let existing = db
         .query_row(
             "SELECT username, connected FROM accounts WHERE username = ? COLLATE NOCASE",
@@ -1111,15 +668,14 @@ fn add_account(db: &Connection, username: &str, connected: bool) -> Result<Value
         [&normalized],
     )
     .sql()?;
-    as_json(load_app_data(db)?)
+    load_app_data(db)
 }
 
-/// `addFriends`: follow many players at once; validation failure rolls the whole batch back.
-fn add_friends(host: &dyn Host, db: &Connection, usernames: &[Value]) -> Result<AppData> {
-    transaction(host, db, || {
+/// Follows many players at once; validation failure rolls the whole batch back.
+pub fn add_friends(db: &Connection, usernames: &[String]) -> Result<AppData> {
+    transaction(db, || {
         for raw in usernames {
-            let name: String = serde_json::from_value(validate("assertUsername", raw)?)
-                .map_err(|cause| CoreError::new(cause.to_string()))?;
+            let name = username(raw)?;
             let exists = db
                 .query_row(
                     "SELECT 1 FROM accounts WHERE username = ? COLLATE NOCASE",
@@ -1146,7 +702,7 @@ fn add_friends(host: &dyn Host, db: &Connection, usernames: &[Value]) -> Result<
     load_app_data(db)
 }
 
-fn dismissed_friends(db: &Connection) -> Result<Vec<String>> {
+pub fn dismissed_friends(db: &Connection) -> Result<Vec<String>> {
     let mut statement = db.prepare("SELECT username FROM dismissed_friends").sql()?;
     let names = statement
         .query_map([], |row| row.get::<_, String>(0))
@@ -1198,7 +754,6 @@ pub(super) fn purge_account_data(
         "DELETE FROM pending_game_sync WHERE account = ? COLLATE NOCASE",
         [account],
     )?;
-    // `length` is JavaScript's UTF-16 length, as the TypeScript passes it.
     let prefix_length = i64::try_from(account.encode_utf16().count() + 1).unwrap_or(i64::MAX);
     db.execute(
         "DELETE FROM api_cache WHERE substr(key, 1, ?) = ? COLLATE NOCASE",
@@ -1231,8 +786,8 @@ pub(super) fn purge_account_data(
     Ok(())
 }
 
-fn logout_accounts(host: &dyn Host, db: &Connection, username: Option<&str>) -> Result<AppData> {
-    transaction(host, db, || {
+pub fn logout_accounts(db: &Connection, username: Option<&str>) -> Result<AppData> {
+    transaction(db, || {
         let filter = username.map_or(SqlValue::Null, |name| SqlValue::Text(name.to_owned()));
         let accounts = {
             let mut statement = db
@@ -1269,8 +824,8 @@ fn logout_accounts(host: &dyn Host, db: &Connection, username: Option<&str>) -> 
     load_app_data(db)
 }
 
-fn remove_account(host: &dyn Host, db: &Connection, username: &str) -> Result<AppData> {
-    transaction(host, db, || {
+pub fn remove_account(db: &Connection, username: &str) -> Result<AppData> {
+    transaction(db, || {
         // Only friends are remembered as removed; disconnecting one's own account is not a "no thanks".
         let connected = db
             .query_row(
@@ -1305,8 +860,8 @@ fn remove_account(host: &dyn Host, db: &Connection, username: &str) -> Result<Ap
 
 /// Deletes what was downloaded for one account but keeps the account; the cursor resets so the next
 /// sync fetches everything again.
-fn clear_account_data(host: &dyn Host, db: &Connection, username: &str) -> Result<AppData> {
-    transaction(host, db, || {
+pub fn clear_account_data(db: &Connection, username: &str) -> Result<AppData> {
+    transaction(db, || {
         // The account and its data-usage history stay; only what was downloaded goes.
         purge_account_data(db, username, false).sql()?;
         db.execute(
@@ -1319,40 +874,82 @@ fn clear_account_data(host: &dyn Host, db: &Connection, username: &str) -> Resul
     load_app_data(db)
 }
 
-/// Whether a game is still live, as `isGameInProgress` decides it.
-pub(super) fn in_progress(game: &Value) -> Result<bool> {
-    domain(
-        "isGameInProgress",
-        vec![game.get("status").cloned().unwrap_or(Value::Null)],
-    )?
-    .as_bool()
-    .ok_or_else(|| CoreError::new("isGameInProgress did not return a boolean."))
+/// Whether a game is still live, by its `status`.
+pub(super) fn in_progress(game: &Value) -> bool {
+    kchess_domain::records::games::is_game_in_progress(game.get("status"))
 }
 
-pub(super) fn upsert_sql() -> String {
-    let updates = GAME_KEYS
-        .iter()
-        .filter(|key| **key != "account" && **key != "id")
-        .map(|key| format!("{key} = excluded.{key}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "INSERT INTO games ({}) VALUES ({}) ON CONFLICT(account, id) DO UPDATE SET {updates}",
-        GAME_KEYS.join(", "),
-        vec!["?"; GAME_KEYS.len()].join(", ")
+/// The one writer of `games` rows: every `GAME_KEYS` column of a game, replacing the stored game
+/// with the same account and id.
+pub(super) struct GameRows<'db> {
+    upsert: rusqlite::Statement<'db>,
+}
+
+impl<'db> GameRows<'db> {
+    pub(super) fn new(db: &'db Connection) -> Result<Self> {
+        let updates = GAME_KEYS
+            .iter()
+            .filter(|key| **key != "account" && **key != "id")
+            .map(|key| format!("{key} = excluded.{key}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "INSERT INTO games ({}) VALUES ({}) ON CONFLICT(account, id) DO UPDATE SET {updates}",
+            GAME_KEYS.join(", "),
+            vec!["?"; GAME_KEYS.len()].join(", ")
+        );
+        Ok(GameRows {
+            upsert: db.prepare(&sql).sql()?,
+        })
+    }
+
+    /// Writes `game`, under `account` when given, else under the game's own `account`.
+    pub(super) fn write(&mut self, game: &Value, account: Option<&str>) -> Result<()> {
+        let params = GAME_KEYS
+            .iter()
+            .map(|key| match (*key, account) {
+                ("account", Some(account)) => Ok(SqlValue::Text(account.to_owned())),
+                (key, _) => to_sql(game.get(key)),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.upsert.execute(params_from_iter(params)).sql()?;
+        Ok(())
+    }
+}
+
+/// A live game waits to be stored until it ends; only a tracked Lichess account's games wait.
+pub(super) fn keep_pending(db: &Connection, account: &str, id: &Value) -> Result<()> {
+    db.execute(
+        "INSERT OR IGNORE INTO pending_game_sync (account, id)
+         SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM accounts WHERE username = ?1 COLLATE NOCASE)",
+        params_from_iter([SqlValue::Text(account.to_owned()), to_sql(Some(id))?]),
     )
+    .sql()?;
+    Ok(())
 }
 
-/// `upsertGames`: one batch of games, and the account's sync marker, in a single transaction.
+/// The account keeps its newest `MAX_GAMES` games.
+pub(super) fn trim_games(db: &Connection, account: &str) -> Result<()> {
+    db.execute(
+        &format!(
+            "DELETE FROM games WHERE account = ?1 COLLATE NOCASE AND rowid NOT IN (SELECT rowid FROM games WHERE account = ?1 COLLATE NOCASE ORDER BY createdAt DESC LIMIT {MAX_GAMES})"
+        ),
+        [account],
+    )
+    .sql()?;
+    Ok(())
+}
+
+/// One batch of games, and the account's sync marker, in a single transaction.
 fn upsert_games(
     host: &dyn Host,
     db: &Connection,
     username: &str,
     games: &[Value],
     synced_at: Option<i64>,
-    reviews: &[Value],
+    reviews: &[StoredReview],
 ) -> Result<()> {
-    transaction(host, db, || {
+    transaction(db, || {
         let exists = db
             .query_row(
                 "SELECT 1 FROM accounts WHERE username = ? COLLATE NOCASE",
@@ -1364,45 +961,26 @@ fn upsert_games(
         if exists.is_none() {
             return Err(CoreError::new("This account was removed during sync."));
         }
-        let mut upsert = db.prepare(&upsert_sql()).sql()?;
+        let mut rows = GameRows::new(db)?;
         for game in games {
-            if in_progress(game)? {
-                db.execute(
-                    "INSERT OR IGNORE INTO pending_game_sync (account, id) VALUES (?, ?)",
-                    params_from_iter([
-                        SqlValue::Text(username.to_owned()),
-                        to_sql(game.get("id"))?,
-                    ]),
-                )
-                .sql()?;
+            let id = game.get("id").unwrap_or(&Value::Null);
+            if in_progress(game) {
+                keep_pending(db, username, id)?;
             } else {
-                let params = GAME_KEYS
-                    .iter()
-                    .map(|key| to_sql(game.get(*key)))
-                    .collect::<Result<Vec<_>>>()?;
-                upsert.execute(params_from_iter(params)).sql()?;
+                rows.write(game, None)?;
                 db.execute(
                     "DELETE FROM pending_game_sync WHERE account = ? COLLATE NOCASE AND id = ?",
-                    params_from_iter([
-                        SqlValue::Text(username.to_owned()),
-                        to_sql(game.get("id"))?,
-                    ]),
+                    params_from_iter([SqlValue::Text(username.to_owned()), to_sql(Some(id))?]),
                 )
                 .sql()?;
             }
         }
         for review in reviews {
-            super::reviews::write_review(host, db, review)?;
+            super::reviews::write_review(host, db, review.clone())?;
         }
         // Trim once per completed sync rather than after every page.
         if let Some(synced_at) = synced_at {
-            db.execute(
-                &format!(
-                    "DELETE FROM games WHERE account = ? AND rowid NOT IN (SELECT rowid FROM games WHERE account = ? ORDER BY createdAt DESC LIMIT {MAX_GAMES})"
-                ),
-                [username, username],
-            )
-            .sql()?;
+            trim_games(db, username)?;
             db.execute(
                 "UPDATE accounts SET lastSyncedAt = ? WHERE username = ? COLLATE NOCASE",
                 params![synced_at, username],
@@ -1413,32 +991,25 @@ fn upsert_games(
     })
 }
 
-fn save_games_page(
+/// One page of a sync: its games and their Lichess reviews.
+pub fn save_games_page(
     host: &dyn Host,
     db: &Connection,
     username: &str,
     games: &[Value],
-    reviews: &[Value],
-    still_current: bool,
-) -> Result<Value> {
-    if !still_current {
-        return Err(CoreError::new("Sync was cancelled."));
-    }
-    upsert_games(host, db, username, games, None, reviews)?;
-    Ok(Value::Null)
+    reviews: &[StoredReview],
+) -> Result<()> {
+    upsert_games(host, db, username, games, None, reviews)
 }
 
-fn save_games(
+/// The last page of a sync, which trims the account's games and marks it synced.
+pub fn save_games(
     host: &dyn Host,
     db: &Connection,
     username: &str,
     games: &[Value],
     synced_at: Option<i64>,
-    still_current: bool,
-) -> Result<Value> {
-    if !still_current {
-        return Err(CoreError::new("Sync was cancelled."));
-    }
+) -> Result<AppData> {
     upsert_games(
         host,
         db,
@@ -1447,35 +1018,49 @@ fn save_games(
         Some(synced_at.unwrap_or_else(now_ms)),
         &[],
     )?;
-    as_json(load_app_data(db)?)
+    load_app_data(db)
 }
 
 /// The player's Lichess play time as of their last sync, which a later profile is compared with.
-fn save_synced_play_time(
-    db: &Connection,
-    username: &str,
-    play_time: i64,
-    still_current: bool,
-) -> Result<Value> {
-    if !still_current {
-        return Err(CoreError::new("Sync was cancelled."));
-    }
+pub fn save_synced_play_time(db: &Connection, username: &str, play_time: i64) -> Result<()> {
     db.execute(
         "UPDATE accounts SET syncedPlayTime = ? WHERE username = ? COLLATE NOCASE",
         params![play_time, username],
     )
     .sql()?;
-    Ok(Value::Null)
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kchess_contracts::types::{
+        CoordinateMode, EngineLevel, PieceAnimation, PromotionMode, ReviewAuto,
+    };
 
     fn database() -> Connection {
         let db = Connection::open_in_memory().unwrap();
         crate::store::migrations::migrate(&db).unwrap();
         db
+    }
+
+    /// How a stored value reads back: a volume of exactly 1 is the whole volume (not 1%), blank
+    /// text is 0, and a flag stored as neither 1 nor 0 keeps its default.
+    #[test]
+    fn stored_settings_read_back_as_their_wire_values() {
+        let cases: [(&str, Value, Value); 6] = [
+            ("soundVolume", json!(1), json!(1.0)),
+            ("soundVolume", json!(50), json!(0.5)),
+            ("soundVolume", json!("  "), json!(0.0)),
+            ("correspondencePoll", json!(""), json!(0.0)),
+            ("soundEnabled", json!(5), json!(true)),
+            ("soundEnabled", json!(0), json!(false)),
+        ];
+        for (key, stored, expected) in cases {
+            let stored_row = Map::from_iter([(key.to_string(), stored.clone())]);
+            let wire = serde_json::to_value(settings_from_stored(&stored_row)).unwrap();
+            assert_eq!(wire[key], expected, "{key} stored as {stored}");
+        }
     }
 
     /// Clearing an account drops its games' reviews, but keeps the reviews of local games and
@@ -1563,19 +1148,15 @@ mod tests {
         let db = database();
         assert_eq!(read_settings(&db).unwrap(), None);
         let defaults = default_settings();
-        assert_eq!(
-            serde_json::to_value(&defaults).unwrap()["engineLevels"],
-            json!(["beginner", "club", "expert", "fm", "im", "gm", "max"])
-        );
-        assert_eq!(get_settings(&db).unwrap(), json!(defaults));
+        assert_eq!(get_settings(&db).unwrap(), defaults);
         // A solved puzzle stays on the board until Next (or Return), as on Lichess.
-        assert!(!defaults.puzzle_auto_next);
+        assert!(!defaults.frontend.puzzle_auto_next);
         // A correspondence move cannot be taken back, so it waits for Confirm, as on Lichess.
-        assert!(defaults.confirm_correspondence);
+        assert!(defaults.frontend.confirm_correspondence);
     }
 
     #[test]
-    fn stored_settings_are_normalized_as_the_row_mapper_did() {
+    fn stored_settings_no_longer_offered_are_normalized() {
         let db = database();
         db.execute_batch(
             "INSERT INTO settings (id, appearance, boardTheme, coordinates, soundEnabled, soundVolume, enginePath, promotion, pieceAnimation, reviewAuto, engineLevels, correspondencePoll)
@@ -1583,12 +1164,63 @@ mod tests {
         )
         .unwrap();
         let settings = read_settings(&db).unwrap().unwrap();
-        assert_eq!(settings.coordinates, "inside");
-        assert_eq!(settings.promotion, "ask");
-        assert_eq!(settings.piece_animation, "normal");
-        assert_eq!(settings.review_auto, "recent");
-        assert_eq!(settings.sound_volume, 0.8);
-        assert_eq!(settings.correspondence_poll, 120.0);
-        assert_eq!(settings.engine_levels, ["club"]);
+        assert_eq!(settings.frontend.coordinates, CoordinateMode::Inside);
+        assert_eq!(settings.frontend.promotion, PromotionMode::Ask);
+        assert_eq!(settings.frontend.piece_animation, PieceAnimation::Normal);
+        assert_eq!(settings.core.review_auto, ReviewAuto::Recent);
+        assert_eq!(settings.frontend.sound_volume, 0.8);
+        assert_eq!(settings.core.correspondence_poll, 120.0);
+        assert_eq!(settings.core.engine_levels, [EngineLevel::Club]);
+    }
+
+    /// A stored row and a backup's object go through the same rules: flags stored as 1/0 or
+    /// sent as booleans, levels as text or a list, and anything else keeps the default.
+    #[test]
+    fn stored_settings_of_either_form_read_the_same() {
+        let defaults = default_settings();
+        let from_row = settings_from_stored(&Map::from_iter([
+            ("zenMode".to_owned(), json!(1)),
+            ("premove".to_owned(), json!(0)),
+            ("blindfold".to_owned(), json!(7)),
+            ("notifyLowTime".to_owned(), json!("yes")),
+            ("engineLevels".to_owned(), json!("gm,club")),
+            ("soundVolume".to_owned(), json!("50")),
+            ("correspondencePoll".to_owned(), json!("soon")),
+            ("appearance".to_owned(), json!(3)),
+        ]));
+        let from_backup = settings_from_stored(&Map::from_iter([
+            ("zenMode".to_owned(), json!(true)),
+            ("premove".to_owned(), json!(false)),
+            ("blindfold".to_owned(), json!(null)),
+            ("engineLevels".to_owned(), json!(["gm", "club"])),
+            ("soundVolume".to_owned(), json!(0.5)),
+            ("correspondencePoll".to_owned(), json!(0)),
+        ]));
+        assert_eq!(from_row, from_backup);
+        assert!(from_row.frontend.zen_mode);
+        assert!(!from_row.frontend.premove);
+        assert_eq!(from_row.frontend.blindfold, defaults.frontend.blindfold);
+        assert_eq!(
+            from_row.frontend.notify_low_time,
+            defaults.frontend.notify_low_time
+        );
+        assert_eq!(
+            from_row.core.engine_levels,
+            [EngineLevel::Club, EngineLevel::Gm]
+        );
+        assert_eq!(from_row.frontend.sound_volume, 0.5);
+        assert_eq!(from_row.core.correspondence_poll, 0.0);
+        assert_eq!(from_row.frontend.appearance, defaults.frontend.appearance);
+    }
+
+    #[test]
+    fn saved_settings_read_back_unchanged() {
+        let db = database();
+        let mut settings = default_settings();
+        settings.frontend.figurine_notation = true;
+        settings.frontend.sound_volume = 0.25;
+        settings.core.engine_levels = vec![EngineLevel::Gm];
+        save_settings(&db, &settings).unwrap();
+        assert_eq!(get_settings(&db).unwrap(), settings);
     }
 }

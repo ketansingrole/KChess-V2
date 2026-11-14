@@ -2,7 +2,15 @@
 //! timeline, one tournament's details (join, standings, the top game, games in progress and
 //! totals), and creating an arena.
 
-use kchess_contracts::calls;
+use crate::loading::Epoch;
+use kchess_contracts::calls::{self, CoreCall};
+use kchess_contracts::check::{
+    Bounded, OptionalAccount, TournamentId, TournamentPassword, Username,
+};
+use kchess_contracts::types::{
+    Reply, TournamentClock, TournamentDetail, TournamentList, TournamentStatus, TournamentSummary,
+    TournamentSystem,
+};
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -10,10 +18,10 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::core::AppCore;
+use crate::game::surface::TakesKeys as _;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::theme::Palette;
 use crate::widgets::{self, Pill};
@@ -32,38 +40,51 @@ const CLOCK_TICK: Duration = Duration::from_millis(250);
 /// Whether an event of `status`, last read `since` ago, is due a refresh. `since` counts from
 /// the answer, which comes a little after the tick that asked: the slack keeps a running event on
 /// every tick rather than every other one.
-fn refresh_due(status: &Value, since: Duration) -> bool {
+fn refresh_due(status: TournamentStatus, since: Duration) -> bool {
     const SLACK: Duration = Duration::from_secs(2);
-    match status.as_str() {
-        Some("started") => since + SLACK >= REFRESH_EVERY,
-        Some("created") => since + SLACK >= WAITING_REFRESH_EVERY,
-        _ => false,
+    match status {
+        TournamentStatus::Started => since + SLACK >= REFRESH_EVERY,
+        TournamentStatus::Created => since + SLACK >= WAITING_REFRESH_EVERY,
+        TournamentStatus::Finished => false,
     }
 }
 
-/// `control`: "3+2", "½+0".
-pub fn control(clock: &Value) -> String {
-    let minutes = clock["limit"].as_f64().unwrap_or_default() / 60.;
-    let base = match minutes {
-        0.25 => "¼".to_string(),
-        0.5 => "½".to_string(),
-        0.75 => "¾".to_string(),
-        m if m.fract() == 0. => format!("{m:.0}"),
-        m => m.to_string(),
-    };
-    format!("{base}+{}", clock["increment"].as_f64().unwrap_or_default())
+/// Playable here, and open to the account (or nothing says it is not).
+fn open_to_join(detail: &TournamentDetail) -> bool {
+    detail.summary.playable
+        && detail
+            .verdicts
+            .as_ref()
+            .is_none_or(|verdicts| verdicts.accepted)
+}
+
+/// The pairing system Lichess names `name` ("arena", "swiss").
+fn system_named(name: &str) -> TournamentSystem {
+    if name == TournamentSystem::Swiss.as_str() {
+        TournamentSystem::Swiss
+    } else {
+        TournamentSystem::Arena
+    }
+}
+
+/// "3+2", "½+0".
+pub fn control(clock: &TournamentClock) -> String {
+    crate::widgets::time_control(
+        clock.limit.as_f64().unwrap_or_default() / 60.,
+        clock.increment.as_f64().unwrap_or_default(),
+    )
 }
 
 /// The tournament open, and what is known of it.
 struct Open {
     system: String,
     id: String,
-    detail: Option<Value>,
+    detail: Option<TournamentDetail>,
     /// When `detail` arrived: the top game's clocks are as they were then.
     received: Instant,
     error: Option<SharedString>,
     page: usize,
-    epoch: u64,
+    epoch: Epoch,
 }
 
 /// The page's actions, as its buttons offer them.
@@ -79,15 +100,13 @@ pub(crate) enum Action {
 }
 
 pub struct TournamentsPage {
-    /// Only what KChess can play (`playable`), or everything.
+    /// Only what KChess can play, or everything.
     playable_only: bool,
-    list: Option<Value>,
-    loading: bool,
-    error: Option<SharedString>,
-    /// Each list request; an answer to an earlier one (another account's) is dropped.
-    list_request: u64,
+    list: Option<TournamentList>,
+    /// The list's request: an answer to an earlier one (another account's) is dropped.
+    loading: crate::loading::Loading,
     /// `JoinedTournament`s the core keeps.
-    joined: Vec<Value>,
+    joined: Vec<kchess_contracts::types::JoinedTournament>,
     open: Option<Open>,
     password: Entity<InputState>,
     busy: bool,
@@ -115,7 +134,7 @@ impl TournamentsPage {
     #[cfg(test)]
     pub(crate) fn shown_name(&self) -> Option<String> {
         let detail = self.open.as_ref()?.detail.as_ref()?;
-        detail["name"].as_str().map(str::to_string)
+        Some(detail.summary.name.clone())
     }
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> TournamentsPage {
@@ -125,8 +144,17 @@ impl TournamentsPage {
                 .placeholder("Entry code (if any)")
         });
         let accounts = crate::accounts::handle(cx);
+        let page = cx.entity().downgrade();
         let subscriptions = vec![
             cx.observe(&accounts, |_, _, cx| cx.notify()),
+            // Another window joined or left a tournament.
+            crate::core::profile_changes(
+                cx,
+                &[kchess_contracts::types::ProfileArea::Tournaments],
+                move |cx| {
+                    let _ = page.update(cx, |page, cx| page.reload_joined(cx));
+                },
+            ),
             // Return in the entry code joins, as the Join button beside it does.
             cx.subscribe_in(
                 &password,
@@ -140,20 +168,11 @@ impl TournamentsPage {
                 },
             ),
         ];
-        let refresh = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(REFRESH_EVERY).await;
-                let alive = this
-                    .update(cx, |this, cx| {
-                        if this.refresh_due() {
-                            this.load_event(cx);
-                        }
-                    })
-                    .is_ok();
-                if !alive {
-                    return;
-                }
+        let refresh = crate::timer::every(REFRESH_EVERY, cx, |this, cx| {
+            if this.refresh_due() {
+                this.load_event(cx);
             }
+            true
         });
         // Between refreshes the top game's side to move keeps losing time.
         let clock = cx.spawn(async move |this, cx| {
@@ -163,8 +182,13 @@ impl TournamentsPage {
                     .update(cx, |this, cx| {
                         let running = this.open.as_ref().is_some_and(|open| {
                             open.detail.as_ref().is_some_and(|detail| {
-                                detail["status"] != json!("finished")
-                                    && event::featured_running(&detail["featured"]).is_some()
+                                detail.summary.status != TournamentStatus::Finished
+                                    && detail
+                                        .extras
+                                        .featured
+                                        .as_ref()
+                                        .and_then(event::featured_running)
+                                        .is_some()
                             })
                         });
                         if running {
@@ -180,9 +204,7 @@ impl TournamentsPage {
         let mut page = TournamentsPage {
             playable_only: false,
             list: None,
-            loading: false,
-            error: None,
-            list_request: 0,
+            loading: Default::default(),
             joined: Vec::new(),
             open: None,
             password,
@@ -208,15 +230,12 @@ impl TournamentsPage {
     }
 
     /// The account's argument: its name, or empty for anonymous lookups.
-    fn account_arg(cx: &App) -> Value {
-        json!(Self::account(cx).unwrap_or_default())
+    fn account_arg(cx: &App) -> OptionalAccount {
+        OptionalAccount(Self::account(cx).unwrap_or_default())
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.list_request += 1;
-        let request = self.list_request;
-        self.loading = true;
-        self.error = None;
+        let turn = self.loading.start();
         cx.notify();
         let call = cx.global::<AppCore>().request(calls::Tournaments {
             account: Self::account_arg(cx),
@@ -225,13 +244,12 @@ impl TournamentsPage {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
                 // A later refresh (another account's) owns the list and its spinner now.
-                if request != this.list_request {
+                if !this.loading.answered(turn) {
                     return;
                 }
-                this.loading = false;
                 match answer {
                     Ok(list) => this.list = Some(list),
-                    Err(cause) => this.error = Some(cause.message.into()),
+                    Err(cause) => this.loading.failed("tournaments", &cause),
                 }
                 cx.notify();
             });
@@ -241,30 +259,22 @@ impl TournamentsPage {
 
     fn reload_joined(&mut self, cx: &mut Context<Self>) {
         let call = cx.global::<AppCore>().request(calls::JoinedTournaments {});
-        cx.spawn(async move |this, cx| {
-            if let Ok(joined) = call.await {
-                let _ = this.update(cx, |this, cx| {
-                    this.joined = joined.as_array().cloned().unwrap_or_default();
-                    cx.notify();
-                });
-            }
-        })
-        .detach();
+        crate::loading::fetch(cx, "tournaments", call, |this, joined, _| {
+            this.joined = joined;
+        });
     }
 
     /// Joined from KChess by `account` and not over yet.
     fn is_joined(&self, system: &str, id: &str, account: Option<&str>) -> bool {
-        let now = chrono::Utc::now().timestamp_millis() as f64;
+        let now = kchess_games::now_ms();
         let Some(account) = account else {
             return false;
         };
         self.joined.iter().any(|entry| {
-            entry["system"] == json!(system)
-                && entry["id"] == json!(id)
-                && entry["account"]
-                    .as_str()
-                    .is_some_and(|name| name.eq_ignore_ascii_case(account))
-                && entry["until"].as_f64().is_some_and(|until| until > now)
+            entry.system.as_str() == system
+                && entry.id == id
+                && entry.joined_by(account)
+                && entry.until > now
         })
     }
 
@@ -282,7 +292,7 @@ impl TournamentsPage {
                 received: Instant::now(),
                 error: None,
                 page: 1,
-                epoch: 0,
+                epoch: Epoch::default(),
             });
         }
         self.load_event(cx);
@@ -294,12 +304,11 @@ impl TournamentsPage {
         let swiss = self
             .joined
             .iter()
-            .any(|entry| entry["id"] == json!(id) && entry["system"] == json!("swiss"))
-            || self.list.as_ref().is_some_and(|list| {
-                list["swiss"]
-                    .as_array()
-                    .is_some_and(|swiss| swiss.iter().any(|entry| entry["id"] == json!(id)))
-            });
+            .any(|entry| entry.id == id && entry.system.as_str() == "swiss")
+            || self
+                .list
+                .as_ref()
+                .is_some_and(|list| list.swiss.iter().any(|entry| entry.id == id));
         self.show_event(if swiss { "swiss" } else { "arena" }, id, cx);
     }
 
@@ -314,9 +323,9 @@ impl TournamentsPage {
     fn refresh_due(&self) -> bool {
         self.visible
             && self.open.as_ref().is_some_and(|open| {
-                open.detail
-                    .as_ref()
-                    .is_some_and(|detail| refresh_due(&detail["status"], open.received.elapsed()))
+                open.detail.as_ref().is_some_and(|detail| {
+                    refresh_due(detail.summary.status, open.received.elapsed())
+                })
             })
     }
 
@@ -338,38 +347,36 @@ impl TournamentsPage {
         let Some(open) = &mut self.open else {
             return;
         };
-        open.epoch += 1;
-        let epoch = open.epoch;
+        let epoch = open.epoch.next();
         let (system, id, page) = (open.system.clone(), open.id.clone(), open.page);
         let call = cx.global::<AppCore>().request(calls::Tournament {
-            system: json!(system),
-            id: json!(id),
+            system: system_named(&system),
+            id: TournamentId(id.clone()),
             account,
-            page: Some(json!(page)),
+            page: Some(Bounded(page as u64)),
         });
         cx.spawn(async move |this, cx| {
             let answer = call.await;
-            let _ =
-                this.update(cx, |this, cx| {
-                    // Every tournament opened counts from 1: a reply is this one's only if it also
-                    // names the tournament still open.
-                    let Some(open) = this.open.as_mut().filter(|open| {
-                        open.epoch == epoch && open.system == system && open.id == id
-                    }) else {
-                        return;
-                    };
-                    match answer {
-                        Ok(detail) => {
-                            open.detail = Some(detail);
-                            open.received = Instant::now();
-                            open.error = None;
-                        }
-                        Err(cause) => open.error = Some(cause.message.into()),
+            let _ = this.update(cx, |this, cx| {
+                // Every tournament opened counts from 1: a reply is this one's only if it also
+                // names the tournament still open.
+                let Some(open) = this.open.as_mut().filter(|open| {
+                    open.epoch.is_current(epoch) && open.system == system && open.id == id
+                }) else {
+                    return;
+                };
+                match answer {
+                    Ok(detail) => {
+                        open.detail = Some(detail);
+                        open.received = Instant::now();
+                        open.error = None;
                     }
-                    // The core forgets an arena that is over or that you left.
-                    this.reload_joined(cx);
-                    cx.notify();
-                });
+                    Err(cause) => open.error = Some(cause.message.into()),
+                }
+                // The core forgets an arena that is over or that you left.
+                this.reload_joined(cx);
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -388,10 +395,9 @@ impl TournamentsPage {
             return false;
         };
         !self.busy
-            && detail["status"] != json!("finished")
+            && detail.summary.status != TournamentStatus::Finished
             && !self.joined_now(detail, cx)
-            && detail["playable"] == json!(true)
-            && detail["verdicts"]["accepted"] != json!(false)
+            && open_to_join(detail)
     }
 
     /// `join`: with the entry code, if any; a login without the permission asks to reconnect.
@@ -404,27 +410,24 @@ impl TournamentsPage {
             return;
         };
         let password = self.password.read(cx).value().trim().to_string();
-        let mut args = vec![
-            detail["system"].clone(),
-            detail["id"].clone(),
-            json!(account),
-        ];
-        // An unset code is left out: the validators reject null.
-        if !password.is_empty() {
-            args.push(json!(password));
-        }
+        let summary = &detail.summary;
+        let join = calls::JoinTournament {
+            system: summary.system,
+            id: TournamentId(summary.id.clone()),
+            account: Username(account),
+            password: (!password.is_empty()).then_some(TournamentPassword(password)),
+        };
         self.act(
-            "joinTournament",
-            args,
-            Some(if detail["system"] == json!("arena") {
+            join,
+            Some(if summary.system == TournamentSystem::Arena {
                 format!(
                     "Joined {}. Games open here automatically when you are paired.",
-                    detail["name"].as_str().unwrap_or_default()
+                    summary.name
                 )
             } else {
                 format!(
                     "Joined {}. Each round's game opens here automatically.",
-                    detail["name"].as_str().unwrap_or_default()
+                    summary.name
                 )
             }),
             window,
@@ -440,12 +443,11 @@ impl TournamentsPage {
             return;
         };
         self.act(
-            "leaveTournament",
-            vec![
-                detail["system"].clone(),
-                detail["id"].clone(),
-                json!(account),
-            ],
+            calls::LeaveTournament {
+                system: detail.summary.system,
+                id: TournamentId(detail.summary.id.clone()),
+                account: Username(account),
+            },
             None,
             window,
             cx,
@@ -453,10 +455,9 @@ impl TournamentsPage {
     }
 
     /// Join or leave, then read the tournament again.
-    fn act(
+    fn act<C: CoreCall<Answer = Reply<bool>> + Send + 'static>(
         &mut self,
-        method: &'static str,
-        args: Vec<Value>,
+        call: C,
         done: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -467,16 +468,14 @@ impl TournamentsPage {
         self.busy = true;
         self.needs_reconnect = false;
         cx.notify();
-        let call = cx.global::<AppCore>().call(method, args);
+        let call = cx.global::<AppCore>().request(call);
         cx.spawn_in(window, async move |this, cx| {
             let answer = call.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match answer {
-                    Ok(result) if result.get("needsReconnect").is_some() => {
-                        this.needs_reconnect = true
-                    }
-                    Ok(_) => {
+                    Ok(Reply::NeedsReconnect) => this.needs_reconnect = true,
+                    Ok(Reply::Done(_)) => {
                         this.password
                             .update(cx, |input, cx| input.set_value("", window, cx));
                         if let Some(done) = done {
@@ -517,7 +516,7 @@ impl TournamentsPage {
     pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
         let Some(open) = &self.open else {
             let mut actions = Vec::new();
-            if !self.loading {
+            if !self.loading.busy() {
                 actions.push(Action::Refresh);
             }
             actions.push(Action::Create);
@@ -531,23 +530,25 @@ impl TournamentsPage {
     }
 
     /// The open event's own actions: join it, or go to your game and leave it.
-    fn event_actions(&self, detail: Option<&Value>, cx: &App) -> Vec<Action> {
+    fn event_actions(&self, detail: Option<&TournamentDetail>, cx: &App) -> Vec<Action> {
         let Some(detail) = detail else {
             return Vec::new();
         };
-        if detail["status"] == json!("finished") || self.busy {
+        if detail.summary.status == TournamentStatus::Finished || self.busy {
             return Vec::new();
         }
         if !self.joined_now(detail, cx) {
-            let open =
-                detail["playable"] == json!(true) && detail["verdicts"]["accepted"] != json!(false);
-            return if open { vec![Action::Join] } else { Vec::new() };
+            return if open_to_join(detail) {
+                vec![Action::Join]
+            } else {
+                Vec::new()
+            };
         }
         let mut actions = Vec::new();
-        if detail["me"]["gameId"].is_string() {
+        if detail.me.as_ref().is_some_and(|me| me.game_id.is_some()) {
             actions.push(Action::Game);
         }
-        actions.push(if detail["system"] == json!("arena") {
+        actions.push(if detail.summary.system == TournamentSystem::Arena {
             Action::Pause
         } else {
             Action::Withdraw
@@ -570,9 +571,9 @@ impl TournamentsPage {
                     .open
                     .as_ref()
                     .and_then(|open| open.detail.as_ref())
-                    .and_then(|detail| detail["me"]["gameId"].as_str().map(str::to_string));
+                    .and_then(|detail| detail.me.as_ref()?.game_id.clone());
                 if let Some(id) = game {
-                    crate::shell::open_online_game(&id, window, cx);
+                    crate::pages::online::open_game(&id, window, cx);
                 }
             }
             Action::Pause | Action::Withdraw => self.leave(window, cx),
@@ -589,18 +590,15 @@ impl TournamentsPage {
     }
 
     /// An arena was made: show it.
-    fn created(&mut self, created: &Value, window: &mut Window, cx: &mut Context<Self>) {
-        window.push_notification(
-            format!(
-                "Created {}",
-                created["name"].as_str().unwrap_or("the arena")
-            ),
-            cx,
-        );
+    fn created(
+        &mut self,
+        created: &TournamentSummary,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.push_notification(format!("Created {}", created.name), cx);
         self.refresh(cx);
-        if let Some(id) = created["id"].as_str() {
-            self.show_event("arena", id, cx);
-        }
+        self.show_event("arena", &created.id, cx);
     }
 
     fn reconnect_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -642,7 +640,7 @@ impl Render for TournamentsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let showing_event = self.open.is_some();
-        let failed = self.list.is_none() && self.error.is_some();
+        let failed = self.list.is_none() && self.loading.error().is_some();
         let page = cx.entity().downgrade();
         let choose = move |index: usize, _: &mut Window, cx: &mut App| {
             let _ = page.update(cx, |page, cx| {
@@ -699,8 +697,8 @@ impl Render for TournamentsPage {
                                     .outline()
                                     .icon(icon("refresh-cw"))
                                     .label("Refresh")
-                                    .loading(self.loading)
-                                    .disabled(self.loading)
+                                    .loading(self.loading.busy())
+                                    .disabled(self.loading.busy())
                                     .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
                             )
                         })
@@ -735,11 +733,7 @@ impl Render for TournamentsPage {
                     cx.stop_propagation();
                 }
             }))
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
+            .takes_keys(&self.focus)
             .size_full()
             .overflow_y_scroll()
             .child(
@@ -755,50 +749,95 @@ impl Render for TournamentsPage {
     }
 }
 
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::ActionInfo;
+        let (id, label, glyph, keywords) = match self {
+            Action::Refresh => ("refresh", "Refresh", "refresh-cw", "reload schedule"),
+            Action::Create => ("create", "Create arena", "plus", "new tournament host"),
+            Action::Back => ("back", "All tournaments", "arrow-left", "schedule list"),
+            Action::Join => ("join", "Join", "log-in", "enter tournament"),
+            Action::Game => ("game", "Go to your game", "swords", "play pairing"),
+            Action::Pause => ("pause", "Pause", "pause", "leave arena"),
+            Action::Withdraw => ("withdraw", "Withdraw", "log-out", "leave tournament"),
+        };
+        ActionInfo::new(format!("tournaments:{id}"), label, glyph, keywords)
+    }
+}
+
+impl crate::pages::PageView for TournamentsPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Tournaments,
+        label: "Tournaments",
+        short: "Tournaments",
+        icon: "trophy",
+        group: Some(crate::pages::NavGroup::Lichess),
+        keywords: "",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        TournamentsPage::new(window, cx)
+    }
+
+    /// The open tournament refreshes only while Tournaments is shown.
+    fn shown(this: &Entity<Self>, again: bool, _window: &mut Window, cx: &mut App) {
+        if !again {
+            this.update(cx, |tournaments, cx| tournaments.shown(cx));
+        }
+    }
+
+    fn hidden(this: &Entity<Self>, _window: &mut Window, cx: &mut App) {
+        this.update(cx, |tournaments, _| tournaments.hidden());
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        TournamentsPage::actions(self, cx)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.run(action, window, cx));
+    }
+}
+
+/// A tournament's page, by its id.
+pub fn open_tournament(id: &str, window: &mut Window, cx: &mut App) {
+    let id = id.to_string();
+    crate::shell::show::<TournamentsPage>(window, cx, move |page, _, cx| {
+        page.show_known_event(&id, cx)
+    });
+}
+
+/// A tournament named by its system (`arena` or `swiss`) and id, as a pasted link names it.
+pub fn open_event(system: &'static str, id: &str, window: &mut Window, cx: &mut App) {
+    let id = id.to_string();
+    crate::shell::show::<TournamentsPage>(window, cx, move |page, _, cx| {
+        page.show_event(system, &id, cx)
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    /// Overlapping list requests (a refresh, then the account changed) let the first answer
-    /// clear the spinner while the second was on its way, and land over it if it came later.
-    #[gpui_kit::test]
-    fn only_the_latest_tournament_list_lands(cx: &mut gpui_kit::TestAppContext) {
-        use gpui_kit::AppContext as _;
-        let mut app = crate::e2e::Harness::start(cx);
-        let (first, second) = app.with_window(|window, cx| {
-            let page = cx.new(|cx| super::TournamentsPage::new(window, cx));
-            page.update(cx, |page, cx| {
-                page.refresh(cx);
-                let first = page.list_request;
-                page.refresh(cx);
-                (first, page.list_request)
-            })
-        });
-        assert_ne!(first, second);
-    }
-
     #[test]
     fn only_a_running_event_refreshes_every_tick_and_a_waiting_one_each_minute() {
-        use super::{REFRESH_EVERY, WAITING_REFRESH_EVERY, refresh_due};
-        use serde_json::json;
+        use super::{REFRESH_EVERY, TournamentStatus, WAITING_REFRESH_EVERY, refresh_due};
         use std::time::Duration;
         let tick = REFRESH_EVERY - Duration::from_millis(300);
-        assert!(refresh_due(&json!("started"), tick));
-        assert!(!refresh_due(&json!("started"), Duration::from_secs(1)));
+        assert!(refresh_due(TournamentStatus::Started, tick));
+        assert!(!refresh_due(
+            TournamentStatus::Started,
+            Duration::from_secs(1)
+        ));
         // An upcoming event used to be refreshed every tick, for hours before its start.
-        assert!(!refresh_due(&json!("created"), tick));
+        assert!(!refresh_due(TournamentStatus::Created, tick));
         assert!(refresh_due(
-            &json!("created"),
+            TournamentStatus::Created,
             WAITING_REFRESH_EVERY - Duration::from_millis(300)
         ));
-        assert!(!refresh_due(&json!("finished"), Duration::from_secs(3600)));
-    }
-
-    use super::control;
-    use serde_json::json;
-
-    #[test]
-    fn time_controls_read_like_lichess() {
-        assert_eq!(control(&json!({ "limit": 180, "increment": 2 })), "3+2");
-        assert_eq!(control(&json!({ "limit": 30, "increment": 0 })), "½+0");
-        assert_eq!(control(&json!({ "limit": 90, "increment": 1 })), "1.5+1");
+        assert!(!refresh_due(
+            TournamentStatus::Finished,
+            Duration::from_secs(3600)
+        ));
     }
 }

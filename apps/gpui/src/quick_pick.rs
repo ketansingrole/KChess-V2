@@ -11,7 +11,7 @@ pub enum Mode {
     Help,
 }
 
-/// The mode a leading prefix picks, and the text to match (`parseQuickPick`).
+/// The mode a leading prefix picks, and the text to match.
 pub fn parse(raw: &str) -> (Mode, &str) {
     let mode = match raw.chars().next() {
         Some('>') => Mode::Commands,
@@ -46,7 +46,7 @@ fn find(haystack: &[char], needle: &[char], from: usize) -> Option<usize> {
 }
 
 /// One token in `text`: whole substrings beat acronym-style subsequences, word starts beat the
-/// middle (`matchToken`).
+/// middle.
 fn match_token(token: &[char], text: &str) -> Option<Match> {
     let original: Vec<char> = text.chars().collect();
     let lower: Vec<char> = text.chars().flat_map(char::to_lowercase).collect();
@@ -122,7 +122,7 @@ fn merge(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
 const EXACT_LABEL: f64 = 100.;
 
 /// Every token must match the label or the extra text (keywords, details); only label matches are
-/// highlighted, and they score higher (`matchQuickPick`).
+/// highlighted, and they score higher.
 pub fn match_query(query: &str, label: &str, extra: &str) -> Option<Match> {
     let tokens: Vec<Vec<char>> = query
         .to_lowercase()
@@ -175,7 +175,7 @@ pub fn segments(label: &str, ranges: &[(usize, usize)]) -> Vec<(String, bool)> {
     out
 }
 
-/// Most recent first, without repeats, capped (`pushRecent`).
+/// Most recent first, without repeats, capped.
 pub fn push_recent(recent: &[String], id: &str, limit: usize) -> Vec<String> {
     std::iter::once(id.to_string())
         .chain(recent.iter().filter(|entry| *entry != id).cloned())
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn a_whole_name_beats_longer_labels_it_starts() {
         let exact = match_query("appearance", "Appearance", "Settings").unwrap();
-        let longer = match_query("appearance", "Appearance: Match system", "").unwrap();
+        let longer = match_query("appearance", "Appearance: System", "").unwrap();
         assert!(exact.score > longer.score);
     }
 

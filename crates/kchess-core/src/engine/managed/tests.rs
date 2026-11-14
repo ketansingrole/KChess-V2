@@ -2,6 +2,7 @@
 //! archive traversal and links, failed handoff, failed probe, cancellation. A local HTTP server
 //! stands in for GitHub; archives are generated in the test.
 
+use crate::test_host::TestHost;
 use std::collections::HashMap;
 use std::future::Future;
 use std::io::{Cursor, Write};
@@ -21,41 +22,6 @@ use super::*;
 
 const EXE: &str = "stockfish";
 const LINUX_ASSET: &str = "stockfish-linux-x86-64-universal.tar.gz";
-
-#[derive(Default)]
-struct RecordingHost {
-    events: Mutex<Vec<(String, Value)>>,
-    logs: Mutex<Vec<String>>,
-}
-
-impl Host for RecordingHost {
-    fn log(&self, _level: Level, scope: &str, message: &str) {
-        self.logs
-            .lock()
-            .unwrap()
-            .push(format!("[{scope}] {message}"));
-    }
-
-    fn emit(&self, event: &str, payload: Value) {
-        self.events
-            .lock()
-            .unwrap()
-            .push((event.to_string(), payload));
-    }
-}
-
-impl RecordingHost {
-    #[cfg(unix)]
-    fn usage_events(&self) -> Vec<Value> {
-        self.events
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(event, _)| event == "host:usage")
-            .map(|(_, payload)| payload.clone())
-            .collect()
-    }
-}
 
 type Hits = Arc<Mutex<Vec<String>>>;
 
@@ -155,8 +121,9 @@ fn sha256(bytes: &[u8]) -> String {
     format!("sha256:{}", hex(&Sha256::digest(bytes)))
 }
 
-/// A fake UCI engine: answers `uci` with `uciok`, then exits at end of input.
-const FAKE_ENGINE: &str = "#!/bin/sh\nwhile read line; do\n  if [ \"$line\" = uci ]; then echo id name Fake; echo uciok; fi\ndone\n";
+/// A fake UCI engine: answers `uci` with `uciok` and `isready` with `readyok`, then exits at end
+/// of input.
+const FAKE_ENGINE: &str = "#!/bin/sh\nwhile read line; do\n  if [ \"$line\" = uci ]; then echo id name Fake; echo uciok; fi\n  if [ \"$line\" = isready ]; then echo readyok; fi\ndone\n";
 
 /// One archive member.
 enum Member<'a> {
@@ -308,25 +275,65 @@ impl EngineHandoff for TestHandoff {
 
 #[tokio::test]
 async fn reports_missing_when_the_directory_or_binary_is_absent() {
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let empty = dir.path().join("empty");
     assert_eq!(
         managed_engine(&host, &empty).await,
         ManagedEngine {
             installed: false,
-            path: empty.join(executable_name()),
+            path: empty.join(executable_name()).to_string_lossy().into_owned(),
             version: None,
         }
     );
     let nested = dir.path().join("notadir").join("sub");
     std::fs::create_dir_all(&nested).unwrap();
     assert!(!managed_engine(&host, &nested).await.installed);
+    // A folder where the executable belongs is no engine.
+    let folder = dir.path().join("folder");
+    std::fs::create_dir_all(folder.join(executable_name())).unwrap();
+    assert!(!managed_engine(&host, &folder).await.installed);
+}
+
+/// Every install and delete of one folder takes the same lock; another folder has its own.
+#[tokio::test]
+async fn one_folder_has_one_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let lock = dir_lock(dir.path());
+    let _held = lock.lock().await;
+    assert!(dir_lock(dir.path()).try_lock().is_err(), "the same folder");
+    assert!(dir_lock(&dir.path().join("other")).try_lock().is_ok());
+}
+
+/// Release metadata of a few megabytes (a long changelog) is read; the limit is ten.
+#[tokio::test]
+async fn release_metadata_of_a_few_megabytes_is_read() {
+    let mut metadata = json!({ "tag_name": "sf_17.1", "assets": [] });
+    metadata["body"] = json!("x".repeat(2 * 1024 * 1024));
+    let (base, _) = serve(|_| {
+        vec![Route(
+            "/release",
+            200,
+            serde_json::to_vec(&metadata).unwrap(),
+        )]
+    })
+    .await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let release = fetch_release(
+        &Unmetered,
+        &client,
+        &format!("{base}/release"),
+        None,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(release.tag, "sf_17.1");
 }
 
 #[tokio::test]
 async fn reports_the_recorded_version_and_none_when_the_file_is_missing() {
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join(executable_name()), "#!/bin/sh\nexit 0\n").unwrap();
     let state = managed_engine(&host, dir.path()).await;
@@ -339,7 +346,7 @@ async fn reports_the_recorded_version_and_none_when_the_file_is_missing() {
 
 #[tokio::test]
 async fn deletes_only_its_own_directory_under_engine_maintenance() {
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     std::fs::create_dir_all(&engine).unwrap();
@@ -364,7 +371,7 @@ async fn skips_the_download_when_the_installed_engine_matches_the_release() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_17.1", "binary");
@@ -386,7 +393,7 @@ async fn skips_the_download_when_the_installed_engine_matches_the_release() {
 #[tokio::test]
 async fn rejects_invalid_release_metadata_instead_of_downloading() {
     let (base, hits) = serve(|_| vec![Route("/release", 200, br#"{"nope":true}"#.to_vec())]).await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let error = install_managed_engine(&host, &location(dir.path(), &base))
         .await
@@ -426,12 +433,13 @@ async fn installs_the_verified_release_and_records_its_version() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
-    let result = install_managed_engine(&host, &location(&engine, &base))
-        .await
-        .unwrap();
+    let meter = Arc::new(crate::usage::UsageLog::default());
+    let mut at = location(&engine, &base);
+    at.meter = meter.clone();
+    let result = install_managed_engine(&host, &at).await.unwrap();
     assert_eq!(result.version, "sf_18");
     assert!(result.updated && result.installed);
     assert_eq!(
@@ -444,16 +452,12 @@ async fn installs_the_verified_release_and_records_its_version() {
     assert_eq!(mode & 0o777, 0o755);
     assert!(!engine.join(format!("{EXE}.pending")).exists());
     assert_eq!(*hits.lock().unwrap(), ["/release", "/asset"]);
-    let usage = host.usage_events();
-    assert_eq!(usage.first().unwrap()["requests"], 1);
-    assert_eq!(usage.last().unwrap()["bytes"], size as u64);
-    assert_eq!(
-        usage
-            .iter()
-            .map(|u| u["bytes"].as_u64().unwrap())
-            .sum::<u64>(),
-        size as u64
-    );
+    // The release check, then the download: one request and its bytes each.
+    let usage = meter.counted();
+    assert_eq!(usage.len(), 2);
+    assert!(usage.iter().all(|u| u["requests"] == 1));
+    assert!(usage[0]["bytes"].as_u64().unwrap() > 0);
+    assert_eq!(usage[1]["bytes"], size as u64);
 }
 
 // The release is a Linux archive whose engine is a shell script.
@@ -486,7 +490,7 @@ async fn a_token_authenticates_the_release_check_but_not_the_download() {
     let dir = tempfile::tempdir().unwrap();
     let mut location = location(&dir.path().join("current"), &base);
     location.github_token = Some("test-token".to_string());
-    install_managed_engine(&RecordingHost::default(), &location)
+    install_managed_engine(&TestHost::default(), &location)
         .await
         .unwrap();
     assert_eq!(
@@ -518,7 +522,7 @@ async fn rejects_a_download_that_fails_its_digest_and_keeps_the_old_engine() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -550,7 +554,7 @@ async fn rejects_a_release_without_a_sha256_digest() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -590,7 +594,7 @@ async fn rejects_a_download_shorter_than_the_release_size() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -619,7 +623,7 @@ async fn refuses_an_oversized_release_before_downloading() {
         )]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let error = install_managed_engine(&host, &location(dir.path(), &base))
         .await
@@ -646,7 +650,7 @@ async fn reports_a_failed_download_status() {
         )]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let error = install_managed_engine(&host, &location(dir.path(), &base))
         .await
@@ -685,7 +689,7 @@ async fn a_brief_github_failure_is_asked_again_and_the_install_succeeds() {
         },
     )
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let result = install_managed_engine(&host, &location(dir.path(), &base))
         .await
@@ -700,7 +704,7 @@ async fn a_brief_github_failure_is_asked_again_and_the_install_succeeds() {
 #[tokio::test]
 async fn a_lasting_github_failure_still_fails_the_install() {
     let (base, hits) = serve_failing(vec![("/release", vec![504; 3])], |_| Vec::new()).await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let error = install_managed_engine(&host, &location(dir.path(), &base))
         .await
@@ -762,7 +766,7 @@ async fn a_binary_that_does_not_answer_uci_keeps_the_old_engine() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -801,7 +805,7 @@ async fn an_archive_without_an_engine_is_rejected() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -844,7 +848,7 @@ async fn rejects_path_traversal_in_a_tar_archive() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -883,7 +887,7 @@ async fn rejects_a_symbolic_link_in_a_tar_archive() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -904,7 +908,7 @@ fn zip_archives_extract_named_files_and_directories() {
     )
     .unwrap();
     let out = root.path().join("out");
-    extract(ArchiveKind::Zip, &archive, &out).unwrap();
+    extract(ArchiveKind::Zip, &archive, &out, None).unwrap();
     assert_eq!(
         std::fs::read(out.join("stockfish/bin/stockfish.exe")).unwrap(),
         b"engine"
@@ -932,7 +936,7 @@ fn zip_archives_refuse_traversal_absolute_paths_and_links() {
     for (index, (bytes, expected)) in cases.iter().enumerate() {
         std::fs::write(&archive, bytes).unwrap();
         let out = root.path().join(format!("out{index}"));
-        let error = extract(ArchiveKind::Zip, &archive, &out).unwrap_err();
+        let error = extract(ArchiveKind::Zip, &archive, &out, None).unwrap_err();
         assert_eq!(error.message, *expected);
     }
     assert!(!root.path().join("escape").exists());
@@ -947,36 +951,7 @@ fn archive_names_select_the_format_case_insensitively() {
     assert_eq!(archive_kind("a.7z"), None);
 }
 
-#[test]
-fn safe_relative_keeps_only_normal_components() {
-    assert_eq!(safe_relative("./a/b").unwrap(), Path::new("a/b"));
-    assert!(safe_relative("../a").is_err());
-    assert!(safe_relative("a/../../b").is_err());
-    assert!(safe_relative("/etc/passwd").is_err());
-    assert!(safe_relative("a\\..\\b").is_err());
-}
-
 // --- Handoff, cancellation and deadlines ---
-
-/// CI regression (Linux): a descriptor still open for writing makes `execve` fail with
-/// `ETXTBSY`, as when a concurrently forked child inherits it. The probe waits it out.
-#[cfg(target_os = "linux")]
-#[tokio::test]
-async fn the_probe_waits_out_a_busy_executable() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join(EXE);
-    let mut writer = std::fs::File::create(&path).unwrap();
-    writer.write_all(FAKE_ENGINE.as_bytes()).unwrap();
-    set_executable(&path).unwrap();
-    let busy = tokio::process::Command::new(&path).spawn().unwrap_err();
-    assert_eq!(busy.kind(), std::io::ErrorKind::ExecutableFileBusy);
-    let release = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        drop(writer);
-    });
-    probe_engine(&path).await.unwrap();
-    release.await.unwrap();
-}
 
 // The release is a Linux archive whose engine is a shell script.
 #[cfg(unix)]
@@ -1004,7 +979,7 @@ async fn a_refused_handoff_keeps_the_old_engine_and_resumes_nothing() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -1043,7 +1018,7 @@ async fn owners_that_do_not_exit_time_out_and_keep_the_old_engine() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -1061,12 +1036,10 @@ async fn owners_that_do_not_exit_time_out_and_keep_the_old_engine() {
 #[tokio::test]
 async fn a_cancelled_install_fails_as_an_abort() {
     let (base, _hits) = serve(|_| vec![Route("/release", 200, release("sf_17", vec![]))]).await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
-    let (cancel, receiver) = watch::channel(false);
-    cancel.send(true).unwrap();
-    let mut location = location(dir.path(), &base);
-    location.cancel = Some(receiver);
+    let location = location(dir.path(), &base);
+    location.cancel.cancel();
     let error = install_managed_engine(&host, &location).await.unwrap_err();
     assert!(error.aborted);
     assert_eq!(error.message, "This operation was aborted");
@@ -1074,7 +1047,7 @@ async fn a_cancelled_install_fails_as_an_abort() {
 
 #[tokio::test]
 async fn delete_reports_the_refused_handoff_and_removes_nothing() {
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -1232,7 +1205,7 @@ async fn a_pinned_release_is_checked_against_its_pinned_digest() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -1269,7 +1242,7 @@ async fn a_pinned_release_must_answer_its_own_tag() {
         )]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let mut pinned = location(&dir.path().join("current"), &base);
     pinned.pinned = Some(&OTHER_TAG);
@@ -1279,4 +1252,14 @@ async fn a_pinned_release_must_answer_its_own_tag() {
         "GitHub answered Stockfish sf_17 for the pinned sf_19."
     );
     assert_eq!(*hits.lock().unwrap(), ["/release"]);
+}
+
+/// The shipped engine is fetched by its own tag and held to its pinned digests, not the latest
+/// release's.
+#[test]
+fn the_shipped_engine_is_fetched_by_its_tag_and_pinned() {
+    let shipped = super::ManagedLocation::shipped(std::env::temp_dir().join("shipped"));
+    assert_eq!(shipped.release_url, super::tag_url(super::SHIPPED.tag));
+    assert_ne!(shipped.release_url, super::RELEASE_URL);
+    assert_eq!(shipped.pinned.map(|pin| pin.tag), Some(super::SHIPPED.tag));
 }

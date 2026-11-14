@@ -1,38 +1,47 @@
 //! Rating-history keys, display names, histories rebuilt from
 //! games and the merge of Lichess's own histories with them.
 
+use crate::perf::Speed;
+use crate::variant::Variant;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use serde_json::{Map, Value, json};
 
-use super::{Out, arg, list};
 use crate::js;
 
 const DAY_MS: f64 = 86_400_000.0;
 /// `ms` for `Date`'s range: beyond it a JavaScript Date is invalid.
 const MAX_DATE_MS: f64 = 8.64e15;
 
-/// `RATING_DISPLAY_NAMES`: the label for each rating-history key.
+const fn named(variant: Variant) -> (&'static str, &'static str) {
+    (variant.key(), variant.label())
+}
+
+const fn speed(speed: Speed) -> (&'static str, &'static str) {
+    (speed.key(), speed.label())
+}
+
+/// The label for each rating-history key.
 pub const DISPLAY_NAMES: &[(&str, &str)] = &[
-    ("ultraBullet", "UltraBullet"),
-    ("bullet", "Bullet"),
-    ("blitz", "Blitz"),
-    ("rapid", "Rapid"),
-    ("classical", "Classical"),
-    ("correspondence", "Correspondence"),
-    ("chess960", "Chess960"),
-    ("crazyhouse", "Crazyhouse"),
-    ("antichess", "Antichess"),
-    ("atomic", "Atomic"),
-    ("horde", "Horde"),
-    ("kingOfTheHill", "King of the Hill"),
-    ("racingKings", "Racing Kings"),
-    ("threeCheck", "Three-check"),
+    speed(Speed::UltraBullet),
+    speed(Speed::Bullet),
+    speed(Speed::Blitz),
+    speed(Speed::Rapid),
+    speed(Speed::Classical),
+    speed(Speed::Correspondence),
+    named(Variant::Chess960),
+    named(Variant::Crazyhouse),
+    named(Variant::Antichess),
+    named(Variant::Atomic),
+    named(Variant::Horde),
+    named(Variant::KingOfTheHill),
+    named(Variant::RacingKings),
+    named(Variant::ThreeCheck),
     ("puzzle", "Puzzles"),
 ];
 
-/// `KEY_BY_NORMALIZED`: lowercase names without spaces, `_` or `-`, to their key.
+/// Lowercase names without spaces, `_` or `-`, to their key.
 const KEY_BY_NORMALIZED: &[(&str, &str)] = &[
     ("ultrabullet", "ultraBullet"),
     ("bullet", "bullet"),
@@ -52,34 +61,16 @@ const KEY_BY_NORMALIZED: &[(&str, &str)] = &[
     ("puzzles", "puzzle"),
 ];
 
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    Some(match method {
-        "normalizeRatingKey" => Ok(json!(normalize(arg(args, 0)))),
-        "ratingDisplayName" => Ok(json!(display_name(arg(args, 0)))),
-        "isPuzzleHistory" => Ok(json!(normalize(arg(args, 0)) == "puzzle")),
-        "ratingDisplayNames" => Ok(Value::Object(
-            DISPLAY_NAMES
-                .iter()
-                .map(|(key, label)| ((*key).to_string(), json!(label)))
-                .collect(),
-        )),
-        "ratingHistoryFromGames" => list(args, 0, "games").map(history_from_games),
-        "mergeRatingHistories" => list(args, 0, "official").and_then(|official| {
-            list(args, 1, "fromGames").map(|from_games| merge(official, from_games))
-        }),
-        _ => return None,
-    })
-}
-
 fn lookup(table: &'static [(&'static str, &'static str)], key: &str) -> Option<&'static str> {
     table.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
 }
 
-/// `normalizeRatingKey`: '' for anything but a non-empty string; an unknown name is kept as it is.
-fn normalize(name: Option<&Value>) -> String {
-    let Some(name) = name.and_then(Value::as_str).filter(|name| !name.is_empty()) else {
+/// The rating-history key of a Lichess perf or history name ("King of the Hill" is
+/// `kingOfTheHill`); an unknown name is kept as it is.
+pub fn normalize_rating_key(name: &str) -> String {
+    if name.is_empty() {
         return String::new();
-    };
+    }
     let key: String = name
         .to_lowercase()
         .chars()
@@ -88,16 +79,31 @@ fn normalize(name: Option<&Value>) -> String {
     lookup(KEY_BY_NORMALIZED, &key).map_or_else(|| name.to_string(), str::to_string)
 }
 
-/// `ratingDisplayName`: the label for a key, or the name itself when it has none.
-fn display_name(name: Option<&Value>) -> String {
-    let Some(text) = name.and_then(Value::as_str).filter(|name| !name.is_empty()) else {
-        return String::new();
-    };
-    lookup(DISPLAY_NAMES, &normalize(name)).map_or_else(|| text.to_string(), str::to_string)
+/// The label of a rating category's key ("kingOfTheHill" is "King of the Hill").
+pub fn perf_label(key: &str) -> Option<&'static str> {
+    DISPLAY_NAMES
+        .iter()
+        .find(|(known, _)| *known == key)
+        .map(|(_, label)| *label)
 }
 
-/// The rating key of a game's `perf`: `normalizeRatingKey(perf) || perf`. A non-string perf is
-/// its own key (undefined when absent).
+/// The label of a rating history, or the name itself when it has none.
+pub fn rating_display_name(name: &str) -> String {
+    lookup(DISPLAY_NAMES, &normalize_rating_key(name))
+        .map_or_else(|| name.to_string(), str::to_string)
+}
+
+/// Whether a rating history is the puzzle rating's.
+pub fn is_puzzle_history(name: &str) -> bool {
+    normalize_rating_key(name) == "puzzle"
+}
+
+/// The key of a history entry's or game's `name`: '' for anything but a string.
+fn normalize(name: Option<&Value>) -> String {
+    normalize_rating_key(name.and_then(Value::as_str).unwrap_or_default())
+}
+
+/// The rating key of a game's `perf`. A non-string perf is its own key (None when absent).
 fn perf_key(perf: Option<&Value>) -> Option<Value> {
     match perf {
         Some(Value::String(_)) => Some(json!(normalize(perf))),
@@ -105,7 +111,7 @@ fn perf_key(perf: Option<&Value>) -> Option<Value> {
     }
 }
 
-/// Stands in for the identity of a `Map` key: values are equal when their JSON is.
+/// A key's identity: values are equal when their JSON is.
 fn key_id(key: &Option<Value>) -> String {
     match key {
         None => "undefined".into(),
@@ -136,8 +142,9 @@ struct Perf {
     day_index: HashMap<u64, usize>,
 }
 
-/// `ratingHistoryFromGames`: one point per UTC day per perf, the day's last rated game.
-fn history_from_games(games: &[Value]) -> Value {
+/// Rating histories rebuilt from games: one point per UTC day per perf, the day's last rated
+/// game, as `[year, month0, day, rating]`.
+pub fn rating_history_from_games(games: &[Value]) -> Value {
     let mut sorted: Vec<&Value> = games.iter().collect();
     sorted.sort_by(|a, b| {
         created_at(a)
@@ -211,7 +218,7 @@ fn utc_date(day: f64) -> (Value, Value, Value) {
     }
 }
 
-/// Whether a history entry has points (`entry.points?.length`).
+/// Whether a history entry has points: a non-empty `points` list (or string).
 fn has_points(entry: &Value) -> bool {
     match entry.get("points") {
         Some(Value::Array(points)) => !points.is_empty(),
@@ -220,9 +227,8 @@ fn has_points(entry: &Value) -> bool {
     }
 }
 
-/// `mergeRatingHistories`: Lichess's histories, plus the game-built ones for perfs it has no
-/// points for.
-fn merge(official: &[Value], from_games: &[Value]) -> Value {
+/// Lichess's rating histories, plus the game-built ones for perfs it has no points for.
+pub fn merge_rating_histories(official: &[Value], from_games: &[Value]) -> Value {
     let covered: HashSet<String> = official
         .iter()
         .filter(|entry| has_points(entry))
@@ -245,10 +251,12 @@ mod tests {
     #[test]
     fn keys_normalize_like_lichess_names() {
         let name = |s: &str| json!(s);
-        assert_eq!(normalize(Some(&name("King of the Hill"))), "kingOfTheHill");
+        assert_eq!(normalize_rating_key("King of the Hill"), "kingOfTheHill");
+        assert_eq!(normalize_rating_key("Puzzles"), "puzzle");
+        assert_eq!(normalize_rating_key("Unknown_Thing"), "Unknown_Thing");
+        assert_eq!(normalize_rating_key(""), "");
         assert_eq!(normalize(Some(&name("Puzzles"))), "puzzle");
-        assert_eq!(normalize(Some(&name("Unknown_Thing"))), "Unknown_Thing");
-        assert_eq!(normalize(Some(&name(""))), "");
+        assert_eq!(normalize(Some(&json!(3))), "");
         assert_eq!(normalize(None), "");
     }
 

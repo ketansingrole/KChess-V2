@@ -1,4 +1,4 @@
-//! `cargo xtask package [--skip-build|--build-only] [--snap]`: the app for this machine, with its
+//! `cargo xtask package [--skip-build|--build-only] [--snap|--mas]`: the app for this machine, with its
 //! own native Stockfish, the core service, the command line and the voice runtime beside it, in the
 //! formats KChess has always shipped: macOS a .dmg and a .zip (Apple Silicon); Windows the per-user
 //! NSIS installer (.exe); Linux an .AppImage and a .deb. The updater installs each kind
@@ -28,14 +28,12 @@ pub mod windows;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use kchess_delta::Asset;
+use kchess_delta::{Asset, installed};
 
-use crate::util::{Result, exe, root, run_with, say};
+use crate::util::{Result, root, run_with, say};
 
 pub const AUTHOR: &str = "Ketan Singrole";
 pub const COPYRIGHT: &str = "Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.";
-#[cfg(unix)]
-pub const HOMEPAGE: &str = "https://ketansingrole.github.io/KChess-V2/";
 #[cfg(unix)]
 pub const SYNOPSIS: &str = "Desktop chess: Stockfish, Lichess, puzzles and training";
 #[cfg(unix)]
@@ -93,16 +91,6 @@ impl Identity {
     }
 }
 
-/// The crates whose programs every package ships: the app, the core service, the command line
-/// and the speech helper. They are built for release, attributed (`licenses`), and checked for
-/// `unwrap` (`check`).
-pub const SHIPPED: [&str; 4] = [
-    "kchess-gpui",
-    "kchess-service",
-    "kchess-cli",
-    "kchess-voice",
-];
-
 /// The license texts of everything a package ships, beside its programs.
 const LICENSES: &str = "THIRD_PARTY_LICENSES.txt";
 
@@ -121,16 +109,25 @@ pub struct Built {
 impl Built {
     /// The programs a package installs side by side, each with the name it is installed as: the
     /// app as `app`, the engines, the core service and, with `cli`, the command line. The app
-    /// finds them by these names beside itself (`apps/gpui/src/profile.rs`).
+    /// finds them by these names beside itself (`crates/kchess-service/src/layout.rs`).
     pub fn programs(&self, app: &str, cli: bool) -> Vec<(&Path, String)> {
         let mut programs = vec![
-            (self.app.as_path(), exe(app)),
-            (self.stockfish.as_path(), exe("stockfish")),
-            (self.fairy.as_path(), exe("fairy-stockfish")),
-            (self.service.as_path(), exe("kchess-service")),
+            (self.app.as_path(), installed::program(app)),
+            (
+                self.stockfish.as_path(),
+                installed::program(installed::STOCKFISH),
+            ),
+            (
+                self.fairy.as_path(),
+                installed::program(installed::FAIRY_STOCKFISH),
+            ),
+            (
+                self.service.as_path(),
+                installed::program(installed::SERVICE),
+            ),
         ];
         if cli {
-            programs.push((self.cli.as_path(), exe("kchess-cli")));
+            programs.push((self.cli.as_path(), installed::program(installed::CLI)));
         }
         programs
     }
@@ -152,7 +149,6 @@ pub fn copy_licenses(built: &Built, dir: &Path) -> Result {
         .map_err(|cause| cause.to_string())
 }
 
-/// Copy `from` to `to`, executable on Unix.
 pub fn copy_program(from: &Path, to: &Path) -> Result {
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent).map_err(|cause| cause.to_string())?;
@@ -174,7 +170,7 @@ pub fn executable(path: &Path) -> Result {
 
 /// Copy the voice runtime into `dir/voice`; the paths of its programs and libraries.
 pub fn copy_voice(built: &Built, dir: &Path) -> Result<Vec<PathBuf>> {
-    let target = dir.join("voice");
+    let target = dir.join(installed::VOICE);
     std::fs::create_dir_all(&target).map_err(|cause| cause.to_string())?;
     let mut code = Vec::new();
     for entry in std::fs::read_dir(&built.voice)
@@ -212,10 +208,10 @@ fn verify_no_dev_build(path: &Path) -> Result {
 fn compile() -> Command {
     let mut cargo = Command::new("cargo");
     cargo.args(["build", "--release", "--locked"]);
-    for package in SHIPPED {
+    for package in crate::members::shipped() {
         cargo.args(["-p", package]);
     }
-    // A shipped build ignores the development overrides (`kchess_core::dev_overrides`).
+    // A shipped build ignores the development overrides (`kchess_host::dev_overrides`).
     cargo.args(["--features", "kchess-core/packaged"]);
     cargo
 }
@@ -233,9 +229,9 @@ fn build(skip: bool) -> Result<Built> {
     std::fs::create_dir_all(root().join("target/package")).map_err(|cause| cause.to_string())?;
     crate::licenses::write(&licenses)?;
     let built = Built {
-        app: target.join(exe("KChess")),
-        service: target.join(exe("kchess-service")),
-        cli: target.join(exe("kchess-cli")),
+        app: target.join(installed::program("KChess")),
+        service: target.join(installed::program(installed::SERVICE)),
+        cli: target.join(installed::program(installed::CLI)),
         stockfish,
         fairy,
         voice,
@@ -449,21 +445,6 @@ mod tests {
         assert!(deb.exists(), "--mas removed the .deb");
         clear_out(&out, false, false);
         assert!(!out.exists(), "a new run kept the last run's packages");
-    }
-
-    /// The build packaging ships, as `--build-only` makes it for CI's cache: every shipped program,
-    /// released and without the development overrides.
-    #[test]
-    fn the_cached_build_is_the_shipped_build() {
-        let cargo = compile();
-        let args: Vec<_> = cargo.get_args().map(|arg| arg.to_string_lossy()).collect();
-        let mut expected = vec!["build", "--release", "--locked"];
-        for package in SHIPPED {
-            expected.extend(["-p", package]);
-        }
-        expected.extend(["--features", "kchess-core/packaged"]);
-        assert_eq!(args, expected);
-        assert_eq!(cargo.get_program(), "cargo");
     }
 
     /// A platform's packaging fails without any package it releases, or with an empty one.

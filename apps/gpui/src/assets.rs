@@ -14,7 +14,8 @@ use gpui_kit::{AssetSource, Result, SharedString};
 struct Icons;
 
 /// An icon by its name (`circle-dot`). `cargo xtask icons` finds every `icon("…")` in the
-/// sources, so the name must be written here as a literal.
+/// sources, and every string literal that is a name in its `ICONS`, so a name kept in a table
+/// is written there as a literal.
 pub fn icon(name: &'static str) -> Icon {
     Icon::empty().path(format!("icons/{name}.svg"))
 }

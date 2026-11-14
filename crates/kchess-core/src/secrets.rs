@@ -7,7 +7,7 @@
 //!
 //! The key is named after the profile's `credentials.id`, a random id kept in the profile, so two
 //! profiles on one machine never share a key and a copied profile does not find one. Under the
-//! test switch (`KCHESS_STORE_DEBUG=1`) the key is a file in the profile instead, so automated
+//! test switches (`Config::test_switches`) the key is a file in the profile instead, so automated
 //! runs never touch the user's credential store.
 
 use aes_gcm::aead::{Aead, KeyInit};
@@ -18,7 +18,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, Result};
 
 /// What every sealed credential starts with.
 pub const SEALED: &str = "kcs1:";
@@ -57,10 +57,10 @@ pub struct Credentials {
 }
 
 impl Credentials {
-    /// The credentials of the profile at `data_dir`: the OS credential store, or a key file in
-    /// the profile under the test switch.
-    pub fn for_profile(data_dir: &Path) -> Credentials {
-        if crate::store::debug::enabled() {
+    /// The credentials of the profile at `data_dir`: the OS credential store, or (`in_file`, an
+    /// automated run) a key file in the profile.
+    pub fn for_profile(data_dir: &Path, in_file: bool) -> Credentials {
+        if in_file {
             return Credentials::new(Box::new(FileKeys(data_dir.join(TEST_KEY_FILE))));
         }
         Credentials::new(Box::new(SystemKeys {
@@ -75,7 +75,7 @@ impl Credentials {
         }
     }
 
-    /// `SecretStore.available()`: whether tokens can be sealed here.
+    /// Whether tokens can be sealed here.
     pub fn available(&self) -> bool {
         self.keys.available()
     }
@@ -137,7 +137,7 @@ impl Credentials {
             None => {
                 let mut bytes = [0u8; 32];
                 getrandom::fill(&mut bytes).map_err(|e| CoreError::wrap("credential key", e))?;
-                let created = hex(&bytes);
+                let created = kchess_delta::hex(&bytes);
                 self.keys.write(&created)?;
                 // A store that dropped the key silently would leave the token unreadable.
                 if self.keys.read()?.as_deref() != Some(created.as_str()) {
@@ -156,10 +156,6 @@ impl Credentials {
 
 fn cipher(key: &[u8; 32]) -> Aes256Gcm {
     Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn unhex(text: &str) -> Option<[u8; 32]> {
@@ -214,7 +210,7 @@ impl SystemKeys {
             None => {
                 let mut bytes = [0u8; 16];
                 getrandom::fill(&mut bytes).map_err(|e| CoreError::wrap("credential id", e))?;
-                let id = hex(&bytes);
+                let id = kchess_delta::hex(&bytes);
                 write_private(&path, &id)?;
                 id
             }
@@ -257,7 +253,7 @@ impl KeyStore for SystemKeys {
     }
 }
 
-/// The key in a profile file, for automated runs only (`KCHESS_STORE_DEBUG=1`).
+/// The key in a profile file, for automated runs only (`Config::test`).
 struct FileKeys(PathBuf);
 
 impl KeyStore for FileKeys {

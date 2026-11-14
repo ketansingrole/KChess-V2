@@ -14,13 +14,9 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use kchess_delta::{APPIMAGE, Delta, Entry, WINDOWS_INSTALLER};
+use kchess_delta::{APPIMAGE, Delta, Entry};
 
 use super::Package;
-
-/// Where a Windows patch's installer is staged; the files go in `files` beside it, where it
-/// reads them (`$EXEDIR\files`).
-pub const UPDATE_EXE: &str = "KChess-update.exe";
 
 /// The release asset of the patch from `current`'s files to `package` (the release asset this
 /// installation updates from).
@@ -66,7 +62,7 @@ pub fn rebuild(patch: &Patch, work: &Path) -> Result<PathBuf, String> {
     let _ = std::fs::remove_dir_all(&out);
     match package {
         Package::MacZip => {
-            let bundle = out.join("KChess.app");
+            let bundle = out.join(kchess_delta::installed::MAC_BUNDLE);
             delta
                 .rebuild(|path| install.join(path), &bundle)
                 .map_err(text)?;
@@ -79,13 +75,7 @@ pub fn rebuild(patch: &Patch, work: &Path) -> Result<PathBuf, String> {
             Ok(out.join(APPIMAGE))
         }
         Package::WindowsInstaller => {
-            delta
-                .rebuild(|path| install.join(path), &out.join("files"))
-                .map_err(text)?;
-            let installer = out.join(UPDATE_EXE);
-            std::fs::write(&installer, delta.extra(WINDOWS_INSTALLER).map_err(text)?)
-                .map_err(|cause| cause.to_string())?;
-            Ok(installer)
+            kchess_delta::stage_windows(&mut delta, install, &out).map_err(text)
         }
         Package::Deb => {
             let files = out.join("root");

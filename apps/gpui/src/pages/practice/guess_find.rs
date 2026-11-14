@@ -1,12 +1,14 @@
 //! Finding a game to guess through without bringing one: a Lichess player's recent games, looked
 //! up as on Players, or a famous game.
 
+use crate::loading::Epoch;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::*;
 use kchess_contracts::calls;
-use serde_json::{Value, json};
+use kchess_contracts::check::{GameId, Username};
+use kchess_contracts::types::{LichessGame, PlayerSuggestion};
 use shakmaty::Color;
 
 use super::classics::{CLASSICS, winner};
@@ -25,12 +27,12 @@ pub enum Found {
 pub struct GameFinder {
     input: Entity<InputState>,
     /// Players whose names start with what is typed.
-    matches: Vec<Value>,
-    search_epoch: usize,
+    matches: Vec<PlayerSuggestion>,
+    search_epoch: Epoch,
     /// The player whose games are shown, and their games once Lichess sends them.
     player: Option<String>,
-    games: Option<Vec<Value>>,
-    epoch: usize,
+    games: Option<Vec<LichessGame>>,
+    epoch: Epoch,
     /// The row of the game being fetched.
     opening: Option<usize>,
     error: Option<SharedString>,
@@ -54,10 +56,10 @@ impl GameFinder {
         GameFinder {
             input,
             matches: Vec::new(),
-            search_epoch: 0,
+            search_epoch: Epoch::default(),
             player: None,
             games: None,
-            epoch: 0,
+            epoch: Epoch::default(),
             opening: None,
             error: None,
             _subscriptions: subscriptions,
@@ -66,8 +68,7 @@ impl GameFinder {
 
     /// Players whose names start with what is typed, once typing settles.
     fn search_names(&mut self, cx: &mut Context<Self>) {
-        self.search_epoch += 1;
-        let epoch = self.search_epoch;
+        let epoch = self.search_epoch.next();
         let term = self.input.read(cx).value().trim().to_string();
         let shown = self
             .player
@@ -86,20 +87,22 @@ impl GameFinder {
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(players::SEARCH_WAIT).await;
             let current = this
-                .read_with(cx, |this, _| this.search_epoch == epoch)
+                .read_with(cx, |this, _| this.search_epoch.is_current(epoch))
                 .unwrap_or(false);
             if !current {
                 return;
             }
             let found = core
-                .request(calls::SearchPlayers { term: json!(term) })
+                .request(calls::SearchPlayers {
+                    term: Username(term),
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                if this.search_epoch != epoch {
+                if !this.search_epoch.is_current(epoch) {
                     return;
                 }
                 if let Ok(found) = found {
-                    this.matches = found.as_array().cloned().unwrap_or_default();
+                    this.matches = found;
                     this.matches.truncate(players::SUGGESTED);
                 }
                 cx.notify();
@@ -120,9 +123,8 @@ impl GameFinder {
             cx.notify();
             return;
         }
-        self.epoch += 1;
-        let epoch = self.epoch;
-        self.search_epoch += 1;
+        let epoch = self.epoch.next();
+        self.search_epoch.invalidate();
         self.matches.clear();
         self.player = Some(name.clone());
         self.games = None;
@@ -130,23 +132,20 @@ impl GameFinder {
         self.error = None;
         cx.notify();
         let games = cx.global::<AppCore>().request(calls::RecentGames {
-            username: json!(name),
+            username: Username(name.clone()),
             rated: None,
         });
         cx.spawn(async move |this, cx| {
             let answer = games.await;
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 match answer {
                     Ok(games) => {
-                        let games = games.as_array().cloned().unwrap_or_default();
                         // Named as Lichess spells it, among the players looked up lately.
-                        if let Some(account) =
-                            games.first().and_then(|game| game["account"].as_str())
-                        {
-                            this.player = Some(account.to_string());
+                        if let Some(game) = games.first() {
+                            this.player = Some(game.account.clone());
                         }
                         if let Some(player) = this.player.clone() {
                             players::remember(&player, cx);
@@ -176,29 +175,24 @@ impl GameFinder {
         let Some(game) = self.games.as_ref().and_then(|games| games.get(index)) else {
             return;
         };
-        let side = if game["color"] == json!("black") {
-            Color::Black
-        } else {
-            Color::White
-        };
-        let id = game["id"].as_str().unwrap_or_default().to_string();
-        let epoch = self.epoch;
+        let side = game.color;
+        let id = game.id.clone();
+        let epoch = self.epoch.current();
         self.opening = Some(index);
         self.error = None;
         cx.notify();
         let export = cx
             .global::<AppCore>()
-            .request(calls::ExportGame { id: json!(id) });
+            .request(calls::ExportGame { id: GameId(id) });
         cx.spawn(async move |this, cx| {
             let answer = export.await;
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch || this.opening != Some(index) {
+                if !this.epoch.is_current(epoch) || this.opening != Some(index) {
                     return;
                 }
                 this.opening = None;
                 match answer {
-                    Ok(Value::String(pgn)) => cx.emit(Found::Game { pgn, side }),
-                    Ok(_) => this.error = Some("That game could not be read".into()),
+                    Ok(pgn) => cx.emit(Found::Game { pgn, side }),
                     Err(cause) => this.error = Some(cause.message.into()),
                 }
                 cx.notify();
@@ -255,9 +249,9 @@ impl GameFinder {
                 .iter()
                 .map(|found| {
                     (
-                        found["username"].as_str().unwrap_or_default().to_string(),
-                        found["title"].as_str().map(str::to_string),
-                        found["online"] == json!(true),
+                        found.username.clone(),
+                        found.title.clone(),
+                        found.online == Some(true),
                     )
                 })
                 .collect();

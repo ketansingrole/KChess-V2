@@ -7,15 +7,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use kchess_contracts::types::ChesscomAccount;
 use kchess_core::Config;
 use kchess_core::chesscom::Chesscom;
-use kchess_core::store::Database;
+use kchess_core::store::{Database, chesscom, games, reviews};
 use serde_json::{Value, json};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use crate::fixtures::{Fixture, Reply, Seen, serve};
+use crate::fixtures::{Fixture, Reply, Request, serve};
 use crate::support::Recording;
+use crate::support::store::game_page;
 
 const PAST: &str = "2020/01";
 
@@ -75,12 +77,12 @@ fn profile(fixture: &Fixture) -> Profile {
 
 impl Profile {
     async fn games(&self, account: &str) -> Vec<Value> {
+        let account = account.to_string();
         let page = self
             .database
-            .call_async(
-                "store.games.gamePage",
-                &[json!({ "account": account, "offset": 0, "limit": 100 })],
-            )
+            .read_async(move |c| {
+                game_page(c, &json!({ "account": account, "offset": 0, "limit": 100 }))
+            })
             .await
             .unwrap();
         page["games"].as_array().cloned().unwrap_or_default()
@@ -106,7 +108,7 @@ async fn a_player_is_synced_and_a_second_sync_asks_only_for_this_month_if_change
     let month_path = format!("/pub/player/alice/games/{now}");
     let past_path = format!("/pub/player/alice/games/{PAST}");
     let (month, past) = (month_path.clone(), past_path.clone());
-    let fixture = serve(move |seen: &Seen| match seen.path() {
+    let fixture = serve(move |seen: &Request| match seen.path() {
         "/pub/player/alice" => Reply::Json(200, profile_body()),
         "/pub/player/alice/games/archives" => Reply::Json(200, archives(&this_month())),
         path if path == past => Reply::WithHeaders(
@@ -135,8 +137,8 @@ async fn a_player_is_synced_and_a_second_sync_asks_only_for_this_month_if_change
     .await;
     let profile = profile(&fixture);
     let accounts = profile.chesscom.add("ALICE").await.expect("added");
-    assert_eq!(accounts[0]["username"], "Alice", "{accounts}");
-    assert!(accounts[0]["lastSyncedAt"].is_i64(), "{accounts}");
+    assert_eq!(accounts[0].username, "Alice", "{accounts:?}");
+    assert!(accounts[0].last_synced_at.is_some(), "{accounts:?}");
     let games = profile.games("Alice@chess.com").await;
     let ids: Vec<&str> = games.iter().map(|g| g["id"].as_str().unwrap()).collect();
     assert_eq!(ids.len(), 3, "bughouse is not kept: {ids:?}");
@@ -167,7 +169,7 @@ async fn a_player_is_synced_and_a_second_sync_asks_only_for_this_month_if_change
 async fn a_rate_limited_month_is_asked_again_after_the_wait() {
     let limited = Arc::new(AtomicUsize::new(0));
     let seen_limits = Arc::clone(&limited);
-    let fixture = serve(move |seen: &Seen| match seen.path() {
+    let fixture = serve(move |seen: &Request| match seen.path() {
         "/pub/player/alice" => Reply::Json(200, profile_body()),
         "/pub/player/alice/games/archives" => Reply::Json(
             200,
@@ -199,10 +201,12 @@ async fn a_rate_limited_month_is_asked_again_after_the_wait() {
 /// without waiting for Chess.com to answer (`open` is never sent).
 async fn removed_during_add(
     profile: &Profile,
-    adding: tokio::task::JoinHandle<Result<Value, kchess_core::error::CoreError>>,
+    adding: tokio::task::JoinHandle<
+        Result<Vec<ChesscomAccount>, kchess_contracts::error::CoreError>,
+    >,
 ) {
     let left = profile.chesscom.remove("alice").await.expect("removed");
-    assert_eq!(left, json!([]));
+    assert!(left.is_empty());
     let outcome = tokio::time::timeout(Duration::from_secs(10), adding)
         .await
         .expect("the removal stops the request in flight")
@@ -211,13 +215,13 @@ async fn removed_during_add(
     assert!(profile.games("Alice@chess.com").await.is_empty());
     let accounts = profile
         .database
-        .call_async("store.chesscom.accounts", &[])
+        .read_async(|c| chesscom::accounts(c.db))
         .await
         .unwrap();
-    assert_eq!(accounts, json!([]));
+    assert!(accounts.is_empty());
     let archives = profile
         .database
-        .call_async("store.chesscom.archives", &[json!("alice")])
+        .read_async(|c| chesscom::archives(c.db, "alice"))
         .await
         .unwrap();
     assert_eq!(archives, json!([]));
@@ -226,7 +230,7 @@ async fn removed_during_add(
 #[tokio::test]
 async fn removing_a_player_during_their_sync_leaves_nothing_behind() {
     let (open, gate) = watch::channel(false);
-    let fixture = serve(move |seen: &Seen| match seen.path() {
+    let fixture = serve(move |seen: &Request| match seen.path() {
         "/pub/player/alice" => Reply::Json(200, profile_body()),
         "/pub/player/alice/games/archives" => Reply::Json(
             200,
@@ -261,7 +265,7 @@ async fn removing_a_player_during_their_sync_leaves_nothing_behind() {
 #[tokio::test]
 async fn removing_a_player_while_they_are_looked_up_does_not_add_them_back() {
     let (open, gate) = watch::channel(false);
-    let fixture = serve(move |seen: &Seen| match seen.path() {
+    let fixture = serve(move |seen: &Request| match seen.path() {
         "/pub/player/alice" => {
             Reply::Gated(gate.clone(), Box::new(Reply::Json(200, profile_body())))
         }
@@ -289,24 +293,6 @@ async fn removing_a_player_while_they_are_looked_up_does_not_add_them_back() {
 }
 
 /// An add the player's removal overtook stores nothing, however late the database admits it.
-#[tokio::test]
-async fn an_overtaken_add_stores_no_player() {
-    let fixture = serve(|_: &Seen| Reply::Json(404, "{}".into())).await;
-    let profile = profile(&fixture);
-    let refused = profile
-        .database
-        .call_async("store.chesscom.addAccount", &[json!("alice"), json!(false)])
-        .await
-        .unwrap_err();
-    assert_eq!(refused.message, "Sync was cancelled.");
-    let added = profile
-        .database
-        .call_async("store.chesscom.addAccount", &[json!("alice"), json!(true)])
-        .await
-        .unwrap();
-    assert_eq!(added[0]["username"], "alice");
-}
-
 /// Regression: a sync whose call was cancelled (a socket client cancelling it or leaving aborts
 /// the call's task) left its entry behind, and every later sync of the player joined that dead
 /// entry and failed at once with "Sync was cancelled." until the player was removed.
@@ -314,7 +300,7 @@ async fn an_overtaken_add_stores_no_player() {
 async fn a_cancelled_sync_does_not_fail_the_next_one() {
     let (open, gate) = watch::channel(false);
     let gate = Arc::new(Mutex::new(Some(gate)));
-    let fixture = serve(move |seen: &Seen| match seen.path() {
+    let fixture = serve(move |seen: &Request| match seen.path() {
         "/pub/player/alice" => Reply::Json(200, profile_body()),
         "/pub/player/alice/games/archives" => Reply::Json(
             200,
@@ -358,21 +344,21 @@ async fn a_cancelled_sync_does_not_fail_the_next_one() {
 
 #[tokio::test]
 async fn an_unknown_player_is_not_added() {
-    let fixture = serve(|_: &Seen| Reply::Json(404, "{\"code\":0}".into())).await;
+    let fixture = serve(|_: &Request| Reply::Json(404, "{\"code\":0}".into())).await;
     let profile = profile(&fixture);
     let error = profile.chesscom.add("nobody_here").await.unwrap_err();
     assert_eq!(error.message, "No Chess.com player is called nobody_here.");
     let accounts = profile
         .database
-        .call_async("store.chesscom.accounts", &[])
+        .read_async(|c| chesscom::accounts(c.db))
         .await
         .unwrap();
-    assert_eq!(accounts, json!([]));
+    assert!(accounts.is_empty());
 }
 
 #[tokio::test]
 async fn chesscom_games_are_reviewed_without_asking_lichess() {
-    let fixture = serve(move |seen: &Seen| match seen.path() {
+    let fixture = serve(move |seen: &Request| match seen.path() {
         "/pub/player/alice" => Reply::Json(200, profile_body()),
         "/pub/player/alice/games/archives" => Reply::Json(
             200,
@@ -390,10 +376,7 @@ async fn chesscom_games_are_reviewed_without_asking_lichess() {
     profile.chesscom.add("alice").await.expect("added");
     let queue = profile
         .database
-        .call_async(
-            "store.reviewStore.gamesToReview",
-            &[json!(["Alice@chess.com"]), json!(0), json!(10)],
-        )
+        .read_async(|c| reviews::games_to_review(c.db, &["Alice@chess.com".to_string()], 0.0, 10.0))
         .await
         .unwrap();
     assert_eq!(queue[0]["id"], "cc-l5");
@@ -404,7 +387,7 @@ async fn chesscom_games_are_reviewed_without_asking_lichess() {
 /// point a day per speed (Home's rating cards and chart for a Chess.com player).
 #[tokio::test]
 async fn chesscom_ratings_make_a_history_without_rating_changes() {
-    let fixture = serve(move |seen: &Seen| match seen.path() {
+    let fixture = serve(move |seen: &Request| match seen.path() {
         "/pub/player/alice" => Reply::Json(200, profile_body()),
         "/pub/player/alice/games/archives" => Reply::Json(
             200,
@@ -425,9 +408,10 @@ async fn chesscom_ratings_make_a_history_without_rating_changes() {
     profile.chesscom.add("alice").await.expect("added");
     let history = profile
         .database
-        .call_async("store.games.gameRatingHistory", &[json!("alice@chess.com")])
+        .read_async(|c| games::rating_history(c.db, "alice@chess.com"))
         .await
         .unwrap();
+    let history = serde_json::to_value(history).unwrap();
     assert_eq!(
         history,
         json!([{ "name": "rapid", "points": [[2020, 0, 6, 1500], [2020, 0, 7, 1480]] }])

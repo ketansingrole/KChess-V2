@@ -1,5 +1,5 @@
 //! Audio for voice input: the default
-//! microphone, mono, in chunks of about 100 ms. Under the store's test switch a WAV file named by
+//! microphone, mono, in chunks of about 100 ms. Under the test switches a WAV file named by
 //! `KCHESS_TEST_VOICE_AUDIO` is played in its place, in real time, so the app can be driven
 //! without opening a microphone.
 
@@ -28,7 +28,7 @@ impl Drop for Capture {
     }
 }
 
-/// Why the microphone did not open, in words the player can act on (`describeMicError`).
+/// Why the microphone did not open, in words the player can act on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CaptureError {
     Missing,
@@ -48,20 +48,22 @@ impl CaptureError {
     }
 }
 
-/// The test file to play instead of the microphone, while the test switch is on.
-fn test_audio() -> Option<PathBuf> {
-    kchess_core::store::debug::enabled()
-        .then(|| kchess_core::env::var_os("KCHESS_TEST_VOICE_AUDIO"))
-        .flatten()
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
+/// The test file to play instead of the microphone (`TestSwitches::voice_audio`).
+fn test_audio(cx: &gpui_kit::App) -> Option<PathBuf> {
+    cx.try_global::<crate::core::AppCore>()?
+        .test
+        .as_ref()?
+        .voice_audio
+        .clone()
 }
 
 /// Start capturing: chunks arrive on the returned receiver until the capture is dropped.
-pub fn start() -> Result<(Capture, mpsc::UnboundedReceiver<Chunk>), CaptureError> {
+pub fn start(
+    cx: &gpui_kit::App,
+) -> Result<(Capture, mpsc::UnboundedReceiver<Chunk>), CaptureError> {
     let (sender, receiver) = mpsc::unbounded();
     let stop = Arc::new(AtomicBool::new(false));
-    if let Some(path) = test_audio() {
+    if let Some(path) = test_audio(cx) {
         let (samples, rate) = read_wav(&path).map_err(CaptureError::Busy)?;
         let flag = Arc::clone(&stop);
         std::thread::spawn(move || play_file(samples, rate, sender, flag));
@@ -280,7 +282,7 @@ fn parse_wav(bytes: &[u8]) -> Result<(Vec<f32>, u32), String> {
     Err(invalid())
 }
 
-/// Samples as base64 16-bit little-endian PCM, as the core's recognizer takes them (`pcmBase64`).
+/// Samples as base64 16-bit little-endian PCM, as the core's recognizer takes them.
 pub fn pcm_base64(audio: &[f32]) -> String {
     use base64::Engine as _;
     let bytes: Vec<u8> = audio
@@ -290,7 +292,7 @@ pub fn pcm_base64(audio: &[f32]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-/// How loud a chunk is, 0 to 1, for the level meter (`reportLevel`).
+/// How loud a chunk is, 0 to 1, for the level meter.
 pub fn level(audio: &[f32]) -> f32 {
     if audio.is_empty() {
         return 0.;

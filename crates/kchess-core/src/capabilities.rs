@@ -1,22 +1,24 @@
 //! Host capabilities the core asks for while it runs: the OS secret store, opening the browser,
-//! bringing the window forward and power state. The core emits `host:request`
-//! `{ id, kind, payload }`; the host answers with `host.reply(id, { value } | { error })`.
-//! Every request is bounded, so a host that never answers cannot hang the core.
+//! bringing the window forward and power state. The core emits `host:request` (a `HostAsk`); the
+//! host answers with `host.reply(id, reply)` (a `HostReply`, `Core::host_reply`). Every request
+//! is bounded, so a host that never answers cannot hang the core.
 //!
 //! With the profile's own credentials (`Config::system_credentials`) the core seals and opens every
 //! token itself (`secrets.rs`); without them (tests, `--no-credentials`) the host does.
 
-use serde_json::{Value, json};
+use kchess_contracts::{CoreEvent, HostAsk, HostReply, HostRequest};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::oneshot;
 
-use crate::connection::{Capability, Connections};
-use crate::error::{CoreError, Result};
+use crate::connection::Connections;
 use crate::host::Host;
 use crate::secrets::{self, Credentials};
+use crate::tasks::lock;
+use kchess_contracts::error::{CoreError, Result};
 
 const DEADLINE: Duration = Duration::from_secs(30);
 const HOST_CLOSED: &str = "The host closed before answering.";
@@ -50,16 +52,6 @@ pub struct Capabilities {
     connections: Option<Arc<Connections>>,
 }
 
-/// What a client must be able to do to answer a request of `kind`.
-fn needed(kind: &str) -> Capability {
-    match kind {
-        "openExternal" => Capability::Browser,
-        kind if kind.starts_with("secrets.") => Capability::Secrets,
-        // `focus`, `onBattery`: a window.
-        _ => Capability::Focus,
-    }
-}
-
 impl Capabilities {
     pub fn new(host: Arc<dyn Host>) -> Capabilities {
         Capabilities::with_credentials(host, None)
@@ -84,26 +76,17 @@ impl Capabilities {
         self
     }
 
-    /// A log line through the host.
-    pub fn log(&self, level: crate::host::Level, scope: &str, message: &str) {
-        self.host.log(level, scope, message);
-    }
-
     /// Ask the host; its error message becomes the error.
-    pub async fn request(&self, kind: &str, payload: Value) -> Result<Value> {
-        self.request_within(kind, payload, DEADLINE).await
+    pub async fn request(&self, request: HostRequest) -> Result<Value> {
+        self.request_within(request, DEADLINE).await
     }
 
     /// `request` with its own bound, for host work that legitimately takes longer (Lichess).
-    pub async fn request_within(
-        &self,
-        kind: &str,
-        payload: Value,
-        deadline: Duration,
-    ) -> Result<Value> {
+    pub async fn request_within(&self, request: HostRequest, deadline: Duration) -> Result<Value> {
+        let kind = request.kind();
         let target = match &self.connections {
             Some(connections) => {
-                match connections.route(needed(kind), crate::connection::current()) {
+                match connections.route(request.needs(), crate::connection::current()) {
                     Some(target) => Some(target),
                     None => {
                         return Err(CoreError::new(format!(
@@ -117,10 +100,7 @@ impl Capabilities {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (send, receive) = oneshot::channel();
         {
-            let mut pending = self
-                .pending
-                .lock()
-                .map_err(|_| CoreError::new("The host is unavailable."))?;
+            let mut pending = lock(&self.pending);
             if pending.closed {
                 return Err(CoreError::new(HOST_CLOSED));
             }
@@ -129,14 +109,12 @@ impl Capabilities {
         // Forgotten however the wait ends: a caller that was cancelled while its window had
         // gone would otherwise leave the entry until the core closed.
         let _forget = crate::tasks::on_drop(|| {
-            if let Ok(mut pending) = self.pending.lock() {
-                pending.waiting.remove(&id);
-            }
+            lock(&self.pending).waiting.remove(&id);
         });
-        let request = json!({ "id": id, "kind": kind, "payload": payload });
+        let event = CoreEvent::HostRequest(HostAsk { id, request });
         match target {
-            Some(target) => self.host.emit_to(target, "host:request", request),
-            None => self.host.emit("host:request", request),
+            Some(target) => self.host.emit_to(target, event),
+            None => self.host.emit(event),
         }
         let answer = tokio::time::timeout(deadline, receive).await;
         match answer {
@@ -147,63 +125,58 @@ impl Capabilities {
         }
     }
 
-    /// `host.reply(id, answer)`: `{ value }` or `{ error }`. Unknown ids are ignored, and so is
-    /// an answer from any client but the one the request was sent to: another client of the
-    /// shared core could otherwise answer a window's `secrets.decrypt` with a token of its own.
-    pub fn reply(&self, id: u64, answer: &Value) {
-        let Some(send) = self.pending.lock().ok().and_then(|mut pending| {
+    /// `host.reply(id, answer)`. Unknown ids are ignored, and so is an answer from any client
+    /// but the one the request was sent to: another client of the shared core could otherwise
+    /// answer a window's `secrets.decrypt` with a token of its own.
+    pub fn reply(&self, id: u64, answer: HostReply) {
+        let send = {
+            let mut pending = lock(&self.pending);
             let replier = crate::connection::current();
             match pending.waiting.get(&id) {
                 // In-process callers run outside any connection's scope; every socket client's
-                // call is scoped (`Core::call_client`).
+                // call is scoped (`Core::call_as`).
                 Some((Some(target), _)) if replier.is_some_and(|replier| replier != *target) => {
                     None
                 }
                 Some(_) => pending.waiting.remove(&id).map(|(_, send)| send),
                 None => None,
             }
-        }) else {
+        };
+        let Some(send) = send else {
             return;
         };
-        let result = match answer.get("error").and_then(Value::as_str) {
-            Some(message) => Err(message.to_string()),
-            None => Ok(answer.get("value").cloned().unwrap_or(Value::Null)),
-        };
-        let _ = send.send(result);
+        let _ = send.send(answer.into_result());
     }
 
     /// Fail every unanswered request, and every later one (the core is closing).
     pub fn close(&self) {
-        if let Ok(mut pending) = self.pending.lock() {
-            pending.closed = true;
-            pending.waiting.clear();
-        }
+        let mut pending = lock(&self.pending);
+        pending.closed = true;
+        pending.waiting.clear();
     }
 
-    /// `SecretStore.available()`, or whether the profile's credentials can be used.
+    /// Whether tokens can be sealed: by the profile's credentials, or else by the host.
     pub async fn secrets_available(&self) -> Result<bool> {
         if let Some(credentials) = &self.credentials {
             let credentials = Arc::clone(credentials);
             return blocking(move || Ok(credentials.available())).await;
         }
-        Ok(self
-            .request("secrets.available", Value::Null)
-            .await?
-            .as_bool()
-            == Some(true))
+        Ok(self.request(HostRequest::SecretsAvailable).await?.as_bool() == Some(true))
     }
 
-    /// Seal a token: with the profile's credentials, or `SecretStore.encrypt(plain)`.
+    /// Seal a token: with the profile's credentials, or else by the host.
     pub async fn encrypt(&self, plain: &str) -> Result<String> {
         if let Some(credentials) = &self.credentials {
             let (credentials, plain) = (Arc::clone(credentials), plain.to_string());
             return blocking(move || credentials.seal(&plain)).await;
         }
-        text(self.request("secrets.encrypt", json!(plain)).await?)
+        text(
+            self.request(HostRequest::SecretsEncrypt(plain.to_string()))
+                .await?,
+        )
     }
 
-    /// Open a token: with the profile's credentials, or `SecretStore.decrypt(base64)` when the host
-    /// seals them.
+    /// Open a token: with the profile's credentials, or else by the host.
     pub async fn decrypt(&self, ciphertext: &str) -> Result<String> {
         let Some(credentials) = &self.credentials else {
             if secrets::is_sealed(ciphertext) {
@@ -211,7 +184,10 @@ impl Capabilities {
                     "This account was saved by another KChess app. Reconnect your account.",
                 ));
             }
-            return text(self.request("secrets.decrypt", json!(ciphertext)).await?);
+            return text(
+                self.request(HostRequest::SecretsDecrypt(ciphertext.to_string()))
+                    .await?,
+            );
         };
         if !secrets::is_sealed(ciphertext) {
             return Err(CoreError::new(
@@ -222,19 +198,19 @@ impl Capabilities {
         blocking(move || credentials.open(&sealed)).await
     }
 
-    /// `CorePlatform.openExternal(url)`.
+    /// Opens `url` in the browser of the client that can.
     pub async fn open_external(&self, url: &str) -> Result<()> {
-        self.request("openExternal", json!(url)).await.map(|_| ())
+        self.request(HostRequest::OpenExternal(url.to_string()))
+            .await
+            .map(|_| ())
     }
 
-    /// `CorePlatform.focus?.()`.
     pub async fn focus(&self) -> Result<()> {
-        self.request("focus", Value::Null).await.map(|_| ())
+        self.request(HostRequest::Focus).await.map(|_| ())
     }
 
-    /// `CorePlatform.onBattery()`.
     pub async fn on_battery(&self) -> Result<bool> {
-        Ok(self.request("onBattery", Value::Null).await?.as_bool() == Some(true))
+        Ok(self.request(HostRequest::OnBattery).await?.as_bool() == Some(true))
     }
 }
 
@@ -254,47 +230,37 @@ fn text(value: Value) -> Result<String> {
         .ok_or_else(|| CoreError::new("The host answered with something other than text."))
 }
 
-/// Whether a frontend may open `url` for `openExternal`: any `https://` page, or a plain-http
-/// page on this machine's loopback address (`127.0.0.1`, as the test servers listen). The URL is
-/// parsed, so `http://127.0.0.1.example.com/` or `http://127.0.0.1@example.com/` is not local,
-/// and nothing with a login in it opens.
-pub fn opens_in_browser(url: &str) -> bool {
-    let Ok(parsed) = reqwest::Url::parse(url) else {
-        return false;
-    };
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return false;
-    }
-    match parsed.scheme() {
-        "https" => parsed.host_str().is_some(),
-        "http" => parsed.host_str() == Some("127.0.0.1"),
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::host::Level;
+    use crate::test_host::TestHost;
+    use kchess_contracts::CoreEvent;
+    use serde_json::json;
 
-    /// Answers every request on another task, as a JavaScript host answers through `host.reply`.
+    /// Answers every request on another task, as a service client answers through `host.reply`.
     struct Echo(Mutex<Option<Arc<Capabilities>>>);
 
     impl Host for Echo {
         fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, event: &str, payload: Value) {
+        fn emit(&self, event: CoreEvent) {
+            let (event, payload) = (event.name(), event.into_payload().unwrap());
             assert_eq!(event, "host:request");
             let caps = self.0.lock().unwrap().clone().unwrap();
+            let ask: HostAsk = serde_json::from_value(payload).unwrap();
             tokio::spawn(async move {
-                let id = payload["id"].as_u64().unwrap();
-                let answer = match payload["kind"].as_str().unwrap() {
-                    "secrets.decrypt" => {
-                        json!({ "value": format!("plain:{}", payload["payload"].as_str().unwrap()) })
+                let answer = match ask.request {
+                    HostRequest::SecretsDecrypt(sealed) => {
+                        HostReply::Value(json!(format!("plain:{sealed}")))
                     }
-                    "onBattery" => json!({ "value": true }),
-                    _ => json!({ "error": "Not supported." }),
+                    HostRequest::OnBattery => HostReply::Value(json!(true)),
+                    HostRequest::SecretsAvailable => HostReply::Value(json!(false)),
+                    HostRequest::OpenExternal(url) if url == "https://kchess.test/" => {
+                        HostReply::Value(Value::Null)
+                    }
+                    _ => HostReply::Error("Not supported.".into()),
                 };
-                caps.reply(id, &answer);
+                caps.reply(ask.id, answer);
             });
         }
     }
@@ -307,6 +273,15 @@ mod tests {
         assert_eq!(caps.decrypt("abc").await.unwrap(), "plain:abc");
         assert!(caps.on_battery().await.unwrap());
         assert_eq!(caps.focus().await.unwrap_err().message, "Not supported.");
+        assert!(!caps.secrets_available().await.unwrap());
+        caps.open_external("https://kchess.test/").await.unwrap();
+        assert_eq!(
+            caps.open_external("https://elsewhere.test/")
+                .await
+                .unwrap_err()
+                .message,
+            "Not supported."
+        );
         assert!(caps.pending.lock().unwrap().waiting.is_empty());
     }
 
@@ -348,24 +323,6 @@ mod tests {
         assert!(caps.pending.lock().unwrap().waiting.is_empty());
     }
 
-    #[test]
-    fn only_web_pages_and_this_machine_open() {
-        assert!(opens_in_browser("https://lichess.org/oauth?state=x"));
-        assert!(opens_in_browser("http://127.0.0.1:8123/callback"));
-        for refused in [
-            "http://127.0.0.1.evil.example/",
-            "http://127.0.0.1@evil.example/",
-            "https://user:pass@lichess.org/",
-            "http://lichess.org/",
-            "file:///etc/passwd",
-            "javascript:alert(1)",
-            "-https://lichess.org",
-            "",
-        ] {
-            assert!(!opens_in_browser(refused), "{refused}");
-        }
-    }
-
     /// A request routed to one client is answered by that client alone.
     #[tokio::test]
     async fn only_the_asked_client_answers() {
@@ -377,31 +334,26 @@ mod tests {
             .unwrap()
             .waiting
             .insert(7, (Some(2), send));
-        crate::connection::scope(3, async { caps.reply(7, &json!({ "value": "forged" })) }).await;
+        crate::connection::scope(3, async {
+            caps.reply(7, HostReply::Value(json!("forged")));
+        })
+        .await;
         assert!(
             caps.pending.lock().unwrap().waiting.contains_key(&7),
             "another client's answer"
         );
-        crate::connection::scope(2, async { caps.reply(7, &json!({ "value": "real" })) }).await;
+        crate::connection::scope(2, async {
+            caps.reply(7, HostReply::Value(json!("real")));
+        })
+        .await;
         assert_eq!(receive.await.unwrap(), Ok(json!("real")));
-    }
-
-    /// Hears requests and never answers, like the closing core's gated host.
-    #[derive(Default)]
-    struct Silent(Mutex<usize>);
-
-    impl Host for Silent {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _: &str, _: Value) {
-            *self.0.lock().unwrap() += 1;
-        }
     }
 
     /// A request made once the capabilities have closed fails at once, unheard: it is no longer
     /// left waiting `DEADLINE` for an answer that cannot come.
     #[tokio::test]
     async fn a_request_after_close_fails_at_once() {
-        let host = Arc::new(Silent::default());
+        let host = TestHost::new();
         let caps = Capabilities::new(host.clone());
         caps.close();
         let answer = tokio::time::timeout(Duration::from_secs(1), caps.on_battery())
@@ -411,7 +363,7 @@ mod tests {
             answer.unwrap_err().message,
             "The host closed before answering."
         );
-        assert_eq!(*host.0.lock().unwrap(), 0, "the host was asked");
+        assert!(host.events().is_empty(), "the host was asked");
         assert!(caps.pending.lock().unwrap().waiting.is_empty());
     }
 
@@ -421,9 +373,9 @@ mod tests {
     /// (`tests/memory.rs`, `cores_opened_and_closed`). The refresh now ends with the core.
     #[tokio::test]
     async fn a_battery_refresh_that_starts_after_close_ends_at_once() {
-        let host: Arc<dyn Host> = Arc::new(Silent::default());
+        let host: Arc<dyn Host> = TestHost::new();
         let caps = Arc::new(Capabilities::new(Arc::clone(&host)));
-        let battery = crate::engine::bridge::Battery::new(host);
+        let battery = crate::engine::bridge::Battery::new(host, Arc::clone(&caps));
         let alive = || {
             tokio::runtime::Handle::current()
                 .metrics()
@@ -431,7 +383,7 @@ mod tests {
         };
         let before = alive();
         // One thread: the refresh is not polled before the capabilities close.
-        battery.refresh(&caps);
+        battery.refresh();
         assert_eq!(alive(), before + 1);
         caps.close();
         battery.close();

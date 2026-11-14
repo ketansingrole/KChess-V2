@@ -2,10 +2,11 @@
 //! challenge event from an account's event stream, and the inbox of pending challenges that
 //! emits `challenges:update` whenever it changes.
 //!
-//! The reader keeps the TypeScript schema's rules (valibot): unknown keys pass, an optional key
+//! The reader's rules: unknown keys pass, an optional key
 //! may be absent but not null, lengths count UTF-16 units, and a malformed event is not a
 //! challenge at all. The variant mapping comes from `kchess_domain`.
 
+use kchess_contracts::CoreEvent;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
@@ -15,11 +16,11 @@ pub use kchess_domain::records::challenge::{
     ChallengeEvent, ChallengeInfo, PlayerRef, TimeControl, read_challenge_event,
 };
 
-/// `LIVE_TTL_MS`: a real-time challenge Lichess stops reporting is forgotten after this long.
+/// A real-time challenge Lichess stops reporting is forgotten after this long.
 const LIVE_TTL_MS: i64 = 30 * 60_000;
 /// `CORRESPONDENCE_TTL_MS`.
 const CORRESPONDENCE_TTL_MS: i64 = 14 * 86_400_000;
-/// `MAX_CHALLENGES`: the inbox keeps this many; the oldest sighting goes first.
+/// The inbox keeps this many; the oldest sighting goes first.
 pub const MAX_CHALLENGES: usize = 50;
 
 /// A Lichess game id: `^[a-zA-Z0-9]{8,12}$`.
@@ -38,7 +39,7 @@ pub struct ChallengeInbox {
 use crate::tasks::lock;
 
 impl ChallengeInbox {
-    /// `now` is the clock (`Date.now()` in TypeScript); tests pass their own.
+    /// `now` is the clock; tests pass their own.
     pub fn new(host: Arc<dyn Host>, now: Arc<dyn Fn() -> i64 + Send + Sync>) -> ChallengeInbox {
         ChallengeInbox {
             entries: Mutex::new(Vec::new()),
@@ -83,7 +84,8 @@ impl ChallengeInbox {
             while entries.len() > MAX_CHALLENGES {
                 entries.remove(0);
             }
-            known_time.is_none() && event.info.direction == "in"
+            known_time.is_none()
+                && event.info.direction == kchess_contracts::types::ChallengeDirection::In
         } else {
             entries.retain(|info| info.id != event.info.id);
             false
@@ -124,7 +126,7 @@ impl ChallengeInbox {
                     entries[at] = info;
                 }
                 None => {
-                    if info.direction == "in" {
+                    if info.direction == kchess_contracts::types::ChallengeDirection::In {
                         fresh.push(info.clone());
                     }
                     entries.push(info);
@@ -176,12 +178,11 @@ impl ChallengeInbox {
 
     /// `changed(list())`: the whole list as `challenges:update` carries it.
     fn emit(&self, entries: &[ChallengeInfo]) {
-        let payload = serde_json::to_value(sorted(entries)).unwrap_or(Value::Array(Vec::new()));
-        self.host.emit("challenges:update", payload);
+        self.host.emit(CoreEvent::ChallengesUpdate(sorted(entries)));
     }
 }
 
-/// Newest first; a stable sort keeps the insertion order of equal times, as JavaScript does.
+/// Newest first; a stable sort keeps the insertion order of equal times.
 fn sorted(entries: &[ChallengeInfo]) -> Vec<ChallengeInfo> {
     let mut list = entries.to_vec();
     list.sort_by_key(|a| std::cmp::Reverse(a.received_at));
@@ -191,9 +192,10 @@ fn sorted(entries: &[ChallengeInfo]) -> Vec<ChallengeInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host::Level;
+
+    use crate::test_host::TestHost;
     use serde_json::Number;
-    use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicI64, Ordering};
 
     fn challenge(overrides: Value) -> Value {
         let mut challenge = json!({
@@ -216,7 +218,10 @@ mod tests {
     #[test]
     fn reads_incoming_and_outgoing_challenges_from_either_accounts_point_of_view() {
         let incoming = read_challenge_event("Alice", &challenge(json!({})), 1000).unwrap();
-        assert_eq!(incoming.info.direction, "in");
+        assert_eq!(
+            incoming.info.direction,
+            kchess_contracts::types::ChallengeDirection::In
+        );
         assert_eq!(incoming.info.opponent.name, "Bob");
         assert_eq!(incoming.info.opponent.rating, Some(Number::from(1700)));
         assert_eq!(
@@ -232,7 +237,7 @@ mod tests {
                 .unwrap()
                 .info
                 .direction,
-            "out"
+            kchess_contracts::types::ChallengeDirection::Out
         );
         assert!(read_challenge_event("Alice", &json!({ "type": "gameStart" }), 0).is_none());
     }
@@ -283,22 +288,11 @@ mod tests {
         );
     }
 
-    #[derive(Default)]
-    struct Updates(AtomicUsize);
-
-    impl Host for Updates {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, event: &str, _: Value) {
-            assert_eq!(event, "challenges:update");
-            self.0.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
     #[test]
     fn announces_a_challenge_once_removes_it_when_cancelled_and_forgets_stale_ones() {
         let clock = Arc::new(AtomicI64::new(1_000));
         let now = Arc::clone(&clock);
-        let host = Arc::new(Updates::default());
+        let host = TestHost::new();
         let inbox = ChallengeInbox::new(
             Arc::clone(&host) as Arc<dyn Host>,
             Arc::new(move || now.load(Ordering::SeqCst)),
@@ -329,12 +323,12 @@ mod tests {
         assert_eq!(inbox.list().len(), 1);
         inbox.forget("alice");
         assert!(inbox.list().is_empty());
-        assert!(host.0.load(Ordering::SeqCst) > 0);
+        assert!(!host.named("challenges:update").is_empty());
     }
 
     #[test]
     fn a_listing_replaces_only_its_own_accounts_challenges_and_a_malformed_one_changes_nothing() {
-        let host = Arc::new(Updates::default());
+        let host = TestHost::new();
         let inbox = ChallengeInbox::new(Arc::clone(&host) as Arc<dyn Host>, Arc::new(|| 1_000));
         inbox.ingest("Alice", &challenge(json!({})));
         let to_bob = challenge(json!({

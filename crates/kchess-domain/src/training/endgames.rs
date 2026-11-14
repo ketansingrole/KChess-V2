@@ -2,11 +2,7 @@
 //! after a line of moves.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
 
-use super::data::data;
-use super::{Out, to_value, value_arg};
 use crate::{position, rules};
 
 /// One drill (`ENDGAME_DRILLS`), from `data/training.json`.
@@ -23,7 +19,8 @@ pub struct EndgameDrill {
     pub idea: String,
 }
 
-/// `EndgameStatus` with the turn and FEN the TypeScript result carries alongside it.
+/// Where a drill stands: whether it is over and won, what to tell the player, and the turn and FEN
+/// after the moves.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
@@ -37,12 +34,7 @@ pub struct Status {
     pub fen: String,
 }
 
-/// `repetitionKey`: the first four FEN fields.
-fn repetition_key(fen: &str) -> String {
-    fen.split(' ').take(4).collect::<Vec<_>>().join(" ")
-}
-
-/// `evaluateEndgame`: where the drill stands after `moves` (UCI, from `fen`), judged for
+/// Where the drill stands after `moves` (UCI, from `fen`), judged for
 /// `player` and the drill's `goal`.
 pub fn evaluate<S: AsRef<str>>(
     fen: &str,
@@ -52,17 +44,11 @@ pub fn evaluate<S: AsRef<str>>(
 ) -> Result<Status, String> {
     const INVALID: &str = "Invalid drill position.";
     let start = rules::standard_from_fen(fen).ok_or(INVALID)?;
-    let mut seen: HashMap<String, u32> =
-        HashMap::from([(repetition_key(&rules::make_fen(&start)), 1)]);
+    let mut seen = rules::Repetitions::starting_at(&rules::make_fen(&start));
     let (after, line) = position::line(start, moves, false, false);
     let mut repeated = false;
     for step in &line {
-        let key = repetition_key(&step.fen);
-        let count = seen.get(&key).copied().unwrap_or(0) + 1;
-        seen.insert(key, count);
-        if count >= 3 {
-            repeated = true;
-        }
+        repeated |= seen.reached(&step.fen);
     }
     let pos = match line.last() {
         Some(last) => rules::standard_from_fen(&last.fen).ok_or(INVALID)?,
@@ -133,7 +119,7 @@ pub fn evaluate<S: AsRef<str>>(
     })
 }
 
-/// `sanFrom`: SAN of a UCI move list played from `fen`; empty when the FEN is not a position.
+/// SAN of a UCI move list played from `fen`; empty when the FEN is not a position.
 pub fn san_from<S: AsRef<str>>(fen: &str, moves: &[S]) -> Vec<String> {
     rules::standard_from_fen(fen)
         .map(|start| {
@@ -144,30 +130,6 @@ pub fn san_from<S: AsRef<str>>(fen: &str, moves: &[S]) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-fn evaluate_call(args: &[Value]) -> Out {
-    let fen: String = value_arg(args, 0, "fen")?;
-    let moves: Vec<String> = value_arg(args, 1, "moves")?;
-    let player: String = value_arg(args, 2, "player")?;
-    let goal: String = value_arg(args, 3, "goal")?;
-    to_value(evaluate(&fen, &moves, &player, &goal)?)
-}
-
-fn san_from_call(args: &[Value]) -> Out {
-    let fen: String = value_arg(args, 0, "fen")?;
-    let moves: Vec<String> = value_arg(args, 1, "moves")?;
-    to_value(san_from(&fen, &moves))
-}
-
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result = match method {
-        "endgameDrills" => data().and_then(|d| to_value(&d.endgame_drills)),
-        "evaluateEndgame" => evaluate_call(args),
-        "sanFrom" => san_from_call(args),
-        _ => return None,
-    };
-    Some(result)
 }
 
 #[cfg(test)]

@@ -1,167 +1,34 @@
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use kchess_contracts::types::OnlinePhase;
-use serde::{Deserialize, Serialize};
-use serde_json::Number;
+pub use kchess_contracts::types::{
+    ChatLine, OngoingGame, OnlineAction, OnlineOptions, PresenceReport, Resumed, StartResult,
+    UserPresence,
+};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::super::accounts::Lichess;
-use super::super::challenges::{ChallengeInbox, PlayerRef};
-use super::super::client::{Failure, TokenSource};
-use crate::error::CoreError;
+use super::super::challenges::ChallengeInbox;
 use crate::host::Host;
+use crate::lichess::stream::Backoff;
 
-/// `MAX_RECONNECTS`: how many times a dropped game or event stream is re-opened without progress.
+/// How many times a dropped game or event stream is re-opened without progress.
 pub(crate) const MAX_RECONNECTS: u32 = 6;
-/// `ongoingChanged` debounce: streams that start or end together are reported once.
+/// Streams that start or end together within this time are reported once.
 pub(crate) const ONGOING_DEBOUNCE: Duration = Duration::from_millis(750);
-/// `presenceCache`: a status answer is reused this long (`ttl: 4000`), at most 100 of them.
+/// A status answer is reused this long, at most `PRESENCE_MAX` of them.
 pub(crate) const PRESENCE_TTL: Duration = Duration::from_millis(4000);
 pub(crate) const PRESENCE_MAX: usize = 100;
-/// The announced-games set keeps this many ids.
 pub(crate) const ANNOUNCED_MAX: usize = 200;
 pub(crate) const SEEK_REJECTED: &str = "Lichess rejected this public seek. The Board API allows Rapid and slower for matchmaking (Blitz and faster need a direct challenge). Pick a longer control or add a username.";
 pub(crate) const LOST_CONNECTION: &str =
     "Lost connection to Lichess. Check your network and reopen the game.";
+/// A game stream's state once it is gone for good.
+pub(crate) const LOST_STREAM: &str = "Lost connection to Lichess. Reconnect to recover the game.";
 
-/// A failed call or stream, as the session reports it.
-pub type Res<T> = std::result::Result<T, Failure>;
-
-/// The session's streams (`lane`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Lane {
-    Events,
-    Game,
-    Seek,
-}
-
-impl Lane {
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Lane::Events => "events",
-            Lane::Game => "game",
-            Lane::Seek => "seek",
-        }
-    }
-}
-
-/// `OnlineOptions`: what to play and how; the Board API body of a seek or challenge is built
-/// from it (`gameBody`).
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct OnlineOptions {
-    /// Ignored for correspondence games (`days`).
-    pub minutes: f64,
-    pub increment: f64,
-    /// Correspondence: days per move instead of a clock.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub days: Option<f64>,
-    /// Lichess variant key; standard when omitted.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
-    /// A direct challenge from this position.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fen: Option<String>,
-    /// `random`, `white` or `black`.
-    pub color: String,
-    pub rated: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub account: Option<String>,
-}
-
-/// What `start` answers: a challenge's id and URL, a seek in progress, or a correspondence game.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StartResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub seeking: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub correspondence: Option<bool>,
-}
-
-/// A game `resume` reattached to.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct Resumed {
-    pub id: String,
-    pub account: String,
-}
-
-/// A game one of the connected accounts is playing (`OngoingGame`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OngoingGame {
-    pub game_id: String,
-    pub account: String,
-    pub opponent: PlayerRef,
-    pub color: String,
-    pub fen: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_move: Option<String>,
-    pub is_my_turn: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub seconds_left: Option<Number>,
-    pub variant: String,
-    pub speed: String,
-    pub rated: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tournament_id: Option<String>,
-    /// Whether the Board API can play it (`compat.board`): Lichess refuses it some games
-    /// started elsewhere, which can only be watched here.
-    pub playable: bool,
-}
-
-/// A private chat line of the live game (`ChatLine`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ChatLine {
-    pub user: String,
-    pub text: String,
-    pub room: String,
-}
-
-/// One user's status (`UserPresence`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UserPresence {
-    pub online: bool,
-    pub playing: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub signal: Option<Number>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub playing_id: Option<String>,
-}
-
-/// `PresenceReport`: statuses by lower-cased username, and the request's round trip.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PresenceReport {
-    pub users: BTreeMap<String, UserPresence>,
-    pub latency_ms: u64,
-}
-
-/// `OnlineAction`: what can be done to the live game.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum OnlineAction {
-    Resign,
-    Abort,
-    Takeback,
-    DeclineTakeback,
-    OfferDraw,
-    AcceptDraw,
-    DeclineDraw,
-    ClaimVictory,
-    ClaimDraw,
-    Berserk,
-}
+pub use kchess_contracts::types::Lane;
 
 /// `OnlineHooks` of the service: the session reports these to the host through `emit`.
 pub(crate) const CHALLENGE_TYPES: [&str; 3] =
@@ -196,7 +63,7 @@ pub(crate) struct State {
     pub(crate) presence: Vec<(String, Instant, PresenceReport)>,
 }
 
-/// What a game Lichess says started does to the board (`State::started`).
+/// What a game Lichess says started (`gameStart`) does to the board (`State::started`).
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Started {
     OnBoard,
@@ -268,7 +135,7 @@ impl State {
         self.is_live(id) || self.protected_game == id
     }
 
-    /// Game `id`'s stream (`handle_id`) ended (`.finally`): the game leaves the board when it
+    /// Game `id`'s stream (`handle_id`) ended: the game leaves the board when it
     /// finished and the stream is still the board's; a stream that only dropped keeps it.
     pub(crate) fn stream_ended(&mut self, id: &str, handle_id: u64, finished: bool) {
         if finished && super::ongoing::finished_check(self, handle_id) {
@@ -301,7 +168,7 @@ impl State {
     }
 }
 
-/// One stream controller: `id` identifies it (the TypeScript compares controller identity).
+/// One stream controller: `id` identifies it.
 #[derive(Clone)]
 pub(crate) struct Handle {
     pub(crate) id: u64,
@@ -314,11 +181,11 @@ pub(crate) type StateHook = Arc<dyn Fn(bool, bool) + Send + Sync>;
 
 pub(crate) struct Inner {
     pub(crate) lichess: Arc<Lichess>,
-    pub(crate) tokens: Arc<dyn TokenSource>,
-    pub(crate) http: reqwest::Client,
     pub(crate) host: Arc<dyn Host>,
     pub(crate) challenges: ChallengeInbox,
     pub(crate) state: Mutex<State>,
+    /// How long a dropped stream waits before it reconnects.
+    pub(crate) backoff: Backoff,
     /// Run before each state is reported: a live game stops the engines and the watch, and the
     /// engines' busy state is refreshed.
     pub(crate) state_hook: Mutex<Option<StateHook>>,
@@ -332,22 +199,7 @@ pub struct OnlineSession {
 
 pub(crate) use crate::tasks::lock;
 
-pub(crate) fn aborted(message: &str) -> Failure {
-    Failure::Core(CoreError::aborted(message))
-}
-
-pub(crate) fn core(message: impl Into<String>) -> Failure {
-    Failure::Core(CoreError::new(message))
-}
-
-/// `Number(x)` as JavaScript writes it into a URL or form: integers without a fraction.
-pub fn js_number(value: f64) -> String {
-    if value.fract() == 0.0 && value.abs() < 1e15 {
-        format!("{}", value as i64)
-    } else {
-        format!("{value}")
-    }
-}
+pub use kchess_domain::js::number_to_string as js_number;
 
 #[cfg(test)]
 mod tests {

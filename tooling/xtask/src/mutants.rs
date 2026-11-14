@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
+use crate::members::{APP, APP_FILES};
 use crate::util::{Result, git, merge_base, root, say, succeeds, without_git_location};
 
 /// Where the diff cargo-mutants reads is written, under the (ignored) target directory.
@@ -25,7 +26,6 @@ fn base_of(repo: &Path, args: &[String]) -> Result<String> {
     }
 }
 
-/// The arguments before `--`: this command's own.
 fn own(args: &[String]) -> &[String] {
     match args.iter().position(|arg| arg == "--") {
         Some(at) => &args[..at],
@@ -33,17 +33,38 @@ fn own(args: &[String]) -> &[String] {
     }
 }
 
-/// Whether this command's own arguments hold `flag`.
 fn has(args: &[String], flag: &str) -> bool {
     own(args).iter().any(|arg| arg == flag)
 }
 
-/// The arguments after `--`, passed to cargo-mutants as they are.
 fn passed_through(args: &[String]) -> &[String] {
     match args.iter().position(|arg| arg == "--") {
         Some(at) => &args[at + 1..],
         None => &[],
     }
+}
+
+/// cargo-mutants' arguments for the files a run of changed lines covers: everything but the app,
+/// or with `--app` the app alone. Each of the app's mutants rebuilds the app, so a run of changed
+/// lines (a pull request's, a branch push's) leaves them out, and the weekly run's `gpui` job
+/// tests them (`--app`). A run of `--all` names its own files or packages.
+fn files_of(args: &[String]) -> Vec<String> {
+    if has(args, "--all") {
+        return Vec::new();
+    }
+    let flag = if has(args, "--app") {
+        "--file"
+    } else {
+        "--exclude"
+    };
+    vec![flag.to_string(), APP_FILES.to_string()]
+}
+
+/// cargo-mutants' arguments: the files the run covers, then those after `--`.
+fn cargo_mutants_args(args: &[String]) -> Vec<String> {
+    let mut out = files_of(args);
+    out.extend(passed_through(args).iter().cloned());
+    out
 }
 
 /// Whether a unified diff changes any Rust source, the only files cargo-mutants mutates.
@@ -269,9 +290,10 @@ fn write_diff(repo: &Path, base: &str) -> Result<bool> {
 /// rebuilds the core and runs its tests), less for the lighter packages.
 const PER_SHARD: usize = 15;
 
-/// The most shards a pull request's mutants take: each holds a runner, and the account runs
-/// about twenty jobs at once.
-const MAX_SHARDS: usize = 8;
+/// The most shards a pull request's mutants take: as many as the account runs at once (twenty,
+/// GitHub's limit for a free account). More would only wait for a runner, each paying its own
+/// setup and baseline build; a refactor's thousands of mutants fill each shard's six hours instead.
+const MAX_SHARDS: usize = 20;
 
 /// How many CI shards `count` mutants need: none for none.
 fn shards_for(count: usize) -> usize {
@@ -296,26 +318,7 @@ fn plan_outputs(count: usize) -> String {
 fn plan(args: &[String]) -> Result {
     let repo = root();
     let base = base_of(&repo, args)?;
-    let count = if write_diff(&repo, &base)? {
-        let mut list: Vec<String> = ["mutants", "--in-diff", DIFF, "--list"]
-            .map(String::from)
-            .to_vec();
-        list.extend(passed_through(args).iter().cloned());
-        let out = Command::new("cargo")
-            .args(&list)
-            .current_dir(&repo)
-            .output()
-            .map_err(|cause| format!("Could not run cargo mutants: {cause}"))?;
-        if !out.status.success() {
-            return Err(format!(
-                "cargo mutants --list failed: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            ));
-        }
-        count_listed(&String::from_utf8_lossy(&out.stdout))
-    } else {
-        0
-    };
+    let count = count_since(&repo, "cargo", &base, args)?;
     say(&format!(
         "{count} mutants on the lines changed since {base}."
     ));
@@ -323,17 +326,76 @@ fn plan(args: &[String]) -> Result {
     Ok(())
 }
 
-/// The mutants in `cargo mutants --list` output: one per line.
+/// How many mutants the lines of `repo` changed since `base` have, in the files `args` select
+/// (`files_of`), with `cargo` as the cargo to run (a stand-in in the tests): none without Rust
+/// changes. Listing them builds nothing.
+pub(crate) fn count_since(repo: &Path, cargo: &str, base: &str, args: &[String]) -> Result<usize> {
+    if !write_diff(repo, base)? {
+        return Ok(0);
+    }
+    let mut list: Vec<String> = ["mutants", "--in-diff", DIFF, "--list"]
+        .map(String::from)
+        .to_vec();
+    list.extend(cargo_mutants_args(args));
+    let mut command = Command::new(cargo);
+    // From the pre-push hook, Git's variables name the pushing checkout, not `repo`.
+    let out = without_git_location(&mut command)
+        .args(&list)
+        .current_dir(repo)
+        .output()
+        .map_err(|cause| format!("Could not run {cargo} mutants: {cause}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "cargo mutants --list failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(count_listed(&String::from_utf8_lossy(&out.stdout)))
+}
+
 fn count_listed(list: &str) -> usize {
     list.lines().filter(|line| !line.trim().is_empty()).count()
 }
 
-/// `mutants [--plan] [--base <ref> | --all] [--in-place] [-- <cargo-mutants arguments>]`.
+/// `mutants [--plan | --warm] [--app] [--base <ref> | --all] [--in-place] [-- <cargo-mutants
+/// arguments>]`.
 pub fn run(args: &[String]) -> Result {
-    if args.first().map(String::as_str) == Some("--plan") {
-        return plan(&args[1..]);
+    match args.first().map(String::as_str) {
+        Some("--plan") => plan(&args[1..]),
+        Some("--warm") => warm(),
+        _ => run_in(&root(), "cargo", args),
     }
-    run_in(&root(), "cargo", args)
+}
+
+/// `--warm`: build the tests of every package a run of changed lines mutates (all but the app),
+/// one package at a time, as cargo-mutants builds each mutant's package, so the features each is
+/// built with are the ones a mutant of it asks for (CI's mutants cache).
+fn warm() -> Result {
+    for args in warm_commands(&crate::check::members()?) {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        crate::util::run("cargo", &args)?;
+    }
+    Ok(())
+}
+
+/// What `--warm` runs for the workspace's `members`: a build of each one's tests but the app's.
+fn warm_commands(members: &[String]) -> Vec<Vec<String>> {
+    members
+        .iter()
+        .filter(|package| *package != APP)
+        .map(|package| {
+            [
+                "nextest",
+                "run",
+                "--no-run",
+                "--locked",
+                "--package",
+                package,
+            ]
+            .map(String::from)
+            .to_vec()
+        })
+        .collect()
 }
 
 /// What a run tests: the mutants of the lines changed since a base, or (`--all`) every mutant
@@ -379,9 +441,9 @@ pub(crate) fn run_in(repo: &Path, cargo: &str, args: &[String]) -> Result {
             say(&format!(
                 "Testing the mutants of the lines changed since {base}…"
             ));
-            mutants_args(Some(DIFF), nextest, passed_through(args))
+            mutants_args(Some(DIFF), nextest, &cargo_mutants_args(args))
         }
-        None => mutants_args(None, nextest, passed_through(args)),
+        None => mutants_args(None, nextest, &cargo_mutants_args(args)),
     };
     let mut command = Command::new(cargo);
     // From the pre-push hook, Git's variables name the pushing checkout, not `repo`.
@@ -411,18 +473,70 @@ pub(crate) fn run_in(repo: &Path, cargo: &str, args: &[String]) -> Result {
 mod tests {
     use super::*;
 
+    /// `--warm` builds each member's tests on its own, all but the app's.
+    #[test]
+    fn warming_builds_every_package_but_the_app() {
+        let commands = warm_commands(&strings(&["kchess-core", APP, "xtask"]));
+        assert_eq!(
+            commands,
+            [
+                strings(&[
+                    "nextest",
+                    "run",
+                    "--no-run",
+                    "--locked",
+                    "--package",
+                    "kchess-core"
+                ]),
+                strings(&[
+                    "nextest",
+                    "run",
+                    "--no-run",
+                    "--locked",
+                    "--package",
+                    "xtask"
+                ]),
+            ]
+        );
+    }
+
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| item.to_string()).collect()
     }
 
+    /// A run of changed lines leaves the app out unless `--app` asks for it alone; `--all` names
+    /// its own.
     #[test]
-    fn a_plan_takes_a_shard_per_fifteen_mutants_up_to_eight() {
+    fn the_app_is_left_out_unless_asked_for() {
+        assert_eq!(
+            cargo_mutants_args(&strings(&["--base", "abc", "--", "--shard", "1/4"])),
+            ["--exclude", APP_FILES, "--shard", "1/4"]
+        );
+        assert_eq!(
+            cargo_mutants_args(&strings(&["--app", "--base", "abc"])),
+            ["--file", APP_FILES]
+        );
+        assert_eq!(
+            cargo_mutants_args(&strings(&["--all", "--", "-p", "kchess-domain"])),
+            ["-p", "kchess-domain"]
+        );
+        // After `--`, a flag is cargo-mutants', not this command's.
+        assert_eq!(
+            cargo_mutants_args(&strings(&["--", "--app"])),
+            ["--exclude", APP_FILES, "--app"]
+        );
+    }
+
+    #[test]
+    fn a_plan_takes_a_shard_per_fifteen_mutants_up_to_twenty() {
         assert_eq!(shards_for(0), 0);
         assert_eq!(shards_for(1), 1);
         assert_eq!(shards_for(15), 1);
         assert_eq!(shards_for(16), 2);
         assert_eq!(shards_for(120), 8);
-        assert_eq!(shards_for(665), 8);
+        assert_eq!(shards_for(300), 20);
+        assert_eq!(shards_for(301), 20);
+        assert_eq!(shards_for(5300), 20);
         assert_eq!(plan_outputs(0), "count=0\nshards=[]\ntotal=0\n");
         assert_eq!(plan_outputs(23), "count=23\nshards=[0,1]\ntotal=2\n");
     }
@@ -549,20 +663,17 @@ mod tests {
 
     #[test]
     fn code_that_only_moved_is_no_change() {
-        let (dir, base) = repo();
+        let (dir, _) = repo();
         std::fs::write(
             dir.path().join("a.rs"),
             format!("fn a() {{}}\n\n{MOVED_FN}"),
         )
         .unwrap();
         commit(dir.path());
-        let base = {
-            let _ = base;
-            git(dir.path(), &["rev-parse", "HEAD"], &[0])
-                .unwrap()
-                .trim()
-                .to_string()
-        };
+        let base = git(dir.path(), &["rev-parse", "HEAD"], &[0])
+            .unwrap()
+            .trim()
+            .to_string();
         // The function moves to b.rs, indented into a module, beside a new one.
         std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
         let indented: String = MOVED_FN
@@ -805,6 +916,49 @@ mod tests {
         path.display().to_string()
     }
 
+    /// A stand-in cargo in `dir` that records its arguments, lists two mutants and exits with
+    /// `status`, saying why on standard error.
+    #[cfg(unix)]
+    fn fake_lister(dir: &Path, status: i32) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("fake-lister");
+        let script = format!(
+            "#!/bin/sh\necho \"$@\" > \"{calls}\"\nprintf 'a.rs:1:1: one\\nb.rs:2:2: two\\n'\n\
+             echo 'no such package' >&2\nexit {status}\n",
+            calls = dir.join("calls").display(),
+        );
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.display().to_string()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_changed_lines_mutants_are_counted_from_their_listing() {
+        let (dir, base) = repo();
+        let tools = tempfile::tempdir().unwrap();
+        let cargo = fake_lister(tools.path(), 0);
+        // Without Rust changes there is nothing to list.
+        assert_eq!(count_since(dir.path(), &cargo, &base, &[]).unwrap(), 0);
+        assert!(!tools.path().join("calls").exists());
+
+        std::fs::write(dir.path().join("new.rs"), "fn new() {}\n").unwrap();
+        assert_eq!(count_since(dir.path(), &cargo, &base, &[]).unwrap(), 2);
+        let calls = std::fs::read_to_string(tools.path().join("calls")).unwrap();
+        assert_eq!(
+            calls.trim(),
+            format!("mutants --in-diff {DIFF} --list --exclude {APP_FILES}")
+        );
+        let diff = std::fs::read_to_string(dir.path().join(DIFF)).unwrap();
+        assert!(diff.contains("+fn new() {}"), "{diff}");
+
+        let cargo = fake_lister(tools.path(), 1);
+        let failed = count_since(dir.path(), &cargo, &base, &[]).unwrap_err();
+        assert!(failed.contains("no such package"), "{failed}");
+        let missing = tools.path().join("no-cargo").display().to_string();
+        assert!(count_since(dir.path(), &missing, &base, &[]).is_err());
+    }
+
     #[cfg(unix)]
     #[test]
     fn without_cargo_mutants_it_says_how_to_install_it() {
@@ -840,7 +994,9 @@ mod tests {
         let calls = std::fs::read_to_string(tools.path().join("calls")).unwrap();
         assert_eq!(
             calls.trim(),
-            format!("mutants --in-diff {DIFF} --no-shuffle --test-tool nextest -j 2")
+            format!(
+                "mutants --in-diff {DIFF} --no-shuffle --test-tool nextest --exclude {APP_FILES} -j 2"
+            )
         );
         let seen = std::fs::read_to_string(tools.path().join("seen.patch")).unwrap();
         assert!(seen.contains("+fn new() {}"), "{seen}");
@@ -879,7 +1035,7 @@ mod tests {
         assert_eq!(
             calls,
             format!(
-                "mutants --in-diff {DIFF} --no-shuffle --test-tool nextest --shard 1/2 --in-place"
+                "mutants --in-diff {DIFF} --no-shuffle --test-tool nextest --exclude {APP_FILES} --shard 1/2 --in-place"
             )
         );
         assert_eq!(incremental, "unset");

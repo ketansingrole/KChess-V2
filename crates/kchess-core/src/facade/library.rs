@@ -1,142 +1,170 @@
-//! The facade's the library: studies, played games, drills, sessions and repertoire notes (`run_facade` arms, moved without changes).
+//! The library: studies, played games, drills, sessions and repertoire notes.
 
-use super::args::{arg, normal, normal_args, now_ms};
-use super::{archived_game, study_command};
+use kchess_contracts::check::{
+    ArchivedGame, LibraryId, MissCounts, PgnText, Position, RepertoireKey, RepertoireLine,
+    ReviewKey, SessionObject, Side, ViewPreferenceKey,
+};
+use kchess_contracts::core_api::LibraryApi;
+use kchess_contracts::types::{
+    Drill, JoinedTournament, Library, MistakeGame, MistakesAdded, RepertoireMisses,
+    RepertoireSchedule, SessionDocument, SessionKind, StudyCommand, StudyCommandResult,
+};
+use kchess_domain::misc::documents;
+use kchess_domain::misc::value::J;
+use serde_json::{Map, Value};
+
 use crate::core::Core;
-use crate::error::{CoreError, Result};
-use serde_json::{Value, json};
+use crate::store::{library, library_import, view_preferences};
+use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result};
 
-impl Core {
-    /// Answers the facade's library methods.
-    pub(crate) async fn run_library(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "library" => {
-                self.database
-                    .call_async("store.library.library", &[json!(now_ms())])
-                    .await
-            }
-            "studyCommand" => {
-                let shape = normal("assertStudyCommandShape", &arg(args, 0))?;
-                let command = study_command(&shape)?;
-                self.database
-                    .call_async(
-                        "store.library.studyCommand",
-                        &[command, json!(now_ms()), arg(args, 1), arg(args, 2)],
-                    )
-                    .await
-            }
-            "saveArchivedGame" => {
-                let shape = normal("assertArchivedGameShape", &arg(args, 0))?;
-                let game = archived_game(&shape)?;
-                self.database
-                    .call_async("store.library.saveArchivedGame", &[game])
-                    .await
-            }
-            "removeArchivedGame" => {
-                let id = normal("assertLibraryId", &arg(args, 0))?;
-                self.database
-                    .call_async("store.library.removeArchivedGame", &[id])
-                    .await
-            }
-            "addMistakes" => {
-                let key = normal("assertReviewKey", &arg(args, 0))?;
-                let color = match args.get(1) {
-                    None | Some(Value::Null) => Value::Null,
-                    Some(value) => normal("assertSide", value)?,
-                };
-                self.database
-                    .call_async("store.library.addMistakes", &[key, color, json!(now_ms())])
-                    .await
-            }
-            "answerMistake" => {
-                let id = normal("assertLibraryId", &arg(args, 0))?;
-                let solved = normal("assertBoolean", &arg(args, 1))?;
-                self.database
-                    .call_async(
-                        "store.library.answerMistake",
-                        &[id, solved, json!(now_ms())],
-                    )
-                    .await
-            }
-            "mistakeGames" => {
-                self.database
-                    .call_async("store.library.mistakeGames", &[])
-                    .await
-            }
-            "saveSession" => {
-                let kind = normal("assertSessionKind", &arg(args, 0))?;
-                let value = normal_args("assertSession", &[kind.clone(), arg(args, 1)])?;
-                self.database
-                    .call_async("store.library.saveSession", &[kind, value])
-                    .await
-            }
-            "session" => {
-                let kind = normal("assertSessionKind", &arg(args, 0))?;
-                self.database
-                    .call_async("store.library.session", &[kind])
-                    .await
-            }
-            "mistakes" => {
-                self.database
-                    .call_async("store.library.mistakes", &[])
-                    .await
-            }
-            "joinedTournaments" => {
-                self.database
-                    .call_async("store.library.joinedTournaments", &[json!(now_ms())])
-                    .await
-            }
-            "recordRepertoireMiss" => {
-                let key = normal("assertRepertoireKey", &arg(args, 0))?;
-                let fen = normal(
-                    "assertAnalysisRequest",
-                    &json!({ "fen": arg(args, 1), "lines": 1 }),
-                )?;
-                self.database
-                    .call_async(
-                        "store.library.recordRepertoireMiss",
-                        &[key, fen["fen"].clone()],
-                    )
-                    .await
-            }
-            "clearRepertoireMisses" => {
-                let key = normal("assertRepertoireKey", &arg(args, 0))?;
-                self.database
-                    .call_async("store.library.clearRepertoireMisses", &[key])
-                    .await
-            }
-            "restoreRepertoireMisses" => {
-                let key = normal("assertRepertoireKey", &arg(args, 0))?;
-                self.database
-                    .call_async(
-                        "store.library.restoreRepertoireMisses",
-                        &[key, arg(args, 1)],
-                    )
-                    .await
-            }
-            "reviewRepertoireLine" => {
-                let key = normal("assertRepertoireKey", &arg(args, 0))?;
-                let line = normal("assertRepertoireLine", &arg(args, 1))?;
-                let correct = normal("assertBoolean", &arg(args, 2))?;
-                self.database
-                    .call_async(
-                        "store.library.reviewRepertoireLine",
-                        &[key, line, correct, json!(now_ms())],
-                    )
-                    .await
-            }
-            "viewPreferences" => {
-                self.database
-                    .call_async("store.viewPreferences.all", &[])
-                    .await
-            }
-            "setViewPreference" => {
-                let key = normal("assertViewPreferenceKey", &arg(args, 0))?;
-                self.database
-                    .call_async("store.viewPreferences.set", &[key, arg(args, 1)])
-                    .await
-            }
-            _ => Err(CoreError::new(format!("Unknown core method {method}."))),
-        }
+impl LibraryApi for Core {
+    async fn library(&self) -> Result<Library> {
+        let now = now_ms() as f64;
+        self.database
+            .read_async(move |ctx| library_import::cached_library(ctx, now))
+            .await
+    }
+
+    async fn study_command(
+        &self,
+        command: StudyCommand,
+        incremental: Option<bool>,
+        based_on: Option<PgnText>,
+    ) -> Result<StudyCommandResult> {
+        let (incremental, now) = (incremental == Some(true), now_ms() as f64);
+        self.database
+            .write_async(move |ctx| {
+                let based_on = based_on.as_ref().map(|pgn| pgn.0.as_str());
+                library::run_study_command(ctx.db, command, now, incremental, based_on)
+            })
+            .await
+    }
+
+    async fn save_archived_game(&self, game: ArchivedGame) -> Result<()> {
+        let game = kchess_domain::library::decode_archived_game(&game.0)
+            .ok_or_else(|| CoreError::new("This game cannot be saved."))?;
+        self.database
+            .write_async(move |ctx| library::write_game(ctx.db, &game))
+            .await
+    }
+
+    async fn remove_archived_game(&self, id: LibraryId) -> Result<()> {
+        self.database
+            .write_async(move |ctx| library::remove_archived_game(ctx.db, &id.0))
+            .await
+    }
+
+    async fn add_mistakes(
+        &self,
+        review_key: ReviewKey,
+        color: Option<Side>,
+    ) -> Result<MistakesAdded> {
+        let (color, now) = (color.map(|side| side.0), now_ms() as f64);
+        self.database
+            .write_async(move |ctx| {
+                library::add_mistakes(ctx.host, ctx.db, &review_key.0, color, now)
+            })
+            .await
+    }
+
+    async fn answer_mistake(&self, id: LibraryId, solved: bool) -> Result<Vec<Drill>> {
+        let now = now_ms() as f64;
+        self.database
+            .write_async(move |ctx| library::answer_mistake(ctx.db, &id.0, solved, now))
+            .await
+    }
+
+    async fn mistake_games(&self) -> Result<Vec<MistakeGame>> {
+        self.database
+            .read_async(|ctx| library::mistake_games(ctx.host, ctx.db))
+            .await
+    }
+
+    async fn save_session(&self, kind: SessionKind, session: SessionObject) -> Result<()> {
+        let checked =
+            documents::assert_session(vec![J::Str(kind.as_str().into()), J::from(&session.0)]);
+        let value = checked.map(J::into_value).map_err(CoreError::new)?;
+        self.database
+            .write_async(move |ctx| library::save_session(ctx.db, kind, value))
+            .await
+    }
+
+    async fn joined_tournaments(&self) -> Result<Vec<JoinedTournament>> {
+        let now = now_ms() as f64;
+        self.database
+            .read_async(move |ctx| library::joined_tournaments(ctx.host, ctx.db, now))
+            .await
+    }
+
+    async fn session(&self, kind: SessionKind) -> Result<Option<SessionDocument>> {
+        self.database
+            .read_async(move |ctx| library::session(ctx.host, ctx.db, kind))
+            .await
+    }
+
+    async fn mistakes(&self) -> Result<Vec<Drill>> {
+        self.database
+            .read_async(|ctx| library_import::read_mistakes(ctx.db))
+            .await
+    }
+
+    async fn record_repertoire_miss(
+        &self,
+        key: RepertoireKey,
+        fen: Position,
+    ) -> Result<RepertoireMisses> {
+        self.database
+            .write_async(move |ctx| {
+                library::record_repertoire_miss(ctx.host, ctx.db, &key.0, &fen.0)
+            })
+            .await
+    }
+
+    async fn clear_repertoire_misses(&self, key: RepertoireKey) -> Result<RepertoireMisses> {
+        self.database
+            .write_async(move |ctx| library::clear_repertoire_misses(ctx.host, ctx.db, &key.0))
+            .await
+    }
+
+    async fn restore_repertoire_misses(
+        &self,
+        key: RepertoireKey,
+        misses: MissCounts,
+    ) -> Result<RepertoireMisses> {
+        self.database
+            .write_async(move |ctx| {
+                library::restore_repertoire_misses(ctx.host, ctx.db, &key.0, &misses.0)
+            })
+            .await
+    }
+
+    async fn review_repertoire_line(
+        &self,
+        key: RepertoireKey,
+        line: RepertoireLine,
+        correct: bool,
+    ) -> Result<RepertoireSchedule> {
+        let now = now_ms() as f64;
+        self.database
+            .write_async(move |ctx| {
+                library::review_repertoire_line(ctx.host, ctx.db, &key.0, &line.0, correct, now)
+            })
+            .await
+    }
+
+    async fn view_preferences(&self) -> Result<Map<String, Value>> {
+        self.database.read_async(view_preferences::all).await
+    }
+
+    async fn set_view_preference(
+        &self,
+        key: ViewPreferenceKey,
+        value: Option<Value>,
+    ) -> Result<()> {
+        let value = value.unwrap_or(Value::Null);
+        self.database
+            .write_async(move |ctx| view_preferences::set(ctx, &key.0, &value))
+            .await
     }
 }

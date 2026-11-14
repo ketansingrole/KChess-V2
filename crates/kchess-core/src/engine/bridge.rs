@@ -6,6 +6,7 @@
 //! The battery reading never makes a lease wait for the host: a refresh asks the host in the
 //! background and the next lease uses whatever reading has arrived.
 
+use kchess_contracts::CoreEvent;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,35 +14,34 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use serde::Deserialize;
-use serde_json::{Value, json};
+
 use tokio_util::sync::CancellationToken;
 
 use super::analysis::Analysis;
 use super::managed::{EngineGuard, EngineHandoff};
 use super::review::{
-    GameToReview, Pause, ReviewHost, ReviewSettings, ReviewStatus, ReviewStorage, ReviewUpdate,
-    Reviews, StoredReview,
+    Pause, ReviewHost, ReviewSettings, ReviewStatus, ReviewUpdate, Reviews, StoredReview,
 };
+use super::scheduler::Power;
 use super::search::Search;
 use super::uci::EngineHub;
 use crate::capabilities::Capabilities;
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
-use crate::store::Database;
+use crate::store::{Database, chesscom, games};
+use kchess_contracts::error::Result;
 
 /// How often the battery reading is refreshed while the core runs.
+#[cfg(not(test))]
 const REFRESH_EVERY: Duration = Duration::from_secs(15);
-/// How long a Lichess review lookup may take on the host (it fetches a batch of games).
-/// Games a review pass looks at (the store's `gamesToReview` limit).
-const REVIEW_LIMIT: usize = 300;
+#[cfg(test)]
+const REFRESH_EVERY: Duration = Duration::from_millis(10);
 
-/// The battery reading the scheduler's on-battery function reads. A refresh asks the host once
-/// at a time, in the background.
+/// The battery reading the scheduler consults. A refresh asks the host once at a time, in the
+/// background.
 ///
-/// Intentionally stale-tolerant: refreshed at most every 15 s and on each lease via
-/// `before_lease` spawn-and-don't-wait, never blocking lease admission. A plug/unplug
-/// flip mid-queue uses the last reading (at most 2 threads on battery until refresh).
+/// Intentionally stale-tolerant: refreshed at most every 15 s and before each lease without
+/// waiting, never blocking lease admission. A plug/unplug flip mid-queue uses the last reading
+/// (at most 2 threads on battery until refresh).
 pub struct Battery {
     value: AtomicBool,
     refreshing: AtomicBool,
@@ -50,27 +50,29 @@ pub struct Battery {
     /// the connections they reach) then rather than at its next tick.
     stopped: CancellationToken,
     host: Arc<dyn Host>,
+    capabilities: Arc<Capabilities>,
 }
 
 impl Battery {
-    pub fn new(host: Arc<dyn Host>) -> Arc<Battery> {
+    pub fn new(host: Arc<dyn Host>, capabilities: Arc<Capabilities>) -> Arc<Battery> {
         Arc::new(Battery {
             value: AtomicBool::new(false),
             refreshing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             stopped: CancellationToken::new(),
             host,
+            capabilities,
         })
     }
 
-    /// The latest reading (`CorePlatform.onBattery()`, as of the last refresh).
+    /// The latest reading.
     pub fn value(&self) -> bool {
         self.value.load(Ordering::SeqCst)
     }
 
     /// Asks the host for the reading without waiting for the answer. A refresh already in flight
     /// is not repeated. Outside a runtime nothing is asked.
-    pub fn refresh(self: &Arc<Self>, capabilities: &Arc<Capabilities>) {
+    pub fn refresh(self: &Arc<Self>) {
         if self.closed.load(Ordering::SeqCst) || self.refreshing.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -79,9 +81,8 @@ impl Battery {
             return;
         };
         let battery = Arc::clone(self);
-        let capabilities = Arc::clone(capabilities);
         runtime.spawn(async move {
-            match capabilities.on_battery().await {
+            match battery.capabilities.on_battery().await {
                 Ok(on_battery) => battery.value.store(on_battery, Ordering::SeqCst),
                 Err(cause) => battery.host.log(
                     Level::Debug,
@@ -94,7 +95,7 @@ impl Battery {
     }
 
     /// Refreshes the reading on a slow interval until the core closes or is dropped.
-    pub fn start_refreshing(self: &Arc<Self>, capabilities: Arc<Capabilities>) {
+    pub fn start_refreshing(self: &Arc<Self>) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
@@ -112,7 +113,7 @@ impl Battery {
                 if battery.closed.load(Ordering::SeqCst) {
                     return;
                 }
-                battery.refresh(&capabilities);
+                battery.refresh();
             }
         });
     }
@@ -130,131 +131,17 @@ impl Drop for Battery {
     }
 }
 
-/// The review store: `kchess.db`'s review functions, through the one shared connection.
-pub struct ReviewRecords(pub Arc<Database>);
-
-fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
-    serde_json::from_value(value).map_err(|cause| CoreError::new(cause.to_string()))
-}
-
-impl ReviewStorage for ReviewRecords {
-    fn write_review_if<'a>(
-        &'a self,
-        review: StoredReview,
-        current: &'a (dyn Fn() -> bool + Sync),
-    ) -> BoxFuture<'a, Result<ReviewUpdate>> {
-        Box::pin(async move {
-            let value = self
-                .0
-                .call_async_with("store.reviewStore.writeReview", || {
-                    if !current() {
-                        return Err(CoreError::new("Review was discarded."));
-                    }
-                    Ok(vec![
-                        serde_json::to_value(review)
-                            .map_err(|cause| CoreError::new(cause.to_string()))?,
-                    ])
-                })
-                .await?;
-            parse(value)
-        })
-    }
-    fn mark_checked_if<'a>(
-        &'a self,
-        ids: &'a [String],
-        current: &'a (dyn Fn() -> bool + Sync),
-    ) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
-            self.0
-                .call_async_with("store.reviewStore.markChecked", || {
-                    if !current() {
-                        return Err(CoreError::aborted("Review was discarded."));
-                    }
-                    Ok(vec![json!(ids), json!(super::now_ms())])
-                })
-                .await
-                .map(|_| ())
-        })
-    }
-    fn read_review<'a>(
-        &'a self,
-        key: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, Result<Option<StoredReview>>> {
-        Box::pin(async move {
-            let value = self
-                .0
-                .call_async("store.reviewStore.readReview", &[json!(key)])
-                .await?;
-            if value.is_null() {
-                return Ok(None);
-            }
-            parse(value).map(Some)
-        })
+impl Power for Arc<Battery> {
+    fn on_battery(&self) -> bool {
+        self.value()
     }
 
-    fn write_review<'a>(
-        &'a self,
-        review: StoredReview,
-    ) -> futures_util::future::BoxFuture<'a, Result<ReviewUpdate>> {
-        Box::pin(async move {
-            let value = self
-                .0
-                .call_async(
-                    "store.reviewStore.writeReview",
-                    &[serde_json::to_value(review)
-                        .map_err(|cause| CoreError::new(cause.to_string()))?],
-                )
-                .await?;
-            parse(value)
-        })
-    }
-
-    fn has_account<'a>(
-        &'a self,
-        username: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, Result<bool>> {
-        Box::pin(async move {
-            Ok(self
-                .0
-                .call_async("store.reviewStore.hasAccount", &[json!(username)])
-                .await?
-                .as_bool()
-                == Some(true))
-        })
-    }
-
-    fn mark_checked<'a>(
-        &'a self,
-        ids: &'a [String],
-    ) -> futures_util::future::BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
-            let at = super::now_ms();
-            self.0
-                .call_async("store.reviewStore.markChecked", &[json!(ids), json!(at)])
-                .await
-                .map(|_| ())
-        })
-    }
-
-    fn games_to_review<'a>(
-        &'a self,
-        accounts: &'a [String],
-        since: i64,
-    ) -> futures_util::future::BoxFuture<'a, Result<Vec<GameToReview>>> {
-        Box::pin(async move {
-            let value = self
-                .0
-                .call_async(
-                    "store.reviewStore.gamesToReview",
-                    &[json!(accounts), json!(since), json!(REVIEW_LIMIT)],
-                )
-                .await?;
-            parse(value)
-        })
+    fn refresh(&self) {
+        Battery::refresh(self);
     }
 }
 
-/// The review queue's host in the Rust core: settings and accounts from the store, the busy
+/// The review queue's host: settings and accounts from the store, the busy
 /// state from the engines and online play, Lichess through the host, and updates and status as
 /// `review:update` and `review:status` events.
 pub struct ReviewBridge {
@@ -269,36 +156,28 @@ pub struct ReviewBridge {
     pub online: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AppAccount {
-    username: String,
-    connected: bool,
-}
-
-#[derive(Deserialize)]
-struct AppData {
-    accounts: Vec<AppAccount>,
-}
-
 impl ReviewHost for ReviewBridge {
     fn settings(&self) -> BoxFuture<'_, Result<ReviewSettings>> {
         Box::pin(async move {
-            parse(
-                self.database
-                    .call_async("store.games.getSettings", &[])
-                    .await?,
-            )
+            let settings = self
+                .database
+                .read_async(|ctx| games::get_settings(ctx.db))
+                .await?
+                .core;
+            Ok(ReviewSettings {
+                review_auto: settings.review_auto.as_str().to_string(),
+                review_on_battery: settings.review_on_battery,
+                engine_path: settings.engine_path,
+            })
         })
     }
 
     fn accounts(&self) -> BoxFuture<'_, Result<Vec<String>>> {
         Box::pin(async move {
-            let data: AppData = parse(
-                self.database
-                    .call_async("store.games.loadData", &[])
-                    .await?,
-            )?;
+            let data = self
+                .database
+                .read_async(|ctx| games::load_app_data(ctx.db))
+                .await?;
             // Your own accounts: the connected ones, or the first one added when none is, and
             // every Chess.com player added (they are added by name, as your own).
             let mut own: Vec<String> = data
@@ -317,16 +196,12 @@ impl ReviewHost for ReviewBridge {
             }
             let chesscom = self
                 .database
-                .call_async("store.chesscom.accounts", &[])
+                .read_async(|ctx| chesscom::accounts(ctx.db))
                 .await?;
             own.extend(
                 chesscom
-                    .as_array()
-                    .map(Vec::as_slice)
-                    .unwrap_or_default()
                     .iter()
-                    .filter_map(|row| row.get("username").and_then(Value::as_str))
-                    .map(kchess_domain::chesscom::account_of),
+                    .map(|row| kchess_domain::chesscom::account_of(&row.username)),
             );
             Ok(own)
         })
@@ -351,31 +226,28 @@ impl ReviewHost for ReviewBridge {
         let account = account.to_string();
         let ids = ids.to_vec();
         Box::pin(async move {
-            let reviews =
-                crate::lichess::reviews::fetch_lichess_reviews(&self.lichess, &account, &ids)
-                    .await?;
-            parse(Value::Array(reviews))
+            crate::lichess::reviews::fetch_lichess_reviews(&self.lichess, &account, &ids).await
         })
     }
 
     fn update(&self, update: ReviewUpdate) {
-        self.emit("review:update", json!(update));
+        self.emit(CoreEvent::ReviewUpdate(Box::new(update)));
     }
 
     fn status(&self, status: ReviewStatus) {
-        self.emit("review:status", json!(status));
+        self.emit(CoreEvent::ReviewStatus(status));
     }
 }
 
 impl ReviewBridge {
-    fn emit(&self, event: &str, payload: Value) {
-        self.host.emit(event, payload);
+    fn emit(&self, event: CoreEvent) {
+        self.host.emit(event);
     }
 }
 
 /// How long an engine replacement, or closing the core, waits for a stopped analysis to end after
 /// its engine exited.
-pub(crate) const SETTLE_DEADLINE: Duration = Duration::from_secs(4);
+pub(crate) const SETTLE_DEADLINE: Duration = super::uci::EXIT_DEADLINE;
 
 /// The engine owners a replacement of the executable stops: the computer's search, the analysis
 /// engine and the review engine. Their processes must have exited before the file changes.
@@ -391,11 +263,7 @@ impl EngineHandoff for EngineOwners {
         Box::pin(async move {
             let hold = self
                 .hub
-                .suspend(|| {
-                    self.search.stop_engine(true);
-                    self.analysis.stop_analysis(true);
-                    self.reviews.restart_review_engine();
-                })
+                .suspend(|| super::stop_engines(&self.search, &self.analysis, &self.reviews, true))
                 .await?;
             // The engines have exited; the stopped analysis also ends (its final `interrupted`
             // update sent, no longer running) before the executable changes. Waiting only for
@@ -404,5 +272,53 @@ impl EngineHandoff for EngineOwners {
             let _ = tokio::time::timeout(SETTLE_DEADLINE, self.analysis.settled()).await;
             Ok(Box::new(hold) as EngineGuard)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::scheduler::{Priority, Scheduler};
+    use crate::test_host::TestHost;
+
+    fn battery() -> (Arc<TestHost>, Arc<Capabilities>, Arc<Battery>) {
+        let host = TestHost::new();
+        let caps = Arc::new(Capabilities::new(host.clone()));
+        let battery = Battery::new(host.clone(), Arc::clone(&caps));
+        (host, caps, battery)
+    }
+
+    /// Waits until the host has been asked for the battery reading.
+    async fn asked(host: &TestHost) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while host.requests("onBattery").is_empty() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the host was asked for the battery reading");
+    }
+
+    /// A lease refreshes the reading the scheduler consults.
+    #[tokio::test]
+    async fn a_lease_asks_for_the_battery_reading() {
+        let (host, caps, battery) = battery();
+        let scheduler = Scheduler::with_budget(1, Arc::clone(&battery));
+        let lease = scheduler
+            .acquire(Priority::Analysis, &CancellationToken::new())
+            .await
+            .unwrap();
+        asked(&host).await;
+        drop(lease);
+        caps.close();
+    }
+
+    #[tokio::test]
+    async fn the_reading_is_refreshed_while_the_core_runs() {
+        let (host, caps, battery) = battery();
+        battery.start_refreshing();
+        asked(&host).await;
+        battery.close();
+        caps.close();
     }
 }

@@ -1,47 +1,44 @@
-//! The training session's transitions.
+//! The puzzle training session, a typed state machine.
 //!
-//! The caller keeps the state, runs the host call each transition returns
-//! (`call`), and reports the settled reply back with the `resume` token it was given. Every
-//! decision is made here: a reply counts only while its load generation, session version,
-//! attempt and selection are still current, which is how late replies are ignored.
-//!
-//! Transitions take `{ state, internal, … }` and return `{ state, internal, call, warn }`.
-//! `internal` holds what the caller keeps privately (load generation, session version, attempt).
+//! The caller holds the session, runs the host call each step returns (`call`), and reports the
+//! settled reply back with the `resume` token it was given. Every decision is made here: a reply
+//! counts only while its load generation, session version, attempt and selection are still
+//! current, which is how late replies are ignored. `day` is the host's calendar day
+//! (`YYYY-MM-DD`), for an attempt that ends in the step.
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
-use super::Out;
 use super::puzzle_progress::{Outcome, Verdict, classify, moves};
 use crate::js;
 
 const OFFLINE_TEXT: &str = "You’re offline. Choose Downloaded to use puzzles on this device, or reconnect for online puzzles.";
 const REJECTED_TEXT: &str = "Lichess did not accept the result: reconnect your account.";
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+/// What the player chose to train: the account, theme, difficulty, colour and mode.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Selection {
-    account: String,
-    angle: String,
-    difficulty: String,
-    color: String,
-    mode: String,
+pub struct Selection {
+    pub account: String,
+    pub angle: String,
+    pub difficulty: String,
+    pub color: String,
+    pub mode: String,
 }
 
 /// The session's attempts by outcome (`puzzle_progress::Outcome`), and its player moves.
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Tally {
-    solved: f64,
-    hinted: f64,
-    partial: f64,
-    missed: f64,
-    revealed: f64,
+pub struct Tally {
+    pub solved: f64,
+    pub hinted: f64,
+    pub partial: f64,
+    pub missed: f64,
+    pub revealed: f64,
     /// Player moves found, and tried (found plus the wrong move that ended an attempt).
-    moves_found: f64,
-    moves_tried: f64,
-    rating_change: f64,
+    pub moves_found: f64,
+    pub moves_tried: f64,
+    pub rating_change: f64,
 }
 
 impl Tally {
@@ -59,36 +56,38 @@ impl Tally {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+/// How Lichess took the last result sent.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Report {
-    win: bool,
+pub struct Report {
+    pub win: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    rating_diff: Option<f64>,
+    pub rating_diff: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    failed: Option<String>,
+    pub failed: Option<String>,
 }
 
-/// The observable state (`PuzzleSessionState` in TypeScript).
-#[derive(Clone, Serialize, Deserialize)]
+/// What the page shows of the session.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct State {
-    phase: String,
+pub struct State {
+    /// `idle`, `loading`, `ready`, `exhausted`, `nodb`, `noaccount`, `reconnect` or `error`.
+    pub phase: String,
     #[serde(default)]
-    current: Option<Value>,
-    puzzle_key: u64,
-    is_retry: bool,
-    train_error: String,
+    pub current: Option<Value>,
+    pub puzzle_key: u64,
+    pub is_retry: bool,
+    pub train_error: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    rating: Option<f64>,
-    session: Tally,
+    pub rating: Option<f64>,
+    pub session: Tally,
     #[serde(default)]
-    last_report: Option<Report>,
+    pub last_report: Option<Report>,
     #[serde(default)]
-    attempt_outcome: Option<bool>,
+    pub attempt_outcome: Option<bool>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Attempt {
     key: u64,
@@ -113,7 +112,7 @@ struct Attempt {
 }
 
 /// A wrong first try: the index in the solution of the move it replaced, and the move played.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WrongMove {
     index: usize,
@@ -121,7 +120,7 @@ struct WrongMove {
 }
 
 /// What the board knew at the first verdict.
-#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct VerdictFacts {
     win: bool,
@@ -138,8 +137,8 @@ fn counts_for_rating(mode: &str, hinted: bool) -> bool {
 /// The most player moves an attempt scores; longer solutions are not real puzzles.
 const MAX_TRIES: usize = 32;
 
-/// What the class kept private: replies are matched against these counters.
-#[derive(Clone, Default, Serialize, Deserialize)]
+/// What the session keeps private: replies are matched against these counters.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Internal {
     load_gen: u64,
@@ -148,9 +147,9 @@ struct Internal {
 }
 
 /// Carried by a host call and handed back with its reply.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Resume {
+pub struct Resume {
     /// `offline` (local puzzle), `draw` (Lichess puzzle), `anonymous` (practice retry), `solve`.
     stage: String,
     generation: u64,
@@ -165,48 +164,95 @@ struct Resume {
     selection: Selection,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Call {
-    method: &'static str,
-    args: Value,
-    resume: Resume,
+/// A core call a step asks for, and the token its reply goes back with.
+#[derive(Clone, Debug)]
+pub struct Call {
+    pub request: Request,
+    pub resume: Resume,
 }
 
-#[derive(Serialize)]
+/// The core call a step asks for, with its argument.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Request {
+    /// Downloaded puzzles near a rating (`localPuzzles`).
+    LocalPuzzles(LocalQuery),
+    /// The next Lichess puzzle (`puzzleNext`).
+    PuzzleNext(Draw),
+    /// A solved puzzle's result for Lichess (`puzzleSolve`).
+    PuzzleSolve(Solve),
+}
+
+/// The downloaded puzzles asked for.
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Step {
-    state: State,
-    internal: Internal,
-    call: Option<Call>,
+pub struct LocalQuery {
+    pub theme: String,
+    pub min_rating: f64,
+    pub max_rating: f64,
+    pub count: u32,
+}
+
+/// The Lichess puzzle asked for; no colour for either.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Draw {
+    pub account: String,
+    pub angle: String,
+    pub difficulty: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+/// A puzzle's result as Lichess takes it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Solve {
+    pub account: String,
+    pub angle: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<Value>,
+    pub win: bool,
+    pub rated: bool,
+}
+
+/// What one step asks of the host.
+#[derive(Clone, Debug, Default)]
+pub struct Step {
+    pub call: Option<Call>,
     /// An attempt for the host to keep in the local log (`recordPuzzleAttempt`).
-    record: Option<Value>,
-    warn: bool,
+    pub record: Option<Value>,
+    /// The step failed in a way worth a warning in the log.
+    pub warn: bool,
 }
 
-struct Session {
+/// The puzzle training session.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PuzzleSession {
     state: State,
     internal: Internal,
+}
+
+/// One step's working copy: the session, what it asks of the host, and the day.
+struct Session<'a> {
+    state: &'a mut State,
+    internal: &'a mut Internal,
     call: Option<Call>,
     record: Option<Value>,
     warn: bool,
-    /// The host's calendar day (`YYYY-MM-DD`), for an attempt that ends in this transition.
-    day: String,
+    day: &'a str,
 }
 
 /// What the board knew at the verdict.
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Detail {
+pub struct Detail {
     #[serde(default)]
-    revealed: bool,
+    pub revealed: bool,
     #[serde(default)]
-    hinted: bool,
+    pub hinted: bool,
     #[serde(default)]
-    total: u32,
+    pub total: u32,
 }
 
-/// `OFFLINE_OFFSET` by difficulty; an unknown difficulty has no offset (NaN, as in TypeScript).
+/// The offline rating offset by difficulty; an unknown difficulty has none (NaN).
 fn offset(difficulty: &str) -> f64 {
     match difficulty {
         "easiest" => -600.0,
@@ -218,8 +264,8 @@ fn offset(difficulty: &str) -> f64 {
     }
 }
 
-/// `isReconnect`: a non-array object with a `needsReconnect` property.
-pub(super) fn is_reconnect(value: &Value) -> bool {
+/// A non-array object with a `needsReconnect` property.
+pub fn is_reconnect(value: &Value) -> bool {
     value
         .as_object()
         .is_some_and(|object| object.contains_key("needsReconnect"))
@@ -248,15 +294,13 @@ fn syncs_to_lichess(state: &State, selection: &Selection) -> bool {
 }
 
 /// The arguments of `puzzleNext`: the colour is left out when it is random.
-fn draw_args(account: &str, selection: &Selection) -> Value {
-    let mut args = Map::new();
-    args.insert("account".into(), json!(account));
-    args.insert("angle".into(), json!(selection.angle));
-    args.insert("difficulty".into(), json!(selection.difficulty));
-    if selection.color != "random" {
-        args.insert("color".into(), json!(selection.color));
-    }
-    Value::Object(args)
+fn draw_args(account: &str, selection: &Selection) -> Request {
+    Request::PuzzleNext(Draw {
+        account: account.to_string(),
+        angle: selection.angle.clone(),
+        difficulty: selection.difficulty.clone(),
+        color: (selection.color != "random").then(|| selection.color.clone()),
+    })
 }
 
 fn resume(stage: &str, generation: u64, selection: &Selection) -> Resume {
@@ -272,9 +316,9 @@ fn resume(stage: &str, generation: u64, selection: &Selection) -> Resume {
 }
 
 /// A reply's outcome: `Ok(value)` or the failure's message.
-type Reply = Result<Value, String>;
+pub type Reply = Result<Value, String>;
 
-impl Session {
+impl Session<'_> {
     fn invalidate(&mut self) {
         self.end_attempt();
         self.internal.load_gen += 1;
@@ -341,12 +385,11 @@ impl Session {
         if selection.mode == "offline" {
             let centre = self.state.rating.unwrap_or(1500.0) + offset(&selection.difficulty);
             self.call = Some(Call {
-                method: "localPuzzles",
-                args: json!({
-                    "theme": selection.angle,
-                    "minRating": (centre - 150.0).max(0.0),
-                    "maxRating": centre + 150.0,
-                    "count": 1,
+                request: Request::LocalPuzzles(LocalQuery {
+                    theme: selection.angle.clone(),
+                    min_rating: (centre - 150.0).max(0.0),
+                    max_rating: centre + 150.0,
+                    count: 1,
                 }),
                 resume: resume("offline", generation, selection),
             });
@@ -361,8 +404,7 @@ impl Session {
             return;
         }
         self.call = Some(Call {
-            method: "puzzleNext",
-            args: draw_args(&selection.account, selection),
+            request: draw_args(&selection.account, selection),
             resume: resume("draw", generation, selection),
         });
     }
@@ -390,8 +432,7 @@ impl Session {
                     }
                     // Practice does not need the permission: take a puzzle without the account.
                     self.call = Some(Call {
-                        method: "puzzleNext",
-                        args: draw_args("", &selection),
+                        request: draw_args("", &selection),
                         resume: resume("anonymous", token.generation, &selection),
                     });
                     return;
@@ -522,29 +563,24 @@ impl Session {
         if self.state.is_retry {
             return;
         }
-        if !syncs_to_lichess(&self.state, selection) || started.anonymous {
+        if !syncs_to_lichess(self.state, selection) || started.anonymous {
             return;
         }
         let puzzle_id = puzzle.get("id").cloned().unwrap_or(Value::Null);
-        let mut args = Map::new();
-        args.insert("account".into(), json!(started.account));
-        args.insert("angle".into(), json!(started.angle));
-        if let Some(id) = puzzle.get("id") {
-            args.insert("id".into(), id.clone());
-        }
-        args.insert("win".into(), json!(win));
-        args.insert(
-            "rated".into(),
-            json!(counts_for_rating(&started.mode, detail.hinted)),
-        );
+        let solve = Solve {
+            account: started.account.clone(),
+            angle: started.angle.clone(),
+            id: puzzle.get("id").cloned(),
+            win,
+            rated: counts_for_rating(&started.mode, detail.hinted),
+        };
         let mut token = resume("solve", self.internal.load_gen, selection);
         token.version = self.internal.session_version;
         token.key = started.key;
         token.win = win;
         token.puzzle_id = puzzle_id;
         self.call = Some(Call {
-            method: "puzzleSolve",
-            args: Value::Object(args),
+            request: Request::PuzzleSolve(solve),
             resume: token,
         });
     }
@@ -614,150 +650,148 @@ impl Session {
         }
     }
 
-    fn finish(self) -> Out {
-        serde_json::to_value(Step {
-            state: self.state,
-            internal: self.internal,
+    fn finish(self) -> Step {
+        Step {
             call: self.call,
             record: self.record,
             warn: self.warn,
-        })
-        .map_err(|error| error.to_string())
-    }
-}
-
-fn take<T: DeserializeOwned>(arg: &Map<String, Value>, key: &str) -> Result<T, String> {
-    serde_json::from_value(arg.get(key).cloned().unwrap_or(Value::Null))
-        .map_err(|error| format!("{key}: {error}"))
-}
-
-/// The `{ state, internal }` input shared by every transition.
-fn session_from(args: &[Value]) -> Result<(Map<String, Value>, Session), String> {
-    let arg = args
-        .first()
-        .and_then(Value::as_object)
-        .ok_or("the session input must be an object")?
-        .clone();
-    let session = Session {
-        state: take(&arg, "state")?,
-        internal: take(&arg, "internal")?,
-        call: None,
-        record: None,
-        warn: false,
-        day: arg
-            .get("day")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-    };
-    Ok((arg, session))
-}
-
-/// A reply as `{ ok: value }` or `{ error: message }`; an unreadable shape is an error.
-fn reply(arg: &Map<String, Value>) -> Result<Reply, String> {
-    let outcome = arg
-        .get("outcome")
-        .and_then(Value::as_object)
-        .ok_or("outcome must be an object")?;
-    if let Some(text) = outcome.get("error") {
-        return Ok(Err(text.as_str().unwrap_or_default().to_string()));
-    }
-    Ok(Ok(outcome.get("ok").cloned().unwrap_or(Value::Null)))
-}
-
-/// `{ state, selection }` → whether the session syncs its result to Lichess.
-fn syncs_call(args: &[Value]) -> Out {
-    let arg = args
-        .first()
-        .and_then(Value::as_object)
-        .ok_or("the input must be an object")?;
-    let state: State = take(arg, "state")?;
-    let selection: Selection = take(arg, "selection")?;
-    Ok(json!(syncs_to_lichess(&state, &selection)))
-}
-
-/// This module's methods for `api::call`; None when the method is not one of them.
-pub(super) fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result = match method {
-        "puzzleSessionInitial" => Ok(json!({
-            "state": initial_state(),
-            "internal": Internal::default(),
-        })),
-        "puzzleSessionInvalidate" => session_from(args).and_then(|(_, mut session)| {
-            session.invalidate();
-            session.finish()
-        }),
-        "puzzleSessionLoadBegin" => session_from(args).and_then(|(arg, mut session)| {
-            let selection: Selection = take(&arg, "selection")?;
-            let online = arg.get("online").and_then(Value::as_bool).unwrap_or(false);
-            session.load_begin(&selection, online);
-            session.finish()
-        }),
-        "puzzleSessionLoadSettled" => session_from(args).and_then(|(arg, mut session)| {
-            let token: Resume = take(&arg, "resume")?;
-            let now: Selection = take(&arg, "selection")?;
-            let outcome = reply(&arg)?;
-            session.load_settled(token, outcome, &now);
-            session.finish()
-        }),
-        "puzzleSessionRetry" | "puzzleSessionShow" => {
-            session_from(args).and_then(|(arg, mut session)| {
-                let puzzle = arg.get("puzzle").cloned().unwrap_or(Value::Null);
-                let selection: Selection = take(&arg, "selection")?;
-                if method == "puzzleSessionRetry" {
-                    session.retry(puzzle, &selection);
-                } else {
-                    // A puzzle chosen now replaces whatever a load still on its way would show.
-                    session.internal.load_gen += 1;
-                    session.show(puzzle, &selection, false);
-                }
-                session.finish()
-            })
         }
-        "puzzleSessionReportBegin" => session_from(args).and_then(|(arg, mut session)| {
-            let win = arg.get("win").and_then(Value::as_bool).unwrap_or(false);
-            let detail: Option<Detail> = take(&arg, "detail")?;
-            let selection: Selection = take(&arg, "selection")?;
-            session.report_begin(win, detail, &selection);
-            session.finish()
-        }),
-        "puzzleSessionMove" => session_from(args).and_then(|(arg, mut session)| {
-            let index = arg.get("index").and_then(Value::as_u64).unwrap_or(u64::MAX);
-            let correct = arg.get("correct").and_then(Value::as_bool).unwrap_or(false);
-            let uci = arg.get("uci").and_then(Value::as_str);
-            session.played(usize::try_from(index).unwrap_or(usize::MAX), correct, uci);
-            session.finish()
-        }),
-        "puzzleSessionEnd" => session_from(args).and_then(|(_, mut session)| {
-            session.end_attempt();
-            session.finish()
-        }),
-        "puzzleSessionReportSettled" => session_from(args).and_then(|(arg, mut session)| {
-            let token: Resume = take(&arg, "resume")?;
-            let now: Selection = take(&arg, "selection")?;
-            let outcome = reply(&arg)?;
-            session.report_settled(token, outcome, &now);
-            session.finish()
-        }),
-        "puzzleSessionResetSession" => session_from(args).and_then(|(_, mut session)| {
+    }
+}
+
+impl Default for PuzzleSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PuzzleSession {
+    /// The session before its first puzzle.
+    pub fn new() -> PuzzleSession {
+        PuzzleSession {
+            state: initial_state(),
+            internal: Internal::default(),
+        }
+    }
+
+    pub fn state(&self) -> &State {
+        &self.state
+    }
+
+    pub fn phase(&self) -> &str {
+        &self.state.phase
+    }
+
+    /// The puzzle shown, if any.
+    pub fn current(&self) -> Option<&Value> {
+        self.state
+            .current
+            .as_ref()
+            .filter(|current| !current.is_null())
+    }
+
+    /// Changes with each puzzle shown.
+    pub fn puzzle_key(&self) -> u64 {
+        self.state.puzzle_key
+    }
+
+    fn step(&mut self, day: &str, body: impl FnOnce(&mut Session)) -> Step {
+        let mut session = Session {
+            state: &mut self.state,
+            internal: &mut self.internal,
+            call: None,
+            record: None,
+            warn: false,
+            day,
+        };
+        body(&mut session);
+        session.finish()
+    }
+
+    /// Ends the attempt on the board without a result, so no reply still on its way counts.
+    pub fn invalidate(&mut self, day: &str) -> Step {
+        self.step(day, |session| session.invalidate())
+    }
+
+    /// Asks for the next puzzle of `selection`, from Lichess when `online`.
+    pub fn load_begin(&mut self, selection: &Selection, online: bool, day: &str) -> Step {
+        self.step(day, |session| session.load_begin(selection, online))
+    }
+
+    /// The reply to a load, counted only while it is still current for `selection`.
+    pub fn load_settled(
+        &mut self,
+        resume: Resume,
+        reply: Reply,
+        selection: &Selection,
+        day: &str,
+    ) -> Step {
+        self.step(day, |session| {
+            session.load_settled(resume, reply, selection)
+        })
+    }
+
+    /// Plays an earlier `puzzle` again, unrated and uncounted.
+    pub fn retry(&mut self, puzzle: Value, selection: &Selection, day: &str) -> Step {
+        self.step(day, |session| session.retry(puzzle, selection))
+    }
+
+    /// Shows a chosen `puzzle`, replacing whatever a load still on its way would show.
+    pub fn show(&mut self, puzzle: Value, selection: &Selection, day: &str) -> Step {
+        self.step(day, |session| {
+            session.internal.load_gen += 1;
+            session.show(puzzle, selection, false);
+        })
+    }
+
+    /// The attempt's result, sent to Lichess when the selection syncs.
+    pub fn report_begin(
+        &mut self,
+        win: bool,
+        detail: Option<Detail>,
+        selection: &Selection,
+    ) -> Step {
+        self.step("", |session| session.report_begin(win, detail, selection))
+    }
+
+    /// A move played on the board: its `index` in the solution, whether `correct`, and its `uci`.
+    pub fn played(&mut self, index: usize, correct: bool, uci: Option<&str>) -> Step {
+        self.step("", |session| session.played(index, correct, uci))
+    }
+
+    /// The puzzle is over: its attempt is counted and logged.
+    pub fn end(&mut self, day: &str) -> Step {
+        self.step(day, |session| session.end_attempt())
+    }
+
+    /// Lichess's reply to a result, counted only while it is still current for `selection`.
+    pub fn report_settled(&mut self, resume: Resume, reply: Reply, selection: &Selection) -> Step {
+        self.step("", |session| {
+            session.report_settled(resume, reply, selection)
+        })
+    }
+
+    /// Starts the session's tally again.
+    pub fn reset_session(&mut self) -> Step {
+        self.step("", |session| {
             session.internal.session_version += 1;
             session.state.session = Tally::default();
-            session.finish()
-        }),
-        "puzzleSessionSyncs" => syncs_call(args),
-        "isReconnect" => Ok(json!(args.first().is_some_and(is_reconnect))),
-        _ => return None,
-    };
-    Some(result)
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{call, counts_for_rating};
-    use serde_json::{Value, json};
+    use super::*;
 
-    fn selection() -> Value {
-        json!({ "account": "", "angle": "mix", "difficulty": "normal", "color": "", "mode": "offline" })
+    fn selection() -> Selection {
+        Selection {
+            account: String::new(),
+            angle: "mix".into(),
+            difficulty: "normal".into(),
+            color: String::new(),
+            mode: "offline".into(),
+        }
     }
 
     fn puzzle(id: &str) -> Value {
@@ -771,81 +805,57 @@ mod tests {
         })
     }
 
-    fn step(method: &str, from: &Value, extra: Value) -> Value {
-        let mut arg = json!({ "state": from["state"], "internal": from["internal"] });
-        for (key, value) in extra.as_object().unwrap() {
-            arg[key] = value.clone();
-        }
-        call(method, &[arg]).unwrap().unwrap()
-    }
-
     /// A puzzle tried again from the history marked the session as retrying, and that mark
     /// carried over: a puzzle shown next was neither counted nor synced to Lichess.
     #[test]
     fn a_retry_marks_only_its_own_attempt() {
-        let start = call("puzzleSessionInitial", &[]).unwrap().unwrap();
-        let retried = step(
-            "puzzleSessionRetry",
-            &start,
-            json!({ "puzzle": puzzle("old"), "selection": selection() }),
-        );
-        assert_eq!(retried["state"]["isRetry"], json!(true));
-        let shown = step(
-            "puzzleSessionShow",
-            &retried,
-            json!({ "puzzle": puzzle("new"), "selection": selection() }),
-        );
-        assert_eq!(shown["state"]["isRetry"], json!(false));
-        assert_eq!(shown["internal"]["attempt"]["retry"], json!(false));
+        let mut session = PuzzleSession::new();
+        session.retry(puzzle("old"), &selection(), "");
+        assert!(session.state().is_retry);
+        session.show(puzzle("new"), &selection(), "");
+        assert!(!session.state().is_retry);
+        assert!(session.internal.attempt.as_ref().is_some_and(|a| !a.retry));
     }
 
     /// The local database answering with no puzzle (`[null]`) is out of puzzles, not one to show.
     #[test]
     fn an_offline_load_without_a_puzzle_is_exhausted() {
-        let start = call("puzzleSessionInitial", &[]).unwrap().unwrap();
-        let loading = step(
-            "puzzleSessionLoadBegin",
-            &start,
-            json!({ "selection": selection(), "online": true }),
-        );
-        let settled = step(
-            "puzzleSessionLoadSettled",
-            &loading,
-            json!({
-                "resume": loading["call"]["resume"],
-                "selection": selection(),
-                "outcome": { "ok": [null] },
-            }),
-        );
-        assert_eq!(settled["state"]["phase"], json!("exhausted"));
-        assert!(settled["state"]["current"].is_null());
+        let mut session = PuzzleSession::new();
+        let call = session.load_begin(&selection(), true, "").call.unwrap();
+        session.load_settled(call.resume, Ok(json!([null])), &selection(), "");
+        assert_eq!(session.state().phase, "exhausted");
+        assert!(session.state().current.is_none());
     }
 
     /// A load still on its way replaced the puzzle chosen while it loaded.
     #[test]
     fn a_shown_puzzle_is_not_replaced_by_an_earlier_load() {
-        let start = call("puzzleSessionInitial", &[]).unwrap().unwrap();
-        let loading = step(
-            "puzzleSessionLoadBegin",
-            &start,
-            json!({ "selection": selection(), "online": true }),
-        );
-        let resume = loading["call"]["resume"].clone();
-        let shown = step(
-            "puzzleSessionShow",
-            &loading,
-            json!({ "puzzle": puzzle("chosen"), "selection": selection() }),
-        );
-        let late = step(
-            "puzzleSessionLoadSettled",
-            &shown,
-            json!({
-                "resume": resume,
-                "selection": selection(),
-                "outcome": { "ok": [puzzle("loaded")] },
-            }),
-        );
-        assert_eq!(late["state"]["current"]["id"], json!("chosen"));
+        let mut session = PuzzleSession::new();
+        let call = session.load_begin(&selection(), true, "").call.unwrap();
+        session.show(puzzle("chosen"), &selection(), "");
+        let late = Ok(json!([puzzle("loaded")]));
+        session.load_settled(call.resume, late, &selection(), "");
+        assert_eq!(session.state().current.as_ref().unwrap()["id"], "chosen");
+    }
+
+    /// What the page reads: the phase, the puzzle shown and a key that changes with each one.
+    #[test]
+    fn a_session_reports_the_puzzle_shown() {
+        let mut session = PuzzleSession::new();
+        assert_eq!(session.current(), None);
+        let first = session.puzzle_key();
+        session.show(puzzle("one"), &selection(), "");
+        assert_eq!(session.phase(), "ready");
+        assert_eq!(session.current().map(|p| &p["id"]), Some(&json!("one")));
+        session.show(puzzle("two"), &selection(), "");
+        assert_eq!(session.current().map(|p| &p["id"]), Some(&json!("two")));
+        assert_eq!(session.puzzle_key(), first + 2);
+        session.state.current = Some(Value::Null);
+        assert_eq!(session.current(), None);
+        let call = session.load_begin(&selection(), true, "").call.unwrap();
+        assert_eq!(session.phase(), "loading");
+        session.load_settled(call.resume, Ok(json!([null])), &selection(), "");
+        assert_eq!(session.phase(), "exhausted");
     }
 
     #[test]

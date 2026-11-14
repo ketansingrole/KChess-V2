@@ -7,16 +7,17 @@ use crate::support;
 use std::fs;
 use std::path::PathBuf;
 
+use kchess_core::store::{games, import, lookups};
 use rusqlite::Connection;
 use serde_json::{Value, json};
-use support::store::{Secrets, Store, encrypt};
+use support::store::{Secrets, Store, encrypt, game_page};
 
 /// An earlier release's database: the current schema, with the legacy tables and rows written
-/// on top, as the test's `earlierDatabase` created it. Returns the store that owns the file and
+/// on top. Returns the store that owns the file and
 /// the file's path.
 fn earlier_database(sql: &str) -> (Store, PathBuf) {
     let earlier = Store::new(None, Secrets::OFF);
-    earlier.ok("store.open", vec![]);
+    earlier.read(|_| Ok(())).expect("the database opens");
     earlier.close();
     let path = earlier.path().join("kchess.db");
     Connection::open(&path)
@@ -99,20 +100,23 @@ fn the_json_backup_is_taken_with_its_tokens_and_both_files_are_archived() {
     )
     .expect("tokens written");
 
-    let settings = store.ok("store.games.getSettings", vec![]);
+    let settings = store
+        .read(|c| games::get_settings(c.db))
+        .expect("getSettings");
     assert_eq!(settings["appearance"], json!("dark"));
     assert_eq!(settings["boardTheme"], json!("green"));
     assert_eq!(settings["promotion"], json!("ask"));
     assert_eq!(settings["soundVolume"], json!(0.8));
 
-    let data = store.ok("store.games.loadData", vec![]);
+    let data = store
+        .read(|c| games::load_app_data(c.db))
+        .expect("loadData");
     assert_eq!(usernames(&data), ["Alice", "Bob"]);
     assert_eq!(data["accounts"][0]["connected"], json!(true));
     assert_eq!(data["gameCount"], json!(1));
-    let page = store.ok(
-        "store.games.gamePage",
-        vec![json!({ "offset": 0, "limit": 10 })],
-    );
+    let page = store
+        .read(|c| game_page(c, &json!({ "offset": 0, "limit": 10 })))
+        .expect("gamePage");
     assert_eq!(ids(&page), ["Old0001"]);
     assert_eq!(store.token("Alice").as_deref(), Some("lip_alice"));
 
@@ -139,7 +143,9 @@ fn an_earlier_main_database_is_imported_once_with_its_plaintext_tokens_encrypted
     );
     let store = Store::new(Some(legacy.clone()), Secrets::ON);
 
-    let settings = store.ok("store.games.getSettings", vec![]);
+    let settings = store
+        .read(|c| games::get_settings(c.db))
+        .expect("getSettings");
     assert_eq!(settings["appearance"], json!("light"));
     // The earlier database keeps its games but no longer holds a live login in plain text.
     let earlier = Connection::open(&legacy).expect("the earlier database");
@@ -150,31 +156,54 @@ fn an_earlier_main_database_is_imported_once_with_its_plaintext_tokens_encrypted
     assert_eq!(settings["soundEnabled"], json!(false));
     assert_eq!(settings["soundVolume"], json!(0.4));
     assert_eq!(settings["enginePath"], json!("/opt/fish"));
-    let data = store.ok("store.games.loadData", vec![]);
+    let data = store
+        .read(|c| games::load_app_data(c.db))
+        .expect("loadData");
     assert_eq!(usernames(&data), ["Carol"]);
     assert_eq!(data["accounts"][0]["connected"], json!(true));
-    let page = store.ok(
-        "store.games.gamePage",
-        vec![json!({ "offset": 0, "limit": 10 })],
-    );
+    let page = store
+        .read(|c| game_page(c, &json!({ "offset": 0, "limit": 10 })))
+        .expect("gamePage");
     assert_eq!(page["games"][0]["id"], json!("Legacy01"));
     assert_eq!(page["games"][0]["opponentRating"], json!(1500));
     assert_eq!(store.token("Carol").as_deref(), Some("lip_carol"));
 
     // Once imported, the profile is never imported again: a later change to the earlier database
     // does not reach it.
+    assert_eq!(
+        store
+            .read(import::legacy_import_pending)
+            .expect("legacyImportPending"),
+        json!(false)
+    );
     store.close();
+    Connection::open(&legacy)
+        .and_then(|earlier| {
+            earlier.execute_batch(
+                "INSERT INTO lichess_accounts VALUES ('Dora', 'oauth', 6);
+                 INSERT INTO app_settings VALUES ('app.appearance_mode', 'dark');",
+            )
+        })
+        .expect("the earlier database changes");
     let store = store.reopen_with(Secrets::ON);
     assert_eq!(
-        usernames(&store.ok("store.games.loadData", vec![])),
+        usernames(
+            &store
+                .read(|c| games::load_app_data(c.db))
+                .expect("loadData")
+        ),
         ["Carol"]
     );
     assert_eq!(
-        store.ok("store.games.loadData", vec![])["gameCount"],
+        store
+            .read(|c| games::load_app_data(c.db))
+            .expect("loadData")["gameCount"],
         json!(1)
     );
     assert_eq!(
-        store.ok("store.setupPositionLookup.explorerAccount", vec![]),
+        store
+            .read(|c| lookups::explorer_account(c.db))
+            .expect("explorerAccount"),
         json!("Carol")
     );
 }
@@ -188,7 +217,9 @@ fn an_earlier_database_leaves_its_tokens_out_when_os_encryption_is_unavailable()
          INSERT INTO lichess_tokens VALUES ('Erin', 'lip_erin');",
     );
     let store = Store::new(Some(legacy), Secrets::OFF);
-    let data = store.ok("store.games.loadData", vec![]);
+    let data = store
+        .read(|c| games::load_app_data(c.db))
+        .expect("loadData");
     assert_eq!(usernames(&data), ["Erin"]);
     assert_eq!(data["accounts"][0]["connected"], json!(false));
     assert_eq!(store.token("Erin"), None);
@@ -201,7 +232,11 @@ fn damaged_backups_are_read_as_no_backup_and_nothing_is_imported_from_them() {
     fs::write(dir.join("kchess-data.json"), "{ not json").expect("backup written");
     fs::write(dir.join("lichess-tokens.json"), "{ not json").expect("tokens written");
     assert_eq!(
-        usernames(&store.ok("store.games.loadData", vec![])),
+        usernames(
+            &store
+                .read(|c| games::load_app_data(c.db))
+                .expect("loadData")
+        ),
         Vec::<String>::new()
     );
     assert_eq!(
@@ -222,11 +257,17 @@ fn a_null_token_rolls_the_whole_earlier_import_back_when_encryption_is_available
     );
     let store = Store::new(Some(legacy), Secrets::ON);
     assert_eq!(
-        store.ok("store.games.getSettings", vec![])["appearance"],
+        store
+            .read(|c| games::get_settings(c.db))
+            .expect("getSettings")["appearance"],
         json!("system")
     );
     assert_eq!(
-        usernames(&store.ok("store.games.loadData", vec![])),
+        usernames(
+            &store
+                .read(|c| games::load_app_data(c.db))
+                .expect("loadData")
+        ),
         Vec::<String>::new()
     );
 }
@@ -243,7 +284,9 @@ fn null_accounts_and_null_tokens_are_skipped_without_encryption() {
     );
     let store = Store::new(Some(legacy), Secrets::OFF);
     assert_eq!(
-        store.ok("store.games.getSettings", vec![])["appearance"],
+        store
+            .read(|c| games::get_settings(c.db))
+            .expect("getSettings")["appearance"],
         json!("dark")
     );
     // A NULL account name is skipped: `accounts.username` is nullable, and a NULL row made
@@ -253,7 +296,11 @@ fn null_accounts_and_null_tokens_are_skipped_without_encryption() {
         Vec::<Value>::new()
     );
     assert_eq!(
-        usernames(&store.ok("store.games.loadData", vec![])),
+        usernames(
+            &store
+                .read(|c| games::load_app_data(c.db))
+                .expect("loadData")
+        ),
         Vec::<String>::new()
     );
     assert_eq!(
@@ -289,14 +336,15 @@ fn a_backup_with_invalid_times_and_nameless_accounts_still_imports_and_loads() {
         .to_string(),
     )
     .expect("backup written");
-    let data = store.ok("store.games.loadData", vec![]);
+    let data = store
+        .read(|c| games::load_app_data(c.db))
+        .expect("loadData");
     assert_eq!(usernames(&data), ["Alice"]);
     // Games without a readable time are left out rather than breaking every page.
     assert_eq!(data["gameCount"], json!(26));
-    let page = store.ok(
-        "store.games.gamePage",
-        vec![json!({ "offset": 0, "limit": 1 })],
-    );
+    let page = store
+        .read(|c| game_page(c, &json!({ "offset": 0, "limit": 1 })))
+        .expect("gamePage");
     assert_eq!(ids(&page), ["Game0038"]);
 }
 
@@ -313,7 +361,9 @@ fn an_earlier_database_that_fails_to_read_is_not_half_imported() {
     );
     let store = Store::new(Some(legacy), Secrets::OFF);
     assert_eq!(
-        store.ok("store.games.getSettings", vec![])["appearance"],
+        store
+            .read(|c| games::get_settings(c.db))
+            .expect("getSettings")["appearance"],
         json!("system")
     );
     assert_eq!(
@@ -322,7 +372,99 @@ fn an_earlier_database_that_fails_to_read_is_not_half_imported() {
     );
     assert_eq!(store.rows("SELECT id FROM settings"), Vec::<Value>::new());
     assert_eq!(
-        store.ok("store.games.legacyImportPending", vec![]),
+        store
+            .read(import::legacy_import_pending)
+            .expect("legacyImportPending"),
         json!(true)
     );
+}
+
+/// 2026-11-11: each method that read the store migrated an earlier release's profile first, by
+/// hand, and `insights` did not, so opened first it found no games. Every call now runs after the
+/// import.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_first_call_finds_an_earlier_releases_games_whatever_it_is() {
+    let (_earlier, legacy) = earlier_database(
+        "CREATE TABLE lichess_accounts (username TEXT, auth_kind TEXT, last_synced_at INTEGER);
+         INSERT INTO lichess_accounts VALUES ('Carol', 'oauth', 5);
+         CREATE TABLE lichess_games (game_id TEXT, account_username TEXT, played_at INTEGER, rated INTEGER,
+           speed TEXT, perf TEXT, status TEXT, winner TEXT, color TEXT, opponent_name TEXT,
+           opponent_rating INTEGER, player_rating INTEGER, rating_diff INTEGER, opening_name TEXT, moves TEXT);
+         INSERT INTO lichess_games VALUES ('Legacy01', 'Carol', 7, 1, 'bullet', 'bullet', 'resign', 'black',
+           'white', 'Dan', 1500, 1510, -4, NULL, 'e4 e5');",
+    );
+    let profile = tempfile::tempdir().expect("profile");
+    let config = kchess_core::Config {
+        legacy_database_path: Some(legacy),
+        system_credentials: true,
+        test: Some(kchess_core::TestSwitches::default()),
+        ..kchess_core::Config::new(profile.path().to_path_buf())
+    };
+    let core = kchess_core::Core::open(config, support::host()).expect("opens");
+    let report = core
+        .call("insights", vec![json!({ "account": "Carol" })])
+        .await
+        .expect("insights");
+    assert_eq!(report["total"], json!(1), "{report}");
+    core.close().await;
+}
+
+/// The JSON backup's games or accounts that are not a list are refused in plain words, not the
+/// TypeScript TypeError the first port copied, and the backup is kept.
+#[test]
+fn a_backup_whose_games_or_accounts_are_not_a_list_is_refused_in_plain_words() {
+    let store = Store::new(None, Secrets::OFF);
+    let backup = store.path().join("kchess-data.json");
+    fs::write(&backup, json!({ "games": "none" }).to_string()).expect("backup written");
+    let refused = store
+        .db
+        .write(|c| import::migrate(c, false).map(|_| ()))
+        .expect_err("games that are not a list");
+    assert_eq!(refused.message, "The old profile's games are not a list.");
+    assert!(backup.exists());
+
+    let store = Store::new(None, Secrets::OFF);
+    let backup = store.path().join("kchess-data.json");
+    fs::write(
+        &backup,
+        json!({ "accounts": { "username": "Alice" } }).to_string(),
+    )
+    .expect("backup written");
+    store
+        .db
+        .write(|c| import::migrate(c, false).map(|_| ()))
+        .expect("an import that fails is logged");
+    assert!(
+        store
+            .host
+            .logged("JSON migration failed: The old profile's accounts are not a list.")
+    );
+    assert!(backup.exists());
+}
+
+/// A backup from a build that stored a board preset: Chess.com's preset becomes the green board
+/// only when the backup names no board theme of its own.
+#[test]
+fn a_backups_chess_com_preset_becomes_the_green_board_only_without_a_theme() {
+    let cases = [
+        (json!({ "boardPreset": "chess.com" }), "green"),
+        (
+            json!({ "boardPreset": "chess.com", "boardTheme": null }),
+            "green",
+        ),
+        (
+            json!({ "boardPreset": "chess.com", "boardTheme": "blue" }),
+            "blue",
+        ),
+        (json!({ "boardPreset": "lichess" }), "brown"),
+        (json!({}), "brown"),
+    ];
+    for (stored, theme) in cases {
+        let settings = import::backup_settings(stored.as_object().expect("settings object"));
+        assert_eq!(
+            serde_json::to_value(settings).expect("settings")["boardTheme"],
+            json!(theme),
+            "{stored}"
+        );
+    }
 }

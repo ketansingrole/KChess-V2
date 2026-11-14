@@ -1,23 +1,16 @@
 //! `kchess-voice <model folder> [--library <libvosk>]`: offline speech recognition for the KChess
-//! core, which starts this helper and talks to it over its pipes (`protocol.rs`). Running Vosk in
+//! core, which starts this helper and talks to it over its pipes (`kchess_voice::protocol`). Running Vosk in
 //! its own process keeps a crash in the native recognizer or a bad model file away from the core.
 //! libvosk is loaded from beside this executable unless `--library` names it.
 
-mod protocol;
 mod vosk;
 
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use protocol::{Answer, Request};
-
-#[cfg(target_os = "macos")]
-const LIBRARY: &str = "libvosk.dylib";
-#[cfg(target_os = "windows")]
-const LIBRARY: &str = "libvosk.dll";
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-const LIBRARY: &str = "libvosk.so";
+use kchess_voice::LIBRARY;
+use kchess_voice::protocol::{self, Answer, Request};
 
 struct Args {
     model: PathBuf,

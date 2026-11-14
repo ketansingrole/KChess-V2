@@ -2,13 +2,19 @@
 //! speed, opponent, length, clock, day, time of day, ending and opening, with time use from the
 //! games' clocks, filtered by speed, period and rated or casual.
 
+use crate::loading::Epoch;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
-use serde_json::{Value, json};
+use kchess_contracts::types::{
+    Blunders, ExplorerSpeed, GameRecord, InsightsQuery, InsightsReport, OpeningRecord,
+    TimeUseReport,
+};
+use kchess_domain::perf::Speed;
+use kchess_domain::variant::Variant;
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -46,48 +52,18 @@ const WEEKDAYS: [&str; 7] = [
     "Saturday",
 ];
 
-/// `ENDINGS`: how games ended, in words.
-fn ending(status: &str) -> &str {
-    match status {
-        "mate" => "Checkmate",
-        "resign" => "Resignation",
-        "outoftime" => "Time out",
-        "timeout" => "Left the game",
-        "draw" => "Draw",
-        "stalemate" => "Stalemate",
-        "aborted" => "Aborted",
-        "noStart" => "Never started",
-        "cheat" => "Cheat detected",
-        "variantEnd" => "Variant win",
-        other => other,
-    }
-}
-
-/// Lichess's speed keys, as titles.
-fn speed_name(key: &str) -> String {
-    if key == "ultraBullet" {
-        return "UltraBullet".into();
-    }
-    let mut chars = key.chars();
-    chars
-        .next()
-        .map(|first| first.to_uppercase().chain(chars).collect())
-        .unwrap_or_default()
-}
-
-fn record(value: &Value) -> (f64, f64, f64) {
-    let n = |key: &str| value[key].as_f64().unwrap_or_default();
-    (n("win"), n("draw"), n("loss"))
+fn record(record: &GameRecord) -> (f64, f64, f64) {
+    (record.win as f64, record.draw as f64, record.loss as f64)
 }
 
 /// Four-hour blocks read better than 24 thin rows.
-fn by_time(hours: &Value) -> Vec<(String, (f64, f64, f64))> {
+fn by_time(hours: &[GameRecord]) -> Vec<(String, (f64, f64, f64))> {
     (0..24)
         .step_by(4)
         .map(|start| {
             let mut sum = (0., 0., 0.);
-            for hour in start..start + 4 {
-                let (win, draw, loss) = record(&hours[hour]);
+            for hour in hours.iter().skip(start).take(4) {
+                let (win, draw, loss) = record(hour);
                 sum = (sum.0 + win, sum.1 + draw, sum.2 + loss);
             }
             (format!("{start:02}:00–{:02}:00", start + 4), sum)
@@ -96,37 +72,34 @@ fn by_time(hours: &Value) -> Vec<(String, (f64, f64, f64))> {
 }
 
 /// The best and weakest openings of at least five games, by score.
-fn best_and_weakest(openings: &[Value]) -> Option<(String, String)> {
-    let score = |entry: &Value| {
-        let (win, draw, _) = record(&entry["record"]);
-        let total = entry["record"]["total"].as_f64().unwrap_or_default();
-        (win + draw / 2.) / total
+fn best_and_weakest(openings: &[OpeningRecord]) -> Option<(String, String)> {
+    let score = |entry: &OpeningRecord| {
+        let (win, draw, _) = record(&entry.record);
+        (win + draw / 2.) / entry.record.total as f64
     };
-    let mut enough: Vec<&Value> = openings
+    let mut enough: Vec<&OpeningRecord> = openings
         .iter()
-        .filter(|entry| entry["record"]["total"].as_f64().unwrap_or_default() >= 5.)
+        .filter(|entry| entry.record.total >= 5)
         .collect();
     enough.sort_by(|a, b| score(b).total_cmp(&score(a)));
     let (top, bottom) = (enough.first()?, enough.last()?);
-    (!std::ptr::eq(*top, *bottom)).then(|| {
-        (
-            top["name"].as_str().unwrap_or_default().to_string(),
-            bottom["name"].as_str().unwrap_or_default().to_string(),
-        )
-    })
+    (!std::ptr::eq(*top, *bottom)).then(|| (top.name.clone(), bottom.name.clone()))
 }
 
 /// Results of the games where the player's clock fell under a tenth of its start, and of the
 /// rest; none without clocked games.
-fn by_clock(time: &Value) -> Vec<(String, (f64, f64, f64))> {
-    if time.is_null() {
+fn by_clock(time: Option<&TimeUseReport>) -> Vec<(String, (f64, f64, f64))> {
+    let Some(time) = time else {
         return Vec::new();
-    }
-    [("Short of time", "trouble"), ("Time to spare", "spare")]
-        .into_iter()
-        .filter(|(_, key)| time[*key]["total"].as_f64().unwrap_or_default() > 0.)
-        .map(|(label, key)| (label.to_string(), record(&time[key])))
-        .collect()
+    };
+    [
+        ("Short of time", time.trouble),
+        ("Time to spare", time.spare),
+    ]
+    .into_iter()
+    .filter(|(_, part)| part.total > 0)
+    .map(|(label, part)| (label.to_string(), record(&part)))
+    .collect()
 }
 
 /// Seconds as a short duration: `4.2 s`, `1 min 5 s`.
@@ -140,30 +113,25 @@ fn seconds(value: f64) -> String {
 }
 
 /// Blunders per hundred moves.
-fn blunder_rate(entry: &Value) -> Option<f64> {
-    let moves = entry["moves"].as_f64().filter(|moves| *moves > 0.)?;
-    Some(100. * entry["blunders"].as_f64().unwrap_or_default() / moves)
+fn blunder_rate(entry: &Blunders) -> Option<f64> {
+    (entry.moves > 0).then(|| 100. * entry.blunders as f64 / entry.moves as f64)
 }
 
 /// Time use: the clock against the opponent's, blunders short of time, and time by phase.
-fn time_use(time: &Value, palette: &Palette) -> Option<AnyElement> {
-    let games = time["games"].as_f64()?;
-    let clock_at = time["clockAt"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|entry| {
-            let percent = |key: &str| entry[key].as_f64().unwrap_or_default().round();
-            figure(
-                &format!("Clock at move {}", entry["move"]),
-                format!("{}% left", percent("player")),
-                Some(format!("Opponent {}%", percent("opponent"))),
-                palette,
-            )
-        });
-    let blunders = time.get("blunders").and_then(|blunders| {
-        let short = blunder_rate(&blunders["short"]);
-        let spare = blunder_rate(&blunders["spare"]);
+fn time_use(time: Option<&TimeUseReport>, palette: &Palette) -> Option<AnyElement> {
+    let time = time?;
+    let games = time.games as f64;
+    let clock_at = time.clock_at.iter().map(|entry| {
+        figure(
+            &format!("Clock at move {}", entry.at_move),
+            format!("{}% left", entry.player.round()),
+            Some(format!("Opponent {}%", entry.opponent.round())),
+            palette,
+        )
+    });
+    let blunders = time.blunders.as_ref().and_then(|blunders| {
+        let short = blunder_rate(&blunders.short);
+        let spare = blunder_rate(&blunders.spare);
         let (value, sub) = match (short, spare) {
             (Some(short), spare) => (
                 format!("{short:.1}"),
@@ -179,36 +147,29 @@ fn time_use(time: &Value, palette: &Palette) -> Option<AnyElement> {
             palette,
         ))
     });
-    let phases = time["phases"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|entry| {
-            let name = match entry["phase"].as_str().unwrap_or_default() {
-                "opening" => "Opening",
-                "middlegame" => "Middlegame",
-                _ => "Endgame",
-            };
-            let mut detail = format!(
-                "{} a move",
-                seconds(entry["seconds"].as_f64().unwrap_or_default())
-            );
-            if let Some(share) = entry["share"].as_f64() {
-                detail.push_str(&format!(" · {}% of your time", share.round()));
-            }
-            h_flex()
-                .justify_between()
-                .gap(px(12.))
-                .py(px(4.))
-                .text_size(px(13.))
-                .child(div().child(name))
-                .child(
-                    div()
-                        .text_color(palette.text_muted)
-                        .font_features(widgets::tabular())
-                        .child(detail),
-                )
-        });
+    let phases = time.phases.iter().map(|entry| {
+        let name = match entry.phase.as_str() {
+            "opening" => "Opening",
+            "middlegame" => "Middlegame",
+            _ => "Endgame",
+        };
+        let mut detail = format!("{} a move", seconds(entry.seconds));
+        if let Some(share) = entry.share {
+            detail.push_str(&format!(" · {}% of your time", share.round()));
+        }
+        h_flex()
+            .justify_between()
+            .gap(px(12.))
+            .py(px(4.))
+            .text_size(px(13.))
+            .child(div().child(name))
+            .child(
+                div()
+                    .text_color(palette.text_muted)
+                    .font_features(widgets::tabular())
+                    .child(detail),
+            )
+    });
     Some(
         v_flex()
             .id("insights-time-use")
@@ -255,10 +216,10 @@ pub struct InsightsPage {
     /// The variant keys the select lists now; refilled when a report names others, on the next
     /// frame, where there is a window.
     variant_keys: Vec<String>,
-    report: Option<Value>,
+    report: Option<InsightsReport>,
     error: Option<SharedString>,
     loading: bool,
-    epoch: u64,
+    epoch: Epoch,
     /// A game sync ran when the accounts last changed: its end brings new games.
     syncing: bool,
     focus: FocusHandle,
@@ -332,7 +293,7 @@ impl InsightsPage {
             report: None,
             error: None,
             loading: false,
-            epoch: 0,
+            epoch: Epoch::default(),
             syncing: accounts.read(cx).syncing(),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -347,12 +308,13 @@ impl InsightsPage {
         accounts
             .all()
             .iter()
-            .filter_map(|account| account["username"].as_str().map(str::to_string))
-            .chain(accounts.chesscom().iter().filter_map(|player| {
-                player["username"]
-                    .as_str()
-                    .map(kchess_domain::chesscom::account_of)
-            }))
+            .map(|account| account.username.clone())
+            .chain(
+                accounts
+                    .chesscom()
+                    .iter()
+                    .map(|player| kchess_domain::chesscom::account_of(&player.username)),
+            )
             .collect()
     }
 
@@ -391,31 +353,29 @@ impl InsightsPage {
     }
 
     /// `InsightsQuery`: unset filters are left out.
-    pub(crate) fn query(&self, cx: &App) -> Value {
-        let mut query = json!({ "account": self.account });
+    pub(crate) fn query(&self, cx: &App) -> InsightsQuery {
         let speed = Self::chosen(&self.speed, cx);
-        if speed != "all" {
-            query["speed"] = json!(speed);
+        InsightsQuery {
+            account: self.account.clone(),
+            speed: ExplorerSpeed::ALL
+                .iter()
+                .copied()
+                .find(|choice| choice.as_str() == speed),
+            rated: match Self::chosen(&self.rated, cx).as_str() {
+                "rated" => Some(true),
+                "casual" => Some(false),
+                _ => None,
+            },
+            days: Self::chosen(&self.period, cx).parse().ok(),
+            variant: Variant::from_key(&Self::chosen(&self.variant, cx))
+                .filter(|variant| !variant.is_standard()),
         }
-        match Self::chosen(&self.rated, cx).as_str() {
-            "rated" => query["rated"] = json!(true),
-            "casual" => query["rated"] = json!(false),
-            _ => {}
-        }
-        if let Ok(days) = Self::chosen(&self.period, cx).parse::<f64>() {
-            query["days"] = json!(days);
-        }
-        let variant = Self::chosen(&self.variant, cx);
-        if variant != "standard" && variant != "all" {
-            query["variant"] = json!(variant);
-        }
-        query
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
         // A new epoch either way: a report still on its way for the previous account must not
         // land once there is none.
-        self.epoch += 1;
+        self.epoch.invalidate();
         if self.account.is_empty() {
             self.report = None;
             self.loading = false;
@@ -423,7 +383,7 @@ impl InsightsPage {
             cx.notify();
             return;
         }
-        let epoch = self.epoch;
+        let epoch = self.epoch.current();
         self.loading = true;
         self.error = None;
         cx.notify();
@@ -433,7 +393,7 @@ impl InsightsPage {
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch {
+                if !this.epoch.is_current(epoch) {
                     return;
                 }
                 this.loading = false;
@@ -454,12 +414,9 @@ impl InsightsPage {
         let mut keys = vec!["standard".to_string()];
         for key in self
             .report
-            .as_ref()
-            .and_then(|report| report["variants"].as_array())
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::to_string)
+            .iter()
+            .flat_map(|report| &report.variants)
+            .map(|variant| variant.key().to_string())
             .chain((chosen != "standard" && chosen != "all").then_some(chosen.clone()))
         {
             if !keys.contains(&key) {
@@ -488,8 +445,8 @@ impl InsightsPage {
 
     /// How many reports the page has asked for.
     #[cfg(test)]
-    pub(crate) fn requests(&self) -> u64 {
-        self.epoch
+    pub(crate) fn requests(&self) -> crate::loading::Turn {
+        self.epoch.current()
     }
 
     /// Why the last report failed, if it did.
@@ -501,27 +458,30 @@ impl InsightsPage {
     /// How many games the last report counted.
     #[cfg(test)]
     pub(crate) fn report_total(&self) -> Option<f64> {
-        self.report.as_ref()?["total"].as_f64()
+        self.report.as_ref().map(|report| report.total as f64)
     }
 
     /// As if the last report had named `variants` as played.
     #[cfg(test)]
     pub(crate) fn show_report_variants(&mut self, variants: &[&str], cx: &mut Context<Self>) {
         if let Some(report) = &mut self.report {
-            report["variants"] = json!(variants);
+            report.variants = variants
+                .iter()
+                .filter_map(|key| Variant::from_key(key))
+                .collect();
         }
         cx.notify();
     }
 
     /// As if the last report had had `time` as its time use.
     #[cfg(test)]
-    pub(crate) fn show_time_use(&mut self, time: Value, cx: &mut Context<Self>) {
+    pub(crate) fn show_time_use(&mut self, time: TimeUseReport, cx: &mut Context<Self>) {
         assert!(
             !self.loading,
             "a report is on its way and would replace this time use"
         );
         if let Some(report) = &mut self.report {
-            report["timeUse"] = time;
+            report.time_use = Some(time);
         }
         cx.notify();
     }
@@ -571,45 +531,41 @@ fn figure(label: &str, value: String, sub: Option<String>, palette: &Palette) ->
         }))
 }
 
-fn headline(report: &Value, palette: &Palette) -> Div {
-    let total = report["total"].as_f64().unwrap_or_default();
-    let (win, draw, loss) = record(&report["record"]);
+fn headline(report: &InsightsReport, palette: &Palette) -> Div {
+    let total = report.total as f64;
+    let (win, draw, loss) = record(&report.record);
     let score = if total > 0. {
         (100. * (win + draw / 2.) / total).round()
     } else {
         0.
     };
-    let current = report["streaks"]["current"].as_f64().unwrap_or_default();
-    let now = if current > 0. {
+    let current = report.streaks.current;
+    let now = if current > 0 {
         format!(
             "{current} {} in a row now",
-            if current == 1. { "win" } else { "wins" }
+            if current == 1 { "win" } else { "wins" }
         )
-    } else if current < 0. {
+    } else if current < 0 {
         format!(
             "{} {} in a row now",
             -current,
-            if current == -1. { "loss" } else { "losses" }
+            if current == -1 { "loss" } else { "losses" }
         )
     } else {
         "No streak now".into()
     };
-    let accuracy = report["accuracy"].as_object().map(|accuracy| {
-        let games = accuracy
-            .get("games")
-            .and_then(Value::as_f64)
-            .unwrap_or_default();
+    let accuracy = report.accuracy.as_ref().map(|accuracy| {
+        let games = accuracy.games as f64;
         let mut sub = format!(
             "{} reviewed {}",
             widgets::format_count(games),
             if games == 1. { "game" } else { "games" }
         );
-        if let Some(acpl) = accuracy.get("acpl").and_then(Value::as_f64) {
+        if let Some(acpl) = accuracy.acpl {
             sub.push_str(&format!(" · ACPL {}", acpl.round()));
         }
         let average = accuracy
-            .get("average")
-            .and_then(Value::as_f64)
+            .average
             .map_or("–".into(), |average| format!("{average:.1}%"));
         (average, sub)
     });
@@ -633,10 +589,7 @@ fn headline(report: &Value, palette: &Palette) -> Div {
             "Streaks",
             format!(
                 "{} / {}",
-                report["streaks"]["longestWin"].as_f64().unwrap_or_default(),
-                report["streaks"]["longestLoss"]
-                    .as_f64()
-                    .unwrap_or_default()
+                report.streaks.longest_win, report.streaks.longest_loss
             ),
             Some(now),
             palette,
@@ -644,7 +597,7 @@ fn headline(report: &Value, palette: &Palette) -> Div {
         .children(accuracy.map(|(average, sub)| figure("Accuracy", average, Some(sub), palette)))
 }
 
-/// `USelect size="sm"`: a filter only as wide as its choice, so the four fit beside the figures.
+/// A filter only as wide as its choice, so the four fit beside the figures.
 fn fit(select: &Choices, choices: &[(&str, &str)], cx: &App) -> Div {
     let chosen = select.read(cx).selected_value().cloned();
     let label = choices
@@ -700,7 +653,8 @@ impl Render for InsightsPage {
         let palette = *cx.global::<Palette>();
         let names = Self::names(cx);
         self.sync_variants(window, cx);
-        let variant_label = crate::game::variant_label(&Self::chosen(&self.variant, cx));
+        let variant_label =
+            crate::game::variant_label(&Self::chosen(&self.variant, cx)).to_string();
         let filters = h_flex()
             .gap(px(8.))
             .flex_wrap()
@@ -747,10 +701,7 @@ impl Render for InsightsPage {
                 )
             });
         let report = self.report.clone();
-        let total = report
-            .as_ref()
-            .and_then(|report| report["total"].as_f64())
-            .unwrap_or_default();
+        let total = report.as_ref().map_or(0., |report| report.total as f64);
         let header = h_flex()
             .items_start()
             .justify_between()
@@ -834,7 +785,7 @@ impl Render for InsightsPage {
                                 .outline()
                                 .label("Open history")
                                 .on_click(|_, window, cx| {
-                                    crate::shell::open_history_lichess(window, cx)
+                                    crate::pages::history::open_lichess(window, cx)
                                 }),
                         ),
                     ),
@@ -865,52 +816,58 @@ impl Render for InsightsPage {
 }
 
 impl InsightsPage {
-    fn breakdowns(&self, report: &Value, width: Pixels, palette: &Palette) -> Div {
-        let list =
-            |key: &str, label: &dyn Fn(&Value) -> String| -> Vec<(String, (f64, f64, f64))> {
-                report[key]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|entry| (label(entry), record(&entry["record"])))
-                    .collect()
-            };
-        let text = |field: &'static str| {
-            move |entry: &Value| entry[field].as_str().unwrap_or_default().to_string()
+    fn breakdowns(&self, report: &InsightsReport, width: Pixels, palette: &Palette) -> Div {
+        let bands = |bands: &[kchess_contracts::types::BandRecord]| -> Rows {
+            bands
+                .iter()
+                .map(|band| (band.label.clone(), record(&band.record)))
+                .collect()
         };
         let parts: Vec<(&'static str, Rows)> = vec![
             (
                 "By colour",
                 vec![
-                    ("White".into(), record(&report["byColor"]["white"])),
-                    ("Black".into(), record(&report["byColor"]["black"])),
+                    ("White".into(), record(&report.by_color.white)),
+                    ("Black".into(), record(&report.by_color.black)),
                 ],
             ),
             (
                 "By speed",
-                list("bySpeed", &|entry| {
-                    speed_name(entry["speed"].as_str().unwrap_or_default())
-                }),
+                report
+                    .by_speed
+                    .iter()
+                    .map(|entry| {
+                        let name = Speed::from_key(&entry.speed)
+                            .map_or(&*entry.speed, |speed| speed.label());
+                        (name.to_string(), record(&entry.record))
+                    })
+                    .collect(),
             ),
-            ("By opponent rating", list("byOpponent", &text("label"))),
-            ("By game length", list("byLength", &text("label"))),
-            ("By clock", by_clock(&report["timeUse"])),
+            ("By opponent rating", bands(&report.by_opponent)),
+            ("By game length", bands(&report.by_length)),
+            ("By clock", by_clock(report.time_use.as_ref())),
             (
                 "By day",
-                report["byWeekday"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
+                report
+                    .by_weekday
+                    .iter()
                     .enumerate()
                     .map(|(day, entry)| (WEEKDAYS[day % 7].to_string(), record(entry)))
                     .collect(),
             ),
-            ("By time of day", by_time(&report["byHour"])),
+            ("By time of day", by_time(&report.by_hour)),
             (
                 "How games ended",
-                list("endings", &|entry| {
-                    ending(entry["status"].as_str().unwrap_or_default()).to_string()
-                }),
+                report
+                    .endings
+                    .iter()
+                    .map(|entry| {
+                        (
+                            kchess_domain::records::games::status_label(&entry.status).to_string(),
+                            record(&entry.record),
+                        )
+                    })
+                    .collect(),
             ),
         ];
         // Without clocked games there is nothing to break down by clock.
@@ -918,8 +875,8 @@ impl InsightsPage {
             .into_iter()
             .filter(|(title, rows)| *title != "By clock" || !rows.is_empty())
             .collect();
-        let openings = report["byOpening"].as_array().cloned().unwrap_or_default();
-        let best = best_and_weakest(&openings);
+        let openings = &report.by_opening;
+        let best = best_and_weakest(openings);
         // Each section's height for balancing: its title and a row per entry.
         let heights: Vec<f32> = parts
             .iter()
@@ -943,7 +900,7 @@ impl InsightsPage {
         v_flex()
             .gap(px(28.))
             .child(h_flex().items_start().gap(px(40.)).children(column_list))
-            .children(time_use(&report["timeUse"], palette))
+            .children(time_use(report.time_use.as_ref(), palette))
             .child(
                 v_flex()
                     .gap(px(8.))
@@ -966,12 +923,9 @@ impl InsightsPage {
                             .gap_x(px(40.))
                             .children(openings.iter().map(|entry| {
                                 div().flex_1().min_w(px(360.)).child(widgets::result_row(
-                                    entry["name"].as_str().unwrap_or_default().to_string(),
-                                    Some(format!(
-                                        "{} as White",
-                                        entry["asWhite"].as_f64().unwrap_or_default()
-                                    )),
-                                    record(&entry["record"]),
+                                    entry.name.clone(),
+                                    Some(format!("{} as White", entry.as_white)),
+                                    record(&entry.record),
                                     palette,
                                 ))
                             })),
@@ -980,11 +934,33 @@ impl InsightsPage {
     }
 }
 
+impl crate::pages::PageView for InsightsPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: Page::Insights,
+        label: "Insights",
+        short: "Insights",
+        icon: "chart-pie",
+        group: Some(crate::pages::NavGroup::Lichess),
+        keywords: "stats openings performance",
+    };
+
+    type Action = std::convert::Infallible;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        InsightsPage::new(window, cx)
+    }
+
+    fn shown(this: &Entity<Self>, again: bool, _window: &mut Window, cx: &mut App) {
+        if !again {
+            this.update(cx, |insights, cx| insights.shown(cx));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         InsightsPage, balance, best_and_weakest, blunder_rate, by_clock, by_time, seconds,
-        speed_name,
     };
     use crate::e2e::Harness;
     use gpui_kit::AppContext as _;
@@ -999,15 +975,24 @@ mod tests {
             page.update(cx, |page, cx| {
                 page.account = "Alice".into();
                 page.load(cx);
-                let asked = page.epoch;
+                let asked = page.epoch.current();
                 page.account.clear();
                 page.load(cx);
-                (page.loading, page.epoch == asked)
+                (page.loading, page.epoch.is_current(asked))
             })
         });
         assert!(!loading && !stale);
     }
-    use serde_json::json;
+    use kchess_contracts::types::{Blunders, GameRecord, OpeningRecord};
+
+    fn games(win: i64, draw: i64, loss: i64) -> GameRecord {
+        GameRecord {
+            total: win + draw + loss,
+            win,
+            loss,
+            draw,
+        }
+    }
 
     /// The columns put colour, speed and opponent rating first; length and day next;
     /// time of day and endings last.
@@ -1021,10 +1006,10 @@ mod tests {
 
     #[test]
     fn hours_group_into_four_hour_blocks() {
-        let mut hours = vec![json!({ "win": 0, "draw": 0, "loss": 0 }); 24];
-        hours[1] = json!({ "win": 2, "draw": 1, "loss": 0 });
-        hours[3] = json!({ "win": 1, "draw": 0, "loss": 4 });
-        let blocks = by_time(&json!(hours));
+        let mut hours = vec![GameRecord::default(); 24];
+        hours[1] = games(2, 1, 0);
+        hours[3] = games(1, 0, 4);
+        let blocks = by_time(&hours);
         assert_eq!(blocks.len(), 6);
         assert_eq!(blocks[0], ("00:00–04:00".to_string(), (3., 1., 4.)));
         assert_eq!(blocks[5].0, "20:00–24:00");
@@ -1032,39 +1017,39 @@ mod tests {
 
     #[test]
     fn the_best_and_weakest_need_five_games() {
-        let opening = |name: &str, win: f64, total: f64| json!({ "name": name, "record": { "win": win, "draw": 0, "loss": total - win, "total": total } });
+        let opening = |name: &str, win: i64, total: i64| OpeningRecord {
+            name: name.into(),
+            record: games(win, 0, total - win),
+            as_white: 0,
+        };
         let openings = [
-            opening("Sicilian", 8., 10.),
-            opening("French", 1., 6.),
-            opening("Rare", 3., 3.),
+            opening("Sicilian", 8, 10),
+            opening("French", 1, 6),
+            opening("Rare", 3, 3),
         ];
         assert_eq!(
             best_and_weakest(&openings),
             Some(("Sicilian".into(), "French".into()))
         );
         assert_eq!(best_and_weakest(&openings[..1]), None);
-        assert_eq!(speed_name("ultraBullet"), "UltraBullet");
-        assert_eq!(speed_name("blitz"), "Blitz");
     }
 
     #[test]
     fn clock_figures_read_as_words() {
-        assert!(by_clock(&serde_json::Value::Null).is_empty());
-        let time = json!({
-            "trouble": { "win": 1, "draw": 0, "loss": 2, "total": 3 },
-            "spare": { "win": 0, "draw": 0, "loss": 0, "total": 0 },
-        });
+        assert!(by_clock(None).is_empty());
+        let time = kchess_contracts::types::TimeUseReport {
+            trouble: games(1, 0, 2),
+            ..Default::default()
+        };
         assert_eq!(
-            by_clock(&time),
+            by_clock(Some(&time)),
             vec![("Short of time".to_string(), (1., 0., 2.))],
             "a side with no games is left out"
         );
         assert_eq!(seconds(4.25), "4.2 s");
         assert_eq!(seconds(65.), "1 min 5 s");
-        assert_eq!(
-            blunder_rate(&json!({ "moves": 50, "blunders": 2 })),
-            Some(4.)
-        );
-        assert_eq!(blunder_rate(&json!({ "moves": 0, "blunders": 0 })), None);
+        let rate = |moves, blunders| blunder_rate(&Blunders { moves, blunders });
+        assert_eq!(rate(50, 2), Some(4.));
+        assert_eq!(rate(0, 0), None);
     }
 }

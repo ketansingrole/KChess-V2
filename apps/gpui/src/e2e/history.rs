@@ -1,5 +1,7 @@
 //! Game history: finished games listed, opened and kept.
 
+use gpui_kit::test::TestWindowExt as _;
+
 use super::Harness;
 use crate::pages::Page;
 
@@ -8,6 +10,7 @@ const SCHOLARS_MATE: [&str; 7] = ["e4", "e5", "Qh5", "Nc6", "Bc4", "Nf6", "Qxf7#
 /// Play moves over the board by typing them, from wherever the app is.
 fn play_over_the_board(app: &mut Harness, moves: &[&str]) {
     app.open("Over the board");
+    super::local::wait_resumed(app);
     for (played, text) in moves.iter().enumerate() {
         app.click_label("Enter a chess move in SAN or UCI");
         app.type_text(text);
@@ -145,6 +148,35 @@ fn home_lists_recent_games_once_there_is_one(cx: &mut gpui_kit::TestAppContext) 
     app.find("home-view-all");
 }
 
+/// Another window left a game against the computer unfinished: the open Home offers to continue
+/// it. It kept offering a new game until it was opened again.
+#[gpui_kit::test]
+fn a_game_left_in_another_window_is_continued_from_home(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_domain::games::Host;
+    use kchess_domain::games::computer::ComputerGame;
+    let mut app = Harness::start(cx);
+    app.open("Home");
+    app.find("home-play");
+    let host = Host {
+        now: 0.,
+        allowed: true,
+        ready: false,
+    };
+    let session = kchess_domain::games::computer::Saved {
+        moves: Some(vec!["e2e4".into(), "e7e5".into()]),
+        color: Some(shakmaty::Color::White),
+        level: Some("club".into()),
+        ..Default::default()
+    };
+    let game = ComputerGame::resume(Some(session), &host).expect("the computer game");
+    app.request(kchess_contracts::calls::SaveSession {
+        kind: kchess_contracts::types::SessionKind::Computer,
+        session: kchess_contracts::check::SessionObject(serde_json::json!(game.snapshot(host.now))),
+    });
+    app.changed_elsewhere(&[kchess_contracts::types::ProfileArea::Sessions]);
+    app.find("home-continue");
+}
+
 /// Home's _Review_ is in Quick Pick: the last game opens in Game history. Home adds no Sync games
 /// of its own there.
 #[gpui_kit::test]
@@ -224,6 +256,7 @@ fn the_list_is_narrowed_by_result(cx: &mut gpui_kit::TestAppContext) {
     let mut app = mate_in_history(cx);
     // A second game, left unfinished after one move.
     app.open("Over the board");
+    super::local::wait_resumed(&mut app);
     app.click("local-new");
     app.click("start-local");
     app.wait_for_moves(&[]);
@@ -268,7 +301,9 @@ fn a_game_saved_again_shows_its_new_result(cx: &mut gpui_kit::TestAppContext) {
         });
         app.cx.update(|cx| {
             let played = cx.global::<crate::played::PlayedHandle>().0.clone();
-            played.update(cx, |played, cx| played.save(game, cx));
+            played.update(cx, |played, cx| {
+                played.save(serde_json::from_value(game).expect("a played game"), cx)
+            });
         });
     };
     save(&mut app, "*", false);
@@ -278,17 +313,13 @@ fn a_game_saved_again_shows_its_new_result(cx: &mut gpui_kit::TestAppContext) {
     app.click(("history-filter", 1usize));
     assert_eq!(app.find(("history-filter", 1usize)).selected(), Some(false));
     save(&mut app, "1-0", true);
-    let started = std::time::Instant::now();
-    loop {
-        app.click(("history-filter", 1usize));
-        if app.find(("history-filter", 1usize)).selected() == Some(true) {
-            break;
-        }
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(30),
-            "White's win is counted"
-        );
-    }
+    app.wait_for("White's win to be counted", |window, _| {
+        window
+            .try_find(("history-filter", 1usize))
+            .is_some_and(|filter| filter.disabled() != Some(true))
+    });
+    app.click(("history-filter", 1usize));
+    assert_eq!(app.find(("history-filter", 1usize)).selected(), Some(true));
     app.find(("history-row", 0usize));
 }
 
@@ -331,15 +362,18 @@ fn deleting_a_game_asks_first_and_is_kept_after_a_restart(cx: &mut gpui_kit::Tes
 /// at, and opens on the analysis board in Crazyhouse.
 #[gpui_kit::test]
 fn a_crazyhouse_game_shows_its_pockets(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::Page;
     use crate::pages::local::LocalPage;
     let mut app = Harness::start(cx);
     app.open("Over the board");
+    super::local::wait_resumed(&mut app);
     app.with_window(|window, cx| {
-        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
             let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
-            let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
+            let setup = kchess_domain::variant::Setup {
+                variant: kchess_domain::variant::Variant::Crazyhouse,
+                fen: fen.into(),
+            };
             local.replace_game(setup, serde_json::Value::Null, window, cx);
         });
     });
@@ -370,13 +404,13 @@ fn a_crazyhouse_game_shows_its_pockets(cx: &mut gpui_kit::TestAppContext) {
 /// for that variant's games alone.
 #[gpui_kit::test]
 fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::{Page, insights::InsightsPage};
+    use crate::pages::insights::InsightsPage;
     use gpui_kit::test::TestQueryExt as _;
     let (mut app, _lichess) = Harness::signed_in(cx, false);
     app.open("Insights");
     let page = |app: &mut Harness| {
         app.cx
-            .update(|cx| crate::shell::view_of::<InsightsPage>(Page::Insights, cx))
+            .update(|cx| crate::shell::view::<InsightsPage>(cx))
             .expect("the Insights page")
     };
     app.wait_for("the first report", |_, cx| page_loaded(cx));
@@ -391,21 +425,20 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
         window.try_find_by_label("Variant").is_some()
     });
     assert_eq!(
-        app.cx.update(|cx| insights.read(cx).query(cx))["variant"],
-        serde_json::Value::Null,
+        app.cx.update(|cx| insights.read(cx).query(cx)).variant,
+        None,
         "standard chess until a variant is chosen"
     );
     app.with_window(|window, cx| {
         insights.update(cx, |page, cx| page.choose_variant("chess960", window, cx))
     });
     assert_eq!(
-        app.cx.update(|cx| insights.read(cx).query(cx))["variant"],
-        "chess960"
+        app.cx.update(|cx| insights.read(cx).query(cx)).variant,
+        Some(kchess_domain::variant::Variant::Chess960)
     );
 
     fn page_loaded(cx: &gpui_kit::App) -> bool {
-        crate::shell::view_of::<InsightsPage>(Page::Insights, cx)
-            .is_some_and(|page| page.read(cx).loaded())
+        crate::shell::view::<InsightsPage>(cx).is_some_and(|page| page.read(cx).loaded())
     }
 }
 
@@ -415,7 +448,7 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
 /// (`insights_show_time_use_once_games_have_clocks` timed out waiting for the first report).
 #[gpui_kit::test]
 fn insights_read_again_when_a_sync_ends(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::{Page, insights::InsightsPage};
+    use crate::pages::insights::InsightsPage;
     let mut app = Harness::start(cx);
     let lichess = app.connect_with("Showcase", false, |session| {
         session.showcase = true;
@@ -424,12 +457,11 @@ fn insights_read_again_when_a_sync_ends(cx: &mut gpui_kit::TestAppContext) {
     app.open("Insights");
     let page = |app: &mut Harness| {
         app.cx
-            .update(|cx| crate::shell::view_of::<InsightsPage>(Page::Insights, cx))
+            .update(|cx| crate::shell::view::<InsightsPage>(cx))
             .expect("the Insights page")
     };
     app.wait_for("the report before the games", |_, cx| {
-        crate::shell::view_of::<InsightsPage>(Page::Insights, cx)
-            .is_some_and(|page| page.read(cx).loaded())
+        crate::shell::view::<InsightsPage>(cx).is_some_and(|page| page.read(cx).loaded())
     });
     let insights = page(&mut app);
     assert!(
@@ -462,12 +494,12 @@ fn insights_read_again_when_a_sync_ends(cx: &mut gpui_kit::TestAppContext) {
 /// against the opponent's, blunders short of time and time by phase.
 #[gpui_kit::test]
 fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::{Page, insights::InsightsPage};
+    use crate::pages::insights::InsightsPage;
     use gpui_kit::test::TestWindowExt as _;
     let (mut app, _lichess) = Harness::signed_in_showcase(cx);
     app.open("Insights");
     app.wait_for("the first report", |_, cx| {
-        crate::shell::view_of::<InsightsPage>(Page::Insights, cx).is_some_and(|page| {
+        crate::shell::view::<InsightsPage>(cx).is_some_and(|page| {
             let page = page.read(cx);
             // A failed report is not asked for again: name it rather than wait out the timeout
             // (Windows CI once timed out here with no word of what the page held).
@@ -506,12 +538,12 @@ fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppConte
 
     let insights = app
         .cx
-        .update(|cx| crate::shell::view_of::<InsightsPage>(Page::Insights, cx))
+        .update(|cx| crate::shell::view::<InsightsPage>(cx))
         .expect("the Insights page");
     app.cx.update(|cx| {
         insights.update(cx, |page, cx| {
             page.show_time_use(
-                serde_json::json!({
+                serde_json::from_value(serde_json::json!({
                     "games": 12,
                     "trouble": { "win": 2, "draw": 0, "loss": 3, "total": 5 },
                     "spare": { "win": 5, "draw": 1, "loss": 1, "total": 7 },
@@ -525,7 +557,8 @@ fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppConte
                         "short": { "moves": 40, "blunders": 3 },
                         "spare": { "moves": 200, "blunders": 2 },
                     },
-                }),
+                }))
+                .expect("a time use"),
                 cx,
             )
         })
@@ -540,7 +573,7 @@ fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppConte
 /// The Lichess tab's games, once listed: the total and each game's opening.
 fn lichess_listed(app: &mut Harness, what: &str, ready: impl Fn(usize, &[String]) -> bool) {
     app.wait_for(what, |_, cx| {
-        crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+        crate::shell::view::<crate::pages::history::HistoryPage>(cx)
             .and_then(|page| page.read(cx).lichess_listed())
             .is_some_and(|(total, openings)| ready(total, &openings))
     });
@@ -580,6 +613,7 @@ fn an_open_game_steps_to_the_next_and_previous(cx: &mut gpui_kit::TestAppContext
     let mut app = mate_in_history(cx);
     // A newer game, left unfinished after one move: it is listed first.
     app.open("Over the board");
+    super::local::wait_resumed(&mut app);
     app.click("local-new");
     app.click("start-local");
     app.wait_for_moves(&[]);
@@ -614,22 +648,22 @@ fn a_lichess_game_steps_to_the_next_and_previous(cx: &mut gpui_kit::TestAppConte
     lichess_listed(&mut app, "the synced games", |total, _| total == 40);
     let open = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+            crate::shell::view::<crate::pages::history::HistoryPage>(cx)
                 .map(|page| page.read(cx).lichess_open())
                 .unwrap_or_default()
         })
     };
     let wait_open = |app: &mut Harness, row: usize| {
         app.wait_for("the game to open", |_, cx| {
-            crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+            crate::shell::view::<crate::pages::history::HistoryPage>(cx)
                 .map(|page| page.read(cx).lichess_open())
                 .is_some_and(|(open, ids)| open.as_ref() == ids.get(row))
         });
     };
 
     app.with_window(|window, cx| {
-        let page = crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
-            .expect("the history page");
+        let page =
+            crate::shell::view::<crate::pages::history::HistoryPage>(cx).expect("the history page");
         page.update(cx, |page, cx| page.open_first_lichess(window, cx));
     });
     wait_open(&mut app, 0);
@@ -649,6 +683,7 @@ fn board_games_are_searched_by_opponent_or_opening(cx: &mut gpui_kit::TestAppCon
     let mut app = mate_in_history(cx);
     // A second game, 1. e4 alone: a King's Pawn Game, but no Wayward Queen Attack.
     app.open("Over the board");
+    super::local::wait_resumed(&mut app);
     app.click("local-new");
     app.click("start-local");
     app.wait_for_moves(&[]);
@@ -683,6 +718,7 @@ fn board_games_are_searched_by_opponent_or_opening(cx: &mut gpui_kit::TestAppCon
 fn the_games_listed_are_exported_as_one_pgn(cx: &mut gpui_kit::TestAppContext) {
     let mut app = mate_in_history(cx);
     app.open("Over the board");
+    super::local::wait_resumed(&mut app);
     app.click("local-new");
     app.click("start-local");
     app.wait_for_moves(&[]);
@@ -692,11 +728,7 @@ fn the_games_listed_are_exported_as_one_pgn(cx: &mut gpui_kit::TestAppContext) {
 
     let folder = tempfile::tempdir().expect("a folder to save in");
     let save = |app: &mut Harness, name: &str| {
-        let started = std::time::Instant::now();
-        while !app.cx.did_prompt_for_new_path() {
-            assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
-            app.tick();
-        }
+        app.wait_for_save_dialog();
         let path = folder.path().join(name);
         let chosen = path.clone();
         app.cx.simulate_new_path_selection(move |_| Some(chosen));
@@ -730,7 +762,7 @@ fn home_names_a_variant_games_variant(cx: &mut gpui_kit::TestAppContext) {
         let played = cx.global::<crate::played::PlayedHandle>().0.clone();
         played.update(cx, |played, cx| {
             played.save(
-                serde_json::json!({
+                serde_json::from_value(serde_json::json!({
                     "id": "atomic-game",
                     "source": "computer",
                     "setup": {
@@ -746,7 +778,8 @@ fn home_names_a_variant_games_variant(cx: &mut gpui_kit::TestAppContext) {
                     "timeControl": "300+3",
                     "startedAt": 1_790_000_000_000u64,
                     "updatedAt": 1_790_000_000_000u64,
-                }),
+                }))
+                .expect("a played game"),
                 cx,
             );
         });
@@ -769,7 +802,7 @@ fn home_fits_every_result_badge_in_its_column(cx: &mut gpui_kit::TestAppContext)
             for (index, (result, finished)) in [("*", false), ("1-0", true)].into_iter().enumerate()
             {
                 played.save(
-                    serde_json::json!({
+                    serde_json::from_value(serde_json::json!({
                         "id": format!("game-{index}"),
                         "source": "computer",
                         "setup": {
@@ -785,7 +818,8 @@ fn home_fits_every_result_badge_in_its_column(cx: &mut gpui_kit::TestAppContext)
                         "timeControl": "-",
                         "startedAt": 1_790_000_000_000u64 + index as u64,
                         "updatedAt": 1_790_000_000_000u64 + index as u64,
-                    }),
+                    }))
+                    .expect("a played game"),
                     cx,
                 );
             }

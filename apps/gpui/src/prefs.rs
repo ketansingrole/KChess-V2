@@ -10,11 +10,14 @@ use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, Global};
 use kchess_contracts::Level;
+use kchess_contracts::check::ViewPreferenceKey;
+use kchess_contracts::types::ProfileArea;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
-use crate::core::{AppCore, BoxedSave, Saved};
+use crate::core::AppCore;
+use crate::quit::{BoxedSave, Saved};
 
 #[derive(Default)]
 pub struct ViewPreferences {
@@ -177,8 +180,7 @@ pub fn init(cx: &mut App) {
         .bridge
         .request_now(calls::ViewPreferences {})
     {
-        Ok(Value::Object(values)) => values,
-        Ok(_) => Map::new(),
+        Ok(values) => values,
         Err(cause) => {
             crate::log::write(
                 Level::Warn,
@@ -199,8 +201,8 @@ pub fn init(cx: &mut App) {
             Arc::clone(&sending),
             move |key, value| {
                 let save = core.request(calls::SetViewPreference {
-                    key: json!(key),
-                    value,
+                    key: ViewPreferenceKey(key.clone()),
+                    value: (!value.is_null()).then_some(value),
                 });
                 async move {
                     save.await.map(|_| ()).map_err(|cause| {
@@ -222,11 +224,11 @@ pub fn init(cx: &mut App) {
         sending,
         ..ViewPreferences::default()
     });
-    crate::core::on_quit(cx, |cx| {
+    crate::quit::on_quit(cx, |cx| {
         cx.try_global::<ViewPreferences>()
             .map(ViewPreferences::flushed)
     });
-    crate::core::on_profile_change(cx, &["viewPreferences"], reload);
+    crate::core::on_profile_change(cx, &[ProfileArea::ViewPreferences], reload);
 }
 
 /// Read the saved preferences again: another app changed them, or this one reconnected.
@@ -237,8 +239,7 @@ fn reload(cx: &mut App) {
     let saved = cx.global::<AppCore>().request(calls::ViewPreferences {});
     cx.spawn(async move |cx| {
         let saved = match saved.await {
-            Ok(Value::Object(saved)) => saved,
-            Ok(_) => return,
+            Ok(saved) => saved,
             Err(cause) => {
                 return crate::log::write(
                     Level::Warn,
@@ -286,7 +287,7 @@ pub fn set<T: Serialize>(cx: &mut App, key: &str, value: T) {
     cx.refresh_windows();
 }
 
-/// Forget a preference (`forgetViewPreference`): its default applies again in both apps.
+/// Forget a preference: its default applies again.
 pub fn forget(cx: &mut App, key: &str) {
     let prefs = cx.default_global::<ViewPreferences>();
     if prefs.values.remove(key).is_none() && !prefs.unsaved(key) {

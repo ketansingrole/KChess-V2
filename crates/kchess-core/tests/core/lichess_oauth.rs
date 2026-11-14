@@ -1,4 +1,4 @@
-//! Sign-in through the loopback callback (`connectLichess`) over local fixtures:
+//! Sign-in through the loopback callback over local fixtures:
 //! PKCE (S256), the state check, the single-use callback, the callback deadline, a denied
 //! login and a login that a logout overtook. A fake browser reads the authorize URL the core
 //! opens and visits the callback the way a browser would.
@@ -34,11 +34,12 @@ fn query_of(url: &str) -> HashMap<String, String> {
 fn service(base: &str, host: &Arc<Recording>, store: Arc<MemoryStore>) -> Arc<Lichess> {
     let policy = Policy::with_timeout(
         Arc::clone(host) as Arc<dyn kchess_core::host::Host>,
+        Arc::clone(host) as Arc<dyn kchess_core::usage::Meter>,
         http_client(),
         CancellationToken::new(),
         Duration::from_secs(5),
     );
-    let client = LichessClient::with_base(base, Arc::clone(&policy), http_client());
+    let client = LichessClient::with_base(base, Arc::clone(&policy));
     let capabilities = capabilities_for(host);
     Arc::new(Lichess::new(
         client,
@@ -46,7 +47,6 @@ fn service(base: &str, host: &Arc<Recording>, store: Arc<MemoryStore>) -> Arc<Li
         store,
         MemoryTokens::with(&[]),
         Arc::clone(host) as Arc<dyn kchess_core::host::Host>,
-        CancellationToken::new(),
     ))
 }
 

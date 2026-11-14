@@ -2,16 +2,13 @@
 //! never panic or overflow the stack, whatever the text.
 #![no_main]
 
-use kchess_domain::{api, tree};
+use kchess_domain::{position, tree};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|pgn: &str| {
     let _ = tree::valid_pgn(pgn);
-    let args = serde_json::json!([pgn]).to_string();
-    let _ = api::call("pgnGames", &args);
-    if let Ok(built) = api::call("treeFromPgn", &args)
-        && built != "null"
-    {
-        let _ = api::call("treeToPgn", &format!("[{built}]"));
+    let _ = position::pgn_games(pgn);
+    if let Some(built) = tree::tree_from_pgn(pgn) {
+        let _ = built.to_pgn();
     }
 });

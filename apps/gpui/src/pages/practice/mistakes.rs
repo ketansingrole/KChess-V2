@@ -3,15 +3,15 @@
 //! it back in ten minutes), and the games they come from.
 
 use kchess_contracts::calls;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
-use serde_json::{Value, json};
-use shakmaty::Color;
+use kchess_contracts::check::LibraryId;
+use kchess_contracts::types::{Drill, MistakeGame, ProfileArea, Puzzle, ReviewSide};
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -28,39 +28,28 @@ const GAMES_SHOWN: usize = 8;
 /// What counts as due is looked at again every minute.
 const CLOCK: Duration = Duration::from_secs(60);
 
-fn now() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0., |since| since.as_millis() as f64)
-}
-
-fn due_at(item: &Value) -> f64 {
-    item["dueAt"].as_f64().unwrap_or(0.)
-}
-
-fn id_of(item: &Value) -> &str {
-    item["id"].as_str().unwrap_or_default()
-}
-
 /// A drill as a puzzle for the board.
-fn puzzle(item: &Value) -> Value {
-    json!({
-        "id": item["id"],
-        "fen": item["fen"],
-        "solution": item["solution"],
-        "variant": item.get("variant").cloned().unwrap_or(Value::Null),
-        "rating": 0,
-        "themes": [],
-    })
+fn puzzle(item: &Drill) -> Puzzle {
+    Puzzle {
+        id: item.id.clone(),
+        fen: item.fen.clone(),
+        last_move: None,
+        solution: item.solution.clone(),
+        rating: 0.,
+        themes: Vec::new(),
+        plays: None,
+        game_id: None,
+        variant: item.variant.unwrap_or_default(),
+    }
 }
 
 /// A game's title: your opponent when your side is known, else the players.
-fn title(game: &Value) -> String {
+fn title(game: &MistakeGame) -> String {
     let (white, black) = (
-        game["white"].as_str().unwrap_or_default(),
-        game["black"].as_str().unwrap_or_default(),
+        game.white.as_deref().unwrap_or_default(),
+        game.black.as_deref().unwrap_or_default(),
     );
-    match game["player"].as_str() {
+    match game.player.map(|player| player.fold_wb("white", "black")) {
         Some(player) => {
             let opponent = if player == "white" { black } else { white };
             if opponent.is_empty() {
@@ -74,24 +63,26 @@ fn title(game: &Value) -> String {
     }
 }
 
-/// `judgmentCounts` over a game's drills.
-fn judgment_counts(items: &[&Value]) -> Vec<(&'static str, String)> {
+/// How many of a game's drills have each judgment.
+fn judgment_counts(items: &[&Drill]) -> Vec<(&'static str, String)> {
     let count = |judgment: &str| {
         items
             .iter()
-            .filter(|item| item["judgment"] == json!(judgment))
-            .count()
+            .filter(|item| item.judgment == judgment)
+            .count() as u32
     };
-    crate::reviews::judgment_counts(&json!({
-        "blunder": count("blunder"),
-        "mistake": count("mistake"),
-        "inaccuracy": count("inaccuracy"),
-    }))
+    crate::reviews::judgment_counts(&ReviewSide {
+        blunder: count("blunder"),
+        mistake: count("mistake"),
+        inaccuracy: count("inaccuracy"),
+        ..ReviewSide::default()
+    })
 }
 
 /// The mistakes trainer's actions, as its buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum MistakeAction {
+    Flip,
     Hint,
     Solution,
     /// The next due position, from a drill.
@@ -102,12 +93,12 @@ pub(crate) enum MistakeAction {
 }
 
 pub struct Mistakes {
-    items: Vec<Value>,
+    items: Vec<Drill>,
     /// Until the saved drills arrive, "no mistakes yet" would not be true.
     loading: bool,
     /// Each load of the overview; an answer to an earlier one is dropped.
     load: u64,
-    games: Vec<Value>,
+    games: Vec<MistakeGame>,
     error: Option<String>,
     has_accounts: bool,
     /// The drill on the board, or none on the home view.
@@ -124,8 +115,9 @@ pub struct Mistakes {
 impl Mistakes {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Mistakes {
         let puzzle = cx.new(|cx| PuzzleBoard::new(false, window, cx));
-        let subscriptions =
-            vec![cx.subscribe(
+        let trainer = cx.entity().downgrade();
+        let subscriptions = vec![
+            cx.subscribe(
                 &puzzle,
                 |this, _, event: &PuzzleBoardEvent, cx| match event {
                     PuzzleBoardEvent::Outcome { win, .. } => {
@@ -139,20 +131,16 @@ impl Mistakes {
                     }
                     PuzzleBoardEvent::Move { .. } => {}
                 },
-            )];
-        let clock = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(CLOCK).await;
-                if this
-                    .update(cx, |this, cx| {
-                        this.now = now();
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
+            ),
+            // Another window added or answered drills: the overview lists the profile's.
+            crate::core::profile_changes(cx, &[ProfileArea::Drills], move |cx| {
+                let _ = trainer.update(cx, |trainer, cx| trainer.reload(cx));
+            }),
+        ];
+        let clock = crate::timer::every(CLOCK, cx, |this, cx| {
+            this.now = kchess_games::now_ms();
+            cx.notify();
+            true
         });
         let mut trainer = Mistakes {
             items: Vec::new(),
@@ -164,7 +152,7 @@ impl Mistakes {
             current: None,
             done: false,
             show_all: false,
-            now: now(),
+            now: kchess_games::now_ms(),
             puzzle,
             layout: PlayLayout::default(),
             _clock: clock,
@@ -174,12 +162,17 @@ impl Mistakes {
         trainer
     }
 
-    /// The tab was opened (`onMounted`): the overview, with the drills and games as they are now.
+    /// The tab was opened: the overview, with the drills and games as they are now.
     pub fn shown(&mut self, cx: &mut Context<Self>) {
         self.current = None;
         self.done = false;
         self.show_all = false;
-        self.now = now();
+        self.reload(cx);
+    }
+
+    /// The drills and games as they are now; a drill on the board stays.
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        self.now = kchess_games::now_ms();
         self.loading = true;
         self.load += 1;
         let load = self.load;
@@ -199,13 +192,13 @@ impl Mistakes {
                 match library {
                     // A failure to load is the last load's: one that worked clears it.
                     Ok(library) => {
-                        this.items = library["mistakes"].as_array().cloned().unwrap_or_default();
+                        this.items = library.mistakes;
                         this.error = None;
                     }
                     Err(cause) => this.error = Some(cause.message),
                 }
                 match games {
-                    Ok(games) => this.games = games.as_array().cloned().unwrap_or_default(),
+                    Ok(games) => this.games = games,
                     Err(cause) => crate::log::write(
                         Level::Warn,
                         "mistake-trainer",
@@ -213,9 +206,7 @@ impl Mistakes {
                     ),
                 }
                 if let Ok(data) = data {
-                    this.has_accounts = data["accounts"]
-                        .as_array()
-                        .is_some_and(|accounts| !accounts.is_empty());
+                    this.has_accounts = !data.accounts.is_empty();
                 }
                 cx.notify();
             });
@@ -224,10 +215,10 @@ impl Mistakes {
         cx.notify();
     }
 
-    fn due(&self) -> Vec<&Value> {
+    fn due(&self) -> Vec<&Drill> {
         self.items
             .iter()
-            .filter(|item| due_at(item) <= self.now)
+            .filter(|item| item.due_at_ms() <= self.now)
             .collect()
     }
 
@@ -238,8 +229,19 @@ impl Mistakes {
     }
 
     #[cfg(test)]
-    pub(crate) fn seed(&mut self, items: Vec<Value>, cx: &mut Context<Self>) {
-        self.items = items;
+    pub(crate) fn seed(&mut self, items: Vec<serde_json::Value>, cx: &mut Context<Self>) {
+        // A drill as the core lists it, with what a test leaves out filled in.
+        self.items = items
+            .into_iter()
+            .map(|item| {
+                let mut drill =
+                    serde_json::json!({ "judgment": "mistake", "dueAt": 0, "streak": 0, "attempts": 0 });
+                for (key, value) in item.as_object().into_iter().flatten() {
+                    drill[key] = value.clone();
+                }
+                serde_json::from_value(drill).expect("a drill")
+            })
+            .collect();
         cx.notify();
     }
 
@@ -251,6 +253,7 @@ impl Mistakes {
             if !self.done {
                 actions.extend([MistakeAction::Hint, MistakeAction::Solution]);
             }
+            actions.push(MistakeAction::Flip);
             if due {
                 actions.push(MistakeAction::Next);
             }
@@ -269,6 +272,7 @@ impl Mistakes {
             return;
         }
         match action {
+            MistakeAction::Flip => self.puzzle.update(cx, |board, cx| board.flip(cx)),
             MistakeAction::Hint => self.puzzle.update(cx, |board, cx| board.hint(cx)),
             MistakeAction::Solution => self.puzzle.update(cx, |board, cx| board.show_solution(cx)),
             MistakeAction::Next | MistakeAction::Due => self.next(false, cx),
@@ -278,26 +282,30 @@ impl Mistakes {
 
     /// The next position: the one due longest, or with `all` the next one at all (Review early).
     fn next(&mut self, all: bool, cx: &mut Context<Self>) {
-        let mut candidates: Vec<&Value> = if all {
+        let mut candidates: Vec<&Drill> = if all {
             self.items.iter().collect()
         } else {
             self.due()
         };
-        candidates.sort_by(|a, b| due_at(a).total_cmp(&due_at(b)));
+        candidates.sort_by(|a, b| a.due_at_ms().total_cmp(&b.due_at_ms()));
         let current = self.current.as_deref();
         let item = candidates
             .iter()
-            .find(|item| self.done || Some(id_of(item)) != current)
+            .find(|item| self.done || Some(item.id.as_str()) != current)
             .map(|item| (*item).clone());
         // The position on the board is the only one left: keep it rather than blank the board.
-        if item.is_none() && candidates.iter().any(|item| Some(id_of(item)) == current) {
+        if item.is_none()
+            && candidates
+                .iter()
+                .any(|item| Some(item.id.as_str()) == current)
+        {
             return;
         }
         self.done = false;
-        self.current = item.as_ref().map(|item| id_of(item).to_string());
+        self.current = item.as_ref().map(|item| item.id.clone());
         if let Some(item) = item {
             self.puzzle
-                .update(cx, |board, cx| board.start(&puzzle(&item), None, cx));
+                .update(cx, |board, cx| board.start(puzzle(&item), None, cx));
         }
         cx.notify();
     }
@@ -305,15 +313,15 @@ impl Mistakes {
     /// Schedule the drill again: sooner when it went wrong.
     fn answered(&mut self, id: &str, clean: bool, cx: &mut Context<Self>) {
         let answer = cx.global::<AppCore>().request(calls::AnswerMistake {
-            id: json!(id),
-            solved: json!(clean),
+            id: LibraryId(id.to_string()),
+            solved: clean,
         });
         cx.spawn(async move |this, cx| {
             let answer = answer.await;
             let _ = this.update(cx, |this, cx| {
                 match answer {
                     Ok(items) => {
-                        this.items = items.as_array().cloned().unwrap_or_default();
+                        this.items = items;
                         this.error = None;
                     }
                     Err(cause) => {
@@ -331,8 +339,8 @@ impl Mistakes {
         .detach();
     }
 
-    /// A key for the drill on the board: F turns it, once it is over Return or Space goes on to the
-    /// next due position (as on Puzzles), and the arrows, Home and End step through its moves.
+    /// A key for the drill on the board: once it is over Return or Space goes on to the next due
+    /// position (as on Puzzles), and the arrows, Home and End step through its moves.
     /// Whether the key was taken.
     pub fn key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
         if self.current.is_none() {
@@ -343,10 +351,6 @@ impl Mistakes {
             && self.actions().contains(&MistakeAction::Next)
         {
             self.next(false, cx);
-            return true;
-        }
-        if key == "f" {
-            self.puzzle.update(cx, |board, cx| board.flip(cx));
             return true;
         }
         self.puzzle.update(cx, |board, cx| board.step(key, cx))
@@ -454,17 +458,20 @@ impl Mistakes {
             .take(shown)
             .enumerate()
             .map(|(index, game)| {
-                let key = game["key"].as_str().unwrap_or_default();
-                let items: Vec<&Value> = self
+                let key = game.key.as_str();
+                let items: Vec<&Drill> = self
                     .items
                     .iter()
-                    .filter(|item| id_of(item).starts_with(&format!("{key}:")))
+                    .filter(|item| item.id.starts_with(&format!("{key}:")))
                     .collect();
-                let due = items.iter().filter(|item| due_at(item) <= self.now).count();
+                let due = items
+                    .iter()
+                    .filter(|item| item.due_at_ms() <= self.now)
+                    .count();
                 let positions = items.len();
                 let sub = format!(
                     "{} · {positions} {}{}",
-                    crate::game::game_date(game["playedAt"].as_f64().unwrap_or_default()),
+                    crate::game::game_date(game.played_at),
                     if positions == 1 {
                         "position"
                     } else {
@@ -476,11 +483,7 @@ impl Mistakes {
                         String::new()
                     }
                 );
-                let side = match game["player"].as_str() {
-                    Some("white") => Some(Color::White),
-                    Some("black") => Some(Color::Black),
-                    _ => None,
-                };
+                let side = game.player;
                 h_flex()
                     .gap(px(8.))
                     .py(px(8.))
@@ -535,12 +538,10 @@ impl Mistakes {
                             .accessibility_label(format!(
                                 "Practice {}, {}",
                                 title(game),
-                                crate::game::game_date(
-                                    game["playedAt"].as_f64().unwrap_or_default()
-                                )
+                                crate::game::game_date(game.played_at)
                             ))
                             .on_click(move |_, window, cx| {
-                                crate::shell::practise_game(
+                                crate::pages::analysis::practise_game(
                                     practised.clone(),
                                     all.clone(),
                                     window,
@@ -597,7 +598,7 @@ impl Mistakes {
         let learned = self
             .items
             .iter()
-            .filter(|item| item["streak"].as_f64().unwrap_or(0.) >= LEARNED_STREAK)
+            .filter(|item| item.streak() >= LEARNED_STREAK)
             .count();
         let stat = |label: &'static str, value: usize| {
             v_flex()
@@ -713,8 +714,8 @@ impl Render for Mistakes {
 
 #[cfg(test)]
 mod tests {
-    use super::{judgment_counts, title};
-    use serde_json::json;
+    use super::{MistakeGame, judgment_counts, title};
+    use serde_json::{Value, json};
 
     /// A failed load's error stayed on the overview after a later load worked.
     #[gpui_kit::test]
@@ -736,20 +737,30 @@ mod tests {
 
     #[test]
     fn a_game_is_named_by_your_opponent() {
-        let game = json!({ "white": "You", "black": "Stockfish", "player": "white" });
-        assert_eq!(title(&game), "vs Stockfish");
-        assert_eq!(title(&json!({ "player": "black" })), "You as black");
-        assert_eq!(title(&json!({ "white": "A", "black": "B" })), "A – B");
-        assert_eq!(title(&json!({})), "Analysis board game");
+        let game = |value: Value| -> MistakeGame {
+            let mut game = json!({ "key": "k", "fen": "", "moves": [], "playedAt": 0 });
+            game.as_object_mut()
+                .expect("an object")
+                .extend(value.as_object().cloned().unwrap_or_default());
+            serde_json::from_value(game).expect("a game")
+        };
+        let played = game(json!({ "white": "You", "black": "Stockfish", "player": "white" }));
+        assert_eq!(title(&played), "vs Stockfish");
+        assert_eq!(title(&game(json!({ "player": "black" }))), "You as black");
+        assert_eq!(title(&game(json!({ "white": "A", "black": "B" }))), "A – B");
+        assert_eq!(title(&game(json!({}))), "Analysis board game");
     }
 
     #[test]
     fn counts_read_worst_first() {
-        let items = [
-            json!({ "judgment": "mistake" }),
-            json!({ "judgment": "blunder" }),
-            json!({ "judgment": "blunder" }),
-        ];
+        let drill = |judgment: &str| -> kchess_contracts::types::Drill {
+            serde_json::from_value(json!({
+                "id": "k:1", "fen": "", "solution": [], "judgment": judgment,
+                "dueAt": 0, "streak": 0, "attempts": 0,
+            }))
+            .expect("a drill")
+        };
+        let items = [drill("mistake"), drill("blunder"), drill("blunder")];
         let items: Vec<_> = items.iter().collect();
         let counts: Vec<String> = judgment_counts(&items)
             .into_iter()

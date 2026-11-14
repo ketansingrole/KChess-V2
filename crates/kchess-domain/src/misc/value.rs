@@ -88,6 +88,26 @@ pub fn number_value(n: f64) -> serde_json::Value {
     }
 }
 
+/// `#[serde(with = "whole")]`: a value written with its integral numbers as integers, as the
+/// stored documents keep them (see [`integral`]); read as it is.
+pub mod whole {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<T: Serialize, S: Serializer>(
+        value: &T,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let value = serde_json::to_value(value).map_err(serde::ser::Error::custom)?;
+        super::integral(value).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<T, D::Error> {
+        T::deserialize(deserializer)
+    }
+}
+
 /// Integral floating-point numbers of `value` as integers (see [`number_value`]).
 pub fn integral(value: serde_json::Value) -> serde_json::Value {
     use serde_json::Value;
@@ -280,7 +300,7 @@ impl<'de> Deserializer<'de> for J {
     }
 
     /// Whatever `typeof value === 'object'` holds for decodes as a struct or a map, by its own
-    /// entries (a list by its indices, not by position), as the TypeScript validators read it.
+    /// entries (a list by its indices, not by position).
     fn deserialize_struct<V: Visitor<'de>>(
         self,
         _name: &'static str,

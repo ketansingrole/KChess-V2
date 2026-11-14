@@ -1,41 +1,35 @@
-//! Chess engines: UCI processes, the scheduler, search, the managed engine, analysis and review
-//! (see RUST_MIGRATION.md).
+//! Chess engines: UCI processes, the scheduler, search, the managed engine, analysis and review.
 //!
-//! `search`, `analysis` and `review` each own their engine processes and their state (the
-//! TypeScript module-level `serviceState`, one per core instance). They share an `EngineContext`:
-//! the host, the process registry, the engine budget and where engines are found.
+//! `search`, `analysis` and `review` each own an engine slot and their state, one per core
+//! instance. They share an `EngineContext`: the host, the process registry, the engine budget and
+//! where engines are found.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::Deserialize;
-use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio::task::AbortHandle;
 
-use crate::error::{CoreError, Result};
 use crate::host::Host;
-use scheduler::Scheduler;
+use kchess_contracts::error::Result;
+use scheduler::{Priority, Scheduler};
 use status::{EngineLocations, EngineStatus, engine_command};
 use uci::{EngineHub, UciController};
 
 pub mod analysis;
 pub mod bridge;
-pub mod domain_client;
+pub(crate) mod job;
 pub mod managed;
 pub mod review;
 pub mod scheduler;
 pub mod search;
+pub(crate) mod slot;
 pub mod status;
 pub mod uci;
 
-/// How a status becomes the process that runs it (`spawnEngine`). The default runs the engine
+/// How a status becomes the process that runs it. The default runs the engine
 /// `status` names; tests substitute a scripted engine.
 pub type CommandFactory = Arc<dyn Fn(&EngineStatus) -> Command + Send + Sync>;
-
-/// Runs before every engine lease. The core uses it to refresh the battery reading without
-/// making the lease wait for the host.
-pub type BeforeLease = Arc<dyn Fn() + Send + Sync>;
 
 /// What the engine services share with the core: the host, the process registry, the engine
 /// budget, and where engines are found.
@@ -46,7 +40,6 @@ pub struct EngineContext {
     pub scheduler: Arc<Scheduler>,
     pub locations: Arc<EngineLocations>,
     pub command: CommandFactory,
-    pub before_lease: BeforeLease,
 }
 
 impl EngineContext {
@@ -64,87 +57,41 @@ impl EngineContext {
             scheduler,
             locations,
             command: Arc::new(move |status| engine_command(&for_factory, status)),
-            before_lease: Arc::new(|| {}),
         }
     }
 
-    /// `withEngineLease`: waits for the budget at `priority`, then runs `work` under it. The
-    /// budget is released on every exit path.
+    /// Waits for the engine budget at `priority`, then runs `work` under it. The budget is
+    /// released on every exit path; a higher priority cancels `token`, which stops the search.
     pub(crate) async fn lease<T>(
         &self,
-        priority: i32,
-        stop: impl Fn() + Send + Sync + 'static,
+        priority: Priority,
         token: &tokio_util::sync::CancellationToken,
         work: impl std::future::Future<Output = Result<T>>,
     ) -> Result<T> {
-        (self.before_lease)();
-        self.scheduler.with_lease(priority, stop, token, work).await
+        self.scheduler.with_lease(priority, token, work).await
     }
 
-    /// `spawnEngine`: refuses while an executable is being replaced, then starts the process.
+    /// Refuses while an executable is being replaced, then starts the process.
     pub(crate) fn spawn(&self, status: &EngineStatus) -> Result<UciController> {
         self.hub.assert_available()?;
         UciController::start(&self.hub, (self.command)(status), uci::DEFAULT_DEADLINE)
     }
 }
 
-/// `kchess_domain` rules and validators by their TypeScript name, with JSON arguments.
-pub(crate) fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
-    // Most calls skip writing the arguments out and reading the answer back (`call_value`
-    // answers as `call` does). Trees and deep arguments keep going through JSON text, so their
-    // answer is never built and dropped on this thread's smaller stack.
-    if !kchess_domain::api::needs_large_stack(method, &args) {
-        return kchess_domain::api::call_value(method, &args).map_err(CoreError::new);
-    }
-    let text = serde_json::to_string(&args).map_err(|cause| CoreError::new(cause.to_string()))?;
-    let output = kchess_domain::api::call(method, &text).map_err(CoreError::new)?;
-    serde_json::from_str(&output).map_err(|cause| CoreError::new(cause.to_string()))
+/// Stops every engine owner: the computer's search, the analysis and the running review, whose
+/// engine closes. With `close`, the search's and the analysis' engines close too.
+pub(crate) fn stop_engines(
+    search: &search::Search,
+    analysis: &analysis::Analysis,
+    reviews: &review::Reviews,
+    close: bool,
+) {
+    search.stop_engine(close);
+    analysis.stop_analysis(close);
+    reviews.restart_review_engine();
 }
 
-/// A `kchess_domain` `assert*` validator: the sidecar of values JSON cannot carry is empty.
-pub(crate) fn validate(method: &str, value: &Value) -> Result<Value> {
-    domain(method, vec![json!([]), value.clone()])
-}
-
-/// `parseInfo`: one UCI `info` line, with its scored principal variation from White's side.
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct InfoLine {
-    pub rank: f64,
-    pub depth: f64,
-    #[serde(default)]
-    pub cp: Option<f64>,
-    #[serde(default)]
-    pub mate: Option<f64>,
-    pub pv: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct ParsedInfo {
-    pub line: InfoLine,
-    #[serde(default)]
-    pub nps: Option<f64>,
-}
-
-pub(crate) fn parse_info(text: &str, white_to_move: bool) -> Option<ParsedInfo> {
-    let parsed = domain_client::parse_info_typed(text, white_to_move)?;
-    serde_json::from_value(parsed).ok()
-}
-
-/// `Date.now()`: milliseconds since the Unix epoch.
-pub(crate) fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
-        })
-}
-
-/// `String(n)` for an engine option value: whole numbers carry no fraction.
-pub(crate) fn js_number(value: f64) -> String {
-    format!("{value}")
-}
-
-/// Runs `action` after `ms`, unless the returned handle is aborted first (`setTimeout`). Without
+/// Runs `action` after `ms`, unless the returned handle is aborted first. Without
 /// a Tokio runtime nothing is scheduled.
 pub(crate) fn after(ms: u64, action: impl FnOnce() + Send + 'static) -> Option<AbortHandle> {
     let runtime = tokio::runtime::Handle::try_current().ok()?;
@@ -155,7 +102,7 @@ pub(crate) fn after(ms: u64, action: impl FnOnce() + Send + 'static) -> Option<A
     Some(task.abort_handle())
 }
 
-/// Replaces a timer, aborting the previous one (`clearTimeout` then `setTimeout`).
+/// Replaces a timer, aborting the previous one.
 pub(crate) fn replace_timer(slot: &mut Option<AbortHandle>, next: Option<AbortHandle>) {
     if let Some(old) = slot.take() {
         old.abort();
@@ -163,12 +110,12 @@ pub(crate) fn replace_timer(slot: &mut Option<AbortHandle>, next: Option<AbortHa
     *slot = next;
 }
 
-/// Clears a timer (`clearTimeout`).
+/// Clears a timer.
 pub(crate) fn clear_timer(slot: &mut Option<AbortHandle>) {
     replace_timer(slot, None);
 }
 
-/// A uniform number in [0, 1), the source of `Math.random()`.
+/// A uniform number in [0, 1).
 pub(crate) fn random_unit() -> f64 {
     let mut bytes = [0u8; 8];
     let filled = getrandom::fill(&mut bytes).is_ok();

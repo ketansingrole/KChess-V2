@@ -1,12 +1,11 @@
-//! `JSON.stringify`-compatible text, UTF-16 lengths and slicing, and study-name cleanup.
-//! Split from the library store; the other storage modules share this codec so stored
-//! documents keep matching the TypeScript bytes.
+//! Compact JSON text, UTF-16 lengths and slicing, and study-name cleanup. The storage modules
+//! share this codec so stored documents keep the bytes earlier releases wrote.
 
 use serde_json::Value;
 
 use kchess_domain::js;
 
-/// `JSON.stringify(value)`: the same text for the values the core stores (keys in order, whole
+/// Compact JSON text for the values the core stores (keys in order, whole
 /// numbers without `.0`, no spaces).
 pub fn js_json(value: &Value) -> String {
     let mut out = String::new();
@@ -49,28 +48,30 @@ fn write_js_json(value: &Value, out: &mut String) {
     }
 }
 
-/// `s.length`: UTF-16 code units.
-pub fn utf16_len(s: &str) -> usize {
-    js::utf16_len(s)
-}
-
-/// `s.slice(0, max)` in UTF-16 units. A cut inside a surrogate pair drops the whole character
-/// (JavaScript would keep a lone surrogate, which a Rust string cannot hold).
-pub fn js_slice(s: &str, max: usize) -> String {
-    let mut units = 0;
-    let mut end = 0;
-    for (index, c) in s.char_indices() {
-        let next = units + c.len_utf16();
-        if next > max {
-            break;
-        }
-        units = next;
-        end = index + c.len_utf8();
-    }
-    s[..end].to_string()
-}
-
-/// `name.trim().slice(0, 120)`
+/// At most 120 UTF-16 units of the trimmed name.
 pub fn clean_name(name: &str) -> String {
-    js_slice(js::trim(name), 120)
+    js::slice_utf16(js::trim(name), 120).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Stored documents keep the bytes earlier releases wrote: keys in order, whole numbers
+    /// without `.0`, no spaces.
+    #[test]
+    fn stored_text_keeps_the_bytes_earlier_releases_wrote() {
+        let value = json!({ "b": 1.0, "a": [0.5, null, true, "é\n"], "n": -2 });
+        assert_eq!(
+            js_json(&value),
+            r#"{"b":1,"a":[0.5,null,true,"é\n"],"n":-2}"#
+        );
+    }
+
+    #[test]
+    fn names_are_trimmed_and_cut() {
+        assert_eq!(clean_name("  Name  "), "Name");
+        assert_eq!(clean_name(&"x".repeat(200)).len(), 120);
+    }
 }

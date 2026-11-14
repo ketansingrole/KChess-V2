@@ -71,7 +71,7 @@ pub fn init(data_dir: &Path) {
 }
 
 pub fn write(level: Level, scope: &str, message: &str) {
-    if level == Level::Debug && std::env::var("KCHESS_DEBUG").as_deref() != Ok("1") {
+    if level == Level::Debug && kchess_host::env::var("KCHESS_DEBUG").as_deref() != Some("1") {
         return;
     }
     // Not `eprintln!`: it panics when stderr is gone (a terminal closed under a running app).
@@ -102,7 +102,7 @@ pub fn session_id() -> &'static str {
     })
 }
 
-/// The log files, oldest first, redacted again (`DiagnosticLog.read`).
+/// The log files, oldest first, redacted again.
 pub fn read() -> Vec<String> {
     let Some(log) = LOG.get() else {
         return Vec::new();
@@ -117,4 +117,4 @@ pub fn read() -> Vec<String> {
         .collect()
 }
 
-pub use kchess_core::redact::redact;
+use kchess_host::redact;

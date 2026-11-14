@@ -8,19 +8,12 @@ use std::future::Future;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::tasks::lock;
+
 /// The connection of an app that embeds the core, and of calls made outside any connection.
 pub const APP: u64 = 0;
 
-/// Something a client can do for the core when it asks (`host:request`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Capability {
-    /// Open a web page in the browser (`openExternal`).
-    Browser,
-    /// Bring its window to the front (`focus`).
-    Focus,
-    /// Seal and open logins itself (`secrets.*`), for a core without the profile's credentials.
-    Secrets,
-}
+pub use kchess_contracts::Capability;
 
 /// Who a client is, as it says when it connects.
 #[derive(Clone, Debug)]
@@ -79,16 +72,14 @@ impl Connections {
 
     fn insert(&self, id: u64, info: ClientInfo) {
         let connected = self.clock.fetch_add(1, Ordering::SeqCst);
-        if let Ok(mut clients) = self.clients.lock() {
-            clients.insert(
-                id,
-                Client {
-                    info,
-                    focused: 0,
-                    connected,
-                },
-            );
-        }
+        lock(&self.clients).insert(
+            id,
+            Client {
+                info,
+                focused: 0,
+                connected,
+            },
+        );
     }
 
     /// A new client; its connection id.
@@ -103,49 +94,43 @@ impl Connections {
         if id == APP {
             return;
         }
-        if let Ok(mut clients) = self.clients.lock() {
-            clients.remove(&id);
-        }
+        lock(&self.clients).remove(&id);
+    }
+
+    /// The embedding frontend says who it is and what it can answer.
+    pub fn set_app(&self, info: ClientInfo) {
+        self.insert(APP, info);
     }
 
     /// The service has its own clients: the embedding app's connection goes.
     pub fn without_app(&self) {
-        if let Ok(mut clients) = self.clients.lock() {
-            clients.remove(&APP);
-        }
+        lock(&self.clients).remove(&APP);
     }
 
     /// A client reports its window gaining (or losing) focus.
     pub fn focus(&self, id: u64, focused: bool) {
         let at = self.clock.fetch_add(1, Ordering::SeqCst);
-        if let Ok(mut clients) = self.clients.lock()
-            && let Some(client) = clients.get_mut(&id)
-        {
+        if let Some(client) = lock(&self.clients).get_mut(&id) {
             client.focused = if focused { at } else { 0 };
         }
     }
 
     /// The connected ids, oldest first.
     pub fn ids(&self) -> Vec<u64> {
-        self.clients
-            .lock()
-            .map(|clients| clients.keys().copied().collect())
-            .unwrap_or_default()
+        lock(&self.clients).keys().copied().collect()
     }
 
     /// What `id` said when it connected.
     pub fn info(&self, id: u64) -> Option<ClientInfo> {
-        self.clients
-            .lock()
-            .ok()
-            .and_then(|clients| clients.get(&id).map(|client| client.info.clone()))
+        lock(&self.clients)
+            .get(&id)
+            .map(|client| client.info.clone())
     }
 
     /// The client that alerts the person: the window focused last, else the window that
     /// connected last. Clients without windows (a CLI, an MCP server) never alert.
     pub fn alert_owner(&self) -> Option<u64> {
-        let clients = self.clients.lock().ok()?;
-        clients
+        lock(&self.clients)
             .iter()
             .filter(|(_, client)| client.info.capabilities.contains(&Capability::Focus))
             .max_by_key(|(_, client)| (client.focused, client.connected))
@@ -208,6 +193,21 @@ mod tests {
         assert_eq!(connections.ids(), vec![APP]);
         connections.without_app();
         assert!(connections.ids().is_empty());
+    }
+
+    #[test]
+    fn the_embedding_app_says_what_it_can_answer() {
+        let connections = Connections::new();
+        connections.set_app(ClientInfo {
+            kind: "cli".into(),
+            release: "2026.11.1".into(),
+            capabilities: Vec::new(),
+        });
+        assert_eq!(
+            connections.info(APP).map(|info| info.kind).as_deref(),
+            Some("cli")
+        );
+        assert_eq!(connections.route(Capability::Browser, Some(APP)), None);
     }
 
     #[test]

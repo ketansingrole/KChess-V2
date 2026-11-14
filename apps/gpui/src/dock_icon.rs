@@ -1,4 +1,4 @@
-//! The Dock, app switcher and Mission Control icon (`refreshAppIcon`): the light or dark tile
+//! The Dock, app switcher and Mission Control icon: the light or dark tile
 //! `cargo xtask app-icon` writes, following the system appearance. A development build has no
 //! bundle to take an icon from, and a packaged one shows its `.icns` until this applies.
 

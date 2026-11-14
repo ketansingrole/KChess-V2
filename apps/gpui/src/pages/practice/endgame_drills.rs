@@ -6,7 +6,10 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use kchess_contracts::Level;
+use kchess_contracts::types::{RunKind, RunSummary};
+use kchess_domain::training::endgames::{self, Status};
+use serde_json::json;
 use shakmaty::Color;
 
 use super::endgames::{Drill, TrainerEvent, drills, finished};
@@ -14,7 +17,7 @@ use super::engine_move::{EngineMove, HasEngine};
 use super::run::{self, TrainingItem};
 use crate::assets::icon;
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
-use crate::game::{rules, view};
+use crate::game::view;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
@@ -22,28 +25,14 @@ use crate::widgets::{self, Tone};
 
 const GROUPS: [&str; 3] = ["Basic mates", "Pawn endings", "Rook endings"];
 
-pub fn color_of(name: &str) -> Color {
-    if name == "black" {
-        Color::Black
-    } else {
-        Color::White
-    }
-}
+use kchess_domain::training::endgames::san_from;
 
-/// `sanFrom`: SAN of a UCI move list played from `fen`.
-pub fn san_from(fen: &str, moves: &[String]) -> Vec<String> {
-    rules("sanFrom", &[json!(fen), json!(moves)])
-        .ok()
-        .and_then(|sans| serde_json::from_value(sans).ok())
-        .unwrap_or_default()
-}
-
-/// `moveSquares`: a move's squares as the board marks them (castling king to its square).
+/// A move's squares as the board marks them (castling king to its square).
 pub fn move_squares(fen: &str, uci: &str) -> Option<(shakmaty::Square, shakmaty::Square)> {
-    let squares = rules("moveSquares", &[json!(fen), json!(uci)]).ok()?;
+    let squares = kchess_domain::training::puzzle::move_squares(fen, uci)?;
     Some((
-        squares[0].as_str()?.parse().ok()?,
-        squares[1].as_str()?.parse().ok()?,
+        squares.first()?.parse().ok()?,
+        squares.get(1)?.parse().ok()?,
     ))
 }
 
@@ -61,7 +50,7 @@ pub struct EndgameDrills {
     moves: Vec<String>,
     hint: Option<String>,
     flipped: bool,
-    summary: Value,
+    summary: Option<RunSummary>,
     recorded: bool,
     engine: EngineMove,
     board: Entity<ChessBoard>,
@@ -82,8 +71,11 @@ impl EndgameDrills {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> EndgameDrills {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", crate::game::STANDARD_FEN)
-                    .unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    crate::game::STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 None,
                 None,
@@ -116,7 +108,7 @@ impl EndgameDrills {
             moves: Vec::new(),
             hint: None,
             flipped: false,
-            summary: Value::Null,
+            summary: None,
             recorded: false,
             engine: EngineMove::default(),
             board,
@@ -124,8 +116,8 @@ impl EndgameDrills {
             layout: PlayLayout::default(),
             _subscriptions: subscriptions,
         };
-        run::load_summary("endgame", cx, |this, summary, cx| {
-            this.summary = summary;
+        run::load_summary(RunKind::Endgame, cx, |this, summary, cx| {
+            this.summary = Some(summary);
             cx.notify();
         });
         EngineMove::check(cx);
@@ -134,31 +126,38 @@ impl EndgameDrills {
         page
     }
 
-    /// `evaluateEndgame`: where the drill stands, its title and detail, whose turn it is.
-    fn status_after(&self, moves: &[String]) -> Value {
-        rules(
-            "evaluateEndgame",
-            &[
-                json!(self.drill.fen),
-                json!(moves),
-                json!(self.drill.player),
-                json!(self.drill.goal),
-            ],
-        )
-        .unwrap_or(Value::Null)
+    /// Where the drill stands, its title and detail, whose turn it is. A drill whose position
+    /// cannot be read stands nowhere: nothing to play, nothing over.
+    fn status_after(&self, moves: &[String]) -> Status {
+        let drill = &self.drill;
+        endgames::evaluate(&drill.fen, moves, &drill.player, &drill.goal).unwrap_or_else(|cause| {
+            crate::log::write(
+                Level::Warn,
+                "endgame-drill",
+                &format!("{}: {cause}", drill.id),
+            );
+            Status {
+                over: false,
+                success: None,
+                title: String::new(),
+                detail: None,
+                turn: "",
+                fen: String::new(),
+            }
+        })
     }
 
-    fn status(&self) -> Value {
+    fn status(&self) -> Status {
         self.status_after(&self.moves)
     }
 
     fn player(&self) -> Color {
-        color_of(&self.drill.player)
+        kchess_domain::color::from_name(&self.drill.player).unwrap_or(Color::White)
     }
 
     fn your_turn(&self) -> bool {
         let status = self.status();
-        status["over"] != json!(true) && status["turn"] == json!(self.drill.player)
+        !status.over && status.turn == self.drill.player
     }
 
     fn restart(&mut self, next: Option<Drill>, cx: &mut Context<Self>) {
@@ -183,10 +182,7 @@ impl EndgameDrills {
     /// Stockfish answers whenever it is its turn.
     fn engine_turn(&mut self, cx: &mut Context<Self>) {
         let status = self.status();
-        if status["over"] == json!(true)
-            || status["turn"] == json!(self.drill.player)
-            || self.engine.thinking
-        {
+        if status.over || status.turn == self.drill.player || self.engine.thinking {
             return;
         }
         let (fen, moves) = (self.drill.fen.clone(), self.moves.clone());
@@ -219,14 +215,12 @@ impl EndgameDrills {
     }
 
     fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let fen = self.status()["fen"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
+        let fen = self.status().fen;
         let text = self.move_input.read(cx).value().trim().to_string();
-        let setup = json!({ "variant": "standard", "fen": fen });
-        let typed = kchess_domain::rules::setup_start("standard", &fen)
-            .and_then(|position| view::typed_uci(&setup, &position, &text));
+        let setup = kchess_domain::variant::Setup::standard_at(fen.clone());
+        let typed =
+            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &fen)
+                .and_then(|position| view::typed_uci(&setup, &position, &text));
         if let Some(uci) = typed {
             self.move_input
                 .update(cx, |input, cx| input.set_value("", window, cx));
@@ -237,19 +231,19 @@ impl EndgameDrills {
     /// A finished drill is a run: solved or not, and in how many moves.
     fn record(&mut self, cx: &mut Context<Self>) {
         let status = self.status();
-        if status["over"] != json!(true) || self.recorded {
+        if !status.over || self.recorded {
             return;
         }
         self.recorded = true;
-        let success = status["success"] == json!(true);
-        let run = json!({
-            "kind": "endgame",
-            "variant": self.drill.id,
-            "score": if success { 1 } else { 0 },
-            "detail": { "moves": self.moves.len().div_ceil(2), "success": success },
-        });
+        let success = status.success == Some(true);
+        let run = run::input(
+            RunKind::Endgame,
+            self.drill.id.clone(),
+            if success { 1. } else { 0. },
+            json!({ "moves": self.moves.len().div_ceil(2), "success": success }),
+        );
         run::save_run(run, cx, |this, saved, cx| {
-            this.summary = saved["summary"].clone();
+            this.summary = Some(saved.summary);
             cx.notify();
         });
     }
@@ -286,11 +280,6 @@ impl EndgameDrills {
         self.redraw(cx);
     }
 
-    #[cfg(test)]
-    pub(crate) fn flipped(&self) -> bool {
-        self.flipped
-    }
-
     fn takeback(&mut self, cx: &mut Context<Self>) {
         if self.engine.thinking {
             return;
@@ -299,7 +288,7 @@ impl EndgameDrills {
         self.hint = None;
         let mut kept = self.moves.clone();
         kept.pop();
-        while !kept.is_empty() && self.status_after(&kept)["turn"] != json!(self.drill.player) {
+        while !kept.is_empty() && self.status_after(&kept).turn != self.drill.player {
             kept.pop();
         }
         self.moves = kept;
@@ -330,20 +319,22 @@ impl EndgameDrills {
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
         let status = self.status();
-        let fen = status["fen"].as_str().unwrap_or_default().to_string();
-        let Some(position) = kchess_domain::rules::setup_start("standard", &fen) else {
+        let fen = status.fen.clone();
+        let Some(position) =
+            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &fen)
+        else {
             return;
         };
         let last = self.moves.last().and_then(|last| {
             let before = self.status_after(&self.moves[..self.moves.len() - 1]);
-            move_squares(before["fen"].as_str()?, last)
+            move_squares(&before.fen, last)
         });
         let orientation = if self.flipped {
             !self.player()
         } else {
             self.player()
         };
-        let over = status["over"] == json!(true);
+        let over = status.over;
         let movable = self.your_turn().then_some(self.player());
         let mut state = BoardState::of(&position, orientation, movable, last);
         if let Some((from, to)) = self
@@ -372,18 +363,11 @@ impl Render for EndgameDrills {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let status = self.status();
-        let over = status["over"] == json!(true);
-        let success = status["success"] == json!(true);
+        let over = status.over;
+        let success = status.success == Some(true);
         let thinking = self.engine.thinking;
         let missing = self.engine.ready == Some(false);
         let your_turn = self.your_turn();
-        let frontend = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
         let board_size = self.layout.board_size(window);
         let sans = san_from(&self.drill.fen, &self.moves);
         let (tone, glyph, title, detail) = if missing {
@@ -401,8 +385,8 @@ impl Render for EndgameDrills {
                 } else {
                     icon("flag")
                 },
-                status["title"].as_str().unwrap_or_default().to_string(),
-                status["detail"].as_str().map(str::to_string),
+                status.title.clone(),
+                status.detail.map(str::to_string),
             )
         } else if thinking {
             (
@@ -415,8 +399,8 @@ impl Render for EndgameDrills {
             (
                 Tone::Plain,
                 icon("mouse-pointer-click"),
-                status["title"].as_str().unwrap_or_default().to_string(),
-                status["detail"].as_str().map(str::to_string),
+                status.title.clone(),
+                status.detail.map(str::to_string),
             )
         };
         let groups = GROUPS
@@ -430,7 +414,7 @@ impl Render for EndgameDrills {
                         .map(|drill| TrainingItem {
                             id: drill.id.clone(),
                             title: drill.title.clone(),
-                            done: finished(&self.summary, &drill.id),
+                            done: finished(self.summary.as_ref(), &drill.id),
                             aside: Some(drill.level.clone()),
                         })
                         .collect(),
@@ -467,7 +451,7 @@ impl Render for EndgameDrills {
                             )
                             .child(widgets::heading(self.drill.title.clone(), &palette)),
                     )
-                    .child(widgets::view_toggles(frontend.blindfold, frontend.zen_mode)),
+                    .child(widgets::view_toggles(cx)),
             )
             .child(widgets::hint(
                 format!(
@@ -519,7 +503,7 @@ impl Render for EndgameDrills {
                         Button::new("drill-flip")
                             .outline()
                             .icon(icon("arrow-up-down"))
-                            .tooltip("Flip board (F)")
+                            .tooltip(crate::menu::flip_label(cx))
                             .accessibility_label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     )

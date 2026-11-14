@@ -27,37 +27,33 @@ gpui_kit::actions!(
         ShowWhatsNew,
         ToggleSidebar,
         Find,
-        New
+        New,
+        ToggleZen,
+        FlipBoard
     ]
 );
 
 /// Act on the window in front. A key reaches its action while that window is being updated, so
 /// the window is changed just after.
-fn on_window(cx: &mut App, change: fn(&mut Window)) {
+fn on_window(cx: &mut App, change: impl FnOnce(&mut Window, &mut App) + 'static) {
     cx.defer(move |cx| {
         if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, _| change(window));
+            let _ = window.update(cx, |_, window, cx| change(window, cx));
         }
     });
 }
 
 /// Interface size one step either way, or back to Auto; changed after the key's dispatch.
 fn zoom(direction: i8, cx: &mut App) {
-    cx.defer(move |cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, cx| {
-                crate::interface_zoom::step_window(direction, window, cx)
-            });
-        }
+    on_window(cx, move |window, cx| {
+        crate::interface_zoom::step_window(direction, window, cx)
     });
 }
 
 /// Back (-1) or forward (1) through the pages visited, as a swipe goes; after the key's dispatch.
 fn go(direction: crate::swipe::Direction, cx: &mut App) {
-    cx.defer(move |cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, cx| crate::shell::go(direction, window, cx));
-        }
+    on_window(cx, move |window, cx| {
+        crate::shell::go(direction, window, cx)
     });
 }
 
@@ -69,13 +65,8 @@ fn show_palette(prefix: &'static str, cx: &mut App) {
     else {
         return;
     };
-    // The key reaches here while the window is being updated; it is updated next.
-    cx.defer(move |cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, cx| {
-                palette.update(cx, |palette, cx| palette.show(prefix, window, cx))
-            });
-        }
+    on_window(cx, move |window, cx| {
+        palette.update(cx, |palette, cx| palette.show(prefix, window, cx))
     });
 }
 
@@ -83,7 +74,7 @@ fn show_palette(prefix: &'static str, cx: &mut App) {
 /// pages own the unsaved work, and on macOS closing it does not quit the app.
 pub fn close_window(window: AnyWindowHandle, cx: &mut App) {
     unless_leaving_a_game("Close", cx, move |cx| {
-        crate::core::prepare_quit(
+        crate::quit::prepare_quit(
             cx,
             "Close without saving",
             move |cx| {
@@ -131,6 +122,83 @@ fn unless_leaving_a_game(leave: &'static str, cx: &mut App, then: impl FnOnce(&m
     });
 }
 
+/// The keys bound to `action`, as the shortcuts list, Quick Pick and tooltips show them: "⌘ K" on
+/// macOS, "Ctrl K" elsewhere. The first binding made for it outside any context wins (`init`
+/// makes the one to show first), else its first.
+pub fn keys(action: &dyn Action, cx: &App) -> Option<String> {
+    let keymap = cx.key_bindings();
+    let keymap = keymap.borrow();
+    let first = keymap.bindings_for_action(action).next().map(binding_label);
+    keymap
+        .bindings_for_action(action)
+        .find(|binding| binding.predicate().is_none())
+        .map(binding_label)
+        .or(first)
+}
+
+/// "Flip board", with the key that turns the board.
+pub fn flip_label(cx: &App) -> String {
+    match keys(&FlipBoard, cx) {
+        Some(key) => format!("Flip board ({key})"),
+        None => "Flip board".into(),
+    }
+}
+
+/// Every binding of `action`, in the order `init` makes them.
+pub fn all_keys(action: &dyn Action, cx: &App) -> Vec<String> {
+    let keymap = cx.key_bindings();
+    let keymap = keymap.borrow();
+    keymap
+        .bindings_for_action(action)
+        .map(binding_label)
+        .collect()
+}
+
+/// The key of `action`'s binding alone, without its modifiers (the − of ⌘ −).
+pub fn key_alone(action: &dyn Action, cx: &App) -> Option<String> {
+    keys(action, cx)?.rsplit(' ').next().map(str::to_string)
+}
+
+fn binding_label(binding: &KeyBinding) -> String {
+    binding
+        .keystrokes()
+        .iter()
+        .map(|keystroke| keystroke_label(keystroke.modifiers(), keystroke.key()))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// One keystroke as its chips read: the modifiers in the platform's order, then the key.
+fn keystroke_label(modifiers: &Modifiers, key: &str) -> String {
+    let mac = cfg!(target_os = "macos");
+    let mut parts: Vec<String> = Vec::new();
+    if modifiers.control {
+        parts.push(if mac { "⌃" } else { "Ctrl" }.into());
+    }
+    if modifiers.alt {
+        parts.push(if mac { "⌥" } else { "Alt" }.into());
+    }
+    if modifiers.shift {
+        parts.push("⇧".into());
+    }
+    if modifiers.platform {
+        parts.push(if mac { "⌘" } else { "Win" }.into());
+    }
+    parts.push(match key {
+        "left" => "←".into(),
+        "right" => "→".into(),
+        "up" => "↑".into(),
+        "down" => "↓".into(),
+        "-" => "−".into(),
+        "escape" => "Esc".into(),
+        "enter" => "Enter".into(),
+        "space" => "Space".into(),
+        "delete" => "Delete".into(),
+        key => key.to_uppercase(),
+    });
+    parts.join(" ")
+}
+
 /// A binding whose `secondary-` is the host's Cmd or Ctrl. GPUI resolves `secondary-` only when
 /// it loads a binding for the running platform (`KeyBinding::new` refuses it).
 fn bind(keystrokes: &str, action: impl Action, cx: &App) -> KeyBinding {
@@ -139,6 +207,10 @@ fn bind(keystrokes: &str, action: impl Action, cx: &App) -> KeyBinding {
 }
 
 pub fn init(cx: &mut App) {
+    // Ctrl+Y redoes too, as text fields take it outside macOS; the shortcuts list shows it.
+    if !cfg!(target_os = "macos") {
+        cx.bind_keys([bind("ctrl-y", Redo, cx)]);
+    }
     let bindings = [
         // Cmd on macOS and Ctrl elsewhere; the others are macOS's own.
         bind("secondary-q", Quit, cx),
@@ -153,8 +225,8 @@ pub fn init(cx: &mut App) {
         bind("shift-secondary-p", Commands, cx),
         bind("secondary-,", OpenSettings, cx),
         // Interface size: with or without Shift, and the keypad's.
-        bind("secondary-=", ZoomIn, cx),
         bind("secondary-+", ZoomIn, cx),
+        bind("secondary-=", ZoomIn, cx),
         bind("secondary-shift-=", ZoomIn, cx),
         bind("secondary--", ZoomOut, cx),
         bind("secondary-shift--", ZoomOut, cx),
@@ -186,54 +258,19 @@ pub fn init(cx: &mut App) {
     } else {
         bind("ctrl-b", ToggleSidebar, cx)
     }]);
-    // ? lists the shortcuts as on Lichess, but only outside a text field, where it is typed.
-    cx.bind_keys([KeyBinding::new("?", ShowShortcuts, Some("!Input"))]);
-    // Ctrl+Y redoes too, as text fields take it outside macOS.
-    if !cfg!(target_os = "macos") {
-        cx.bind_keys([bind("ctrl-y", Redo, cx)]);
-    }
-    cx.on_action(|_: &ShowShortcuts, cx| {
-        cx.defer(|cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, cx| crate::shortcuts::open(window, cx));
-            }
-        })
-    });
-    cx.on_action(|_: &ShowWhatsNew, cx| {
-        cx.defer(|cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, cx| crate::whats_new::open(window, cx));
-            }
-        })
-    });
-    cx.on_action(|_: &Copy, cx| {
-        cx.defer(|cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, cx| crate::palette::copy_shown(window, cx));
-            }
-        })
-    });
-    cx.on_action(|_: &Paste, cx| {
-        cx.defer(|cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, cx| crate::palette::open_pasted(window, cx));
-            }
-        })
-    });
-    cx.on_action(|_: &New, cx| {
-        cx.defer(|cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, cx| crate::palette::new_on_page(window, cx));
-            }
-        })
-    });
-    cx.on_action(|_: &ToggleSidebar, cx| {
-        cx.defer(|cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, cx| crate::shell::toggle_sidebar(window, cx));
-            }
-        })
-    });
+    // ? lists the shortcuts as on Lichess, Z turns zen mode on or off on a game page and F turns
+    // the board, but only outside a text field, where they are typed.
+    cx.bind_keys([
+        KeyBinding::new("?", ShowShortcuts, Some("!Input")),
+        KeyBinding::new("z", ToggleZen, Some("!Input")),
+        KeyBinding::new("f", FlipBoard, Some("!Input")),
+    ]);
+    cx.on_action(|_: &ShowShortcuts, cx| on_window(cx, crate::shortcuts::open));
+    cx.on_action(|_: &ShowWhatsNew, cx| on_window(cx, crate::whats_new::open));
+    cx.on_action(|_: &Copy, cx| on_window(cx, crate::shell::copy_on_page));
+    cx.on_action(|_: &Paste, cx| on_window(cx, crate::links::open_pasted));
+    cx.on_action(|_: &New, cx| on_window(cx, crate::shell::new_on_page));
+    cx.on_action(|_: &ToggleSidebar, cx| on_window(cx, crate::shell::toggle_sidebar));
     cx.on_action(|_: &GoBack, cx| go(-1, cx));
     cx.on_action(|_: &GoForward, cx| go(1, cx));
     cx.on_action(|_: &ZoomIn, cx| zoom(1, cx));
@@ -255,18 +292,14 @@ pub fn init(cx: &mut App) {
     });
     cx.on_action(|_: &Commands, cx| show_palette(">", cx));
     cx.on_action(|_: &OpenSettings, cx| {
-        cx.defer(|cx| {
-            if let Some(window) = cx.active_window() {
-                let _ = window.update(cx, |_, window, cx| {
-                    crate::shell::open(crate::pages::Page::Settings, window, cx)
-                });
-            }
+        on_window(cx, |window, cx| {
+            crate::shell::open(crate::pages::Page::Settings, window, cx)
         })
     });
     // Everything is saved, with the window still open to say what could not be, before quitting.
     cx.on_action(|_: &Quit, cx| {
         unless_leaving_a_game("Quit", cx, |cx| {
-            crate::core::prepare_quit(cx, "Quit without saving", crate::core::quit_saved, |_| {});
+            crate::quit::prepare_quit(cx, "Quit without saving", crate::quit::quit_saved, |_| {});
         });
     });
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -279,9 +312,9 @@ pub fn init(cx: &mut App) {
             }
         })
     });
-    cx.on_action(|_: &Minimize, cx| on_window(cx, |window| window.minimize_window()));
-    cx.on_action(|_: &Zoom, cx| on_window(cx, |window| window.zoom_window()));
-    cx.on_action(|_: &ToggleFullScreen, cx| on_window(cx, |window| window.toggle_fullscreen()));
+    cx.on_action(|_: &Minimize, cx| on_window(cx, |window, _| window.minimize_window()));
+    cx.on_action(|_: &Zoom, cx| on_window(cx, |window, _| window.zoom_window()));
+    cx.on_action(|_: &ToggleFullScreen, cx| on_window(cx, |window, _| window.toggle_fullscreen()));
     // Closing the window ends the app, which then saves and closes the core; macOS keeps it
     // running, as its apps do, and the Dock icon opens the window again.
     cx.on_window_closed(|cx, _| {

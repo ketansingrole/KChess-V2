@@ -12,7 +12,8 @@ use kchess_contracts::types::{AppTheme, CustomThemeReport, Settings};
 use kchess_contracts::{CoreError, Level};
 use serde_json::Value;
 
-use crate::core::{Answer, AppCore, BoxedSave, CoreEvent, Reads};
+use crate::core::{Answer, AppCore, ClientEvent, CoreEvent, Reads};
+use crate::quit::BoxedSave;
 
 /// How long edits settle before they are saved.
 const SAVE_DELAY: Duration = Duration::from_millis(400);
@@ -43,7 +44,7 @@ enum Write {
     /// The settings shown, and those they were edited from: only what changed is written.
     Save(Box<(Settings, Settings)>),
     /// Done once every save before it was answered: with why the last of them failed, if it did.
-    Flushed(oneshot::Sender<crate::core::Saved>),
+    Flushed(oneshot::Sender<crate::quit::Saved>),
 }
 
 /// Sent when the settings or themes change.
@@ -96,7 +97,7 @@ pub fn init(cx: &mut App) {
         reads: Reads::default(),
     });
     write_in_order(entity.downgrade(), queue, cx);
-    crate::core::on_quit(cx, {
+    crate::quit::on_quit(cx, {
         let entity = entity.clone();
         move |cx| Some(entity.update(cx, |settings, _| settings.flushed()))
     });
@@ -104,9 +105,12 @@ pub fn init(cx: &mut App) {
     let events = cx.global::<AppCore>().events.clone();
     cx.subscribe(&events, {
         let entity = entity.clone();
-        move |_, event: &CoreEvent, cx| {
+        move |_, event: &ClientEvent, cx| {
             // Another window saved, or this one reconnected and may have missed a save.
-            if event.name == "settings:saved" || event.name == crate::core::RECONNECTED {
+            if matches!(
+                event,
+                ClientEvent::Event(CoreEvent::SettingsSaved(_)) | ClientEvent::Reconnected
+            ) {
                 reload(&entity, cx);
             }
         }
@@ -193,7 +197,7 @@ fn write_in_order(
                         let saved = core
                             .request(SaveDesktopSettings {
                                 settings: sent.clone(),
-                                base: base.clone(),
+                                base: Some(base.clone()),
                             })
                             .await;
                         failed = saved
@@ -336,7 +340,12 @@ fn adopt(shown: &Settings, stored: &Settings, next: &Settings) -> Settings {
     serde_json::from_value(Value::Object(merged)).unwrap_or_else(|_| shown.clone())
 }
 
-/// Change settings from a view (`toggleSetting`, the Settings page); they save themselves.
+/// The app's own preferences, as shown now.
+pub fn frontend(cx: &App) -> &kchess_contracts::types::FrontendPreferences {
+    &cx.global::<SettingsHandle>().0.read(cx).settings.frontend
+}
+
+/// Change settings from a view; they save themselves.
 pub fn change(cx: &mut App, change: impl FnOnce(&mut Settings) + 'static) {
     let handle = cx.global::<SettingsHandle>().0.clone();
     handle.update(cx, |settings, cx| settings.update(change, cx));

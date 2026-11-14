@@ -3,15 +3,17 @@
 //! games.
 //! Activity and timeline lines are written here, so every frontend shows the same text.
 
-use serde::Serialize;
 use serde_json::Value;
 
 use super::accounts::{
-    Lichess, LichessGame, Reply, no_such_user, normalize_game, parse_game, path_segment,
-    profile_key,
+    GameJson, Lichess, Reply, no_such_user, normalize_game, path_segment, profile_key,
 };
-use super::client::{Failure, Ndjson};
-use crate::error::{CoreError, Result as CoreResult};
+use super::client::Lane;
+use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
+use kchess_contracts::types::{
+    ActivityDay, ActivityItem, ImportedGame, LeaderboardEntry, LichessGame, LichessRelation,
+    PerfType, PlayerSuggestion, RatingChange, RelationAction, TimelineEntry, UsageKind,
+};
 use kchess_domain::records::RATING_DISPLAY_NAMES;
 
 /// `/api/users` takes at most this many names a request.
@@ -25,97 +27,19 @@ const TIMELINE_SIZE: usize = 30;
 const TIMELINE_PLAYERS: usize = 15;
 const BOOKMARKS_MAX: usize = 100;
 
-/// `LichessRelation` of the contracts.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-pub struct LichessRelation {
-    pub following: bool,
-    pub blocking: bool,
-}
-
-/// `LeaderboardEntry` of the contracts.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct LeaderboardEntry {
-    pub username: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    pub rating: f64,
-    pub progress: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub online: Option<bool>,
-}
-
-/// `PlayerSuggestion` of the contracts.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-pub struct PlayerSuggestion {
-    pub username: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub online: Option<bool>,
-}
-
-/// `ActivityItem` of the contracts.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ActivityItem {
-    pub kind: String,
-    pub text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub game_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rating: Option<RatingChange>,
-}
-
-/// `RatingChange` of the contracts: a rating over the line's games or puzzles.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-pub struct RatingChange {
-    pub before: f64,
-    pub after: f64,
-}
-
-/// `ActivityDay` of the contracts.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-pub struct ActivityDay {
-    pub start: f64,
-    pub items: Vec<ActivityItem>,
-}
-
-/// `TimelineEntry` of the contracts.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-pub struct TimelineEntry {
-    pub date: f64,
-    /// Who on the Following list the line is about.
-    pub player: String,
-    pub item: ActivityItem,
-}
-
-/// `ImportedGame` of the contracts.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-pub struct ImportedGame {
-    pub id: String,
-    pub url: String,
-}
-
 impl Lichess {
-    /// `relation`: whether `account` follows or blocks `username` (the profile as `account` sees
+    /// Whether `account` follows or blocks `username` (the profile as `account` sees
     /// it carries both).
     pub async fn relation(
         &self,
         account: &str,
         username: &str,
     ) -> CoreResult<Reply<LichessRelation>> {
-        self.as_account(account, "profile", |token| async move {
+        self.as_account(account, UsageKind::Profile, |auth| async move {
             let user: Value = self
                 .client()
-                .get_json(
-                    &format!("/api/user/{}", path_segment(username)),
-                    &[],
-                    Some(&super::client::authorize(&token)),
-                    self.lifetime(),
-                )
+                .get(&format!("/api/user/{}", path_segment(username)), &auth)
+                .read_json()
                 .await
                 .map_err(|failure| no_such_user(username, failure))?;
             Ok(LichessRelation {
@@ -126,123 +50,101 @@ impl Lichess {
         .await
     }
 
-    /// `setRelation`: follow, unfollow, block or unblock `username` as `account`. Needs
+    /// Follow, unfollow, block or unblock `username` as `account`. Needs
     /// `follow:write`; a login made before it was requested answers "reconnect".
     pub async fn set_relation(
         &self,
         account: &str,
         username: &str,
-        action: &str,
+        action: RelationAction,
     ) -> CoreResult<Reply<()>> {
-        if !matches!(action, "follow" | "unfollow" | "block" | "unblock") {
-            return Err(CoreError::new("Invalid action."));
-        }
-        self.as_account(account, "profile", |token| async move {
+        let action = action.as_str();
+        self.as_account(account, UsageKind::Profile, |auth| async move {
             self.client()
-                .post_form::<Value>(
+                .post(
                     &format!("/api/rel/{action}/{}", path_segment(username)),
-                    &[],
-                    Some(&super::client::authorize(&token)),
-                    self.lifetime(),
+                    &auth,
                 )
+                .form::<&str, &str>(&[])
+                .read_json::<Value>()
                 .await
                 .map(|_| ())
         })
         .await
     }
 
-    /// `profiles`: many players at once (`POST /api/users`), in requests of 300; Lichess leaves
+    /// Many players at once (`POST /api/users`), in requests of 300; Lichess leaves
     /// out names it does not know.
     pub async fn profiles(&self, usernames: &[String]) -> CoreResult<Vec<Value>> {
         let mut users = Vec::new();
         for chunk in usernames.chunks(USERS_PER_REQUEST) {
             let page: Vec<Value> = self
                 .client()
-                .policy()
-                .with_usage("", "profile", async {
-                    self.client()
-                        .post_text("/api/users", chunk.join(","), None, self.lifetime())
-                        .await
-                })
+                .post("/api/users", &self.anonymous(UsageKind::Profile))
+                .text(chunk.join(","))
+                .read_json()
                 .await?;
             users.extend(page);
         }
         Ok(users)
     }
 
-    /// `leaderboard`: the top players of `perf`.
-    pub async fn leaderboard(&self, perf: &str) -> CoreResult<Vec<LeaderboardEntry>> {
+    /// The top players of `perf`.
+    pub async fn leaderboard(&self, perf: PerfType) -> CoreResult<Vec<LeaderboardEntry>> {
+        let perf = perf.as_str();
         if perf == "correspondence" {
             return Err(CoreError::new("Lichess has no correspondence leaderboard."));
         }
         let text = self
             .client()
-            .policy()
-            .with_usage("", "profile", async {
-                self.client()
-                    .get_text(
-                        &format!("/api/player/top/{LEADERBOARD_SIZE}/{}", path_segment(perf)),
-                        &[],
-                        "application/vnd.lichess.v3+json",
-                        None,
-                        self.lifetime(),
-                        None,
-                    )
-                    .await
-            })
+            .get(
+                &format!("/api/player/top/{LEADERBOARD_SIZE}/{}", path_segment(perf)),
+                &self.anonymous(UsageKind::Profile),
+            )
+            .accept("application/vnd.lichess.v3+json")
+            .read_text(None)
             .await?;
         let body: Value = serde_json::from_str(&text)
             .map_err(|_| CoreError::new("Lichess returned an invalid leaderboard."))?;
         Ok(read_leaderboard(&body, perf))
     }
 
-    /// `searchPlayers`: players whose names start with `term`.
+    /// Players whose names start with `term`.
     pub async fn search_players(&self, term: &str) -> CoreResult<Vec<PlayerSuggestion>> {
         if term.chars().count() < SEARCH_MIN {
             return Ok(Vec::new());
         }
         let body: Value = self
             .client()
-            .policy()
-            .with_usage("", "profile", async {
-                self.client()
-                    .get_json(
-                        "/api/player/autocomplete",
-                        &[("term", term.to_string()), ("object", "true".to_string())],
-                        None,
-                        self.lifetime(),
-                    )
-                    .await
-            })
+            .get(
+                "/api/player/autocomplete",
+                &self.anonymous(UsageKind::Profile),
+            )
+            .query(&[("term", term), ("object", "true")])
+            .read_json()
             .await?;
         Ok(read_suggestions(&body))
     }
 
-    /// `activity`: what `username` did lately, by day. Cached for a few minutes like a profile,
+    /// What `username` did lately, by day. Cached for a few minutes like a profile,
     /// so the timeline and the player's page share one read.
     pub async fn activity(&self, username: &str) -> CoreResult<Vec<ActivityDay>> {
         let body = self
             .cached_fetch(&profile_key(username, "activity"), username, || async {
                 self.client()
-                    .policy()
-                    .with_usage("", "profile", async {
-                        self.client()
-                            .get_json(
-                                &format!("/api/user/{}/activity", path_segment(username)),
-                                &[],
-                                None,
-                                self.lifetime(),
-                            )
-                            .await
-                            .map_err(|failure| no_such_user(username, failure))
-                    })
+                    .get(
+                        &format!("/api/user/{}/activity", path_segment(username)),
+                        &self.anonymous(UsageKind::Profile),
+                    )
+                    .read_json()
                     .await
+                    .map_err(|failure| no_such_user(username, failure))
             })
             .await?;
         Ok(read_activity(&body))
     }
 
-    /// `timeline`: what the players on the Following list did lately, newest first. Lichess's
+    /// What the players on the Following list did lately, newest first. Lichess's
     /// own timeline answers only its mobile app's login, so this reads each player's public
     /// activity. A player whose activity cannot be read is left out; when none can be, the first
     /// failure is the answer.
@@ -285,31 +187,19 @@ impl Lichess {
         Ok(entries)
     }
 
-    /// `importGame`: upload `pgn` to Lichess as `account`, or anonymously when it is empty or its
+    /// Upload `pgn` to Lichess as `account`, or anonymously when it is empty or its
     /// login is unavailable.
     pub async fn import_game(&self, account: &str, pgn: &str) -> CoreResult<ImportedGame> {
-        let token = if account.is_empty() {
-            None
-        } else {
-            self.token_of(account).await
-        };
+        let auth = self.optional_login(account, UsageKind::Profile).await;
         let answer: Value = self
             .client()
-            .policy()
-            .with_usage(account, "profile", async {
-                self.client()
-                    .post_form(
-                        "/api/import",
-                        &[("pgn", pgn)],
-                        token.as_deref().map(super::client::authorize).as_deref(),
-                        self.lifetime(),
-                    )
-                    .await
-            })
+            .post("/api/import", &auth)
+            .form(&[("pgn", pgn)])
+            .read_json()
             .await
-            .map_err(|failure: Failure| match failure.status() {
-                Some(400) => CoreError::new("Lichess could not read that game."),
-                _ => failure.into(),
+            .map_err(|failure| match failure.kind {
+                Some(ErrorKind::Refused) => CoreError::new("Lichess could not read that game."),
+                _ => failure,
             })?;
         match (answer["id"].as_str(), answer["url"].as_str()) {
             (Some(id), Some(url)) if url.starts_with("https://") => Ok(ImportedGame {
@@ -322,44 +212,25 @@ impl Lichess {
         }
     }
 
-    /// `bookmarkedGames`: the games `account` bookmarked, newest first, from its side.
+    /// The games `account` bookmarked, newest first, from its side.
     pub async fn bookmarked_games(&self, account: &str) -> CoreResult<Reply<Vec<LichessGame>>> {
         let reply = self
-            .as_account(account, "profile", |token| async move {
-                let mut lines = Vec::new();
+            .as_account(account, UsageKind::Profile, |auth| async move {
                 self.client()
-                    .ndjson(
-                        Ndjson {
-                            method: reqwest::Method::GET,
-                            path: "/api/games/export/bookmarks",
-                            query: &[
-                                ("max", BOOKMARKS_MAX.to_string()),
-                                ("moves", "false".to_string()),
-                                ("opening", "true".to_string()),
-                            ],
-                            body: None,
-                            auth: Some(&super::client::authorize(&token)),
-                        },
-                        self.lifetime(),
-                        |line| {
-                            lines.push(line.to_string());
-                            Ok(())
-                        },
-                    )
-                    .await?;
-                Ok(lines)
+                    .get("/api/games/export/bookmarks", &auth)
+                    .query(&[
+                        ("max", BOOKMARKS_MAX.to_string()),
+                        ("moves", "false".to_string()),
+                        ("opening", "true".to_string()),
+                    ])
+                    .lane(Lane::Export)
+                    .records("game", BOOKMARKS_MAX, |raw: GameJson| {
+                        Some(normalize_game(&raw, account))
+                    })
+                    .await
             })
             .await?;
-        Ok(match reply {
-            Reply::Done(lines) => {
-                let mut games = Vec::new();
-                for line in lines.iter().take(BOOKMARKS_MAX) {
-                    games.push(normalize_game(&parse_game(line)?, account));
-                }
-                Reply::Done(games)
-            }
-            Reply::NeedsReconnect => Reply::NeedsReconnect,
-        })
+        Ok(reply)
     }
 }
 

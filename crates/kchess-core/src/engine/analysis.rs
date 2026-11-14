@@ -3,137 +3,57 @@
 //! exactly one final update: `completed` when the search finished, `interrupted` when it was
 //! superseded or stopped (never completed), or `failed` with the error.
 //!
-//! The TypeScript module state lives in `Analysis`'s `State`, one per core instance. Analysis
-//! runs on its own task: `start_analysis` returns its id at once, and `stop_analysis` (or a newer
-//! request) ends it.
+//! Analysis runs on its own task: `start_analysis` returns its id at once, and `stop_analysis`
+//! (or a newer request) ends it.
 
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::oneshot;
-use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::status::{
-    EngineStatus, engine_identity, engine_status, fairy_variant, variant_engine_status,
-};
-use super::uci::{UciController, error_summary, lock, signal_aborted, truncate_for_log};
-use super::{EngineContext, after, clear_timer, domain, parse_info, replace_timer, validate};
-use crate::error::{CoreError, Result};
-use crate::host::Level;
+use super::EngineContext;
+use super::job::{self, Line, Place};
+use super::scheduler::Priority;
+use super::slot::EngineSlot;
+use super::status::fairy_variant;
+use super::uci::truncate_for_log;
+use crate::tasks::{aborted as signal_aborted, lock};
+use kchess_contracts::check::check;
+use kchess_contracts::error::{CoreError, Result};
+use kchess_contracts::types::AnalysisRequest;
+pub use kchess_contracts::types::{AnalysisReason as Reason, AnalysisUpdate, EngineLine};
+use kchess_domain::misc::value::J;
+use kchess_domain::training::uci_info::parse_info;
 
-/// The event analysis updates are delivered as (`engine:analysis`).
-pub const ANALYSIS_EVENT: &str = "engine:analysis";
 /// Depth a bounded analysis searches to.
 pub const DEPTH_LIMIT: u32 = 26;
 /// Time a bounded analysis may take.
 pub const TIME_LIMIT_MS: u64 = 60_000;
 /// How long an idle analysis engine is kept.
-const IDLE_MS: u64 = 120_000;
+const IDLE: Duration = Duration::from_secs(120);
 /// Updates are sent at most this often while lines change.
 const EMIT_EVERY: Duration = Duration::from_millis(120);
 
 /// Where updates go: the host's `engine:analysis` event, or a test's recorder.
 pub type AnalysisSink = Arc<dyn Fn(AnalysisUpdate) + Send + Sync>;
 
-/// Why an analysis ended (`reason`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Reason {
-    Completed,
-    Interrupted,
-    Failed,
-}
-
-/// One line of a search's principal variations (`EngineLine`).
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EngineLine {
-    /// 1 for the best line, 2 for the next best...
-    pub rank: u32,
-    pub depth: f64,
-    /// Centipawns, when there is no forced mate.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cp: Option<f64>,
-    /// Moves to mate: positive when White mates, negative when Black does.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mate: Option<f64>,
-    /// Principal variation as UCI moves.
-    pub pv: Vec<String>,
-}
-
-/// The payload of `engine:analysis` (`AnalysisUpdate`).
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AnalysisUpdate {
-    /// The request this belongs to; the frontends drop updates of superseded ones.
-    pub id: u64,
-    pub fen: String,
-    pub depth: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nps: Option<f64>,
-    pub lines: Vec<EngineLine>,
-    pub done: bool,
-    pub context: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<Reason>,
-    pub engine: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// `AnalysisRequest` after validation.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Request {
-    fen: String,
-    #[serde(default)]
-    root_fen: Option<String>,
-    #[serde(default)]
-    moves: Option<Vec<String>>,
-    /// Numbers arrive as floats from the validator.
-    #[serde(default)]
-    client_id: Option<f64>,
-    lines: f64,
-    #[serde(default)]
-    infinite: bool,
-    /// A Lichess variant key; standard chess (or Chess960) when left out.
-    #[serde(default)]
-    variant: Option<String>,
-}
-
-/// The whole number a validated request carries, as the integer the update reports.
-fn whole(value: f64) -> i64 {
-    value as i64
-}
-
-#[derive(Clone)]
-struct Engine {
-    key: String,
-    uci: Arc<UciController>,
-}
-
 /// The analysis service's state.
 #[derive(Default)]
 struct State {
-    engine: Option<Engine>,
     /// The request in progress, with its id.
     current: Option<(u64, CancellationToken)>,
     next_id: u64,
-    /// Finishes when the analysis queued last has finished (the promise chain `serial`).
-    serial: Option<oneshot::Receiver<()>>,
-    idle: Option<AbortHandle>,
+    /// The analyses in the order they were asked for.
+    line: Line,
 }
 
 struct Shared {
     ctx: EngineContext,
     state: Mutex<State>,
+    engine: Arc<EngineSlot>,
 }
 
 /// One client's analysis: its engine and the request in progress. Cloning shares them.
@@ -195,13 +115,13 @@ impl Analysis {
 
     pub(crate) async fn start_analysis_with_settings(
         &self,
-        raw: Value,
+        request: AnalysisRequest,
         configured: impl Future<Output = Result<String>>,
         send: AnalysisSink,
     ) -> Result<u64> {
         self.interrupt_others();
         self.mine()
-            .start_analysis_with_settings(raw, configured, send)
+            .start_analysis_with_settings(request, configured, send)
             .await
     }
 
@@ -296,7 +216,8 @@ impl Session {
             return;
         };
         let rank = parsed.line.rank;
-        if rank > f64::from(wanted) {
+        // A rank the engine did not write as a number is no line.
+        if !rank.is_finite() || rank > f64::from(wanted) {
             return;
         }
         let rank = rank as u32;
@@ -329,7 +250,7 @@ impl Session {
     }
 }
 
-/// Runs when an analysis ends (`finally`): forgets it as current and starts the idle countdown.
+/// Runs when an analysis ends, however it ends: forgets it as current and starts the idle countdown.
 struct Finish {
     shared: Arc<Shared>,
     id: u64,
@@ -337,12 +258,11 @@ struct Finish {
 
 /// An admitted request owns cancellation and its place in line, including while settings load.
 struct PendingAnalysis {
-    request: Request,
+    request: AnalysisRequest,
     id: u64,
     token: CancellationToken,
-    prev: Option<oneshot::Receiver<()>>,
+    place: Place,
     finish: Finish,
-    done: oneshot::Sender<()>,
 }
 
 impl Drop for Finish {
@@ -350,30 +270,8 @@ impl Drop for Finish {
         let mut state = lock(&self.shared.state);
         if state.current.as_ref().is_some_and(|(id, _)| *id == self.id) {
             state.current = None;
-            // The countdown only closes the engine: with none open (a client that left had its
-            // engine killed) it would just keep this analysis's state alive for two minutes.
-            if state.engine.is_none() {
-                return;
-            }
-            let weak = Arc::downgrade(&self.shared);
-            let idle = after(IDLE_MS, move || {
-                if let Some(shared) = weak.upgrade() {
-                    stop_locked(&mut lock(&shared.state), true);
-                }
-            });
-            replace_timer(&mut state.idle, idle);
+            self.shared.engine.release();
         }
-    }
-}
-
-/// `stopAnalysis`' body, under the state lock.
-fn stop_locked(state: &mut State, kill: bool) {
-    if let Some((_, token)) = &state.current {
-        token.cancel();
-    }
-    clear_timer(&mut state.idle);
-    if kill && let Some(engine) = state.engine.take() {
-        engine.uci.close();
     }
 }
 
@@ -381,41 +279,35 @@ impl AnalysisEngine {
     pub fn new(ctx: EngineContext) -> AnalysisEngine {
         AnalysisEngine {
             shared: Arc::new(Shared {
+                engine: EngineSlot::new(ctx.clone(), IDLE),
                 ctx,
                 state: Mutex::new(State::default()),
             }),
         }
     }
 
-    /// `startAnalysis(request, configured, send)`: validates the request, supersedes the analysis
+    /// Validates the request, supersedes the analysis
     /// running, and starts this one on its own task. Returns the request's id.
     pub fn start_analysis(&self, raw: Value, configured: &str, send: AnalysisSink) -> Result<u64> {
-        Ok(self.start_pending(self.reserve(raw)?, configured.to_string(), send))
+        let request = check::<AnalysisRequest>(J::from(&raw)).map_err(CoreError::new)?;
+        Ok(self.start_pending(self.reserve(request), configured.to_string(), send))
     }
 
     /// Admit before the first await; stopping the service cancels pending settings reads too.
     pub(crate) async fn start_analysis_with_settings(
         &self,
-        raw: Value,
+        request: AnalysisRequest,
         configured: impl Future<Output = Result<String>>,
         send: AnalysisSink,
     ) -> Result<u64> {
-        let mut pending = self.reserve(raw)?;
-        if let Some(prev) = pending.prev.take() {
-            let _ = prev.await;
-        }
-        let configured = tokio::select! {
-            biased;
-            _ = pending.token.cancelled() => return Err(signal_aborted()),
-            result = configured => result?,
-        };
+        let mut pending = self.reserve(request);
+        pending.place.turn().await;
+        let configured = job::configured(&pending.token, configured).await?;
         Ok(self.start_pending(pending, configured, send))
     }
 
-    fn reserve(&self, raw: Value) -> Result<PendingAnalysis> {
-        let request: Request = serde_json::from_value(validate("assertAnalysisRequest", &raw)?)
-            .map_err(|cause| CoreError::new(cause.to_string()))?;
-        let (id, token, prev, done) = {
+    fn reserve(&self, request: AnalysisRequest) -> PendingAnalysis {
+        let (id, token, place) = {
             let mut state = lock(&self.shared.state);
             state.next_id += 1;
             let id = state.next_id;
@@ -424,22 +316,19 @@ impl AnalysisEngine {
             }
             let token = CancellationToken::new();
             state.current = Some((id, token.clone()));
-            clear_timer(&mut state.idle);
-            let (done, queued) = oneshot::channel();
-            let prev = state.serial.replace(queued);
-            (id, token, prev, done)
+            self.shared.engine.keep();
+            (id, token, state.line.join())
         };
-        Ok(PendingAnalysis {
+        PendingAnalysis {
             request,
             id,
             token,
-            prev,
-            done,
+            place,
             finish: Finish {
                 shared: Arc::clone(&self.shared),
                 id,
             },
-        })
+        }
     }
 
     fn start_pending(
@@ -452,36 +341,27 @@ impl AnalysisEngine {
             request,
             id,
             token,
-            prev,
-            done,
+            place,
             finish,
         } = pending;
         let shared = Arc::clone(&self.shared);
         tokio::spawn(async move {
-            // Declared so that the finish bookkeeping runs first, then the next analysis may start.
-            let _done = done;
+            // Declared before the finish bookkeeping, which so runs first: then the next
+            // analysis may start.
+            let mut place = place;
             let _finish = finish;
-            if let Some(prev) = prev {
-                // A failed analysis still lets the next one start.
-                let _ = prev.await;
-            }
+            place.turn().await;
             let root = request
                 .root_fen
                 .clone()
                 .unwrap_or_else(|| request.fen.clone());
             let moves = request.moves.clone().unwrap_or_default();
-            let context = domain(
-                "analysisContext",
-                vec![Value::String(root.clone()), serde_json::json!(moves)],
-            )
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_string))
-            .unwrap_or_default();
+            let context = kchess_domain::records::context::analysis_context(&root, &moves);
             let session = Arc::new(Session {
                 id,
                 fen: request.fen.clone(),
                 context,
-                client_id: request.client_id.map(whole),
+                client_id: request.client_id.map(|id| id as i64),
                 sink: send,
                 progress: Mutex::new(Progress::default()),
             });
@@ -495,64 +375,57 @@ impl AnalysisEngine {
                 &token,
             )
             .await;
-            match outcome {
-                Ok(()) => {}
-                Err(cause) => {
-                    let context = format!(
-                        "fen={} client={}",
-                        truncate_for_log(&request.fen, 60),
-                        truncate_for_log(
-                            &request
-                                .client_id
-                                .map_or("none".to_string(), |id| whole(id).to_string()),
-                            40
-                        ),
-                    );
-                    if token.is_cancelled() || cause.aborted {
-                        shared.ctx.host.log(
-                            Level::Debug,
-                            "analysis",
-                            &format!("Analysis interrupted: {context} {}", error_summary(&cause)),
-                        );
-                        session.emit(Some(Reason::Interrupted), None);
-                    } else {
-                        shared.ctx.host.log(
-                            Level::Warn,
-                            "analysis",
-                            &format!("Analysis failed: {context} {}", error_summary(&cause)),
-                        );
-                        session.emit(Some(Reason::Failed), Some(cause.message));
-                    }
+            if let Err(cause) = outcome {
+                let context = format!(
+                    "fen={} client={}",
+                    truncate_for_log(&request.fen, 60),
+                    truncate_for_log(
+                        &request
+                            .client_id
+                            .map_or("none".to_string(), |id| id.to_string()),
+                        40
+                    ),
+                );
+                let labels = ("Analysis interrupted", "Analysis failed");
+                if job::interrupted(
+                    &*shared.ctx.host,
+                    "analysis",
+                    labels,
+                    &context,
+                    &cause,
+                    &token,
+                ) {
+                    session.emit(Some(Reason::Interrupted), None);
+                } else {
+                    session.emit(Some(Reason::Failed), Some(cause.message));
                 }
             }
         });
         id
     }
 
-    /// `analysisRunning`: an analysis is in progress.
     pub fn analysis_running(&self) -> bool {
         lock(&self.shared.state).current.is_some()
     }
 
-    /// `stopAnalysis(kill)`: ends the analysis in progress (its final update is `interrupted`);
-    /// with `kill`, also closes the engine.
+    /// Ends the analysis in progress (its final update is `interrupted`); with `kill`, also
+    /// closes the engine.
     pub fn stop_analysis(&self, kill: bool) {
-        stop_locked(&mut lock(&self.shared.state), kill);
+        let state = lock(&self.shared.state);
+        if let Some((_, token)) = &state.current {
+            token.cancel();
+        }
+        if kill {
+            self.shared.engine.close();
+        }
     }
 
     /// Finishes once every analysis queued so far has ended: its final update sent and it no
     /// longer current. It takes its own place in the `serial` line, so an analysis queued after
     /// it still waits its turn.
     pub async fn settled(&self) {
-        let (link, prev) = {
-            let mut state = lock(&self.shared.state);
-            let (link, queued) = oneshot::channel::<()>();
-            (link, state.serial.replace(queued))
-        };
-        if let Some(prev) = prev {
-            let _ = prev.await;
-        }
-        drop(link);
+        let mut place = lock(&self.shared.state).line.join();
+        place.turn().await;
     }
 }
 
@@ -560,7 +433,7 @@ impl AnalysisEngine {
 async fn analyse(
     shared: &Arc<Shared>,
     session: &Arc<Session>,
-    request: &Request,
+    request: &AnalysisRequest,
     root: &str,
     moves: &[String],
     configured: &str,
@@ -571,80 +444,37 @@ async fn analyse(
     }
     // Variants other than Chess960 go to the bundled Fairy-Stockfish, whatever engine is chosen.
     let fairy = request.variant.as_deref().and_then(fairy_variant);
-    let status: EngineStatus = match fairy {
-        Some(_) => variant_engine_status(&*shared.ctx.host, &shared.ctx.locations).await,
-        None => engine_status(&*shared.ctx.host, &shared.ctx.locations, configured).await,
-    };
+    let located = shared.engine.locate(configured, fairy.is_some()).await;
     if token.is_cancelled() {
         return Err(signal_aborted());
     }
-    if !status.ready {
-        return Err(CoreError::new(if fairy.is_some() {
-            "Fairy-Stockfish, which analyses this variant, is missing."
-        } else {
-            "Stockfish could not be found. Choose an engine in Settings."
-        }));
-    }
-    let key = engine_identity(&status).await?;
-    lock(&session.progress).engine = key.clone();
-    if token.is_cancelled() {
-        return Err(signal_aborted());
-    }
-    let target = {
-        let mut state = lock(&shared.state);
-        let current = state
-            .engine
-            .as_ref()
-            .is_some_and(|engine| engine.key == key && engine.uci.failed().is_none());
-        if !current {
-            if let Some(stale) = state.engine.take() {
-                stale.uci.close();
-            }
-            let uci = Arc::new(shared.ctx.spawn(&status)?);
-            state.engine = Some(Engine {
-                key: key.clone(),
-                uci,
-            });
-        }
-        state
-            .engine
-            .as_ref()
-            .map(|engine| Arc::clone(&engine.uci))
-            .ok_or_else(|| CoreError::new("The engine is unavailable."))?
-    };
+    let located = located?;
+    lock(&session.progress).engine = located.key.clone();
+    let target = shared.engine.open(&located)?.uci;
     let white_to_move = request.fen.split(' ').nth(1).unwrap_or("w") == "w";
-    let stop_token = token.clone();
     shared
         .ctx
-        .lease(2, move || stop_token.cancel(), token, async {
+        .lease(Priority::Analysis, token, async {
             target.ready().await?;
             if token.is_cancelled() {
                 return Err(signal_aborted());
             }
             // Stepping through a game reuses this process with identical options; only changed
-            // values are sent. Chess960 is always on: castling is king-takes-rook in the history.
+            // values are sent.
             let threads = shared.ctx.scheduler.search_threads().to_string();
-            let lines = whole(request.lines).to_string();
-            let mut options = vec![
+            let lines = request.lines.to_string();
+            let options = [
                 ("Threads", threads.as_str()),
                 ("Hash", "128"),
                 ("MultiPV", lines.as_str()),
+                job::rules_option(fairy),
             ];
-            // Fairy-Stockfish plays the variant named; its castling is king-takes-rook too.
-            options.push(match fairy {
-                Some(variant) => ("UCI_Variant", variant),
-                None => ("UCI_Chess960", "true"),
-            });
             target.ensure_options(&options).await?;
             if token.is_cancelled() {
                 return Err(signal_aborted());
             }
-            let mut position = format!("position fen {root}");
-            if !moves.is_empty() {
-                position.push_str(&format!(" moves {}", moves.join(" ")));
-            }
-            target.write(&position)?;
-            let (command, timeout) = if request.infinite {
+            target.write(&job::position_command(Some(root), moves))?;
+            let (command, timeout) = if request.infinite == Some(true) {
                 ("go infinite".to_string(), None)
             } else {
                 (
@@ -654,7 +484,7 @@ async fn analyse(
             };
             let listener = Arc::clone(session);
             let listener_token = token.clone();
-            let wanted = whole(request.lines) as u32;
+            let wanted = request.lines;
             target
                 .search(
                     &command,
@@ -669,4 +499,35 @@ async fn analyse(
             Ok(())
         })
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Only the ranks asked for become lines.
+    #[test]
+    fn lines_past_the_ranks_asked_for_are_ignored() {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let sink_sent = Arc::clone(&sent);
+        let session = Session {
+            id: 1,
+            fen: String::new(),
+            context: String::new(),
+            client_id: None,
+            sink: Arc::new(move |update| lock(&sink_sent).push(update)),
+            progress: Mutex::new(Progress::default()),
+        };
+        let token = CancellationToken::new();
+        for rank in [1, 3, 2] {
+            session.on_info(
+                &format!("info depth 9 multipv {rank} score cp 20 pv e2e4"),
+                true,
+                2,
+                &token,
+            );
+        }
+        let ranks: Vec<u32> = lock(&session.progress).lines.keys().copied().collect();
+        assert_eq!(ranks, vec![1, 2]);
+    }
 }

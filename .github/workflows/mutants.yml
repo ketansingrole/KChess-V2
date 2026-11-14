@@ -1,8 +1,9 @@
 name: Mutants
 # Mutation testing (docs/mutation-testing.md): cargo-mutants changes the code one small edit at a
-# time and fails when the tests still pass. The rules and the core take hours, so each runs in
-# shards, weekly and on demand. A missed mutant is a test to write, or an equivalent mutant to
-# exclude in .cargo/mutants.toml with the reason; never a test to weaken.
+# time and fails when the tests still pass. A whole package takes hours, so it runs in shards:
+# every week the rules (kchess-domain), and any package when started by hand. A missed mutant is a
+# test to write, or an equivalent mutant to exclude in .cargo/mutants.toml with the reason; never a
+# test to weaken.
 on:
   schedule:
     - cron: '17 3 * * 6'
@@ -12,16 +13,14 @@ on:
         description: Package to mutate
         default: kchess-domain
         type: choice
-        options: [kchess-domain, kchess-core, kchess-gpui, kchess-service, kchess-cli, kchess-games, kchess-contracts, kchess-voice, xtask]
+        # Every workspace member but the workspace hack (xtask's `workflows` tests hold it to that).
+        options: [kchess-domain, kchess-core, kchess-gpui, kchess-service, kchess-cli, kchess-games, kchess-contracts, kchess-delta, kchess-host, kchess-testkit, kchess-voice, xtask]
 
 permissions:
   contents: read
 
 env:
   NEXTEST_PROFILE: ci
-  GPUI_LINUX_LIBS: >-
-    libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev
-    libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
 
 jobs:
   mutants:
@@ -35,9 +34,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Install GPUI build libraries
-        if: inputs.package == 'kchess-gpui'
-        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - if: inputs.package == 'kchess-gpui'
+        uses: ./.github/actions/install-gpui-libs
       # CI's caches, read only: this workflow saves none of its own.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
@@ -47,6 +45,9 @@ jobs:
       - uses: ./.github/actions/install-tools
         with:
           tools: cargo-nextest,cargo-mutants
+      # The engines CI's `check` gives the tests, as a pull request's mutants job does: without
+      # them the tests that need an engine skip, and their mutants are reported missed.
+      - uses: ./.github/actions/engines
       - name: Mutants
         env:
           PACKAGE: ${{ inputs.package || 'kchess-domain' }}
@@ -76,8 +77,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Install GPUI build libraries
-        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - uses: ./.github/actions/install-gpui-libs
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: check
@@ -87,16 +87,13 @@ jobs:
         with:
           tools: cargo-nextest,cargo-mutants
       # The engines CI's `check` gives the tests, as a pull request's mutants job does.
-      - name: Fetch the engines
-        run: cargo xtask engines --github-env "$RUNNER_TEMP/stockfish"
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - uses: ./.github/actions/engines
       - name: Mutants of the app's lines changed this week
         env:
           SHARD: ${{ matrix.shard }}
         run: >-
-          cargo xtask mutants --in-place --base "$(git rev-list -1 --before='7 days ago' HEAD)"
-          -- --file 'apps/gpui/**' --shard "$SHARD/4"
+          cargo xtask mutants --app --in-place --base "$(git rev-list -1 --before='7 days ago' HEAD)"
+          -- --shard "$SHARD/4"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:

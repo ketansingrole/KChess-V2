@@ -1,44 +1,26 @@
-//! The facade's usage and the lifecycle (`run_facade` arms, moved without changes).
+//! Network usage and the user's themes.
 
-use crate::core::Core;
-use crate::error::{CoreError, Result};
-use crate::host::Level;
-use serde_json::Value;
 use std::sync::Arc;
 
-impl Core {
-    /// Answers the facade's system methods.
-    pub(crate) async fn run_system(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "usage" => self.usage.report().await,
-            "resetUsage" => self.usage.reset().await,
-            "trustEnginePath" => self.call_sync(method, args.to_vec()),
-            "customThemes" => {
-                let (host, data_dir) = (Arc::clone(&self.host), self.data_dir());
-                tokio::task::spawn_blocking(move || crate::themes::custom_themes(&*host, &data_dir))
-                    .await
-                    .map_err(|_| CoreError::new("Custom themes could not be read."))?
-            }
-            "voiceHistoryDocument" => {
-                self.database
-                    .call_async("store.voiceLog.voiceHistoryDocument", &[])
-                    .await
-            }
-            "suspend" => {
-                if let Err(cause) = self.dispatch("puzzles.cancel", vec![]).await {
-                    self.host.log(
-                        Level::Warn,
-                        "puzzles",
-                        &format!("Puzzle download cancel failed: {}", cause.message),
-                    );
-                }
-                self.services.spectator().stop();
-                self.services.online().close();
-                self.search.stop_engine(true);
-                self.analysis.stop_analysis(true);
-                Ok(Value::Null)
-            }
-            _ => Err(CoreError::new(format!("Unknown core method {method}."))),
-        }
+use kchess_contracts::core_api::SystemApi;
+use kchess_contracts::types::{CustomThemeReport, UsageReport};
+
+use crate::core::Core;
+use kchess_contracts::error::{CoreError, Result};
+
+impl SystemApi for Core {
+    async fn usage(&self) -> Result<UsageReport> {
+        self.usage.report().await
+    }
+
+    async fn reset_usage(&self) -> Result<()> {
+        self.usage.reset().await
+    }
+
+    async fn custom_themes(&self) -> Result<CustomThemeReport> {
+        let (host, data_dir) = (Arc::clone(&self.host), self.data_dir());
+        tokio::task::spawn_blocking(move || crate::themes::custom_themes(&*host, &data_dir))
+            .await
+            .map_err(|_| CoreError::new("Custom themes could not be read."))?
     }
 }

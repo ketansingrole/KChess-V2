@@ -1,17 +1,19 @@
 //! Settings: one category at a time, picked in the sidebar while Settings is
-//! open (`SETTINGS_SECTIONS`). Every change saves itself (`settings.rs`).
+//! open. Every change saves itself (`settings.rs`).
 
 mod accounts;
 mod ai;
 mod data;
 mod engine;
 mod offline;
+mod toggles;
+pub(crate) use toggles::{Quick, TOGGLES, Toggle};
 pub mod updates;
 mod voice;
 mod voice_history;
 
+use kchess_domain::training::engine_levels;
 use std::path::Path;
-use std::rc::Rc;
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -22,16 +24,15 @@ use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{Disableable as _, Icon, IndexPath, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::Level;
 use kchess_contracts::types::{
-    AppTheme, Appearance, CoordinateMode, EngineLevel, EngineStatus, PieceAnimation, PromotionMode,
-    Settings,
+    AppTheme, Appearance, CoordinateMode, EngineLevel, EngineStatus, PieceAnimation, ProfileArea,
+    PromotionMode, Settings,
 };
-use serde::Deserialize;
 use shakmaty::{Color, Piece, Role};
 
 use crate::assets::icon;
 use crate::board::looks;
-use crate::game::rules;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
@@ -57,30 +58,137 @@ pub enum Section {
     Updates,
 }
 
-/// The categories the sidebar lists while Settings is open, in `SECTION_GROUPS`.
-pub fn sections() -> [(Section, &'static str, Icon); 15] {
-    [
-        (Section::Appearance, "Appearance", icon("palette")),
-        (Section::Themes, "Themes", icon("swatch-book")),
-        (Section::Sound, "Sound", icon("volume-2")),
-        (Section::Notifications, "Notifications", icon("bell")),
-        (Section::Gameplay, "Gameplay", icon("chess-knight")),
-        (Section::Gestures, "Gestures", icon("hand")),
-        (Section::Voice, "Voice input", icon("mic")),
-        (Section::Engine, "Chess engine", icon("cpu")),
-        (Section::Analysis, "Cloud evaluation", icon("cloud")),
-        (Section::Ai, "AI", icon("lightbulb")),
-        (Section::Accounts, "Accounts", icon("user-round")),
-        (Section::Online, "Online play", icon("globe-2")),
-        (Section::Offline, "Offline downloads", icon("download")),
-        (Section::Data, "Data & storage", icon("database")),
-        (Section::Updates, "Updates", icon("refresh-cw")),
-    ]
+/// The groups of categories the sidebar lists while Settings is open, in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SectionGroup {
+    Interface,
+    Play,
+    Analysis,
+    Lichess,
+    System,
+}
+
+impl SectionGroup {
+    pub const ALL: [SectionGroup; 5] = [
+        SectionGroup::Interface,
+        SectionGroup::Play,
+        SectionGroup::Analysis,
+        SectionGroup::Lichess,
+        SectionGroup::System,
+    ];
+
+    pub fn heading(self) -> &'static str {
+        match self {
+            SectionGroup::Interface => "Interface",
+            SectionGroup::Play => "Play",
+            SectionGroup::Analysis => "Analysis",
+            SectionGroup::Lichess => "Lichess",
+            SectionGroup::System => "System",
+        }
+    }
+
+    /// Its categories, in the sidebar's order.
+    pub fn sections(self) -> impl Iterator<Item = Section> {
+        Section::ALL
+            .into_iter()
+            .filter(move |section| section.group() == self)
+    }
+}
+
+impl Section {
+    /// Every category, in the sidebar's order.
+    pub const ALL: [Section; 15] = [
+        Section::Appearance,
+        Section::Themes,
+        Section::Sound,
+        Section::Notifications,
+        Section::Gameplay,
+        Section::Gestures,
+        Section::Voice,
+        Section::Engine,
+        Section::Analysis,
+        Section::Ai,
+        Section::Accounts,
+        Section::Online,
+        Section::Offline,
+        Section::Data,
+        Section::Updates,
+    ];
+
+    pub fn label(self) -> &'static str {
+        self.describe().0
+    }
+
+    pub fn icon(self) -> Icon {
+        icon(self.describe().1)
+    }
+
+    pub fn group(self) -> SectionGroup {
+        self.describe().2
+    }
+
+    /// Its name, icon and group, said once.
+    fn describe(self) -> (&'static str, &'static str, SectionGroup) {
+        use SectionGroup as G;
+        match self {
+            Section::Appearance => ("Appearance", "palette", G::Interface),
+            Section::Themes => ("Themes", "swatch-book", G::Interface),
+            Section::Sound => ("Sound", "volume-2", G::Interface),
+            Section::Notifications => ("Notifications", "bell", G::Interface),
+            Section::Gameplay => ("Gameplay", "chess-knight", G::Play),
+            Section::Gestures => ("Gestures", "hand", G::Play),
+            Section::Voice => ("Voice input", "mic", G::Play),
+            Section::Engine => ("Chess engine", "cpu", G::Analysis),
+            Section::Analysis => ("Cloud evaluation", "cloud", G::Analysis),
+            Section::Ai => ("AI", "lightbulb", G::Analysis),
+            Section::Accounts => ("Accounts", "user-round", G::Lichess),
+            Section::Online => ("Online play", "globe-2", G::Lichess),
+            Section::Offline => ("Offline downloads", "download", G::System),
+            Section::Data => ("Data & storage", "database", G::System),
+            Section::Updates => ("Updates", "refresh-cw", G::System),
+        }
+    }
+}
+
+/// The light and dark choice, as Settings and Quick Pick offer it: its name and icon.
+pub const APPEARANCES: [(Appearance, &str, &str); 3] = [
+    (Appearance::System, "System", "monitor"),
+    (Appearance::Light, "Light", "sun"),
+    (Appearance::Dark, "Dark", "moon"),
+];
+
+/// Where the board's coordinates go, as Settings and Quick Pick offer it.
+pub const COORDINATES: [(CoordinateMode, &str); 3] = [
+    (CoordinateMode::Inside, "Inside"),
+    (CoordinateMode::Outside, "Outside"),
+    (CoordinateMode::None, "Hidden"),
+];
+
+/// How the interface size changes anywhere: "⌘ + and ⌘ − adjust it anywhere."
+fn zoom_hint(cx: &App) -> String {
+    let (Some(bigger), Some(smaller)) = (
+        crate::menu::keys(&crate::menu::ZoomIn, cx),
+        crate::menu::keys(&crate::menu::ZoomOut, cx),
+    ) else {
+        return String::new();
+    };
+    format!(
+        "{bigger} and {smaller} adjust it anywhere{}",
+        if cfg!(target_os = "macos") { "." } else { "" }
+    )
 }
 
 /// What finds a category in ⌘K besides its name: every row title it shows (checked by a test, so
 /// a new row is found too), what the custom rows hold, and other names for it.
-pub fn section_keywords(section: Section) -> &'static str {
+pub fn section_keywords(section: Section) -> String {
+    toggles::titles(section)
+        .chain([other_keywords(section)])
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A category's search words besides its toggles' titles.
+fn other_keywords(section: Section) -> &'static str {
     match section {
         Section::Appearance => {
             "Theme Interface size zoom Board coordinates Piece animation Piece notation figurine \
@@ -89,62 +197,36 @@ pub fn section_keywords(section: Section) -> &'static str {
         Section::Themes => {
             "Appearance Light mode theme Dark mode theme Your own themes app theme colors custom"
         }
-        Section::Sound => "Game sounds Volume mute audio",
-        Section::Notifications => {
-            "Desktop notifications While I'm using KChess While KChess is in the background \
-             Opponent moves Low on time Game start and result Computer moves Challenges \
-             System sound Try it alerts"
-        }
+        Section::Sound => "Volume mute audio",
+        Section::Notifications => "Try it alerts",
         Section::Gameplay => {
-            "Show possible moves legal dots Premoves Confirm correspondence moves Pawn promotion \
-             auto-queen Computer levels Show opening names Blindfold Zen mode \
-             Next puzzle after solving auto next"
+            "legal dots Pawn promotion \
+             auto-queen Computer levels auto next"
         }
-        Section::Gestures => "Two-finger swipe Swipe feedback trackpad back forward",
-        Section::Voice => {
-            "Confirm spoken moves Hold to speak Keep voice history Microphone access speech"
-        }
+        Section::Gestures => "trackpad back forward",
+        Section::Voice => "Microphone access speech",
         Section::Engine => {
-            "Status Review my games automatically Also on battery power Game review Stockfish \
+            "Status Review my games automatically Game review Stockfish \
              executable download update"
         }
-        Section::Analysis => "Lichess cloud evaluation analysis",
+        Section::Analysis => "analysis",
         Section::Ai => "ChatGPT model effort usage coach explain",
         Section::Accounts => {
             "my accounts lichess sign in log in connect disconnect sync tracked Use for online play"
         }
-        Section::Online => "Receive challenges Game chat Check correspondence games",
+        Section::Online => "Check correspondence games",
         Section::Offline => "Downloaded puzzles voice model Saved games and studies engine",
         Section::Data => {
             "Diagnostics Export diagnostics Clear local scores Reset counters Database file storage"
         }
         Section::Updates => {
-            "version about upgrade Check for updates Automatically check for updates \
-             Download updates in the background Install updates when I quit What's new release notes \
+            "version about upgrade Check for updates What's new release notes \
              Website Source code GitHub Report a problem issues bug"
         }
     }
 }
 
-/// The sidebar's groups of `sections`, in order: each heading and how many categories it holds.
-pub const SECTION_GROUPS: [(&str, usize); 5] = [
-    ("Interface", 4),
-    ("Play", 3),
-    ("Analysis", 3),
-    ("Lichess", 2),
-    ("System", 3),
-];
-
-/// A yes/no row: its id, title, hint, state and how it changes the settings.
-type SwitchRow = (
-    &'static str,
-    &'static str,
-    Option<&'static str>,
-    bool,
-    fn(&mut Settings, bool),
-);
-
-/// `pollItems`: minutes between correspondence checks.
+/// Minutes between correspondence checks.
 const POLL: [(f64, &str); 6] = [
     (0., "Off"),
     (2., "2 min"),
@@ -160,7 +242,7 @@ fn poll_row(minutes: f64) -> Option<IndexPath> {
         .map(IndexPath::new)
 }
 
-/// The theme pickers' and piece pickers' columns: `minmax(92px, 1fr)`, 8px apart.
+/// The theme pickers' and piece pickers' columns: at least 92px wide, 8px apart.
 const OPTION_MIN: Pixels = px(92.);
 const APP_THEME_MIN: Pixels = px(112.);
 const OPTION_GAP: Pixels = px(8.);
@@ -168,11 +250,16 @@ const OPTION_GAP: Pixels = px(8.);
 const NARROW: Pixels = px(640.);
 
 /// A rung of the engine ladder, as Settings lists it.
-#[derive(Deserialize)]
 struct Rung {
     id: EngineLevel,
     label: String,
     elo: Option<f64>,
+}
+
+/// A ladder level's id as Settings stores it.
+fn level_id(id: &str) -> Result<EngineLevel, String> {
+    serde_json::from_value(serde_json::Value::String(id.into()))
+        .map_err(|cause| format!("engine level {id}: {cause}"))
 }
 
 pub struct SettingsPage {
@@ -189,7 +276,7 @@ pub struct SettingsPage {
     ai_shown: Option<ai::Shown>,
     ladder: Vec<Rung>,
     default_levels: Vec<EngineLevel>,
-    /// The engine the core finds (`engineInfo`), and whether it is being downloaded or deleted.
+    /// The engine the core finds, and whether it is being downloaded or deleted.
     engine: Option<EngineStatus>,
     engine_busy: bool,
     /// What the notification test says, and whether it is counting down.
@@ -266,7 +353,17 @@ impl SettingsPage {
             gpui_kit::component::input::InputState::new(window, cx)
                 .placeholder("Chess.com username")
         });
+        let page = cx.entity().downgrade();
         let subscriptions = vec![
+            crate::core::profile_changes(cx, &[ProfileArea::Engine], {
+                let page = page.clone();
+                move |cx| {
+                    let _ = page.update(cx, |page, cx| page.engine_changed(cx));
+                }
+            }),
+            crate::core::profile_changes(cx, &[ProfileArea::VoiceHistory], move |cx| {
+                let _ = page.update(cx, |page, cx| page.voice_history_changed(cx));
+            }),
             cx.subscribe_in(
                 &chesscom_input,
                 window,
@@ -370,14 +467,28 @@ impl SettingsPage {
                 },
             ),
         ];
-        let ladder = rules("engineLadder", &[])
-            .ok()
-            .and_then(|ladder| serde_json::from_value(ladder).ok())
-            .unwrap_or_default();
-        let default_levels = rules("defaultEngineLevels", &[])
-            .ok()
-            .and_then(|levels| serde_json::from_value(levels).ok())
-            .unwrap_or_default();
+        let ladder = engine_levels::ladder()
+            .iter()
+            .map(|rung| {
+                Ok(Rung {
+                    id: level_id(&rung.id)?,
+                    label: rung.label.clone(),
+                    elo: rung.elo,
+                })
+            })
+            .collect::<Result<_, String>>()
+            .unwrap_or_else(|cause| {
+                crate::log::write(Level::Warn, "settings", &cause);
+                Vec::new()
+            });
+        let default_levels = engine_levels::default_levels()
+            .iter()
+            .map(|id| level_id(id))
+            .collect::<Result<_, String>>()
+            .unwrap_or_else(|cause| {
+                crate::log::write(Level::Warn, "settings", &cause);
+                Vec::new()
+            });
         SettingsPage {
             section: Section::Appearance,
             area: Measured::default(),
@@ -415,7 +526,7 @@ impl SettingsPage {
         self.section
     }
 
-    /// Show one category, from the top (`jumpToSection`).
+    /// Show one category, from the top.
     pub fn show(&mut self, section: Section, cx: &mut Context<Self>) {
         if section != Section::Voice {
             self.stop_mic_test(cx);
@@ -446,6 +557,30 @@ impl SettingsPage {
             db.update(cx, |db, cx| db.refresh(cx));
         }
         cx.notify();
+    }
+
+    /// Another window installed or deleted the engine: the engine shown is read again.
+    fn engine_changed(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.section, Section::Engine | Section::Offline) {
+            self.refresh_engine(cx);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn engine_status(&self) -> Option<&EngineStatus> {
+        self.engine.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn forget_engine_status(&mut self) {
+        self.engine = None;
+    }
+
+    /// Another window saved or cleared voice practice: the history shown is read again.
+    fn voice_history_changed(&mut self, cx: &mut Context<Self>) {
+        if let Some(history) = &self.voice_history {
+            history.update(cx, |history, cx| history.load(cx));
+        }
     }
 
     /// The Interface size select shows the setting, and what Auto means on this display.
@@ -494,22 +629,12 @@ impl SettingsPage {
     }
 }
 
-#[cfg(test)]
-thread_local! {
-    /// Every row title drawn, so a test can check that ⌘K finds each one.
-    pub(crate) static DRAWN_TITLES: std::cell::RefCell<Vec<String>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// A row's title and its optional hint (`.setting-info`).
+/// A row's title and its optional hint.
 fn info(title: impl Into<SharedString>, hint: Option<SharedString>, palette: &Palette) -> Div {
-    let title = title.into();
-    #[cfg(test)]
-    DRAWN_TITLES.with(|titles| titles.borrow_mut().push(title.to_string()));
     widgets::setting_info(title, hint, palette)
 }
 
-/// The category's rows (`.settings-list`), with dividers between them.
+/// The category's rows, with dividers between them.
 struct Rows {
     narrow: bool,
     rows: Vec<AnyElement>,
@@ -549,46 +674,39 @@ impl Rows {
         self
     }
 
-    /// A yes/no row: the switch sits at the start of the control column.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one argument per part of the row"
-    )]
+    /// A yes/no row (`toggles`): the switch sits at the start of the control column.
     fn switch(
-        self,
+        mut self,
         id: &'static str,
-        title: &'static str,
-        hint: Option<&'static str>,
-        on: bool,
+        settings: &Settings,
         enabled: bool,
-        change: impl Fn(&mut Settings, bool) + 'static,
         palette: &Palette,
     ) -> Rows {
-        let change = Rc::new(change);
+        let toggle = toggles::toggle(id);
+        let set = toggle.set;
         let control = h_flex().child(
             Switch::new(id)
                 .large()
-                .checked(on)
+                .checked((toggle.on)(settings))
                 .disabled(!enabled)
-                .accessibility_label(title)
+                .accessibility_label(toggle.title)
                 .on_click(move |checked, _, cx| {
-                    let (checked, change) = (*checked, Rc::clone(&change));
-                    crate::settings::change(cx, move |settings| change(settings, checked));
+                    let checked = *checked;
+                    crate::settings::change(cx, move |settings| set(settings, checked));
                 }),
         );
         // A switch is small enough to stay beside its title in the narrowest window.
-        let mut rows = self;
-        rows.rows.push(
+        self.rows.push(
             widgets::setting_row(
-                info(title, hint.map(SharedString::from), palette).min_w_0(),
+                info(toggle.title, toggle.hint.map(SharedString::from), palette).min_w_0(),
                 control,
             )
             .into_any_element(),
         );
-        rows
+        self
     }
 
-    /// `.setting-row.stacked`: a control that needs the full width goes under its title.
+    /// A control that needs the full width goes under its title.
     fn stacked(
         mut self,
         title: &'static str,
@@ -610,9 +728,9 @@ impl Rows {
         self.card_under(None, palette)
     }
 
-    /// The rows in a card that opens with `header` (`.card-header`: a title and its status).
+    /// The rows in a card that opens with `header` (a title and its status).
     fn card_under(self, header: Option<AnyElement>, palette: &Palette) -> Div {
-        // `.settings-list` keeps 4px above and below: the rows bring their own padding.
+        // 4px above and below: the rows bring their own padding.
         widgets::card(palette)
             .py(px(4.))
             .children(header.map(|header| div().pt(px(14.)).pb(px(4.)).px(px(4.)).child(header)))
@@ -628,7 +746,7 @@ impl Rows {
     }
 }
 
-/// A segmented choice (`UTabs variant="pill"`) that changes one setting.
+/// A segmented choice that changes one setting.
 fn choice<T: Copy + PartialEq + 'static>(
     id: &'static str,
     items: &[(T, &'static str, Option<Icon>)],
@@ -658,7 +776,7 @@ fn choice<T: Copy + PartialEq + 'static>(
     )
 }
 
-/// `.theme-option`: a picture and its name; the chosen one is ringed in the primary color.
+/// A picture and its name; the chosen one is ringed in the primary color.
 #[expect(
     clippy::too_many_arguments,
     reason = "one argument per part of the option"
@@ -726,7 +844,7 @@ fn option(
         }))
 }
 
-/// Lay pickers out in rows of `count`, `OPTION_GAP` apart (`.theme-grid`).
+/// Lay pickers out in rows of `count`, `OPTION_GAP` apart.
 fn grid(count: usize, options: Vec<AnyElement>) -> impl IntoElement {
     let mut rows = Vec::new();
     let mut options = options.into_iter().peekable();
@@ -786,7 +904,7 @@ fn board_swatch(image: &str, width: Pixels) -> impl IntoElement {
         .object_fit(ObjectFit::Cover)
 }
 
-/// `previewColors`: the theme's background, a raised card, its text and primary colors. A scale
+/// The theme's background, a raised card, its text and primary colors. A scale
 /// model of a page, so its corners are scaled down with it rather than taken from `radii`.
 fn theme_preview(theme: &str, custom: &[AppTheme], dark: bool, width: Pixels) -> impl IntoElement {
     let colors = crate::theme::colors(theme, custom, dark);
@@ -832,7 +950,7 @@ fn theme_preview(theme: &str, custom: &[AppTheme], dark: bool, width: Pixels) ->
         )
 }
 
-/// `allThemes`: the default look, the presets, then the user's own (replacing a preset's id).
+/// The default look, the presets, then the user's own (replacing a preset's id).
 fn theme_list(custom: &[AppTheme]) -> Vec<AppTheme> {
     let mut themes = vec![AppTheme {
         id: "kchess".into(),
@@ -859,15 +977,11 @@ fn theme_list(custom: &[AppTheme]) -> Vec<AppTheme> {
 }
 
 fn appearance_items() -> [(Appearance, &'static str, Option<Icon>); 3] {
-    [
-        (Appearance::System, "System", Some(icon("monitor"))),
-        (Appearance::Light, "Light", Some(icon("sun"))),
-        (Appearance::Dark, "Dark", Some(icon("moon"))),
-    ]
+    APPEARANCES.map(|(appearance, label, glyph)| (appearance, label, Some(icon(glyph))))
 }
 
 impl SettingsPage {
-    fn appearance(&self, settings: &Settings, window: &Window, palette: &Palette) -> Div {
+    fn appearance(&self, settings: &Settings, window: &Window, palette: &Palette, cx: &App) -> Div {
         let frontend = &settings.frontend;
         let width = self.inner_width(window);
         let (count, item) = columns(width, OPTION_MIN, OPTION_GAP);
@@ -926,14 +1040,7 @@ impl SettingsPage {
             )
             .row(
                 "Interface size",
-                Some(
-                    if cfg!(target_os = "macos") {
-                        "⌘ + and ⌘ − adjust it anywhere."
-                    } else {
-                        "Ctrl + and Ctrl − adjust it anywhere"
-                    }
-                    .into(),
-                ),
+                Some(zoom_hint(cx).into()),
                 widgets::setting_field(
                     Select::new(&self.zoom).accessibility_label("Interface size"),
                 ),
@@ -944,11 +1051,7 @@ impl SettingsPage {
                 None,
                 choice(
                     "coordinates",
-                    &[
-                        (CoordinateMode::Inside, "Inside", None),
-                        (CoordinateMode::Outside, "Outside", None),
-                        (CoordinateMode::None, "Hidden", None),
-                    ],
+                    &COORDINATES.map(|(mode, label)| (mode, label, None)),
                     frontend.coordinates,
                     |s, value| s.frontend.coordinates = value,
                     palette,
@@ -1096,7 +1199,7 @@ impl SettingsPage {
         let frontend = &settings.frontend;
         let levels = settings.core.engine_levels.clone();
         let ladder_ids: Vec<EngineLevel> = self.ladder.iter().map(|rung| rung.id).collect();
-        // `.engine-levels`: `repeat(auto-fill, minmax(12rem, 1fr))`, 12px by 24px apart.
+        // As many columns as fit, each at least 192px, 12px by 24px apart.
         let (count, width) = columns(self.inner_width(window), px(192.), px(24.));
         let checkboxes =
             h_flex()
@@ -1154,33 +1257,9 @@ impl SettingsPage {
                 }),
         );
         let mut rows = Rows::new(self.narrow())
-            .switch(
-                "legal-moves",
-                "Show possible moves",
-                None,
-                frontend.show_legal_moves,
-                true,
-                |s, on| s.frontend.show_legal_moves = on,
-                palette,
-            )
-            .switch(
-                "premove",
-                "Premoves",
-                Some("Plays your queued move automatically when legal"),
-                frontend.premove,
-                true,
-                |s, on| s.frontend.premove = on,
-                palette,
-            )
-            .switch(
-                "confirm-move",
-                "Confirm correspondence moves",
-                None,
-                frontend.confirm_correspondence,
-                true,
-                |s, on| s.frontend.confirm_correspondence = on,
-                palette,
-            )
+            .switch("legal-moves", settings, true, palette)
+            .switch("premove", settings, true, palette)
+            .switch("confirm-move", settings, true, palette)
             .row(
                 "Pawn promotion",
                 None,
@@ -1203,38 +1282,8 @@ impl SettingsPage {
                 v_flex().gap(px(8.)).child(checkboxes).child(reset),
                 palette,
             );
-        let switches: [SwitchRow; 4] = [
-            (
-                "opening-names",
-                "Show opening names",
-                None,
-                frontend.show_opening_name,
-                |s, on| s.frontend.show_opening_name = on,
-            ),
-            (
-                "blindfold",
-                "Blindfold",
-                Some("Hide pieces while playing"),
-                frontend.blindfold,
-                |s, on| s.frontend.blindfold = on,
-            ),
-            (
-                "zen-mode",
-                "Zen mode",
-                Some("Board and game controls only · Z to toggle"),
-                frontend.zen_mode,
-                |s, on| s.frontend.zen_mode = on,
-            ),
-            (
-                "puzzle-next",
-                "Next puzzle after solving",
-                None,
-                frontend.puzzle_auto_next,
-                |s, on| s.frontend.puzzle_auto_next = on,
-            ),
-        ];
-        for (id, title, hint, on, set) in switches {
-            rows = rows.switch(id, title, hint, on, true, set, palette);
+        for id in ["opening-names", "blindfold", "zen-mode", "puzzle-next"] {
+            rows = rows.switch(id, settings, true, palette);
         }
         rows.card(palette)
     }
@@ -1242,48 +1291,20 @@ impl SettingsPage {
     fn gestures(&self, settings: &Settings, palette: &Palette) -> Div {
         let frontend = &settings.frontend;
         Rows::new(self.narrow())
-            .switch(
-                "swipe-navigation",
-                "Two-finger swipe",
-                Some("Go back and forward with a horizontal swipe"),
-                frontend.swipe_navigation,
-                true,
-                |s, on| s.frontend.swipe_navigation = on,
-                palette,
-            )
+            .switch("swipe-navigation", settings, true, palette)
             .switch(
                 "swipe-indicator",
-                "Swipe feedback",
-                Some("Show an edge hint that follows the swipe"),
-                frontend.swipe_indicator,
+                settings,
                 frontend.swipe_navigation,
-                |s, on| s.frontend.swipe_indicator = on,
                 palette,
             )
             .card(palette)
     }
 
     fn online(&self, settings: &Settings, palette: &Palette) -> Div {
-        let core = &settings.core;
         Rows::new(self.narrow())
-            .switch(
-                "receive-challenges",
-                "Receive challenges",
-                None,
-                core.receive_challenges,
-                true,
-                |s, on| s.core.receive_challenges = on,
-                palette,
-            )
-            .switch(
-                "online-chat",
-                "Game chat",
-                None,
-                core.online_chat,
-                true,
-                |s, on| s.core.online_chat = on,
-                palette,
-            )
+            .switch("receive-challenges", settings, true, palette)
+            .switch("online-chat", settings, true, palette)
             .row(
                 "Check correspondence games",
                 Some("Only while KChess is open".into()),
@@ -1297,30 +1318,14 @@ impl SettingsPage {
 
     fn analysis(&self, settings: &Settings, palette: &Palette) -> Div {
         Rows::new(self.narrow())
-            .switch(
-                "cloud-eval",
-                "Lichess cloud evaluation",
-                Some("Sends analyzed positions to Lichess. Paused during your online games."),
-                settings.core.cloud_eval,
-                true,
-                |s, on| s.core.cloud_eval = on,
-                palette,
-            )
+            .switch("cloud-eval", settings, true, palette)
             .card(palette)
     }
 
     fn sound(&self, settings: &Settings, palette: &Palette) -> Div {
         let frontend = &settings.frontend;
         Rows::new(self.narrow())
-            .switch(
-                "sound",
-                "Game sounds",
-                None,
-                frontend.sound_enabled,
-                true,
-                |s, on| s.frontend.sound_enabled = on,
-                palette,
-            )
+            .switch("sound", settings, true, palette)
             .row(
                 "Volume",
                 Some(format!("{}%", (frontend.sound_volume * 100.).round()).into()),
@@ -1335,7 +1340,7 @@ impl SettingsPage {
     }
 
     /// Delayed so there is time to switch to another app: macOS shows no banners for the app in
-    /// front (`sendTest`).
+    /// front.
     fn send_test(&mut self, cx: &mut Context<Self>) {
         const DELAY: u64 = 5;
         self.test_pending = true;
@@ -1350,7 +1355,7 @@ impl SettingsPage {
             }
             let _ = this.update(cx, |this, cx| {
                 let outcome = crate::notifications::desktop(
-                    "test",
+                    kchess_contracts::types::NotificationKind::Test,
                     "KChess notifications",
                     "This is how game alerts will look. Click it to return to KChess.",
                     cx,
@@ -1376,75 +1381,18 @@ impl SettingsPage {
     fn notifications(&self, settings: &Settings, palette: &Palette, cx: &mut Context<Self>) -> Div {
         let frontend = &settings.frontend;
         let enabled = frontend.notifications_enabled;
-        let mut rows = Rows::new(self.narrow()).switch(
-            "notifications",
-            "Desktop notifications",
-            None,
-            enabled,
-            true,
-            |s, on| s.frontend.notifications_enabled = on,
-            palette,
-        );
-        let switches: [SwitchRow; 8] = [
-            (
-                "notify-active",
-                "While I'm using KChess",
-                None,
-                frontend.notify_active,
-                |s, on| s.frontend.notify_active = on,
-            ),
-            (
-                "notify-background",
-                "While KChess is in the background",
-                None,
-                frontend.notify_background,
-                |s, on| s.frontend.notify_background = on,
-            ),
-            (
-                "notify-opponent",
-                "Opponent moves",
-                None,
-                frontend.notify_opponent_move,
-                |s, on| s.frontend.notify_opponent_move = on,
-            ),
-            (
-                "notify-low-time",
-                "Low on time",
-                None,
-                frontend.notify_low_time,
-                |s, on| s.frontend.notify_low_time = on,
-            ),
-            (
-                "notify-games",
-                "Game start and result",
-                None,
-                frontend.notify_game_events,
-                |s, on| s.frontend.notify_game_events = on,
-            ),
-            (
-                "notify-computer",
-                "Computer moves",
-                None,
-                frontend.notify_computer_move,
-                |s, on| s.frontend.notify_computer_move = on,
-            ),
-            (
-                "notify-challenges",
-                "Challenges",
-                None,
-                frontend.notify_challenges,
-                |s, on| s.frontend.notify_challenges = on,
-            ),
-            (
-                "notify-sound",
-                "System sound",
-                Some("For system notifications"),
-                frontend.notify_sound,
-                |s, on| s.frontend.notify_sound = on,
-            ),
-        ];
-        for (id, title, hint, on, set) in switches {
-            rows = rows.switch(id, title, hint, on, enabled, set, palette);
+        let mut rows = Rows::new(self.narrow()).switch("notifications", settings, true, palette);
+        for id in [
+            "notify-active",
+            "notify-background",
+            "notify-opponent",
+            "notify-low-time",
+            "notify-games",
+            "notify-computer",
+            "notify-challenges",
+            "notify-sound",
+        ] {
+            rows = rows.switch(id, settings, enabled, palette);
         }
         rows.row(
             "Try it",
@@ -1501,7 +1449,7 @@ impl Render for SettingsPage {
         let state = handle.read(cx);
         let settings = state.settings.clone();
         let body = match self.section {
-            Section::Appearance => self.appearance(&settings, window, &palette),
+            Section::Appearance => self.appearance(&settings, window, &palette, cx),
             Section::Themes => self.themes(
                 &settings,
                 &state.custom_themes,
@@ -1544,6 +1492,32 @@ impl Render for SettingsPage {
                     .px(side_padding(window))
                     .child(body),
             )
+    }
+}
+
+impl crate::pages::PageView for SettingsPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Settings,
+        label: "Settings",
+        short: "Settings",
+        icon: "settings-2",
+        group: None,
+        keywords: "preferences options",
+    };
+
+    type Action = std::convert::Infallible;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        SettingsPage::new(window, cx)
+    }
+
+    /// The microphone test runs only while its section is shown.
+    fn hidden(this: &Entity<Self>, _window: &mut Window, cx: &mut App) {
+        this.update(cx, |settings, cx| settings.stop_mic_test(cx));
+    }
+
+    fn opened_by() -> Option<Box<dyn gpui_kit::Action>> {
+        Some(Box::new(crate::menu::OpenSettings))
     }
 }
 

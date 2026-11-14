@@ -1,9 +1,12 @@
 //! The board kept in a study: saving to its chapter, opening, saving as and closing a study.
 
 use super::*;
+use crate::game::tree::TreePgn as _;
+use kchess_contracts::CoreError;
+use kchess_contracts::types::{StudyCommand, StudyCommandResult};
 
 impl AnalysisPage {
-    /// Write the board to its study when it changed there (`persistStudy`); the answer, for a
+    /// Write the board to its study when it changed there; the answer, for a
     /// quit to wait on.
     pub(super) fn persist_study(&mut self, cx: &mut Context<Self>) -> Option<StudySave> {
         self.study_save = None;
@@ -11,28 +14,27 @@ impl AnalysisPage {
             return None;
         }
         let library = cx.global::<StudyHandle>().0.clone();
-        let name = library.read(cx).study(&self.study)?["name"].clone();
-        let text = self.root.to_pgn();
+        let name = library.read(cx).study(&self.study)?.name.clone();
+        let text = self.root.pgn_text();
         if text == self.study_pgn {
             return None;
         }
         // Counted as saved while the core writes it; a failure makes it unsaved again.
         let previous = std::mem::replace(&mut self.study_pgn, text.clone());
         let (study, chapter) = (self.study.clone(), self.chapter.clone());
-        let command = library.read(cx).command(json!({
-            "op": "save",
-            "name": name,
-            "pgn": text,
-            "id": self.study,
-            "chapterId": self.chapter,
-        }));
+        let command = library.read(cx).command_answer(StudyCommand::Save {
+            name,
+            pgn: text.clone(),
+            id: Some(self.study.clone()),
+            chapter_id: Some(self.chapter.clone()),
+        });
         let answer = (Box::pin(command) as std::pin::Pin<Box<dyn Future<Output = _>>>).shared();
         let outcome = answer.clone();
         self.study_writes += 1;
         let write = self.study_writes;
         self.study_writing = Some((write, answer.clone()));
         cx.spawn(async move |this, cx| {
-            let result: Result<Value, String> = outcome.await;
+            let result: Result<StudyCommandResult, CoreError> = outcome.await;
             let _ = this.update(cx, |this, cx| {
                 if this
                     .study_writing
@@ -46,7 +48,7 @@ impl AnalysisPage {
                     // Another window changed the chapter: the board keeps its moves as an unsaved
                     // copy rather than overwriting that window's, or blocking every later save.
                     Err(cause)
-                        if crate::studies::is_stale(cause.as_str())
+                        if crate::studies::is_stale(&cause)
                             && this.study == study
                             && this.chapter == chapter =>
                     {
@@ -61,7 +63,7 @@ impl AnalysisPage {
                         if this.study_pgn == text {
                             this.study_pgn = previous;
                         }
-                        this.study_error = Some(cause);
+                        this.study_error = Some(cause.message);
                     }
                     Err(_) => {}
                 }
@@ -83,7 +85,7 @@ impl AnalysisPage {
             .or_else(|| self.study_writing.as_ref().map(|(_, save)| save.clone()));
         async move {
             match save {
-                Some(save) => save.await.map(|_| ()),
+                Some(save) => save.await.map(|_| ()).map_err(|cause| cause.message),
                 None => Ok(()),
             }
         }
@@ -97,28 +99,23 @@ impl AnalysisPage {
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
         let library = cx.global::<StudyHandle>().0.clone();
-        let found = library.read(cx).study(id).cloned();
-        let chapters = found
-            .as_ref()
-            .and_then(|study| study["chapters"].as_array().cloned())
-            .unwrap_or_default();
-        let opened = chapters
-            .iter()
-            .find(|entry| Some(entry["id"].as_str().unwrap_or_default()) == chapter)
-            .or_else(|| chapters.first())
-            .cloned();
+        let opened = library.read(cx).study(id).and_then(|study| {
+            chapter
+                .and_then(|chapter| study.chapter(chapter))
+                .or_else(|| study.chapters.first())
+                .cloned()
+        });
         let tree = opened
             .as_ref()
-            .and_then(|chapter| chapter["pgn"].as_str())
-            .and_then(TreeNode::from_pgn);
+            .and_then(|chapter| TreeNode::from_pgn(&chapter.pgn));
         let (Some(opened), Some(tree)) = (opened, tree) else {
             return Err("This study could not be opened".into());
         };
         self.take_board(tree, cx);
         self.study = id.to_string();
-        self.chapter = opened["id"].as_str().unwrap_or_default().to_string();
+        self.chapter = opened.id;
         library.read(cx).track(&self.study, &self.chapter);
-        self.study_pgn = self.root.to_pgn();
+        self.study_pgn = self.root.pgn_text();
         self.study_error = None;
         self.changed(cx);
         Ok(())
@@ -133,17 +130,17 @@ impl AnalysisPage {
         self.persist_study(cx);
         self.navigation += 1;
         let navigation = self.navigation;
-        let text = self.root.to_pgn();
+        let text = self.root.pgn_text();
         let library = cx.global::<StudyHandle>().0.clone();
-        let answer = library
-            .read(cx)
-            .command(json!({ "op": "save", "name": name, "pgn": text }));
+        let answer = library.read(cx).command(StudyCommand::Save {
+            name,
+            pgn: text.clone(),
+            id: None,
+            chapter_id: None,
+        });
         cx.spawn(async move |this, cx| {
             let result = answer.await?;
-            let id = result["id"]
-                .as_str()
-                .ok_or("The study could not be saved")?
-                .to_string();
+            let id = result.id.clone().ok_or("The study could not be saved")?;
             this.update(cx, |this, cx| {
                 library.update(cx, |library, cx| {
                     library.apply(&result);
@@ -157,7 +154,7 @@ impl AnalysisPage {
                 let chapter = library
                     .read(cx)
                     .study(&id)
-                    .and_then(|study| study["chapters"][0]["id"].as_str().map(str::to_string));
+                    .and_then(|study| Some(study.chapters.first()?.id.clone()));
                 let Some(chapter) = chapter else {
                     return Err("The saved study has no chapter".to_string());
                 };

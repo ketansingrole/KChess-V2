@@ -1,23 +1,25 @@
-//! Lichess's own analysis of a game, as a review (`reviewFromLichess`, `fetchLichessReviews` and
-//! the review writes of the game sync).
+//! Lichess's own analysis of a game, as a review (reading it, asking Lichess for it, and the
+//! review writes of the game sync).
 //!
-//! Reviews are JSON values shaped as `StoredReview`. Writing them
-//! goes through `LichessStore::save_reviews` and `mark_checked`, so the review store stays behind
+//! Writing reviews goes through `LichessStore::save_reviews` and `mark_checked`, so the review store stays behind
 //! the storage trait the wiring provides.
 
 use serde::Deserialize;
-use serde_json::{Map, Number, Value, json};
-use tokio_util::sync::CancellationToken;
+use serde_json::{Map, Number, Value};
 
-use super::accounts::{Lichess, now_ms};
-use super::client::{Failure, LichessClient, Ndjson};
+use super::accounts::Lichess;
+use super::client::Lane;
 use super::decode::{Loose, read};
-use crate::error::{CoreError, Result as CoreResult};
+use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result as CoreResult};
+use kchess_contracts::types::{
+    Judgment, ReviewAccuracy, ReviewEval, ReviewSource, StoredReview, UsageKind,
+};
 use kchess_domain::{js, records, replay, review as domain_review};
 
 /// The standard start, which Lichess scores as +0.15 when it works out accuracy.
 const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-/// `fetchLichessReviews` asks about at most this many games at once.
+/// Lichess is asked about at most this many games at once.
 pub const MAX_REVIEW_IDS: usize = 300;
 
 /// One entry of Lichess's analysis: each field read when it has the right type.
@@ -81,17 +83,12 @@ struct RawGame {
     id: Loose<String>,
 }
 
-/// `reviewFromLichess(raw)`: Lichess's computer analysis of a game, as a review (scores from
+/// Lichess's computer analysis of a game, as a review (scores from
 /// White's side, its labels and accuracy). None when the game is unfinished, has no analysis,
 /// or is a variant reviews cannot replay.
-pub fn review_from_lichess(raw: &Value) -> Option<Value> {
+pub fn review_from_lichess(raw: &Value) -> Option<StoredReview> {
     let game: RawGame = read(raw)?;
-    let status = game.status.unwrap_or(Value::Null);
-    let in_progress = records::call("isGameInProgress", &[status])
-        .and_then(Result::ok)
-        .and_then(|value| value.as_bool())
-        .unwrap_or(true);
-    if in_progress {
+    if records::games::is_game_in_progress(game.status.as_ref()) {
         return None;
     }
     let analysis = game.analysis.0?;
@@ -109,24 +106,26 @@ pub fn review_from_lichess(raw: &Value) -> Option<Value> {
         return None;
     }
     let positions = replay::replay_positions(&fen, &moves);
-    let mut evals: Vec<Option<Map<String, Value>>> = vec![None; moves.len() + 1];
+    let mut evals: Vec<Option<ReviewEval>> = vec![None; moves.len() + 1];
     if fen == INITIAL_FEN {
-        evals[0] = Some(Map::from_iter([("cp".to_string(), json!(15))]));
+        evals[0] = Some(ReviewEval {
+            cp: Some(15.0),
+            ..ReviewEval::default()
+        });
     }
-    let mut judgments: Vec<Value> = vec![Value::Null; moves.len()];
+    let mut judgments: Vec<Option<Judgment>> = vec![None; moves.len()];
     for (i, entry) in analysis.into_iter().take(moves.len()).enumerate() {
         // Entry i scores the position after move i+1; its `best` is what should have been played.
-        // Only numbers are scores: a review is stored as Lichess sent it.
+        // Only numbers are scores.
         let entry = entry.0.unwrap_or_default();
-        let score = match (entry.mate.0, entry.eval.0) {
-            (Some(mate), _) => Some(("mate", Value::Number(mate))),
-            (None, Some(eval)) => Some(("cp", Value::Number(eval))),
-            (None, None) => None,
+        let (mate, cp) = match (entry.mate.0, entry.eval.0) {
+            (Some(mate), _) => (mate.as_f64(), None),
+            (None, eval) => (None, eval.as_ref().and_then(Number::as_f64)),
         };
-        if let Some((key, value)) = score {
-            evals[i + 1]
-                .get_or_insert_with(Map::new)
-                .insert(key.to_string(), value);
+        if mate.is_some() || cp.is_some() {
+            let slot = evals[i + 1].get_or_insert_with(ReviewEval::default);
+            slot.mate = mate;
+            slot.cp = cp;
         }
         if let Some(best) = entry.best.0.as_deref().filter(|best| !best.is_empty()) {
             let variation = entry.variation.0.as_deref().filter(|text| !text.is_empty());
@@ -142,61 +141,49 @@ pub fn review_from_lichess(raw: &Value) -> Option<Value> {
             } else {
                 pv
             };
-            let slot = evals[i].get_or_insert_with(Map::new);
-            slot.insert("best".to_string(), json!(best));
-            slot.insert("pv".to_string(), json!(pv));
+            let slot = evals[i].get_or_insert_with(ReviewEval::default);
+            slot.best = Some(best.to_string());
+            slot.pv = Some(pv);
         }
-        if let Some(name) = entry
+        judgments[i] = entry
             .judgment
             .0
             .and_then(|judgment| judgment.name.0)
-            .map(|name| name.to_lowercase())
-            && matches!(name.as_str(), "inaccuracy" | "mistake" | "blunder")
-        {
-            judgments[i] = json!(name);
-        }
+            .and_then(|name| Judgment::from_key(&name.to_lowercase()));
     }
-    let mut accuracy = Map::new();
     let players = game.players.0.unwrap_or_default();
-    for (color, player) in [("white", players.white), ("black", players.black)] {
-        let figure = player
+    let [white, black] = [players.white, players.black].map(|player| {
+        player
             .0
             .and_then(|player| player.analysis.0)
-            .and_then(|analysis| analysis.accuracy.0);
-        if let Some(figure) = figure {
-            accuracy.insert(color.to_string(), Value::Number(figure));
-        }
-    }
-    let key = records::call("reviewKey", &[json!(fen), json!(moves)])
-        .and_then(Result::ok)
-        .and_then(|value| value.as_str().map(str::to_string))?;
-    let evals: Vec<Value> = evals
-        .into_iter()
-        .map(|slot| slot.map_or(Value::Null, Value::Object))
-        .collect();
-    Some(json!({
-        "key": key,
-        "fen": fen,
-        "moves": moves,
-        "source": "lichess",
-        "evals": evals,
-        "judgments": judgments,
-        "accuracy": accuracy,
-        "depth": 0,
-        "complete": true,
-        "updatedAt": now_ms(),
-        "gameId": game.id.0?,
-    }))
+            .and_then(|analysis| analysis.accuracy.0)
+    });
+    Some(StoredReview {
+        key: records::review::review_key(&fen, &moves, None),
+        fen,
+        moves,
+        source: ReviewSource::Lichess,
+        engine: None,
+        evals,
+        depth: 0,
+        complete: true,
+        updated_at: now_ms(),
+        game_id: Some(game.id.0?),
+        judgments: Some(judgments),
+        accuracy: Some(ReviewAccuracy { white, black }),
+        variant: None,
+        rest: Map::new(),
+    })
 }
 
-/// `fetchLichessReviews(account, ids)`: asks Lichess for its analysis of games already synced (up
+/// Asks Lichess for its analysis of games already synced (up
 /// to 300 per request), saves each one it has, and remembers every game asked about. Nothing is
 /// written when the account's sync was cancelled meanwhile. Returns the stored reviews.
 pub async fn fetch_lichess_reviews(
     lichess: &Lichess,
     account: &str,
     ids: &[String],
-) -> CoreResult<Vec<Value>> {
+) -> CoreResult<Vec<StoredReview>> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -208,40 +195,21 @@ pub async fn fetch_lichess_reviews(
         ("evals", "true".to_string()),
         ("accuracy", "true".to_string()),
     ];
-    let cancel = lichess.lifetime().clone();
-    let lines = lichess
-        .client()
-        .policy()
-        .with_usage(account, "games", async {
-            lichess
-                .as_owner(account, |auth| {
-                    let body = body.clone();
-                    let cancel = cancel.clone();
-                    let query = query.clone();
-                    async move {
-                        collect_lines(
-                            lichess.client(),
-                            reqwest::Method::POST,
-                            "/api/games/export/_ids",
-                            &query,
-                            Some(body),
-                            auth.as_deref(),
-                            &cancel,
-                        )
-                        .await
-                    }
-                })
-                .await
+    let parsed = lichess
+        .as_owner(account, UsageKind::Games, |auth| {
+            let (body, query) = (body.clone(), &query);
+            async move {
+                lichess
+                    .client()
+                    .post("/api/games/export/_ids", &auth)
+                    .query(query)
+                    .text(body)
+                    .lane(Lane::Export)
+                    .records("game", usize::MAX, |raw: Value| review_from_lichess(&raw))
+                    .await
+            }
         })
-        .await
-        .map_err(CoreError::from)?;
-    let mut parsed = Vec::new();
-    for line in &lines {
-        let raw = parse_record(line)?;
-        if let Some(review) = review_from_lichess(&raw) {
-            parsed.push(review);
-        }
-    }
+        .await?;
     // Nothing is written until the download is over: a logout meanwhile keeps it all off disk.
     if epoch != lichess.account_epoch(account) {
         return Err(CoreError::new("Sync was cancelled."));
@@ -255,44 +223,7 @@ pub async fn fetch_lichess_reviews(
     Ok(found)
 }
 
-/// Parses one game record of an NDJSON export.
-pub(crate) fn parse_record(line: &str) -> CoreResult<Value> {
-    serde_json::from_str(line)
-        .map_err(|cause| CoreError::new(format!("Lichess sent an unreadable game record: {cause}")))
-}
-
-/// The lines of an NDJSON response, read to the end (the request is admitted by the policy).
-pub(crate) async fn collect_lines(
-    client: &LichessClient,
-    method: reqwest::Method,
-    path: &str,
-    query: &[(&str, String)],
-    body: Option<String>,
-    auth: Option<&str>,
-    cancel: &CancellationToken,
-) -> Result<Vec<String>, Failure> {
-    let mut lines = Vec::new();
-    client
-        .ndjson(
-            Ndjson {
-                method,
-                path,
-                query,
-                body,
-                auth,
-            },
-            cancel,
-            |line| {
-                lines.push(line.to_string());
-                Ok(())
-            },
-        )
-        .await?;
-    Ok(lines)
-}
-
-/// `split(/\s+/)` of JavaScript: runs of whitespace separate words, and a leading or trailing run
-/// leaves an empty word, as the regular expression does.
+/// Runs of whitespace separate words, and a leading or trailing run leaves an empty word.
 pub(crate) fn split_whitespace(text: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;

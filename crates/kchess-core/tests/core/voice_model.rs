@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use kchess_core::host::{Host, Level};
 use kchess_core::loopback::close_after_client;
+use kchess_core::test_host::TestHost;
 use kchess_core::voice::{
     Archive, Listener, MAX_DOWNLOAD_BYTES, Phase, Progress, Status, VoiceModel, VoiceModelCache,
 };
@@ -21,21 +21,6 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 
 const NAME: &str = "test-model";
-
-/// Keeps every log line, as `Recording` does for the engine tests.
-#[derive(Default)]
-struct Logs(Mutex<Vec<String>>);
-
-impl Host for Logs {
-    fn log(&self, level: Level, scope: &str, message: &str) {
-        self.0
-            .lock()
-            .expect("log lock")
-            .push(format!("{} [{scope}] {message}", level.name()));
-    }
-
-    fn emit(&self, _event: &str, _payload: serde_json::Value) {}
-}
 
 /// One scripted answer to a request.
 #[derive(Clone)]
@@ -178,10 +163,11 @@ fn model_for(base: &str, zip: &[u8]) -> VoiceModel {
     }
 }
 
-fn cache_in(directory: &Path, base: &str, zip: &[u8]) -> (VoiceModelCache, Arc<Logs>) {
-    let logs = Arc::new(Logs::default());
+fn cache_in(directory: &Path, base: &str, zip: &[u8]) -> (VoiceModelCache, Arc<TestHost>) {
+    let logs = TestHost::new();
     let cache = VoiceModelCache::new(
         logs.clone(),
+        Arc::new(kchess_core::usage::Unmetered),
         directory.to_path_buf(),
         Archive::Url(format!("{base}/model.zip")),
         model_for(base, zip),
@@ -369,13 +355,7 @@ async fn downloads_when_an_earlier_release_archive_is_unusable() {
         entries(directory.path()),
         vec!["model".to_string(), "model.json".to_string()]
     );
-    assert!(
-        logs.0
-            .lock()
-            .expect("logs")
-            .iter()
-            .any(|line| line.contains("could not be reused"))
-    );
+    assert!(logs.logged("could not be reused"));
 }
 
 #[tokio::test]
@@ -399,15 +379,21 @@ async fn reports_shared_preparation_while_a_download_is_in_flight() {
     })
     .await
     .expect("request");
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let busy = cache.status().await;
+    // The held download reports itself: busy, not installed, downloading.
+    let busy = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let status = cache.status().await;
+            if status.progress.as_ref().map(|progress| progress.phase) == Some(Phase::Downloading) {
+                return status;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the download reports itself");
     assert!(busy.busy);
     assert!(!busy.installed);
-    assert_eq!(
-        busy.progress.map(|progress| progress.phase),
-        Some(Phase::Downloading)
-    );
 
     gate.notify_one();
     pending.await.expect("join").expect("ensure");
@@ -447,7 +433,7 @@ async fn shares_concurrent_downloads_and_reuses_a_verified_cache_offline() {
     );
 }
 
-fn cache_at_unreachable(directory: &Path, zip: &[u8]) -> (VoiceModelCache, Arc<Logs>) {
+fn cache_at_unreachable(directory: &Path, zip: &[u8]) -> (VoiceModelCache, Arc<TestHost>) {
     cache_in(directory, "http://127.0.0.1:9", zip)
 }
 
@@ -466,20 +452,15 @@ async fn rejects_a_bad_checksum_without_publishing_a_cache_then_permits_retry() 
     let directory = tempfile::tempdir().expect("directory");
     let (cache, logs) = cache_in(directory.path(), &server.base, &zip);
 
+    // 2026-11-11: every failure ended "Connect to the internet and try again.", this one too,
+    // although the connection worked.
     let error = cache.ensure(None).await.expect_err("checksum");
-    assert!(
-        error.message.contains("checksum mismatch"),
-        "{}",
-        error.message
+    assert_eq!(
+        error.message,
+        "Couldn’t prepare voice input. Voice model checksum mismatch. Try downloading it again."
     );
     assert!(entries(directory.path()).is_empty());
-    assert!(
-        logs.0
-            .lock()
-            .expect("logs")
-            .iter()
-            .any(|line| line.contains("preparation failed"))
-    );
+    assert!(logs.logged("preparation failed"));
 
     assert_eq!(cache.ensure(None).await.expect("retry"), cache.path());
     assert_eq!(server.requests(), 2);
@@ -528,13 +509,16 @@ async fn cleans_up_failed_and_interrupted_responses_and_allows_another_attempt()
     let failed = cache.ensure(None).await.expect_err("503");
     assert_eq!(
         failed.message,
-        "Couldn’t prepare voice input. Voice model download failed: HTTP 503. Connect to the internet and try again."
+        "Couldn’t prepare voice input. Voice model download failed: HTTP 503."
     );
+    // A lost connection is the one failure the connection advice is for.
     let interrupted = cache.ensure(None).await.expect_err("interrupted");
     assert!(
-        interrupted
+        interrupted.message.starts_with(
+            "Couldn’t prepare voice input. Voice model download failed (network error)"
+        ) && interrupted
             .message
-            .starts_with("Couldn’t prepare voice input. "),
+            .ends_with(" Connect to the internet and try again."),
         "{}",
         interrupted.message
     );
@@ -549,12 +533,9 @@ async fn refuses_a_download_declared_larger_than_the_limit() {
     let directory = tempfile::tempdir().expect("directory");
     let (cache, _) = cache_in(directory.path(), &server.base, &zip);
     let error = cache.ensure(None).await.expect_err("too large");
-    assert!(
-        error
-            .message
-            .ends_with("Voice model download is too large. Connect to the internet and try again."),
-        "{}",
-        error.message
+    assert_eq!(
+        error.message,
+        "Couldn’t prepare voice input. Voice model download is too large."
     );
     assert!(entries(directory.path()).is_empty());
 }

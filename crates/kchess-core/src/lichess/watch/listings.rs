@@ -1,21 +1,23 @@
-//! Broadcast listings and the TV and broadcast requests (moved from `watch.rs` without changes).
+//! Broadcast listings and the TV and broadcast requests.
 
 use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
-    BroadcastRoundRef, BroadcastSummary, BroadcastTourDetail, TV_CHANNELS, TvChannel, WatchPlayer,
+    BroadcastRoundPlace, BroadcastRoundRef, BroadcastSummary, BroadcastTourDetail, TV_CHANNELS,
+    TvChannel, WatchPlayer,
 };
-use crate::error::{CoreError, Result as CoreResult};
 use crate::lichess::accounts::{Lichess, path_segment};
 use crate::lichess::decode::{Loose, Millis, Text, read};
+use kchess_contracts::error::{CoreError, Result as CoreResult};
+use kchess_contracts::types::{BroadcastSection, UsageKind};
 use kchess_domain::js;
 
 /* ── Broadcast listings (pure) ── */
 
-/// `broadcastSummaries(entries, section)`: the listing's entries that have a readable tournament;
+/// The listing's entries that have a readable tournament;
 /// only Lichess's own images are kept. A round's section follows its state.
-pub fn broadcast_summaries(entries: &[Value], section: &'static str) -> Vec<BroadcastSummary> {
+pub fn broadcast_summaries(entries: &[Value], section: BroadcastSection) -> Vec<BroadcastSummary> {
     entries
         .iter()
         .take(30)
@@ -26,9 +28,9 @@ pub fn broadcast_summaries(entries: &[Value], section: &'static str) -> Vec<Broa
                 !ongoing && !round.finished && round.finished_at.is_none_or(|at| at == 0.0)
             });
             let section = if ongoing {
-                "active"
+                BroadcastSection::Active
             } else if upcoming {
-                "upcoming"
+                BroadcastSection::Upcoming
             } else {
                 section
             };
@@ -124,18 +126,12 @@ struct ChannelRaw {
 
 /* ── Requests ── */
 
-/// `tvChannels()`: the TV channels with who is playing on each right now.
+/// The TV channels with who is playing on each right now.
 pub async fn tv_channels(lichess: &Lichess) -> CoreResult<Vec<TvChannel>> {
-    let cancel = lichess.lifetime().clone();
     let raw: Value = lichess
         .client()
-        .policy()
-        .with_usage("", "watch", async {
-            lichess
-                .client()
-                .get_json("/api/tv/channels", &[], None, &cancel)
-                .await
-        })
+        .get("/api/tv/channels", &lichess.anonymous(UsageKind::Watch))
+        .read_json()
         .await?;
     Ok(TV_CHANNELS
         .iter()
@@ -153,8 +149,8 @@ pub async fn tv_channels(lichess: &Lichess) -> CoreResult<Vec<TvChannel>> {
                 })
             });
             TvChannel {
-                key,
-                label,
+                key: (*key).to_owned(),
+                label: (*label).to_owned(),
                 game_id,
                 player,
             }
@@ -168,45 +164,29 @@ pub async fn broadcasts(
     lichess: &Lichess,
     query: Option<&str>,
 ) -> CoreResult<Vec<BroadcastSummary>> {
-    let cancel = lichess.lifetime().clone();
     let query = query.map(js::trim).filter(|q| !q.is_empty());
     if let Some(query) = query {
         let raw: Value = lichess
             .client()
-            .policy()
-            .with_usage("", "watch", async {
-                lichess
-                    .client()
-                    .get_json(
-                        "/api/broadcast/search",
-                        &[("q", query.to_string()), ("page", "1".to_string())],
-                        None,
-                        &cancel,
-                    )
-                    .await
-            })
+            .get(
+                "/api/broadcast/search",
+                &lichess.anonymous(UsageKind::Watch),
+            )
+            .query(&[("q", query.to_string()), ("page", "1".to_string())])
+            .read_json()
             .await?;
         let entries = raw
             .get("currentPageResults")
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        return Ok(broadcast_summaries(&entries, "past"));
+        return Ok(broadcast_summaries(&entries, BroadcastSection::Past));
     }
     let raw: Value = lichess
         .client()
-        .policy()
-        .with_usage("", "watch", async {
-            lichess
-                .client()
-                .get_json(
-                    "/api/broadcast/top",
-                    &[("page", "1".to_string())],
-                    None,
-                    &cancel,
-                )
-                .await
-        })
+        .get("/api/broadcast/top", &lichess.anonymous(UsageKind::Watch))
+        .query(&[("page", "1".to_string())])
+        .read_json()
         .await?;
     let list = |key: &str| {
         raw.get(key)
@@ -219,41 +199,41 @@ pub async fn broadcasts(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let mut all = broadcast_summaries(&list("active"), "active");
-    all.extend(broadcast_summaries(&list("upcoming"), "upcoming"));
-    all.extend(broadcast_summaries(&past, "past"));
+    let mut all = broadcast_summaries(&list("active"), BroadcastSection::Active);
+    all.extend(broadcast_summaries(
+        &list("upcoming"),
+        BroadcastSection::Upcoming,
+    ));
+    all.extend(broadcast_summaries(&past, BroadcastSection::Past));
     Ok(all)
 }
 
-/// `broadcastRound(id)`: the tournament a broadcast round is in, as a round's link names only
-/// the round (`{ tourId, roundId }`).
-pub async fn broadcast_round(lichess: &Lichess, id: &str) -> CoreResult<Value> {
-    let cancel = lichess.lifetime().clone();
+/// The tournament a broadcast round is in, as a round's link names only
+/// the round.
+pub async fn broadcast_round(lichess: &Lichess, id: &str) -> CoreResult<BroadcastRoundPlace> {
     let path = format!("/api/broadcast/-/-/{}", path_segment(id));
     let raw: Value = lichess
         .client()
-        .policy()
-        .with_usage("", "watch", async {
-            lichess.client().get_json(&path, &[], None, &cancel).await
-        })
+        .get(&path, &lichess.anonymous(UsageKind::Watch))
+        .read_json()
         .await?;
     let tour = raw["tour"]["id"]
         .as_str()
         .filter(|tour| !tour.is_empty())
         .ok_or_else(|| CoreError::new("Lichess sent an unreadable broadcast."))?;
-    Ok(serde_json::json!({ "tourId": tour, "roundId": id }))
+    Ok(BroadcastRoundPlace {
+        tour_id: tour.to_owned(),
+        round_id: id.to_owned(),
+    })
 }
 
-/// `broadcastTour(id)`: a broadcast tournament and its rounds (at most 100).
+/// A broadcast tournament and its rounds (at most 100).
 pub async fn broadcast_tour(lichess: &Lichess, id: &str) -> CoreResult<BroadcastTourDetail> {
-    let cancel = lichess.lifetime().clone();
     let path = format!("/api/broadcast/{}", path_segment(id));
     let raw: Value = lichess
         .client()
-        .policy()
-        .with_usage("", "watch", async {
-            lichess.client().get_json(&path, &[], None, &cancel).await
-        })
+        .get(&path, &lichess.anonymous(UsageKind::Watch))
+        .read_json()
         .await?;
     let unreadable = || CoreError::new("Lichess sent an unreadable broadcast.");
     let tour: TourRaw = raw.get("tour").and_then(read).ok_or_else(unreadable)?;

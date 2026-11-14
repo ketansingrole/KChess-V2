@@ -50,7 +50,8 @@ fn an_empty_home_offers_a_game(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn every_sidebar_page_opens(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    for (page, label, _) in crate::shell::nav() {
+    for page in crate::pages::Page::in_sidebar() {
+        let label = page.info().label;
         app.open(label);
         let shown = app.cx.update(|cx| crate::shell::current_page(cx));
         assert_eq!(shown, Some(page), "{label} opened another page");
@@ -405,11 +406,7 @@ fn the_account_menu_opens_the_profile_and_the_accounts_settings(cx: &mut gpui_ki
     app.click_label("Manage accounts");
     app.wait_for("Settings to open at its accounts", |_, cx| {
         crate::shell::current_page(cx) == Some(crate::pages::Page::Settings)
-            && crate::shell::view_of::<crate::pages::settings::SettingsPage>(
-                crate::pages::Page::Settings,
-                cx,
-            )
-            .is_some_and(|page| {
+            && crate::shell::view::<crate::pages::settings::SettingsPage>(cx).is_some_and(|page| {
                 page.read(cx).section() == crate::pages::settings::Section::Accounts
             })
     });
@@ -421,12 +418,9 @@ fn the_account_menu_opens_the_profile_and_the_accounts_settings(cx: &mut gpui_ki
     app.click_label("Profile");
     app.wait_for("the account's own profile", |_, cx| {
         crate::shell::current_page(cx) == Some(crate::pages::Page::Players)
-            && crate::shell::view_of::<crate::pages::players::PlayersPage>(
-                crate::pages::Page::Players,
-                cx,
-            )
-            .and_then(|page| page.read(cx).username())
-            .is_some_and(|name| name.eq_ignore_ascii_case("Showcase"))
+            && crate::shell::view::<crate::pages::players::PlayersPage>(cx)
+                .and_then(|page| page.read(cx).username())
+                .is_some_and(|name| name.eq_ignore_ascii_case("Showcase"))
     });
 }
 
@@ -452,7 +446,9 @@ fn quitting_during_a_live_game_asks_first(cx: &mut gpui_kit::TestAppContext) {
     // The phase is set where the key is pressed: a later snapshot of the core's replaces it.
     app.with_window(|window, cx| {
         use gpui_kit::test::TestWindowExt as _;
-        crate::online::handle(cx).update(cx, |online, cx| online.set_phase("playing", cx));
+        crate::online::handle(cx).update(cx, |online, cx| {
+            online.set_phase(kchess_domain::online_game::model::GamePhase::Playing, cx)
+        });
         assert!(crate::online::handle(cx).read(cx).live_game_on(), "on");
         window.press("secondary-q", cx);
     });
@@ -509,7 +505,7 @@ fn a_tests_alerts_never_reach_the_desktop(cx: &mut gpui_kit::TestAppContext) {
     gpui_kit::VisualTestContext::from_window(app.window, &app.cx).deactivate_window();
     let outcome = app.cx.update(|cx| {
         crate::notifications::desktop(
-            "gameEvents",
+            kchess_contracts::types::NotificationKind::GameEvents,
             "Game started",
             "You are playing Opponent as white.",
             cx,
@@ -541,7 +537,7 @@ fn a_clicked_notification_opens_its_game(cx: &mut gpui_kit::TestAppContext) {
     );
     app.with_window(|_, cx| {
         crate::notifications::post(
-            "computerMove",
+            kchess_contracts::types::NotificationKind::ComputerMove,
             "Stockfish moved",
             "e5. Your move.",
             false,
@@ -570,7 +566,40 @@ fn a_clicked_notification_opens_its_game(cx: &mut gpui_kit::TestAppContext) {
     let shown = app.cx.update(|cx| crate::shell::current_page(cx));
     assert_eq!(shown, Some(crate::pages::Page::Computer));
     // A notification about no game has nothing to go to.
-    app.with_window(|_, cx| crate::notifications::post("test", "KChess", "Hello", false, cx));
+    app.with_window(|_, cx| {
+        crate::notifications::post(
+            kchess_contracts::types::NotificationKind::Test,
+            "KChess",
+            "Hello",
+            false,
+            cx,
+        )
+    });
     let shown = app.cx.shown_system_notifications();
     assert!(shown.last().expect("a notification").actions.is_empty());
+}
+
+/// F turns the board on every page that shows one, through the app's Flip board key: each page
+/// answers it, once a click on the page has given it the keys.
+#[gpui_kit::test]
+fn f_turns_the_board_on_every_board_page(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    for (page, focus) in [
+        (
+            "Play with computer",
+            gpui_kit::ElementId::from("chess-board"),
+        ),
+        ("Over the board", "chess-board".into()),
+        ("Analysis board", "chess-board".into()),
+        ("Board editor", ("editor-turn", 0usize).into()),
+    ] {
+        app.open(page);
+        app.find("chess-board");
+        let before = app.white_at_bottom();
+        app.click(focus);
+        app.press("f");
+        assert_eq!(app.white_at_bottom(), !before, "{page}");
+        app.press("f");
+        assert_eq!(app.white_at_bottom(), before, "{page}");
+    }
 }

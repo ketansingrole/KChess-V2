@@ -11,7 +11,7 @@ pub struct Control {
     pub enabled: bool,
     pub feedback: Option<SharedString>,
     pub heard: Option<SharedString>,
-    /// Push to talk applies here when Settings ask for it (`allowPushTalk`).
+    /// Push to talk applies here when Settings ask for it.
     push: bool,
 }
 
@@ -87,7 +87,7 @@ impl Control {
         self.enabled && super::handle(cx).read(cx).owner() == Some(self.owner)
     }
 
-    /// Whether voice can take a phrase as soon as the page asks (`prepare`): `Some(true)` once
+    /// Whether voice can take a phrase as soon as the page asks: `Some(true)` once
     /// the model and microphone are ready, `Some(false)` while they load, `None` when voice is
     /// off or failed.
     pub fn ready(&self, cx: &App) -> Option<bool> {
@@ -101,7 +101,7 @@ impl Control {
         }
     }
 
-    /// A run asked to start waits for voice (`prepare`): true when it can start now. `waiting`
+    /// A run asked to start waits for voice: true when it can start now. `waiting`
     /// stays set while voice loads, so the page starts the run once it is ready, and clears
     /// when voice is off or failed.
     pub fn gate(&self, waiting: &mut bool, cx: &App) -> bool {
@@ -148,7 +148,7 @@ impl Control {
     }
 }
 
-/// A drill's phrases (`logAnswer`): the question asked is known, so each says what was meant,
+/// A drill's phrases: the question asked is known, so each says what was meant,
 /// and a phrase that tries the same question again after a miss points back to it.
 #[derive(Default)]
 pub struct DrillLog {

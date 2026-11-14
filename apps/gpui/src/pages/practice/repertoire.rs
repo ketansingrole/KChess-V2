@@ -6,7 +6,13 @@
 //! same starting position are one tree. An opening chosen on the Openings page is drilled without a
 //! study: its named line, then the explorer's popular moves for a few more.
 
+use crate::game::tree::TreePgn as _;
 use kchess_contracts::calls;
+use kchess_contracts::check::{Fen, MissCounts, Position, RepertoireKey, RepertoireLine};
+use kchess_contracts::types::{
+    Keyed, LookupOptions, PositionLookupKind, RepertoireMisses, RepertoireSchedule, Study,
+    StudyChapter as Chapter, StudyCommand,
+};
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -19,8 +25,8 @@ use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_domain::training::openings::{self, ExplorerMove};
 use kchess_domain::training::repetition;
-use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use shakmaty::Color;
 
@@ -29,7 +35,7 @@ use crate::assets::icon;
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::tree::{TreeNode, child_path, comment_text};
-use crate::game::{STANDARD_FEN, random_unit, rules, view};
+use crate::game::{STANDARD_FEN, view};
 use crate::pages::Page;
 use crate::pages::openings::OpeningChoice;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
@@ -37,6 +43,7 @@ use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::studies::StudyHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice, Pill, Tone};
+use kchess_games::random_unit;
 
 const STUDY: &str = "kchess:repertoire-study";
 const OPENING_CHOICE: &str = "kchess:repertoire-opening";
@@ -52,20 +59,6 @@ const LOOKUP_BUDGET: usize = 16;
 const REPLY: Duration = Duration::from_millis(450);
 const FIRST_REPLY: Duration = Duration::from_millis(400);
 const NEXT_LINE: Duration = Duration::from_millis(1400);
-
-#[derive(Clone, Deserialize)]
-struct Chapter {
-    id: String,
-    name: String,
-    pgn: String,
-}
-
-#[derive(Clone, Deserialize)]
-struct Study {
-    id: String,
-    name: String,
-    chapters: Vec<Chapter>,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -94,14 +87,14 @@ fn same_castle(a: &str, b: &str) -> bool {
 }
 
 /// Adds another chapter's moves (and comments) from the same position to a tree.
-fn merge(into: &mut TreeNode, from: TreeNode) {
-    for comment in from.comments.unwrap_or_default() {
+fn merge(into: &mut TreeNode, mut from: TreeNode) {
+    for comment in from.comments.take().unwrap_or_default() {
         let comments = into.comments.get_or_insert_with(Vec::new);
         if !comments.contains(&comment) {
             comments.push(comment);
         }
     }
-    for child in from.children {
+    for child in std::mem::take(&mut from.children) {
         match into
             .children
             .iter_mut()
@@ -114,18 +107,25 @@ fn merge(into: &mut TreeNode, from: TreeNode) {
 }
 
 /// How often the moves at and below a node were missed: the trainer steers towards weak lines.
-fn weakness(start: &TreeNode, table: &Value) -> f64 {
+fn weakness(start: &TreeNode, table: Option<&Keyed<serde_json::Number>>) -> f64 {
     let mut total = 0.;
     let mut stack = vec![start];
     while let Some(next) = stack.pop() {
-        total += table[&next.fen].as_f64().unwrap_or(0.);
+        total += table
+            .and_then(|table| table.get(&next.fen))
+            .and_then(serde_json::Number::as_f64)
+            .unwrap_or(0.);
         stack.extend(next.children.iter());
     }
     total
 }
 
 /// One of the nodes, more often those with weak lines below them; `draw` is in [0, 1).
-fn pick_weak(nodes: &[&TreeNode], table: &Value, draw: f64) -> Option<usize> {
+fn pick_weak(
+    nodes: &[&TreeNode],
+    table: Option<&Keyed<serde_json::Number>>,
+    draw: f64,
+) -> Option<usize> {
     let weights: Vec<f64> = nodes
         .iter()
         .map(|node| 1. + 2. * weakness(node, table))
@@ -186,12 +186,6 @@ fn leads_to(path: &str, line: &str) -> bool {
             .is_some_and(|rest| rest.starts_with(' '))
 }
 
-fn now_ms() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0., |elapsed| elapsed.as_millis() as f64)
-}
-
 /// When a line is next due, from now: "in 5 min", "in 3 h", "in 2 days".
 fn due_in(due: f64, now: f64) -> String {
     let minutes = ((due - now) / 60_000.).ceil().max(1.);
@@ -229,14 +223,6 @@ fn turn_of(fen: &str) -> Color {
     }
 }
 
-fn color_name(color: Color) -> &'static str {
-    if color == Color::White {
-        "white"
-    } else {
-        "black"
-    }
-}
-
 /// The repertoire trainer's actions, as its buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum RepertoireAction {
@@ -249,9 +235,9 @@ pub(crate) enum RepertoireAction {
 
 pub struct Repertoire {
     studies: Vec<Study>,
-    misses: Value,
+    misses: RepertoireMisses,
     /// Every repertoire's spaced-repetition schedule: key → line → card.
-    schedule: Value,
+    schedule: RepertoireSchedule,
     /// The line being drilled, when one was chosen (a due line): the opponent's moves follow it.
     target: Option<String>,
     /// Whether this line had a wrong move or a shown one: it is then answered wrong.
@@ -290,7 +276,11 @@ impl Repertoire {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Repertoire {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 None,
                 None,
@@ -300,7 +290,16 @@ impl Repertoire {
         let study_select = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
         let chapter_select = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
         let settings = cx.global::<SettingsHandle>().0.clone();
+        let trainer = cx.entity().downgrade();
         let subscriptions = vec![
+            // Another window practised a repertoire: its misses and schedule are the profile's.
+            crate::core::profile_changes(
+                cx,
+                &[kchess_contracts::types::ProfileArea::Repertoire],
+                move |cx| {
+                    let _ = trainer.update(cx, |trainer, cx| trainer.load_misses(cx));
+                },
+            ),
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
                 if let BoardEvent::Move(uci) = event {
                     this.play(uci, cx);
@@ -347,8 +346,8 @@ impl Repertoire {
         ];
         let mut drill = Repertoire {
             studies: Self::studies_of(cx),
-            misses: Value::Null,
-            schedule: Value::Null,
+            misses: Keyed::default(),
+            schedule: Keyed::default(),
             target: None,
             line_missed: false,
             reviewing: false,
@@ -380,14 +379,20 @@ impl Repertoire {
         drill
     }
 
+    /// How many repertoires have missed moves.
+    #[cfg(test)]
+    pub(crate) fn missed_repertoires(&self) -> usize {
+        self.misses.len()
+    }
+
     /// The missed moves, as the core keeps them.
     fn load_misses(&mut self, cx: &mut Context<Self>) {
         let library = cx.global::<AppCore>().request(calls::Library {});
         cx.spawn(async move |this, cx| match library.await {
             Ok(library) => {
                 let _ = this.update(cx, |this, cx| {
-                    this.misses = library["repertoireMisses"].clone();
-                    this.schedule = library["repertoireSchedule"].clone();
+                    this.misses = library.repertoire_misses;
+                    this.schedule = library.repertoire_schedule;
                     // A due line comes first, also when the schedule arrived after the first line.
                     if this.target.is_none()
                         && this.correct + this.wrong == 0
@@ -409,8 +414,7 @@ impl Repertoire {
 
     /// The saved studies, as the library has them.
     fn studies_of(cx: &App) -> Vec<Study> {
-        serde_json::from_value(json!(cx.global::<StudyHandle>().0.read(cx).items()))
-            .unwrap_or_default()
+        cx.global::<StudyHandle>().0.read(cx).items().to_vec()
     }
 
     /* ── What is drilled ──────────────────────────────────────────────── */
@@ -451,7 +455,7 @@ impl Repertoire {
 
     /// Where missed moves are counted: by study (or opening) and side.
     fn miss_key(&self, cx: &App) -> String {
-        let color = color_name(Self::color(cx));
+        let color = kchess_domain::color::name(Self::color(cx));
         match Self::opening(cx).filter(|_| Self::drills_opening(cx)) {
             Some(opening) => format!(
                 "opening:{}:{color}",
@@ -467,12 +471,12 @@ impl Repertoire {
             .0
             .read(cx)
             .study(&Self::study_id(cx))
-            .map(|study| study["updatedAt"].clone());
+            .map(|study| study.updated_at.clone());
         json!([
             edited,
             Self::study_id(cx),
             crate::prefs::get::<String>(cx, CHAPTER, ALL_CHAPTERS.into()),
-            color_name(Self::color(cx)),
+            kchess_domain::color::name(Self::color(cx)),
             Self::opening(cx).map(|opening| json!(opening)),
         ])
     }
@@ -483,7 +487,7 @@ impl Repertoire {
         if Self::drills_opening(cx) {
             let wanted = json!([
                 Self::opening(cx).map(|o| json!(o)),
-                color_name(Self::color(cx))
+                kchess_domain::color::name(Self::color(cx))
             ]);
             if self.drill_for.as_ref() != Some(&wanted) {
                 self.drill_for = Some(wanted);
@@ -506,7 +510,7 @@ impl Repertoire {
         self.start_line(cx);
     }
 
-    /// `useOpeningDrill`: the named line, then the explorer's most played move for the player and
+    /// The named line, then the explorer's most played move for the player and
     /// its popular replies for the opponent. Without the explorer the named line alone is drilled,
     /// and the note says why.
     fn build_drill(&mut self, cx: &mut Context<Self>) {
@@ -538,13 +542,13 @@ impl Repertoire {
                 let fen = root.node_at(&path).fen.clone();
                 let found = core
                     .request(calls::PositionLookup {
-                        kind: json!("opening"),
-                        fen: json!(fen),
-                        options: Some(json!({})),
+                        kind: PositionLookupKind::Opening,
+                        fen: Fen(fen.clone()),
+                        options: Some(LookupOptions::default()),
                     })
                     .await;
                 let moves = match found {
-                    Ok(found) => found["moves"].clone(),
+                    Ok(found) => found.saved.moves,
                     Err(cause) => {
                         crate::log::write(
                             Level::Warn,
@@ -560,24 +564,18 @@ impl Repertoire {
                         break;
                     }
                 };
-                let counts: Vec<Value> = moves
-                    .as_array()
+                let count = |n: Option<i64>| n.unwrap_or_default() as f64;
+                let counts: Vec<ExplorerMove> = moves
                     .into_iter()
-                    .flatten()
-                    .map(|entry| {
-                        json!({
-                            "uci": entry["uci"],
-                            "white": entry["white"],
-                            "draws": entry["draws"],
-                            "black": entry["black"],
-                        })
+                    .map(|found| ExplorerMove {
+                        white: count(found.white),
+                        draws: count(found.draws),
+                        black: count(found.black),
+                        uci: found.uci,
                     })
                     .collect();
                 let yours = turn_of(&fen) == color;
-                let replies: Vec<String> = rules("openingReplies", &[json!(counts), json!(yours)])
-                    .ok()
-                    .and_then(|replies| serde_json::from_value(replies).ok())
-                    .unwrap_or_default();
+                let replies = openings::opening_replies(&counts, yours);
                 for uci in replies {
                     if let Some(child) = root.add_move(&path, &uci)
                         && depth + 1 < EXTRA_PLIES
@@ -637,16 +635,20 @@ impl Repertoire {
     /// How this repertoire's lines stand in the schedule now.
     fn summary(&self, cx: &App) -> repetition::Summary {
         let lines = self.lines();
-        let table = &self.schedule[self.miss_key(cx)];
-        repetition::summary(lines.iter().map(|(_, _, id)| id.as_str()), table, now_ms())
+        let table = self.schedule.get(&self.miss_key(cx));
+        repetition::summary(
+            lines.iter().map(|(_, _, id)| id.as_str()),
+            table,
+            kchess_games::now_ms(),
+        )
     }
 
     /// The most overdue line, if any is due.
     fn due_line(&self, cx: &App) -> Option<(usize, String)> {
         let lines = self.lines();
         let ids: Vec<&str> = lines.iter().map(|(_, _, id)| id.as_str()).collect();
-        let table = &self.schedule[self.miss_key(cx)];
-        let index = repetition::most_overdue(&ids, table, now_ms())?;
+        let table = self.schedule.get(&self.miss_key(cx));
+        let index = repetition::most_overdue(&ids, table, kchess_games::now_ms())?;
         let (root, path, _) = lines.into_iter().nth(index)?;
         Some((root, path))
     }
@@ -679,9 +681,11 @@ impl Repertoire {
                 Some((root, String::new()))
             }
             None => {
-                let table = self.misses[self.miss_key(cx)].clone();
+                let table = self.misses.get(&self.miss_key(cx));
                 let roots: Vec<&TreeNode> = self.roots.iter().collect();
-                pick_weak(&roots, &table, random_unit()).map(|index| (index, String::new()))
+                crate::game::drawn(random_unit())
+                    .and_then(|draw| pick_weak(&roots, table, draw))
+                    .map(|index| (index, String::new()))
             }
         };
         if self.at.is_some() {
@@ -705,7 +709,7 @@ impl Repertoire {
         let Some((root, path)) = self.at.clone() else {
             return;
         };
-        let table = self.misses[self.miss_key(cx)].clone();
+        let table = self.misses.get(&self.miss_key(cx)).cloned();
         let node = self.roots[root].node_at(&path);
         let children: Vec<&TreeNode> = node.children.iter().collect();
         // The line chosen for review, while the moves are on it; otherwise the weak lines.
@@ -715,7 +719,10 @@ impl Repertoire {
                 .position(|child| leads_to(&child_path(&path, &child.uci), target))
         });
         let Some(next) = on_target
-            .or_else(|| pick_weak(&children, &table, random_unit()))
+            .or_else(|| {
+                crate::game::drawn(random_unit())
+                    .and_then(|draw| pick_weak(&children, table.as_ref(), draw))
+            })
             .map(|index| children[index])
         else {
             return self.finish_line(cx);
@@ -811,9 +818,10 @@ impl Repertoire {
             return;
         };
         let text = self.move_input.read(cx).value().trim().to_string();
-        let setup = json!({ "variant": "standard", "fen": node.fen });
-        let typed = kchess_domain::rules::setup_start("standard", &node.fen)
-            .and_then(|position| view::typed_uci(&setup, &position, &text));
+        let setup = kchess_domain::variant::Setup::standard_at(node.fen.clone());
+        let typed =
+            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &node.fen)
+                .and_then(|position| view::typed_uci(&setup, &position, &text));
         if let Some(uci) = typed {
             self.move_input
                 .update(cx, |input, cx| input.set_value("", window, cx));
@@ -905,8 +913,10 @@ impl Repertoire {
         }
         let (key, line, correct) = (self.miss_key(cx), line_id(tree, &path), !self.line_missed);
         // At once here, so the next line is chosen by it; the core's answer replaces it.
-        let mut schedule = self.schedule.as_object().cloned().unwrap_or_default();
-        if let Err(cause) = repetition::record(&mut schedule, &key, &line, correct, now_ms()) {
+        let mut schedule = self.schedule.clone();
+        if let Err(cause) =
+            repetition::record(&mut schedule, &key, &line, correct, kchess_games::now_ms())
+        {
             crate::log::write(
                 Level::Warn,
                 "repertoire",
@@ -914,11 +924,11 @@ impl Repertoire {
             );
             return;
         }
-        self.schedule = Value::Object(schedule);
+        self.schedule = schedule;
         let saved = cx.global::<AppCore>().request(calls::ReviewRepertoireLine {
-            key: json!(key),
-            line: json!(line),
-            correct: json!(correct),
+            key: RepertoireKey(key),
+            line: RepertoireLine(line),
+            correct,
         });
         cx.spawn(async move |this, cx| match saved.await {
             Ok(schedule) => {
@@ -938,39 +948,48 @@ impl Repertoire {
 
     fn record_miss(&mut self, fen: String, cx: &mut Context<Self>) {
         let key = self.miss_key(cx);
-        if !self.misses.is_object() {
-            self.misses = json!({});
-        }
-        let table = &mut self.misses[&key];
-        if !table.is_object() {
-            *table = json!({});
-        }
-        table[&fen] = json!(table[&fen].as_f64().unwrap_or(0.) + 1.);
+        let table = self.misses.entry(&key);
+        let count = table
+            .get(&fen)
+            .and_then(serde_json::Number::as_f64)
+            .unwrap_or(0.)
+            + 1.;
+        table.insert(fen.clone(), serde_json::Number::from(count as u64));
         let saved = cx.global::<AppCore>().request(calls::RecordRepertoireMiss {
-            key: json!(key),
-            fen: json!(fen),
+            key: RepertoireKey(key),
+            fen: Position(fen),
         });
         self.keep_misses(saved, "saving a repertoire miss", cx);
     }
 
     /// Whether this repertoire and side has misses to forget.
     fn has_misses(&self, cx: &App) -> bool {
-        self.misses[&self.miss_key(cx)]
-            .as_object()
+        self.misses
+            .get(&self.miss_key(cx))
             .is_some_and(|table| !table.is_empty())
     }
 
     /// Forget this repertoire's misses at once; Undo puts them back.
     fn clear_misses(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let key = self.miss_key(cx);
-        let forgotten = self
-            .misses
-            .as_object_mut()
-            .and_then(|misses| misses.remove(&key))
-            .filter(|table| table.as_object().is_some_and(|table| !table.is_empty()));
+        let at = self.misses.0.iter().position(|(table, _)| *table == key);
+        let forgotten = at
+            .map(|at| self.misses.0.remove(at).1)
+            .filter(|table| !table.is_empty())
+            .map(|table| {
+                Keyed(
+                    table
+                        .0
+                        .into_iter()
+                        .map(|(fen, count)| (fen, count.as_f64().unwrap_or(0.)))
+                        .collect(),
+                )
+            });
         let saved = cx
             .global::<AppCore>()
-            .request(calls::ClearRepertoireMisses { key: json!(key) });
+            .request(calls::ClearRepertoireMisses {
+                key: RepertoireKey(key.clone()),
+            });
         self.keep_misses(saved, "clearing repertoire misses", cx);
         let Some(forgotten) = forgotten else {
             return;
@@ -987,8 +1006,8 @@ impl Repertoire {
                         let saved =
                             cx.global::<AppCore>()
                                 .request(calls::RestoreRepertoireMisses {
-                                    key: json!(key),
-                                    misses: forgotten,
+                                    key: RepertoireKey(key),
+                                    misses: MissCounts(forgotten),
                                 });
                         page.keep_misses(saved, "restoring repertoire misses", cx);
                     });
@@ -1000,7 +1019,8 @@ impl Repertoire {
 
     fn keep_misses(
         &mut self,
-        saved: impl std::future::Future<Output = Result<Value, kchess_contracts::CoreError>> + 'static,
+        saved: impl std::future::Future<Output = Result<RepertoireMisses, kchess_contracts::CoreError>>
+        + 'static,
         what: &'static str,
         cx: &mut Context<Self>,
     ) {
@@ -1032,9 +1052,12 @@ impl Repertoire {
         let name = library.read(cx).fresh_name(&opening.name);
         self.saving = true;
         cx.notify();
-        let saved = library
-            .read(cx)
-            .command(json!({ "op": "save", "name": name, "pgn": tree.to_pgn() }));
+        let saved = library.read(cx).command(StudyCommand::Save {
+            name,
+            pgn: tree.pgn_text(),
+            id: None,
+            chapter_id: None,
+        });
         cx.spawn_in(window, async move |this, cx| {
             let saved = saved.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -1065,8 +1088,11 @@ impl Repertoire {
     fn redraw(&mut self, cx: &mut Context<Self>) {
         let color = Self::color(cx);
         let state = self.node().map(|node| {
-            let position =
-                kchess_domain::rules::setup_start("standard", &node.fen).unwrap_or_default();
+            let position = kchess_domain::rules::setup_start(
+                kchess_domain::variant::Variant::Standard,
+                &node.fen,
+            )
+            .unwrap_or_default();
             let last = node
                 .uci
                 .get(0..2)
@@ -1185,13 +1211,6 @@ impl Render for Repertoire {
         let drills_opening = Self::drills_opening(cx);
         let color = Self::color(cx);
         let your_turn = self.your_turn(cx);
-        let frontend = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
         let board_size = self.layout.board_size(window);
         let board_column = v_flex().w(board_size).flex_none().gap(widgets::STACK_GAP);
         let board_column = if self.at.is_some() {
@@ -1234,7 +1253,7 @@ impl Render for Repertoire {
             });
         let chapters = self.study(cx).map_or(0, |study| study.chapters.len());
         let summary = self.summary(cx);
-        let schedule = schedule_text(&summary, now_ms());
+        let schedule = schedule_text(&summary, kchess_games::now_ms());
         let total = self.correct + self.wrong;
         let comment = self.node().map(|node| {
             node.comments
@@ -1267,7 +1286,7 @@ impl Render for Repertoire {
                         h_flex()
                             .gap(px(4.))
                             .child(help)
-                            .child(widgets::view_toggles(frontend.blindfold, frontend.zen_mode)),
+                            .child(widgets::view_toggles(cx)),
                     ),
             )
             .child(run::field(
@@ -1460,14 +1479,30 @@ impl Render for Repertoire {
     }
 }
 
+/// Practice → Repertoire on a study.
+pub(crate) fn train_study(id: String, window: &mut Window, cx: &mut App) {
+    crate::prefs::set(cx, STUDY, id);
+    super::open_tab(super::Tab::Openings, window, cx);
+}
+
+/// Practice → Repertoire on an opening.
+pub(crate) fn train_opening(
+    choice: &crate::pages::openings::OpeningChoice,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    crate::prefs::set(cx, OPENING_CHOICE, choice);
+    crate::prefs::set(cx, STUDY, "opening");
+    super::open_tab(super::Tab::Openings, window, cx);
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Chapter, TreeNode, due_in, leads_to, leaves, merge, pick_weak, same_castle, schedule_text,
-        study_roots, to_play, weakness,
+        Chapter, Keyed, TreeNode, due_in, leads_to, leaves, merge, pick_weak, same_castle,
+        schedule_text, study_roots, to_play, weakness,
     };
     use kchess_domain::training::repetition::Summary;
-    use serde_json::json;
     use shakmaty::Color;
 
     fn chapter(pgn: &str) -> Chapter {
@@ -1523,13 +1558,13 @@ mod tests {
         let e4 = tree.add_move("", "e2e4").unwrap();
         tree.add_move("", "d2d4").unwrap();
         let fen = tree.node_at(&e4).fen.clone();
-        let table = json!({ fen: 3 });
+        let table = Keyed(vec![(fen, serde_json::Number::from(3))]);
         let children: Vec<&TreeNode> = tree.children.iter().collect();
-        assert_eq!(weakness(children[0], &table), 3.);
+        assert_eq!(weakness(children[0], Some(&table)), 3.);
         // Weights 7 and 1: draws below 7/8 pick the weak line.
-        assert_eq!(pick_weak(&children, &table, 0.8), Some(0));
-        assert_eq!(pick_weak(&children, &table, 0.9), Some(1));
-        assert_eq!(pick_weak(&[], &table, 0.5), None);
+        assert_eq!(pick_weak(&children, Some(&table), 0.8), Some(0));
+        assert_eq!(pick_weak(&children, Some(&table), 0.9), Some(1));
+        assert_eq!(pick_weak(&[], Some(&table), 0.5), None);
         let mut other = TreeNode::new(None);
         other.add_move("", "c2c4").unwrap();
         merge(&mut tree, other);

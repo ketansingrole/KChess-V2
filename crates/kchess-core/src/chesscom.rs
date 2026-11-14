@@ -19,10 +19,14 @@ use serde_json::{Value, json};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use crate::store::Database;
+use crate::store::StoreContext;
+use crate::store::chesscom as store;
 use crate::store::games::MAX_GAMES;
+use crate::tasks::lock;
+use kchess_contracts::error::{CoreError, Result};
+use kchess_contracts::types::ChesscomAccount;
 use kchess_domain::chesscom::{archive_month, game_row};
 
 /// Chess.com's public API.
@@ -79,12 +83,6 @@ struct MonthArchive<'a> {
     games: &'a [Value],
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
 fn cancelled() -> CoreError {
     CoreError::new("Sync was cancelled.")
 }
@@ -99,7 +97,7 @@ fn no_such_player(name: &str) -> CoreError {
 
 /// The current month (UTC) as an archive names it, `2024/03`.
 fn this_month() -> String {
-    let days = crate::lichess::accounts::now_ms().div_euclid(86_400_000);
+    let days = crate::time::now_ms().div_euclid(86_400_000);
     let (year, month, _) = kchess_domain::calendar::civil_from_days(days).unwrap_or((1970, 1, 1));
     format!("{year:04}/{month:02}")
 }
@@ -275,55 +273,58 @@ impl Chesscom {
         }
     }
 
-    /// `addChesscomAccount`: adds a player Chess.com knows, then syncs their games. A removal
+    /// Adds a player Chess.com knows, then syncs their games. A removal
     /// of the player before it ends wins: the player is not added back, and the add fails.
-    pub async fn add(&self, name: &str) -> Result<Value> {
+    pub async fn add(&self, name: &str) -> Result<Vec<ChesscomAccount>> {
         let epoch = self.epoch(name);
         let current = || self.current(name, epoch);
         let spelled = self.player(name, &current).await?;
         // `current` is read once the database admits the call, so a removal is either before
         // it (no add) or after it (the removal deletes the player).
+        let added = spelled.clone();
         self.database
-            .call_async_with("store.chesscom.addAccount", || {
-                Ok(vec![json!(spelled), json!(current())])
+            .write_admitted(|| {
+                if !current() {
+                    return Err(cancelled());
+                }
+                Ok(move |ctx: &StoreContext| store::add_account(ctx.db, &added))
             })
             .await?;
         // The player stays added when their games cannot be read yet: Sync tries again. The
         // player synced is the one just added, never a re-read list a removal has changed since.
         self.sync_logged(&spelled, epoch).await?;
+        self.accounts().await
+    }
+
+    async fn accounts(&self) -> Result<Vec<ChesscomAccount>> {
         self.database
-            .call_async("store.chesscom.accounts", &[])
+            .read_async(|ctx| store::accounts(ctx.db))
             .await
     }
 
-    /// `removeChesscomAccount`: stops an add or sync in flight, then deletes the player.
-    pub async fn remove(&self, name: &str) -> Result<Value> {
+    /// Stops an add or sync in flight, then deletes the player.
+    pub async fn remove(&self, name: &str) -> Result<Vec<ChesscomAccount>> {
         let key = name.to_lowercase();
         *lock(&self.epochs).entry(key.clone()).or_insert(0) += 1;
         self.removals.send_replace(());
         lock(&self.syncs).remove(&key);
+        let name = name.to_string();
         self.database
-            .call_async("store.chesscom.removeAccount", &[json!(name)])
+            .write_async(move |ctx| store::remove_account(ctx.db, &name))
             .await
     }
 
-    /// `syncChesscomGames`: one player's games, or every player's in turn. Every player still
+    /// One player's games, or every player's in turn. Every player still
     /// syncs when one fails; the first failure is reported afterwards.
-    pub async fn sync(&self, name: Option<&str>) -> Result<Value> {
+    pub async fn sync(&self, name: Option<&str>) -> Result<Vec<ChesscomAccount>> {
         // Taken before the players are read: a removal after this stops that player's sync.
         let epochs = lock(&self.epochs).clone();
-        let accounts = self
-            .database
-            .call_async("store.chesscom.accounts", &[])
-            .await?;
-        let names: Vec<String> = accounts
-            .as_array()
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|row| row.get("username").and_then(Value::as_str))
+        let names: Vec<String> = self
+            .accounts()
+            .await?
+            .into_iter()
+            .map(|account| account.username)
             .filter(|stored| name.is_none_or(|wanted| stored.eq_ignore_ascii_case(wanted)))
-            .map(str::to_string)
             .collect();
         let mut first_error = None;
         for name in &names {
@@ -334,11 +335,7 @@ impl Chesscom {
         }
         match first_error {
             Some(error) => Err(error),
-            None => {
-                self.database
-                    .call_async("store.chesscom.accounts", &[])
-                    .await
-            }
+            None => self.accounts().await,
         }
     }
 
@@ -400,7 +397,7 @@ impl Chesscom {
 
     async fn run(&self, name: &str, epoch: u64) -> Result<usize> {
         let current = || self.current(name, epoch);
-        let started_at = crate::lichess::accounts::now_ms();
+        let started_at = crate::time::now_ms();
         let player = name.to_lowercase();
         let list = self
             .get(
@@ -425,9 +422,10 @@ impl Chesscom {
             .collect();
         months.sort();
         months.dedup();
+        let owner = name.to_string();
         let stored = self
             .database
-            .call_async("store.chesscom.archives", &[json!(name)])
+            .read_async(move |ctx| store::archives(ctx.db, &owner))
             .await?;
         let known: HashMap<String, &Value> = stored
             .as_array()
@@ -512,9 +510,13 @@ impl Chesscom {
         if !current() {
             return Err(cancelled());
         }
+        let owner = name.to_string();
         self.database
-            .call_async_with("store.chesscom.finishSync", || {
-                Ok(vec![json!(name), json!(started_at), json!(current())])
+            .write_admitted(|| {
+                if !current() {
+                    return Err(cancelled());
+                }
+                Ok(move |ctx: &StoreContext| store::finish_sync(ctx.db, &owner, started_at))
             })
             .await?;
         Ok(fetched)
@@ -538,10 +540,12 @@ impl Chesscom {
             "games": archive.games,
         });
         self.database
-            .call_async_with("store.chesscom.saveArchive", || {
-                Ok(vec![archive.clone(), json!(current())])
+            .write_admitted(|| {
+                if !current() {
+                    return Err(cancelled());
+                }
+                Ok(move |ctx: &StoreContext| store::save_archive(ctx.db, &archive))
             })
             .await
-            .map(|_| ())
     }
 }

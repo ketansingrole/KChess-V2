@@ -5,38 +5,34 @@
 //! moves and SAN come from `kchess_domain::replay`, and every remote answer is validated before it
 //! is trusted: a move that is not legal from its position fails the lookup.
 
+use kchess_domain::variant::Variant;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use kchess_contracts::check::EXPLORER_RATINGS;
+use kchess_contracts::types::{
+    CloudEval, CloudLine, ExplorerGame, ExplorerSpeed, LookupMove, LookupOptions, PositionLookup,
+    PositionLookupKind as Kind, SavedLookup as Cached, UsageKind,
+};
+
 use futures_util::future::BoxFuture;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use super::client::Failure;
+use super::client::{Auth, Lane, LichessClient, Request};
 use super::decode::{Loose, Text, read};
+use super::policy::{Clock, Policy, timed_out};
 use super::reviews::split_whitespace;
-use crate::error::{CoreError, Result as CoreResult};
-use kchess_domain::{js, misc, position, replay};
+use crate::host::Host;
+use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
+use kchess_domain::color::{self, Color};
+use kchess_domain::{js, position, replay};
+use std::future::Future;
 
 mod opening_info;
-pub use opening_info::{DescriptionBlock, OpeningDescription, PopularityMonth};
-
-/// `EXPLORER_SPEEDS` of the contracts, in their order.
-pub const EXPLORER_SPEEDS: [&str; 6] = [
-    "ultraBullet",
-    "bullet",
-    "blitz",
-    "rapid",
-    "classical",
-    "correspondence",
-];
-/// `EXPLORER_RATINGS` of the contracts.
-pub const EXPLORER_RATINGS: [f64; 9] = [
-    400.0, 1000.0, 1200.0, 1400.0, 1600.0, 1800.0, 2000.0, 2200.0, 2500.0,
-];
 
 const CLOUD_TTL: Duration = Duration::from_secs(10 * 60);
 const CLOUD_MAX: usize = 500;
@@ -44,30 +40,15 @@ const PENDING_MAX: usize = 16;
 const DEFAULT_OPENING: &str = r#"{"speeds":["blitz","rapid","classical"]}"#;
 const MAX_CACHED_GAMES: usize = 30;
 const MAX_MOVES: usize = 256;
+/// How long a lookup's answer may take by default (the player database's stream excepted).
+pub const LOOKUP_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long the player database may take to finish its stream of ever more complete results.
+const PLAYER_TIMEOUT: Duration = Duration::from_secs(60);
+/// A lookup ended by the core closing.
+const CANCELLED: &str = "Position lookup was cancelled.";
+const CONNECT_EXPLORER: &str = "Connect a Lichess account in Settings to use the opening explorer.";
 
 /* ── Cloud evaluation ── */
-
-/// A cloud evaluation: lines from White's point of view (`CloudEval`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloudEval {
-    pub fen: String,
-    pub depth: Value,
-    pub knodes: Value,
-    pub lines: Vec<CloudLine>,
-}
-
-/// One line of a cloud evaluation (`EngineLine`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct CloudLine {
-    pub rank: usize,
-    pub depth: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cp: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mate: Option<Value>,
-    pub pv: Vec<String>,
-}
 
 /// The cloud evaluation cache: ten minutes per entry, the 500 most recently used kept. A position
 /// Lichess has no evaluation for is remembered as `None`, so it is not asked again soon.
@@ -127,7 +108,7 @@ impl CloudCache {
 
 use crate::tasks::lock;
 
-/// `cloudEval(fen, lines)`: Lichess's cloud evaluation, for positions someone analysed deeply on
+/// Lichess's cloud evaluation, for positions someone analysed deeply on
 /// Lichess before. Lines are kept only as far as they are legal from the position; unknown
 /// positions give None.
 pub async fn cloud_eval(
@@ -140,25 +121,19 @@ pub async fn cloud_eval(
     if let Some(hit) = cache.get(&key) {
         return Ok(hit);
     }
-    let cancel = lichess.lifetime().clone();
-    let query = [("fen", fen.to_string()), ("multiPv", lines.to_string())];
     let raw = lichess
         .client()
-        .policy()
-        .with_usage("", "analysis", async {
-            lichess
-                .client()
-                .get_json::<Value>("/api/cloud-eval", &query, None, &cancel)
-                .await
-        })
+        .get("/api/cloud-eval", &lichess.anonymous(UsageKind::Analysis))
+        .query(&[("fen", fen.to_string()), ("multiPv", lines.to_string())])
+        .read_json::<Value>()
         .await;
     let raw = match raw {
         Ok(raw) => raw,
-        Err(Failure::Lichess(error)) if error.status == 404 => {
+        Err(cause) if cause.kind == Some(ErrorKind::NotFound) => {
             cache.set(key, None);
             return Ok(None);
         }
-        Err(failure) => return Err(failure.into()),
+        Err(cause) => return Err(cause),
     };
     let data = decode_cloud(&raw)?;
     let mut result_lines = Vec::new();
@@ -173,23 +148,18 @@ pub async fn cloud_eval(
             continue;
         }
         result_lines.push(CloudLine {
-            rank: index + 1,
-            depth: Value::Number(data.depth.clone()),
+            rank: index as u32 + 1,
+            depth: data.depth,
             // `cp` wins when both are sent.
-            cp: pv.cp.0.clone().map(Value::Number),
-            mate: pv
-                .cp
-                .0
-                .is_none()
-                .then(|| pv.mate.0.clone().map(Value::Number))
-                .flatten(),
+            cp: pv.cp.0,
+            mate: pv.cp.0.is_none().then_some(pv.mate.0).flatten(),
             pv: moves[..legal].iter().map(|m| m.to_string()).collect(),
         });
     }
     let result = CloudEval {
         fen: fen.to_string(),
-        depth: Value::Number(data.depth),
-        knodes: Value::Number(data.knodes),
+        depth: data.depth,
+        knodes: data.knodes,
         lines: result_lines,
     };
     cache.set(key, Some(result.clone()));
@@ -199,28 +169,25 @@ pub async fn cloud_eval(
 #[derive(Deserialize)]
 struct CloudPv {
     #[serde(default)]
-    cp: Loose<serde_json::Number>,
+    cp: Loose<i64>,
     #[serde(default)]
-    mate: Loose<serde_json::Number>,
+    mate: Loose<i64>,
     moves: String,
 }
 
 #[derive(Deserialize)]
 struct CloudData {
-    depth: serde_json::Number,
-    knodes: serde_json::Number,
+    depth: u64,
+    knodes: u64,
     pvs: Vec<CloudPv>,
 }
 
-/// The cloud evaluation's shape: non-negative depth and nodes, at most five lines, each with a
-/// score (`cp` or `mate`) and at most 2000 characters of moves.
+/// The cloud evaluation's shape: whole non-negative depth and nodes, at most five lines, each
+/// with a whole score (`cp` or `mate`) and at most 2000 characters of moves.
 fn decode_cloud(raw: &Value) -> CoreResult<CloudData> {
-    let non_negative = |n: &serde_json::Number| n.as_f64().is_some_and(|n| n >= 0.0);
     read::<CloudData>(raw)
         .filter(|data| {
-            non_negative(&data.depth)
-                && non_negative(&data.knodes)
-                && data.pvs.len() <= 5
+            data.pvs.len() <= 5
                 && data
                     .pvs
                     .iter()
@@ -231,110 +198,7 @@ fn decode_cloud(raw: &Value) -> CoreResult<CloudData> {
 
 /* ── Position lookups ── */
 
-/// The filters a database uses, normalized in a stable order (they are part of the cache key).
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct LookupOptions {
-    pub speeds: Option<Vec<String>>,
-    pub ratings: Option<Vec<f64>>,
-    pub player: Option<String>,
-    pub color: Option<String>,
-    pub modes: Option<Vec<String>>,
-    pub since: Option<String>,
-    /// The Lichess database's variant; None is standard chess.
-    pub variant: Option<String>,
-}
-
-/// One move of a lookup: the database's counts and the SAN checked against the position.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct LookupMove {
-    pub uci: String,
-    pub san: String,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub white: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub draws: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub black: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub category: Option<String>,
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "double_option"
-    )]
-    pub dtz: Option<Option<i64>>,
-}
-
-/// A game the explorer lists for a position (`ExplorerGame`).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExplorerGame {
-    pub id: String,
-    pub white: String,
-    pub black: String,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub white_rating: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub black_rating: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub winner: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub year: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub month: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub san: Option<String>,
-}
-
-/// A lookup as saved (`Omit<PositionLookup, 'cached' | 'stale' | 'message'>`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Cached {
-    pub kind: String,
-    pub fen: String,
-    pub fetched_at: i64,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub total: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub opening: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub category: Option<String>,
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "double_option"
-    )]
-    pub dtz: Option<Option<i64>>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub games: Option<Vec<ExplorerGame>>,
-    pub moves: Vec<LookupMove>,
-}
-
-/// A lookup as the caller receives it (`PositionLookup`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PositionLookup {
-    #[serde(flatten)]
-    pub data: Cached,
-    pub cached: bool,
-    pub stale: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-/// `dtz` is present and null, or a number, or absent.
-fn double_option<'de, D>(deserializer: D) -> Result<Option<Option<i64>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<i64>::deserialize(deserializer).map(Some)
-}
-
 /// The stored saved-lookup cache: the newest entries, as the store keeps them.
-///
-/// Async since the store moved off the executor (`Database::call_async`): both methods return a
-/// boxed future, so out-of-tree implementers wrap each body in `Box::pin(async move { ... })` and
-/// `.await` the trait at call sites.
 pub trait LookupCache: Send + Sync {
     /// The saved JSON for `key`, if any (a missing or unreadable entry is None).
     fn read<'a>(
@@ -349,74 +213,41 @@ pub trait LookupCache: Send + Sync {
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Kind {
-    Opening,
-    Masters,
-    Player,
-    Tablebase,
-}
-
-impl Kind {
-    fn parse(text: &str) -> Option<Kind> {
-        Some(match text {
-            "opening" => Kind::Opening,
-            "masters" => Kind::Masters,
-            "player" => Kind::Player,
-            "tablebase" => Kind::Tablebase,
-            _ => return None,
-        })
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Kind::Opening => "opening",
-            Kind::Masters => "masters",
-            Kind::Player => "player",
-            Kind::Tablebase => "tablebase",
-        }
-    }
-
-    /// How long a saved lookup is fresh: master games change rarely, a player's games often.
-    fn fresh_ms(self) -> i64 {
-        match self {
-            Kind::Opening => 86_400_000,
-            Kind::Masters | Kind::Tablebase => 30 * 86_400_000,
-            Kind::Player => 3_600_000,
-        }
-    }
-
-    /// The most bytes a response may send.
-    fn max_bytes(self) -> usize {
-        match self {
-            Kind::Player => 4_000_000,
-            _ => 512_000,
-        }
+/// How long a saved lookup is fresh: master games change rarely, a player's games often.
+fn fresh_ms(kind: Kind) -> i64 {
+    match kind {
+        Kind::Opening => 86_400_000,
+        Kind::Masters | Kind::Tablebase => 30 * 86_400_000,
+        Kind::Player => 3_600_000,
     }
 }
 
-/// Where the lookups are sent. Production uses the Lichess explorer and tablebase.
+fn max_bytes(kind: Kind) -> usize {
+    match kind {
+        Kind::Player => 4_000_000,
+        _ => 512_000,
+    }
+}
+
+/// The origins the lookups are sent to. Production uses the Lichess explorer and tablebase.
 #[derive(Clone, Debug)]
 pub struct Endpoints {
-    pub opening: String,
-    pub masters: String,
-    pub player: String,
+    /// The opening explorer: `/lichess`, `/masters`, `/player`, `/masters/pgn/{id}` and
+    /// `/lichess/history` under it.
+    pub explorer: String,
+    /// The tablebase: `/standard` under it.
     pub tablebase: String,
-    pub masters_game: String,
     /// The Wikibooks API, for opening descriptions.
     pub wikibooks: String,
 }
 
 impl Endpoints {
-    /// The explorer and tablebase endpoints under a test origin (`KCHESS_TEST_LICHESS_BASE`), with
-    /// the same paths as production.
+    /// The endpoints under a test origin (`KCHESS_TEST_LICHESS_BASE`), with the same paths as
+    /// production.
     pub fn at(origin: &str) -> Endpoints {
         Endpoints {
-            opening: format!("{origin}/explorer/lichess"),
-            masters: format!("{origin}/explorer/masters"),
-            player: format!("{origin}/explorer/player"),
-            tablebase: format!("{origin}/tablebase/standard"),
-            masters_game: format!("{origin}/explorer/masters/pgn"),
+            explorer: format!("{origin}/explorer"),
+            tablebase: format!("{origin}/tablebase"),
             wikibooks: format!("{origin}/wikibooks/w/api.php"),
         }
     }
@@ -425,11 +256,8 @@ impl Endpoints {
 impl Default for Endpoints {
     fn default() -> Endpoints {
         Endpoints {
-            opening: "https://explorer.lichess.org/lichess".into(),
-            masters: "https://explorer.lichess.org/masters".into(),
-            player: "https://explorer.lichess.org/player".into(),
-            tablebase: "https://tablebase.lichess.org/standard".into(),
-            masters_game: "https://explorer.lichess.org/masters/pgn".into(),
+            explorer: "https://explorer.lichess.org".into(),
+            tablebase: "https://tablebase.lichess.org".into(),
             wikibooks: "https://en.wikibooks.org/w/api.php".into(),
         }
     }
@@ -440,16 +268,21 @@ type Pending = watch::Receiver<Option<Result<PositionLookup, CoreError>>>;
 /// The position explorer: deduplicated and bounded lookups with validated legal moves, stale
 /// recovery when a refresh fails, and the master game PGNs.
 pub struct PositionLookups {
+    /// Wikibooks' client, which carries no Lichess login.
     http: reqwest::Client,
-    endpoints: Endpoints,
+    wikibooks: String,
+    /// The explorer and the tablebase, each with its own policy: a 429 from one pauses only it.
+    explorer: LichessClient,
+    tablebase: LichessClient,
     cache: Arc<dyn LookupCache>,
-    now: Arc<dyn Fn() -> i64 + Send + Sync>,
+    now: Clock,
     pending: Mutex<HashMap<String, Pending>>,
     /// The login the explorer is asked with; None sends no login (tests).
     login: Option<Arc<dyn ExplorerLogin>>,
+    /// The core's: closing stops login, HTTP, cache waits and deduplicated callers.
     lifetime: CancellationToken,
-    /// Per origin, when (by `now`) a 429's cooldown ends; until then that origin is not asked.
-    cooldowns: Mutex<HashMap<String, i64>>,
+    /// How long a lookup's answer may take (the player database's stream excepted).
+    timeout: Duration,
 }
 
 /// Removing a pending lookup must also happen when its caller is cancelled or dropped.
@@ -472,22 +305,39 @@ pub trait ExplorerLogin: Send + Sync {
 }
 
 impl PositionLookups {
-    /// `now` is the clock in ms since the epoch (`Date.now`).
+    /// `now` is the clock in ms since the epoch; it also times the origins' 429 cooldowns.
+    /// `lifetime` is the core's, and `timeout` how long a lookup's answer may take
+    /// (`LOOKUP_TIMEOUT`).
     pub fn new(
+        host: Arc<dyn Host>,
         http: reqwest::Client,
         endpoints: Endpoints,
         cache: Arc<dyn LookupCache>,
-        now: Arc<dyn Fn() -> i64 + Send + Sync>,
+        now: Clock,
+        lifetime: CancellationToken,
+        timeout: Duration,
     ) -> PositionLookups {
+        let client = |base: &str| {
+            let policy = Policy::for_lookups(
+                Arc::clone(&host),
+                http.clone(),
+                lifetime.clone(),
+                timeout,
+                Arc::clone(&now),
+            );
+            LichessClient::with_base(base, policy)
+        };
         PositionLookups {
+            explorer: client(&endpoints.explorer),
+            tablebase: client(&endpoints.tablebase),
             http,
-            endpoints,
+            wikibooks: endpoints.wikibooks,
             cache,
             now,
             pending: Mutex::new(HashMap::new()),
             login: None,
-            lifetime: CancellationToken::new(),
-            cooldowns: Mutex::new(HashMap::new()),
+            lifetime,
+            timeout,
         }
     }
 
@@ -498,92 +348,58 @@ impl PositionLookups {
         self
     }
 
-    /// Share the core's lifetime so close stops login, HTTP, cache waits and deduplicated callers.
-    pub fn with_lifetime(mut self, lifetime: CancellationToken) -> PositionLookups {
-        self.lifetime = lifetime;
-        self
-    }
-
-    /// A request to the explorer (not the tablebase), with the explorer's login when one is set.
-    async fn explorer_request(&self, url: reqwest::Url) -> CoreResult<reqwest::RequestBuilder> {
-        let Some(login) = &self.login else {
-            return Ok(self.http.get(url));
-        };
-        let token = login.token().await?.ok_or_else(|| {
-            CoreError::new("Connect a Lichess account in Settings to use the opening explorer.")
-        })?;
-        Ok(self.http.get(url).bearer_auth(token))
-    }
-
-    /// Refuses a request to an origin that answered 429 until its cooldown ends, so the saved
-    /// lookup (or the error) comes back at once instead of prolonging the rate limit.
-    fn paced(&self, url: &reqwest::Url) -> CoreResult<()> {
-        let origin = url.origin().ascii_serialization();
-        let until = lock(&self.cooldowns).get(&origin).copied();
-        match until {
-            Some(until) if until > (self.now)() => Err(slow_down(until - (self.now)())),
-            _ => Ok(()),
-        }
-    }
-
-    /// After a 429, starts its origin's cooldown (`Retry-After`, as the Lichess API's policy
-    /// reads it) and fails the request.
-    fn note_rate_limit(&self, url: &reqwest::Url, response: &reqwest::Response) -> CoreResult<()> {
-        if response.status().as_u16() != 429 {
-            return Ok(());
-        }
-        let wait = i64::try_from(super::policy::cooldown_for(response.headers()).as_millis())
-            .unwrap_or(i64::MAX);
-        let until = (self.now)().saturating_add(wait);
-        let origin = url.origin().ascii_serialization();
-        lock(&self.cooldowns).insert(origin, until);
-        Err(slow_down(wait))
-    }
-
-    /// `lookup(kind, fen, options)`.
-    pub async fn lookup(
-        &self,
-        raw_kind: &Value,
-        raw_fen: &Value,
-        raw_options: Option<&Value>,
-    ) -> CoreResult<PositionLookup> {
+    /// `work`, ended by the core closing.
+    async fn until_closed<T>(&self, work: impl Future<Output = CoreResult<T>>) -> CoreResult<T> {
         tokio::select! {
             biased;
-            _ = self.lifetime.cancelled() => Err(CoreError::aborted("Position lookup was cancelled.")),
-            result = self.lookup_inner(raw_kind, raw_fen, raw_options) => result,
+            _ = self.lifetime.cancelled() => Err(CoreError::aborted(CANCELLED)),
+            result = work => result,
         }
+    }
+
+    /// A request to the explorer at `path`, asked as its account.
+    async fn explorer_get(&self, path: &str) -> CoreResult<Request<'_>> {
+        Ok(self.explorer.get(path, &self.explorer_auth().await?))
+    }
+
+    /// Who the explorer (not the tablebase) is asked as: the explorer's login when one is set.
+    async fn explorer_auth(&self) -> CoreResult<Auth> {
+        let auth = self.explorer.anonymous(UsageKind::Analysis);
+        let Some(login) = &self.login else {
+            return Ok(auth);
+        };
+        let token = login
+            .token()
+            .await?
+            .ok_or_else(|| CoreError::new(CONNECT_EXPLORER).with_kind(ErrorKind::Login))?;
+        Ok(auth.with_token(token))
+    }
+
+    /// The position `fen` looked up in `kind`'s database with `options` (checked as the
+    /// method's arguments are).
+    pub async fn lookup(
+        &self,
+        kind: Kind,
+        fen: &str,
+        options: Option<&LookupOptions>,
+    ) -> CoreResult<PositionLookup> {
+        self.until_closed(self.lookup_inner(kind, fen, options))
+            .await
     }
 
     async fn lookup_inner(
         &self,
-        raw_kind: &Value,
-        raw_fen: &Value,
-        raw_options: Option<&Value>,
+        kind: Kind,
+        fen: &str,
+        options: Option<&LookupOptions>,
     ) -> CoreResult<PositionLookup> {
-        let kind = raw_kind
-            .as_str()
-            .and_then(Kind::parse)
-            .ok_or_else(|| CoreError::new("Invalid position lookup kind."))?;
-        let options = assert_options(raw_options)?;
-        let options = normalize_options(kind, &options)?;
-        let variant = options.variant.as_deref().unwrap_or("standard");
-        let mut request = json!({ "fen": raw_fen, "lines": 1 });
-        if let Some(variant) = &options.variant {
-            request["variant"] = json!(variant);
-        }
-        let analysis = misc::call("assertAnalysisRequest", &[no_lossless(), request])
-            .ok_or_else(|| CoreError::new("Unknown validator."))?
-            .map_err(CoreError::new)?;
-        let fen = analysis
-            .get("fen")
-            .and_then(Value::as_str)
-            .ok_or_else(|| CoreError::new("Invalid analysis request."))?
-            .to_string();
-        if !is_legal_position(variant, &fen) {
+        let options = normalize_options(kind, options.unwrap_or(&LookupOptions::default()))?;
+        let variant = options.variant.unwrap_or_default();
+        if !is_legal_position(variant, fen) {
             return Err(CoreError::new("That position is not legal."));
         }
         if kind == Kind::Tablebase {
-            let (pieces, castling) = material(&fen);
+            let (pieces, castling) = material(fen);
             if pieces > 7 || castling {
                 return Err(CoreError::new(
                     "Tablebases cover positions with up to seven pieces and no castling rights.",
@@ -594,23 +410,23 @@ impl PositionLookups {
         // The original keys stay readable for lookups saved before filters existed.
         let key =
             if kind == Kind::Tablebase || (kind == Kind::Opening && filters == DEFAULT_OPENING) {
-                format!("{}:{fen}", kind.name())
+                format!("{}:{fen}", kind.as_str())
             } else {
-                format!("{}:{filters}:{fen}", kind.name())
+                format!("{}:{filters}:{fen}", kind.as_str())
             };
         let candidate = decode_cached(self.cache.read(&key).await?.as_ref());
         let saved = candidate.filter(|candidate| {
             candidate.fen == fen
-                && candidate.kind == kind.name()
+                && candidate.kind == kind
                 && candidate.moves.iter().all(|entry| {
-                    legal_san(variant, &fen, &entry.uci).as_deref() == Some(entry.san.as_str())
+                    legal_san(variant, fen, &entry.uci).as_deref() == Some(entry.san.as_str())
                 })
         });
         if let Some(saved) = &saved
-            && (self.now)() - saved.fetched_at < kind.fresh_ms()
+            && (self.now)() - saved.fetched_at < fresh_ms(kind)
         {
             return Ok(PositionLookup {
-                data: saved.clone(),
+                saved: saved.clone(),
                 cached: true,
                 stale: false,
                 message: None,
@@ -639,7 +455,7 @@ impl PositionLookups {
             pending: &self.pending,
             key: key.clone(),
         };
-        let result = self.load(kind, &fen, &options, &key, saved.as_ref()).await;
+        let result = self.load(kind, fen, &options, &key, saved.as_ref()).await;
         let _ = send.send(Some(result.clone()));
         result
     }
@@ -653,14 +469,7 @@ impl PositionLookups {
         saved: Option<&Cached>,
     ) -> CoreResult<PositionLookup> {
         let attempt = async {
-            let timeout = if kind == Kind::Player {
-                Duration::from_secs(60)
-            } else {
-                Duration::from_secs(15)
-            };
-            let text = tokio::time::timeout(timeout, self.fetch(kind, fen, options))
-                .await
-                .map_err(|_| CoreError::new("The operation was aborted due to timeout"))??;
+            let text = self.fetch(kind, fen, options).await?;
             let body = if kind == Kind::Player {
                 // The player database answers with a stream of ever more complete results.
                 text.split('\n')
@@ -678,7 +487,7 @@ impl PositionLookups {
             } else {
                 explorer_result(
                     kind,
-                    options.variant.as_deref().unwrap_or("standard"),
+                    options.variant.unwrap_or_default(),
                     fen,
                     (self.now)(),
                     &raw,
@@ -693,7 +502,7 @@ impl PositionLookups {
                 )
                 .await?;
             Ok(PositionLookup {
-                data: result,
+                saved: result,
                 cached: false,
                 stale: false,
                 message: None,
@@ -703,7 +512,7 @@ impl PositionLookups {
             Ok(result) => Ok(result),
             Err(cause) => match saved {
                 Some(saved) => Ok(PositionLookup {
-                    data: saved.clone(),
+                    saved: saved.clone(),
                     cached: true,
                     stale: true,
                     message: Some("Could not refresh. Showing the saved lookup.".into()),
@@ -713,18 +522,10 @@ impl PositionLookups {
         }
     }
 
-    /// The URL of a lookup, with the filters the database understands.
-    fn url(&self, kind: Kind, fen: &str, options: &LookupOptions) -> CoreResult<reqwest::Url> {
-        let base = match kind {
-            Kind::Opening => &self.endpoints.opening,
-            Kind::Masters => &self.endpoints.masters,
-            Kind::Player => &self.endpoints.player,
-            Kind::Tablebase => &self.endpoints.tablebase,
-        };
-        let mut url = reqwest::Url::parse(base)
-            .map_err(|cause| CoreError::new(format!("Invalid explorer URL: {cause}")))?;
+    /// The query of a lookup, with the filters the database understands.
+    fn query(kind: Kind, fen: &str, options: &LookupOptions) -> Vec<(&'static str, String)> {
+        let mut query = Pairs::default();
         {
-            let mut query = url.query_pairs_mut();
             query.append_pair("fen", fen);
             if kind != Kind::Tablebase {
                 query.append_pair("moves", "12");
@@ -734,10 +535,10 @@ impl PositionLookups {
             }
             match kind {
                 Kind::Opening => {
-                    query.append_pair("variant", options.variant.as_deref().unwrap_or("standard"));
+                    query.append_pair("variant", options.variant.unwrap_or_default().key());
                     query.append_pair(
                         "speeds",
-                        &options.speeds.clone().unwrap_or_default().join(","),
+                        &speeds(options.speeds.as_deref().unwrap_or_default()),
                     );
                     if let Some(ratings) = options.ratings.as_ref().filter(|r| !r.is_empty()) {
                         query.append_pair("ratings", &join_numbers(ratings));
@@ -755,14 +556,16 @@ impl PositionLookups {
                 }
                 Kind::Player => {
                     query.append_pair("player", options.player.as_deref().unwrap_or(""));
-                    query.append_pair("color", options.color.as_deref().unwrap_or("white"));
-                    if let Some(variant) = &options.variant {
-                        query.append_pair("variant", variant);
+                    let side = options.color.unwrap_or(Color::White);
+                    query.append_pair("color", color::name(side));
+                    if let Some(variant) = options.variant {
+                        query.append_pair("variant", variant.key());
                     }
-                    if let Some(speeds) = options.speeds.as_ref().filter(|s| !s.is_empty()) {
-                        query.append_pair("speeds", &speeds.join(","));
+                    if let Some(listed) = options.speeds.as_ref().filter(|s| !s.is_empty()) {
+                        query.append_pair("speeds", &speeds(listed));
                     }
                     if let Some(modes) = options.modes.as_ref().filter(|m| !m.is_empty()) {
+                        let modes: Vec<&str> = modes.iter().map(|mode| mode.as_str()).collect();
                         query.append_pair("modes", &modes.join(","));
                     }
                     if let Some(since) = &options.since {
@@ -772,98 +575,50 @@ impl PositionLookups {
                 Kind::Tablebase => {}
             }
         }
-        Ok(url)
+        query.0
     }
 
     /// Requests a lookup and reads its body, bounded by the kind's size limit.
     async fn fetch(&self, kind: Kind, fen: &str, options: &LookupOptions) -> CoreResult<String> {
-        let url = self.url(kind, fen, options)?;
-        self.paced(&url)?;
-        let request = if kind == Kind::Tablebase {
-            self.http.get(url.clone())
-        } else {
-            self.explorer_request(url.clone()).await?
+        let query = PositionLookups::query(kind, fen, options);
+        let failed = |cause: CoreError| lookup_error(cause, kind, options);
+        let request = match kind {
+            Kind::Tablebase => self
+                .tablebase
+                .get("/standard", &self.tablebase.anonymous(UsageKind::Analysis)),
+            Kind::Opening => self.explorer_get("/lichess").await?,
+            Kind::Masters => self.explorer_get("/masters").await?,
+            Kind::Player => self.explorer_get("/player").await?,
         };
-        let mut response = request.send().await.map_err(|_| {
-            CoreError::new("Position lookup failed. Check your connection and retry.")
-        })?;
-        self.note_rate_limit(&url, &response)?;
-        let status = response.status().as_u16();
-        if status == 401 || status == 403 {
-            return Err(CoreError::new(
-                "Connect a Lichess account in Settings to use the opening explorer.",
-            ));
+        let request = request
+            .query(&query)
+            .max_bytes(max_bytes(kind), "Position lookup returned too much data.");
+        if kind != Kind::Player {
+            return request.read_text(None).await.map_err(failed);
         }
-        if status == 404 && kind == Kind::Player {
-            return Err(CoreError::new(format!(
-                "No Lichess player named \"{}\".",
-                options.player.as_deref().unwrap_or("")
-            )));
+        // The player database streams its answer, so only the whole of it is bounded.
+        let read = request.lane(Lane::Feed).read_text(None);
+        match tokio::time::timeout(PLAYER_TIMEOUT, read).await {
+            Ok(text) => text.map_err(failed),
+            Err(_) => Err(timed_out()),
         }
-        if !response.status().is_success() {
-            return Err(CoreError::new(format!(
-                "Position lookup returned {status}. Try again shortly."
-            )));
-        }
-        let limit = kind.max_bytes();
-        let mut bytes: Vec<u8> = Vec::new();
-        loop {
-            let chunk = response.chunk().await.map_err(|_| {
-                CoreError::new("Position lookup failed. Check your connection and retry.")
-            })?;
-            let Some(chunk) = chunk else { break };
-            if bytes.len() + chunk.len() > limit {
-                return Err(CoreError::new("Position lookup returned too much data."));
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
-    /// `mastersGame(id)`: a master game's PGN; master games never change.
+    /// A master game's PGN; master games never change.
     pub async fn masters_game(&self, id: &str) -> CoreResult<String> {
-        tokio::select! {
-            biased;
-            _ = self.lifetime.cancelled() => Err(CoreError::aborted("Position lookup was cancelled.")),
-            result = self.masters_game_inner(id) => result,
-        }
+        self.until_closed(self.masters_game_inner(id)).await
     }
 
     async fn masters_game_inner(&self, id: &str) -> CoreResult<String> {
-        let valid = id.len() == 8 && id.bytes().all(|b| b.is_ascii_alphanumeric());
-        if !valid {
+        if !super::is_lichess_id(id) {
             return Err(CoreError::new("Invalid id."));
         }
-        let url = reqwest::Url::parse(&format!("{}/{id}", self.endpoints.masters_game))
-            .map_err(|_| CoreError::new("Invalid id."))?;
-        self.paced(&url)?;
-        let attempt = async {
-            let response = self
-                .explorer_request(url.clone())
-                .await?
-                .send()
-                .await
-                .map_err(|_| CoreError::new("The master game could not be loaded."))?;
-            self.note_rate_limit(&url, &response)?;
-            let status = response.status().as_u16();
-            if status == 401 || status == 403 {
-                return Err(CoreError::new(
-                    "Connect a Lichess account in Settings to use the opening explorer.",
-                ));
-            }
-            if !response.status().is_success() {
-                return Err(CoreError::new(format!(
-                    "The master game could not be loaded ({status})."
-                )));
-            }
-            response
-                .text()
-                .await
-                .map_err(|_| CoreError::new("The master game could not be loaded."))
-        };
-        let text = tokio::time::timeout(Duration::from_secs(15), attempt)
+        let text = self
+            .explorer_get(&format!("/masters/pgn/{id}"))
+            .await?
+            .read_text(None)
             .await
-            .map_err(|_| CoreError::new("The operation was aborted due to timeout"))??;
+            .map_err(master_game_error)?;
         if js::utf16_len(&text) > 200_000 || !text.contains('[') {
             return Err(CoreError::new("That game is not a PGN."));
         }
@@ -871,66 +626,88 @@ impl PositionLookups {
     }
 }
 
-/// The error while an origin's 429 cooldown of `wait_ms` runs.
-fn slow_down(wait_ms: i64) -> CoreError {
-    let seconds = (wait_ms.max(1) + 999) / 1000;
-    let unit = if seconds == 1 { "second" } else { "seconds" };
-    CoreError::new(format!("Too many lookups. Try again in {seconds} {unit}."))
+/// What a person is told when a master game cannot be loaded: a rate limit, a timeout or a
+/// cancellation as it is, a refused login asks to connect an account, anything else says what
+/// failed (never Lichess's status).
+fn master_game_error(cause: CoreError) -> CoreError {
+    match cause.kind {
+        Some(ErrorKind::RateLimited | ErrorKind::TimedOut) => cause,
+        _ if cause.aborted => cause,
+        Some(ErrorKind::Login) => explorer_error(cause, ""),
+        _ => CoreError {
+            message: "The master game could not be loaded.".into(),
+            ..cause
+        },
+    }
 }
 
-/// The lossless sidecar of a validator call whose arguments are plain JSON (no `undefined`, NaN or
-/// binary values to record).
-fn no_lossless() -> Value {
-    json!([])
+/// What a person is told when a lookup fails: never Lichess's status, and a refused login asks to
+/// connect an account only for the explorer, which needs one.
+fn lookup_error(cause: CoreError, kind: Kind, options: &LookupOptions) -> CoreError {
+    const OFFLINE: &str = "Position lookup failed. Check your connection and retry.";
+    match cause.kind {
+        Some(ErrorKind::Login | ErrorKind::Offline) if kind != Kind::Tablebase => {
+            explorer_error(cause, OFFLINE)
+        }
+        Some(ErrorKind::Offline) => CoreError {
+            message: OFFLINE.into(),
+            ..cause
+        },
+        Some(ErrorKind::NotFound) if kind == Kind::Player => CoreError {
+            message: format!(
+                "No Lichess player named \"{}\".",
+                options.player.as_deref().unwrap_or("")
+            ),
+            ..cause
+        },
+        _ => cause,
+    }
 }
 
-/// `assertLookupOptions(raw)`: the filters as the request sent them, validated.
-fn assert_options(raw: Option<&Value>) -> CoreResult<LookupOptions> {
-    // An absent value is passed as no argument at all, which the validator reads as undefined.
-    let mut args = vec![no_lossless()];
-    args.extend(raw.cloned());
-    let value = misc::call("assertLookupOptions", &args)
-        .ok_or_else(|| CoreError::new("Unknown validator."))?
-        .map_err(CoreError::new)?;
-    let strings = |key: &str| -> Option<Vec<String>> {
-        value.get(key).and_then(Value::as_array).map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str().map(str::to_string))
-                .collect()
-        })
-    };
-    Ok(LookupOptions {
-        speeds: strings("speeds"),
-        ratings: value
-            .get("ratings")
-            .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(Value::as_f64).collect()),
-        player: value
-            .get("player")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        color: value
-            .get("color")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        modes: strings("modes"),
-        since: value
-            .get("since")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        variant: value
-            .get("variant")
-            .and_then(Value::as_str)
-            .filter(|variant| *variant != "standard")
-            .map(str::to_string),
-    })
+/// What a person is told when the explorer refuses: a refused login asks to connect an account,
+/// and an unreachable explorer says `offline`; anything else is the cause as it was.
+fn explorer_error(cause: CoreError, offline: &str) -> CoreError {
+    match cause.kind {
+        Some(ErrorKind::Login) => CoreError::new(CONNECT_EXPLORER).with_kind(ErrorKind::Login),
+        Some(ErrorKind::Offline) => CoreError {
+            message: offline.into(),
+            ..cause
+        },
+        _ => cause,
+    }
 }
 
-/// `normalizeOptions(kind, options)`: the filters each database understands, in a fixed order.
+/// Query pairs in the order they are added.
+#[derive(Default)]
+struct Pairs(Vec<(&'static str, String)>);
+
+impl Pairs {
+    fn append_pair(&mut self, key: &'static str, value: &str) {
+        self.0.push((key, value.to_string()));
+    }
+}
+
+/// The speeds as a query lists them.
+fn speeds(speeds: &[ExplorerSpeed]) -> String {
+    let names: Vec<&str> = speeds.iter().map(|speed| speed.as_str()).collect();
+    names.join(",")
+}
+
+/// `speeds` in the order the contract lists them, each once.
+fn in_order(speeds: &[ExplorerSpeed]) -> Vec<ExplorerSpeed> {
+    ExplorerSpeed::ALL
+        .iter()
+        .copied()
+        .filter(|speed| speeds.contains(speed))
+        .collect()
+}
+
+/// The filters each database understands, in a fixed order; standard chess has no variant.
 fn normalize_options(kind: Kind, options: &LookupOptions) -> CoreResult<LookupOptions> {
-    let nonempty = |list: &Option<Vec<String>>| list.as_ref().filter(|l| !l.is_empty()).cloned();
-    if options.variant.is_some() && matches!(kind, Kind::Masters | Kind::Tablebase) {
+    let variant = options
+        .variant
+        .filter(|variant| *variant != Variant::Standard);
+    if variant.is_some() && matches!(kind, Kind::Masters | Kind::Tablebase) {
         return Err(CoreError::new(
             "Masters games and tablebases are standard chess only.",
         ));
@@ -947,15 +724,20 @@ fn normalize_options(kind: Kind, options: &LookupOptions) -> CoreResult<LookupOp
         }),
         Kind::Opening => Ok(LookupOptions {
             speeds: Some(
-                nonempty(&options.speeds)
-                    .map(|speeds| {
-                        EXPLORER_SPEEDS
-                            .iter()
-                            .filter(|speed| speeds.iter().any(|s| s == *speed))
-                            .map(|speed| speed.to_string())
-                            .collect()
-                    })
-                    .unwrap_or_else(|| vec!["blitz".into(), "rapid".into(), "classical".into()]),
+                options
+                    .speeds
+                    .as_deref()
+                    .filter(|speeds| !speeds.is_empty())
+                    .map_or_else(
+                        || {
+                            vec![
+                                ExplorerSpeed::Blitz,
+                                ExplorerSpeed::Rapid,
+                                ExplorerSpeed::Classical,
+                            ]
+                        },
+                        in_order,
+                    ),
             ),
             ratings: options
                 .ratings
@@ -969,7 +751,7 @@ fn normalize_options(kind: Kind, options: &LookupOptions) -> CoreResult<LookupOp
                         .collect()
                 }),
             since: options.since.clone(),
-            variant: options.variant.clone(),
+            variant,
             ..LookupOptions::default()
         }),
         Kind::Player => {
@@ -978,17 +760,15 @@ fn normalize_options(kind: Kind, options: &LookupOptions) -> CoreResult<LookupOp
             };
             Ok(LookupOptions {
                 player: Some(player),
-                color: Some(options.color.clone().unwrap_or_else(|| "white".into())),
-                speeds: nonempty(&options.speeds).map(|speeds| {
-                    EXPLORER_SPEEDS
-                        .iter()
-                        .filter(|speed| speeds.iter().any(|s| s == *speed))
-                        .map(|speed| speed.to_string())
-                        .collect()
-                }),
-                modes: nonempty(&options.modes),
+                color: Some(options.color.unwrap_or(Color::White)),
+                speeds: options
+                    .speeds
+                    .as_deref()
+                    .filter(|speeds| !speeds.is_empty())
+                    .map(in_order),
+                modes: options.modes.clone().filter(|modes| !modes.is_empty()),
                 since: options.since.clone(),
-                variant: options.variant.clone(),
+                variant,
                 ..LookupOptions::default()
             })
         }
@@ -1023,10 +803,7 @@ fn filters_json(kind: Kind, options: &LookupOptions) -> String {
                 "player",
                 json!(options.player.clone().unwrap_or_default()),
             ));
-            fields.push(text(
-                "color",
-                json!(options.color.clone().unwrap_or_default()),
-            ));
+            fields.push(text("color", json!(options.color.map_or("", color::name))));
             if let Some(speeds) = &options.speeds {
                 fields.push(text("speeds", json!(speeds)));
             }
@@ -1044,18 +821,15 @@ fn filters_json(kind: Kind, options: &LookupOptions) -> String {
     format!("{{{}}}", fields.join(","))
 }
 
-/// Numbers as JavaScript writes them (`400`, not `400.0`), comma-separated.
-fn join_numbers(values: &[f64]) -> String {
-    values
-        .iter()
-        .map(|value| js::number_to_string(*value))
-        .collect::<Vec<_>>()
-        .join(",")
+/// The rating groups, comma-separated.
+fn join_numbers(values: &[u32]) -> String {
+    let listed: Vec<String> = values.iter().map(u32::to_string).collect();
+    listed.join(",")
 }
 
-/// `Position.fromFen` accepts the FEN: a legal standard position.
-fn is_legal_position(variant: &str, fen: &str) -> bool {
-    if variant == "standard" {
+/// A legal position of `variant`.
+fn is_legal_position(variant: Variant, fen: &str) -> bool {
+    if variant == Variant::Standard {
         position::fen_problem(fen).is_none()
     } else {
         kchess_domain::rules::setup_start(variant, fen).is_some()
@@ -1064,7 +838,7 @@ fn is_legal_position(variant: &str, fen: &str) -> bool {
 
 /// The piece count and whether any castling right remains, for the tablebase limits.
 fn material(fen: &str) -> (usize, bool) {
-    let Some(replay) = replay::replay_setup::<&str>("standard", fen, &[]) else {
+    let Some(replay) = replay::replay_setup::<&str>(Variant::Standard, fen, &[]) else {
         return (usize::MAX, true);
     };
     let mut fields = replay.fen.split(' ');
@@ -1075,7 +849,7 @@ fn material(fen: &str) -> (usize, bool) {
 }
 
 /// The SAN of a legal move from `fen`, or None when it is not legal there.
-fn legal_san(variant: &str, fen: &str, uci: &str) -> Option<String> {
+fn legal_san(variant: Variant, fen: &str, uci: &str) -> Option<String> {
     let replay = replay::replay_setup(variant, fen, &[uci])?;
     replay.played.first().map(|played| played.san.clone())
 }
@@ -1190,7 +964,7 @@ fn tablebase_result(fen: &str, now: i64, raw: &Value) -> CoreResult<Cached> {
         .ok_or_else(unreadable)?;
     let mut moves = Vec::with_capacity(tablebase.moves.len());
     for item in tablebase.moves {
-        let san = legal_san("standard", fen, &item.uci)
+        let san = legal_san(Variant::Standard, fen, &item.uci)
             .ok_or_else(|| CoreError::new("Position lookup returned an illegal move."))?;
         moves.push(LookupMove {
             uci: item.uci.into(),
@@ -1201,7 +975,7 @@ fn tablebase_result(fen: &str, now: i64, raw: &Value) -> CoreResult<Cached> {
         });
     }
     Ok(Cached {
-        kind: "tablebase".into(),
+        kind: Kind::Tablebase,
         fen: fen.to_string(),
         fetched_at: now,
         total: None,
@@ -1215,7 +989,7 @@ fn tablebase_result(fen: &str, now: i64, raw: &Value) -> CoreResult<Cached> {
 
 fn explorer_result(
     kind: Kind,
-    variant: &str,
+    variant: Variant,
     fen: &str,
     now: i64,
     raw: &Value,
@@ -1266,7 +1040,7 @@ fn explorer_result(
         .map(|n| count(n.unwrap_or(0)))
         .fold(0i64, i64::saturating_add);
     Ok(Cached {
-        kind: kind.name().into(),
+        kind,
         fen: fen.to_string(),
         fetched_at: now,
         total: (total > 0).then_some(total),
@@ -1279,9 +1053,9 @@ fn explorer_result(
 }
 
 /// A game the explorer lists, or None when it is not readable.
-fn explorer_game(game: &Value, variant: &str, fen: &str) -> Option<ExplorerGame> {
+fn explorer_game(game: &Value, variant: Variant, fen: &str) -> Option<ExplorerGame> {
     let game: RawExplorerGame = read(game)?;
-    let id_ok = game.id.len() == 8 && game.id.bytes().all(|b| b.is_ascii_alphanumeric());
+    let id_ok = super::is_lichess_id(&game.id);
     let names_ok = [&game.white.name, &game.black.name]
         .iter()
         .all(|name| name.chars().count() <= 80);
@@ -1294,10 +1068,7 @@ fn explorer_game(game: &Value, variant: &str, fen: &str) -> Option<ExplorerGame>
         black: game.black.name,
         white_rating: game.white.rating.0,
         black_rating: game.black.rating.0,
-        winner: game
-            .winner
-            .0
-            .filter(|color| color == "white" || color == "black"),
+        winner: game.winner.0.as_deref().and_then(color::from_name),
         // The move a listed game played from this position, as SAN, when it is legal there.
         san: game
             .uci
@@ -1309,11 +1080,10 @@ fn explorer_game(game: &Value, variant: &str, fen: &str) -> Option<ExplorerGame>
     })
 }
 
-/// `decodeLookupCache`: a saved lookup with the shape this module writes, or None.
+/// A saved lookup with the shape this module writes, or None.
 fn decode_cached(raw: Option<&Value>) -> Option<Cached> {
     let cached: Cached = read(raw?)?;
-    let fits = Kind::parse(&cached.kind).is_some()
-        && cached.fen.len() <= 100
+    let fits = cached.fen.len() <= 100
         && cached.fetched_at >= 0
         && cached.moves.len() <= MAX_MOVES
         && cached
@@ -1335,6 +1105,40 @@ async fn wait_for(mut receiver: Pending) -> CoreResult<PositionLookup> {
         }
         if receiver.changed().await.is_err() {
             return Err(CoreError::new("Position lookup was cancelled."));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A master game that cannot be loaded says why only where the reason helps: a rate limit,
+    /// a timeout and a cancellation keep theirs, a refused login asks for an account, and the rest
+    /// say what failed.
+    #[test]
+    fn a_master_game_failure_keeps_only_the_reasons_that_help() {
+        const FAILED: &str = "The master game could not be loaded.";
+        let slow = CoreError::new("Too many lookups.").with_kind(ErrorKind::RateLimited);
+        let late = CoreError::new("Lichess didn’t answer in time.").with_kind(ErrorKind::TimedOut);
+        let stopped = CoreError::aborted("Stopped.").with_kind(ErrorKind::Unavailable);
+        let refused = CoreError::new("Reconnect it.").with_kind(ErrorKind::Login);
+        let broken = CoreError::new("Lichess isn’t working.").with_kind(ErrorKind::Unavailable);
+        let cases = [
+            (slow.clone(), slow),
+            (late.clone(), late),
+            (stopped.clone(), stopped),
+            (
+                refused,
+                CoreError::new(CONNECT_EXPLORER).with_kind(ErrorKind::Login),
+            ),
+            (
+                broken,
+                CoreError::new(FAILED).with_kind(ErrorKind::Unavailable),
+            ),
+        ];
+        for (cause, told) in cases {
+            assert_eq!(master_game_error(cause.clone()), told, "{cause:?}");
         }
     }
 }

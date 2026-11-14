@@ -1,6 +1,6 @@
 //! Engine status, identity and trust: which engine would run, the command that starts it, a key that changes when the executable
 //! does, the engine paths the frontends may persist, and whether the computer is playing.
-//! Search orchestration (`bestMove`, `stopEngine`) belongs to the UCI controller port.
+//! Searches run in `search.rs`.
 
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -8,12 +8,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
-use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
-use super::managed::{ManagedEngine, Target, can_download, executable_name, managed_engine};
-use crate::error::{CoreError, Result};
+use super::managed::{Target, can_download, executable_name, managed_engine};
 use crate::host::{Host, Level};
+use kchess_contracts::error::{CoreError, Result};
 
 /// The identity of the bundled engine, the official Stockfish shipped beside the app. It never
 /// changes within a build, and differs from the WebAssembly build's (`stockfish-19-lite`) that early
@@ -33,19 +32,7 @@ pub struct EngineLocations {
     pub variant: PathBuf,
 }
 
-/// What `engine_status` reports (`EngineStatus` in the TypeScript contracts).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EngineStatus {
-    pub ready: bool,
-    /// The executable in use (a downloaded or chosen one), or empty when the bundled engine is.
-    pub path: PathBuf,
-    pub bundled: bool,
-    /// The Stockfish KChess downloaded, whether or not it is the one in use.
-    pub managed: ManagedEngine,
-    /// An official native download exists for this platform and architecture.
-    pub can_download: bool,
-}
+pub use kchess_contracts::types::EngineStatus;
 
 /// The engine the computer would use: a configured executable that is executable, else the
 /// bundled one. Not ready when neither is.
@@ -56,23 +43,25 @@ pub async fn engine_status(
 ) -> EngineStatus {
     let managed = managed_engine(host, &locations.managed_dir).await;
     let can_download =
-        !crate::app_store() && can_download(locations.target.platform, locations.target.arch);
+        !kchess_host::app_store() && can_download(locations.target.platform, locations.target.arch);
     if !configured.is_empty() && is_executable_file(host, Path::new(configured)).await {
         return EngineStatus {
             ready: true,
-            path: PathBuf::from(configured),
+            path: configured.to_string(),
             bundled: false,
             managed,
             can_download,
+            identity: None,
         };
     }
     if is_executable_file(host, &locations.bundled).await {
         return EngineStatus {
             ready: true,
-            path: PathBuf::new(),
+            path: String::new(),
             bundled: true,
             managed,
             can_download,
+            identity: None,
         };
     }
     host.log(
@@ -85,26 +74,18 @@ pub async fn engine_status(
     );
     EngineStatus {
         ready: false,
-        path: PathBuf::from(configured),
+        path: configured.to_string(),
         bundled: false,
         managed,
         can_download,
+        identity: None,
     }
 }
 
 /// Fairy-Stockfish's `UCI_Variant` for a Lichess variant key; `None` for standard chess and
 /// Chess960, which Stockfish analyses.
 pub fn fairy_variant(variant: &str) -> Option<&'static str> {
-    Some(match variant {
-        "crazyhouse" => "crazyhouse",
-        "atomic" => "atomic",
-        "antichess" => "antichess",
-        "horde" => "horde",
-        "kingOfTheHill" => "kingofthehill",
-        "racingKings" => "racingkings",
-        "threeCheck" => "3check",
-        _ => return None,
-    })
+    kchess_domain::variant::Variant::from_key(variant)?.fairy_name()
 }
 
 /// The bundled Fairy-Stockfish, which analyses the other variants: ready when it is executable.
@@ -123,10 +104,11 @@ pub async fn variant_engine_status(host: &dyn Host, locations: &EngineLocations)
     }
     EngineStatus {
         ready,
-        path: locations.variant.clone(),
+        path: locations.variant.to_string_lossy().into_owned(),
         bundled: false,
         managed: managed_engine(host, &locations.managed_dir).await,
         can_download: false,
+        identity: None,
     }
 }
 
@@ -150,13 +132,11 @@ async fn is_executable_file(host: &dyn Host, path: &Path) -> bool {
 /// The command that starts the engine `status` names: the bundled executable or the configured
 /// one. The command is not spawned; the caller chooses its stdio.
 pub fn engine_command(locations: &EngineLocations, status: &EngineStatus) -> Command {
-    let mut command = if status.bundled {
+    if status.bundled {
         Command::new(&locations.bundled)
     } else {
         Command::new(&status.path)
-    };
-    crate::process::no_window(&mut command);
-    command
+    }
 }
 
 /// A key that changes when the selected executable does: the bundled identity, or the path with
@@ -175,7 +155,7 @@ pub async fn engine_identity(status: &EngineStatus) -> Result<String> {
         .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1000.0);
     Ok(format!(
         "{}:{}:{}",
-        status.path.display(),
+        status.path,
         metadata.len(),
         modified_ms
     ))
@@ -219,10 +199,7 @@ impl EngineTrust {
     }
 
     fn with_paths<T>(&self, action: impl FnOnce(&mut HashSet<OsString>) -> T) -> T {
-        let mut paths = match self.paths.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let mut paths = crate::tasks::lock(&self.paths);
         action(&mut paths)
     }
 }
@@ -242,14 +219,8 @@ fn executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
 
-    struct SilentHost;
-
-    impl Host for SilentHost {
-        fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-        fn emit(&self, _event: &str, _payload: Value) {}
-    }
+    use crate::test_host::QUIET;
 
     fn locations(dir: &Path) -> EngineLocations {
         EngineLocations {
@@ -269,15 +240,15 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let locations = locations(dir.path());
-        assert!(!engine_status(&SilentHost, &locations, "").await.ready);
+        assert!(!engine_status(&QUIET, &locations, "").await.ready);
         std::fs::write(&locations.bundled, "#!/bin/sh\n").unwrap();
         assert!(
-            !engine_status(&SilentHost, &locations, "").await.ready,
+            !engine_status(&QUIET, &locations, "").await.ready,
             "a file that cannot run is not an engine"
         );
         std::fs::set_permissions(&locations.bundled, std::fs::Permissions::from_mode(0o755))
             .unwrap();
-        let status = engine_status(&SilentHost, &locations, "").await;
+        let status = engine_status(&QUIET, &locations, "").await;
         assert!(status.ready && status.bundled);
         assert_eq!(status.path, PathBuf::new());
         assert!(status.can_download);
@@ -308,11 +279,11 @@ mod tests {
         let configured = engine.display().to_string();
 
         // Not executable yet: the bundled engine is used.
-        let status = engine_status(&SilentHost, &locations, &configured).await;
+        let status = engine_status(&QUIET, &locations, &configured).await;
         assert!(status.bundled);
 
         std::fs::set_permissions(&engine, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let status = engine_status(&SilentHost, &locations, &configured).await;
+        let status = engine_status(&QUIET, &locations, &configured).await;
         assert!(status.ready && !status.bundled);
         assert_eq!(status.path, engine);
         let first = engine_identity(&status).await.unwrap();
@@ -323,20 +294,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_platform_without_an_official_build_cannot_download_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut locations = locations(dir.path());
+        assert!(engine_status(&QUIET, &locations, "").await.can_download);
+        locations.target = Target {
+            platform: "freebsd",
+            arch: "x64",
+        };
+        assert!(!engine_status(&QUIET, &locations, "").await.can_download);
+    }
+
+    #[tokio::test]
     async fn missing_configured_engine_falls_back_and_reports_the_configured_path() {
         let dir = tempfile::tempdir().unwrap();
         let locations = locations(dir.path());
-        let status = engine_status(&SilentHost, &locations, "/no/such/engine").await;
+        let status = engine_status(&QUIET, &locations, "/no/such/engine").await;
         assert!(!status.ready);
         assert_eq!(status.path, PathBuf::from("/no/such/engine"));
-    }
-
-    #[test]
-    fn computer_playing_while_searching_or_just_after_a_move() {
-        assert!(computer_playing(true, 0, 1_000, 5_000));
-        assert!(computer_playing(false, 4_500, 1_000, 5_000));
-        assert!(!computer_playing(false, 3_000, 1_000, 5_000));
-        assert!(!computer_playing(false, 0, 1_000, 5_000));
     }
 
     #[test]

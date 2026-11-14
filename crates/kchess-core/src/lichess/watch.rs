@@ -6,11 +6,15 @@
 //! `watch:frame` and `watch:broadcast` on the host). Lining a TV game up with its delayed export
 //! runs in the background and fails quietly: the board works without it.
 
+use kchess_contracts::CoreEvent;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::Serialize;
-use serde_json::Value;
+pub use kchess_contracts::types::{
+    BroadcastGame, BroadcastRoundPlace, BroadcastRoundRef, BroadcastSummary, BroadcastTourDetail,
+    BroadcastUpdate, TvChannel, TvPastGame, WatchClock, WatchFrame, WatchPlayer, WatchState,
+    WatchTarget,
+};
 
 use crate::host::Host;
 
@@ -19,220 +23,20 @@ mod listings;
 mod spectator;
 
 pub use feed::{
-    GameDetails, GameSetup, TvGame, align_tv_moves, broadcast_game, display_fen,
-    parse_game_details, parse_tv_game, variant_from_lichess,
+    GameDetails, TvGame, align_tv_moves, broadcast_game, display_fen, parse_game_details,
+    parse_tv_game,
 };
 pub use listings::{broadcast_round, broadcast_summaries, broadcast_tour, broadcasts, tv_channels};
 pub use spectator::Spectator;
 
-/// The TV channels: key and label, in display order.
-pub const TV_CHANNELS: [(&str, &str); 16] = [
-    ("best", "Top rated"),
-    ("bullet", "Bullet"),
-    ("blitz", "Blitz"),
-    ("rapid", "Rapid"),
-    ("classical", "Classical"),
-    ("ultraBullet", "UltraBullet"),
-    ("chess960", "Chess960"),
-    ("kingOfTheHill", "King of the Hill"),
-    ("threeCheck", "Three-check"),
-    ("antichess", "Antichess"),
-    ("atomic", "Atomic"),
-    ("horde", "Horde"),
-    ("racingKings", "Racing Kings"),
-    ("crazyhouse", "Crazyhouse"),
-    ("bot", "Bots"),
-    ("computer", "Computer"),
-];
+pub use kchess_domain::misc::constants::TV_CHANNELS;
 
-pub(crate) use kchess_domain::misc::constants::VARIANTS;
 /// How many earlier games a TV channel keeps for the session.
 const PAST_GAMES: usize = 6;
-/// The longest broadcast PGN read, in UTF-16 units (`pgn.slice(0, 200_000)`).
+/// The longest broadcast PGN read, in UTF-16 units.
 const MAX_BROADCAST_PGN: usize = 200_000;
 /// The most PGN text the round stream keeps waiting for a game to end.
 const MAX_PGN: usize = 2_000_000;
-
-/* ── Wire shapes ── */
-
-/// A player of a watched game (`WatchPlayer`).
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct WatchPlayer {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rating: Option<f64>,
-}
-
-/// A time control in seconds (`clock` of `WatchFrame`).
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-pub struct WatchClock {
-    pub initial: f64,
-    pub increment: f64,
-}
-
-/// Connection health of a watch (`WatchState`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct WatchState {
-    pub session: u64,
-    pub phase: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    /// The kind of failure (`ErrorKind`) of an `error` phase, so the viewer is offered a retry
-    /// only when one can help.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub kind: Option<&'static str>,
-}
-
-/// A game a TV channel showed before the current one (`TvPastGame`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TvPastGame {
-    pub game_id: String,
-    pub white: WatchPlayer,
-    pub black: WatchPlayer,
-    pub fen: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_move: Option<String>,
-    pub orientation: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub winner: Option<&'static str>,
-}
-
-/// One position of a watched game (`WatchFrame`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WatchFrame {
-    pub session: u64,
-    pub source: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub channel: Option<String>,
-    pub game_id: String,
-    pub white: WatchPlayer,
-    pub black: WatchPlayer,
-    pub orientation: &'static str,
-    pub fen: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_move: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub white_clock: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub black_clock: Option<f64>,
-    pub variant: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub speed: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rated: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub clock: Option<WatchClock>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub winner: Option<&'static str>,
-    pub finished: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_fen: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub moves: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub previous: Option<Vec<TvPastGame>>,
-}
-
-/// A TV channel with who is playing on it (`TvChannel`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct TvChannel {
-    pub key: &'static str,
-    pub label: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub game_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub player: Option<WatchPlayer>,
-}
-
-/// A broadcast's listing entry (`BroadcastSummary`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BroadcastSummary {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub players: Option<String>,
-    pub tour_id: String,
-    pub tour_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub image: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub round_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub round_name: Option<String>,
-    pub ongoing: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub starts_at: Option<i64>,
-    pub section: &'static str,
-}
-
-/// A round of a broadcast tournament (`BroadcastRoundRef`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BroadcastRoundRef {
-    pub id: String,
-    pub name: String,
-    pub ongoing: bool,
-    pub finished: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub starts_at: Option<i64>,
-}
-
-/// A broadcast tournament with its rounds (`BroadcastTourDetail`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BroadcastTourDetail {
-    pub id: String,
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub rounds: Vec<BroadcastRoundRef>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_round_id: Option<String>,
-}
-
-/// One board of a broadcast round (`BroadcastGame`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BroadcastGame {
-    pub id: String,
-    pub name: String,
-    pub white: WatchPlayer,
-    pub black: WatchPlayer,
-    pub result: String,
-    pub start_fen: String,
-    pub moves: Vec<String>,
-    pub fen: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_move: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub white_clock: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub black_clock: Option<f64>,
-    pub ongoing: bool,
-    pub pgn: String,
-}
-
-/// What a broadcast round's feed sent (`BroadcastUpdate`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BroadcastUpdate {
-    pub session: u64,
-    pub round_id: String,
-    pub games: Vec<BroadcastGame>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ended: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
 
 /// Where watch frames, states and broadcast updates go.
 pub trait WatchSink: Send + Sync {
@@ -264,34 +68,25 @@ impl HostSink {
         }
     }
 
-    fn emit(&self, event: &str, payload: Value) {
+    fn emit(&self, event: CoreEvent) {
         match self.connection {
-            Some(connection) => self.host.emit_to(connection, event, payload),
-            None => self.host.emit(event, payload),
+            Some(connection) => self.host.emit_to(connection, event),
+            None => self.host.emit(event),
         }
     }
 }
 
 impl WatchSink for HostSink {
     fn frame(&self, frame: WatchFrame) {
-        self.emit(
-            "watch:frame",
-            serde_json::to_value(frame).unwrap_or(Value::Null),
-        );
+        self.emit(CoreEvent::WatchFrame(Box::new(frame)));
     }
 
     fn state(&self, state: WatchState) {
-        self.emit(
-            "watch:state",
-            serde_json::to_value(state).unwrap_or(Value::Null),
-        );
+        self.emit(CoreEvent::WatchState(state));
     }
 
     fn broadcast(&self, update: BroadcastUpdate) {
-        self.emit(
-            "watch:broadcast",
-            serde_json::to_value(update).unwrap_or(Value::Null),
-        );
+        self.emit(CoreEvent::WatchBroadcast(update));
     }
 }
 
@@ -316,10 +111,7 @@ impl Spectators {
     /// The calling connection's watch, made on first use.
     pub fn mine(&self) -> Spectator {
         let connection = crate::connection::current_or_app();
-        let mut watches = self
-            .watches
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut watches = crate::tasks::lock(&self.watches);
         watches
             .entry(connection)
             .or_insert_with(|| {
@@ -345,7 +137,7 @@ impl Spectators {
         }
     }
 
-    /// `stopWatching`: the calling connection's watch only.
+    /// The calling connection's watch only.
     /// With `session`, only that watch: a stop sent before a newer watch began, but handled
     /// after it, must not end the newer one.
     pub fn stop_mine(&self, session: Option<u64>) {
@@ -374,13 +166,6 @@ impl Spectators {
             spectator.stop();
         }
     }
-}
-
-/// What a watch follows.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum WatchTarget {
-    Channel(String),
-    Game(String),
 }
 
 /// How a TV game is lined up with its delayed export (`LINE_UP_DELAY_MS`, `LINE_UP_ATTEMPTS`).

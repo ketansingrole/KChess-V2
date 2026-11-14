@@ -7,6 +7,9 @@
 //! does: only the files that start, configure or host the core name `kchess_core`, and only the
 //! updater and the picture loader make HTTP requests of their own (`reqwest`). Tests (the app's
 //! `e2e`, `tests.rs` files and inline test modules) may name anything.
+//!
+//! It also holds the app's rules of look that span every page (spinners, named selects, corners,
+//! steady clocks), which no test of one page can see.
 
 use std::path::Path;
 
@@ -35,15 +38,6 @@ const RULES: [Rule; 2] = [
             // Starting the core (embedded or through the service) and answering its host requests.
             "apps/gpui/src/core.rs",
             "apps/cli/src/core.rs",
-            // The programs and switches the core is configured with.
-            "apps/gpui/src/profile.rs",
-            // Log lines are redacted as the core's are.
-            "apps/gpui/src/log.rs",
-            // The App Store build: no updater, and no Stockfish download in the engine settings.
-            "apps/gpui/src/updates.rs",
-            "apps/gpui/src/pages/settings/engine.rs",
-            // Voice input's test audio, behind the core's test switch.
-            "apps/gpui/src/voice/capture.rs",
         ],
     },
     Rule {
@@ -142,8 +136,12 @@ fn check_in(repo: &Path) -> Result {
 /// typed call (`kchess_contracts::calls`) names.
 const NAMED_CALLS: [&str; 2] = ["apps/gpui/src/core.rs", "apps/cli/src/core.rs"];
 
-/// Each shipped frontend call of a core method by its name as text (`.call("library", …)`),
-/// whatever its line breaks, as `path: method`.
+/// The files that may also send a method whose name is only known as the program runs: the
+/// command line's `call` command sends the method the person names.
+const NAMED_AT_RUN_TIME: [&str; 1] = ["apps/cli/src/main.rs"];
+
+/// Each shipped frontend call of a core method by its name (`.call("library", …)`, or a name in
+/// a variable, `.call(method, …)`), whatever its line breaks, as `path: what`.
 fn named_calls(files: &[(String, String)]) -> Vec<String> {
     let mut found = Vec::new();
     for (path, text) in files {
@@ -154,13 +152,21 @@ fn named_calls(files: &[(String, String)]) -> Vec<String> {
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();
-        for call in [".call(\"", ".call_now(\""] {
+        for call in [".call(", ".call_now("] {
             for (at, _) in packed.match_indices(call) {
                 let rest = &packed[at + call.len()..];
-                let method = rest.split('"').next().unwrap_or_default();
+                let named = match rest.strip_prefix('"') {
+                    Some(literal) => format!("`{}`", literal.split('"').next().unwrap_or_default()),
+                    None if NAMED_AT_RUN_TIME.contains(&path.as_str()) => continue,
+                    None => format!(
+                        "the method named in `{}`",
+                        rest.split([',', ')']).next().unwrap_or_default()
+                    ),
+                };
                 found.push(format!(
-                    "{path}: calls `{method}` by name; declare it in `calls!` \
-                     (crates/kchess-contracts/src/calls.rs) and send it with `request`"
+                    "{path}: calls {named} by name; declare it in `core_api!` \
+                     (crates/kchess-contracts/src/core_api.rs) and send its typed call with \
+                     `request`"
                 ));
             }
         }
@@ -208,6 +214,31 @@ fn a_call_by_name_is_found_across_lines() {
     assert_eq!(found.len(), 2, "{found:?}");
     assert!(found[0].starts_with("apps/gpui/src/page.rs: calls `library` by name"));
     assert!(found[1].starts_with("apps/gpui/src/page.rs: calls `usage` by name"));
+}
+
+/// A name in a variable escaped the check once (`call(if masters { "mastersGame" } else { … })`
+/// and `call(method, args)`): it is found too, except in the command line's `call` command.
+#[test]
+fn a_call_by_a_name_in_a_variable_is_found() {
+    let files = [
+        file(
+            "apps/gpui/src/page.rs",
+            "let call = core.call(\n    method,\n    args,\n);\nbridge.call_now(name, vec![]);\n",
+        ),
+        file(
+            "apps/cli/src/main.rs",
+            "print(&core.call(method, parameters).await?);\ncore.call(\"usage\", vec![]);\n",
+        ),
+    ];
+    let found = named_calls(&files);
+    assert_eq!(found.len(), 3, "{found:?}");
+    assert!(
+        found[0].starts_with("apps/gpui/src/page.rs: calls the method named in `method` by name")
+    );
+    assert!(
+        found[1].starts_with("apps/gpui/src/page.rs: calls the method named in `name` by name")
+    );
+    assert!(found[2].starts_with("apps/cli/src/main.rs: calls `usage` by name"));
 }
 
 #[test]
@@ -346,4 +377,188 @@ fn a_fenced_block_in_a_doc_comment_is_found() {
         file("b.rs", "//! ```rust\n// ```\nlet s = \"```\";\n"),
     ];
     assert_eq!(doc_code_blocks(&files), ["a.rs:2", "a.rs:4", "b.rs:1"]);
+}
+
+/* The app's look: rules that hold across every page, which no test of one page can see. */
+
+/// The app's shipped sources, as (path from the repository root, text before its test module).
+fn app_sources() -> Vec<(String, String)> {
+    let mut files = Vec::new();
+    sources_under(&root(), "apps/gpui/src", &mut files).expect("the app's sources");
+    files
+        .into_iter()
+        .filter(|(path, _)| !is_test_file(path))
+        .map(|(path, text)| {
+            let text = shipped(&text).replace("\r\n", "\n");
+            (path, text)
+        })
+        .collect()
+}
+
+/// Each file with a still loader: the loader icon outside `spinner`, or a "Loading…" written as
+/// a plain hint, which has no spinner (`loading` has one).
+fn still_loaders(files: &[(String, String)]) -> Vec<String> {
+    files
+        .iter()
+        .filter(|(path, text)| {
+            let allowed = usize::from(path == "apps/gpui/src/widgets/status.rs");
+            text.matches("icon(\"loader-circle\")").count() > allowed
+                || text.contains("hint(\"Loading")
+        })
+        .map(|(path, _)| path.clone())
+        .collect()
+}
+
+/// Each `Select` built without an accessible name in the builder chain that follows it, as
+/// `path:line`.
+fn unnamed_selects(files: &[(String, String)]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (path, text) in files {
+        let lines: Vec<&str> = text.lines().collect();
+        for (index, line) in lines.iter().enumerate() {
+            if !line.contains("Select::new(") || line.trim_start().starts_with("//") {
+                continue;
+            }
+            let chain = lines[index..lines.len().min(index + 8)].join("\n");
+            if !chain.contains("accessibility_label") {
+                found.push(format!("{path}:{}", index + 1));
+            }
+        }
+    }
+    found
+}
+
+/// Each corner rounded by a literal size rather than the `radii` scale, as `path:line`; only
+/// Settings' theme preview, a scale model of a page, rounds its own.
+fn stray_corners(files: &[(String, String)]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (path, text) in files {
+        let preview = text
+            .find("fn theme_preview(")
+            .map(|start| (start, start + text[start..].find("\n}").unwrap_or(0)));
+        for (at, _) in text.match_indices(".rounded") {
+            let call = &text[at..];
+            let literal = call.find('(').is_some_and(|open| {
+                call[open + 1..].starts_with("px(") && !call[..open].contains('\n')
+            });
+            let in_preview = preview.is_some_and(|(start, end)| (start..end).contains(&at));
+            if literal && !in_preview {
+                found.push(format!("{path}:{}", text[..at].lines().count()));
+            }
+        }
+    }
+    found
+}
+
+/// Each file drawing a large ticking time without tabular figures, whose digits then shift
+/// sideways on every tick. The clocks of Puzzle Rush, timed practice runs and Over the board draw
+/// through `widgets::timer`; the title bar's "Updating N%" is anchored on the right, so a
+/// proportional figure moved the button's left edge with every percent.
+fn proportional_timers(files: &[(String, String)]) -> Vec<String> {
+    let text_of = |wanted: &str| {
+        files
+            .iter()
+            .find(|(path, _)| path == wanted)
+            .map_or("", |(_, text)| text.as_str())
+    };
+    let mut found: Vec<String> = ["puzzles/rush.rs", "practice/run.rs", "local.rs"]
+        .iter()
+        .map(|page| format!("apps/gpui/src/pages/{page}"))
+        .filter(|path| !text_of(path).contains("widgets::timer("))
+        .collect();
+    let updates = "apps/gpui/src/pages/settings/updates.rs";
+    let text = text_of(updates);
+    let button = text
+        .find("fn title_bar_button")
+        .map(|at| &text[at..])
+        .map(|rest| &rest[..rest.find("\n}\n").unwrap_or(rest.len())]);
+    if !button.is_some_and(|button| button.contains(".font_features(crate::widgets::tabular())")) {
+        found.push(updates.to_string());
+    }
+    found
+}
+
+/// Every wait turns: the Lichess seek card once showed a loader that never moved.
+#[test]
+fn every_loader_in_the_app_is_the_turning_spinner() {
+    let found = still_loaders(&app_sources());
+    assert!(found.is_empty(), "a still loader in {found:?}");
+}
+
+#[test]
+fn a_still_loader_is_found() {
+    let files = [
+        file("apps/gpui/src/widgets/status.rs", "icon(\"loader-circle\")"),
+        file("apps/gpui/src/a.rs", "hint(\"Loading games…\")"),
+        file("apps/gpui/src/b.rs", "icon(\"loader-circle\")"),
+        file("apps/gpui/src/c.rs", "widgets::loading(\"Loading games…\")"),
+    ];
+    assert_eq!(
+        still_loaders(&files),
+        ["apps/gpui/src/a.rs", "apps/gpui/src/b.rs"]
+    );
+}
+
+/// A select's placeholder and value are never its accessible name (GPUI Kit 0.9), so each one
+/// is named where it is built. Most of the unnamed ones sat behind a connected account, where
+/// the end-to-end audit cannot reach.
+#[test]
+fn every_select_in_the_app_is_named() {
+    let found = unnamed_selects(&app_sources());
+    assert!(found.is_empty(), "an unnamed select at {found:?}");
+}
+
+#[test]
+fn an_unnamed_select_is_found_with_its_line() {
+    let files = [file(
+        "apps/gpui/src/a.rs",
+        "Select::new(&a)\n    .accessibility_label(\"Speed\");\n// Select::new(&b)\n\
+         Select::new(&c)\n    .w_full();\n",
+    )];
+    assert_eq!(unnamed_selects(&files), ["apps/gpui/src/a.rs:4"]);
+}
+
+#[test]
+fn every_corner_in_the_app_comes_from_the_radius_scale() {
+    let found = stray_corners(&app_sources());
+    assert!(found.is_empty(), "corners outside `radii`: {found:?}");
+}
+
+#[test]
+fn a_literal_corner_is_found_outside_the_theme_preview() {
+    let files = [file(
+        "apps/gpui/src/a.rs",
+        "div().rounded(radii::SM)\ndiv().rounded(px(3.))\nfn theme_preview() {\n    \
+         div().rounded(px(2.))\n}\n",
+    )];
+    assert_eq!(stray_corners(&files), ["apps/gpui/src/a.rs:2"]);
+}
+
+#[test]
+fn ticking_times_in_the_app_hold_still() {
+    let found = proportional_timers(&app_sources());
+    assert!(found.is_empty(), "proportional figures in {found:?}");
+}
+
+#[test]
+fn a_clock_without_tabular_figures_is_found() {
+    let files = [
+        file(
+            "apps/gpui/src/pages/puzzles/rush.rs",
+            "widgets::timer(text)",
+        ),
+        file("apps/gpui/src/pages/practice/run.rs", "div().child(text)"),
+        file("apps/gpui/src/pages/local.rs", "widgets::timer(text)"),
+        file(
+            "apps/gpui/src/pages/settings/updates.rs",
+            "fn title_bar_button() {\n    label(percent)\n}\n",
+        ),
+    ];
+    assert_eq!(
+        proportional_timers(&files),
+        [
+            "apps/gpui/src/pages/practice/run.rs",
+            "apps/gpui/src/pages/settings/updates.rs"
+        ]
+    );
 }

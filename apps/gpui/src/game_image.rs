@@ -41,8 +41,7 @@ struct Shown {
 /// What to draw (`ImageOptions`).
 #[derive(Clone)]
 pub struct ImageOptions {
-    pub variant: String,
-    pub fen: String,
+    pub setup: kchess_domain::variant::Setup,
     pub moves: Vec<String>,
     pub orientation: Color,
     pub board_theme: String,
@@ -163,7 +162,7 @@ fn painter(options: &ImageOptions) -> Result<Painter, String> {
         Transform::identity(),
         None,
     );
-    let crazyhouse = options.variant == "crazyhouse";
+    let crazyhouse = options.setup.variant == kchess_domain::variant::Variant::Crazyhouse;
     let (mut pieces, mut pocket_pieces, mut counts) =
         (HashMap::new(), HashMap::new(), HashMap::new());
     for color in Color::ALL {
@@ -295,7 +294,9 @@ impl Painter {
 /// Each position of the game from the start, with the move that led to it; `up_to` stops after
 /// that many moves. The line stops at the first illegal move.
 fn positions(options: &ImageOptions, up_to: usize) -> Result<Vec<Shown>, String> {
-    let mut position = kchess_domain::rules::setup_start(&options.variant, &options.fen)
+    let mut position = options
+        .setup
+        .position()
         .ok_or("That game cannot be replayed")?;
     let mut list = vec![Shown {
         board: position.board().clone(),
@@ -542,8 +543,7 @@ mod tests {
 
     fn game() -> ImageOptions {
         ImageOptions {
-            variant: "standard".into(),
-            fen: crate::game::STANDARD_FEN.into(),
+            setup: kchess_domain::variant::Setup::standard(),
             moves: ["e2e4", "e7e5", "g1f3"].map(String::from).to_vec(),
             orientation: shakmaty::Color::White,
             board_theme: "brown".into(),
@@ -570,8 +570,10 @@ mod tests {
     #[test]
     fn a_crazyhouse_picture_shows_the_pockets() {
         let options = ImageOptions {
-            variant: "crazyhouse".into(),
-            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1".into(),
+            setup: kchess_domain::variant::Setup {
+                variant: kchess_domain::variant::Variant::Crazyhouse,
+                fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1".into(),
+            },
             moves: ["e2e4", "d7d5", "e4d5", "d8d5"].map(String::from).to_vec(),
             ..game()
         };

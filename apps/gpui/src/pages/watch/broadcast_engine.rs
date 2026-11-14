@@ -4,6 +4,7 @@
 //! Lichess game.
 
 use kchess_contracts::calls;
+use kchess_contracts::types::{AnalysisUpdate, BroadcastGame, EngineLine};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -18,7 +19,7 @@ use serde_json::{Value, json};
 use shakmaty::{Color, Position as _, Square};
 
 use super::WatchPage;
-use super::broadcasts::{Broadcasts, moves_of, setup_of};
+use super::broadcasts::{Broadcasts, setup_of};
 use crate::assets::icon;
 use crate::board::Arrow;
 use crate::core::AppCore;
@@ -43,7 +44,7 @@ const PREVIEW_TIME: Duration = Duration::from_millis(1500);
 struct Preview {
     context: String,
     /// None when the engine could not give one.
-    line: Option<Value>,
+    line: Option<EngineLine>,
 }
 
 pub(super) struct BroadcastEngine {
@@ -63,12 +64,9 @@ fn engine_of(page: &mut WatchPage) -> &mut PositionEngine {
     &mut page.broadcasts.engine.engine
 }
 
-/// The context a board's live position is analysed in (`analysisContext`).
-fn context_of(game: &Value) -> String {
-    analysis_context(
-        game["startFen"].as_str().unwrap_or_default(),
-        &moves_of(game),
-    )
+/// The context a board's live position is analysed in.
+fn context_of(game: &BroadcastGame) -> String {
+    analysis_context(&game.start_fen, &game.moves)
 }
 
 fn assistance(cx: &App) -> bool {
@@ -115,7 +113,10 @@ impl Broadcasts {
         if let Some(base) = &self.engine.variation_base {
             return base.iter().chain(&self.engine.variation).cloned().collect();
         }
-        let moves = self.current().map(moves_of).unwrap_or_default();
+        let moves = self
+            .current()
+            .map(|game| game.moves.clone())
+            .unwrap_or_default();
         moves[..self.shown_ply().min(moves.len())].to_vec()
     }
 
@@ -160,7 +161,7 @@ impl Broadcasts {
             .iter()
             .enumerate()
             .filter_map(|(rank, line)| {
-                let uci = line["pv"][0].as_str()?;
+                let uci = line.pv.first()?;
                 let square = |range: std::ops::Range<usize>| uci.get(range)?.parse::<Square>().ok();
                 Some(Arrow::engine(square(0..2)?, square(2..4)?, rank))
             })
@@ -168,8 +169,8 @@ impl Broadcasts {
     }
 
     /// A grid board's estimate, and whether the engine could not make one for its position.
-    pub(super) fn grid_evaluation(&self, game: &Value) -> (Option<Value>, bool) {
-        let id = game["id"].as_str().unwrap_or_default();
+    pub(super) fn grid_evaluation(&self, game: &BroadcastGame) -> (Option<EngineLine>, bool) {
+        let id = game.id.as_str();
         let context = context_of(game);
         if self.current().is_none()
             && self
@@ -178,14 +179,9 @@ impl Broadcasts {
                 .as_ref()
                 .is_some_and(|(previewing, at)| previewing == id && *at == context)
             && let Some(update) = &self.engine.engine.update
-            && update["context"].as_str() == Some(context.as_str())
+            && update.context == context
         {
-            return (
-                update["lines"][0]
-                    .as_object()
-                    .map(|_| update["lines"][0].clone()),
-                false,
-            );
+            return (update.lines.first().cloned(), false);
         }
         match self.engine.previews.get(id) {
             Some(preview) if preview.context == context => {
@@ -209,9 +205,8 @@ impl WatchPage {
             .global::<AppCore>()
             .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
-            let status = status.await.unwrap_or(Value::Null);
+            let ready = status.await.is_ok_and(|status| status.ready);
             let _ = this.update(cx, |this, cx| {
-                let ready = status["ready"].as_bool() == Some(true);
                 if this.broadcasts.engine.ready != ready {
                     this.broadcasts.engine.ready = ready;
                     this.broadcasts.engine.previews.clear();
@@ -242,7 +237,7 @@ impl WatchPage {
                 .unwrap_or_default();
             let request = json!({
                 "fen": fen,
-                "rootFen": game["startFen"],
+                "rootFen": game.start_fen,
                 "moves": history,
                 "lines": crate::prefs::get::<usize>(cx, LINES, 3).clamp(1, 5),
                 "infinite": crate::prefs::get(cx, INFINITE, false),
@@ -253,26 +248,23 @@ impl WatchPage {
             return (None, None);
         }
         let next = broadcasts.games.iter().find(|game| {
-            game["ongoing"] == json!(true)
+            game.ongoing
                 && broadcasts
                     .engine
                     .previews
-                    .get(game["id"].as_str().unwrap_or_default())
+                    .get(&game.id)
                     .is_none_or(|preview| preview.context != context_of(game))
         });
         let Some(game) = next else {
             return (None, None);
         };
         let request = json!({
-            "fen": game["fen"],
-            "rootFen": game["startFen"],
-            "moves": moves_of(game),
+            "fen": game.fen,
+            "rootFen": game.start_fen,
+            "moves": game.moves,
             "lines": 1,
         });
-        let previewing = (
-            game["id"].as_str().unwrap_or_default().to_string(),
-            context_of(game),
-        );
+        let previewing = (game.id.clone(), context_of(game));
         (Some(request), Some(previewing))
     }
 
@@ -306,23 +298,22 @@ impl WatchPage {
             .engine
             .update
             .as_ref()
-            .filter(|update| update["context"].as_str() == Some(context.as_str()))
-            .and_then(|update| update["lines"].as_array()?.first().cloned());
+            .filter(|update| update.context == context)
+            .and_then(|update| update.lines.first().cloned());
         engine.previews.insert(id, Preview { context, line });
         self.engine_changed(cx);
     }
 
     /// An `engine:analysis` event.
-    pub(super) fn engine_update(&mut self, update: &Value, cx: &mut Context<Self>) {
+    pub(super) fn engine_update(&mut self, update: &AnalysisUpdate, cx: &mut Context<Self>) {
         if !self.broadcasts.engine.engine.receive(update) {
             return;
         }
         let previewing = self.broadcasts.engine.previewing.clone();
         if let Some((_, context)) = previewing {
             let engine = &self.broadcasts.engine.engine;
-            let reached = update["context"].as_str() == Some(context.as_str())
-                && (update["depth"].as_f64().unwrap_or_default() >= PREVIEW_DEPTH
-                    || update["done"] == json!(true));
+            let reached =
+                update.context == context && (update.depth >= PREVIEW_DEPTH || update.done);
             if reached || engine.error.is_some() {
                 return self.finish_preview(cx);
             }
@@ -337,7 +328,7 @@ impl WatchPage {
             .broadcasts
             .games
             .iter()
-            .filter_map(|game| game["id"].as_str().map(str::to_string))
+            .map(|game| game.id.clone())
             .collect();
         self.broadcasts
             .engine
@@ -398,7 +389,7 @@ impl WatchPage {
             None => "Starting…".into(),
             Some(update) => format!(
                 "Depth {}{}",
-                update["depth"].as_f64().unwrap_or_default(),
+                update.depth,
                 if broadcasts.engine.engine.busy {
                     "…"
                 } else {
@@ -424,7 +415,7 @@ impl WatchPage {
         })
     }
 
-    /// The engine section above the moves (`.broadcast-engine`).
+    /// The engine section above the moves.
     pub(super) fn broadcast_engine_panel(
         &self,
         cx: &mut Context<Self>,
@@ -577,8 +568,8 @@ impl WatchPage {
                 panel.child(crate::engine_view::engine_lines(
                     crate::engine_view::EngineLines {
                         fen: &fen,
-                        variant: "standard",
-                        lines: &broadcasts.engine.engine.lines(),
+                        variant: kchess_domain::variant::Variant::Standard,
+                        lines: broadcasts.engine.engine.lines(),
                         pending: crate::prefs::get::<usize>(cx, LINES, 3).clamp(1, 5),
                         ended: terminal.map(|_| "Nothing to analyse"),
                     },

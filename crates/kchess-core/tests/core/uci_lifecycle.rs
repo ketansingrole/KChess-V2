@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use kchess_core::engine::uci::{UciController, search_cancelled};
 #[cfg(unix)]
-use kchess_core::error::CoreError;
+use kchess_contracts::error::CoreError;
+use kchess_core::engine::uci::{UciController, search_cancelled};
 #[cfg(unix)]
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -52,6 +52,21 @@ async fn rejects_an_ignored_readiness_request() {
     .expect("spawn the fake engine");
     let error = engine.ready().await.unwrap_err();
     assert!(error.message.contains("timed out"), "{}", error.message);
+}
+
+/// A line longer than the limit is not read in pieces as if each were a line: the engine fails
+/// with invalid output, though a valid `uciok` follows it.
+#[tokio::test]
+async fn fails_an_engine_whose_line_runs_past_the_limit() {
+    let host = support::host();
+    let hub = support::hub(&host);
+    let engine = UciController::start(&hub, support::fake("long-line", None), HANDSHAKE)
+        .expect("spawn the fake engine");
+    let error = engine.ready().await.unwrap_err();
+    assert_eq!(error.message, "Invalid engine output.");
+    tokio::time::timeout(Duration::from_secs(5), engine.closed())
+        .await
+        .expect("the failed engine process exits");
 }
 
 #[tokio::test]
@@ -137,7 +152,7 @@ async fn rejects_a_bounded_search_with_no_bestmove() {
         .unwrap_err();
     assert!(error.message.contains("timed out"), "{}", error.message);
     assert!(
-        host.contains("Engine command timed out: go timeoutMs=20"),
+        host.logged("Engine command timed out: go timeoutMs=20"),
         "the timeout is logged with the command name only"
     );
 }
