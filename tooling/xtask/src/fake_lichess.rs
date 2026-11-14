@@ -357,7 +357,10 @@ mod tests {
         loop {
             let mut line = String::new();
             // A stand-in that hangs up without an answer fails here rather than spinning.
-            assert!(reader.read_line(&mut line).unwrap() > 0, "{path}: no answer");
+            assert!(
+                reader.read_line(&mut line).unwrap() > 0,
+                "{path}: no answer"
+            );
             if line == "\r\n" {
                 break;
             }
