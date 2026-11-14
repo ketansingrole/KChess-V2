@@ -58,7 +58,7 @@ impl OnlineSession {
             // A refused request leaves the seek or challenge already running alone.
             return Err(CoreError::new(message));
         }
-        self.cancel_inner();
+        self.cancel_for_start();
         let handle = {
             let mut st = self.st();
             let handle = self.next_handle(&mut st);

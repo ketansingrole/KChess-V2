@@ -485,6 +485,29 @@ fn a_seek_waits_for_the_check_for_a_game_in_progress(cx: &mut gpui_kit::TestAppC
     app.find("online-cancel");
 }
 
+/// 2026-11-10, Windows CI (`a_seek_is_cancelled_from_quick_pick`): signing in asks Lichess for a
+/// game in progress. When that check failed, the seek started after it was reported as a game to
+/// reconnect to, and the page never showed it while it was open on Lichess.
+#[gpui_kit::test]
+fn a_seek_after_a_failed_check_for_a_game_shows(cx: &mut gpui_kit::TestAppContext) {
+    use crate::online::Phase;
+    let mut app = Harness::start(cx);
+    let lichess = app.connect_with("Tester", false, |session| session.fail_check = true);
+    app.wait_for("the check to fail", |_, _| lichess.lock().checked);
+    app.open("Play on Lichess");
+    app.click("online-start");
+    app.wait_for("the seek", |_, cx| {
+        writes(&lichess)
+            .iter()
+            .any(|write| write.starts_with("POST /api/board/seek"))
+            && crate::online::handle(cx).read(cx).phase == Phase::Seeking
+    });
+    app.click("online-cancel");
+    app.wait_for("the seek to end", |_, cx| {
+        crate::online::handle(cx).read(cx).phase != Phase::Seeking
+    });
+}
+
 /// A correspondence move cannot be taken back, so it waits on the board for Confirm (Return) and
 /// can be cancelled (Esc) until then, as on Lichess; with the setting off it goes at once.
 #[gpui_kit::test]
