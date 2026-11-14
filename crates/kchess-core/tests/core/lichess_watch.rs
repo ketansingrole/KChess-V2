@@ -886,12 +886,12 @@ impl kchess_core::host::Host for Delivered {
         self.0
             .lock()
             .unwrap()
-            .push((None, name, event.into_payload()));
+            .push((None, name, event.into_payload().unwrap()));
     }
 
     fn emit_to(&self, connection: u64, event: kchess_core::host::CoreEvent) {
         let name = event.name().to_string();
-        let payload = event.into_payload();
+        let payload = event.into_payload().unwrap();
         self.0
             .lock()
             .unwrap()

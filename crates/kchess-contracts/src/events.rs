@@ -10,8 +10,8 @@ use crate::types::*;
 
 /// What an event holds: its contract type, read from and written to the JSON it crosses as.
 pub trait EventPayload: Serialize + DeserializeOwned {
-    fn into_json(self) -> Value {
-        serde_json::to_value(self).expect("an event payload is JSON")
+    fn into_json(self) -> serde_json::Result<Value> {
+        serde_json::to_value(self)
     }
 
     fn from_json(payload: Value) -> serde_json::Result<Self> {
@@ -20,8 +20,8 @@ pub trait EventPayload: Serialize + DeserializeOwned {
 }
 
 impl EventPayload for Value {
-    fn into_json(self) -> Value {
-        self
+    fn into_json(self) -> serde_json::Result<Value> {
+        Ok(self)
     }
 
     fn from_json(payload: Value) -> serde_json::Result<Self> {
@@ -74,8 +74,8 @@ macro_rules! core_events {
                 }
             }
 
-            /// The JSON it crosses with.
-            pub fn into_payload(self) -> Value {
+            /// The JSON it crosses with, or why its payload could not be written as JSON.
+            pub fn into_payload(self) -> serde_json::Result<Value> {
                 match self {
                     $(CoreEvent::$variant(payload) => payload.into_json(),)*
                 }
@@ -181,7 +181,7 @@ mod tests {
     /// `event` crosses as `expected`, and reading those bytes back gives the event again.
     fn crosses_as(event: CoreEvent, expected: &str) {
         let name = event.name();
-        let payload = event.clone().into_payload();
+        let payload = event.clone().into_payload().unwrap();
         assert_eq!(serde_json::to_string(&payload).unwrap(), sorted(expected));
         assert_eq!(CoreEvent::from_wire(name, payload), Some(event));
     }
@@ -213,7 +213,7 @@ mod tests {
         let raw = json!({ "type": "gameStart", "game": { "id": "abcdefgh", "extra": [1] } });
         let event = CoreEvent::from_wire("online:event", raw.clone()).unwrap();
         assert_eq!(event, CoreEvent::OnlineEvent(raw.clone()));
-        assert_eq!(event.into_payload(), raw);
+        assert_eq!(event.into_payload().unwrap(), raw);
     }
 
     #[test]
@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn a_typed_event_crosses_as_its_json() {
         let event = analysis(true);
-        let sent = event.clone().into_payload();
+        let sent = event.clone().into_payload().unwrap();
         assert_eq!(sent["done"], json!(true));
         assert_eq!(CoreEvent::from_wire("engine:analysis", sent), Some(event));
         assert_eq!(

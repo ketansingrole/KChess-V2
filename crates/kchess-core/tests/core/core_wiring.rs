@@ -217,7 +217,7 @@ fn typed_events_cross_as_recorded() {
         let recorded = std::fs::read_to_string(&path).expect("the recording");
         let payload: Value = serde_json::from_str(&recorded).expect("JSON");
         let event = CoreEvent::from_wire(name, payload).expect("the event's shape");
-        support::wire::assert_wire(recording, &event.into_payload());
+        support::wire::assert_wire(recording, &event.into_payload().unwrap());
     }
 }
 

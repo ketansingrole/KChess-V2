@@ -27,7 +27,7 @@ impl Host for SignedIn {
     }
 
     fn emit(&self, event: CoreEvent) {
-        let (event, payload) = (event.name(), event.into_payload());
+        let (event, payload) = (event.name(), event.into_payload().unwrap());
         if event != "host:request" {
             self.events
                 .lock()

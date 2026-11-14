@@ -244,7 +244,7 @@ mod tests {
     impl Host for Echo {
         fn log(&self, _: Level, _: &str, _: &str) {}
         fn emit(&self, event: CoreEvent) {
-            let (event, payload) = (event.name(), event.into_payload());
+            let (event, payload) = (event.name(), event.into_payload().unwrap());
             assert_eq!(event, "host:request");
             let caps = self.0.lock().unwrap().clone().unwrap();
             let ask: HostAsk = serde_json::from_value(payload).unwrap();

@@ -85,7 +85,10 @@ impl Host for TestHost {
     fn emit(&self, event: CoreEvent) {
         if self.keep {
             let name = event.name().to_string();
-            lock(&self.events).push((name, event.into_payload()));
+            match event.into_payload() {
+                Ok(payload) => lock(&self.events).push((name, payload)),
+                Err(cause) => lock(&self.logs).push(format!("error [test-host] {name}: {cause}")),
+            }
         }
     }
 }
@@ -115,7 +118,7 @@ mod tests {
         host.log(Level::Info, "test", "kept");
         assert_eq!(
             host.events(),
-            vec![("host:request".into(), ask().into_payload())]
+            vec![("host:request".into(), ask().into_payload().unwrap())]
         );
         assert_eq!(host.requests("focus").len(), 1);
         assert!(host.logged("kept"));

@@ -326,7 +326,7 @@ impl Host for Recording {
     }
 
     fn emit(&self, event: CoreEvent) {
-        let (event, payload) = (event.name(), event.into_payload());
+        let (event, payload) = (event.name(), event.into_payload().unwrap());
         self.events
             .lock()
             .unwrap()

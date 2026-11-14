@@ -55,7 +55,9 @@ async fn event(events: &mut UnboundedReceiver<ClientEvent>, name: &str) -> Value
     tokio::time::timeout(WAIT, async {
         loop {
             match events.recv().await {
-                Some(ClientEvent::Event(got)) if got.name() == name => return got.into_payload(),
+                Some(ClientEvent::Event(got)) if got.name() == name => {
+                    return got.into_payload().unwrap();
+                }
                 Some(_) => {}
                 None => panic!("the events ended before {name}"),
             }

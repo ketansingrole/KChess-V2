@@ -101,7 +101,18 @@ impl ServiceHost {
     fn send(&self, connection: u64, sender: &mpsc::Sender<Frame>, event: CoreEvent) {
         let droppable = event.coalesced();
         let name = event.name();
-        if let Err(mpsc::error::TrySendError::Full(_)) = sender.try_send(frame(event))
+        let frame = match frame(event) {
+            Ok(frame) => frame,
+            Err(cause) => {
+                self.log(
+                    Level::Error,
+                    "service",
+                    &format!("Could not send {name}: {cause}"),
+                );
+                return;
+            }
+        };
+        if let Err(mpsc::error::TrySendError::Full(_)) = sender.try_send(frame)
             && !droppable
         {
             self.log(
@@ -114,11 +125,12 @@ impl ServiceHost {
     }
 }
 
-fn frame(event: CoreEvent) -> Frame {
-    Frame::Event {
+/// The frame an event crosses as, or why its payload could not be written as JSON.
+fn frame(event: CoreEvent) -> serde_json::Result<Frame> {
+    Ok(Frame::Event {
         name: event.name().to_string(),
-        payload: event.into_payload(),
-    }
+        payload: event.into_payload()?,
+    })
 }
 
 impl Host for ServiceHost {
@@ -423,7 +435,14 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         protocol: state.protocol.clone(),
     });
     state.core.with_alert_owner(|owner| {
-        let _ = sender.try_send(frame(owner));
+        match frame(owner) {
+            Ok(frame) => drop(sender.try_send(frame)),
+            Err(cause) => state.host.log(
+                Level::Error,
+                "service",
+                &format!("Could not send the alert owner: {cause}"),
+            ),
+        }
         state.host.add(connection, sender.clone(), Arc::clone(&cut));
     });
     state.changed.notify_one();
