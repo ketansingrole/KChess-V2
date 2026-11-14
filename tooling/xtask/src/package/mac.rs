@@ -65,7 +65,7 @@ pub fn info_plist(identity: &Identity, store: bool) -> String {
             "LSApplicationCategoryType",
             Value::Text("public.app-category.board-games"),
         ),
-        ("LSMinimumSystemVersion", Value::Text("12.0")),
+        ("LSMinimumSystemVersion", Value::Text(super::MACOS_MINIMUM)),
         ("NSHumanReadableCopyright", Value::Text(super::COPYRIGHT)),
         ("NSMicrophoneUsageDescription", Value::Text(MICROPHONE)),
         ("NSHighResolutionCapable", Value::True),
