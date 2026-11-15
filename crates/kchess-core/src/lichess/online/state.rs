@@ -25,6 +25,14 @@ pub(crate) const ANNOUNCED_MAX: usize = 200;
 pub(crate) const SEEK_REJECTED: &str = "Lichess rejected this public seek. The Board API allows Rapid and slower for matchmaking (Blitz and faster need a direct challenge). Pick a longer control or add a username.";
 pub(crate) const LOST_CONNECTION: &str =
     "Lost connection to Lichess. Check your network and reopen the game.";
+/// Lichess keeps one stream per player and game: opening it on another device closes this one.
+/// A game stream that Lichess closes this soon after it opened, with the game still on, twice in
+/// a row, was taken by another device; reconnecting would only take it back, and the two would
+/// trade it about once a second.
+pub(crate) const SUPERSEDED_WITHIN: Duration = Duration::from_secs(10);
+pub(crate) const SUPERSEDED_TIMES: u32 = 2;
+pub(crate) const PLAYED_ELSEWHERE: &str =
+    "This game is open on another device. Reconnect to play it here.";
 /// A game stream's state once it is gone for good.
 pub(crate) const LOST_STREAM: &str = "Lost connection to Lichess. Reconnect to recover the game.";
 

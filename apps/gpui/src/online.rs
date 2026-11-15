@@ -123,6 +123,9 @@ pub struct OnlineState {
     pub failure: Option<ErrorKind>,
     /// The game connection's state that ended it for good, kept until the game connects again.
     failed_state: Option<OnlineConnection>,
+    /// The game whose lost connection was last put to the player in a dialog, so one loss asks
+    /// once; cleared when its connection comes back.
+    alerted: Option<String>,
     pub busy_challenge: String,
     /// Turn flags seen at the last check, to say only when it becomes your turn.
     turns: std::collections::HashMap<String, bool>,
@@ -158,6 +161,32 @@ impl OnlineState {
 
     pub fn model(&self) -> &Model {
         &self.model
+    }
+
+    /// A game connection gone for good (lost, taken by another device, its login refused) stops
+    /// play until the player acts, so it is put to them in a dialog, once per loss. Reconnecting
+    /// on its own is only told in the game's panel: a dialog would come and go with each try.
+    fn alert_if_lost(&mut self, report: &OnlineConnection, cx: &mut Context<Self>) {
+        let lost = matches!(
+            report.phase,
+            OnlinePhase::Disconnected | OnlinePhase::AuthRequired
+        );
+        if !lost {
+            self.alerted = None;
+            return;
+        }
+        let game = report.game_id.as_str();
+        if game.is_empty() || game != self.id() || self.alerted.as_deref() == Some(game) {
+            return;
+        }
+        self.alerted = Some(game.to_string());
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window().or_else(|| cx.windows().first().copied()) {
+                let _ = window.update(cx, |_, window, cx| {
+                    crate::pages::online::game::connection_lost(window, cx)
+                });
+            }
+        });
     }
 
     pub fn id(&self) -> &str {
@@ -916,6 +945,9 @@ impl OnlineState {
                     self.failure = kind;
                 }
                 self.transition(|model, ctx| model.connection(report, ctx), None, cx);
+                if report.lane == Lane::Game {
+                    self.alert_if_lost(report, cx);
+                }
             }
             CoreEvent::OnlineError(message) => notice(cx, message.clone()),
             CoreEvent::OnlineLobby(lobby) => {
@@ -1015,6 +1047,7 @@ pub fn init(cx: &mut App) {
             ongoing_request: 0,
             failure: None,
             failed_state: None,
+            alerted: None,
             busy_challenge: String::new(),
             turns: std::collections::HashMap::new(),
             _ticker: None,

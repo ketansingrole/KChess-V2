@@ -92,6 +92,8 @@ crate::union!(
         NoEngine = "noEngine",
         /// Another window changed what this write was based on; reload before writing again.
         Conflict = "conflict",
+        /// The game is being played from another device, which Lichess gave its one stream to.
+        Elsewhere = "elsewhere",
     }
 );
 crate::union!(

@@ -120,7 +120,8 @@ mod tests {
                 "notFound",
                 "unavailable",
                 "noEngine",
-                "conflict"
+                "conflict",
+                "elsewhere"
             ]
         );
         for &kind in ErrorKind::ALL {
