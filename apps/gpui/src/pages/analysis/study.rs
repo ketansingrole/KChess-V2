@@ -173,27 +173,38 @@ impl AnalysisPage {
     /// Save the open study, then return to an empty board; the study stays open when it cannot
     /// be saved.
     pub fn close_study(&mut self, cx: &mut Context<Self>) -> Task<bool> {
-        let flush = self.flush_study(cx);
+        use std::ops::ControlFlow::{Break, Continue};
+        let mut flush = self.flush_study(cx);
         let navigation = self.navigation;
         cx.spawn(async move |this, cx| {
-            let saved = flush.await;
-            this.update(cx, |this, cx| match saved {
-                // A game or study opened while it saved has the board now: it stays.
-                _ if this.navigation != navigation => true,
-                Ok(()) => {
-                    this.study.clear();
-                    this.chapter.clear();
-                    this.study_pgn.clear();
-                    this.load(None, cx);
-                    true
+            loop {
+                let saved = flush.await;
+                let next = this.update(cx, |this, cx| match saved {
+                    // A game or study opened while it saved has the board now: it stays.
+                    _ if this.navigation != navigation => Break(true),
+                    // An edit made while it saved is saved too before the board empties.
+                    Ok(()) if this.root.pgn_text() != this.study_pgn => {
+                        Continue(this.flush_study(cx))
+                    }
+                    Ok(()) => {
+                        this.study.clear();
+                        this.chapter.clear();
+                        this.study_pgn.clear();
+                        this.load(None, cx);
+                        Break(true)
+                    }
+                    Err(cause) => {
+                        this.study_error = Some(cause);
+                        cx.notify();
+                        Break(false)
+                    }
+                });
+                match next {
+                    Ok(Continue(again)) => flush = again,
+                    Ok(Break(closed)) => return closed,
+                    Err(_) => return false,
                 }
-                Err(cause) => {
-                    this.study_error = Some(cause);
-                    cx.notify();
-                    false
-                }
-            })
-            .unwrap_or(false)
+            }
         })
     }
 

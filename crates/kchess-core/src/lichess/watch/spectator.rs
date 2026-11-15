@@ -756,9 +756,17 @@ impl Inner {
                     let record: GameRecord = read(&data).unwrap_or_default();
                     let fen = display_fen(record.fen.0.as_deref().unwrap_or(""));
                     if let Some(id) = record.id.0.as_deref() {
+                        let game_id = kchess_domain::js::slice_utf16(id, 12).to_string();
                         // The description has no `fen` of its own: the game is shown from its
-                        // start until the position that follows it.
+                        // start until the position that follows it, and the description sent
+                        // again as it ends keeps the position reached.
+                        let reached = current
+                            .as_ref()
+                            .filter(|frame| fen.is_none() && frame.game_id == game_id);
+                        let last_move = uci_or_none(record.last_move.as_ref())
+                            .or_else(|| reached.and_then(|frame| frame.last_move.clone()));
                         let Some(fen) = fen
+                            .or_else(|| reached.map(|frame| frame.fen.clone()))
                             .or_else(|| display_fen(record.initial_fen.0.as_deref()?))
                             .or_else(|| display_fen(STANDARD_START))
                         else {
@@ -780,12 +788,12 @@ impl Inner {
                             session,
                             source: WatchSource::Game,
                             channel: None,
-                            game_id: kchess_domain::js::slice_utf16(id, 12).to_string(),
+                            game_id,
                             white: player_of(players.get("white")),
                             black: player_of(players.get("black")),
                             orientation: current.as_ref().map_or(Color::White, |c| c.orientation),
                             fen,
-                            last_move: uci_or_none(record.last_move.as_ref()),
+                            last_move,
                             white_clock: current.as_ref().and_then(|c| c.white_clock),
                             black_clock: current.as_ref().and_then(|c| c.black_clock),
                             variant: {
