@@ -691,7 +691,7 @@ async fn read_lines(inner: Arc<Inner>, stdout: ChildStdout) {
             Ok(0) => break,
             Ok(read) if cut_off(read, &buffer) => {
                 inner.fail(CoreError::new("Invalid engine output."));
-                break;
+                return;
             }
             Ok(_) => {
                 let raw = String::from_utf8_lossy(&buffer);
@@ -705,6 +705,19 @@ async fn read_lines(inner: Arc<Inner>, stdout: ChildStdout) {
                 break;
             }
         }
+    }
+    // The output ended. An engine that exits ends it first, and its exit says why; one still
+    // running can answer nothing more, and a search waiting on it would wait forever.
+    let mut exited = inner.exit_tx.subscribe();
+    let exits = async {
+        while !*exited.borrow_and_update() {
+            if exited.changed().await.is_err() {
+                break;
+            }
+        }
+    };
+    if tokio::time::timeout(STOP_DEADLINE, exits).await.is_err() {
+        inner.fail(CoreError::new("The engine stopped answering."));
     }
 }
 

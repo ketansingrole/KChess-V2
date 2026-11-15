@@ -210,14 +210,21 @@ pub fn review_summaries(
     Ok(result)
 }
 
-/// Whether this account is still on this device.
+/// Whether this account is still on this device: a Lichess account, or a Chess.com player
+/// (`name@chess.com`).
 pub fn has_account(db: &Connection, username: &str) -> Result<bool> {
-    let row = db
-        .query_row(
+    let (query, username) = match kchess_domain::chesscom::username_of(username) {
+        Some(player) => (
+            "SELECT 1 FROM chesscom_accounts WHERE username = ?1 COLLATE NOCASE",
+            player,
+        ),
+        None => (
             "SELECT 1 FROM accounts WHERE username = ?1 COLLATE NOCASE",
-            params![username],
-            |_| Ok(()),
-        )
+            username,
+        ),
+    };
+    let row = db
+        .query_row(query, params![username], |_| Ok(()))
         .optional()
         .sql()?;
     Ok(row.is_some())

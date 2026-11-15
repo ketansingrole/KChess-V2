@@ -182,9 +182,17 @@ impl AnalysisPage {
                 let next = this.update(cx, |this, cx| match saved {
                     // A game or study opened while it saved has the board now: it stays.
                     _ if this.navigation != navigation => Break(true),
-                    // An edit made while it saved is saved too before the board empties.
+                    // An edit made while it saved is saved too before the board empties. A board
+                    // no longer linked to its study (another window changed it) is not written:
+                    // it stays as the unsaved copy.
                     Ok(()) if this.root.pgn_text() != this.study_pgn => {
-                        Continue(this.flush_study(cx))
+                        let again = this.flush_study(cx);
+                        if this.root.pgn_text() == this.study_pgn {
+                            Continue(again)
+                        } else {
+                            cx.notify();
+                            Break(false)
+                        }
                     }
                     Ok(()) => {
                         this.study.clear();

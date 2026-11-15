@@ -74,3 +74,59 @@ async fn signing_out_or_removing_an_account_forgets_the_tournaments_it_joined() 
     assert_eq!(changes, vec![json!(["accounts"]); 3], "{changes:?}");
     core.close().await;
 }
+
+/// 2026-11-15: a Chess.com game's review was refused as if its player were gone (only Lichess
+/// accounts were looked for), and removing the player left its running review to write the
+/// deleted game back. The review runs, and stops when the player goes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_chesscom_review_runs_and_stops_when_its_player_is_removed() {
+    use crate::support::{copy_log, engine_copy, received, save_engine_path, wait_until};
+    let fixture = serve(|seen| match seen.path() {
+        "/api/stream/event" => Reply::Hang,
+        "/api/account/playing" => Reply::Json(200, json!({ "nowPlaying": [] }).to_string()),
+        "/pub/player/alice" => Reply::Json(
+            200,
+            json!({ "username": "alice", "url": "https://www.chess.com/member/Alice" }).to_string(),
+        ),
+        "/pub/player/alice/games/archives" => {
+            Reply::Json(200, json!({ "archives": [] }).to_string())
+        }
+        _ => Reply::Json(200, "{}".into()),
+    })
+    .await;
+    let profile = signed_in::open_with_chesscom(&fixture.base).await;
+    let core = &profile.core;
+    let dir = tempfile::tempdir().unwrap();
+    let engine = engine_copy(dir.path(), "stall");
+    save_engine_path(core, &engine);
+    core.call("resumeOnline", vec![]).await.unwrap();
+    core.call("addChesscomAccount", vec![json!("alice")])
+        .await
+        .unwrap();
+    let request = json!({
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "moves": ["e2e4", "e7e5", "f1c4", "b8c6", "d1h5", "g8f6", "h5f7"],
+        "gameId": "cc-l1",
+        "account": "alice@chess.com",
+    });
+    core.call("reviewRequest", vec![request]).await.unwrap();
+    let log = copy_log(&engine);
+    let wait = std::time::Duration::from_secs(30);
+    wait_until(wait, "the review to search", || {
+        received(&log)
+            .iter()
+            .any(|line| line.starts_with("go"))
+            .then_some(())
+    })
+    .await;
+    core.call("removeChesscomAccount", vec![json!("alice")])
+        .await
+        .unwrap();
+    wait_until(wait, "the review to stop", || {
+        received(&log)
+            .iter()
+            .any(|line| line == "stop")
+            .then_some(())
+    })
+    .await;
+}
