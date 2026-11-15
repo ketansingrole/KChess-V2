@@ -79,7 +79,8 @@ fn study_metadata(raw: &Value) -> Option<LichessStudy> {
 }
 
 /// A multi-game PGN split into games. Lichess separates games with blank lines
-/// before a tag; each part is trimmed and kept only when it starts with a tag.
+/// before a tag; each part is trimmed and kept only when it starts with a tag. A blank line
+/// and a `[` inside a comment (`{…}`, `;…`) or a tag's string are the game's own text.
 pub fn split_pgn(text: &str) -> Vec<String> {
     let text = text.replace("\r\n", "\n");
     let chars: Vec<char> = text.chars().collect();
@@ -87,8 +88,33 @@ pub fn split_pgn(text: &str) -> Vec<String> {
     let mut pieces: Vec<String> = Vec::new();
     let mut start = 0;
     let mut index = 0;
+    // The closing character of the comment or string `index` is in.
+    let mut inside: Option<char> = None;
     while index < count {
-        if chars[index] == '\n' {
+        let at = chars[index];
+        if let Some(close) = inside {
+            if at == '\\' && close == '"' {
+                index += 1;
+            } else if at == close {
+                inside = None;
+            }
+            // The newline ending a `;` comment may still start the blank line.
+            if at != '\n' || inside.is_some() {
+                index += 1;
+                continue;
+            }
+        }
+        match at {
+            '{' => inside = Some('}'),
+            ';' => inside = Some('\n'),
+            '"' => inside = Some('"'),
+            _ => {}
+        }
+        if inside.is_some() {
+            index += 1;
+            continue;
+        }
+        if at == '\n' {
             // `\n\s*\n(?=\[)`: the second newline is the last one before the tag.
             let mut end = index + 1;
             while end < count && js::is_space(chars[end]) {
@@ -565,6 +591,20 @@ mod tests {
         let pgn = "[Event \"Test Open\"]\n\n1. e4 *";
         let text = format!("{pgn}\n\n\n{}\n", pgn.replace("Test Open", "Second"));
         assert_eq!(split_pgn(&text).len(), 2);
+    }
+
+    /// A comment holding a blank line and then a tag-like line was split into chapters, so an
+    /// export counted one chapter as two and reported a partial failure.
+    #[test]
+    fn a_comment_or_tag_value_never_starts_a_chapter() {
+        let pgn = "[Event \"Test {Open\"]\n\n1. e4 { A plan:\n\n[Event \"inner\"] } e5 *";
+        let text = format!(
+            "{pgn}\n\n{pgn}\n\n[Event \"Third\"]\n\n1. d4 ; note {{\n\n[Event \"Fourth\"]\n\n1. c4 *"
+        );
+        let games = split_pgn(&text);
+        assert_eq!(games.len(), 4, "{games:#?}");
+        assert!(games[0].ends_with("e5 *"), "{}", games[0]);
+        assert!(games[2].ends_with("; note {"), "{}", games[2]);
     }
 
     #[test]

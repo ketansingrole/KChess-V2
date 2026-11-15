@@ -65,6 +65,9 @@ pub struct LichessTab {
     pub search_input: Entity<InputState>,
     /// The game open, its review's side, and its board.
     pub open: Option<(LichessGame, Entity<GameReplay>)>,
+    /// The game being opened: a read answered after another game opened, or after the game
+    /// closed, is dropped.
+    pub opening: Epoch,
 }
 
 /// The game from the account's side.
@@ -204,6 +207,7 @@ pub fn new_tab(
             size_select,
             search_input,
             open: None,
+            opening: Epoch::default(),
         },
         subscriptions,
     )
@@ -330,6 +334,7 @@ impl HistoryPage {
 
     /// Read the game's PGN (list rows carry none) and go through it.
     pub fn open_lichess(&mut self, game: LichessGame, window: &mut Window, cx: &mut Context<Self>) {
+        let opening = self.lichess.opening.next();
         let read = if game.pgn.is_some() {
             None
         } else {
@@ -344,6 +349,9 @@ impl HistoryPage {
                 None => game.pgn.clone(),
             };
             let _ = this.update_in(cx, |this, window, cx| {
+                if !this.lichess.opening.is_current(opening) {
+                    return;
+                }
                 let Some((setup, moves)) = pgn.as_deref().and_then(line_of) else {
                     this.message = Some("That game could not be read".into());
                     cx.notify();
@@ -382,7 +390,8 @@ impl HistoryPage {
         }
     }
 
-    pub(super) fn close_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.lichess.opening.invalidate();
         self.lichess.open = None;
         self.redo = None;
         window.focus(&self.focus, cx);

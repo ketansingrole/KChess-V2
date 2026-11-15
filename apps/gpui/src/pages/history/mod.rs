@@ -448,6 +448,12 @@ impl HistoryPage {
         }
     }
 
+    /// The first game on the Lichess list's page.
+    #[cfg(test)]
+    pub(crate) fn first_lichess(&self) -> Option<LichessGame> {
+        self.lichess.games.first().cloned()
+    }
+
     /// The Lichess game open, and the ids its list's page shows.
     #[cfg(test)]
     pub(crate) fn lichess_open(&self) -> (Option<String>, Vec<String>) {
@@ -513,6 +519,7 @@ impl HistoryPage {
         self.open = None;
         self.redo = None;
         if source == Source::Lichess {
+            self.lichess.opening.invalidate();
             self.lichess.open = None;
             self.load_lichess(cx);
         }

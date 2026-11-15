@@ -142,6 +142,7 @@ impl Core {
 
     /// Signs a ChatGPT account in through the browser.
     async fn ai_sign_in(&self) -> Result<AiConnection> {
+        let disconnects = *self.ai.refreshing.lock().await;
         let mut connection = self.ai_connection().await?;
         if !valid_host_id(&connection.host_id) {
             connection.host_id = new_host_id()?;
@@ -227,6 +228,11 @@ impl Core {
         // The sign-in took minutes: merge into the connection as saved now, so a model or effort
         // chosen meanwhile (in this window or another) is kept.
         let renewing = self.ai.refreshing.lock().await;
+        if *renewing != disconnects {
+            return Err(CoreError::new(
+                "ChatGPT was disconnected during the sign-in.",
+            ));
+        }
         let mut saved = self.ai_connection().await?;
         saved.host_id = connection.host_id;
         saved.sealed = Some(sealed);
@@ -439,7 +445,8 @@ impl AiApi for Core {
     }
 
     async fn ai_disconnect(&self) -> Result<AiConnection> {
-        let _renewing = self.ai.refreshing.lock().await;
+        let mut renewing = self.ai.refreshing.lock().await;
+        *renewing += 1;
         let mut connection = self.ai_connection().await?;
         connection.sealed = None;
         connection.email = None;

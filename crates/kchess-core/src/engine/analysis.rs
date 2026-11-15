@@ -71,6 +71,10 @@ pub struct AnalysisEngine {
 pub struct Analysis {
     ctx: EngineContext,
     engines: Arc<Mutex<BTreeMap<u64, AnalysisEngine>>>,
+    /// Held from interrupting the others to reserving the new request: two connections starting
+    /// at once would otherwise each interrupt nothing and both keep a request, the later one
+    /// then waiting for the engine forever behind an infinite analysis.
+    admission: Arc<Mutex<()>>,
 }
 
 impl Analysis {
@@ -78,6 +82,7 @@ impl Analysis {
         Analysis {
             ctx,
             engines: Arc::new(Mutex::new(BTreeMap::new())),
+            admission: Arc::new(Mutex::new(())),
         }
     }
 
@@ -109,8 +114,19 @@ impl Analysis {
 
     /// `startAnalysis` for the calling connection: supersedes only its own analysis.
     pub fn start_analysis(&self, raw: Value, configured: &str, send: AnalysisSink) -> Result<u64> {
+        let request = check::<AnalysisRequest>(J::from(&raw)).map_err(CoreError::new)?;
+        let (engine, pending) = self.admit(request);
+        Ok(engine.start_pending(pending, configured.to_string(), send))
+    }
+
+    /// Interrupts every other connection's analysis and reserves `request` for the calling one,
+    /// as one step (`admission`).
+    fn admit(&self, request: AnalysisRequest) -> (AnalysisEngine, PendingAnalysis) {
+        let _admission = lock(&self.admission);
         self.interrupt_others();
-        self.mine().start_analysis(raw, configured, send)
+        let engine = self.mine();
+        let pending = engine.reserve(request);
+        (engine, pending)
     }
 
     pub(crate) async fn start_analysis_with_settings(
@@ -119,10 +135,8 @@ impl Analysis {
         configured: impl Future<Output = Result<String>>,
         send: AnalysisSink,
     ) -> Result<u64> {
-        self.interrupt_others();
-        self.mine()
-            .start_analysis_with_settings(request, configured, send)
-            .await
+        let (engine, pending) = self.admit(request);
+        engine.start_reserved(pending, configured, send).await
     }
 
     /// Any connection's analysis is in progress (the review queue waits for them).
@@ -293,14 +307,14 @@ impl AnalysisEngine {
         Ok(self.start_pending(self.reserve(request), configured.to_string(), send))
     }
 
-    /// Admit before the first await; stopping the service cancels pending settings reads too.
-    pub(crate) async fn start_analysis_with_settings(
+    /// Admitted before the first await; stopping the service cancels pending settings reads
+    /// too.
+    async fn start_reserved(
         &self,
-        request: AnalysisRequest,
+        mut pending: PendingAnalysis,
         configured: impl Future<Output = Result<String>>,
         send: AnalysisSink,
     ) -> Result<u64> {
-        let mut pending = self.reserve(request);
         pending.place.turn().await;
         let configured = job::configured(&pending.token, configured).await?;
         Ok(self.start_pending(pending, configured, send))

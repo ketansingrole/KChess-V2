@@ -257,8 +257,9 @@ pub struct Ai {
     /// Where the sign-in callback listens first: OpenAI's registered port, or any free one
     /// under test, so test runs side by side do not fight over it.
     callback_port: u16,
-    /// Refresh tokens rotate: two refreshes at once would burn the sign-in.
-    pub refreshing: AsyncMutex<()>,
+    /// Refresh tokens rotate: two refreshes at once would burn the sign-in. It counts the
+    /// disconnects, so a sign-in started before one does not connect again after it.
+    pub refreshing: AsyncMutex<u64>,
 }
 
 impl Ai {
@@ -273,7 +274,7 @@ impl Ai {
             auth: origin.clone().unwrap_or_else(|| AUTH.to_string()),
             api: origin.unwrap_or_else(|| API.to_string()),
             lifetime,
-            refreshing: AsyncMutex::new(()),
+            refreshing: AsyncMutex::new(0),
         })
     }
 
