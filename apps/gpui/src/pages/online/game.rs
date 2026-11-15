@@ -152,6 +152,10 @@ fn ask_resign(window: &mut Window, cx: &mut App) {
 
 /// The game's connection is gone for good: what happened, and the one action that helps.
 pub(crate) fn connection_lost(window: &mut Window, cx: &mut App) {
+    // Asked over the game only: elsewhere (a game resumed on launch) its page says it when opened.
+    if crate::shell::current_page(cx) != Some(crate::pages::Page::Online) {
+        return;
+    }
     let online = crate::online::handle(cx).read(cx);
     if online.phase != Phase::Disconnected {
         return;
