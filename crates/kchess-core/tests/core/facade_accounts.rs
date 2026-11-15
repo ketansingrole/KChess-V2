@@ -112,10 +112,11 @@ async fn a_chesscom_review_runs_and_stops_when_its_player_is_removed() {
     core.call("reviewRequest", vec![request]).await.unwrap();
     let log = copy_log(&engine);
     let wait = std::time::Duration::from_secs(30);
-    wait_until(wait, "the review to search", || {
+    // The quick pass's searches end by themselves: only the full pass stalls until `stop`.
+    wait_until(wait, "the review's full pass", || {
         received(&log)
             .iter()
-            .any(|line| line.starts_with("go"))
+            .any(|line| line.starts_with("go depth 18 "))
             .then_some(())
     })
     .await;
