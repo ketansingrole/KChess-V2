@@ -217,3 +217,53 @@ async fn a_joined_tournament_is_kept_until_it_is_left_withdrawn_or_finished() {
     assert!(posted.body.contains("name=Club+Night") || posted.body.contains("name=Club%20Night"));
     core.close().await;
 }
+
+/// 2026-11-15: a join waiting for the arena's details while its account logged out still
+/// remembered the tournament afterwards, so the lobby reopened for an account that was gone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_join_answered_after_a_logout_remembers_nothing() {
+    let (details, held) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let held = Mutex::new(Some(held));
+    let fixture = serve(move |seen| match (seen.method.as_str(), seen.path()) {
+        (_, "/api/stream/event") => Reply::Hang,
+        ("POST", "/api/tournament/Abcd1234/join") => {
+            Reply::Json(200, json!({ "ok": true }).to_string())
+        }
+        ("GET", "/api/tournament/Abcd1234") => match held.lock().unwrap().take() {
+            Some(held) => Reply::Stream(held),
+            None => Reply::Json(200, detail(true, false).to_string()),
+        },
+        _ => Reply::Json(200, "{}".into()),
+    })
+    .await;
+    let profile = signed_in::open(&fixture.base).await;
+    let core = &profile.core;
+    let join = core.call(
+        "joinTournament",
+        vec![
+            json!("arena"),
+            json!("Abcd1234"),
+            json!("Alice"),
+            Value::Null,
+        ],
+    );
+    let logout = async {
+        crate::support::wait_until(
+            std::time::Duration::from_secs(10),
+            "the join to ask for the details",
+            || (!fixture.to("/api/tournament/Abcd1234").is_empty()).then_some(()),
+        )
+        .await;
+        core.call("logout", vec![json!("Alice")]).await.unwrap();
+        details.send(detail(true, false).to_string()).unwrap();
+        drop(details);
+    };
+    let (joined, ()) = tokio::join!(join, logout);
+    assert_eq!(joined.unwrap(), json!(true));
+    let remembered = core.call("joinedTournaments", vec![]).await.unwrap();
+    assert_eq!(
+        remembered,
+        json!([]),
+        "the logged-out account's join was kept"
+    );
+}

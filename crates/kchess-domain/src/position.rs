@@ -277,6 +277,17 @@ pub fn play_uci(pos: &VariantPosition, uci: &str) -> Option<Played> {
     Some(played(pos, m))
 }
 
+/// `uci` as its legal move in `pos` writes it: castling onto the rook's square and onto the
+/// king's are one move, while a rook's move stays the rook's.
+pub fn canonical_uci(pos: &VariantPosition, uci: &str) -> Option<String> {
+    play_uci(pos, uci).map(|played| played.uci)
+}
+
+/// Whether `a` and `b` are the same legal move in `pos` (`canonical_uci`).
+pub fn same_move(pos: &VariantPosition, a: &str, b: &str) -> bool {
+    matches!((canonical_uci(pos, a), canonical_uci(pos, b)), (Some(a), Some(b)) if a == b)
+}
+
 /// `parseSan` then `play`.
 pub fn play_san(pos: &VariantPosition, san: &str) -> Option<Played> {
     let m = rules::parse_san(pos, san)?;

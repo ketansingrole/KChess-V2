@@ -74,16 +74,11 @@ struct Feedback {
     detail: Option<String>,
 }
 
-/// e1g1 and e1h1 are the same castling move.
-fn same_castle(a: &str, b: &str) -> bool {
-    let king_move = |uci: &str| match uci {
-        "e1h1" => "e1g1".to_string(),
-        "e1a1" => "e1c1".to_string(),
-        "e8h8" => "e8g8".to_string(),
-        "e8a8" => "e8c8".to_string(),
-        other => other.to_string(),
-    };
-    king_move(a) == king_move(b)
+/// Whether `a` and `b` are the same move from `fen`: castling written either way is one move,
+/// and a rook's move from the king's square is never castling.
+fn same_move_at(fen: &str, a: &str, b: &str) -> bool {
+    kchess_domain::rules::standard_from_fen(fen)
+        .is_some_and(|position| kchess_domain::position::same_move(&position, a, b))
 }
 
 /// Adds another chapter's moves (and comments) from the same position to a tree.
@@ -760,7 +755,7 @@ impl Repertoire {
         let found = node
             .children
             .iter()
-            .find(|child| child.uci == uci || same_castle(&child.uci, uci))
+            .find(|child| child.uci == uci || same_move_at(&node.fen, &child.uci, uci))
             .map(|child| {
                 (
                     child.uci.clone(),
@@ -1499,7 +1494,7 @@ pub(crate) fn train_opening(
 #[cfg(test)]
 mod tests {
     use super::{
-        Chapter, Keyed, TreeNode, due_in, leads_to, leaves, merge, pick_weak, same_castle,
+        Chapter, Keyed, TreeNode, due_in, leads_to, leaves, merge, pick_weak, same_move_at,
         schedule_text, study_roots, to_play, weakness,
     };
     use kchess_domain::training::repetition::Summary;
@@ -1529,9 +1524,21 @@ mod tests {
 
     #[test]
     fn castling_either_way_is_the_same_move() {
-        assert!(same_castle("e1h1", "e1g1"));
-        assert!(same_castle("e8c8", "e8a8"));
-        assert!(!same_castle("e1g1", "e1c1"));
+        let castles = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
+        assert!(same_move_at(castles, "e1h1", "e1g1"));
+        assert!(!same_move_at(castles, "e1g1", "e1c1"));
+        let black = "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1";
+        assert!(same_move_at(black, "e8c8", "e8a8"));
+    }
+
+    /// A rook's move from e1 to h1 was taken for the repertoire's Rg1, as if it castled.
+    #[test]
+    fn a_rook_move_is_not_castling() {
+        assert!(!same_move_at(
+            "1k6/8/8/8/8/8/8/K3R3 w - - 0 1",
+            "e1h1",
+            "e1g1"
+        ));
     }
 
     #[test]

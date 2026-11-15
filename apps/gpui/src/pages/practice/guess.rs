@@ -415,8 +415,19 @@ impl GuessMoves {
         }
     }
 
+    /// `uci` from the position at `ply` as `position::canonical_uci` writes it, so guesses, the
+    /// moves played and the engine's lines compare (`guess::same_move`).
+    fn canonical(&self, uci: &str) -> String {
+        self.game
+            .as_ref()
+            .and_then(|game| view::position_at(&game.setup, &game.moves, self.ply))
+            .and_then(|position| kchess_domain::position::canonical_uci(&position, uci))
+            .unwrap_or_else(|| uci.to_string())
+    }
+
     /// A guess at the move at `ply`: the move played scores at once; another waits for the engine.
     fn guess(&mut self, uci: String, cx: &mut Context<Self>) {
+        let uci = self.canonical(&uci);
         if !self.your_turn() {
             return self.redraw(cx);
         }
@@ -455,7 +466,7 @@ impl GuessMoves {
                 lines.iter().find(|line| {
                     line.pv
                         .first()
-                        .is_some_and(|first| guess::same_move(first, uci))
+                        .is_some_and(|first| guess::same_move(&self.canonical(first), uci))
                 })
             })?
         });
@@ -528,7 +539,7 @@ impl GuessMoves {
             guessed: None,
             played,
         };
-        if guess::same_move(&uci, &game.moves[self.ply]) {
+        if guess::same_move(&uci, &self.canonical(&game.moves[self.ply])) {
             return self.judged(
                 &uci,
                 Evals {
@@ -558,7 +569,11 @@ impl GuessMoves {
         let Some(game) = &self.game else {
             return;
         };
-        let Some(played) = game.moves.get(self.ply).cloned() else {
+        let Some(played) = game
+            .moves
+            .get(self.ply)
+            .map(|played| self.canonical(played))
+        else {
             return;
         };
         let mut history = game.moves[..self.ply].to_vec();

@@ -165,19 +165,11 @@ pub struct Judged {
     pub flaw: Option<Flaw>,
 }
 
-/// Whether two UCI moves are the same move: castling may be written king-to-rook (`e1h1`) or
-/// king-to-destination (`e1g1`).
+/// Whether two UCI moves are the same move, both written as `position::canonical_uci` writes
+/// them in the position they are played from. Comparing the squares alone took a rook's move
+/// from e1 to h1 for castling short.
 pub fn same_move(a: &str, b: &str) -> bool {
-    fn king_move(uci: &str) -> &str {
-        match uci {
-            "e1h1" => "e1g1",
-            "e1a1" => "e1c1",
-            "e8h8" => "e8g8",
-            "e8a8" => "e8c8",
-            other => other,
-        }
-    }
-    king_move(a) == king_move(b)
+    a == b
 }
 
 /// Centipawns lost by a move leaving `after` against the best move's `best`. A move the engine
@@ -342,9 +334,28 @@ mod tests {
 
     #[test]
     fn castling_either_way_is_the_move_played() {
-        assert_eq!(judge("e1h1", "e1g1", Evals::default()).grade, Grade::Master);
-        assert_eq!(judge("e8c8", "e8a8", Evals::default()).grade, Grade::Master);
-        assert!(!same_move("e1g1", "e1c1"));
+        let castles = crate::rules::standard_from_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1")
+            .expect("a position");
+        let short = |uci| crate::position::canonical_uci(&castles, uci).expect("castling");
+        assert_eq!(
+            judge(&short("e1h1"), &short("e1g1"), Evals::default()).grade,
+            Grade::Master
+        );
+        assert!(crate::position::same_move(&castles, "e1h1", "e1g1"));
+        assert!(!crate::position::same_move(&castles, "e1g1", "e1c1"));
+    }
+
+    /// A rook's move from e1 to h1 was taken for castling short, played as e1g1.
+    #[test]
+    fn a_rook_move_is_not_castling() {
+        let rook =
+            crate::rules::standard_from_fen("1k6/8/8/8/8/8/8/K3R3 w - - 0 1").expect("a position");
+        assert!(!crate::position::same_move(&rook, "e1h1", "e1g1"));
+        let guessed = crate::position::canonical_uci(&rook, "e1h1").expect("a rook move");
+        assert_ne!(
+            judge(&guessed, "e1g1", Evals::default()).grade,
+            Grade::Master
+        );
     }
 
     #[test]
