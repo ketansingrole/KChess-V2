@@ -150,6 +150,50 @@ fn ask_resign(window: &mut Window, cx: &mut App) {
     });
 }
 
+/// The game's connection is gone for good: what happened, and the one action that helps.
+pub(crate) fn connection_lost(window: &mut Window, cx: &mut App) {
+    // Asked over the game only: elsewhere (a game resumed on launch) its page says it when opened.
+    if crate::shell::current_page(cx) != Some(crate::pages::Page::Online) {
+        return;
+    }
+    let online = crate::online::handle(cx).read(cx);
+    if online.phase != Phase::Disconnected {
+        return;
+    }
+    let failure = connection_failure(online);
+    let status = online.model().online_status.clone();
+    let id = online.id().to_string();
+    crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
+        let ok = match failure {
+            Failure::Login => "Account settings",
+            Failure::Refused => "Watch",
+            Failure::Interrupted | Failure::Checking | Failure::Elsewhere => "Reconnect",
+        };
+        let id = id.clone();
+        dialog
+            .title(failure.title())
+            .description(status.clone())
+            .ok_text(ok)
+            .cancel_text("Close")
+            .show_cancel(true)
+            .on_ok(move |_, window, cx| {
+                match failure {
+                    Failure::Login => crate::shell::open_settings(
+                        crate::pages::settings::Section::Accounts,
+                        window,
+                        cx,
+                    ),
+                    Failure::Refused => {
+                        crate::online::handle(cx).update(cx, |online, cx| online.stop(cx));
+                        crate::pages::watch::watch_game(&id, window, cx)
+                    }
+                    _ => crate::online::handle(cx).update(cx, |online, cx| online.reconnect(cx)),
+                }
+                true
+            })
+    });
+}
+
 /// An offer or a notice above the moves.
 fn offer(glyph: &'static str, text: String, buttons: Vec<AnyElement>, palette: &Palette) -> Div {
     h_flex()
@@ -574,11 +618,11 @@ impl OnlinePage {
                     }),
                 )
             };
-        let mut board_column = v_flex().w(board_size).flex_none().gap(widgets::STACK_GAP);
-        if online.phase == Phase::Disconnected {
-            board_column = board_column.child(self.disconnected(online, &palette));
-        }
-        board_column = board_column
+        // A lost connection is told in the panel, so the board never moves for it.
+        let board_column = v_flex()
+            .w(board_size)
+            .flex_none()
+            .gap(widgets::STACK_GAP)
             .child(line(!orientation))
             .child(crate::board::cached(&self.board))
             .child(line(orientation));
@@ -609,85 +653,73 @@ impl OnlinePage {
             .children(self.chat_dock(cx, &palette))
     }
 
-    fn disconnected(&self, online: &OnlineState, palette: &Palette) -> Div {
-        let status = online.model().online_status.as_str();
+    /// What can be done about a lost connection, under its notice in the panel.
+    fn connection_actions(online: &OnlineState) -> Div {
         let has_game = !online.id().is_empty();
         let id = online.id().to_string();
         let failure = connection_failure(online);
         // Only a connection that may come back is worth reconnecting; a login is fixed in
         // Settings, and a game Lichess refused or no longer has can only be watched.
-        let reconnect = matches!(failure, Failure::Interrupted | Failure::Checking);
+        // Reconnecting from another device's game takes it back here.
+        let reconnect = matches!(
+            failure,
+            Failure::Interrupted | Failure::Checking | Failure::Elsewhere
+        );
         let gone = matches!(failure, Failure::Refused);
-        widgets::card(palette)
+        h_flex()
             .gap(px(8.))
-            .child(widgets::heading(failure.title(), palette))
-            .child(widgets::hint(
-                if reconnect {
-                    format!("{status} Clocks are paused until a fresh server update arrives")
-                } else {
-                    status.to_string()
-                },
-                palette,
-            ))
-            .child(
-                h_flex()
-                    .gap(px(8.))
-                    .when(reconnect, |row| {
-                        row.child(
-                            Button::new("online-reconnect")
-                                .primary()
-                                .label("Reconnect")
-                                .loading(online.busy)
-                                .on_click(|_, _, cx| {
-                                    crate::online::handle(cx)
-                                        .update(cx, |online, cx| online.reconnect(cx))
-                                }),
-                        )
-                    })
-                    .when(gone && has_game, |row| {
-                        row.child(
-                            Button::new("online-watch")
-                                .primary()
-                                .label("Watch")
-                                .on_click(move |_, window, cx| {
-                                    crate::online::handle(cx)
-                                        .update(cx, |online, cx| online.stop(cx));
-                                    crate::pages::watch::watch_game(&id, window, cx)
-                                }),
-                        )
-                    })
-                    .when(!gone, |row| {
-                        row.child(
-                            Button::new("online-accounts")
-                                .map(|button| {
-                                    if matches!(failure, Failure::Login) {
-                                        button.primary()
-                                    } else {
-                                        button.outline()
-                                    }
-                                })
-                                .label("Account settings")
-                                .on_click(|_, window, cx| {
-                                    crate::shell::open_settings(
-                                        crate::pages::settings::Section::Accounts,
-                                        window,
-                                        cx,
-                                    )
-                                }),
-                        )
-                    })
-                    .when(!has_game || gone, |row| {
-                        row.child(
-                            Button::new("online-another")
-                                .ghost()
-                                .label("Find another game")
-                                .on_click(|_, _, cx| {
-                                    crate::online::handle(cx)
-                                        .update(cx, |online, cx| online.stop(cx))
-                                }),
-                        )
-                    }),
-            )
+            .when(reconnect, |row| {
+                row.child(
+                    Button::new("online-reconnect")
+                        .primary()
+                        .label("Reconnect")
+                        .loading(online.busy)
+                        .on_click(|_, _, cx| {
+                            crate::online::handle(cx).update(cx, |online, cx| online.reconnect(cx))
+                        }),
+                )
+            })
+            .when(gone && has_game, |row| {
+                row.child(
+                    Button::new("online-watch")
+                        .primary()
+                        .label("Watch")
+                        .on_click(move |_, window, cx| {
+                            crate::online::handle(cx).update(cx, |online, cx| online.stop(cx));
+                            crate::pages::watch::watch_game(&id, window, cx)
+                        }),
+                )
+            })
+            .when(!gone, |row| {
+                row.child(
+                    Button::new("online-accounts")
+                        .map(|button| {
+                            if matches!(failure, Failure::Login) {
+                                button.primary()
+                            } else {
+                                button.outline()
+                            }
+                        })
+                        .label("Account settings")
+                        .on_click(|_, window, cx| {
+                            crate::shell::open_settings(
+                                crate::pages::settings::Section::Accounts,
+                                window,
+                                cx,
+                            )
+                        }),
+                )
+            })
+            .when(!has_game || gone, |row| {
+                row.child(
+                    Button::new("online-another")
+                        .ghost()
+                        .label("Find another game")
+                        .on_click(|_, _, cx| {
+                            crate::online::handle(cx).update(cx, |online, cx| online.stop(cx))
+                        }),
+                )
+            })
     }
 
     fn game_panel(
@@ -718,10 +750,15 @@ impl OnlinePage {
         } else if playing {
             None
         } else if online.phase == Phase::Disconnected {
+            let failure = connection_failure(online);
             Some((
                 "triangle-alert",
-                connection_failure(online).title().into(),
-                status.clone(),
+                failure.title().into(),
+                if matches!(failure, Failure::Interrupted | Failure::Checking) {
+                    format!("{status} Clocks are paused until a fresh server update arrives")
+                } else {
+                    status.clone()
+                },
             ))
         } else {
             Some((
@@ -1090,6 +1127,9 @@ impl OnlinePage {
                         (!detail.is_empty()).then(|| detail.into()),
                         |banner, value| banner.detail(value),
                     )
+                    .when(online.phase == Phase::Disconnected, |banner| {
+                        banner.extra(Self::connection_actions(online).into_any_element())
+                    })
                     .when(reviewing, |banner| {
                         let last = moves.len();
                         banner.extra(widgets::back_to_game(move |_, _, cx| {
@@ -1206,6 +1246,7 @@ enum Failure {
     Login,
     Refused,
     Interrupted,
+    Elsewhere,
 }
 
 impl Failure {
@@ -1215,6 +1256,7 @@ impl Failure {
             Failure::Login => "Sign in again",
             Failure::Refused => "Lichess won’t open this game here",
             Failure::Interrupted => "Connection interrupted",
+            Failure::Elsewhere => "Open on another device",
         }
     }
 }
@@ -1229,6 +1271,7 @@ fn connection_failure(online: &OnlineState) -> Failure {
         (Some(OnlinePhase::Checking), _) => Failure::Checking,
         (Some(OnlinePhase::AuthRequired), _) | (_, Some(ErrorKind::Login)) => Failure::Login,
         (_, Some(ErrorKind::Refused | ErrorKind::NotFound)) => Failure::Refused,
+        (_, Some(ErrorKind::Elsewhere)) => Failure::Elsewhere,
         _ => Failure::Interrupted,
     }
 }

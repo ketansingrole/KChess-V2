@@ -19,7 +19,8 @@ use kchess_contracts::types::UsageKind;
 use super::requests::{Emitter, Listen, Quiet, StreamRequest};
 use super::state::{
     ANNOUNCED_MAX, Handle, Inner, LOST_CONNECTION, LOST_STREAM, Lane, MAX_RECONNECTS,
-    ONGOING_DEBOUNCE, OnlineSession, State, lock,
+    ONGOING_DEBOUNCE, OnlineSession, PLAYED_ELSEWHERE, SUPERSEDED_TIMES, SUPERSEDED_WITHIN, State,
+    lock,
 };
 
 mod lobby;
@@ -272,9 +273,11 @@ impl OnlineSession {
         options: &Listen,
     ) {
         let mut failures: u32 = 0;
+        let mut superseded: u32 = 0;
         self.listen_state(options, cancel, OnlinePhase::Connecting, None);
         while !cancel.is_cancelled() {
             let mut received = false;
+            let opened = tokio::time::Instant::now();
             // A malformed line ends the read the way a thrown error does: the line error wins.
             let line_cancel = cancel.child_token();
             let mut line_error: Option<String> = None;
@@ -318,6 +321,7 @@ impl OnlineSession {
             };
             let account = options.account.clone();
             let game_id = options.game_id.clone();
+            let ended_cleanly = outcome.is_ok();
             match outcome {
                 Ok(()) => {}
                 Err(cause) => {
@@ -362,6 +366,28 @@ impl OnlineSession {
                     OnlinePhase::Disconnected,
                     Some("The seek ended. Try finding a game again."),
                 );
+                return;
+            }
+            // Lichess closed a game stream it had just opened, and the game is still on: another
+            // device opened it. Taking it back each time would close theirs, and theirs ours.
+            superseded = if options.lane == Lane::Game
+                && ended_cleanly
+                && opened.elapsed() < SUPERSEDED_WITHIN
+            {
+                superseded + 1
+            } else {
+                0
+            };
+            if superseded >= SUPERSEDED_TIMES {
+                self.log(
+                    Level::Info,
+                    format!(
+                        "Lichess game stream taken by another device: {} {}",
+                        options.account, options.game_id
+                    ),
+                );
+                let cause = CoreError::new(PLAYED_ELSEWHERE).with_kind(ErrorKind::Elsewhere);
+                self.listen_failed(options, cancel, OnlinePhase::Disconnected, &cause);
                 return;
             }
             failures = if received && !malformed {

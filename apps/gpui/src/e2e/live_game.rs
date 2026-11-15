@@ -89,7 +89,8 @@ fn a_game_lichess_keeps_from_apps_is_offered_to_watch(cx: &mut gpui_kit::TestApp
 }
 
 /// When Lichess refuses the board stream of a game it listed as playable, the page says so in
-/// Lichess's words, offers the game to watch and never a Reconnect that cannot work.
+/// Lichess's words, offers the game to watch and never a Reconnect that cannot work. Play cannot
+/// go on, so it asks in a dialog; the panel keeps the same actions once the dialog is closed.
 #[gpui_kit::test]
 fn a_refused_game_offers_watching_instead_of_reconnecting(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, lichess) = in_a_game(cx);
@@ -97,7 +98,8 @@ fn a_refused_game_offers_watching_instead_of_reconnecting(cx: &mut gpui_kit::Tes
     app.find("online-watch");
     assert!(!app.shows("online-reconnect"));
     assert!(app.shows("online-another"));
-    app.click("online-watch");
+    app.find("ok");
+    app.click("ok");
     assert_eq!(
         app.cx.update(|cx| crate::shell::current_page(cx)),
         Some(crate::pages::Page::Watch)

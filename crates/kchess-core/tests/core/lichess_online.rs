@@ -755,6 +755,62 @@ async fn a_game_stream_that_keeps_failing_is_reported_lost() {
     online.close();
 }
 
+/// Lichess keeps one board stream per player and game: a game open in KChess on two devices had
+/// each close the other's stream as it reconnected, so both showed "Connection interrupted"
+/// about once a second and the game could not be played. A stream that Lichess closes just after
+/// it opened, twice, with the game still on, is now left to the other device.
+#[tokio::test]
+async fn a_game_stream_another_device_keeps_taking_is_left_to_it() {
+    let opened = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&opened);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/account/playing" => Reply::Json(
+            200,
+            json!({ "nowPlaying": [{ "gameId": "AbCd1234", "speed": "blitz" }] }).to_string(),
+        ),
+        "/api/board/game/stream/AbCd1234" => {
+            counted.fetch_add(1, Ordering::SeqCst);
+            let full = json!({
+                "type": "gameFull",
+                "id": "AbCd1234",
+                "white": {},
+                "black": {},
+                "speed": "blitz",
+                "state": { "type": "gameState", "moves": "e2e4", "status": "started" },
+            });
+            // The game's opening record, then the stream closed: another device opened it.
+            Reply::Text(200, "application/x-ndjson", format!("{full}\n"))
+        }
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let backoff = Backoff {
+        first: Duration::from_millis(1),
+        most: Duration::from_millis(1),
+    };
+    let online = session_with(&fixture.base, &host, &store, &tokens, backoff);
+    online.resume().await.unwrap();
+    until("the game is left to the other device", || {
+        states(&host)
+            .iter()
+            .any(|state| state["kind"] == "elsewhere")
+    })
+    .await;
+    let last = states(&host).last().unwrap().clone();
+    assert_eq!(last["phase"], "disconnected");
+    assert_eq!(last["gameId"], "AbCd1234");
+    assert_eq!(
+        last["message"],
+        "This game is open on another device. Reconnect to play it here."
+    );
+    // Once taken back after the first close, then left: no stream keeps opening.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(opened.load(Ordering::SeqCst), 2);
+    assert!(emitted(&host, "online:error").is_empty());
+    online.close();
+}
+
 /// Every 403 asked to reconnect, though one that is not about the login (Lichess refusing the
 /// request itself) is not mended by reconnecting.
 #[tokio::test]
