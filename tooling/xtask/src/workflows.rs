@@ -133,6 +133,87 @@ fn every_workflow_is_valid_yaml() {
     assert!(checked > 5, "only {checked} workflows found");
 }
 
+/// Sections that hold a mapping or a list wherever they appear, which GitHub refuses when they
+/// are empty: a key with nothing under it is YAML's null.
+const NOT_EMPTY: &[&str] = &[
+    "env",
+    "with",
+    "jobs",
+    "steps",
+    "permissions",
+    "defaults",
+    "outputs",
+    "inputs",
+    "secrets",
+    "strategy",
+    "matrix",
+    "services",
+    "concurrency",
+    "runs",
+];
+
+/// The sections of `yaml` left empty, by their path from the document's root.
+fn empty_sections(yaml: &yaml_rust2::Yaml, path: &str) -> Vec<String> {
+    use yaml_rust2::Yaml;
+    match yaml {
+        Yaml::Hash(map) => map
+            .iter()
+            .flat_map(|(key, value)| {
+                let key = key.as_str().unwrap_or_default();
+                let here = format!("{path}.{key}");
+                let empty = matches!(value, Yaml::Null) && NOT_EMPTY.contains(&key);
+                empty
+                    .then(|| here.clone())
+                    .into_iter()
+                    .chain(empty_sections(value, &here))
+            })
+            .collect(),
+        Yaml::Array(items) => items
+            .iter()
+            .enumerate()
+            .flat_map(|(index, item)| empty_sections(item, &format!("{path}[{index}]")))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// `env:` left with nothing under it, once its one variable moved to a shared action, made
+/// release.yml a workflow GitHub refuses: every push failed it, and a tag would have started no
+/// release. YAML reads it as null, so only a look at what each section holds sees it.
+#[test]
+fn no_workflow_leaves_a_section_empty() {
+    let parse = |text: &str| {
+        yaml_rust2::YamlLoader::load_from_str(text)
+            .unwrap()
+            .remove(0)
+    };
+    let broken = parse(
+        "on:
+  workflow_dispatch:
+env:
+jobs:
+  a:
+    steps:
+      - uses: x
+        with:
+",
+    );
+    assert_eq!(
+        empty_sections(&broken, ""),
+        [".env", ".jobs.a.steps[0].with"],
+        "an empty `workflow_dispatch:` is how GitHub spells a trigger without inputs"
+    );
+    for path in workflow_files() {
+        let workflow = parse(&std::fs::read_to_string(&path).unwrap());
+        let empty = empty_sections(&workflow, "");
+        assert!(
+            empty.is_empty(),
+            "{} leaves {empty:?} empty",
+            path.display()
+        );
+    }
+}
+
 /// The Mutants workflow started by hand offers every member but the workspace hack: its list
 /// was written by hand and lacked kchess-delta, the crate installed apps read updates with.
 #[test]

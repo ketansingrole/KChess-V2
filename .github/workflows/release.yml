@@ -16,8 +16,6 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-
 jobs:
   validate:
     runs-on: ubuntu-latest
