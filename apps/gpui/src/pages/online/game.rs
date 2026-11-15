@@ -150,16 +150,20 @@ fn ask_resign(window: &mut Window, cx: &mut App) {
     });
 }
 
-/// The game's connection is gone for good: what happened, and the one action that helps.
+/// The game's connection is gone for good: what happened, and the one action that helps. Asked
+/// over the game's page only, once per loss: when the loss arrives while the page is shown, or
+/// when the page is opened on a loss not yet asked about (a game resumed on launch).
 pub(crate) fn connection_lost(window: &mut Window, cx: &mut App) {
-    // Asked over the game only: elsewhere (a game resumed on launch) its page says it when opened.
     if crate::shell::current_page(cx) != Some(crate::pages::Page::Online) {
         return;
     }
-    let online = crate::online::handle(cx).read(cx);
-    if online.phase != Phase::Disconnected {
+    let handle = crate::online::handle(cx);
+    if handle.read(cx).phase != Phase::Disconnected
+        || !handle.update(cx, |online, _| online.mark_alerted())
+    {
         return;
     }
+    let online = handle.read(cx);
     let failure = connection_failure(online);
     let status = online.model().online_status.clone();
     let id = online.id().to_string();

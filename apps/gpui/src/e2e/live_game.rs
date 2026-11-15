@@ -106,16 +106,60 @@ fn a_refused_game_offers_watching_instead_of_reconnecting(cx: &mut gpui_kit::Tes
     );
 }
 
+/// Whether a dialog is open over the page.
+fn asking(app: &mut Harness) -> bool {
+    use gpui_kit::component::WindowExt as _;
+    app.with_window(|window, cx| window.has_active_dialog(cx))
+}
+
+/// Open a page as the sidebar does, without waiting for a dialog to close first.
+fn show(app: &mut Harness, page: crate::pages::Page) {
+    app.with_window(|window, cx| crate::shell::open(page, window, cx));
+    app.settle();
+}
+
 /// The same refusal on launch, when the app resumes the game by itself: it once arrived before
-/// the page was listening, and the board waited on a game that would never come.
+/// the page was listening, and the board waited on a game that would never come. The page
+/// opening and the refusal arrive in either order; the dialog asked only when the page came
+/// first, and a test waiting for no dialog timed out on CI the other way round. Whichever comes
+/// first, opening the game asks once, and the panel keeps the actions once it is closed.
 #[gpui_kit::test]
 fn a_game_refused_on_launch_offers_watching(cx: &mut gpui_kit::TestAppContext) {
     let (app, lichess) = Harness::signed_in(cx, true);
     lichess.lock().board_refused = true;
     let mut app = app.restart();
-    app.open("Play on Lichess");
+    show(&mut app, crate::pages::Page::Online);
     app.find("online-watch");
+    app.wait_for("the dialog", |window, cx| {
+        use gpui_kit::component::WindowExt as _;
+        window.has_active_dialog(cx)
+    });
+    app.click("cancel");
+    app.wait_for("the dialog to close", |window, cx| {
+        use gpui_kit::component::WindowExt as _;
+        !window.has_active_dialog(cx)
+    });
     assert!(!app.shows("online-reconnect"));
+    // One loss asks once: back on the game, the panel says it.
+    show(&mut app, crate::pages::Page::Dashboard);
+    show(&mut app, crate::pages::Page::Online);
+    app.find("online-watch");
+    assert!(!asking(&mut app));
+}
+
+/// A refusal that comes before the game's page is opened is asked about when it is.
+#[gpui_kit::test]
+fn a_refusal_before_the_page_is_asked_about_when_it_opens(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, lichess) = in_a_game(cx);
+    show(&mut app, crate::pages::Page::Dashboard);
+    lichess.lock().board_refused = true;
+    app.wait_for("the refusal", |_, cx| {
+        crate::online::handle(cx).read(cx).phase == crate::online::Phase::Disconnected
+    });
+    assert!(!asking(&mut app), "not asked over another page");
+    show(&mut app, crate::pages::Page::Online);
+    app.find("online-watch");
+    assert!(asking(&mut app), "asked once the game shows");
 }
 
 fn writes(lichess: &Handle) -> Vec<String> {

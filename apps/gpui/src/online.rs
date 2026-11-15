@@ -123,6 +123,9 @@ pub struct OnlineState {
     pub failure: Option<ErrorKind>,
     /// The game connection's state that ended it for good, kept until the game connects again.
     failed_state: Option<OnlineConnection>,
+    /// The game whose connection was lost for good and not yet back, to ask about once the
+    /// game's page shows it.
+    lost: Option<String>,
     /// The game whose lost connection was last put to the player in a dialog, so one loss asks
     /// once; cleared when its connection comes back.
     alerted: Option<String>,
@@ -173,13 +176,16 @@ impl OnlineState {
         );
         if !lost {
             self.alerted = None;
+            self.lost = None;
             return;
         }
         let game = report.game_id.as_str();
         if game.is_empty() || game != self.id() || self.alerted.as_deref() == Some(game) {
             return;
         }
-        self.alerted = Some(game.to_string());
+        self.lost = Some(game.to_string());
+        // Asked once the game's page shows it (`connection_lost`), now or when it is opened:
+        // on launch the page opening and the loss arrive in either order.
         cx.defer(|cx| {
             if let Some(window) = cx.active_window().or_else(|| cx.windows().first().copied()) {
                 let _ = window.update(cx, |_, window, cx| {
@@ -191,6 +197,21 @@ impl OnlineState {
 
     pub fn id(&self) -> &str {
         &self.model.online_id
+    }
+
+    /// Note that the game's lost connection is being put to the player; false when nothing was
+    /// lost or it already was asked about, so one loss asks once.
+    /// A game played without a live connection (correspondence) reads as disconnected too, with
+    /// nothing lost: only a loss the core reported is asked about.
+    pub(crate) fn mark_alerted(&mut self) -> bool {
+        if self.id().is_empty()
+            || self.lost.as_deref() != Some(self.id())
+            || self.alerted.as_deref() == Some(self.id())
+        {
+            return false;
+        }
+        self.alerted = Some(self.id().to_string());
+        true
     }
 
     pub fn account(&self) -> &str {
@@ -1047,6 +1068,7 @@ pub fn init(cx: &mut App) {
             ongoing_request: 0,
             failure: None,
             failed_state: None,
+            lost: None,
             alerted: None,
             busy_challenge: String::new(),
             turns: std::collections::HashMap::new(),
