@@ -987,6 +987,7 @@ impl AnalysisPage {
                     "Explain",
                     &self.explainer,
                     request,
+                    self.orientation,
                     None,
                     cx,
                     palette,

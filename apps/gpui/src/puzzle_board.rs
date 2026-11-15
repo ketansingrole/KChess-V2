@@ -335,7 +335,7 @@ impl PuzzleBoard {
         }
     }
 
-    fn orientation(&self) -> Color {
+    pub fn orientation(&self) -> Color {
         let color = self
             .on_board
             .as_ref()

@@ -301,6 +301,38 @@ pub fn last_squares(uci: &str) -> Option<(Square, Square)> {
     Some((from, to))
 }
 
+/// A position's preview board's width, in the tooltip a move shows on hover.
+pub const PREVIEW_TIP: Pixels = px(200.);
+
+/// The tooltip of a move in a line: a small board of `fen`, reached by `uci` (marked as the last
+/// move), seen from `orientation`. The board is made when the tooltip opens and let go with it.
+pub fn preview_tip(
+    fen: String,
+    uci: String,
+    variant: kchess_domain::variant::Variant,
+    orientation: Color,
+) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    move |window, cx| {
+        let board = cx.new(|_| ChessBoard::new(preview_state(&fen, &uci, variant, orientation)));
+        gpui_kit::component::tooltip::Tooltip::element(move |_, _| {
+            div().w(PREVIEW_TIP).py(px(6.)).child(board.clone())
+        })
+        .build(window, cx)
+    }
+}
+
+/// A preview board's position: only looked at, small, with no keys or coordinates of its own.
+fn preview_state(
+    fen: &str,
+    uci: &str,
+    variant: kchess_domain::variant::Variant,
+    orientation: Color,
+) -> BoardState {
+    let mut state = BoardState::shown(fen, variant, orientation, Some(uci));
+    state.preview = true;
+    state
+}
+
 /// What the board tells its page.
 pub enum BoardEvent {
     /// A move the player made, in UCI (`e2e4`, `e7e8q`, castling as king to rook or two squares,
@@ -2366,6 +2398,31 @@ mod description_tests {
             Some("e2e4"),
         );
         assert_eq!(describe(&after), "Last move e2–e4 · Black to move");
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::preview_state;
+    use shakmaty::{Color, Square};
+
+    /// A move's preview shows the position it reaches from the side the board beside it is seen
+    /// from, the move marked, and takes no part in the page.
+    #[test]
+    fn a_preview_shows_where_a_move_leads() {
+        let state = preview_state(
+            "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+            "e2e4",
+            kchess_domain::variant::Variant::Standard,
+            Color::Black,
+        );
+        assert!(state.preview);
+        assert_eq!(state.orientation, Color::Black);
+        assert_eq!(state.last_move, Some((Square::E2, Square::E4)));
+        assert_eq!(
+            state.fen,
+            "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+        );
     }
 }
 

@@ -150,6 +150,8 @@ const CACHE_SIZE: usize = 600;
 const CLOUD_DELAY: Duration = Duration::from_millis(300);
 /// The evaluation bar's gap to the board; without the bar the board keeps its place.
 const EVAL_GAP: Pixels = px(8.);
+/// The row above the board that holds what the far side has won.
+const MATERIAL_ROW: Pixels = px(18.);
 const ENGINE_ON: &str = "kchess:analysis-engine";
 const ENGINE_LINES: &str = "kchess:analysis-lines";
 pub(crate) const INFINITE: &str = "kchess:analysis-infinite";
@@ -1857,6 +1859,8 @@ impl AnalysisPage {
     }
 
     /// The panel's height beside a board of `board_size`: the board and the move box under it.
+    /// The panel beside the board runs from the board's top to the move box's bottom: the row
+    /// of material above the board is the board's alone.
     fn panel_height(&self, board_size: Pixels) -> Pixels {
         board_size + px(36.) + widgets::STACK_GAP
     }
@@ -1866,7 +1870,7 @@ impl AnalysisPage {
         self.layout.board_size_around(
             EVAL_BAR + EVAL_GAP,
             STUDY_BAR,
-            widgets::STACK_GAP + px(36.),
+            MATERIAL_ROW + widgets::STACK_GAP * 2. + px(36.),
             window,
         )
     }
@@ -1914,10 +1918,31 @@ impl Render for AnalysisPage {
                 .map(|pocket| div().pl(EVAL_BAR + EVAL_GAP).child(pocket))
         };
         let (top_pocket, bottom_pocket) = (pocket(!self.orientation), pocket(self.orientation));
+        // What each side has won, as in a game: the far side's above the board, the near
+        // side's beside the move box. The row above keeps its place, so the board holds still.
+        let fen = self.node().fen.clone();
+        let piece_set = cx
+            .global::<SettingsHandle>()
+            .0
+            .read(cx)
+            .settings
+            .frontend
+            .piece_set
+            .clone();
+        let material = |color: Color, id: &'static str| {
+            widgets::material(&fen, color == Color::White, &piece_set, &palette)
+                .map(|won| div().id(id).test_support().child(won))
+        };
         let board_column = v_flex()
             .w(board_size + EVAL_BAR + EVAL_GAP)
             .flex_none()
             .gap(widgets::STACK_GAP)
+            .child(
+                h_flex()
+                    .h(MATERIAL_ROW)
+                    .pl(EVAL_BAR + EVAL_GAP)
+                    .children(material(!self.orientation, "analysis-material-far")),
+            )
             .children(top_pocket)
             .child(
                 h_flex()
@@ -1951,7 +1976,13 @@ impl Render for AnalysisPage {
                 v_flex()
                     .pl(EVAL_BAR + EVAL_GAP)
                     .gap(px(4.))
-                    .child(widgets::input_row(entry, voice))
+                    .child(
+                        h_flex()
+                            .h(px(36.))
+                            .gap(px(12.))
+                            .children(material(self.orientation, "analysis-material-near"))
+                            .child(widgets::move_row(entry, voice)),
+                    )
                     .children(voice_line)
                     .children(self.move_message.clone().map(|message| {
                         div()
@@ -1974,10 +2005,9 @@ impl Render for AnalysisPage {
         let panel = if self.layout.is_stacked() {
             self.render_panel(window, cx)
         } else {
-            self.panel
-                .clone()
-                .cached(panel_style(self.panel_height(board_size), PANEL_MAX))
-                .into_any_element()
+            let mut style = panel_style(self.panel_height(board_size), PANEL_MAX);
+            style.margin.top = Some((MATERIAL_ROW + widgets::STACK_GAP).into());
+            self.panel.clone().cached(style).into_any_element()
         };
         div()
             .size_full()
