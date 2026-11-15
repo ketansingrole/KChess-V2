@@ -138,6 +138,101 @@ pub fn check_reply(reply: &str, allowed: &Allowed) -> bool {
     true
 }
 
+/// A move an explanation names: where it is written in the reply, the move (UCI) and the
+/// position after it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedMove {
+    pub range: std::ops::Range<usize>,
+    pub uci: String,
+    pub fen: String,
+}
+
+/// One move of a line given to the model: its SAN without check marks, the move and the
+/// position after it.
+struct Ply {
+    san: String,
+    uci: String,
+    fen: String,
+}
+
+fn plies<S: AsRef<str>>(start: &VariantPosition, line: &[S]) -> Vec<Ply> {
+    let mut pos = start.clone();
+    let mut plies = Vec::new();
+    for text in line {
+        let Some(played) =
+            rules::parse_uci(text.as_ref()).and_then(|uci| rules::legal_move(&pos, uci))
+        else {
+            break;
+        };
+        let san = rules::san_and_play(&mut pos, played);
+        plies.push(Ply {
+            san: bare(&san),
+            uci: text.as_ref().to_string(),
+            fen: rules::make_fen(&pos),
+        });
+    }
+    plies
+}
+
+/// The moves `reply` names from `lines`, each a line of UCI moves from `fen`, in the order they
+/// are written. A move named in more than one line is read as the next move of the line the
+/// one before it came from, when it is; else as the earliest of that line still to come; else
+/// as the earliest in the first line that has it. Words that name no move of the lines, a
+/// square among them, are left alone.
+pub fn named_moves<S: AsRef<str>>(reply: &str, fen: &str, lines: &[Vec<S>]) -> Vec<NamedMove> {
+    let Some(start) = rules::standard_from_fen(fen) else {
+        return Vec::new();
+    };
+    let lines: Vec<Vec<Ply>> = lines.iter().map(|line| plies(&start, line)).collect();
+    let mut named = Vec::new();
+    let mut last: Option<(usize, usize)> = None;
+    let mut token_start = None;
+    let in_token = |c: char| c.is_alphanumeric() || "+#=-".contains(c);
+    for (at, c) in reply
+        .char_indices()
+        .chain(std::iter::once((reply.len(), ' ')))
+    {
+        if in_token(c) {
+            token_start.get_or_insert(at);
+            continue;
+        }
+        let Some(from) = token_start.take() else {
+            continue;
+        };
+        let raw = &reply[from..at];
+        let trimmed = raw.trim_matches('-');
+        let begin = from + (raw.len() - raw.trim_start_matches('-').len());
+        let san = bare(trimmed);
+        let found = |line: usize, ply: usize| lines[line].get(ply).is_some_and(|p| p.san == san);
+        let next = last
+            .map(|(line, ply)| (line, ply + 1))
+            .filter(|&(l, p)| found(l, p));
+        let later = || {
+            let (line, ply) = last?;
+            (ply + 1..lines[line].len())
+                .find(|&p| found(line, p))
+                .map(|p| (line, p))
+        };
+        let first = || {
+            (0..lines.len()).find_map(|line| {
+                (0..lines[line].len())
+                    .find(|&p| found(line, p))
+                    .map(|p| (line, p))
+            })
+        };
+        if let Some((line, ply)) = next.or_else(later).or_else(first) {
+            let ply_of = &lines[line][ply];
+            named.push(NamedMove {
+                range: begin..begin + trimmed.len(),
+                uci: ply_of.uci.clone(),
+                fen: ply_of.fen.clone(),
+            });
+            last = Some((line, ply));
+        }
+    }
+    named
+}
+
 fn tactic_words(tactic: &Tactic, missed: bool) -> String {
     match tactic {
         Tactic::Fork { san, targets, .. } => {
@@ -436,6 +531,72 @@ mod tests {
         )
         .unwrap()
         .1
+    }
+
+    #[test]
+    fn an_explanation_names_the_moves_of_its_lines() {
+        const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        // The better line, then the played one, as an explanation lists them: Nf3 is in both.
+        let played = vec!["e2e4", "e7e5", "g1f3"];
+        let best = vec!["g1f3", "d7d5", "d2d4"];
+        let reply = "You missed Nf3, stronger than e4. After e4 e5 Nf3, (d5) answers; d4!? and the e4-square.";
+        let named = named_moves(reply, START, &[best, played]);
+        let words: Vec<(&str, &str)> = named
+            .iter()
+            .map(|named| (&reply[named.range.clone()], named.uci.as_str()))
+            .collect();
+        assert_eq!(
+            words,
+            [
+                // Alone: the first line that has it.
+                ("Nf3", "g1f3"),
+                ("e4", "e2e4"),
+                ("e4", "e2e4"),
+                ("e5", "e7e5"),
+                // The move after e5 in its line, not the better line's first.
+                ("Nf3", "g1f3"),
+                ("d5", "d7d5"),
+                // Annotations and words joined by a hyphen are not part of a move.
+                ("d4", "d2d4"),
+            ]
+        );
+        assert_eq!(
+            named[4].fen,
+            "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
+        );
+        assert_eq!(
+            named[0].fen,
+            "rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1"
+        );
+    }
+
+    #[test]
+    fn a_move_later_in_the_same_line_is_preferred() {
+        const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let first = vec!["d2d4", "d7d5"];
+        let second = vec!["e2e4", "d7d5", "d2d4"];
+        // After e4, d4 is read from e4's line even with words between.
+        let reply = "Here e4 and then d4.";
+        let named = named_moves(reply, START, &[first, second]);
+        assert_eq!(named[1].uci, "d2d4");
+        assert_eq!(
+            named[1].fen,
+            "rnbqkbnr/ppp1pppp/8/3p4/3PP3/8/PPP2PPP/RNBQKBNR b KQkq - 0 2"
+        );
+        // A move named again after its own line's is read from the first line that has it.
+        let best = vec!["g1f3"];
+        let played = vec!["e2e4", "e7e5", "g1f3"];
+        let again = named_moves("e4 e5 Nf3, and Nf3 at once.", START, &[best, played]);
+        assert_eq!(
+            again[3].fen,
+            "rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1"
+        );
+        assert_eq!(
+            again[2].fen,
+            "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
+        );
+        assert!(named_moves("e4", "not a fen", &[vec!["e2e4"]]).is_empty());
+        assert!(named_moves("Nothing here.", START, &[vec!["e2e4"]]).is_empty());
     }
 
     #[test]

@@ -949,10 +949,22 @@ impl PositionExplorer {
                 .into_any_element();
         }
         let figurine = crate::notation::figurine(cx);
+        let (fen, variant) = (&result.saved.fen, self.variant.unwrap_or_default());
         v_flex()
             .gap(px(4.))
             .children(moves.iter().enumerate().map(|(index, entry)| {
                 let (uci, san) = (entry.uci.clone(), entry.san.clone());
+                // The position the move reaches, on hover, as the grid's tiles show it.
+                let next = kchess_domain::replay::replay_positions_in(
+                    variant,
+                    fen,
+                    std::slice::from_ref(&uci),
+                )
+                .get(1)
+                .map(|position| position.fen.clone());
+                let tip = next.map(|next| {
+                    crate::board::preview_tip(next, uci.clone(), variant, Color::White)
+                });
                 h_flex()
                     .gap(px(8.))
                     .child(
@@ -968,6 +980,7 @@ impl PositionExplorer {
                             .text_color(palette.primary)
                             .cursor_pointer()
                             .pressable_link()
+                            .when_some(tip, |cell, tip| cell.tooltip(tip))
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(ExplorerEvent::Play(uci.clone()))
                             }))

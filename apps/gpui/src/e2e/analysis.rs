@@ -464,6 +464,24 @@ fn the_board_can_be_flipped_and_still_takes_moves(cx: &mut gpui_kit::TestAppCont
     assert_eq!(selected(&mut app, "e2e4"), Some(true));
 }
 
+/// What each side has won shows by the board as in a game: the far side's above it, the near
+/// side's below, and nothing while the material is even.
+#[gpui_kit::test]
+fn the_material_won_shows_by_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 d5 2. exd5 *");
+    app.click("tree-e2e4 d7d5 e4d5");
+    // White took a pawn, and White is at the bottom.
+    app.find("analysis-material-near");
+    assert!(!app.shows("analysis-material-far"));
+    app.click("analysis-flip");
+    app.find("analysis-material-far");
+    assert!(!app.shows("analysis-material-near"));
+    app.click("tree-e2e4");
+    app.wait_gone("analysis-material-far");
+    assert!(!app.shows("analysis-material-near"));
+}
+
 #[gpui_kit::test]
 fn a_position_can_be_taken_from_the_analysis_board_to_the_editor(
     cx: &mut gpui_kit::TestAppContext,

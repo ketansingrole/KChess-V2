@@ -915,6 +915,7 @@ fn coach_block(
         label,
         shown.explainer(),
         request,
+        shown.orientation(),
         on_answer,
         cx,
         palette,

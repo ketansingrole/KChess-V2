@@ -12,6 +12,7 @@ use kchess_contracts::check::AiModelName;
 use kchess_contracts::types::{
     AiConnection, AiEffort, AiExplanation, AiModelList, AiProblem, AiRequest,
 };
+use shakmaty::Color;
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -238,13 +239,78 @@ fn manage_usage(id: &'static str) -> Button {
         .on_click(|_, _, cx| cx.open_url(USAGE_SETTINGS))
 }
 
-/// The explaining block for `request`: the button, then the answer. `id` keeps pages apart; with
-/// no plan connected it is nothing at all, and `on_answer` runs once an answer arrives.
+/// The lines an explanation was given, each from `request.fen`: the better line first, as the
+/// moves a reply names alone are most often the ones it recommends.
+fn given_lines(request: &AiRequest) -> Vec<Vec<String>> {
+    let played = request
+        .played
+        .iter()
+        .chain(&request.refutation)
+        .cloned()
+        .collect();
+    vec![request.best.clone(), request.moves.clone(), played]
+}
+
+/// An answer's text, each move it names from `request`'s lines showing the position it reaches
+/// on hover, seen from `orientation`.
+fn said(text: &str, request: &AiRequest, orientation: Color, palette: &Palette) -> AnyElement {
+    let named = kchess_domain::coach::named_moves(text, &request.fen, &given_lines(request));
+    if named.is_empty() {
+        return div().child(text.to_string()).into_any_element();
+    }
+    let variant = kchess_domain::variant::Variant::Standard;
+    let mut named = named.into_iter().enumerate().peekable();
+    let mut words: Vec<AnyElement> = Vec::new();
+    let mut at = 0;
+    // Word by word, so a move can be an element of its own and the text still wraps.
+    for word in text.split_inclusive(char::is_whitespace) {
+        let end = at + word.len();
+        let mut parts: Vec<AnyElement> = Vec::new();
+        let mut from = at;
+        while let Some((index, move_named)) = named.next_if(|(_, named)| named.range.end <= end) {
+            let range = move_named.range.clone();
+            if range.start > from {
+                parts.push(text[from..range.start].to_string().into_any_element());
+            }
+            parts.push(
+                div()
+                    .id(("ai-move", index))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(palette.toned)
+                    .tooltip(crate::board::preview_tip(
+                        move_named.fen,
+                        move_named.uci,
+                        variant,
+                        orientation,
+                    ))
+                    .child(text[range.clone()].to_string())
+                    .into_any_element(),
+            );
+            from = range.end;
+        }
+        if from < end {
+            parts.push(text[from..end].to_string().into_any_element());
+        }
+        words.push(h_flex().flex_none().children(parts).into_any_element());
+        at = end;
+    }
+    h_flex()
+        .flex_wrap()
+        .items_baseline()
+        .children(words)
+        .into_any_element()
+}
+
+/// The explaining block for `request`: the button, then the answer, its moves previewed from
+/// `orientation`. `id` keeps pages apart; with no plan connected it is nothing at all, and
+/// `on_answer` runs once an answer arrives.
+#[allow(clippy::too_many_arguments)]
 pub fn explain_block(
     id: &'static str,
     label: &'static str,
     explainer: &Entity<Explainer>,
     request: AiRequest,
+    orientation: Color,
     on_answer: Option<OnAnswer>,
     cx: &App,
     palette: &Palette,
@@ -287,7 +353,7 @@ pub fn explain_block(
     Some(match phase {
         None => button(label).on_click(ask).into_any_element(),
         Some(Phase::Asking) => button("Explaining…").disabled(true).into_any_element(),
-        Some(Phase::Said(text)) => panel(div().child(text).into_any_element())
+        Some(Phase::Said(text)) => panel(said(&text, &request, orientation, palette))
             .child(
                 h_flex()
                     .gap(px(8.))
@@ -329,4 +395,34 @@ pub fn explain_block(
             panel(div().child(message).into_any_element()).into_any_element()
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::given_lines;
+    use kchess_contracts::types::{AiKind, AiRequest};
+
+    /// An explanation's lines start where it does: the better line first, the puzzle's
+    /// solution, then the move played followed by its answer.
+    #[test]
+    fn an_explanation_s_lines_put_the_better_one_first() {
+        let request = AiRequest {
+            kind: AiKind::Move,
+            fen: String::new(),
+            played: Some("e2e4".into()),
+            moves: vec!["d2d4".into()],
+            best: vec!["g1f3".into(), "d7d5".into()],
+            refutation: vec!["e7e5".into()],
+            mate_before: None,
+            mate_after: None,
+        };
+        assert_eq!(
+            given_lines(&request),
+            [
+                vec!["g1f3".to_string(), "d7d5".into()],
+                vec!["d2d4".into()],
+                vec!["e2e4".into(), "e7e5".into()],
+            ]
+        );
+    }
 }

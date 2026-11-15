@@ -569,6 +569,7 @@ impl WatchPage {
                     crate::engine_view::EngineLines {
                         fen: &fen,
                         variant: kchess_domain::variant::Variant::Standard,
+                        orientation: broadcasts.orientation,
                         lines: broadcasts.engine.engine.lines(),
                         pending: crate::prefs::get::<usize>(cx, LINES, 3).clamp(1, 5),
                         ended: terminal.map(|_| "Nothing to analyse"),

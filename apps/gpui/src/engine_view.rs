@@ -104,16 +104,18 @@ pub fn eval_bar(line: Option<&EngineLine>, orientation: Color, result: Option<&s
 
 /// What the engine panel lists (`engine_lines`): the `lines` searched from `fen` in `variant`, how
 /// many rows wait for lines still to come (`pending`), and, when there is nothing to search, why
-/// (`ended`).
+/// (`ended`). A move's preview board is seen as the board beside it is (`orientation`).
 pub struct EngineLines<'a> {
     pub fen: &'a str,
     pub variant: kchess_domain::variant::Variant,
+    pub orientation: Color,
     pub lines: &'a [EngineLine],
     pub pending: usize,
     pub ended: Option<&'static str>,
 }
 
-/// Each line's score and its moves, a click playing the line up to the move (`on_play`).
+/// Each line's score and its moves, a click playing the line up to the move (`on_play`) and a
+/// hover showing the position it reaches.
 pub fn engine_lines(
     shown: EngineLines<'_>,
     on_play: PlayLine,
@@ -126,6 +128,7 @@ pub fn engine_lines(
         lines,
         pending,
         ended,
+        orientation,
     } = shown;
     let mut rows: Vec<AnyElement> = Vec::new();
     if let Some(ended) = ended {
@@ -177,6 +180,12 @@ pub fn engine_lines(
                     .child(h_flex().min_w_0().overflow_hidden().children(
                         moves.into_iter().enumerate().map(|(at, played)| {
                             let (pv, on_play) = (pv.clone(), on_play.clone());
+                            let tip = crate::board::preview_tip(
+                                played.fen.clone(),
+                                played.uci.clone(),
+                                variant,
+                                orientation,
+                            );
                             div()
                                 .id(SharedString::from(format!("pv-{index}-{at}")))
                                 .role(Role::Button)
@@ -189,6 +198,7 @@ pub fn engine_lines(
                                 .text_color(palette.toned)
                                 .cursor_pointer()
                                 .pressable_fill(tint(palette.primary, 24.), palette)
+                                .tooltip(tip)
                                 .on_click(move |_, window, cx| on_play(&pv, at, window, cx))
                                 .child(crate::notation::shown(
                                     &played.label,

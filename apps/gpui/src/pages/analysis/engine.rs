@@ -723,6 +723,7 @@ impl AnalysisPage {
                         crate::engine_view::EngineLines {
                             fen: &self.engine_fen(),
                             variant: self.root.variant(),
+                            orientation: self.orientation,
                             lines: &lines,
                             pending: if using_cloud { 0 } else { prefs_lines(cx) },
                             ended: over.map(|_| "Nothing to analyse"),
