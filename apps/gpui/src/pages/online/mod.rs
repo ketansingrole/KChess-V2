@@ -904,10 +904,12 @@ impl crate::pages::PageView for OnlinePage {
         OnlinePage::new(window, cx)
     }
 
-    fn shown(this: &Entity<Self>, again: bool, _window: &mut Window, cx: &mut App) {
+    fn shown(this: &Entity<Self>, again: bool, window: &mut Window, cx: &mut App) {
         if !again {
             this.update(cx, |online, cx| online.shown(cx));
         }
+        // A loss that came before the page did is asked about now, once the shell has shown it.
+        window.defer(cx, game::connection_lost);
     }
 
     /// Zen mode leaves the game and its panel, as on the other game pages.
