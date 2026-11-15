@@ -308,6 +308,55 @@ async fn a_game_that_ends_keeps_its_final_position() {
 }
 
 #[tokio::test]
+async fn a_description_with_its_own_position_keeps_none_of_the_earlier_move() {
+    let mut description = game_description("resign", Some("black"));
+    description["fen"] = json!(AFTER_E4_E5);
+    let fixture = serve(move |seen: &Request| {
+        if seen.path() != "/api/stream/game/Game0001" {
+            return Reply::Hang;
+        }
+        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        for record in [
+            game_description("started", None),
+            json!({
+                "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+                "lm": "e2e4", "wc": 59, "bc": 60
+            }),
+            description.clone(),
+        ] {
+            tx.send(format!("{record}\n")).unwrap();
+        }
+        Reply::Stream(rx)
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let sink = Arc::new(Sink::default());
+    let spectator = Spectator::new(
+        service(&fixture.base, &host),
+        Arc::clone(&sink) as Arc<dyn WatchSink>,
+    );
+    spectator.watch(WatchTarget::Game("Game0001".into()));
+    until("the final frame", || {
+        sink.frames
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.status.as_deref() == Some("resign"))
+    })
+    .await;
+    let last = sink.frames.lock().unwrap().last().cloned().unwrap();
+    spectator.stop();
+    assert!(
+        last.fen.starts_with("rnbqkbnr/pppp1ppp/8/4p3/4P3/"),
+        "{}",
+        last.fen
+    );
+    assert_eq!(last.last_move, None);
+}
+
+const AFTER_E4_E5: &str = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2";
+
+#[tokio::test]
 async fn a_game_feed_that_closes_mid_game_offers_to_reconnect() {
     let last = last_state_of_a_closed_game_stream(vec![
         game_description("started", None),

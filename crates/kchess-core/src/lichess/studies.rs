@@ -87,20 +87,22 @@ pub fn split_pgn(text: &str) -> Vec<String> {
     let count = chars.len();
     let mut pieces: Vec<String> = Vec::new();
     let mut start = 0;
-    let mut index = 0;
+    let mut indices = 0..count;
     // The closing character of the comment or string `index` is in.
     let mut inside: Option<char> = None;
-    while index < count {
+    while let Some(index) = indices.next() {
         let at = chars[index];
         if let Some(close) = inside {
             if at == '\\' && close == '"' {
-                index += 1;
-            } else if at == close {
+                // The escaped character is the string's own.
+                indices.next();
+                continue;
+            }
+            if at == close {
                 inside = None;
             }
             // The newline ending a `;` comment may still start the blank line.
             if at != '\n' || inside.is_some() {
-                index += 1;
                 continue;
             }
         }
@@ -111,7 +113,6 @@ pub fn split_pgn(text: &str) -> Vec<String> {
             _ => {}
         }
         if inside.is_some() {
-            index += 1;
             continue;
         }
         if at == '\n' {
@@ -123,11 +124,9 @@ pub fn split_pgn(text: &str) -> Vec<String> {
             if end < count && chars[end] == '[' && end - 1 > index && chars[end - 1] == '\n' {
                 pieces.push(chars[start..index].iter().collect());
                 start = end;
-                index = end;
-                continue;
+                indices = end..count;
             }
         }
-        index += 1;
     }
     pieces.push(chars[start..].iter().collect());
     pieces
@@ -605,6 +604,23 @@ mod tests {
         assert_eq!(games.len(), 4, "{games:#?}");
         assert!(games[0].ends_with("e5 *"), "{}", games[0]);
         assert!(games[2].ends_with("; note {"), "{}", games[2]);
+    }
+
+    #[test]
+    fn a_backslash_escapes_only_inside_a_tag_value() {
+        let next = "\n\n[Event \"Next\"]\n\n1. d4 *";
+        // An escaped quote keeps the value open, so its `{` opens no comment.
+        let escaped = format!("[Event \"x\\\" {{\"]\n\n1. e4 *{next}");
+        // A `{` in a value opens no comment either.
+        let brace = format!("[Event \"a {{\"]\n\n1. e4 *{next}");
+        // In a comment a backslash is text: `}` still closes it.
+        let comment = format!("[Event \"c\"]\n\n1. e4 {{ a\\}} e5 *{next}");
+        for text in [escaped, brace, comment] {
+            let games = split_pgn(&text);
+            assert_eq!(games.len(), 2, "{text}: {games:#?}");
+            assert!(games[0].ends_with('*'), "{}", games[0]);
+            assert_eq!(games[1], "[Event \"Next\"]\n\n1. d4 *");
+        }
     }
 
     #[test]
