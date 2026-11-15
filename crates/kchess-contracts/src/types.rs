@@ -2627,12 +2627,16 @@ pub enum StudyCommand {
         chapter: StudyChapter,
         index: u32,
     },
-    /// The study is a copy of a Lichess study, as downloaded (`baseline`).
+    /// The study is a copy of a Lichess study, as downloaded (`baseline`). `chapters` are the
+    /// ids of the chapters uploaded, in order: a study moved, added to or cut since then keeps its
+    /// structure marked changed.
     MarkCloud {
         id: String,
         account: String,
         remote_id: String,
         baseline: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        chapters: Vec<String>,
     },
     /// A Lichess study kept as a local one.
     Offline {

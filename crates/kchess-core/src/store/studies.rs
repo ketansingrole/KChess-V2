@@ -448,12 +448,23 @@ pub(crate) fn study_command(
             account,
             remote_id,
             baseline,
+            chapters,
         } => {
+            // Chapters moved, added or removed while the upload was on its way are not on
+            // Lichess: the next upload is a copy rather than writing them over these by index.
+            let structure_changed = !chapters.is_empty()
+                && studies.find(id).is_some_and(|study| {
+                    !study
+                        .chapters
+                        .iter()
+                        .map(|chapter| &chapter.id)
+                        .eq(chapters.iter())
+                });
             let cloud = StudyCloud {
                 account: account.clone(),
                 id: remote_id.clone(),
                 downloaded_pgn: baseline.clone(),
-                structure_changed: false,
+                structure_changed,
             };
             mark_cloud(&mut studies, id, cloud);
         }
@@ -888,6 +899,48 @@ mod tests {
             .message,
             "That chapter no longer exists."
         );
+    }
+
+    /// 2026-11-15: an upload's answer cleared "structure changed" on the study as it was by then,
+    /// so chapters moved while it was on its way were later written over the Lichess chapters
+    /// by index. Only the structure that was uploaded counts as unchanged.
+    #[test]
+    fn chapters_moved_during_an_upload_keep_the_structure_changed() {
+        let db = database();
+        let id = create(&db, "Openings", "1. e4 *");
+        let first = study(&db, &id)["chapters"][0]["id"].clone();
+        let second = run(
+            &db,
+            json!({ "op": "duplicateChapter", "id": id, "chapterId": first }),
+        )
+        .expect("duplicate")["id"]
+            .clone();
+        let uploaded = json!([first, second]);
+        let mark = |db: &Connection| {
+            run(
+                db,
+                json!({
+                    "op": "markCloud", "id": id, "account": "Alice", "remoteId": "abcdEFGH",
+                    "baseline": "1. e4 *\n\n1. e4 *", "chapters": uploaded,
+                }),
+            )
+            .expect("mark")
+        };
+        mark(&db);
+        let changed = |db: &Connection| {
+            study(db, &id)["cloud"]["structureChanged"]
+                .as_bool()
+                .unwrap_or(false)
+        };
+        assert!(!changed(&db));
+        // The chapters move while the next upload is on its way.
+        run(
+            &db,
+            json!({ "op": "moveChapter", "id": id, "chapterId": second, "index": 0 }),
+        )
+        .expect("move");
+        mark(&db);
+        assert!(changed(&db), "the move was forgotten");
     }
 
     #[test]

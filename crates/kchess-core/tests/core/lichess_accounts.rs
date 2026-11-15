@@ -242,6 +242,46 @@ async fn interrupted_sync(interrupt: fn(&Lichess)) -> (Arc<MemoryStore>, Result<
     (store, outcome)
 }
 
+/// 2026-11-15: the sync read its accounts, then waited on the players' play times, and only then
+/// took the account's epoch: data cleared meanwhile went unseen, and the sync went on from the
+/// cursor read before the clear, so the older games never came back.
+#[tokio::test]
+async fn data_cleared_while_the_play_times_are_read_stops_the_sync() {
+    let slot: Arc<OnceLock<Arc<Lichess>>> = Arc::new(OnceLock::new());
+    let for_fixture = Arc::clone(&slot);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/users" => {
+            if let Some(lichess) = for_fixture.get() {
+                lichess.cancel_account_syncs(&["Alice".to_string()]);
+            }
+            Reply::Json(
+                200,
+                json!([{ "username": "Alice", "playTime": { "total": 10 } }]).to_string(),
+            )
+        }
+        "/api/games/user/Alice" => Reply::Text(
+            200,
+            "application/x-ndjson",
+            ndjson(&page_of("Game", 1, 7_000_000)),
+        ),
+        _ => Reply::Json(404, "{}".into()),
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let store = MemoryStore::with_accounts(&[("Alice", true)]);
+    let lichess = service(
+        &fixture.base,
+        &host,
+        Arc::clone(&store),
+        MemoryTokens::with(&[("Alice", "lip_alice")]),
+    );
+    let _ = slot.set(Arc::clone(&lichess));
+    let outcome = lichess.sync_games(Some("Alice")).await;
+    assert_eq!(outcome.unwrap_err().message, "Sync was cancelled.");
+    assert!(store.games.lock().unwrap().is_empty());
+    assert!(store.cursors.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn a_logout_during_a_download_saves_nothing() {
     let (store, outcome) =
