@@ -1859,8 +1859,10 @@ impl AnalysisPage {
     }
 
     /// The panel's height beside a board of `board_size`: the board and the move box under it.
+    /// The panel beside the board runs from the board's top to the move box's bottom: the row
+    /// of material above the board is the board's alone.
     fn panel_height(&self, board_size: Pixels) -> Pixels {
-        board_size + MATERIAL_ROW + px(36.) + widgets::STACK_GAP * 2.
+        board_size + px(36.) + widgets::STACK_GAP
     }
 
     /// The board's size in the page, the eval bar beside it and the study bar above.
@@ -2003,10 +2005,9 @@ impl Render for AnalysisPage {
         let panel = if self.layout.is_stacked() {
             self.render_panel(window, cx)
         } else {
-            self.panel
-                .clone()
-                .cached(panel_style(self.panel_height(board_size), PANEL_MAX))
-                .into_any_element()
+            let mut style = panel_style(self.panel_height(board_size), PANEL_MAX);
+            style.margin.top = Some((MATERIAL_ROW + widgets::STACK_GAP).into());
+            self.panel.clone().cached(style).into_any_element()
         };
         div()
             .size_full()
