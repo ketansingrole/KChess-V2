@@ -591,6 +591,68 @@ fn refused_save_then_another_chapter(cx: &mut gpui_kit::TestAppContext, autosavi
     );
 }
 
+/// 2026-11-15: a board whose save was refused (another window wrote the chapter) is no longer
+/// linked to its study; closing the study then saved "again" forever and froze the window. It
+/// stays open as the unsaved copy.
+#[gpui_kit::test]
+fn closing_a_study_whose_save_was_refused_keeps_the_board(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::analysis::AnalysisPage;
+    let mut app = Harness::start(cx);
+    import_study(&mut app, "Pawn openings", TWO_CHAPTERS);
+    app.click("open-imported");
+    wait_for_value(&mut app, "Study chapter", "1. Chapter 1");
+    app.find("tree-e2e4 e7e5");
+    let (study, chapter) = app.cx.update(|cx| {
+        let page = crate::shell::view::<AnalysisPage>(cx).expect("the analysis board");
+        let page = page.read(cx);
+        (page.study_id().to_string(), page.chapter_id().to_string())
+    });
+    let written = std::rc::Rc::new(std::cell::Cell::new(false));
+    app.cx.update(|cx| {
+        let save =
+            cx.global::<crate::core::AppCore>()
+                .request(kchess_contracts::calls::StudyCommand {
+                    command: kchess_contracts::types::StudyCommand::Save {
+                        name: "Pawn openings".into(),
+                        pgn: "1. c4 *".into(),
+                        id: Some(study.clone()),
+                        chapter_id: Some(chapter.clone()),
+                    },
+                    incremental: None,
+                    based_on: None,
+                });
+        let written = written.clone();
+        cx.spawn(async move |_| {
+            save.await.expect("the other window's save");
+            written.set(true);
+        })
+        .detach();
+    });
+    app.wait_for("the other window's save", |_, _| written.get());
+    app.with_window(|_, cx| {
+        let page = crate::shell::view::<AnalysisPage>(cx).expect("the analysis board");
+        assert!(page.update(cx, |page, cx| page.play_for_test("g1f3", cx)));
+        page.update(cx, |page, cx| page.autosave_for_test(cx));
+    });
+    app.wait_for("the save to be refused", |_, cx| {
+        crate::shell::view::<AnalysisPage>(cx)
+            .is_some_and(|page| page.read(cx).study_id().is_empty())
+    });
+    let closed = std::rc::Rc::new(std::cell::Cell::new(None));
+    app.with_window(|_, cx| {
+        let page = crate::shell::view::<AnalysisPage>(cx).expect("the analysis board");
+        page.update(cx, |page, cx| {
+            let close = page.close_study(cx);
+            let closed = closed.clone();
+            cx.spawn(async move |_, _| closed.set(Some(close.await)))
+                .detach();
+        });
+    });
+    app.wait_for("the close to answer", |_, _| closed.get().is_some());
+    assert_eq!(closed.get(), Some(false), "the unsaved copy was closed");
+    app.find("tree-g1f3");
+}
+
 #[gpui_kit::test]
 fn the_chosen_chapter_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
@@ -636,6 +698,39 @@ fn a_position_opened_while_a_study_closes_stays_on_the_board(cx: &mut gpui_kit::
             .shown_fen()
     });
     assert_eq!(shown, opened);
+}
+
+/// 2026-11-15: closing a study waited for one save, then emptied the board: a move made while
+/// that save was on its way was lost. It is saved before the board empties.
+#[gpui_kit::test]
+fn a_move_made_while_a_study_closes_is_saved(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::analysis::AnalysisPage;
+    let mut app = Harness::start(cx);
+    import_study(&mut app, "Pawn openings", TWO_CHAPTERS);
+    app.click("open-imported");
+    app.find("tree-e2e4");
+    let closed = std::rc::Rc::new(std::cell::Cell::new(None));
+    app.with_window(|_, cx| {
+        let page = crate::shell::view::<AnalysisPage>(cx).expect("the analysis board");
+        page.update(cx, |page, cx| {
+            let close = page.close_study(cx);
+            let closed = closed.clone();
+            cx.spawn(async move |_, _| closed.set(Some(close.await)))
+                .detach();
+            assert!(page.play_for_test("g1f3", cx));
+        });
+    });
+    app.wait_for("the study to close", |_, _| closed.get().is_some());
+    assert_eq!(closed.get(), Some(true), "the close went through");
+    let pgn = app.cx.update(|cx| {
+        cx.global::<crate::studies::StudyHandle>()
+            .0
+            .read(cx)
+            .items()[0]
+            .pgn
+            .clone()
+    });
+    assert!(pgn.contains("Nf3"), "the move was lost: {pgn}");
 }
 
 #[gpui_kit::test]

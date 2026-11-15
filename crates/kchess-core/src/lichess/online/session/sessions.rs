@@ -73,7 +73,7 @@ impl OnlineSession {
             let cancel_pending = st
                 .pending_challenge
                 .take()
-                .map(|id| (id, st.current_account.clone(), st.epoch));
+                .map(|id| (id, st.current_account.clone()));
             (phase_report, cancel_pending)
         };
         if let Some((session, account, game, phase, message)) = phase_report {
@@ -82,14 +82,11 @@ impl OnlineSession {
             // Nothing left to report, but the live game is gone: the engines may work again.
             self.refresh_assistance();
         }
-        if let Some((id, account, epoch_at_cancel)) = cancel_pending {
-            // Epoch-guarded: a challenge created by the new session after `cancel_inner`
-            // bumped the epoch must not be cancelled by the old session's teardown.
+        if let Some((id, account)) = cancel_pending {
+            // The ended session's own challenge, by its id: a session started meanwhile (its
+            // challenge has another id) still has it withdrawn, or it could be accepted.
             let this = self.clone();
             tokio::spawn(async move {
-                if this.st().epoch != epoch_at_cancel {
-                    return;
-                }
                 match this.login(&account).await {
                     Ok(Some(auth)) => this.cancel_challenge(&id, &auth).await,
                     Ok(None) => {}

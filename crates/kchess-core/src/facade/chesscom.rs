@@ -26,6 +26,10 @@ impl ChesscomApi for Core {
         &self,
         username: ChesscomUsername,
     ) -> Result<Vec<ChesscomAccount>> {
+        // A review running or queued for the player's games would write them back after the
+        // removal deleted them.
+        self.reviews
+            .discard_account_reviews(&[kchess_domain::chesscom::account_of(&username.0)]);
         self.chesscom.remove(&username.0).await
     }
 

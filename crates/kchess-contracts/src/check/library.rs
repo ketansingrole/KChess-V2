@@ -267,6 +267,8 @@ struct SentMarkCloud {
     account: String,
     remote_id: String,
     baseline: String,
+    #[serde(default)]
+    chapters: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -382,11 +384,16 @@ impl Validate for StudyCommand {
                 study_account(&sent.account)?;
                 study_lichess_id(&sent.remote_id, "remoteId")?;
                 study_pgn(&sent.baseline, "baseline")?;
+                max_items(&sent.chapters, MAX_CHAPTERS, None, "chapters")?;
+                for chapter in &sent.chapters {
+                    local_id(chapter, "chapters")?;
+                }
                 StudyCommand::MarkCloud {
                     id: sent.id,
                     account: sent.account,
                     remote_id: sent.remote_id,
                     baseline: sent.baseline,
+                    chapters: sent.chapters,
                 }
             }
             StudyOp::Offline => {

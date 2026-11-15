@@ -91,6 +91,9 @@ pub struct Core {
     pub(crate) tracker: TaskTracker,
     /// The one-time import of an earlier release.
     pub(crate) migrated: OnceCell<()>,
+    /// Held by the import as it runs on its own task: an import started again after its caller
+    /// went away waits for the first to finish.
+    pub(crate) migrating: Arc<tokio::sync::Mutex<()>>,
     /// The close in progress, shared by every `close` call.
     pub(crate) closing: OnceCell<()>,
     /// Ids for the managed engine requests the facade starts.
@@ -241,6 +244,7 @@ impl Core {
             closed,
             tracker: TaskTracker::new(),
             migrated: OnceCell::new(),
+            migrating: Arc::new(tokio::sync::Mutex::new(())),
             closing: OnceCell::new(),
             requests: AtomicU64::new(0),
             claim,

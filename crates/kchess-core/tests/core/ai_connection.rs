@@ -234,6 +234,28 @@ async fn a_plan_connects_explains_and_disconnects() {
     let signed = signed.unwrap();
     assert_eq!(signed["connected"], true);
     assert_eq!(signed["effort"], "high", "{signed}");
+
+    // A disconnect while a sign-in waits in the browser wins over its return.
+    let (release, held) = tokio::sync::oneshot::channel();
+    *hold.lock().unwrap() = Some(held);
+    let (signed, disconnected) = tokio::join!(core.call("aiConnect", vec![]), async {
+        crate::support::wait_until(
+            std::time::Duration::from_secs(10),
+            "the sign-in to wait",
+            || hold.lock().unwrap().is_none().then_some(()),
+        )
+        .await;
+        let disconnected = core.call("aiDisconnect", vec![]).await;
+        release.send(()).unwrap();
+        disconnected
+    });
+    assert_eq!(disconnected.unwrap()["connected"], false);
+    assert!(
+        signed.unwrap_err().message.contains("disconnected"),
+        "the sign-in finished after the disconnect"
+    );
+    let status = core.call("aiStatus", vec![]).await.unwrap();
+    assert_eq!(status["connected"], false, "{status}");
 }
 
 /// 2026-11-11: a connection document this release could not read was taken for no connection,

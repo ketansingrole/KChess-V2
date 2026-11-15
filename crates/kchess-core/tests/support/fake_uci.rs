@@ -268,6 +268,17 @@ fn main() {
         if line == "quit" {
             break;
         }
+        // `mute`: at the first search, closes its output and goes on running, answering nothing.
+        #[cfg(unix)]
+        if mode == "mute" && line.starts_with("go") {
+            use std::os::unix::process::CommandExt as _;
+            let exe = std::env::current_exe().expect("the fake engine's path");
+            let again = std::process::Command::new("/bin/sh")
+                .args(["-c", "exec \"$0\" silent 1>&-"])
+                .arg(exe)
+                .exec();
+            panic!("the fake engine could not run again: {again}");
+        }
         if searching {
             if slow && line.starts_with("go ") {
                 std::thread::sleep(std::time::Duration::from_millis(20));

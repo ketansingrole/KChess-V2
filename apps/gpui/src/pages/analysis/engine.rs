@@ -267,7 +267,7 @@ impl AnalysisPage {
                 cx.notify();
             });
             let answer = core
-                .request(calls::CloudEval {
+                .lookup(calls::CloudEval {
                     fen: Position(fen),
                     lines: Bounded(lines as u64),
                 })

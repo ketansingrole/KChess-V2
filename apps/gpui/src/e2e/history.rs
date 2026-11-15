@@ -677,6 +677,32 @@ fn a_lichess_game_steps_to_the_next_and_previous(cx: &mut gpui_kit::TestAppConte
     assert!(open(&mut app).0.is_some());
 }
 
+/// 2026-11-15: a game's PGN read answered after the game was closed opened it again, and one
+/// answered after the next game opened replaced it. A read answered late is dropped.
+#[gpui_kit::test]
+fn a_lichess_game_closed_before_its_read_answers_stays_closed(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    app.with_window(|window, cx| crate::shell::open(Page::History, window, cx));
+    app.click(("history-source", 2usize));
+    lichess_listed(&mut app, "the synced games", |total, _| total == 40);
+    app.with_window(|window, cx| {
+        let page =
+            crate::shell::view::<crate::pages::history::HistoryPage>(cx).expect("the history page");
+        page.update(cx, |page, cx| {
+            let mut game = page.first_lichess().expect("a synced game");
+            game.pgn = Some("[Event \"Casual\"]\n\n1. e4 e5 *".into());
+            page.open_lichess(game, window, cx);
+            page.close_lichess(window, cx);
+        });
+    });
+    app.settle();
+    let open = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::history::HistoryPage>(cx)
+            .map(|page| page.read(cx).lichess_open().0)
+    });
+    assert_eq!(open, Some(None), "the closed game opened again");
+}
+
 /// The computer and board games are searched by opponent or opening, as the Lichess games are.
 #[gpui_kit::test]
 fn board_games_are_searched_by_opponent_or_opening(cx: &mut gpui_kit::TestAppContext) {

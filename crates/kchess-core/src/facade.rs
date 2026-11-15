@@ -101,79 +101,24 @@ impl Core {
     /// Migrates an earlier release's profile once, before the first call reads the store. The
     /// plaintext tokens of an earlier database are encrypted with the OS store here.
     pub(crate) async fn ensure_migrated(&self) -> Result<()> {
+        let migration = Migration {
+            host: Arc::clone(&self.host),
+            capabilities: Arc::clone(&self.capabilities),
+            database: Arc::clone(&self.database),
+            running: Arc::clone(&self.migrating),
+        };
         self.migrated
-            .get_or_try_init(|| async { self.migrate().await })
+            .get_or_try_init(|| async {
+                // On its own task: a caller cancelled during a keychain prompt (its window
+                // closed) stopped it after the accounts were committed and before their logins
+                // were, and the import, no longer pending, never ran again.
+                self.tracker
+                    .spawn(migration.run())
+                    .await
+                    .unwrap_or_else(|_| Err(CoreError::new("The profile import stopped.")))
+            })
             .await
             .map(|_| ())
-    }
-
-    pub(crate) async fn migrate(&self) -> Result<()> {
-        // Asking the OS secret store can show a keychain prompt: only when tokens may be imported.
-        let pending = self
-            .database
-            .read_async(import::legacy_import_pending)
-            .await?;
-        let available = pending && self.capabilities.secrets_available().await?;
-        let legacy = self
-            .database
-            .write_async(move |ctx| import::migrate(ctx, available))
-            .await?;
-        if !available {
-            return Ok(());
-        }
-        let imported = !legacy.is_empty();
-        for entry in legacy {
-            let account = entry.account;
-            let stored = match self.capabilities.encrypt(&entry.token).await {
-                Ok(encrypted) => {
-                    let owner = account.clone();
-                    self.database
-                        .write_async(move |ctx| {
-                            store::games::import_token_ciphertext(
-                                ctx.db,
-                                owner.as_deref(),
-                                &encrypted,
-                            )
-                        })
-                        .await
-                }
-                Err(cause) => Err(cause),
-            };
-            if let Err(cause) = stored {
-                // The accounts row was already committed as connected: disconnect it
-                // so a per-account encrypt failure does not leave a silent logged-out
-                // state that the import (no longer pending) would never retry. Its
-                // imported games stay: a logout would delete them (and with no account
-                // name, every account's).
-                let name = account.clone().unwrap_or_else(|| "?".into());
-                self.host.log(
-                    Level::Warn,
-                    "store",
-                    &format!("Legacy migration failed for {name}: {}", cause.message),
-                );
-                if let Some(account) = account {
-                    let disconnected = self
-                        .database
-                        .write_async(move |ctx| store::games::disconnect_account(ctx.db, &account))
-                        .await;
-                    if let Err(cause) = disconnected {
-                        self.host.log(
-                            Level::Warn,
-                            "store",
-                            &format!("Could not disconnect {name}: {}", cause.message),
-                        );
-                    }
-                }
-            }
-        }
-        // Every login the earlier database held is sealed here now (or its account was
-        // disconnected), so its plaintext copies go.
-        if imported {
-            self.database
-                .read_async(import::scrub_legacy_tokens)
-                .await?;
-        }
-        Ok(())
     }
 
     /// The saved settings.
@@ -356,5 +301,85 @@ impl Core {
         self.puzzles.close().await;
         self.database.close_async().await;
         self.claim.release();
+    }
+}
+
+/// The import of an earlier release's profile, as its own task runs it (`ensure_migrated`).
+struct Migration {
+    host: Arc<dyn Host>,
+    capabilities: Arc<crate::capabilities::Capabilities>,
+    database: Arc<crate::store::Database>,
+    running: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl Migration {
+    async fn run(self) -> Result<()> {
+        let _running = self.running.lock().await;
+        // Asking the OS secret store can show a keychain prompt: only when tokens may be imported.
+        let pending = self
+            .database
+            .read_async(import::legacy_import_pending)
+            .await?;
+        let available = pending && self.capabilities.secrets_available().await?;
+        let legacy = self
+            .database
+            .write_async(move |ctx| import::migrate(ctx, available))
+            .await?;
+        if !available {
+            return Ok(());
+        }
+        let imported = !legacy.is_empty();
+        for entry in legacy {
+            let account = entry.account;
+            let stored = match self.capabilities.encrypt(&entry.token).await {
+                Ok(encrypted) => {
+                    let owner = account.clone();
+                    self.database
+                        .write_async(move |ctx| {
+                            store::games::import_token_ciphertext(
+                                ctx.db,
+                                owner.as_deref(),
+                                &encrypted,
+                            )
+                        })
+                        .await
+                }
+                Err(cause) => Err(cause),
+            };
+            if let Err(cause) = stored {
+                // The accounts row was already committed as connected: disconnect it
+                // so a per-account encrypt failure does not leave a silent logged-out
+                // state that the import (no longer pending) would never retry. Its
+                // imported games stay: a logout would delete them (and with no account
+                // name, every account's).
+                let name = account.clone().unwrap_or_else(|| "?".into());
+                self.host.log(
+                    Level::Warn,
+                    "store",
+                    &format!("Legacy migration failed for {name}: {}", cause.message),
+                );
+                if let Some(account) = account {
+                    let disconnected = self
+                        .database
+                        .write_async(move |ctx| store::games::disconnect_account(ctx.db, &account))
+                        .await;
+                    if let Err(cause) = disconnected {
+                        self.host.log(
+                            Level::Warn,
+                            "store",
+                            &format!("Could not disconnect {name}: {}", cause.message),
+                        );
+                    }
+                }
+            }
+        }
+        // Every login the earlier database held is sealed here now (or its account was
+        // disconnected), so its plaintext copies go.
+        if imported {
+            self.database
+                .read_async(import::scrub_legacy_tokens)
+                .await?;
+        }
+        Ok(())
     }
 }

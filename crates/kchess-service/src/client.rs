@@ -328,10 +328,18 @@ impl Drop for Unanswered {
             .lock()
             .ok()
             .and_then(|mut pending| pending.as_mut().and_then(|p| p.remove(&self.id)));
-        // A full queue means the core is not reading; the connection then ends, and the call
-        // with it.
         if self.sent && waiting.is_some() {
-            let _ = self.sender.try_send(Frame::Cancel { id: self.id });
+            // A full queue holds the cancel back rather than losing it: the core would go on
+            // with work nobody waits for once it reads again.
+            if let Err(mpsc::error::TrySendError::Full(cancel)) =
+                self.sender.try_send(Frame::Cancel { id: self.id })
+                && let Ok(runtime) = tokio::runtime::Handle::try_current()
+            {
+                let sender = self.sender.clone();
+                runtime.spawn(async move {
+                    let _ = sender.send(cancel).await;
+                });
+            }
         }
     }
 }
@@ -456,5 +464,26 @@ mod tests {
         // A copy the sandboxed app wrote was quarantined: "Operation not permitted" on start.
         let bundled = Path::new("/Applications/KChess.app/Contents/MacOS/kchess-service");
         assert_eq!(service_binary(bundled, true), bundled);
+    }
+    /// A call dropped while the queue to the core was full forgot its cancel, so the core went
+    /// on with it once the queue drained.
+    #[tokio::test]
+    async fn a_call_dropped_on_a_full_queue_is_still_cancelled() {
+        let (sender, mut queue) = mpsc::channel::<Frame>(1);
+        sender.try_send(Frame::Suspend).unwrap();
+        let (answer, _answered) = oneshot::channel();
+        let pending: Pending = Arc::new(Mutex::new(Some(HashMap::from([(7, answer)]))));
+        drop(Unanswered {
+            id: 7,
+            sender,
+            pending,
+            sent: true,
+        });
+        assert!(matches!(queue.recv().await, Some(Frame::Suspend)));
+        let next = tokio::time::timeout(Duration::from_secs(5), queue.recv()).await;
+        assert!(
+            matches!(next, Ok(Some(Frame::Cancel { id: 7 }))),
+            "the cancel was lost"
+        );
     }
 }

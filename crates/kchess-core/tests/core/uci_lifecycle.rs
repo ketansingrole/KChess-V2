@@ -69,6 +69,31 @@ async fn fails_an_engine_whose_line_runs_past_the_limit() {
         .expect("the failed engine process exits");
 }
 
+/// 2026-11-15: an engine that closed its output but kept running left an infinite search
+/// waiting forever, holding the engine from every review. The search fails, and the process goes.
+#[cfg(unix)]
+#[tokio::test]
+async fn fails_a_search_whose_engine_closes_its_output_and_keeps_running() {
+    let host = support::host();
+    let hub = support::hub(&host);
+    let engine = UciController::start(&hub, support::fake("mute", None), HANDSHAKE)
+        .expect("spawn the fake engine");
+    engine.ready().await.expect("handshake");
+    let searched = tokio::time::timeout(
+        Duration::from_secs(10),
+        engine.search("go infinite", |_line: &str| {}, None, None),
+    )
+    .await
+    .expect("the search ends");
+    assert_eq!(
+        searched.unwrap_err().message,
+        "The engine stopped answering."
+    );
+    tokio::time::timeout(Duration::from_secs(5), engine.closed())
+        .await
+        .expect("the mute engine process exits");
+}
+
 #[tokio::test]
 async fn cancels_an_active_search_after_the_stop_acknowledgment() {
     let host = support::host();

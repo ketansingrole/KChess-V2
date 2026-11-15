@@ -83,9 +83,13 @@ impl TournamentsApi for Core {
         let (id, name) = (id.0, account.0);
         let password = password.as_ref().map(|password| password.0.as_str());
         let lichess = self.services.lichess();
+        // A logout or removal meanwhile ends the join's work: it keeps no stream open and
+        // remembers no tournament for an account that is gone.
+        let epoch = lichess.account_epoch(&name);
+        let current = || lichess.account_epoch(&name) == epoch;
         let result =
             done(tournaments::join_tournament(lichess, system, &id, &name, password).await)?;
-        if result != Reply::Done(true) {
+        if result != Reply::Done(true) || !current() {
             return Ok(result);
         }
         // Pairings arrive on the event stream: keep it open while in the tournament.
@@ -114,6 +118,9 @@ impl TournamentsApi for Core {
                     cause.message
                 ),
             ),
+        }
+        if !current() {
+            return Ok(result);
         }
         self.database
             .write_async(move |ctx| {

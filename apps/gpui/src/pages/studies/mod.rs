@@ -609,6 +609,11 @@ impl StudiesPage {
                     .flatten()
                     .ok_or("The study is gone")?;
                 let pgn = document_pgn(&study);
+                let uploaded: Vec<String> = study
+                    .chapters
+                    .iter()
+                    .map(|chapter| chapter.id.clone())
+                    .collect();
                 let linked = study.cloud.as_ref().filter(|cloud| {
                     !copy
                         && !cloud.structure_changed
@@ -676,6 +681,7 @@ impl StudiesPage {
                             account: account.clone(),
                             remote_id: remote.clone(),
                             baseline: baseline.clone(),
+                            chapters: uploaded.clone(),
                         })
                     })
                     .map_err(|_| "The page closed".to_string())?;

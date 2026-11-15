@@ -1097,6 +1097,9 @@ impl Lichess {
     /// Syncs the connected accounts (or one of them), in turn. Every account still
     /// syncs when one fails; the first failure is reported afterwards.
     pub async fn sync_games(&self, username: Option<&str>) -> CoreResult<()> {
+        // Taken before the accounts are read: data cleared after this resets a cursor read here,
+        // and that account's sync stops rather than going on from the old one.
+        let epochs = lock(&self.account_epochs).clone();
         let rows = self.store.accounts().await?;
         let rows: Vec<&AccountRow> = rows
             .iter()
@@ -1107,8 +1110,10 @@ impl Lichess {
         let play_times = self.play_times(&rows).await;
         let mut first_error: Option<CoreError> = None;
         for row in rows {
-            let play_time = play_times.get(&row.username.to_lowercase()).copied();
-            if let Err(cause) = self.sync_account(row, play_time).await {
+            let key = row.username.to_lowercase();
+            let play_time = play_times.get(&key).copied();
+            let epoch = epochs.get(&key).copied().unwrap_or(0);
+            if let Err(cause) = self.sync_account(row, play_time, epoch).await {
                 self.host.log(
                     Level::Warn,
                     "lichess",
@@ -1158,7 +1163,12 @@ impl Lichess {
     /// briefly run concurrently with the old one, but both recheck the account epoch
     /// before every write (`current()`), so stale writes are skipped and only the
     /// current generation advances the cursor.
-    async fn sync_account(&self, row: &AccountRow, play_time: Option<i64>) -> CoreResult<usize> {
+    async fn sync_account(
+        &self,
+        row: &AccountRow,
+        play_time: Option<i64>,
+        epoch: u64,
+    ) -> CoreResult<usize> {
         let key = row.username.to_lowercase();
         let joined = lock(&self.syncs)
             .get(&key)
@@ -1180,7 +1190,7 @@ impl Lichess {
                 syncs.remove(&key);
             }
         });
-        let result = self.run_sync(row, play_time).await;
+        let result = self.run_sync(row, play_time, epoch).await;
         drop(forget);
         let shared = result.clone();
         let _ = send.send(Some(shared));
@@ -1194,9 +1204,14 @@ impl Lichess {
         result
     }
 
-    async fn run_sync(&self, row: &AccountRow, play_time: Option<i64>) -> CoreResult<usize> {
+    /// `row` as read under the account's `epoch`.
+    async fn run_sync(
+        &self,
+        row: &AccountRow,
+        play_time: Option<i64>,
+        epoch: u64,
+    ) -> CoreResult<usize> {
         let name = row.username.as_str();
-        let epoch = self.account_epoch(name);
         let current = || self.account_epoch(name) == epoch;
         let started_at = now_ms();
         async {

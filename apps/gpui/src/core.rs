@@ -111,6 +111,18 @@ impl CoreBridge {
         }
     }
 
+    /// `request` for a lookup a newer one replaces: dropped before its answer, it cancels the
+    /// call in the core rather than leaving it to run for nobody.
+    pub fn lookup<C: CoreCall + Send + 'static>(
+        &self,
+        call: C,
+    ) -> impl Future<Output = Result<C::Answer, CoreError>> + 'static + use<C>
+    where
+        C::Answer: Send,
+    {
+        abortable(self.runtime.handle(), self.handle.request(call))
+    }
+
     /// A typed core call (`kchess_contracts::calls`); the future resolves on any executor.
     pub fn request<C: CoreCall + Send + 'static>(
         &self,
@@ -149,6 +161,27 @@ impl CoreBridge {
         let _ = self.runtime.block_on(async {
             tokio::time::timeout(std::time::Duration::from_secs(5), closing).await
         });
+    }
+}
+
+/// Runs `work` on `runtime`; the future resolves on any executor, and dropped first it aborts
+/// the work, which drops the core call with it.
+fn abortable<T: Send + 'static, W: Future<Output = Result<T, CoreError>> + Send + 'static>(
+    runtime: &tokio::runtime::Handle,
+    work: W,
+) -> impl Future<Output = Result<T, CoreError>> + 'static + use<T, W> {
+    struct Abort(tokio::task::AbortHandle);
+    impl Drop for Abort {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let task = runtime.spawn(work);
+    let abort = Abort(task.abort_handle());
+    async move {
+        let _abort = abort;
+        task.await
+            .unwrap_or_else(|_| Err(CoreError::new("The KChess core stopped")))
     }
 }
 
@@ -273,6 +306,17 @@ impl AppCore {
     {
         self.bridge.request(call)
     }
+
+    /// `request` for a lookup a newer one replaces (`CoreBridge::lookup`).
+    pub fn lookup<C: CoreCall + Send + 'static>(
+        &self,
+        call: C,
+    ) -> impl Future<Output = Result<C::Answer, CoreError>> + 'static + use<C>
+    where
+        C::Answer: Send,
+    {
+        self.bridge.lookup(call)
+    }
 }
 
 /// Opens the core for `data_dir` and delivers its events to `CoreEvents` on the UI thread.
@@ -360,6 +404,34 @@ fn answer_host(ask: HostAsk, cx: &mut App) {
 mod tests {
     use super::{Answer, Reads};
     use kchess_contracts::types::ProfileArea;
+
+    /// 2026-11-15: a cloud evaluation the next position replaced kept running in the core, since
+    /// the app's call ran detached on the core's runtime; dropping it now ends the work.
+    #[test]
+    fn a_dropped_lookup_stops_its_work() {
+        struct Dropped(std::sync::mpsc::Sender<()>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                let _ = self.0.send(());
+            }
+        }
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (sender, dropped) = std::sync::mpsc::channel();
+        let (started, running) = std::sync::mpsc::channel();
+        let lookup = super::abortable(runtime.handle(), async move {
+            let _work = Dropped(sender);
+            let _ = started.send(());
+            std::future::pending::<Result<(), kchess_contracts::CoreError>>().await
+        });
+        running.recv().unwrap();
+        drop(lookup);
+        assert!(
+            dropped
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .is_ok(),
+            "the work went on after its lookup was dropped"
+        );
+    }
 
     #[test]
     fn only_the_newest_read_without_later_changes_is_shown() {
