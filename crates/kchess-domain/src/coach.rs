@@ -595,6 +595,11 @@ mod tests {
             again[2].fen,
             "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
         );
+        // Hyphens around a move are not part of it, wherever it stands in the reply.
+        let dashed = "So --e4- it is.";
+        let named = named_moves(dashed, START, &[vec!["e2e4"]]);
+        assert_eq!(named[0].range, 5..7);
+        assert_eq!(&dashed[named[0].range.clone()], "e4");
         assert!(named_moves("e4", "not a fen", &[vec!["e2e4"]]).is_empty());
         assert!(named_moves("Nothing here.", START, &[vec!["e2e4"]]).is_empty());
     }
