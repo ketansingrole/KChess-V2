@@ -524,7 +524,6 @@ fn utf16_len_chars(chars: &[char]) -> usize {
 /// Where `dests` puts a legal move: castling lands on the rook.
 pub(crate) fn dest(m: &Move) -> Option<Square> {
     match *m {
-        Move::Castle { rook, .. } => Some(rook),
         Move::Put { .. } => None,
         _ => Some(m.to()),
     }
@@ -579,11 +578,6 @@ pub fn legal_move(pos: &VariantPosition, uci: UciMove) -> Option<Move> {
         } => (from, to, promotion),
     };
     let board = pos.board();
-    match promotion {
-        Some(Role::Pawn) => return None,
-        Some(Role::King) if !matches!(pos, VariantPosition::Antichess(_)) => return None,
-        _ => {}
-    }
     let promotes = board.by_role(Role::Pawn).contains(from) && backranks().contains(to);
     if promotion.is_some() != promotes {
         return None;
@@ -597,11 +591,8 @@ pub fn legal_move(pos: &VariantPosition, uci: UciMove) -> Option<Move> {
         } else {
             CastlingSide::QueenSide
         };
-        let rook = pos.castles().rook(pos.turn(), side)?;
-        return pos
-            .castling_moves(side)
-            .into_iter()
-            .find(|m| m.from() == Some(from) && dest(m) == Some(rook));
+        // The side to move has one king, so at most one castling move each way.
+        return pos.castling_moves(side).into_iter().next();
     }
     pos.san_candidates(role, to)
         .into_iter()
@@ -610,10 +601,7 @@ pub fn legal_move(pos: &VariantPosition, uci: UciMove) -> Option<Move> {
 
 /// A legal drop: in the pocket, no pawn on a back rank, an allowed square.
 fn legal_drop(pos: &VariantPosition, role: Role, to: Square) -> Option<Move> {
-    let pockets = pos.pockets()?;
-    if *pockets.get(pos.turn()).get(role) == 0 || (role == Role::Pawn && backranks().contains(to)) {
-        return None;
-    }
+    pos.pockets()?;
     pos.san_candidates(role, to)
         .into_iter()
         .find(|m| *m == Move::Put { role, to })
@@ -635,9 +623,8 @@ fn san_without_suffix(pos: &VariantPosition, m: &Move) -> String {
     let Some(role) = board.role_at(from) else {
         return "--".into();
     };
-    if role == Role::King
-        && (board.by_color(pos.turn()).contains(to) || (to as i32 - from as i32).abs() == 2)
-    {
+    // A castle lands on the king's own rook.
+    if role == Role::King && board.by_color(pos.turn()).contains(to) {
         return if to > from {
             "O-O".into()
         } else {
@@ -724,12 +711,7 @@ pub fn parse_san(pos: &VariantPosition, san: &str) -> Option<Move> {
             "O-O-O" | "O-O-O+" | "O-O-O#" => CastlingSide::QueenSide,
             _ => return parse_drop_san(pos, san),
         };
-        let king = pos.board().king_of(pos.turn())?;
-        let rook = pos.castles().rook(pos.turn(), side)?;
-        return pos
-            .castling_moves(side)
-            .into_iter()
-            .find(|m| m.from() == Some(king) && dest(m) == Some(rook));
+        return pos.castling_moves(side).into_iter().next();
     };
     let promotes = parsed.role == Role::Pawn && backranks().contains(parsed.to);
     if parsed.promotion.is_some() != promotes {
@@ -793,7 +775,7 @@ fn parse_drop_san(pos: &VariantPosition, san: &str) -> Option<Move> {
     let (role, square) = body.split_once('@')?;
     let role = match role.chars().collect::<Vec<_>>().as_slice() {
         [] => Role::Pawn,
-        [c] if "pnbrqkPNBRQK".contains(*c) => Role::from_char(c.to_ascii_lowercase())?,
+        [c] => Role::from_char(c.to_ascii_lowercase())?,
         _ => return None,
     };
     legal_drop(pos, role, parse_square(square)?)
