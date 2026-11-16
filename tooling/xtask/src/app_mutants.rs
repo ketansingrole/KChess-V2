@@ -1002,6 +1002,15 @@ mod tests {
         assert_eq!(shard_count(1000.0 * 3600.0), MAX_SHARDS);
     }
 
+    /// A shard's planned work fits before its deadline, and the chunk running at the deadline,
+    /// even at twice its estimate, ends within the job's six hours.
+    #[test]
+    fn a_shard_stops_late_enough_for_its_plan_and_early_enough_to_report() {
+        let deadline = SHARD_DEADLINE.as_secs_f64();
+        let job = 6.0 * 3600.0;
+        assert!((SHARD_SECONDS..job - 2.0 * CHUNK_SECONDS).contains(&deadline));
+    }
+
     fn chunk(estimate: f64) -> Chunk {
         Chunk {
             mutants: Vec::new(),
