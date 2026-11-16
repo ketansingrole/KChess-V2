@@ -17,7 +17,7 @@ fn computer(cx: &mut gpui_kit::TestAppContext) -> Harness {
 /// Until the page takes moves: the saved game is restored and the engine is ready, which a new
 /// game (another variant's engine) waits for again. The page itself is asked, not the move field
 /// as last drawn, which can still show the game before.
-fn wait_playable(app: &mut Harness) {
+pub(super) fn wait_playable(app: &mut Harness) {
     app.wait_for("the game to take moves", |_, cx| {
         crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
             .is_some_and(|page| page.read(cx).takes_moves())

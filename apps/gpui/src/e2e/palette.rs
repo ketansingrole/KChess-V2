@@ -535,12 +535,7 @@ fn the_analysis_boards_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppConte
 fn a_computer_game_takes_back_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.open("Play with computer");
-    app.wait_for("the game to take moves", |window, _| {
-        use gpui_kit::test::TestQueryExt as _;
-        window
-            .try_find_by_label("Enter a chess move in SAN or UCI")
-            .is_some_and(|entry| entry.disabled() != Some(true))
-    });
+    super::computer::wait_playable(&mut app);
     // Before a move there is nothing to take back: the page's actions lead the list without it.
     let shown = |app: &mut Harness| {
         app.press("secondary-k");
