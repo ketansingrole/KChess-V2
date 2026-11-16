@@ -134,6 +134,19 @@ pub fn parse_info(text: &str, white_to_move: bool) -> Option<Info> {
 mod tests {
     use super::*;
 
+    /// `string` is free text to the end of the line, so a PV inside it is not the line's.
+    #[test]
+    fn a_pv_inside_a_string_is_not_read() {
+        assert!(parse_info("info depth 9 score cp 50 string x pv e2e4", true).is_none());
+    }
+
+    /// `wdl` takes three values, so the words after the first two are not keys.
+    #[test]
+    fn wdl_takes_three_values() {
+        let line = parse_info("info depth 9 score cp 50 wdl 0 depth 4 pv e2e4", true).unwrap();
+        assert_eq!(line.line.depth, 9.0);
+    }
+
     #[test]
     fn variant_lines_keep_their_drops_and_king_promotions() {
         let line = parse_info("info depth 9 score cp 50 pv b1c3 d5e6 P@b4 e7e8k", true).unwrap();

@@ -180,8 +180,10 @@ exclude_re = [
     # The scientific layout is used only for exponents of 21 and up or -7 and down, and 0 and
     # negative zero return before the sign is picked.
     'kchess-domain/src/js\.rs:.*: replace < with <= in number_to_string$',
-    # The header name's first character is a letter or digit, which the loop accepts anyway.
-    'kchess-domain/src/pgn\.rs:.*: replace \+ with \* in match_header$',
+    # The PGN reader stops when a token or header would not move it forward; every real one does,
+    # so the guard's `>` and `>=` (or `<` and `<=`) differ only for a match that never happens.
+    'kchess-domain/src/pgn\.rs:.*: replace > with >= in tokens$',
+    'kchess-domain/src/pgn\.rs:.*: replace < with <= in Parser::handle_line$',
     # A line is too long only if its UTF-16 length is, which never exceeds its byte length: the
     # byte check only skips decoding short lines. A row solid for the sampler is solid for themes
     # too, so the early return only saves the work below, which the same two flags guard.
