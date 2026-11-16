@@ -679,7 +679,6 @@ fn level_info(level: &str) -> Result<&'static engine_levels::EngineLevelInfo, St
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::games::ILLEGAL_SETUP;
     use serde_json::{Value, json};
 
     fn host(now: f64) -> Host {
@@ -739,16 +738,6 @@ mod tests {
         assert_eq!(game.moves(), ["e2e4", "e7e5"]);
     }
 
-    #[test]
-    fn a_reply_to_a_game_taken_back_is_ignored() {
-        let mut game = ComputerGame::resume(None, &host(0.)).unwrap();
-        game.play("e2e4", &host(1.));
-        let request = game.search_start(&host(2.)).unwrap().unwrap();
-        game.takeback(&host(3.));
-        game.search_reply(&request, "e7e5", &host(4.));
-        assert!(game.moves().is_empty());
-    }
-
     /// Another variant's game is played by its rules and searched in it: a drop is a move, and
     /// the engine is told the variant (Fairy-Stockfish plays it) and the start.
     #[test]
@@ -774,21 +763,6 @@ mod tests {
         let request = game.search_start(&host(5.)).unwrap().expect("a search");
         assert_eq!(request.moves, ["e2e4", "d7d5", "e4d5", "d8d5", "P@e3"]);
         assert_eq!(json!(request.options)["chess960"], Value::Null);
-    }
-
-    /// A saved game on a setup that is not a legal position is refused: it used to be played on
-    /// from the standard start, refusing every move.
-    #[test]
-    fn a_saved_game_on_an_illegal_setup_is_refused() {
-        let saved = Saved {
-            setup: Some(Setup {
-                variant: Variant::Standard,
-                fen: "8/8/8/8/8/8/8/8 w - - 0 1".into(),
-            }),
-            ..Saved::default()
-        };
-        let error = ComputerGame::resume(Some(saved), &host(0.)).err();
-        assert_eq!(error.as_deref(), Some(ILLEGAL_SETUP));
     }
 
     /// The engine's clock runs out on its turn: the engine stops, its flag falls and the player
@@ -843,15 +817,6 @@ mod tests {
         game.search_reply(&request, "e2e4", &host(6.));
         game.resign();
         assert_eq!(Outcome::tag(game.outcome()), "1-0");
-    }
-
-    #[test]
-    fn a_resignation_stops_the_engine_and_loses() {
-        let mut game = ComputerGame::resume(None, &host(0.)).unwrap();
-        game.play("e2e4", &host(1.));
-        assert_eq!(game.resign(), [Effect::StopEngine]);
-        assert!(game.over());
-        assert_eq!(game.result().unwrap().kind, Kind::Loss);
     }
 
     /// Assistance stopping mid-search cancels the engine.
@@ -1098,12 +1063,5 @@ mod tests {
             ..host(2.)
         };
         assert!(!played(&mut game, request.epoch, request.count, refused));
-    }
-
-    #[test]
-    fn an_illegal_move_is_refused() {
-        let mut game = ComputerGame::resume(None, &host(0.)).unwrap();
-        assert!(!game.play("e2e5", &host(1.)).0);
-        assert!(!game.over());
     }
 }

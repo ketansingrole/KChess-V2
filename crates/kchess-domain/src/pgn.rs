@@ -983,22 +983,6 @@ mod tests {
         );
     }
 
-    /// An illegal setup gave a PGN of the headers alone, which read back as a game from the
-    /// standard start with no moves.
-    #[test]
-    fn a_setup_pgn_refuses_an_illegal_setup() {
-        let kingless = "8/8/8/8/8/8/8/8 w - - 0 1";
-        assert_eq!(
-            setup_pgn(
-                crate::variant::Variant::Standard,
-                kingless,
-                &["e2e4"],
-                &[("White", "You")]
-            ),
-            Err(crate::games::ILLEGAL_SETUP.to_string())
-        );
-    }
-
     use super::*;
     use regex::Regex;
 

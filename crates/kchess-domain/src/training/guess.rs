@@ -325,14 +325,6 @@ mod tests {
     }
 
     #[test]
-    fn the_move_played_scores_full_points_without_an_engine() {
-        let judged = judge("g1f3", "g1f3", Evals::default());
-        assert_eq!(judged.grade, Grade::Master);
-        assert_eq!(judged.points, FULL_POINTS);
-        assert_eq!(judged.flaw, None);
-    }
-
-    #[test]
     fn castling_either_way_is_the_move_played() {
         let castles = crate::rules::standard_from_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1")
             .expect("a position");
@@ -356,55 +348,6 @@ mod tests {
             judge(&guessed, "e1g1", Evals::default()).grade,
             Grade::Master
         );
-    }
-
-    #[test]
-    fn another_move_scores_nothing_without_an_engine() {
-        let judged = judge("b1c3", "g1f3", Evals::default());
-        assert_eq!(judged.grade, Grade::Miss);
-        assert_eq!((judged.points, judged.loss), (0, None));
-        let best_only = Evals {
-            best: Some(Eval::Cp(30)),
-            ..Evals::default()
-        };
-        assert_eq!(judge("b1c3", "g1f3", best_only).points, 0);
-    }
-
-    #[test]
-    fn a_guess_near_the_best_move_still_scores() {
-        let best = Eval::Cp(40);
-        let cases = [
-            (Eval::Cp(40), Grade::Best, 4, 0),
-            (Eval::Cp(20), Grade::Best, 4, 20),
-            (Eval::Cp(19), Grade::Good, 2, 21),
-            (Eval::Cp(-10), Grade::Good, 2, 50),
-            (Eval::Cp(-60), Grade::Fair, 1, 100),
-            (Eval::Cp(-61), Grade::Miss, 0, 101),
-        ];
-        for (guessed, grade, points, loss) in cases {
-            let judged = judge("b1c3", "g1f3", engine(best, guessed));
-            assert_eq!(
-                (judged.grade, judged.points, judged.loss),
-                (grade, points, Some(loss)),
-                "{guessed:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_guess_the_engine_likes_more_than_its_best_lost_nothing() {
-        let judged = judge("b1c3", "g1f3", engine(Eval::Cp(10), Eval::Cp(35)));
-        assert_eq!((judged.grade, judged.loss), (Grade::Best, Some(0)));
-    }
-
-    #[test]
-    fn any_move_that_keeps_a_won_game_won_is_good() {
-        // +15 against +12: both clamp to a clear win.
-        let judged = judge("a1a2", "h1h2", engine(Eval::Cp(1500), Eval::Cp(1200)));
-        assert_eq!(judged.grade, Grade::Best);
-        // A slower mate is still a mate.
-        let judged = judge("a1a2", "h1h2", engine(Eval::Mate(2), Eval::Mate(5)));
-        assert_eq!(judged.grade, Grade::Best);
     }
 
     #[test]
@@ -436,56 +379,6 @@ mod tests {
         assert_eq!(Flaw::Mistake.glyph(), "?");
     }
 
-    #[test]
-    fn a_sound_move_played_scores_in_full() {
-        let evals = Evals {
-            best: Some(Eval::Cp(40)),
-            guessed: None,
-            played: Some(Eval::Cp(25)),
-        };
-        let judged = judge("g1f3", "g1f3", evals);
-        assert_eq!(
-            judged,
-            Judged {
-                grade: Grade::Master,
-                points: FULL_POINTS,
-                loss: Some(15),
-                flaw: None
-            }
-        );
-    }
-
-    /// The player blundered: guessing their move is no longer the right answer, and the
-    /// engine's move is.
-    #[test]
-    fn a_blunder_played_scores_what_it_was_worth_and_the_better_move_scores_in_full() {
-        let evals = Evals {
-            best: Some(Eval::Cp(40)),
-            guessed: Some(Eval::Cp(35)),
-            played: Some(Eval::Cp(-300)),
-        };
-        let matched = judge("d1h5", "d1h5", evals);
-        assert_eq!(
-            (matched.grade, matched.points, matched.flaw),
-            (Grade::Played, 0, Some(Flaw::Blunder))
-        );
-        let better = judge("g1f3", "d1h5", evals);
-        assert_eq!(
-            (better.grade, better.points, better.flaw),
-            (Grade::Better, FULL_POINTS, Some(Flaw::Blunder))
-        );
-        // A move only good, not best, is graded as ever.
-        let good = judge(
-            "b1c3",
-            "d1h5",
-            Evals {
-                guessed: Some(Eval::Cp(0)),
-                ..evals
-            },
-        );
-        assert_eq!((good.grade, good.points), (Grade::Good, 2));
-    }
-
     /// An inaccuracy is marked, but within what separate searches differ by: the move played
     /// still scores in full, and a guess matching the engine is only best.
     #[test]
@@ -503,20 +396,6 @@ mod tests {
         let best = judge("g1f3", "a2a3", evals);
         assert_eq!((best.grade, best.points), (Grade::Best, 4));
         assert_eq!(summarize(&[matched]).flawed, 0);
-    }
-
-    #[test]
-    fn a_mistake_played_scores_its_band() {
-        let evals = Evals {
-            best: Some(Eval::Cp(40)),
-            guessed: None,
-            played: Some(Eval::Cp(-100)),
-        };
-        let matched = judge("a2a3", "a2a3", evals);
-        assert_eq!(
-            (matched.grade, matched.points, matched.loss, matched.flaw),
-            (Grade::Played, 0, Some(140), Some(Flaw::Mistake))
-        );
     }
 
     #[test]

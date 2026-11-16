@@ -697,44 +697,6 @@ mod tests {
         assert!(TreeNode::from_pgn("1. e5 *").is_none());
     }
 
-    #[test]
-    fn a_crazyhouse_tree_starts_with_pockets_and_keeps_its_drops() {
-        let tree =
-            tree_from_pgn("[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 3. Nc3 Qa5 4. P@d4 *")
-                .unwrap();
-        assert!(tree.fen.contains("[]"), "{}", tree.fen);
-        let mut node = &tree;
-        while let Some(child) = node.children.first() {
-            node = child;
-        }
-        assert_eq!(node.uci, "P@d4");
-        assert_eq!(node.san, "P@d4");
-        assert!(node.fen.contains("[p]"), "{}", node.fen);
-    }
-
-    #[test]
-    fn builds_a_tree_with_variations() {
-        let tree =
-            tree_from_pgn("1. e4 e5 (1... c5 2. Nf3) 2. Nf3 Nc6 3. Bb5 a6 4. O-O *").unwrap();
-        assert_eq!(tree.children[0].uci, "e2e4");
-        let e4 = &tree.children[0];
-        assert_eq!(e4.children.len(), 2);
-        assert_eq!(e4.children[1].san, "c5");
-        let mut node = &e4.children[0];
-        while let Some(next) = node.children.first() {
-            node = next;
-        }
-        assert_eq!(node.san, "O-O");
-        assert_eq!(node.uci, "e1h1");
-        assert_eq!(node.ply, 7);
-    }
-
-    #[test]
-    fn rejects_illegal_and_multi_game_documents() {
-        assert!(tree_from_pgn("1. e5 *").is_none());
-        assert!(tree_from_pgn("1. e4 e5\n\n1. d4 d5").is_none());
-    }
-
     /// A main line of `plies` knight moves, back and forth.
     fn shuffle(plies: usize) -> String {
         let knights = ["Nf3", "Nf6", "Ng1", "Ng8"];

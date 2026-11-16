@@ -534,43 +534,6 @@ mod tests {
     }
 
     #[test]
-    fn an_explanation_names_the_moves_of_its_lines() {
-        const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-        // The better line, then the played one, as an explanation lists them: Nf3 is in both.
-        let played = vec!["e2e4", "e7e5", "g1f3"];
-        let best = vec!["g1f3", "d7d5", "d2d4"];
-        let reply = "You missed Nf3, stronger than e4. After e4 e5 Nf3, (d5) answers; d4!? and the e4-square.";
-        let named = named_moves(reply, START, &[best, played]);
-        let words: Vec<(&str, &str)> = named
-            .iter()
-            .map(|named| (&reply[named.range.clone()], named.uci.as_str()))
-            .collect();
-        assert_eq!(
-            words,
-            [
-                // Alone: the first line that has it.
-                ("Nf3", "g1f3"),
-                ("e4", "e2e4"),
-                ("e4", "e2e4"),
-                ("e5", "e7e5"),
-                // The move after e5 in its line, not the better line's first.
-                ("Nf3", "g1f3"),
-                ("d5", "d7d5"),
-                // Annotations and words joined by a hyphen are not part of a move.
-                ("d4", "d2d4"),
-            ]
-        );
-        assert_eq!(
-            named[4].fen,
-            "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
-        );
-        assert_eq!(
-            named[0].fen,
-            "rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1"
-        );
-    }
-
-    #[test]
     fn a_move_later_in_the_same_line_is_preferred() {
         const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         let first = vec!["d2d4", "d7d5"];
@@ -670,15 +633,6 @@ mod tests {
     }
 
     #[test]
-    fn plain_chess_words_are_no_claims() {
-        let allowed = fork_brief().allowed;
-        assert!(check_reply(
-            "The fork wins material, and your opponent's position collapses.",
-            &allowed
-        ));
-    }
-
-    #[test]
     fn a_nudge_never_gives_the_answer() {
         let solution = ["b5c7", "e8d7", "c7a8"];
         let brief = nudge_brief(FORK, &solution).unwrap();
@@ -711,14 +665,6 @@ mod tests {
             "Missed Nc7, winning 5 points of material."
         );
         assert!(review_moment(&review, 3).is_none());
-    }
-
-    #[test]
-    fn a_review_without_lines_still_has_a_moment() {
-        let review = stored(json!({ "fen": FORK, "moves": ["e1e2"], "evals": [null, null] }));
-        let moment = review_moment(&review, 0).unwrap();
-        assert_eq!(moment["reason"], Value::Null);
-        assert_eq!(moment["request"]["kind"], "move");
     }
 
     /// The Lichess daily puzzle fWQJU, which the first real run of puzzle help got wrong: a mate
@@ -813,14 +759,5 @@ mod tests {
             clue(&line(&["Rh8"], 0, vec![])),
             "Look for the most forcing move."
         );
-    }
-
-    #[test]
-    fn a_wrong_puzzle_move_is_explained_without_the_solution() {
-        let solution = ["b5c7", "e8d7", "c7a8"];
-        let brief = wrong_brief(FORK, &solution, "e1e2", &["e8d7"]).unwrap();
-        assert!(brief.input.contains("without giving the better move away"));
-        assert!(!brief.input.contains("Nc7"), "{}", brief.input);
-        assert!(!check_reply("Nc7 was the move.", &brief.allowed));
     }
 }

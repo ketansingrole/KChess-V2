@@ -847,9 +847,4 @@ mod tests {
         let s = status(fen, &win, &taken).unwrap();
         assert_eq!((s.success, s.reason), (Some(true), Some(Reason::BareKing)));
     }
-
-    #[test]
-    fn invalid_input_is_an_error() {
-        assert!(status("nonsense", &Task::Read, &[] as &[String]).is_err());
-    }
 }

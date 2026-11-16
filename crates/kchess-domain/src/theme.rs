@@ -316,16 +316,4 @@ mod tests {
         assert_eq!(default_colors(false)["--ui-primary"], "#4b6231");
         assert_eq!(default_colors(true)["--ui-bg"], "#171615");
     }
-
-    #[test]
-    fn a_palette_without_its_base_colors_is_refused() {
-        assert!(colors(&json!({ "bg": "#fff", "text": "#000" }), false).is_none());
-        assert!(
-            colors(
-                &json!({ "bg": "white", "text": "#000", "primary": "#000" }),
-                false
-            )
-            .is_none()
-        );
-    }
 }

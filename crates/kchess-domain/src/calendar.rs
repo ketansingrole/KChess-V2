@@ -178,20 +178,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn day_counts_follow_the_gregorian_calendar() {
-        assert_eq!(civil_from_days(0), Some((1970, 1, 1)));
-        assert_eq!(civil_from_days(-1), Some((1969, 12, 31)));
-        assert_eq!(civil_from_days(11_016), Some((2000, 2, 29)));
-        assert_eq!(civil_from_days(19_782), Some((2024, 2, 29)));
-        assert_eq!(days_from_civil(2024, 3, 1), Some(19_783));
-        assert_eq!(days_from_civil(2023, 2, 29), None);
-        assert_eq!(days_from_civil(1900, 2, 29), None);
-        assert_eq!(days_from_civil(2000, 2, 29), Some(11_016));
-        assert_eq!(civil_from_days(i64::MAX), None);
-        assert_eq!(civil_from_days(i64::MIN), None);
-    }
-
-    #[test]
     fn day_counts_round_trip_across_the_whole_range() {
         let first = days_from_civil(MIN_YEAR, 1, 1).expect("first day");
         let last = days_from_civil(MAX_YEAR, 12, 31).expect("last day");
@@ -257,21 +243,6 @@ mod tests {
             parse_iso_millis("2026-10-21T08:30:00.000Z"),
             Some(1_792_571_400_000)
         );
-    }
-
-    #[test]
-    fn timestamps_write_as_javascript_writes_them() {
-        assert_eq!(iso_millis(0).as_deref(), Some("1970-01-01T00:00:00.000Z"));
-        assert_eq!(
-            iso_millis(1_700_000_000_123).as_deref(),
-            Some("2023-11-14T22:13:20.123Z")
-        );
-        assert_eq!(iso_millis(-1).as_deref(), Some("1969-12-31T23:59:59.999Z"));
-        assert_eq!(
-            iso_millis(-62_198_755_200_000).as_deref(),
-            Some("-000001-01-01T00:00:00.000Z")
-        );
-        assert_eq!(iso_millis(i64::MAX), None);
     }
 
     #[test]

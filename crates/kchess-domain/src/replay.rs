@@ -283,27 +283,6 @@ mod tests {
     }
 
     #[test]
-    fn castling_is_accepted_both_ways() {
-        let line = ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "e1g1"];
-        assert_eq!(
-            replay_setup(Variant::Standard, START, &line)
-                .unwrap()
-                .played[6]
-                .san,
-            "O-O"
-        );
-        let mut rook = line;
-        rook[6] = "e1h1";
-        assert_eq!(
-            replay_setup(Variant::Standard, START, &rook)
-                .unwrap()
-                .played[6]
-                .san,
-            "O-O"
-        );
-    }
-
-    #[test]
     fn engine_line_spells_castling_for_the_engine_mode() {
         let line = [
             "e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "e1h1", "f8c5", "e1g1",

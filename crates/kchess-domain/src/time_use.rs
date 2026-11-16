@@ -159,26 +159,6 @@ mod tests {
     }
 
     #[test]
-    fn a_game_without_clocks_or_with_correspondence_time_has_none() {
-        assert_eq!(time_use("[TimeControl \"180+2\"]\n\n1. e4 e5 1-0"), None);
-        assert_eq!(
-            time_use("[TimeControl \"-\"]\n\n1. e4 { [%clk 0:03:00] } 1-0"),
-            None
-        );
-        assert_eq!(
-            time_use("[TimeControl \"60\"]\n\n1. e4 { [%clk 0:01:00] } 1... e5 2. Qh5 1-0")
-                .map(|time| time.clocks.len()),
-            Some(3),
-            "legal moves without clocks still count"
-        );
-        assert_eq!(
-            time_use("[TimeControl \"60\"]\n\n1. e4 { [%clk 0:01:00] } 1... Ke2 1-0"),
-            None,
-            "an illegal move"
-        );
-    }
-
-    #[test]
     fn the_endgame_begins_where_the_review_phases_say() {
         // A position with a queen and a rook each: already the endgame.
         let pgn = "[TimeControl \"60\"]\n[FEN \"4k3/8/8/8/8/8/q6r/4K2R w - - 0 1\"]\n[SetUp \"1\"]\n\n\

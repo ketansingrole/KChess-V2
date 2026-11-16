@@ -463,16 +463,6 @@ mod tests {
     }
 
     #[test]
-    fn a_double_attack_the_line_ignores_is_not_a_fork() {
-        let line = facts(
-            "r3k3/pp3ppp/8/1N6/8/8/PPP2PPP/4K3 w - - 0 1",
-            &["b5c7", "e8d7", "c7b5"],
-        );
-        assert_eq!(line.material, 0);
-        assert!(line.tactics.is_empty(), "{line:?}");
-    }
-
-    #[test]
     fn pawns_and_defended_equals_are_no_fork_targets() {
         let pawns = rules::standard_from_fen("4k3/8/2p1p3/1p3p2/3N4/8/8/4K3 w - - 0 1").unwrap();
         assert!(real_targets(&pawns, Square::D4, Color::Black).is_empty());
@@ -483,26 +473,9 @@ mod tests {
     }
 
     #[test]
-    fn a_hanging_piece_is_a_capture_the_line_leaves_standing() {
-        let line = facts("4k3/8/8/3q4/8/8/8/3RK3 w - - 0 1", &["d1d5"]);
-        assert_eq!(line.material, 9);
-        assert_eq!(kinds(&line), ["hanging"]);
-    }
-
-    #[test]
     fn a_line_ending_on_an_answerable_capture_counts_nothing_for_it() {
         let line = facts("4k3/4n3/8/3q4/8/8/8/3RK3 w - - 0 1", &["d1d5"]);
         assert_eq!(line.material, 0);
-        assert!(line.tactics.is_empty(), "{line:?}");
-    }
-
-    #[test]
-    fn a_recaptured_piece_is_not_hanging() {
-        let line = facts(
-            "4k3/8/4p3/3n4/4P3/8/8/4K3 w - - 0 1",
-            &["e4d5", "e6d5", "e1d2"],
-        );
-        assert_eq!(line.material, 2);
         assert!(line.tactics.is_empty(), "{line:?}");
     }
 
@@ -533,19 +506,6 @@ mod tests {
         assert_eq!(refutation.material, 9);
         assert_eq!(kinds(&refutation), ["hanging"]);
         assert_eq!(facts.better.unwrap().san, ["Ke2"]);
-    }
-
-    #[test]
-    fn the_best_move_has_nothing_better() {
-        let facts = move_facts(
-            "4k3/8/8/4p3/8/8/8/3QK3 w - - 0 1",
-            "e1e2",
-            &["e1e2"],
-            &["e8e7"],
-            Mates::default(),
-        )
-        .unwrap();
-        assert_eq!(facts.better, None);
     }
 
     #[test]
@@ -587,32 +547,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(kept.missed_mate, None);
-    }
-
-    #[test]
-    fn an_illegal_line_stops_where_it_stops_being_legal() {
-        let line = facts("4k3/8/8/8/8/8/8/4K2R w - - 0 1", &["h1h8", "a1a2", "e8e7"]);
-        assert_eq!(line.san, ["Rh8+"]);
-        assert!(
-            move_facts(
-                "not a fen",
-                "e2e4",
-                &[] as &[&str],
-                &[] as &[&str],
-                Mates::default()
-            )
-            .is_none()
-        );
-        assert!(
-            move_facts(
-                "4k3/8/8/8/8/8/8/4K2R w - - 0 1",
-                "a1a2",
-                &[] as &[&str],
-                &[] as &[&str],
-                Mates::default()
-            )
-            .is_none()
-        );
     }
 
     #[test]

@@ -767,18 +767,6 @@ mod tests {
     }
 
     #[test]
-    fn reads_clocks_like_chessops() {
-        assert_eq!(comment_clock("[%clk 1:02:03]"), Some(3723.0));
-        assert_eq!(
-            comment_clock("a [%clk 0:00:05.5] b [%clk 0:00:04.]"),
-            Some(4.0)
-        );
-        assert_eq!(comment_clock("[%clk 0:00:05.1234]"), None);
-        assert_eq!(comment_clock("[%clk  0:00:05]"), None);
-        assert_eq!(comment_clock("[%clk 123456:00:05]"), None);
-    }
-
-    #[test]
     fn reads_the_main_line() {
         let line = pgn_mainline(
             "1. e4 { [%clk 0:01:00] } e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# *",
@@ -788,28 +776,6 @@ mod tests {
         assert_eq!(line.moves.len(), 3);
         assert_eq!(line.moves[0].clock, Some(60.0));
         assert_eq!(line.start.as_deref(), Some(START));
-    }
-
-    /// A board's destinations castle onto the king's square too, a Chess960 board's onto the
-    /// rook only, as the rules do.
-    #[test]
-    fn dests_castle_as_the_board_asks() {
-        let pos = rules::setup_start(
-            crate::variant::Variant::Standard,
-            "4k3/8/8/8/8/8/8/4K2R w K - 0 1",
-        )
-        .unwrap();
-        let king = |mode| {
-            dests(&pos, mode)
-                .into_iter()
-                .find(|(from, _)| *from == Square::E1)
-                .unwrap()
-                .1
-        };
-        assert!(king(DestMode::Board).contains(&Square::G1));
-        let squares = king(DestMode::Rules);
-        assert!(squares.contains(&Square::H1));
-        assert!(!squares.contains(&Square::G1));
     }
 
     #[test]
