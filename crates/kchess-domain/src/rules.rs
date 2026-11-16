@@ -352,7 +352,6 @@ fn chessops_valid(pos: &VariantPosition) -> bool {
         || (!pos.is_check() && pos.board().by_role(Role::Pawn).is_empty())
 }
 
-
 /// A FEN text as a position of `variant`; none when it is not a legal one there.
 pub fn setup_start(variant: crate::variant::Variant, fen: &str) -> Option<VariantPosition> {
     setup_position(variant.rules(), parse_fen(fen)?)
