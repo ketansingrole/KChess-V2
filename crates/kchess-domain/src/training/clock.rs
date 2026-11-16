@@ -205,4 +205,21 @@ mod tests {
         assert_eq!(format_clock(90_000_000.0), "1d 1h");
         assert_eq!(format_clock(-5.0), "0:00.0");
     }
+    #[test]
+    fn the_alert_comes_when_the_clock_reaches_the_threshold() {
+        let mut clock = ClockState::initial();
+        clock.set(
+            &SetData {
+                white: 30_000.0,
+                black: 30_000.0,
+                ticking: Some("white".into()),
+                initial_seconds: None,
+                delay_centis: None,
+            },
+            0.0,
+        );
+        assert_eq!(clock.emerg_ms, 20_000.0);
+        assert!(!clock.low_time_alert("white", 9_999.0));
+        assert!(clock.low_time_alert("white", 10_000.0));
+    }
 }

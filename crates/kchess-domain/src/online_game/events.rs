@@ -593,4 +593,50 @@ mod tests {
         Run::new(&mut model, &ctx).checking();
         assert_eq!(model.online_connection.unwrap().epoch(), 7.0);
     }
+
+    /// A clock that has run out is no berserk, though it is below half.
+    #[test]
+    fn an_empty_clock_is_no_berserk() {
+        let ctx = Ctx::default();
+        let mut model = Model::idle();
+        model.online_id = "AbCd1234".into();
+        model.online_tournament = "arena".into();
+        model.online_clock_config = Some(ClockConfig {
+            initial: 180.0,
+            increment: 0.0,
+        });
+        Run::new(&mut model, &ctx).read_event(&event(json!({
+            "type": "gameState", "id": "AbCd1234", "moves": "",
+            "wtime": 0, "btime": 180_000, "status": "started",
+        })));
+        assert!(!model.berserked);
+    }
+
+    /// The how of an ending is told only with the winner it fits.
+    #[test]
+    fn an_ending_is_told_with_the_winner_it_fits() {
+        let line = |winner: Option<&str>, reason: &str| outcome_line(winner, reason, Color::White);
+        let cases = [
+            ("mate", "You won by checkmate"),
+            ("resign", "You won by resignation"),
+            ("timeout", "You won by abandonment"),
+            ("cheat", "You won by cheat detection"),
+            ("variantEnd", "You won by the variant's rules"),
+            ("outoftime", "You won on time"),
+            ("stalemate", "You won"),
+            ("draw", "You won"),
+        ];
+        for (reason, told) in cases {
+            assert_eq!(line(Some("white"), reason), told, "{reason}");
+        }
+        assert_eq!(line(Some("black"), "cheat"), "You lost by cheat detection");
+        // Without a winner, a decisive ending is no more than a game over.
+        for reason in ["mate", "resign", "timeout", "cheat", "variantEnd"] {
+            assert_eq!(line(None, reason), "Game over", "{reason}");
+        }
+        assert_eq!(line(None, "stalemate"), "Draw by stalemate");
+        assert_eq!(line(None, "draw"), "Draw by agreement");
+        assert_eq!(line(None, "outoftime"), "Draw on time");
+        assert_eq!(line(None, "aborted"), "Game aborted");
+    }
 }

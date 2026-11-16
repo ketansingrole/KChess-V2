@@ -145,4 +145,67 @@ exclude_re = [
     'tooling/xtask/src/package/mac\.rs:.*: replace sign -> Result with ',
     'tooling/xtask/src/package/(mac|mas)\.rs:.*: replace package -> Result<Vec<PathBuf>> with ',
     'tooling/xtask/src/package/mod\.rs:.*: replace run -> Result with ',
+    # ── kchess-domain: mutants whose program behaves the same ──
+    # `|` and `^` (or `+` and `-`, or `&` and `|`) agree on bitboards or numbers that share no bit:
+    # a king's square and its rooks', the first and eighth ranks, queens and rooks, pawn pushes and
+    # captures, and a pawn's squares beside the attack set.
+    'kchess-domain/src/rules\.rs:.*: replace \| with \^ in (parse_castling|backranks|parse_san)$',
+    'kchess-domain/src/position\.rs:.*: replace \| with \^ in fen_problem$',
+    'kchess-domain/src/training/lessons\.rs:.*: replace \| with \^ in (bare_king_against_major|play_status)$',
+    # A multi-byte character's lead byte is past `h` and `8` either way, so it is no square.
+    'kchess-domain/src/rules\.rs:.*: replace \|\| with && in parse_square$',
+    # A rook never stands on its own king's square, so `<` and `<=` order the castling letters alike.
+    'kchess-domain/src/rules\.rs:.*: replace < with <= in write_fen$',
+    # Castling's `to` is the rook's square, never the king's: `>` and `>=` pick the same side.
+    'kchess-domain/src/rules\.rs:.*: replace > with >= in san_without_suffix$',
+    # The pieces of the role are filtered by which of them reach the square right after, so any
+    # wider set of candidates gives the same set.
+    'kchess-domain/src/rules\.rs:.*: replace & with \| in san_without_suffix$',
+    # Each step past the move itself: the move ends on the square the fork or pin is seen from,
+    # and a target is never that square; the step that made the position cannot capture a piece
+    # of the side now to move.
+    'kchess-domain/src/tactics\.rs:.*: replace \+ with \* in (fork|pin)$',
+    # The score is filtered to non-zero the line before.
+    'kchess-domain/src/tactics\.rs:.*: replace > with >= in mate_for$',
+    # The king stands on the extra square, which holds no rook.
+    'kchess-domain/src/editor\.rs:.*: replace \+ with \* in castling_available$',
+    # The index comes from the node's own children, so it is always below their count.
+    'kchess-domain/src/tree\.rs:.*: replace < with <= in TreeNode::promote$',
+    # V8's `Math.exp`: NaN plus, minus or times itself is the same quiet NaN; `HUGE ± x` is about
+    # 1e300 for every tiny `x`, never 1.
+    'kchess-domain/src/review\.rs:.*: replace \+ with [-*] in js_exp$',
+    'kchess-domain/src/review\.rs:.*: replace > with >= in js_exp$',
+    # The `None` arm of `white_at` is never reached: every index is within the positions.
+    'kchess-domain/src/review\.rs:.*: replace == with != in analyse_moves$',
+    # The scientific layout is used only for exponents of 21 and up or -7 and down, and 0 and
+    # negative zero return before the sign is picked.
+    'kchess-domain/src/js\.rs:.*: replace < with <= in number_to_string$',
+    # The header name's first character is a letter or digit, which the loop accepts anyway.
+    'kchess-domain/src/pgn\.rs:.*: replace \+ with \* in match_header$',
+    # A line is too long only if its UTF-16 length is, which never exceeds its byte length: the
+    # byte check only skips decoding short lines. A row solid for the sampler is solid for themes
+    # too, so the early return only saves the work below, which the same two flags guard.
+    'kchess-domain/src/puzzle\.rs:.*: replace > with >= in Sampler::(add_bytes|push)$',
+    'kchess-domain/src/puzzle\.rs:.*: delete ! in Sampler::add_bytes$',
+    # File and rank are whole numbers (or NaN), so their sum and difference share their parity.
+    'kchess-domain/src/voice\.rs:.*: replace \+ with - in square_color$',
+    # Equal material adds no extra pieces either way.
+    'kchess-domain/src/voice\.rs:.*: replace > with >= in material_diff$',
+    # A wait of zero gives zero either way.
+    'kchess-domain/src/online_game/events\.rs:.*: replace > with >= in Run<.*>::read_state$',
+    # The calendar takes only years -9999 to 9999, far inside the limit, so the guard only saves
+    # work; `is_finite` is the one that refuses.
+    'kchess-domain/src/records/ratings\.rs:.*: replace > with (==|>=) in utc_date$',
+    # Clamped to ±1000, the two forms differ only past 99,000 moves to mate; `Mate(0)` is taken by
+    # the arm above.
+    'kchess-domain/src/training/guess\.rs:.*: replace - with \+ in Eval::centipawns$',
+    'kchess-domain/src/training/guess\.rs:.*: replace > with >= in Eval::chances$',
+    # Mate within 0 moves is always false, so a search that also tries 0 finds the same mates.
+    'kchess-domain/src/training/lessons\.rs:.*: replace > with >= in (mates_within|quickest_mate|try_move|step_problems)$',
+    # A move from a square to itself is no move.
+    'kchess-domain/src/training/puzzle\.rs:.*: replace > with >= in castling_side$',
+    # A combo of 30 is answered by the table, with the value the fallthrough would give.
+    'kchess-domain/src/training/rush\.rs:.*: replace > with >= in combo_bonus_ms$',
+    # The extra token is `pv` itself, which is no UCI move and is filtered out.
+    'kchess-domain/src/training/uci_info\.rs:.*: replace \+ with \* in parse_info$',
 ]

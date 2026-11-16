@@ -241,4 +241,20 @@ mod tests {
         assert_eq!(day_streak([], "2026-10-19"), DayStreak::default());
         assert_eq!(day_streak(["junk"], "2026-10-19"), DayStreak::default());
     }
+    #[test]
+    fn outcomes_are_stored_by_name() {
+        let all = [
+            (Outcome::Solved, "solved"),
+            (Outcome::Hinted, "hinted"),
+            (Outcome::Partial, "partial"),
+            (Outcome::Missed, "missed"),
+            (Outcome::Revealed, "revealed"),
+        ];
+        for (outcome, name) in all {
+            assert_eq!(outcome.name(), name);
+            assert_eq!(Outcome::parse(name), Some(outcome));
+        }
+        assert_eq!(Outcome::parse("won"), None);
+        assert_eq!(Outcome::parse(""), None);
+    }
 }

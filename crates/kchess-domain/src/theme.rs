@@ -316,4 +316,16 @@ mod tests {
         assert_eq!(default_colors(false)["--ui-primary"], "#4b6231");
         assert_eq!(default_colors(true)["--ui-bg"], "#171615");
     }
+
+    /// A dark channel is divided by 12.92, as WCAG writes the linear part.
+    #[test]
+    fn the_luminance_of_a_dark_color_is_its_linear_part() {
+        // 5/255 is under the 0.03928 threshold: (5/255) / 12.92 in every channel.
+        let expected = 5.0 / 255.0 / 12.92;
+        assert!((Rgb(5.0, 5.0, 5.0).luminance() - expected).abs() < 1e-9);
+        assert!((Rgb(0.0, 0.0, 0.0).luminance()).abs() < 1e-12);
+        assert!((Rgb(255.0, 255.0, 255.0).luminance() - 1.0).abs() < 1e-9);
+        let contrast = Rgb(5.0, 5.0, 5.0).contrast(Rgb(0.0, 0.0, 0.0));
+        assert!((contrast - (expected + 0.05) / 0.05).abs() < 1e-9);
+    }
 }

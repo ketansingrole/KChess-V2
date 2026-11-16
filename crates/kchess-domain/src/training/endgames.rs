@@ -188,4 +188,24 @@ mod tests {
         );
         assert!(san_from("nonsense", &[] as &[String]).is_empty());
     }
+    #[test]
+    fn being_checkmated_offers_another_try() {
+        let mated = evaluate(
+            "7k/5Q2/6K1/8/8/8/8/8 w - - 0 1",
+            &moves(&["f7g7"]),
+            "white",
+            "win",
+        )
+        .unwrap();
+        assert_eq!(mated.detail, None);
+        let lost = evaluate(
+            "7k/5Q2/6K1/8/8/8/8/8 w - - 0 1",
+            &moves(&["f7g7"]),
+            "black",
+            "draw",
+        )
+        .unwrap();
+        assert_eq!(lost.success, Some(false));
+        assert_eq!(lost.detail, Some("Try the position again."));
+    }
 }

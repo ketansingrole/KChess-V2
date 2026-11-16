@@ -331,4 +331,56 @@ mod link_tests {
             assert_eq!(game_link(other), None, "{other}");
         }
     }
+
+    #[test]
+    fn a_game_link_has_no_more_than_an_id_and_a_side() {
+        assert_eq!(game_link("https://lichess.org/q7ZvsdUF/white/extra"), None);
+        assert_eq!(game_link("https://lichess.org/q7ZvsdUF/black/extra"), None);
+    }
+
+    #[test]
+    fn a_study_link_needs_eight_letter_ids() {
+        use super::study_link;
+        assert_eq!(study_link("https://lichess.org/study/abc"), None);
+        assert_eq!(study_link("https://lichess.org/study/abcd-fgh"), None);
+        assert_eq!(study_link("https://lichess.org/study/1wzY0YmD/short"), None);
+    }
+
+    #[test]
+    fn an_orientation_tag_names_the_side_it_shows() {
+        use super::pgn_orientation;
+        use shakmaty::Color;
+        assert_eq!(
+            pgn_orientation("[Orientation \"white\"]\n*"),
+            Some(Color::White)
+        );
+        assert_eq!(
+            pgn_orientation("[Orientation \"black\"]\n*"),
+            Some(Color::Black)
+        );
+        assert_eq!(pgn_orientation("[Orientation \"red\"]\n*"), None);
+    }
+
+    #[test]
+    fn a_broadcast_link_needs_eight_letter_ids() {
+        use super::{BroadcastLink, broadcast_link};
+        for bad in [
+            "https://lichess.org/broadcast/slug/abc",
+            "https://lichess.org/broadcast/slug/abcd-fgh",
+            "https://lichess.org/broadcast/slug/round-2/abc",
+            "https://lichess.org/broadcast/slug/round-2/abcd-fgh",
+            "https://lichess.org/broadcast/slug/round-2/BeCQF8BD/abc",
+            "https://lichess.org/broadcast/slug/round-2/abc/AbCd1234",
+            "https://lichess.org/broadcast/slug/round-2/BeCQF8BD/abcd-fgh",
+        ] {
+            assert_eq!(broadcast_link(bad), None, "{bad}");
+        }
+        assert_eq!(
+            broadcast_link("https://lichess.org/broadcast/slug/round-2/BeCQF8BD/AbCd1234"),
+            Some(BroadcastLink::Round {
+                round: "BeCQF8BD".into(),
+                game: "AbCd1234".into(),
+            })
+        );
+    }
 }

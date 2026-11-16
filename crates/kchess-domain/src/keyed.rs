@@ -102,4 +102,9 @@ mod tests {
         assert!(!keyed.is_empty());
         assert_eq!(keyed.iter().collect::<Vec<_>>(), [("b", &3), ("a", &2)]);
     }
+    #[test]
+    fn a_value_that_is_not_an_object_says_what_was_expected() {
+        let error = serde_json::from_str::<Keyed<u32>>("[1]").unwrap_err();
+        assert!(error.to_string().contains("expected an object"), "{error}");
+    }
 }

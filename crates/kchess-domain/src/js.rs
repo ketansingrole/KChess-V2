@@ -418,4 +418,63 @@ mod tests {
         assert_eq!(slice_utf16("abc", 10), "abc");
         assert_eq!(slice_utf16("abc", 0), "");
     }
+
+    #[test]
+    fn text_is_a_string_within_its_utf16_length() {
+        use serde_json::json;
+        assert_eq!(text(Some(&json!("abc")), 3), Some("abc"));
+        assert_eq!(text(Some(&json!("abcd")), 3), None);
+        assert_eq!(text(Some(&json!("a😀")), 2), None);
+        assert_eq!(text(Some(&json!(5)), 3), None);
+    }
+
+    #[test]
+    fn zero_is_falsy_and_other_numbers_are_not() {
+        use serde_json::json;
+        assert!(falsy(Some(&json!(0))) && falsy(Some(&json!(0.0))));
+        assert!(!falsy(Some(&json!(1))) && !falsy(Some(&json!(-0.5))));
+    }
+
+    #[test]
+    fn the_smaller_number_wins_when_either_is_nan() {
+        assert!(min(f64::NAN, 1.0).is_nan() && min(1.0, f64::NAN).is_nan());
+        assert!(max(f64::NAN, 1.0).is_nan());
+        assert!(min(f64::NAN, f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn an_empty_array_is_zero_and_a_longer_one_is_not_a_number() {
+        use serde_json::json;
+        assert_eq!(to_number(Some(&json!([]))), 0.0);
+        assert!(to_number(Some(&json!([1, 2]))).is_nan());
+    }
+
+    #[test]
+    fn only_javascript_numeric_text_is_a_number() {
+        for text in ["inf", "-inf", "infinity", "nan", "NaN", "1x", "0x", "e"] {
+            assert!(string_to_number(text).is_nan(), "{text}");
+        }
+        assert_eq!(string_to_number("-Infinity"), f64::NEG_INFINITY);
+        assert_eq!(string_to_number("1e3"), 1000.0);
+        assert_eq!(string_to_number("-.5"), -0.5);
+        assert_eq!(string_to_number("0x10"), 16.0);
+    }
+
+    #[test]
+    fn only_canonical_indices_are_ordered_first() {
+        let order = |json: &str| stringify(&serde_json::from_str::<Value>(json).unwrap());
+        assert_eq!(order(r#"{"b":1,"0":2,"3":3}"#), r#"{"0":2,"3":3,"b":1}"#);
+        for key in ["01", "+1", "-1", "1.5", "4294967295"] {
+            let json = format!(r#"{{"!x":1,"{key}":2,"7":3}}"#);
+            assert_eq!(
+                order(&json),
+                format!(r#"{{"7":3,"!x":1,"{key}":2}}"#),
+                "{key}"
+            );
+        }
+        assert_eq!(
+            order(r#"{"4294967294":1,"a":2}"#),
+            r#"{"4294967294":1,"a":2}"#
+        );
+    }
 }

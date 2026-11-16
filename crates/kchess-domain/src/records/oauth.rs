@@ -185,4 +185,21 @@ mod tests {
         assert_eq!(look(&json!({ "appearance": "neon" })), None);
         assert_eq!(look(&Value::Null), None);
     }
+
+    /// A colour of 240 UTF-16 units is kept, one of 241 is not.
+    #[test]
+    fn a_colour_is_at_most_240_units_long() {
+        let scheme = |long: String| {
+            let mut map = Map::new();
+            for key in COLOR_KEYS {
+                map.insert((*key).to_string(), json!("#fff"));
+            }
+            map.insert("bg".into(), json!(long));
+            colors(Some(&Value::Object(map)))
+        };
+        let mix = |units: usize| format!("color-mix(in srgb,{})", "a".repeat(units - 19));
+        assert_eq!(mix(240).len(), 240);
+        assert!(scheme(mix(240)).is_some());
+        assert!(scheme(mix(241)).is_none());
+    }
 }

@@ -388,4 +388,91 @@ mod tests {
             .is_none()
         );
     }
+
+    fn event_of(overrides: Value) -> Option<ChallengeEvent> {
+        read_challenge_event("Alice", &challenge(overrides), 0)
+    }
+
+    #[test]
+    fn a_challenge_event_is_one_of_three_kinds() {
+        for kind in ["challenge", "challengeCanceled", "challengeDeclined"] {
+            let mut raw = challenge(json!({}));
+            raw["type"] = json!(kind);
+            let event = read_challenge_event("Alice", &raw, 0).unwrap();
+            assert_eq!(event.kind, kind);
+        }
+        let mut raw = challenge(json!({}));
+        raw["type"] = json!("challengeAccepted");
+        assert!(read_challenge_event("Alice", &raw, 0).is_none());
+    }
+
+    #[test]
+    fn a_color_is_white_black_or_random() {
+        for color in ["white", "black", "random"] {
+            let event = event_of(json!({ "color": color })).unwrap();
+            assert_eq!(event.info.color, color);
+        }
+        assert!(event_of(json!({ "color": "green" })).is_none());
+        assert_eq!(event_of(json!({ "color": null })), None);
+    }
+
+    #[test]
+    fn a_game_id_is_eight_to_twelve_letters_and_digits() {
+        for id in ["AbCd1234", "AbCd1234Ef56"] {
+            assert!(event_of(json!({ "id": id })).is_some(), "{id}");
+        }
+        for id in ["abcd-fgh", "abc", "AbCd123", "AbCd1234Ef567"] {
+            assert!(event_of(json!({ "id": id })).is_none(), "{id}");
+        }
+        let rematch = |id: &str| event_of(json!({ "rematchOf": id }));
+        assert_eq!(
+            rematch("AbCd5678").unwrap().info.rematch_of.as_deref(),
+            Some("AbCd5678")
+        );
+        assert!(rematch("abcd-fgh").is_none());
+        assert!(rematch("abc").is_none());
+    }
+
+    #[test]
+    fn every_kind_of_time_control_is_read() {
+        let control = |time_control: Value| {
+            event_of(json!({ "timeControl": time_control })).map(|event| event.info.time_control)
+        };
+        assert_eq!(
+            control(json!({ "type": "correspondence", "daysPerTurn": 3 })),
+            Some(TimeControl::Correspondence {
+                days: Number::from(3)
+            })
+        );
+        assert_eq!(
+            control(json!({ "type": "correspondence" })),
+            Some(TimeControl::Correspondence {
+                days: Number::from(0)
+            })
+        );
+        assert_eq!(
+            control(json!({ "type": "unlimited" })),
+            Some(TimeControl::Unlimited)
+        );
+        assert_eq!(
+            control(json!({ "type": "clock" })),
+            Some(TimeControl::Clock {
+                limit: Number::from(0),
+                increment: Number::from(0)
+            })
+        );
+        assert_eq!(control(json!({ "type": "blitz" })), None);
+    }
+
+    #[test]
+    fn a_start_position_is_no_initial_fen() {
+        let fen = |initial: &str| {
+            event_of(json!({ "initialFen": initial })).and_then(|event| event.info.initial_fen)
+        };
+        assert_eq!(fen("startpos"), None);
+        assert_eq!(
+            fen("8/8/8/8/8/8/8/k1K5 w - - 0 1").as_deref(),
+            Some("8/8/8/8/8/8/8/k1K5 w - - 0 1")
+        );
+    }
 }

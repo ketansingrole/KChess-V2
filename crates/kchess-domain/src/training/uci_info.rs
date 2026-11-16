@@ -158,4 +158,48 @@ mod tests {
         let cp = parse_info("info depth 5 score cp 20 pv e2e4", true).unwrap();
         assert_eq!(cp.line.cp, Some(20.0));
     }
+
+    #[test]
+    fn an_indented_line_is_read_after_trimming() {
+        assert!(parse_info("  info depth 5 score cp 20 pv e2e4", true).is_some());
+        assert!(parse_info("\tinfo depth 5 score cp 20 pv e2e4", true).is_some());
+        assert!(parse_info("xinfo depth 5 score cp 20 pv e2e4", true).is_none());
+    }
+
+    #[test]
+    fn the_line_rank_and_speed_are_read() {
+        let info = parse_info("info multipv 2 nps 1500 depth 5 score cp 20 pv e2e4", true).unwrap();
+        assert_eq!(info.line.rank, 2.0);
+        assert_eq!(info.nps, Some(1500.0));
+        let plain = parse_info("info depth 5 score cp 20 pv e2e4", true).unwrap();
+        assert_eq!((plain.line.rank, plain.nps), (1.0, None));
+    }
+
+    #[test]
+    fn a_key_takes_its_value_and_a_score_may_come_first() {
+        // `currmove`'s value is not a key, and not a move of the line.
+        let info = parse_info("info currmove depth depth 5 score cp 20 pv e2e4", true).unwrap();
+        assert_eq!(info.line.depth, 5.0);
+        let info = parse_info("info score cp 20 depth 5 pv e2e4", true).unwrap();
+        assert_eq!(info.line.cp, Some(20.0));
+        let info = parse_info("info wdl 1 2 depth depth 5 score cp 20 pv e2e4", true).unwrap();
+        assert_eq!(info.line.depth, 5.0);
+        let info = parse_info("info depth 5 score cp 20 currmove e7e5 pv e2e4", true).unwrap();
+        assert_eq!(info.line.pv, ["e2e4"]);
+    }
+
+    #[test]
+    fn a_key_swallows_exactly_one_value() {
+        // `depth` is `currmove`'s value here, not a second depth.
+        let info = parse_info("info depth 5 currmove depth score cp 20 pv e2e4", true).unwrap();
+        assert_eq!(info.line.depth, 5.0);
+        // A score of neither kind swallows its two values, `depth 5` among them.
+        assert!(parse_info("info score depth 5 score cp 20 pv e2e4", true).is_none());
+    }
+
+    #[test]
+    fn a_bound_score_is_provisional() {
+        assert!(parse_info("info depth 5 score cp 20 lowerbound pv e2e4", true).is_none());
+        assert!(parse_info("info depth 5 score cp 20 upperbound pv e2e4", true).is_none());
+    }
 }

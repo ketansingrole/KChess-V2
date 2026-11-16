@@ -453,4 +453,57 @@ mod tests {
             Some(vec!["e1".to_string(), "g1".to_string()])
         );
     }
+    #[test]
+    fn only_a_whole_move_number_in_range_is_expected() {
+        let solution = ["e2e4", "", "g1f3"];
+        assert_eq!(expected_at(&solution, 0.0), Some("e2e4"));
+        assert_eq!(expected_at(&solution, 2.0), Some("g1f3"));
+        assert_eq!(expected_at(&solution, 1.0), None);
+        assert_eq!(expected_at(&solution, 3.0), None);
+        assert_eq!(expected_at(&solution, -1.0), None);
+        assert_eq!(expected_at(&solution, 0.5), None);
+        assert_eq!(expected_at(&solution, f64::NAN), None);
+    }
+
+    #[test]
+    fn a_puzzle_whose_game_moves_are_illegal_is_refused() {
+        let raw = json!({
+            "puzzle": { "id": "p1", "initialPly": 3, "solution": ["g1f3"] },
+            "game": { "pgn": "1. e4 e5 2. Nf6 Nc6" },
+        });
+        assert!(from_api(&raw).is_none());
+    }
+
+    #[test]
+    fn both_squares_of_a_move_must_be_on_the_board() {
+        for bad in ["e9e4", "z1e4", "e4e9", "e4i5", "e0e4", "e4", "e2e4qq"] {
+            assert_eq!(uci_squares(bad), None, "{bad}");
+        }
+        assert_eq!(uci_squares("a1h8"), Some(("a1", "h8")));
+    }
+
+    #[test]
+    fn squares_count_from_zero() {
+        assert_eq!(coords("a1"), (0, 0));
+        assert_eq!(coords("e2"), (4, 1));
+        assert_eq!(coords("h8"), (7, 7));
+    }
+
+    #[test]
+    fn a_king_two_squares_over_castles_on_either_side_for_either_colour() {
+        let white = rules::standard_from_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1").unwrap();
+        assert_eq!(castling_side(&white, "e1", "g1"), Some('h'));
+        assert_eq!(castling_side(&white, "e1", "c1"), Some('a'));
+        assert_eq!(castling_side(&white, "e1", "h1"), Some('h'));
+        assert_eq!(castling_side(&white, "e1", "a1"), Some('a'));
+        assert_eq!(castling_side(&white, "e1", "e2"), None);
+        assert_eq!(castling_side(&white, "a1", "a3"), None);
+        let black = rules::standard_from_fen("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1").unwrap();
+        assert_eq!(castling_side(&black, "e8", "g8"), Some('h'));
+        assert_eq!(castling_side(&black, "e8", "c8"), Some('a'));
+        assert_eq!(
+            move_squares("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", "e8c8"),
+            Some(vec!["e8".to_string(), "c8".to_string()])
+        );
+    }
 }

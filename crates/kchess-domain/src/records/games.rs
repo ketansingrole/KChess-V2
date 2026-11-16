@@ -163,4 +163,21 @@ mod tests {
         assert_eq!(status_label("noStart"), "Did not start");
         assert_eq!(status_label("unknownFinish"), "unknownFinish");
     }
+
+    /// The fifty-move rule draws a game that goes on, and none that has ended already.
+    #[test]
+    fn the_fifty_move_rule_draws_only_a_game_that_goes_on() {
+        let reason = |fen: &str| setup_draw_reason(Variant::Standard, fen, &[]);
+        assert_eq!(
+            reason("4k3/8/8/8/8/8/8/R3K3 w - - 100 80"),
+            Some("Fifty-move rule")
+        );
+        assert_eq!(reason("4k3/8/8/8/8/8/8/R3K3 w - - 99 80"), None);
+        // Neither side can mate with a bare king.
+        assert_eq!(reason("4k3/8/8/8/8/8/8/4K3 w - - 100 80"), None);
+        // Black is stalemated.
+        assert_eq!(reason("7k/5Q2/6K1/8/8/8/8/8 b - - 100 90"), None);
+        // Black is mated.
+        assert_eq!(reason("7k/5Q1R/6K1/8/8/8/8/8 b - - 100 90"), None);
+    }
 }

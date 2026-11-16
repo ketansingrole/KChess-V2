@@ -274,4 +274,16 @@ mod tests {
         }
         assert_eq!(day_number("-000001-01-01"), None);
     }
+
+    #[test]
+    fn seconds_and_offsets_stay_inside_their_clock_faces() {
+        assert_eq!(parse_iso_millis("1970-01-01T00:00:59Z"), Some(59_000));
+        assert_eq!(parse_iso_millis("1970-01-01T00:00:60Z"), None);
+        assert_eq!(
+            parse_iso_millis("1970-01-01T23:00:00+23:59"),
+            Some(-3_540_000)
+        );
+        assert_eq!(parse_iso_millis("1970-01-01T00:00:00+24:00"), None);
+        assert_eq!(parse_iso_millis("1970-01-01T00:00:00+01:60"), None);
+    }
 }

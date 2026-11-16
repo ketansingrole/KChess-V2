@@ -467,4 +467,244 @@ mod tests {
             .expect("kept for its theme");
         assert_eq!(bad.openings, "");
     }
+
+    use std::hash::Hasher;
+
+    /// A solid row (solid for the rating bucket and for themes) with the given cells.
+    fn row(id: &str, rating: u32, themes: &str, tags: &str) -> String {
+        format!(
+            "{id},8/8 w - - 0 1,e2e4,{rating},80,90,1000,{themes},https://lichess.org/x#1,{tags}"
+        )
+    }
+
+    /// A row solid for themes and openings only, so no rating bucket keeps it.
+    fn theme_row(id: &str, themes: &str, tags: &str) -> String {
+        format!("{id},8/8 w - - 0 1,e2e4,1500,100,80,200,{themes},https://lichess.org/x#1,{tags}")
+    }
+
+    fn sampler_with(lines: &[String]) -> Sampler {
+        let mut sampler = Sampler::new(Random::new(5));
+        for line in lines {
+            sampler.add(line).unwrap();
+        }
+        sampler
+    }
+
+    #[test]
+    fn the_generator_repeats_the_recorded_sequence_for_a_seed() {
+        let mut random = Random::new(1);
+        assert_eq!(random.next_f64(), 0.6270739405881613);
+        assert_eq!(random.next_f64(), 0.002735721180215478);
+        assert_eq!(random.next_f64(), 0.5274470399599522);
+        assert_eq!(random.next_f64(), 0.9810509674716741);
+    }
+
+    #[test]
+    fn a_full_reservoir_replaces_a_slot_with_shrinking_odds() {
+        let mut reservoir = Reservoir::new(1);
+        let mut random = Random::new(9);
+        let mut shadow = random.clone();
+        let first = Rc::new(DbPuzzle {
+            id: "a".into(),
+            fen: String::new(),
+            moves: String::new(),
+            rating: 1.0,
+            plays: 1.0,
+            themes: String::new(),
+            openings: String::new(),
+            game_id: String::new(),
+        });
+        assert!(matches!(reservoir.offer(&mut random), Some(Place::Push)));
+        reservoir.place(Place::Push, &first);
+        for seen in 2..60u32 {
+            let slot = (shadow.next_f64() * f64::from(seen)).floor() as usize;
+            let place = reservoir.offer(&mut random);
+            match (slot < 1, place) {
+                (true, Some(Place::Replace(0))) | (false, None) => {}
+                _ => panic!("offer {seen} put the row somewhere else than slot {slot}"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_hash_is_fnv_1a_over_everything_written() {
+        let mut hasher = Fnv::default();
+        hasher.write(b"a");
+        assert_eq!(hasher.finish(), 0xaf63_dc4c_8601_ec8c);
+        hasher.write(b"b");
+        let mut whole = Fnv::default();
+        whole.write(b"ab");
+        assert_eq!(hasher.finish(), whole.finish());
+        assert_eq!(whole.finish(), 0x089c_4407_b545_986a);
+    }
+
+    #[test]
+    fn a_puzzle_must_pass_every_solid_bound() {
+        assert!(solid(90.0, 85.0, 300.0));
+        assert!(!solid(91.0, 85.0, 300.0));
+        assert!(!solid(90.0, 84.0, 300.0));
+        assert!(!solid(90.0, 85.0, 299.0));
+        assert!(!solid(91.0, 84.0, 299.0));
+        assert!(!solid(91.0, 85.0, 299.0));
+        assert!(!solid(90.0, 84.0, 300.0));
+        assert!(solid_for_theme(110.0, 70.0, 100.0));
+        assert!(!solid_for_theme(111.0, 70.0, 100.0));
+        assert!(!solid_for_theme(110.0, 69.0, 100.0));
+        assert!(!solid_for_theme(110.0, 70.0, 99.0));
+        assert!(!solid_for_theme(111.0, 69.0, 100.0));
+        assert!(!solid_for_theme(111.0, 70.0, 99.0));
+        assert!(!solid_for_theme(110.0, 69.0, 99.0));
+    }
+
+    #[test]
+    fn adding_a_line_counts_it_and_refuses_an_oversized_one() {
+        let mut sampler = Sampler::new(Random::new(1));
+        assert!(sampler.add(&row("a", 1500, "fork", "")).is_ok());
+        assert_eq!(sampler.lines, 1);
+        assert_eq!(sampler.add(&"x".repeat(MAX_LINE + 1)), Err(OVERSIZED));
+    }
+
+    #[test]
+    fn a_line_is_oversized_past_sixteen_thousand_utf16_units() {
+        let check = |line: String| Sampler::new(Random::new(1)).add(&line);
+        assert_eq!(check("x".repeat(MAX_LINE)), Ok(()));
+        assert_eq!(check("x".repeat(MAX_LINE + 1)), Err(OVERSIZED));
+        // More than 16000 bytes but only 8001 units.
+        assert_eq!(check("\u{e9}".repeat(8001)), Ok(()));
+        // 16001 bytes, exactly 16000 units.
+        assert_eq!(check(format!("\u{e9}{}", "x".repeat(MAX_LINE - 1))), Ok(()));
+    }
+
+    #[test]
+    fn a_pushed_tail_is_oversized_past_sixteen_thousand_utf16_units() {
+        let check = |chunk: String| Sampler::new(Random::new(1)).push(chunk.as_bytes());
+        assert_eq!(check("x".repeat(MAX_LINE)), Ok(()));
+        assert_eq!(check("x".repeat(MAX_LINE + 1)), Err(OVERSIZED));
+        assert_eq!(check("\u{e9}".repeat(8001)), Ok(()));
+        assert_eq!(check(format!("\u{e9}{}", "x".repeat(MAX_LINE - 1))), Ok(()));
+    }
+
+    #[test]
+    fn a_line_with_too_few_cells_is_not_counted() {
+        let sampler = sampler_with(&["abc,1,2".to_string(), "abc".to_string()]);
+        assert_eq!(sampler.lines, 0);
+    }
+
+    #[test]
+    fn the_tags_cell_keeps_its_commas() {
+        let sampler = sampler_with(&[row("a", 1500, "fork", "Foo,Bar")]);
+        assert_eq!(sampler.kept()[0].openings, "");
+    }
+
+    #[test]
+    fn an_unusable_rating_or_deviation_skips_the_line() {
+        let cells = |rating: &str, deviation: &str| {
+            format!("a,8/8 w - - 0 1,e2e4,{rating},{deviation},90,1000,fork,,")
+        };
+        let sampler = sampler_with(&[
+            cells("5000", "80"),
+            cells("-1", "80"),
+            cells("nope", "80"),
+            cells("1500", "nope"),
+        ]);
+        assert_eq!(sampler.lines, 0);
+        let sampler = sampler_with(&[cells("0", "80"), cells("4000", "80")]);
+        assert_eq!(sampler.lines, 2);
+    }
+
+    #[test]
+    fn an_id_is_alphanumeric_and_at_most_sixty_four_long() {
+        let lines = |id: String| sampler_with(&[row(&id, 1500, "fork", "")]).lines;
+        assert_eq!(lines("a b".to_string()), 0);
+        assert_eq!(lines(String::new()), 0);
+        assert_eq!(lines("a".repeat(64)), 1);
+        assert_eq!(lines("a".repeat(65)), 0);
+    }
+
+    #[test]
+    fn themes_are_alphanumeric_words_of_at_most_two_hundred_fifty_six_bytes() {
+        let lines = |themes: String| sampler_with(&[row("a", 1500, &themes, "")]).lines;
+        let words = |len: usize| "abcdefg ".repeat(len / 8 + 1)[..len].to_string();
+        assert_eq!(lines(words(256)), 1);
+        assert_eq!(lines(words(257)), 0);
+        assert_eq!(lines("fork-mate".to_string()), 0);
+        assert_eq!(lines("fork mate".to_string()), 1);
+    }
+
+    #[test]
+    fn a_row_solid_for_nothing_is_counted_but_kept_nowhere() {
+        let weak = "w,8/8 w - - 0 1,e2e4,1500,300,10,5,fork,,";
+        let sampler = sampler_with(&[weak.to_string()]);
+        assert_eq!(sampler.lines, 1);
+        assert!(sampler.kept().is_empty());
+    }
+
+    #[test]
+    fn a_rating_bucket_keeps_eighteen_hundred_rows_of_fifty_points() {
+        let lines: Vec<String> = (0..1900)
+            .map(|i| row(&format!("r{i}"), 1500 + i % 50, "fork", ""))
+            .collect();
+        let sampler = sampler_with(&lines);
+        assert_eq!(sampler.count(), PER_BUCKET);
+        let next_bucket = sampler_with(&[row("a", 1500, "fork", ""), row("b", 1550, "fork", "")]);
+        assert_eq!(next_bucket.buckets.len(), 2);
+    }
+
+    #[test]
+    fn a_theme_word_is_kept_only_between_one_and_forty_bytes() {
+        let kept = |themes: &str| sampler_with(&[theme_row("a", themes, "")]).kept().len();
+        assert_eq!(kept(""), 0);
+        assert_eq!(kept("fork  "), 1);
+        assert_eq!(kept(&"a".repeat(40)), 1);
+        assert_eq!(kept(&"a".repeat(41)), 0);
+    }
+
+    #[test]
+    fn the_sampler_tracks_at_most_256_themes() {
+        let lines: Vec<String> = (0..=MAX_THEMES)
+            .map(|i| theme_row(&format!("t{i}"), &format!("theme{i}"), ""))
+            .collect();
+        let mut sampler = sampler_with(&lines);
+        assert_eq!(sampler.kept().len(), MAX_THEMES);
+        // A theme already tracked still takes rows.
+        sampler.add(&theme_row("again", "theme0", "")).unwrap();
+        assert_eq!(sampler.kept().len(), MAX_THEMES + 1);
+    }
+
+    #[test]
+    fn an_opening_family_keeps_a_sample_when_a_row_has_no_theme() {
+        let lines: Vec<String> = (0..PER_OPENING + 30)
+            .map(|i| theme_row(&format!("o{i}"), "", "Fam Fam_Var"))
+            .collect();
+        assert_eq!(sampler_with(&lines).kept().len(), PER_OPENING);
+    }
+
+    #[test]
+    fn an_opening_family_is_between_one_and_eighty_bytes() {
+        let kept = |tags: &str| sampler_with(&[theme_row("a", "", tags)]).kept().len();
+        assert_eq!(kept(""), 0);
+        assert_eq!(kept("  "), 0);
+        assert_eq!(kept(&"A".repeat(80)), 1);
+        assert_eq!(kept(&"A".repeat(81)), 0);
+    }
+
+    #[test]
+    fn the_sampler_tracks_at_most_512_opening_families() {
+        let lines: Vec<String> = (0..=MAX_OPENINGS)
+            .map(|i| theme_row(&format!("o{i}"), "", &format!("Family{i}")))
+            .collect();
+        assert_eq!(sampler_with(&lines).kept().len(), MAX_OPENINGS);
+    }
+
+    #[test]
+    fn counting_follows_the_kept_rows_and_release_frees_them() {
+        let mut sampler = sampler_with(&[]);
+        assert_eq!(sampler.count(), 0);
+        sampler.add(&row("a", 1500, "fork", "")).unwrap();
+        sampler.add(&row("b", 1700, "fork", "")).unwrap();
+        assert_eq!(sampler.count(), 2);
+        sampler.release();
+        assert_eq!(sampler.count(), 2);
+        assert!(sampler.kept().is_empty());
+    }
 }

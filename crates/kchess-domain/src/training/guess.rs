@@ -429,4 +429,41 @@ mod tests {
         assert_eq!(summarize(&[miss]).closeness, Closeness::Far);
         assert_eq!(summary.closeness.label(), "Close");
     }
+    #[test]
+    fn flaws_are_named() {
+        assert_eq!(Flaw::Inaccuracy.label(), "An inaccuracy");
+        assert_eq!(Flaw::Mistake.label(), "A mistake");
+        assert_eq!(Flaw::Blunder.label(), "A blunder");
+    }
+
+    #[test]
+    fn a_far_off_mate_is_still_a_clamped_win() {
+        assert_eq!(Eval::Mate(500).centipawns(), CLAMP_CP);
+        assert_eq!(Eval::Mate(-500).centipawns(), -CLAMP_CP);
+        assert_eq!(Eval::Mate(1).centipawns(), CLAMP_CP);
+        assert_eq!(Eval::Mate(0).centipawns(), -CLAMP_CP);
+    }
+
+    /// Lichess's curve: 2 / (1 + e^(-0.00368208 cp)) - 1.
+    fn curve(cp: f64) -> f64 {
+        2. / (1. + (-0.003_682_08 * cp).exp()) - 1.
+    }
+
+    #[test]
+    fn winning_chances_follow_the_curve() {
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        assert!(close(Eval::Cp(0).chances(), 0.));
+        assert!(close(Eval::Cp(150).chances(), curve(150.)));
+        assert!(close(Eval::Cp(-150).chances(), curve(-150.)));
+        assert!(close(Eval::Cp(5000).chances(), curve(1000.)));
+        // Mate 0 is the side to move mated.
+        assert_eq!(Eval::Mate(0).chances(), -1.);
+        // A nearer mate is worth more, down to 10 moves; beyond that all the same.
+        assert!(close(Eval::Mate(1).chances(), curve(2000.)));
+        assert!(close(Eval::Mate(-1).chances(), curve(-2000.)));
+        assert!(close(Eval::Mate(4).chances(), curve(1700.)));
+        assert!(close(Eval::Mate(10).chances(), curve(1100.)));
+        assert!(close(Eval::Mate(25).chances(), curve(1100.)));
+        assert!(close(Eval::Mate(-25).chances(), curve(-1100.)));
+    }
 }

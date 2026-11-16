@@ -271,4 +271,43 @@ mod tests {
         assert!(username("ab") && username(&"a".repeat(30)));
         assert!(!username("a") && !username(&"a".repeat(31)) && !username("a b"));
     }
+
+    #[test]
+    fn castling_and_en_passant_fields_of_a_fen() {
+        let with = |castling: &str, ep: &str| fen(&format!("8/8/8/8/8/8/8/8 w {castling} {ep}"));
+        for castling in ["-", "K", "KQkq", "Kq", "AHah", "bg"] {
+            assert!(with(castling, "-"), "{castling}");
+        }
+        for castling in ["", "X", "KQkqK", "ZZ", "I", "i", "k-", "KQkq1"] {
+            assert!(!with(castling, "-"), "{castling:?}");
+        }
+        for ep in ["-", "e3", "a6", "h3"] {
+            assert!(with("-", ep), "{ep}");
+        }
+        for ep in ["", "e4", "i3", "e", "e33", "E3"] {
+            assert!(!with("-", ep), "{ep:?}");
+        }
+    }
+
+    #[test]
+    fn game_ids_and_account_names() {
+        assert!(game_id("AbCd1234") && game_id("AbCd1234Ef56"));
+        assert!(!game_id("AbCd123") && !game_id("AbCd1234Ef567") && !game_id("AbCd-234"));
+        assert!(game_id("cc-l12345") && game_id("cc-d1"));
+        assert!(chesscom_game_id("cc-l12345") && !chesscom_game_id("AbCd1234"));
+        assert!(chesscom_username("abc") && chesscom_username("a_b-c"));
+        assert!(!chesscom_username("ab") && !chesscom_username("a b"));
+    }
+
+    #[test]
+    fn identifiers_take_their_own_characters() {
+        assert!(puzzle_angle("a") && puzzle_angle("Opening_1-b") && puzzle_angle(&"a".repeat(60)));
+        assert!(!puzzle_angle("") && !puzzle_angle("a b") && !puzzle_angle(&"a".repeat(61)));
+        assert!(theme_id("dark-2") && theme_id("a") && theme_id(&"a".repeat(32)));
+        assert!(
+            !theme_id("") && !theme_id("Dark") && !theme_id("a_b") && !theme_id(&"a".repeat(33))
+        );
+        assert!(run_detail_key("a_B1") && run_detail_key("a") && run_detail_key(&"a".repeat(30)));
+        assert!(!run_detail_key("") && !run_detail_key("a-b") && !run_detail_key(&"a".repeat(31)));
+    }
 }

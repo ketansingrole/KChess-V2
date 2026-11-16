@@ -168,4 +168,51 @@ mod tests {
         assert_eq!(time.phase(0), 2);
         assert!(time.white(0));
     }
+
+    fn clocked(white_starts: bool) -> TimeUse {
+        TimeUse {
+            initial: 180.0,
+            increment: 2.0,
+            clocks: vec![Some(170.0), Some(160.0), Some(150.0)],
+            middlegame: 3,
+            endgame: 3,
+            white_starts,
+        }
+    }
+
+    #[test]
+    fn a_side_second_move_starts_from_the_clock_after_its_first() {
+        let time = clocked(true);
+        assert_eq!(time.before(1), Some(180.0));
+        assert_eq!(time.before(2), Some(170.0));
+        assert_eq!(time.before(3), Some(160.0));
+    }
+
+    #[test]
+    fn plies_alternate_from_the_side_that_started() {
+        assert!(clocked(true).white(0) && !clocked(true).white(1) && clocked(true).white(2));
+        assert!(!clocked(false).white(0) && clocked(false).white(1));
+    }
+
+    #[test]
+    fn short_of_time_is_under_a_tenth_of_the_start() {
+        let mut time = clocked(true);
+        time.clocks = vec![Some(100.0), Some(10.0), Some(18.0), Some(17.9), None];
+        assert_eq!(time.short_before(2), Some(false), "100 s of 180");
+        assert_eq!(time.short_before(3), Some(true), "10 s of 180");
+        assert_eq!(
+            time.short_before(4),
+            Some(false),
+            "exactly a tenth is not under it"
+        );
+        assert_eq!(time.short_before(5), Some(true));
+        assert_eq!(time.short_before(6), None);
+    }
+
+    #[test]
+    fn a_time_control_is_whole_seconds() {
+        for text in ["1e3", "60+1.5", "inf", "nan", "+", "60+", "6 0", "-5"] {
+            assert_eq!(time_control(text), None, "{text}");
+        }
+    }
 }

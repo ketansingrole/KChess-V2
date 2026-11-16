@@ -854,4 +854,29 @@ mod tests {
         assert!(!counts_for_rating("rated", true));
         assert!(!counts_for_rating("practice", false));
     }
+    #[test]
+    fn each_difficulty_moves_the_offline_rating() {
+        let offsets: Vec<f64> = ["easiest", "easier", "normal", "harder", "hardest"]
+            .into_iter()
+            .map(offset)
+            .collect();
+        assert_eq!(offsets, [-600.0, -300.0, 0.0, 300.0, 600.0]);
+        assert!(offset("tough").is_nan());
+    }
+
+    /// A move is scored only while a puzzle is shown, and only within the tries kept.
+    #[test]
+    fn a_move_is_scored_only_while_a_puzzle_is_shown() {
+        let tries =
+            |session: &PuzzleSession| session.internal.attempt.as_ref().unwrap().tries.len();
+        let mut session = PuzzleSession::new();
+        session.show(puzzle("one"), &selection(), "");
+        session.played(MAX_TRIES, false, Some("e2e4"));
+        assert_eq!(tries(&session), 0);
+        session.played(0, true, None);
+        assert_eq!(tries(&session), 1);
+        session.state.phase = "exhausted".into();
+        session.played(1, false, Some("e2e4"));
+        assert_eq!(tries(&session), 1);
+    }
 }
