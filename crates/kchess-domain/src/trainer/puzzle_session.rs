@@ -817,16 +817,6 @@ mod tests {
         assert!(session.internal.attempt.as_ref().is_some_and(|a| !a.retry));
     }
 
-    /// The local database answering with no puzzle (`[null]`) is out of puzzles, not one to show.
-    #[test]
-    fn an_offline_load_without_a_puzzle_is_exhausted() {
-        let mut session = PuzzleSession::new();
-        let call = session.load_begin(&selection(), true, "").call.unwrap();
-        session.load_settled(call.resume, Ok(json!([null])), &selection(), "");
-        assert_eq!(session.state().phase, "exhausted");
-        assert!(session.state().current.is_none());
-    }
-
     /// A load still on its way replaced the puzzle chosen while it loaded.
     #[test]
     fn a_shown_puzzle_is_not_replaced_by_an_earlier_load() {

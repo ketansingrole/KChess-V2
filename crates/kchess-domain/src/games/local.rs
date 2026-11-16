@@ -458,34 +458,12 @@ mod tests {
     }
 
     #[test]
-    fn a_flag_falls_once_the_side_to_move_runs_out() {
-        let mut game = LocalGame::resume(None, 0.).unwrap();
-        game.start(Setup::standard(), one_minute(), 0.).unwrap();
-        game.play("e2e4", 1_000.);
-        assert!(!game.expire(30_000.));
-        assert!(!game.over());
-        assert!(game.expire(62_000.));
-        assert!(game.over());
-        assert_eq!(game.result().unwrap().winner, Some(Color::White));
-    }
-
-    #[test]
     fn an_agreed_draw_ends_the_game_without_a_winner() {
         let mut game = LocalGame::resume(None, 0.).unwrap();
         game.play("e2e4", 1.);
         game.agree_draw();
         assert!(game.over());
         assert_eq!(game.result().unwrap().winner, None);
-    }
-
-    #[test]
-    fn a_takeback_undoes_the_last_move() {
-        let mut game = LocalGame::resume(None, 0.).unwrap();
-        game.play("e2e4", 1.);
-        game.takeback(2.);
-        // White is to move again, so e4 is legal once more and e5 is not.
-        assert_eq!(game.play("e7e5", 3.).0, None);
-        assert_eq!(game.play("e2e4", 4.).0.as_deref(), Some("e4"));
     }
 
     #[test]

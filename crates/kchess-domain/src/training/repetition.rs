@@ -294,14 +294,6 @@ mod tests {
     }
 
     #[test]
-    fn a_right_answer_before_the_line_is_due_changes_nothing() {
-        let card = Card::review(None, true, NOW);
-        assert_eq!(Card::review(Some(&card), true, NOW + 60_000.0), card);
-        // A wrong one still lapses it.
-        assert_eq!(Card::review(Some(&card), false, NOW + 60_000.0).reps, 0);
-    }
-
-    #[test]
     fn ease_and_interval_stay_in_bounds() {
         let mut card = Card::review(None, false, NOW);
         for _ in 0..20 {

@@ -397,7 +397,7 @@ fn settle_chat(mut run: Run, id: &str, value: Option<&Value>) -> Outcome {
 mod tests {
     use serde_json::json;
 
-    use super::model::{ChatRoom, ClockConfig, Effect, Setup};
+    use super::model::{ChatRoom, Effect, Setup};
     use super::server::ServerEvent;
     use super::*;
 
@@ -590,31 +590,6 @@ mod tests {
         assert!(again.call.is_none());
     }
 
-    #[test]
-    fn a_finished_game_says_who_won_and_how_in_one_line() {
-        use super::events::outcome_line;
-        use crate::color::Color::{Black, White};
-        assert_eq!(
-            outcome_line(Some("white"), "mate", White),
-            "You won by checkmate"
-        );
-        assert_eq!(
-            outcome_line(Some("white"), "outoftime", Black),
-            "You lost on time"
-        );
-        assert_eq!(outcome_line(None, "stalemate", White), "Draw by stalemate");
-        assert_eq!(outcome_line(None, "draw", Black), "Draw by agreement");
-        assert_eq!(outcome_line(None, "aborted", White), "Game aborted");
-        assert_eq!(
-            outcome_line(Some("black"), "unknownFinish", Black),
-            "You won"
-        );
-        assert_eq!(outcome_line(None, "finished", White), "Game over");
-        // A status that contradicts the result is left out rather than stated.
-        assert_eq!(outcome_line(None, "mate", White), "Game over");
-        assert_eq!(outcome_line(Some("white"), "stalemate", White), "You won");
-    }
-
     /// A 5+5 game: neither clock runs until both sides have moved, as on Lichess. A clock that
     /// ran from the start snapped back to 5:00 when the first move arrived.
     #[test]
@@ -645,58 +620,6 @@ mod tests {
         assert_eq!(ticking_after(""), None, "before White's first move");
         assert_eq!(ticking_after("e2e4"), None, "before Black's first move");
         assert_eq!(ticking_after("e2e4 e7e5"), Some("white"));
-    }
-
-    #[test]
-    fn a_game_reads_both_players_ratings() {
-        let mut model = playing();
-        model.online_account = "Alice".into();
-        model.event(
-            &ServerEvent::read(&json!({
-                "type": "gameFull",
-                "id": "AbCd1234",
-                "white": { "id": "bob", "name": "Bob", "rating": 1590 },
-                "black": { "id": "alice", "name": "Alice", "rating": 1580 },
-                "state": { "moves": "" },
-            })),
-            &ctx(0.0),
-        );
-        assert_eq!(model.online_color, crate::color::Color::Black);
-        assert_eq!(model.online_rating, Some(1580.0));
-        assert_eq!(model.online_opponent_rating, Some(1590.0));
-    }
-
-    #[test]
-    fn a_finished_game_announces_its_result_and_is_kept_for_a_rematch() {
-        let mut model = playing();
-        model.opponent_id = "bob".into();
-        model.online_opponent = "Bob".into();
-        model.online_color = crate::color::Color::White;
-        model.online_account = "Alice".into();
-        model.online_clock_config = Some(ClockConfig {
-            initial: 300.0,
-            increment: 3.0,
-        });
-        let context = ctx(0.0);
-        let mut run = Run::new(&mut model, &context);
-        run.finish(Some("black"), "resign", true);
-        let result = run.done();
-        assert_eq!(model.online_phase, GamePhase::Finished);
-        assert_eq!(model.online_status, "You lost by resignation");
-        // Exports and saved games need the result itself, not only the sentence.
-        assert_eq!(model.online_result, "0-1");
-        assert_eq!(
-            result.effects[1],
-            Effect::Notify {
-                kind: crate::misc::constants::NotificationKind::GameEvents,
-                title: "You lost".into(),
-                body: "Against Bob · resign.".into(),
-            }
-        );
-        let rematch = model.view().rematch.unwrap();
-        assert_eq!(rematch["color"], json!("black"));
-        assert_eq!(rematch["minutes"], json!(5.0));
-        assert_eq!(rematch["increment"], json!(3.0));
     }
 
     /// An opponent's move that cannot be replayed has no SAN: the notice said

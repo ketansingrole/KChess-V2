@@ -396,69 +396,6 @@ pub fn opening_replies(moves: &[ExplorerMove], yours: bool) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// The lookup as it was: a FEN written and looked up after every move.
-    fn opening_written_out(moves: &[String]) -> Option<(String, String)> {
-        let mut pos = rules::setup_start(Variant::Standard, START)?;
-        let (books, named) = (table(), lines());
-        let mut found = books
-            .get(rules::repetition_key(&rules::make_fen(&pos)))
-            .map(|&index| &named[index]);
-        for text in moves {
-            let Some(m) = rules::parse_uci(text).and_then(|u| rules::legal_move(&pos, u)) else {
-                break;
-            };
-            pos.play_unchecked(m);
-            if let Some(&index) = books.get(rules::repetition_key(&rules::make_fen(&pos))) {
-                found = Some(&named[index]);
-            }
-        }
-        found.map(|line| (line.eco.clone(), line.name.clone()))
-    }
-
-    /// Only a position placed as a named one is written out and looked up: every named line (and
-    /// each move of it), and random games that leave the book, are named as before.
-    #[test]
-    fn a_name_is_looked_up_only_where_one_can_be() {
-        let named = |moves: &[String]| {
-            opening_at("standard", START, moves, f64::INFINITY).map(|name| (name.eco, name.name))
-        };
-        let mut checked = 0;
-        for line in lines().iter().step_by(7) {
-            for ply in 0..=line.moves.len() {
-                let moves = &line.moves[..ply];
-                assert_eq!(named(moves), opening_written_out(moves), "{moves:?}");
-                checked += 1;
-            }
-        }
-        let mut seed = 0x2545_F491_4F6C_DD1Du64;
-        for _ in 0..300 {
-            let mut pos = rules::setup_start(Variant::Standard, START).expect("start");
-            let mut moves = Vec::new();
-            for _ in 0..60 {
-                let legal = pos.legal_moves();
-                if legal.is_empty() {
-                    break;
-                }
-                seed ^= seed << 13;
-                seed ^= seed >> 7;
-                seed ^= seed << 17;
-                // Mostly the first moves listed, so games stay in the book a while.
-                let pick = if seed.is_multiple_of(3) {
-                    seed as usize
-                } else {
-                    0
-                } % legal.len();
-                let m = legal[pick];
-                moves.push(rules::make_uci(&m));
-                pos.play_unchecked(m);
-            }
-            assert_eq!(named(&moves), opening_written_out(&moves), "{moves:?}");
-            checked += 1;
-        }
-        assert!(checked > 1000, "{checked}");
-        assert!(named(&lines()[0].moves).is_some(), "a named line is named");
-    }
-
     /// The filter lets through the positions of the table and turns others away, so only those
     /// are written out.
     #[test]

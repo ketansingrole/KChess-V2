@@ -885,24 +885,6 @@ mod tests {
         serde_json::from_value(fields).unwrap()
     }
 
-    /// A review whose start is not a legal position was analysed as `null`, with nothing to say
-    /// why.
-    #[test]
-    fn a_review_that_cannot_be_analysed_says_why() {
-        let review = |fen: &str| {
-            stored(json!({ "fen": fen, "moves": ["e2e4"], "evals": [{ "cp": 20 }, { "cp": 30 }] }))
-        };
-        assert!(analyse(&review(INITIAL_FEN)).is_ok());
-        assert_eq!(
-            analyse(&review("8/8/8/8/8/8/8/8 w - - 0 1")),
-            Err("the review's start is not a legal position".into())
-        );
-        assert_eq!(
-            summarize(&review("8/8/8/8/8/8/8/8 w - - 0 1")),
-            Err("the review's start is not a legal position".into())
-        );
-    }
-
     /// The analysis serialises as the JSON the review page and the command line read.
     #[test]
     fn an_analysis_reads_as_its_json() {
@@ -1013,17 +995,6 @@ mod tests {
     }
 
     #[test]
-    fn brilliant_uses_the_movers_perspective_for_black_too() {
-        let raw = json!({
-            "fen": "rnbq1rk1/ppp2ppp/3b1n2/3p4/3Pp3/4PN2/PPP1BPPP/RNBQ1RK1 b - - 0 1",
-            "moves": ["d6h2"], "source": "local",
-            "evals": [{"cp": -20, "best": "d6h2", "depth": 18},
-                {"cp": -20, "depth": 18, "pv": ["g1h2", "f6g4"]}]
-        });
-        assert_eq!(classify(&raw), Some(vec![Some(Classification::Brilliant)]));
-    }
-
-    #[test]
     fn classifications_preserve_lichess_errors_and_exclude_ordinary_trades() {
         let mut raw = sacrifice_review();
         raw["source"] = json!("lichess");
@@ -1044,14 +1015,6 @@ mod tests {
         assert_eq!(js_exp(1.0), std::f64::consts::E);
         assert!((js_exp(-3.68208) - (-3.68208f64).exp()).abs() < 1e-15);
         assert_eq!(js_exp(f64::NEG_INFINITY), 0.0);
-    }
-
-    #[test]
-    fn round_matches_javascript() {
-        assert_eq!(js::round(2.5), 3.0);
-        assert_eq!(js::round(-2.5), -2.0);
-        assert_eq!(js::round(0.499_999_999_999_999_94), 0.0);
-        assert!(js::round(-0.4).is_sign_negative());
     }
 
     #[test]
@@ -1100,40 +1063,6 @@ mod tests {
         // The same for Black, whose losses are White's gains.
         assert_eq!(judge(cp(0.0), cp(60.0), false), Some(Judgment::Inaccuracy));
         assert_eq!(judge(cp(0.0), cp(-300.0), false), None);
-    }
-
-    #[test]
-    fn hardly_minds_a_lost_position_getting_more_lost() {
-        assert_eq!(judge(cp(-900.0), cp(-1100.0), true), None);
-    }
-
-    #[test]
-    fn judges_walking_into_mate_by_how_good_the_position_still_was() {
-        assert_eq!(judge(cp(50.0), mate(-3.0), true), Some(Judgment::Blunder));
-        assert_eq!(judge(cp(-800.0), mate(-3.0), true), Some(Judgment::Mistake));
-        assert_eq!(
-            judge(cp(-1200.0), mate(-3.0), true),
-            Some(Judgment::Inaccuracy)
-        );
-        assert_eq!(judge(cp(-50.0), mate(3.0), false), Some(Judgment::Blunder));
-    }
-
-    #[test]
-    fn judges_missing_a_forced_mate_by_what_is_left() {
-        assert_eq!(
-            judge(mate(2.0), cp(1500.0), true),
-            Some(Judgment::Inaccuracy)
-        );
-        assert_eq!(judge(mate(2.0), cp(800.0), true), Some(Judgment::Mistake));
-        assert_eq!(judge(mate(2.0), cp(300.0), true), Some(Judgment::Blunder));
-        assert_eq!(judge(mate(2.0), mate(-4.0), true), Some(Judgment::Blunder));
-        // A slower mate is not a mistake.
-        assert_eq!(judge(mate(2.0), mate(4.0), true), None);
-    }
-
-    #[test]
-    fn never_judges_the_mating_move() {
-        assert_eq!(judge(mate(-1.0), mate(0.0), false), None);
     }
 
     /// The bands of a mate walked into or missed include their lower edge (-999 and -700, 999

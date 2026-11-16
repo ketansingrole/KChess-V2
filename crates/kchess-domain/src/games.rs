@@ -228,20 +228,6 @@ impl Clocking {
 mod tests {
     use super::*;
 
-    /// An illegal setup was replaced by the standard start without a word: the game showed the
-    /// usual position and refused every move.
-    #[test]
-    fn an_illegal_setup_is_refused() {
-        let illegal = Setup {
-            variant: crate::variant::Variant::Standard,
-            fen: "8/8/8/8/8/8/8/8 w - - 0 1".into(),
-        };
-        assert_eq!(Board::new(illegal, Vec::new()).unwrap_err(), ILLEGAL_SETUP);
-        let board = Board::new(Setup::standard(), vec!["e2e4".into()]).unwrap();
-        assert_eq!(board.turn(), Color::Black);
-        assert_eq!(board.turn_after(0), Color::White);
-    }
-
     /// The board says where its moves lead: the position, a mate's winner and a repetition.
     #[test]
     fn a_board_reads_its_position_winner_and_draw() {

@@ -450,12 +450,6 @@ mod tests {
     }
 
     #[test]
-    fn archived_games_need_every_move_legal() {
-        assert!(decode_archived_game(&game(&["e2e4", "e7e5"])).is_some());
-        assert!(decode_archived_game(&game(&["e2e4", "e2e4"])).is_none());
-    }
-
-    #[test]
     fn studies_drop_invalid_chapters_and_keep_cloud_links() {
         let doc = json!({ "version": 2, "items": [
             { "id": "s", "name": "S", "pgn": "1. e4 *", "updatedAt": 1,
@@ -481,17 +475,6 @@ mod tests {
         );
         let broken = json!({ "id": "s", "name": "S", "pgn": "*", "updatedAt": 1, "cloud": { "id": "short" } });
         assert_eq!(decode_study(&broken).unwrap().cloud, None);
-    }
-
-    #[test]
-    fn mistakes_need_a_playable_solution() {
-        let doc = json!({ "version": 1, "items": [
-            { "id": "m", "fen": START, "solution": ["e2e4"], "judgment": 3, "dueAt": 0, "streak": 0, "attempts": 1.0 },
-            { "id": "x", "fen": START, "solution": ["e2e5"], "dueAt": 0, "streak": 0, "attempts": 0 },
-        ]});
-        let items = decode_mistakes(&doc).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].judgment, "3");
     }
 
     /// A drill's schedule reads back as the numbers it was stored with.

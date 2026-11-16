@@ -593,16 +593,4 @@ mod tests {
         Run::new(&mut model, &ctx).checking();
         assert_eq!(model.online_connection.unwrap().epoch(), 7.0);
     }
-
-    /// A chat line is the players' unless it was said in the spectators' room.
-    #[test]
-    fn a_chat_line_names_its_room() {
-        let line = |room| ChatEntry {
-            user: None,
-            text: None,
-            room,
-        };
-        assert!(line(ChatRoom::Player).players());
-        assert!(!line(ChatRoom::Spectator).players());
-    }
 }

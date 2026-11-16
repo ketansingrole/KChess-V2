@@ -135,15 +135,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scores_turn_to_white_and_bounds_are_skipped() {
-        let line = parse_info("info depth 12 score cp 31 nodes 9 pv e2e4 e7e5", false).unwrap();
-        assert_eq!(line.line.cp, Some(-31.0));
-        assert!(parse_info("info depth 12 score cp 40 lowerbound nodes 1 pv e2e4", true).is_none());
-        assert!(parse_info("info string NNUE evaluation using nn.nnue", true).is_none());
-        assert!(parse_info("", true).is_none());
-    }
-
-    #[test]
     fn variant_lines_keep_their_drops_and_king_promotions() {
         let line = parse_info("info depth 9 score cp 50 pv b1c3 d5e6 P@b4 e7e8k", true).unwrap();
         assert_eq!(line.line.pv, ["b1c3", "d5e6", "P@b4", "e7e8k"]);

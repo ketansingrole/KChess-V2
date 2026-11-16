@@ -231,6 +231,7 @@ fn lichess_games_open_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
 fn a_resigned_computer_game_is_listed_with_the_computer_games(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.open("Play with computer");
+    super::computer::wait_playable(&mut app);
     app.click_square("e2", true);
     app.click_square("e4", true);
     app.wait_for_moves(&["e4"]);

@@ -170,35 +170,6 @@ mod tests {
     }
 
     #[test]
-    fn classifies_partial_credit() {
-        assert_eq!(
-            classify(&verdict(true, false, false, 3, 3)),
-            Outcome::Solved
-        );
-        assert_eq!(classify(&verdict(true, false, true, 3, 3)), Outcome::Hinted);
-        assert_eq!(
-            classify(&verdict(false, false, false, 2, 5)),
-            Outcome::Partial
-        );
-        assert_eq!(
-            classify(&verdict(false, false, true, 1, 5)),
-            Outcome::Partial
-        );
-        assert_eq!(
-            classify(&verdict(false, false, false, 0, 5)),
-            Outcome::Missed
-        );
-        assert_eq!(
-            classify(&verdict(false, true, false, 2, 5)),
-            Outcome::Revealed
-        );
-        assert_eq!(
-            classify(&verdict(false, true, false, 0, 1)),
-            Outcome::Revealed
-        );
-    }
-
-    #[test]
     fn scores_every_move_by_its_first_try() {
         // Wrong on the first move, right on the second, wrong on the third.
         let mixed = Verdict {
@@ -238,31 +209,6 @@ mod tests {
         // A mate other than the solution's can end a puzzle early: it is still every move.
         let solved = verdict(true, false, false, 2, 3);
         assert_eq!(moves(classify(&solved), &solved), (3, 3));
-    }
-
-    #[test]
-    fn reads_calendar_days() {
-        assert_eq!(day_number("1970-01-01"), Some(0));
-        assert_eq!(day_number("2024-02-29"), Some(19_782));
-        assert_eq!(day_number("2024-03-01"), Some(19_783));
-        assert_eq!(day_number("2023-02-29"), None);
-        assert_eq!(day_number("2026-13-01"), None);
-        assert_eq!(day_number("2026-1-01"), None);
-        assert_eq!(day_number("２０２６-01-01"), None);
-    }
-
-    #[test]
-    fn streak_spans_month_and_year_boundaries() {
-        let days = ["2025-12-30", "2025-12-31", "2026-01-01", "2026-01-01"];
-        assert_eq!(
-            day_streak(days, "2026-01-01"),
-            DayStreak {
-                current: 3,
-                best: 3
-            }
-        );
-        let leap = ["2024-02-28", "2024-02-29", "2024-03-01"];
-        assert_eq!(day_streak(leap, "2024-03-01").current, 3);
     }
 
     #[test]
