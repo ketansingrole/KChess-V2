@@ -806,19 +806,10 @@ use crate::rules::INITIAL_FEN;
 
 /// The value of the first non-empty `[FEN "…"]` tag in a PGN.
 fn fen_tag(pgn: &str) -> Option<&str> {
-    let mut from = 0;
-    while let Some(at) = pgn[from..].find("[FEN \"") {
-        let start = from + at + 6;
-        let value_end = pgn[start..].find('"').map(|i| start + i);
-        if let Some(end) = value_end
-            && end > start
-            && pgn[end..].starts_with("\"]")
-        {
-            return Some(&pgn[start..end]);
-        }
-        from = from + at + 1;
-    }
-    None
+    pgn.split("[FEN \"").skip(1).find_map(|after| {
+        let (value, rest) = after.split_once('"')?;
+        (!value.is_empty() && rest.starts_with(']')).then_some(value)
+    })
 }
 
 /// A synced game's start position (initial FEN, else its PGN's FEN tag) and its

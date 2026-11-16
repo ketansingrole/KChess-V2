@@ -283,8 +283,8 @@ regexes themselves in the tests below) ── */
 
 /// The header pattern, matched at the start of `line`:
 /// `^\s*\[([A-Za-z0-9][A-Za-z0-9_+#=:-]*)\s+"((?:[^"\\]|\\"|\\\\)*)"\]`.
-/// Returns the name, the raw (still escaped) value and where the match ends.
-fn match_header(line: &str) -> Option<(&str, &str, usize)> {
+/// Returns the name, the raw (still escaped) value and the rest of the line after the match.
+fn match_header(line: &str) -> Option<(&str, &str, &str)> {
     let start = line.len() - line.trim_start_matches(js::is_space).len();
     let b = line.as_bytes();
     if b.get(start) != Some(&b'[') {
@@ -294,36 +294,28 @@ fn match_header(line: &str) -> Option<(&str, &str, usize)> {
     if !b.get(name_start)?.is_ascii_alphanumeric() {
         return None;
     }
-    let mut i = name_start + 1;
-    while b
-        .get(i)
-        .is_some_and(|&c| c.is_ascii_alphanumeric() || b"_+#=:-".contains(&c))
-    {
-        i += 1;
-    }
-    let name_end = i;
-    let spaces = line[i..].len() - line[i..].trim_start_matches(js::is_space).len();
-    if spaces == 0 {
+    let name = &line[name_start..];
+    let name_len = name
+        .bytes()
+        .take_while(|&c| c.is_ascii_alphanumeric() || b"_+#=:-".contains(&c))
+        .count();
+    let (name, after) = name.split_at(name_len);
+    let quoted = after.trim_start_matches(js::is_space);
+    if quoted.len() == after.len() {
         return None;
     }
-    i += spaces;
-    if b.get(i) != Some(&b'"') {
-        return None;
-    }
-    let value_start = i + 1;
-    i = value_start;
-    loop {
-        match *b.get(i)? {
-            b'"' => break,
-            b'\\' => match b.get(i + 1) {
-                Some(b'"' | b'\\') => i += 2,
-                _ => return None,
-            },
-            _ => i += 1,
+    let value = quoted.strip_prefix('"')?;
+    let mut bytes = value.bytes().enumerate();
+    let value_len = loop {
+        match bytes.next()? {
+            (at, b'"') => break at,
+            // A backslash escapes only a quote or a backslash, which it takes with it.
+            (_, b'\\') if !matches!(bytes.next()?, (_, b'"' | b'\\')) => return None,
+            _ => {}
         }
-    }
-    (b.get(i + 1) == Some(&b']'))
-        .then(|| (&line[name_start..name_end], &line[value_start..i], i + 2))
+    };
+    let (value, closing) = value.split_at(value_len);
+    Some((name, value, closing.strip_prefix("\"]")?))
 }
 
 fn file_at(b: &[u8], i: usize) -> bool {
@@ -385,6 +377,19 @@ fn match_san(b: &[u8], p: usize) -> Option<usize> {
         }
     }
     None
+}
+
+/// The move-text tokens of `line`, as `(start, end)` byte ranges in order.
+fn tokens(line: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
+    let mut pos = 0;
+    std::iter::from_fn(move || {
+        let (start, end) = next_token(line, pos)?;
+        // Every token ends past where its search began: stop rather than find one again.
+        (end > pos).then(|| {
+            pos = end;
+            (start, end)
+        })
+    })
 }
 
 /// The next move-text token at or after `pos`, as the token pattern finds it.
@@ -497,116 +502,120 @@ impl Parser {
         // Every rewrite below keeps a suffix of the line, so it never needs copying.
         let mut line = line;
         'continued: loop {
-            if self.state == State::Bom {
-                if let Some(rest) = line.strip_prefix('\u{FEFF}') {
-                    line = rest;
+            // One state a pass: each either ends the line or moves to the next state.
+            match self.state {
+                State::Bom => {
+                    if let Some(rest) = line.strip_prefix('\u{FEFF}') {
+                        line = rest;
+                    }
+                    self.state = State::Pre;
                 }
-                self.state = State::Pre;
-            }
-            if self.state == State::Pre {
-                if js::is_blank(line) || line.starts_with('%') {
-                    return;
+                State::Pre => {
+                    if js::is_blank(line) || line.starts_with('%') {
+                        return;
+                    }
+                    self.found = true;
+                    self.state = State::Headers;
                 }
-                self.found = true;
-                self.state = State::Headers;
-            }
-            if self.state == State::Headers {
-                if line.starts_with('%') {
-                    return;
-                }
-                while let Some((name, raw, end)) = match_header(line) {
-                    let value = raw.replace("\\\"", "\"").replace("\\\\", "\\");
-                    self.game.set_header(name, value);
-                    line = &line[end..];
-                    fresh_line = false;
-                }
-                if js::is_blank(line) {
-                    return;
-                }
-                self.state = State::Moves;
-            }
-            if self.state == State::Moves {
-                if fresh_line {
+                State::Headers => {
                     if line.starts_with('%') {
                         return;
                     }
+                    // Each header takes part of the line: stop rather than read one again.
+                    while let Some((name, raw, rest)) =
+                        match_header(line).filter(|header| header.2.len() < line.len())
+                    {
+                        let value = raw.replace("\\\"", "\"").replace("\\\\", "\\");
+                        self.game.set_header(name, value);
+                        line = rest;
+                        fresh_line = false;
+                    }
                     if js::is_blank(line) {
-                        return self.emit();
+                        return;
                     }
+                    self.state = State::Moves;
                 }
-                let mut pos = 0;
-                while let Some((start, end)) = next_token(line, pos) {
-                    pos = end;
-                    let token = &line[start..end];
-                    match token {
-                        ";" => return,
-                        "!" => self.handle_nag(1),
-                        "?" => self.handle_nag(2),
-                        "!!" => self.handle_nag(3),
-                        "??" => self.handle_nag(4),
-                        "!?" => self.handle_nag(5),
-                        "?!" => self.handle_nag(6),
-                        _ if token.starts_with('$') => {
-                            self.handle_nag(token[1..].parse().unwrap_or(0));
+                State::Moves => {
+                    if fresh_line {
+                        if line.starts_with('%') {
+                            return;
                         }
-                        "1-0" | "1–0" | "1—0" | "0-1" | "0–1" | "0—1" | "1/2-1/2" | "1/2–1/2"
-                        | "1/2—1/2" | "*" => {
-                            if self.stack.at_root() && token != "*" {
-                                self.game.set_header("Result", token.to_string());
-                            }
-                        }
-                        "(" => {
-                            let parent = self.stack.current().parent;
-                            self.stack.push(Frame {
-                                parent,
-                                root: false,
-                                node: None,
-                                starting_comments: None,
-                            });
-                        }
-                        ")" => {
-                            self.stack.pop();
-                        }
-                        "{" => {
-                            let open = end;
-                            let begin = if line.as_bytes().get(open) == Some(&b' ') {
-                                open + 1
-                            } else {
-                                open
-                            };
-                            line = &line[begin..];
-                            self.state = State::Comment;
-                            continue 'continued;
-                        }
-                        _ => {
-                            let san = if token.starts_with(['O', '0', 'o']) {
-                                San::new(&token.replace(['0', 'o'], "O").replace(['–', '—'], "-"))
-                            } else if matches!(token, "Z0" | "0000" | "@@@@") {
-                                San::new("--")
-                            } else {
-                                San::new(token)
-                            };
-                            let frame = self.stack.current_mut();
-                            if let Some(node) = frame.node {
-                                frame.parent = node;
-                            }
-                            let index = self.game.nodes.len();
-                            self.game.nodes.push(PgnNode {
-                                san,
-                                starting_comments: frame.starting_comments.take(),
-                                ..PgnNode::default()
-                            });
-                            frame.node = Some(index);
-                            frame.root = false;
-                            let parent = frame.parent;
-                            self.game.append_child(parent, index);
+                        if js::is_blank(line) {
+                            return self.emit();
                         }
                     }
+                    for (start, end) in tokens(line) {
+                        let token = &line[start..end];
+                        match token {
+                            ";" => return,
+                            "!" => self.handle_nag(1),
+                            "?" => self.handle_nag(2),
+                            "!!" => self.handle_nag(3),
+                            "??" => self.handle_nag(4),
+                            "!?" => self.handle_nag(5),
+                            "?!" => self.handle_nag(6),
+                            _ if token.starts_with('$') => {
+                                self.handle_nag(token[1..].parse().unwrap_or(0));
+                            }
+                            "1-0" | "1–0" | "1—0" | "0-1" | "0–1" | "0—1" | "1/2-1/2"
+                            | "1/2–1/2" | "1/2—1/2" | "*" => {
+                                if self.stack.at_root() && token != "*" {
+                                    self.game.set_header("Result", token.to_string());
+                                }
+                            }
+                            "(" => {
+                                let parent = self.stack.current().parent;
+                                self.stack.push(Frame {
+                                    parent,
+                                    root: false,
+                                    node: None,
+                                    starting_comments: None,
+                                });
+                            }
+                            ")" => {
+                                self.stack.pop();
+                            }
+                            "{" => {
+                                let open = end;
+                                let begin = if line.as_bytes().get(open) == Some(&b' ') {
+                                    open + 1
+                                } else {
+                                    open
+                                };
+                                line = &line[begin..];
+                                self.state = State::Comment;
+                                continue 'continued;
+                            }
+                            _ => {
+                                let san = if token.starts_with(['O', '0', 'o']) {
+                                    San::new(
+                                        &token.replace(['0', 'o'], "O").replace(['–', '—'], "-"),
+                                    )
+                                } else if matches!(token, "Z0" | "0000" | "@@@@") {
+                                    San::new("--")
+                                } else {
+                                    San::new(token)
+                                };
+                                let frame = self.stack.current_mut();
+                                if let Some(node) = frame.node {
+                                    frame.parent = node;
+                                }
+                                let index = self.game.nodes.len();
+                                self.game.nodes.push(PgnNode {
+                                    san,
+                                    starting_comments: frame.starting_comments.take(),
+                                    ..PgnNode::default()
+                                });
+                                frame.node = Some(index);
+                                frame.root = false;
+                                let parent = frame.parent;
+                                self.game.append_child(parent, index);
+                            }
+                        }
+                    }
+                    return;
                 }
-                return;
-            }
-            if self.state == State::Comment {
-                match line.find('}') {
+                State::Comment => match line.find('}') {
                     None => {
                         self.comment_buf.push(line.to_string());
                         return;
@@ -624,7 +633,7 @@ impl Parser {
                         self.state = State::Moves;
                         fresh_line = false;
                     }
-                }
+                },
             }
         }
     }
@@ -864,14 +873,15 @@ pub fn study_content(pgn: &str) -> String {
 
 pub fn parse_pgn(pgn: &str) -> Vec<Game> {
     let mut parser = Parser::new();
-    let mut rest = pgn;
-    while let Some(nl) = rest.find('\n') {
-        let line = &rest[..nl];
-        let line = line.strip_suffix('\r').unwrap_or(line);
+    let mut lines = pgn.split('\n').peekable();
+    while let Some(line) = lines.next() {
+        // Every line but the last ended at a newline, and loses a `\r` before it.
+        let line = match lines.peek() {
+            Some(_) => line.strip_suffix('\r').unwrap_or(line),
+            None => line,
+        };
         parser.handle_line(line);
-        rest = &rest[nl + 1..];
     }
-    parser.handle_line(rest);
     parser.emit();
     parser.games
 }
@@ -1007,10 +1017,7 @@ mod tests {
     #[test]
     fn a_header_value_escapes_only_quotes_and_backslashes() {
         let line = r#"[Event "a \"b\" \\c"]"#;
-        assert_eq!(
-            match_header(line),
-            Some(("Event", r#"a \"b\" \\c"#, line.len()))
-        );
+        assert_eq!(match_header(line), Some(("Event", r#"a \"b\" \\c"#, "")));
         assert_eq!(match_header(r#"[Event "a\x"]"#), None);
         assert!(!header_regex().is_match(r#"[Event "a\x"]"#));
     }
@@ -1088,17 +1095,13 @@ mod tests {
                 .find_iter(&text)
                 .map(|m| (m.start(), m.end()))
                 .collect();
-            let mut actual = Vec::new();
-            let mut pos = 0;
-            while let Some((start, end)) = next_token(&text, pos) {
-                actual.push((start, end));
-                pos = end;
-            }
+            let actual: Vec<(usize, usize)> = tokens(&text).collect();
             assert_eq!(actual, expected, "tokens of {text:?}");
             let expected = header
                 .captures(&text)
                 .map(|c| (c[1].to_string(), c[2].to_string(), c.get(0).unwrap().end()));
-            let actual = match_header(&text).map(|(n, v, e)| (n.to_string(), v.to_string(), e));
+            let actual = match_header(&text)
+                .map(|(n, v, rest)| (n.to_string(), v.to_string(), text.len() - rest.len()));
             assert_eq!(actual, expected, "header of {text:?}");
         }
         for text in [
@@ -1108,7 +1111,8 @@ mod tests {
             "[E \"x\\\"]",
         ] {
             let expected = header.captures(text).map(|c| c.get(0).unwrap().end());
-            assert_eq!(match_header(text).map(|h| h.2), expected, "{text:?}");
+            let end = match_header(text).map(|h| text.len() - h.2.len());
+            assert_eq!(end, expected, "{text:?}");
         }
     }
 

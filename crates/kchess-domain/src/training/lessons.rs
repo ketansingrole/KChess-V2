@@ -205,25 +205,26 @@ fn fen_of(pos: &Chess) -> String {
 
 /// The side to move forces checkmate within `n` of its moves.
 pub fn mates_within(pos: &Chess, n: u32) -> bool {
-    if n == 0 {
+    // The moves left after this one.
+    let Some(left) = n.checked_sub(1) else {
         return false;
-    }
+    };
     let mut quiet = Vec::new();
     for m in pos.legal_moves() {
         let mut next = pos.clone();
         next.play_unchecked(m);
         if next.is_check() {
-            if next.is_checkmate() || (n > 1 && defender_lost(&next, n - 1)) {
+            if next.is_checkmate() || (left > 0 && defender_lost(&next, left)) {
                 return true;
             }
-        } else if n > 1 {
+        } else if left > 0 {
             quiet.push(next);
         }
     }
     // Only a check mates at once; quiet moves need a reply first.
     quiet
         .iter()
-        .any(|next| !next.legal_moves().is_empty() && defender_lost(next, n - 1))
+        .any(|next| !next.legal_moves().is_empty() && defender_lost(next, left))
 }
 
 /// Every reply of the side to move (not checkmated) still allows mate within `n`.

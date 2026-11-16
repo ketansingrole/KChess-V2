@@ -145,11 +145,9 @@ pub fn day_streak<'a>(days: impl IntoIterator<Item = &'a str>, today: &str) -> D
     else {
         return streak;
     };
-    let mut day = end;
-    while numbers.binary_search(&day).is_ok() {
-        streak.current += 1;
-        day -= 1;
-    }
+    streak.current = (0..)
+        .take_while(|back| numbers.binary_search(&(end - back)).is_ok())
+        .count() as u32;
     streak
 }
 
