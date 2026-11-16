@@ -126,6 +126,14 @@ exclude_re = [
     # pull request. `warm` builds every member's tests, as `warm_commands` (tested) says, for CI's
     # mutants cache.
     'tooling/xtask/src/mutants\.rs:.*: (replace (plan|run|warm) -> Result with |.* in (plan|run)$)',
+    # The weekly run of the app's mutants: the plan builds the app's tests with coverage and runs
+    # each, and a shard runs cargo-mutants on the repository, so a test of them would run the
+    # app's suite and cargo-mutants inside the tests; `cpus` only weighs the estimates by the
+    # machine's processors. What they decide is tested (`mutants_listed`, `covered_lines`,
+    # `Index`, `wall`, `chunks`, `shard_count`, `assign`, `plan_json`, `planned_for`,
+    # `chunk_args`, `merge`, `verdict`, `in_parallel`); the Mutants workflow's `gpui-plan` and
+    # `gpui` jobs run them every Sunday.
+    'tooling/xtask/src/app_mutants\.rs:.*: (replace (plan|list|cpus|coverage|instrumented|test_names|run_test|llvm_tools|lines_of|shard) -> .* with |.* in (plan|list|coverage|instrumented|test_names|run_test|llvm_tools|lines_of|shard)$)',
     # Talk to GitHub through gh: the Electron step's download and manifests, the release check of
     # a commit's CI, the draft upload and the Snap download. What they decide is tested
     # (`check_step`, `check_sums`, `matches`, `manifest_text`, `ci_verdict`, `needs_ci`,

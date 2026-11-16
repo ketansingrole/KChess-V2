@@ -37,8 +37,8 @@ incrementally from the crates.io dependencies each push to `main` keeps built, a
 runner up to six hours, GitHub's limit, so a large refactor's mutants are tested too. A change
 with no mutants starts no runner. The app's mutants (`apps/gpui`) each rebuild the app, so
 `cargo xtask mutants` leaves them out of a run of changed lines (pull requests, the pre-push hook);
-`--app` tests the app's alone, as the weekly run's `gpui` job does for the lines the past week
-changed in the app.
+`--app` tests the app's alone, each with the app's whole suite, and the weekly run tests the
+lines the past week changed in the app, each with the tests that run it (below).
 
 The pre-push hook (`cargo xtask install-hooks`) runs it before every push of a branch, on the
 lines new since that branch's last push, and refuses the push while a mutant survives: a survivor
@@ -82,10 +82,45 @@ moved code still is a change. Commit a move first: an untracked file is compared
 
 `.github/workflows/mutants.yml` runs a package in eight shards every Saturday (the rules) and on
 demand for any package, through `cargo xtask mutants --all --in-place` as a pull request's run
-does. Its `gpui` job, on the same schedule, tests the mutants of the app's
-lines changed in the past week, which pull requests leave out. The rules and the core take hours on one machine: about 20 seconds of
-CPU per mutant for the rules' 7,000, more for the core's 6,300 and the app's 12,000, whose every
-mutant rebuilds the app.
+does. The rules and the core take hours on one machine: about 20 seconds of CPU per mutant for
+the rules' 7,000, more for the core's 6,300 and the app's 12,000, whose every mutant rebuilds the
+app.
+
+### The app's week
+
+Every Sunday (or by hand: `gh workflow run mutants.yml -f app_week=true`), the `gpui-plan` and
+`gpui` jobs test the mutants of the app's lines changed in the past week, which pull requests
+leave out. A busy week has about 4,000 of them. Each used to run the app's whole suite, 669 tests
+and about 2 minutes on a runner, plus a 17-second rebuild of the app: some 150 runner-hours, so
+on 2026-11-14 all four shards were cancelled at six hours with nothing reported. Yet a mutant can
+only show in a test that runs its line, and most lines are run by a handful of tests.
+
+So `cargo xtask mutants --app-plan --base <ref>` (`tooling/xtask/src/app_mutants.rs`) first
+measures which tests run which lines: it builds the app's tests with coverage of the app's own
+code (`cargo rustc … -C instrument-coverage`, the dependencies left as the shards build them),
+runs each test alone with its own profile, and reads each one's covered lines with the
+toolchain's `llvm-cov` (`rustup component add llvm-tools-preview`). Each mutant gets the tests
+that ran a line of its span; half of them need 5 tests or fewer, and the week's estimate fell
+from about 150 hours to under 40. A mutant no test runs is not built at all: it is listed in
+`uncovered.txt`, a test to write as surely as a missed one. The plan groups the mutants that
+share their tests into chunks of up to fifteen estimated minutes, and spreads the chunks over as
+many shards as four hours each takes (at most 16), the longest first, onto the least loaded. On
+this Mac the plan takes about a minute; on a runner, its first build too.
+
+Each shard (`cargo xtask mutants --app-shard <k>`) builds the app once, then runs cargo-mutants
+once per chunk, in place, with `--baseline skip` (the plan ran every test) and a nextest filter
+of the chunk's tests (`-E 'test(=…) | …'`). It picks the chunk's mutants by their exact names
+(`--re`) and by a diff that marks only their lines (`--in-diff`): cargo-mutants 27.1 never checks
+a struct field's "delete field" mutants against names, so by name alone every chunk tested all
+of its files' (and `.cargo/mutants.toml`'s exclusions do not reach them either). Its `mutants.out` adds up the chunks' lists
+(`caught.txt`, `missed.txt`, `timeout.txt`, `unviable.txt`), each chunk's own logs under
+`chunks/`. A shard starts no chunk past five hours, so it always reports within the job's six;
+anything it did not reach is listed in `untested.txt`, and the plan's next week needs more
+shards, not a longer limit.
+
+The selection trusts that a test which never runs a line cannot see a change to it. A test whose
+path depends on timing may run a line in one run and not the next: two runs of the plan here
+disagreed on 3 of 4,000 mutants.
 
 ## Mutants no test here can kill
 
