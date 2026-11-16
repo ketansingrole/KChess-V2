@@ -584,6 +584,126 @@ mod tests {
         assert_eq!(kept["setup"]["fen"], crate::rules::INITIAL_FEN);
     }
 
+    /// The prefix keeps whole characters: one that straddles the limit is left out.
+    #[test]
+    fn a_prefix_stops_at_the_limit_in_utf16_units() {
+        assert_eq!(utf16_prefix("abcdef", 3), "abc");
+        assert_eq!(utf16_prefix("abc", 3), "abc");
+        assert_eq!(utf16_prefix("abc", 0), "");
+        // The pile of poo is two units: it fits in two, not in the one left after `a`.
+        assert_eq!(utf16_prefix("a\u{1F4A9}b", 3), "a\u{1F4A9}");
+        assert_eq!(utf16_prefix("a\u{1F4A9}b", 2), "a");
+    }
+
+    #[test]
+    fn a_time_is_a_finite_number_or_nothing() {
+        assert_eq!(ms(Some(&J::Num(f64::INFINITY))), 0.0);
+        assert_eq!(ms(Some(&J::Num(f64::NEG_INFINITY))), 0.0);
+        assert_eq!(ms(Some(&J::Num(1500.0))), 1500.0);
+        assert_eq!(finite_of(Some(&J::Num(f64::INFINITY))), None);
+        assert_eq!(finite_of(Some(&J::Num(2.5))), Some(2.5));
+    }
+
+    /// A list of moves holds 1024 at most.
+    #[test]
+    fn a_game_holds_1024_moves_at_most() {
+        let shuffle = |count: usize| {
+            let moves: Vec<J> = ["g1f3", "g8f6", "f3g1", "f6g8"]
+                .iter()
+                .cycle()
+                .take(count)
+                .map(|m| J::Str((*m).into()))
+                .collect();
+            J::Arr(moves)
+        };
+        let fen = crate::rules::INITIAL_FEN;
+        let kept = playable(Variant::Standard, fen, Some(&shuffle(1024)));
+        assert_eq!(kept.map(|moves| moves.len()), Some(1024));
+        assert_eq!(playable(Variant::Standard, fen, Some(&shuffle(1025))), None);
+    }
+
+    /// A list's entries are its indices, so a list of counts reads as one keyed by them.
+    #[test]
+    fn a_list_of_misses_is_read_by_its_indices() {
+        let raw = J::Obj(vec![(
+            "study:white".into(),
+            J::Arr(vec![J::Num(2.0), J::Num(0.0), J::Num(3.0)]),
+        )]);
+        assert_eq!(
+            serde_json::to_value(decode_repertoire_misses(&raw)).unwrap(),
+            serde_json::json!({ "study:white": { "0": 2, "2": 3 } })
+        );
+    }
+
+    /// A key of 200 UTF-16 units stays; one of 201, and one with no table to hold, go.
+    #[test]
+    fn repertoire_keys_are_bounded_and_need_a_table() {
+        let table = || J::Obj(vec![("fen".into(), J::Num(1.0))]);
+        let raw = J::Obj(vec![
+            ("k".repeat(200), table()),
+            ("k".repeat(201), table()),
+            ("string".into(), J::Str("not a table".into())),
+            ("null".into(), J::Null),
+        ]);
+        let kept = serde_json::to_value(decode_repertoire_misses(&raw)).unwrap();
+        let keys: Vec<&String> = kept.as_object().unwrap().keys().collect();
+        assert_eq!(keys, [&"k".repeat(200)]);
+    }
+
+    /// Whole-number keys come first, ascending; anything that is not a canonical index below
+    /// 2^32 - 1 keeps its place among the rest.
+    #[test]
+    fn only_canonical_indices_sort_first() {
+        let order = js_key_order(
+            [
+                "b",
+                "0",
+                "05",
+                "+5",
+                "",
+                "4294967295",
+                "4294967294",
+                "7",
+                "-1",
+                "a",
+            ]
+            .iter()
+            .map(|k| ((*k).to_string(), J::Null))
+            .collect(),
+        );
+        let keys: Vec<&str> = order.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "0",
+                "7",
+                "4294967294",
+                "b",
+                "05",
+                "+5",
+                "",
+                "4294967295",
+                "-1",
+                "a"
+            ]
+        );
+    }
+
+    /// A value that is not an object is no session, whatever its kind.
+    #[test]
+    fn a_session_must_be_an_object() {
+        let cannot = Err("This session cannot be saved.".to_string());
+        for value in [J::Str("x".into()), J::Num(1.0), J::Bool(true), J::Null] {
+            let checked = assert_session(vec![J::Str("no such kind".into()), value]);
+            assert_eq!(checked.map(J::into_value), cannot);
+        }
+        let checked = assert_session(vec![J::Str("no such kind".into()), J::Obj(vec![])]);
+        assert_eq!(
+            checked.map(J::into_value),
+            Err("SESSION_DECODERS[kind] is not a function".to_string())
+        );
+    }
+
     #[test]
     fn js_order_puts_index_keys_first() {
         let order = js_key_order(vec![

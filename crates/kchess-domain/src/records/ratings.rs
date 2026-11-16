@@ -265,4 +265,15 @@ mod tests {
         assert_eq!(utc_date(f64::NAN).0, Value::Null);
         assert_eq!(utc_date(9.0e15).0, Value::Null);
     }
+
+    /// A history entry has points when it lists some, as a list or as text.
+    #[test]
+    fn an_entry_has_points_when_it_lists_some() {
+        assert!(has_points(&json!({ "points": [[2026, 0, 1, 1500]] })));
+        assert!(has_points(&json!({ "points": "1500" })));
+        assert!(!has_points(&json!({ "points": [] })));
+        assert!(!has_points(&json!({ "points": "" })));
+        assert!(!has_points(&json!({ "points": 3 })));
+        assert!(!has_points(&json!({})));
+    }
 }

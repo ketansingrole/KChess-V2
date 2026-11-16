@@ -460,4 +460,41 @@ mod tests {
         let setup = EditorSetup::from_fen("4k3/8/8/3pP3/8/8/8/4K3 w - d5 0 1").expect("a position");
         assert_eq!(setup.ep, "");
     }
+
+    #[test]
+    fn an_array_index_is_a_whole_number_inside_the_array() {
+        assert_eq!(at_index(0.0, 8), Some(0));
+        assert_eq!(at_index(7.0, 8), Some(7));
+        assert_eq!(at_index(8.0, 8), None);
+        assert_eq!(at_index(-1.0, 8), None);
+        assert_eq!(at_index(2.5, 8), None);
+        assert_eq!(at_index(f64::NAN, 8), None);
+    }
+
+    #[test]
+    fn a_file_past_the_board_adds_the_piece_at_the_end_of_its_row() {
+        let empty = "8/8/8/8/8/8/8/8";
+        let rook = Some(("white", "rook"));
+        assert_eq!(
+            with_piece(empty, "i1", rook).as_deref(),
+            Ok("8/8/8/8/8/8/8/8R")
+        );
+        // The files between hold nothing.
+        assert_eq!(
+            with_piece(empty, "k1", rook).as_deref(),
+            Ok("8/8/8/8/8/8/8/8R")
+        );
+    }
+
+    #[test]
+    fn a_shredder_letter_is_short_or_long_by_the_side_of_its_king() {
+        let board = "4k3/8/8/8/8/8/8/3RK2R";
+        assert_eq!(castling_letters(board, "HDhd"), "KQkq");
+        let board = "r3k2r/8/8/8/8/8/8/R3K2R";
+        assert_eq!(castling_letters(board, "AHah"), "QKqk");
+        // A rook on the king's own file is on neither side: read as the long one.
+        assert_eq!(castling_letters("4k3/8/8/8/8/8/8/4K3", "E"), "Q");
+        // With no king on its rank there is no side to read.
+        assert_eq!(castling_letters("8/8/8/8/8/8/8/8", "H"), "");
+    }
 }

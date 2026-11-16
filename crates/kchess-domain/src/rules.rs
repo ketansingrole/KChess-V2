@@ -319,10 +319,7 @@ pub fn parse_square(s: &str) -> Option<Square> {
 
 /// The position under the given rules, or None when not legal.
 pub fn setup_position(variant: Variant, setup: Setup) -> Option<VariantPosition> {
-    let ep = setup.ep_square;
     let mut setup = setup;
-    // An en passant square that no pawn could have just passed is silently dropped.
-    setup.ep_square = ep.filter(|&sq| valid_ep_square(&setup, sq));
     if variant != Variant::ThreeCheck {
         setup.remaining_checks = None;
     }
@@ -340,6 +337,7 @@ pub fn setup_position(variant: Variant, setup: Setup) -> Option<VariantPosition>
     }
     VariantPosition::from_setup(variant, setup, CastlingMode::Chess960)
         .or_else(PositionError::ignore_invalid_castling_rights)
+        // An en passant square that no pawn could have just passed is silently dropped.
         .or_else(PositionError::ignore_invalid_ep_square)
         .or_else(PositionError::ignore_too_much_material)
         .or_else(PositionError::ignore_impossible_check)
@@ -347,92 +345,13 @@ pub fn setup_position(variant: Variant, setup: Setup) -> Option<VariantPosition>
         .filter(chessops_valid)
 }
 
-/// The `validate()` rules of each variant, which shakmaty does not always share.
+/// What chessops refuses in Racing Kings and shakmaty allows: a side in check, or a pawn. Every
+/// other rule chessops checks, shakmaty's own validation already refuses.
 fn chessops_valid(pos: &VariantPosition) -> bool {
-    let board = pos.board();
-    let turn = pos.turn();
-    let kings = board.by_role(Role::King);
-    let pawns = board.by_role(Role::Pawn);
-    let opposite_check = |king: Square| pos.king_attackers(king, turn, board.occupied()).any();
-    let standard = || {
-        board.occupied().any()
-            && kings.count() == 2
-            && board.king_of(turn).is_some()
-            && board
-                .king_of(!turn)
-                .is_some_and(|king| !opposite_check(king))
-            && !pawns.intersects(backranks())
-    };
-    match pos {
-        VariantPosition::Chess(_)
-        | VariantPosition::KingOfTheHill(_)
-        | VariantPosition::ThreeCheck(_) => standard(),
-        VariantPosition::Crazyhouse(_) => {
-            standard()
-                && pos.pockets().is_none_or(|pockets| {
-                    let total: usize = Color::ALL
-                        .iter()
-                        .flat_map(|&c| {
-                            Role::ALL
-                                .iter()
-                                .map(move |&r| usize::from(*pockets.get(c).get(r)))
-                        })
-                        .sum();
-                    *pockets.white.get(Role::King) == 0
-                        && *pockets.black.get(Role::King) == 0
-                        && total + board.occupied().count() <= 64
-                })
-        }
-        VariantPosition::Atomic(_) => {
-            board.occupied().any()
-                && kings.count() <= 2
-                && board
-                    .king_of(!turn)
-                    .is_some_and(|king| !opposite_check(king))
-                && !pawns.intersects(backranks())
-        }
-        VariantPosition::Antichess(_) => board.occupied().any() && !pawns.intersects(backranks()),
-        VariantPosition::RacingKings(_) => !pos.is_check() && pawns.is_empty() && standard(),
-        VariantPosition::Horde(_) => {
-            board.occupied().any()
-                && kings.count() == 1
-                && board
-                    .king_of(!turn)
-                    .is_none_or(|king| !opposite_check(king))
-                && Color::ALL.iter().all(|&color| {
-                    let ranks = if (board.by_color(color) & kings).is_empty() {
-                        Bitboard::from_rank((!color).backrank())
-                    } else {
-                        backranks()
-                    };
-                    !(board.by_color(color) & pawns).intersects(ranks)
-                })
-        }
-    }
+    !matches!(pos, VariantPosition::RacingKings(_))
+        || (!pos.is_check() && pos.board().by_role(Role::Pawn).is_empty())
 }
 
-fn valid_ep_square(setup: &Setup, square: Square) -> bool {
-    let (ep_rank, forward) = match setup.turn {
-        Color::White => (Rank::Sixth, 8),
-        Color::Black => (Rank::Third, -8),
-    };
-    if square.rank() != ep_rank {
-        return false;
-    }
-    let ahead = square.offset(forward);
-    let pawn = square.offset(-forward);
-    match (ahead, pawn) {
-        (Some(ahead), Some(pawn)) => {
-            !setup.board.occupied().contains(ahead)
-                && setup.board.piece_at(pawn)
-                    == Some(Piece {
-                        role: Role::Pawn,
-                        color: !setup.turn,
-                    })
-        }
-        _ => false,
-    }
-}
 
 /// A FEN text as a position of `variant`; none when it is not a legal one there.
 pub fn setup_start(variant: crate::variant::Variant, fen: &str) -> Option<VariantPosition> {
@@ -1358,6 +1277,37 @@ mod fen_tests {
             parse_san(&pos, "a8N").map(|m| make_uci(&m)).as_deref(),
             Some("a7a8n")
         );
+    }
+
+    /// A king that stays where it is never castles, whichever rights remain.
+    #[test]
+    fn a_king_that_stays_put_does_not_castle() {
+        let pos = chess("4k3/8/8/8/8/8/8/4K2R w K - 0 1");
+        assert_eq!(uci(&pos, "e1e1"), None);
+        assert_eq!(uci(&pos, "e1g1").as_deref(), Some("e1h1"));
+    }
+
+    /// Of two pieces that reach one square, the move names the one it starts from.
+    #[test]
+    fn a_move_starts_from_the_piece_it_names() {
+        let pos = chess("k7/8/8/8/8/8/8/1N2KN1N w - - 0 1");
+        assert_eq!(uci(&pos, "b1d2").as_deref(), Some("b1d2"));
+        assert_eq!(uci(&pos, "f1d2").as_deref(), Some("f1d2"));
+        // The knight on h1 cannot reach d2, though two others can.
+        assert_eq!(uci(&pos, "h1d2"), None);
+    }
+
+    /// Only a pawn is kept off the back ranks; any other piece is dropped there.
+    #[test]
+    fn a_knight_drops_on_the_back_rank() {
+        let pos = setup_position(
+            Variant::Crazyhouse,
+            parse_fen("4k3/8/8/8/8/8/8/4K3[N] w - - 0 1").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(uci(&pos, "N@a8").as_deref(), Some("N@a8"));
+        assert_eq!(uci(&pos, "N@a1").as_deref(), Some("N@a1"));
+        assert!(parse_san(&pos, "N@a8").is_some());
     }
 
     /// A drop needs the piece in the pocket, and a pawn is never dropped on a back rank.

@@ -954,4 +954,141 @@ mod tests {
             SpokenMove::Move { choices } if choices.len() == 1 && choices[0].uci == "e7e5"
         ));
     }
+
+    fn say(text: &str, fen: &str) -> super::SpokenMove {
+        super::spoken_move(text, &crate::rules::standard_from_fen(fen).unwrap())
+    }
+
+    /// The `(uci, san)` of every choice a phrase offers at `fen`.
+    fn choices(text: &str, fen: &str) -> Vec<(String, String)> {
+        match say(text, fen) {
+            super::SpokenMove::Move { choices } => {
+                choices.into_iter().map(|c| (c.uci, c.san)).collect()
+            }
+            other => panic!("{text:?} was read as {other:?}"),
+        }
+    }
+
+    fn ucis(text: &str, fen: &str) -> Vec<String> {
+        choices(text, fen).into_iter().map(|(uci, _)| uci).collect()
+    }
+
+    const BOTH_CASTLES: &str = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
+    const PROMOTION: &str = "8/4P3/8/8/8/8/k7/4K3 w - - 0 1";
+
+    #[test]
+    fn a_square_is_a_file_then_a_rank_and_nothing_else() {
+        use super::is_square;
+        assert!(is_square("a1") && is_square("h8"));
+        for not in ["", "a", "a1x", "i1", "a9", "1a", "abc"] {
+            assert!(!is_square(not), "{not:?}");
+        }
+    }
+
+    #[test]
+    fn a_source_is_a_square_a_file_or_a_rank() {
+        use super::is_source;
+        for yes in ["e4", "e", "4", "a", "h", "1", "8"] {
+            assert!(is_source(yes), "{yes:?}");
+        }
+        for not in ["", "ab", "i", "9", "0", "e9", "zz", "e4x", "xyz"] {
+            assert!(!is_source(not), "{not:?}");
+        }
+    }
+
+    #[test]
+    fn an_eight_before_a_rank_is_file_a_unless_a_square_follows() {
+        use super::tokens;
+        assert_eq!(tokens("eight three"), ["a3"]);
+        assert_eq!(tokens("eight three alpha"), ["8", "3", "a"]);
+        assert_eq!(tokens("rook eight to a three"), ["rook", "8", "to", "a3"]);
+        assert_eq!(tokens("knight eight three"), ["knight", "a3"]);
+    }
+
+    #[test]
+    fn only_confirm_words_and_filler_confirm() {
+        use super::SpokenMove::Confirm;
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        assert_eq!(say("yes", start), Confirm);
+        assert_eq!(say("confirm move", start), Confirm);
+        assert_eq!(say("yeah play", start), Confirm);
+        assert_ne!(say("play", start), Confirm);
+        assert_ne!(say("yes e four", start), Confirm);
+    }
+
+    #[test]
+    fn castling_is_said_as_a_side() {
+        for (text, uci, san) in [
+            ("castle kingside", "e1g1", "O-O"),
+            ("castle king side", "e1g1", "O-O"),
+            ("castling kingside", "e1g1", "O-O"),
+            ("castle queenside", "e1c1", "O-O-O"),
+            ("castle queen side", "e1c1", "O-O-O"),
+            ("play castle queenside", "e1c1", "O-O-O"),
+        ] {
+            assert_eq!(
+                choices(text, BOTH_CASTLES),
+                [(uci.to_string(), san.to_string())],
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn castling_with_check_is_still_castling() {
+        // The rook lands on f1 and checks the king on f8.
+        assert_eq!(
+            choices("castle kingside", "5k2/8/8/8/8/8/8/4K2R w K - 0 1"),
+            [("e1g1".to_string(), "O-O+".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_chess960_castle_stays_king_takes_rook() {
+        assert_eq!(
+            ucis("castle kingside", "1k6/8/8/8/8/8/8/1K5R w H - 0 1"),
+            ["b1h1"]
+        );
+    }
+
+    #[test]
+    fn a_rook_move_is_not_castling() {
+        assert_eq!(
+            ucis("rook to h one", "k7/8/8/8/8/8/8/K3R3 w - - 0 1"),
+            ["e1h1"]
+        );
+    }
+
+    #[test]
+    fn a_promotion_offers_only_the_named_piece() {
+        for phrase in ["e eight queen", "e eight to queen", "e eight promote queen"] {
+            assert_eq!(ucis(phrase, PROMOTION), ["e7e8q"], "{phrase}");
+        }
+        assert_eq!(ucis("e eight knight", PROMOTION), ["e7e8n"]);
+    }
+
+    #[test]
+    fn more_than_one_word_before_the_destination_is_not_a_move() {
+        // Nb1 could reach c3, but "b one a" is two words of origin.
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        assert_eq!(say("b one a c three", start), super::SpokenMove::Invalid);
+        assert_eq!(ucis("b one c three", start), ["b1c3"]);
+    }
+
+    #[test]
+    fn a_random_square_falls_back_to_the_board_when_none_are_allowed() {
+        use super::random_square;
+        assert_eq!(random_square(None, &[0.5], Some(&[])), Some("e1".into()));
+        let only = ["c3".to_string(), "d4".to_string()];
+        assert_eq!(random_square(None, &[0.9], Some(&only)), Some("d4".into()));
+    }
+
+    #[test]
+    fn squares_alternate_dark_and_light() {
+        use super::square_color;
+        assert_eq!(square_color("a1"), "dark");
+        assert_eq!(square_color("b1"), "light");
+        assert_eq!(square_color("a2"), "light");
+        assert_eq!(square_color("h8"), "dark");
+    }
 }

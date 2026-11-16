@@ -760,4 +760,166 @@ mod tests {
             "Look for the most forcing move."
         );
     }
+
+    #[test]
+    fn a_token_is_move_like_when_it_ends_on_a_square_after_a_piece_or_a_capture() {
+        for token in [
+            "O-O", "O-O-O", "Nf3", "Rxe8", "exd5", "exd8=Q", "Ne4", "Kh1",
+        ] {
+            assert!(is_move_like(token), "{token}");
+        }
+        for token in ["e4", "Rab", "ab4", "d4e5", "pawn", "e", "", "Zf3", "O-O-"] {
+            assert!(!is_move_like(token), "{token}");
+        }
+    }
+
+    #[test]
+    fn a_mating_line_allows_the_word_mate() {
+        let start = rules::standard_from_fen("7k/6pp/8/8/8/8/8/R5K1 w - - 0 1").unwrap();
+        let mut allowed = Allowed::default();
+        see_line(&start, &["a1a8"], &mut allowed);
+        assert!(allowed.mate);
+        assert!(allowed.moves.contains("Ra8"));
+        let mut quiet = Allowed::default();
+        see_line(&start, &["a1a7"], &mut quiet);
+        assert!(!quiet.mate);
+    }
+
+    #[test]
+    fn a_tactic_is_told_by_what_it_won_or_lost() {
+        let hanging = Tactic::Hanging {
+            role: "rook",
+            square: "a8".into(),
+            san: "Nxa8".into(),
+        };
+        assert_eq!(
+            tactic_words(&hanging, true),
+            "Missed Nxa8, winning the rook."
+        );
+        assert_eq!(tactic_words(&hanging, false), "Loses the rook to Nxa8.");
+    }
+
+    fn facts_of(refutation: Option<LineFacts>) -> MoveFacts {
+        MoveFacts {
+            san: "a3".into(),
+            refutation,
+            better: None,
+            mated_in: None,
+            missed_mate: None,
+        }
+    }
+
+    fn line_of(san: &[&str], material: i32) -> LineFacts {
+        LineFacts {
+            san: san.iter().map(ToString::to_string).collect(),
+            material,
+            tactics: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_reply_that_wins_material_is_the_reason_and_one_that_wins_none_is_not() {
+        let loses = facts_of(Some(line_of(&["Nxe5"], 3)));
+        assert_eq!(
+            reason(&loses).as_deref(),
+            Some("Loses 3 points of material.")
+        );
+        let one = facts_of(Some(line_of(&["Nxe5"], 1)));
+        assert_eq!(reason(&one).as_deref(), Some("Loses 1 point of material."));
+        assert_eq!(reason(&facts_of(Some(line_of(&["Nf3"], 0)))), None);
+    }
+
+    #[test]
+    fn a_line_tells_its_material_only_when_it_won_some() {
+        let won = line_text("Line", &line_of(&["Rxa8"], 5));
+        assert!(won.contains("Material won: 5."), "{won}");
+        let even = line_text("Line", &line_of(&["Ra7"], 0));
+        assert!(!even.contains("Material"), "{even}");
+        let mate = line_text("Line", &line_of(&["Ra8#"], 0));
+        assert!(mate.contains("It ends in checkmate."), "{mate}");
+    }
+
+    #[test]
+    fn a_forced_mate_in_the_facts_allows_the_word_mate() {
+        // Black is mated in 2 after Kd8, and nothing in the lines is a mate.
+        let (facts, brief) = move_brief(
+            "4k3/8/8/8/8/8/8/4K2R b - - 0 1",
+            "e8d8",
+            &[] as &[&str],
+            &[] as &[&str],
+            Mates {
+                before: None,
+                after: Some(2),
+            },
+        )
+        .unwrap();
+        assert_eq!(facts.mated_in, Some(2));
+        assert!(brief.allowed.mate);
+        // White's own mate, given up by Ke2.
+        let (facts, brief) = move_brief(
+            "4k3/8/8/8/8/8/8/4K2R w - - 0 1",
+            "e1e2",
+            &[] as &[&str],
+            &[] as &[&str],
+            Mates {
+                before: Some(4),
+                after: Some(0),
+            },
+        )
+        .unwrap();
+        assert_eq!(facts.missed_mate, Some(4));
+        assert!(brief.allowed.mate);
+        // No mate, no word for it.
+        let (_, brief) = move_brief(
+            "4k3/8/8/8/8/8/8/4K2R w - - 0 1",
+            "e1e2",
+            &[] as &[&str],
+            &[] as &[&str],
+            Mates::default(),
+        )
+        .unwrap();
+        assert!(!brief.allowed.mate);
+    }
+
+    #[test]
+    fn a_wrong_move_hears_of_a_better_line_only_when_it_won_material() {
+        let brief = wrong_brief(FORK, &["e1d1"], "a2a3", &["e8d7"]).unwrap();
+        assert!(
+            !brief.input.contains("The position offered"),
+            "{}",
+            brief.input
+        );
+    }
+
+    #[test]
+    fn a_wrong_move_keeps_the_reply_that_won_something_or_mated() {
+        let reply = "The opponent's best reply line";
+        // Black wins the bishop on its third move, which no tactic names.
+        let wins = wrong_brief(
+            "4k2r/8/8/8/2B5/8/8/4K3 w - - 0 1",
+            &["c4f7"],
+            "e1e2",
+            &["h8h4", "e2e3", "h4c4"],
+        )
+        .unwrap();
+        assert!(wins.input.contains(reply), "{}", wins.input);
+        // A reply that mates is no quiet one.
+        let mates = wrong_brief(
+            "3r2k1/8/8/8/8/8/P4PPP/6K1 w - - 0 1",
+            &["h2h3"],
+            "a2a3",
+            &["d8d1"],
+        )
+        .unwrap();
+        assert!(mates.input.contains(reply), "{}", mates.input);
+        // One that wins nothing is left out.
+        let quiet = wrong_brief(
+            "4k2r/8/8/8/2B5/8/8/4K3 w - - 0 1",
+            &["c4f7"],
+            "e1e2",
+            &["h8h7"],
+        )
+        .unwrap();
+        assert!(!quiet.input.contains(reply), "{}", quiet.input);
+    }
 }

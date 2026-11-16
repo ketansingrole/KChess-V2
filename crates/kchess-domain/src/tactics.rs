@@ -559,4 +559,145 @@ mod tests {
         assert_eq!(line.material, 5);
         assert_eq!(kinds(&line), ["fork"]);
     }
+
+    fn steps_of(fen: &str, line: &[&str]) -> (VariantPosition, Vec<Step>) {
+        let start = rules::standard_from_fen(fen).unwrap();
+        let steps = walk(&start, line);
+        assert_eq!(steps.len(), line.len(), "{line:?} is legal from {fen}");
+        (start, steps)
+    }
+
+    #[test]
+    fn every_role_has_its_name() {
+        let names = Role::ALL.map(role_name);
+        assert_eq!(names, ["pawn", "knight", "bishop", "rook", "queen", "king"]);
+    }
+
+    #[test]
+    fn a_square_is_taken_only_by_a_capture_of_the_side_on_it() {
+        let (_, steps) = steps_of("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", &["e4d5", "e8e7"]);
+        assert!(taken_on(&steps, 0, Square::D5, Color::White));
+        // Not by the other side, not from a later step, not on another square.
+        assert!(!taken_on(&steps, 0, Square::D5, Color::Black));
+        assert!(!taken_on(&steps, 1, Square::D5, Color::White));
+        assert!(!taken_on(&steps, 0, Square::E7, Color::Black));
+        // A quiet move to the square is not a capture, and neither side's capture elsewhere counts.
+        let (_, quiet) = steps_of("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", &["e1d1", "d5e4"]);
+        assert!(!taken_on(&quiet, 0, Square::D1, Color::White));
+        assert!(taken_on(&quiet, 0, Square::E4, Color::Black));
+        assert!(!taken_on(&quiet, 0, Square::E4, Color::White));
+    }
+
+    #[test]
+    fn a_loose_piece_is_hanging_unless_answered_on_its_square() {
+        let hung = |fen: &str, line: &[&str], side: Color, gain: i32| {
+            let (start, steps) = steps_of(fen, line);
+            hanging(&start, &steps, side, gain)
+        };
+        let white = Color::White;
+        // The pawn on d5 is taken and the reply is elsewhere.
+        let loose = hung(
+            "4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1",
+            &["e4d5", "e8e7"],
+            white,
+            1,
+        );
+        assert_eq!(
+            loose,
+            Some(Tactic::Hanging {
+                role: "pawn",
+                square: "d5".into(),
+                san: "exd5".into()
+            })
+        );
+        // Winning less than the piece is worth makes it no loose piece.
+        assert_eq!(
+            hung(
+                "4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1",
+                &["e4d5", "e8e7"],
+                white,
+                0
+            ),
+            None
+        );
+        // A recapture on the square answers it; a capture elsewhere does not.
+        assert_eq!(
+            hung(
+                "4k3/8/3r4/3p4/4P3/8/8/4K3 w - - 0 1",
+                &["e4d5", "d6d5"],
+                white,
+                1
+            ),
+            None
+        );
+        assert!(
+            hung(
+                "4k3/8/8/3p4/4P3/8/6Pr/4K3 w - - 0 1",
+                &["e4d5", "h2g2"],
+                white,
+                1
+            )
+            .is_some()
+        );
+        // The line's own side may take second: its first blow can follow the other side's capture.
+        let second = hung(
+            "4k3/8/8/3p4/2P5/8/8/2R1K3 b - - 0 1",
+            &["d5c4", "c1c4"],
+            white,
+            1,
+        );
+        assert_eq!(
+            second,
+            Some(Tactic::Hanging {
+                role: "pawn",
+                square: "c4".into(),
+                san: "Rxc4".into()
+            })
+        );
+        // But not a third move: later blows are the combination's.
+        assert_eq!(
+            hung(
+                "4k3/8/8/3p4/2P5/8/8/2R1K3 b - - 0 1",
+                &["e8e7", "e1d1", "d5c4", "c1c4"],
+                white,
+                1
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_bigger_or_loose_piece_is_a_target_and_a_defended_smaller_one_is_not() {
+        // The knight attacks a rook that a pawn defends: still worth forking.
+        let rook = rules::standard_from_fen("4k3/8/4p3/3r4/8/2N5/8/4K3 w - - 0 1").unwrap();
+        assert_eq!(real_targets(&rook, Square::C3, Color::Black), [Square::D5]);
+        // The rook attacks a knight that a pawn defends: not.
+        let knight = rules::standard_from_fen("4k3/8/4p3/3n4/8/8/8/3RK3 w - - 0 1").unwrap();
+        assert!(real_targets(&knight, Square::D1, Color::Black).is_empty());
+    }
+
+    #[test]
+    fn only_an_enemy_piece_can_be_pinned_and_to_a_bigger_one() {
+        let found = |fen: &str| {
+            let pos = rules::standard_from_fen(fen).unwrap();
+            pins(&pos, Color::White)
+        };
+        // A knight pinned to the king, and to the queen.
+        assert_eq!(
+            found("k7/8/8/8/n7/8/8/R6K w - - 0 1"),
+            [(Square::A1, Square::A4, Square::A8)]
+        );
+        assert_eq!(
+            found("q6k/8/8/8/n7/8/8/R6K w - - 0 1"),
+            [(Square::A1, Square::A4, Square::A8)]
+        );
+        // Our own piece in between is no pin, nor is a queen in front of a queen.
+        assert!(found("k7/8/8/8/N7/8/8/R6K w - - 0 1").is_empty());
+        assert!(found("q6k/8/8/8/q7/8/8/R6K w - - 0 1").is_empty());
+        // A queen in front of the king is pinned.
+        assert_eq!(
+            found("k7/8/8/8/q7/8/8/R6K w - - 0 1"),
+            [(Square::A1, Square::A4, Square::A8)]
+        );
+    }
 }

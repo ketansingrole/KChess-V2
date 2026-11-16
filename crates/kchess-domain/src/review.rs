@@ -1017,6 +1017,338 @@ mod tests {
         assert_eq!(js_exp(f64::NEG_INFINITY), 0.0);
     }
 
+    /// `Math.exp` of V8 on arm64, bit for bit, around every branch of the routine: tiny, small,
+    /// the two reduction ranges, k = 1, k below -1021, k = 1024, overflow, underflow, NaN and
+    /// infinities, each also one bit either side of its threshold.
+    #[test]
+    fn exp_matches_v8_bit_for_bit() {
+        let table: &[(u64, u64)] = &[
+            (0x0000000000000000, 0x3ff0000000000000),
+            (0x3ddb7cdfd9d7bdbb, 0x3ff000000006df38),
+            (0xbddb7cdfd9d7bdbb, 0x3feffffffff24190),
+            (0x3e29c511dc3a41df, 0x3ff0000000ce288f),
+            (0xbe29c511dc3a41df, 0x3feffffffe63aee2),
+            (0x3e35798ee2308c3a, 0x3ff00000015798ee),
+            (0x3fb999999999999a, 0x3ff1aec7b35a00d4),
+            (0xbfb999999999999a, 0x3fecf46d99d52b3a),
+            (0x3fd3333333333333, 0x3ff599058c8c1a96),
+            (0xbfd3333333333333, 0x3fe7b4c869c37c05),
+            (0x3fd5c28f5c28f5c3, 0x3ff67aaa532108be),
+            (0xbfd5c28f5c28f5c3, 0x3fe6c6d28e50ebb6),
+            (0x3fd6666666666666, 0x3ff6b4802c805dec),
+            (0xbfd6666666666666, 0x3fe68cce09671f71),
+            (0x3fe0000000000000, 0x3ffa61298e1e069c),
+            (0xbfe0000000000000, 0x3fe368b2fc6f960a),
+            (0x3fe3333333333333, 0x3ffd27660b11a9ef),
+            (0xbfe3333333333333, 0x3fe18fdd6b9604e4),
+            (0x3feccccccccccccd, 0x4003ad44655c78bc),
+            (0xbfeccccccccccccd, 0x3fda053cc0086e1e),
+            (0x3ff0000000000000, 0x4005bf0a8b145769),
+            (0xbff0000000000000, 0x3fd78b56362cef38),
+            (0x3ff0a3d70a3d70a4, 0x4006a23c87af69e8),
+            (0xbff0a3d70a3d70a4, 0x3fd69f0062e862fe),
+            (0x3ff0a305532617c2, 0x4006a113e5103a32),
+            (0x3ff3333333333333, 0x400a8f99761065a4),
+            (0xbff3333333333333, 0x3fd346c4167a12de),
+            (0x3ff8000000000000, 0x4011ed3fe64fc541),
+            (0xbff8000000000000, 0x3fcc8f87724b5c1d),
+            (0x4000000000000000, 0x401d8e64b8d4ddae),
+            (0xc000000000000000, 0x3fc152aaa3bf81cc),
+            (0x400d99999999999a, 0x4044394144eeec81),
+            (0xc00d99999999999a, 0x3f99511fc6871044),
+            (0x4014000000000000, 0x40628d389970338f),
+            (0xc014000000000000, 0x3f7b993fe00d5376),
+            (0x4024000000000000, 0x40d5829dcf950560),
+            (0xc024000000000000, 0x3f07cd79b5647c9a),
+            (0x4049266666666666, 0x4477b655e81f0704),
+            (0xc049266666666666, 0x3b65979b805a3ba7),
+            (0x4059066666666666, 0x48f5508d07df81bb),
+            (0xc059066666666666, 0x36e805628c2e465c),
+            (0x4072c80000000000, 0x5b0719c25b8f5b4a),
+            (0xc072c80000000000, 0x24d629f5b5352a54),
+            (0x4085e20000000000, 0x7f12fd8e4cbfa413),
+            (0xc085e20000000000, 0x00caf5fe9a485c8e),
+            (0x4086240000000000, 0x7fd1bf058bc994ad),
+            (0xc086240000000000, 0x000e6cf6d08897ac),
+            (0x40862d999999999a, 0x7fed75ae7a50ee14),
+            (0x40862e3d70a3d70a, 0x7fefe9ce5c4c52b4),
+            (0xc0862d999999999a, 0x0004584ca6a179a6),
+            (0xc086826666666666, 0x000000071844d2b6),
+            (0xc08720cccccccccd, 0x000000000000004d),
+            (0xc08748cccccccccd, 0x0000000000000001),
+            (0xc08749999999999a, 0x0000000000000000),
+            (0x4086300000000000, 0x7ff0000000000000),
+            (0xc087500000000000, 0x0000000000000000),
+            (0x40f86a0000000000, 0x7ff0000000000000),
+            (0xc0f86a0000000000, 0x0000000000000000),
+            (0x3fd62e4200000000, 0x3ff6a09e0c594ff3),
+            (0x3fd62e4200000001, 0x3ff6a09e0c594ff3),
+            (0x3fd62e41ffffffff, 0x3ff6a09e0c594ff2),
+            (0xbfd62e4200000000, 0x3fe6a09ec0a5290d),
+            (0xbfd62e4200000001, 0x3fe6a09ec0a5290d),
+            (0x3ff0a2b200000000, 0x4006a09e0d126a0a),
+            (0x3ff0a2b1ffffffff, 0x4006a09e0d126a08),
+            (0x3ff0a2b200000001, 0x4006a09e0d126a0b),
+            (0xbff0a2b200000000, 0x3fd6a09ebfec0ef1),
+            (0xbff0a2b1ffffffff, 0x3fd6a09ebfec0ef2),
+            (0xbff0a2b200000001, 0x3fd6a09ebfec0ef0),
+            (0x3e30000000000000, 0x3ff0000001000000),
+            (0x3e2fffffffffffff, 0x3ff0000001000000),
+            (0x3e30000000000001, 0x3ff0000001000000),
+            (0xbe30000000000000, 0x3feffffffe000000),
+            (0xbe2fffffffffffff, 0x3feffffffe000000),
+            (0x40862e4200000000, 0x7feffc045693009d),
+            (0x40862e41ffffffff, 0x7feffc045692fc9e),
+            (0x40862e4200000001, 0x7feffc045693049d),
+            (0xc0862e4200000000, 0x0004007f850cf7ea),
+            (0xc0862e41ffffffff, 0x0004007f850cf86a),
+            (0xc0862e4200000001, 0x0004007f850cf76a),
+            (0x7ff0000000000000, 0x7ff0000000000000),
+            (0xfff0000000000000, 0x0000000000000000),
+            (0x7ff8000000000005, 0x7ff8000000000005),
+            (0x7ff8000000000000, 0x7ff8000000000000),
+            (0x7ff8000100000000, 0x7ff8000100000000),
+            (0x7ff8000000000001, 0x7ff8000000000001),
+            (0x7ff8000f00000000, 0x7ff8000f00000000),
+            (0x7ff8001000000000, 0x7ff8001000000000),
+            (0x7ff8000080000000, 0x7ff8000080000000),
+            (0x7fefffffffffffff, 0x7ff0000000000000),
+            (0xffefffffffffffff, 0x0000000000000000),
+            (0x7ff0000500000005, 0x7ff8000000000000),
+            (0x7ff0000500000000, 0x7ff8000000000000),
+            (0xfff0000500000005, 0x7ff8000000000000),
+            (0xc0874910d52d3051, 0x0000000000000001),
+            (0x40862e42fefa39ef, 0x7fefffffffffff2a),
+            (0x3fd62e42fefa39ef, 0x3ff6a09e667f3bcc),
+            (0xbfd62e42fefa39ef, 0x3fe6a09e667f3bcc),
+            (0x3fd62e4280000000, 0x3ff6a09e399a8c39),
+            (0xbfd62e4280000000, 0x3fe6a09e9363ebb9),
+            (0x3fd62e42ffffffff, 0x3ff6a09e66dbc8d9),
+            (0xbfd62e42ffffffff, 0x3fe6a09e6622aec0),
+            (0x3fd62e4212345678, 0x3ff6a09e12c8fd7a),
+            (0xbfd62e4212345678, 0x3fe6a09eba357b55),
+            (0x3fd62e422468ace0, 0x3ff6a09e1938aafd),
+            (0xbfd62e422468ace0, 0x3fe6a09eb3c5cda4),
+            (0x3fd62e429abcdef0, 0x3ff6a09e430e9325),
+            (0xbfd62e429abcdef0, 0x3fe6a09e89efe4ac),
+            (0x3fd62e4255555555, 0x3ff6a09e2a84cd6d),
+            (0xbfd62e4255555555, 0x3fe6a09ea279aacc),
+            (0x3fd62e42aaaaaaaa, 0x3ff6a09e48b04b0f),
+            (0xbfd62e42aaaaaaaa, 0x3fe6a09e844e2cb2),
+            (0x3fd62e420badf00d, 0x3ff6a09e107a6a28),
+            (0xbfd62e420badf00d, 0x3fe6a09ebc840eb8),
+            (0x3fd62e42deadbeef, 0x3ff6a09e5b13e263),
+            (0xbfd62e42deadbeef, 0x3fe6a09e71ea953c),
+            (0x3fd62e4231415926, 0x3ff6a09e1dc363a0),
+            (0xbfd62e4231415926, 0x3fe6a09eaf3b14e2),
+            (0x3fd62e4271828182, 0x3ff6a09e347b0b2f),
+            (0xbfd62e4271828182, 0x3fe6a09e98836cd8),
+            (0x3ca0000000000000, 0x3ff0000000000000),
+            (0xbca0000000000000, 0x3fefffffffffffff),
+            (0x3e30000008000000, 0x3ff0000001000001),
+            (0xbe30000008000000, 0x3feffffffdffffff),
+            (0x3cb8000000000000, 0x3ff0000000000002),
+            (0xbcb8000000000000, 0x3feffffffffffffd),
+            (0x3e30000018000000, 0x3ff0000001000002),
+            (0xbe30000018000000, 0x3feffffffdfffffd),
+            (0x3cc4000000000000, 0x3ff0000000000002),
+            (0xbcc4000000000000, 0x3feffffffffffffb),
+            (0x3e30000028000000, 0x3ff0000001000003),
+            (0xbe30000028000000, 0x3feffffffdfffffb),
+            (0x3ff0a2b2a7b82cfc, 0x4006a09efa435745),
+            (0xbff0a2b2a7b82cfc, 0x3fd6a09dd2bb2419),
+            (0x3ff0a2b24e085000, 0x4006a09e7b6d2f08),
+            (0xbff0a2b24e085000, 0x3fd6a09e519148a4),
+            (0x3ff0a2b2a1ea7000, 0x4006a09ef20e3060),
+            (0xbff0a2b2a1ea7000, 0x3fd6a09ddaf04a96),
+            (0x3ff0a2b2fef21000, 0x4006a09f759e9649),
+            (0xbff0a2b2fef21000, 0x3fd6a09d575fee01),
+            (0x3ff0a2b2adf13000, 0x4006a09f0310335e),
+            (0xbff0a2b2adf13000, 0x3fd6a09dc9ee4876),
+            (0x3ff0a2b2ac51d000, 0x4006a09f00c4c57f),
+            (0xbff0a2b2ac51d000, 0x3fd6a09dcc39b636),
+            (0x3ff0a2b22c35f000, 0x4006a09e4b986479),
+            (0xbff0a2b22c35f000, 0x3fd6a09e81661340),
+            (0x3ff0a2b2e2179080, 0x4006a09f4cd07e93),
+            (0xbff0a2b2e2179080, 0x3fd6a09d802e022e),
+            (0x3ff0a2b2b50fe600, 0x4006a09f0d21e780),
+            (0xbff0a2b2b50fe600, 0x3fd6a09dbfdc94e5),
+            (0x3ff0a2b2d3d94e00, 0x4006a09f38abe6c4),
+            (0xbff0a2b2d3d94e00, 0x3fd6a09d94529875),
+            (0x3ff0a2b2bd4a9600, 0x4006a09f18c53630),
+            (0xbff0a2b2bd4a9600, 0x3fd6a09db43946e5),
+            (0x3ff0a2b256763e00, 0x4006a09e8758f516),
+            (0xbff0a2b256763e00, 0x3fd6a09e45a582b2),
+            (0x3ff0a2b2cb3cc600, 0x4006a09f2c7e38c6),
+            (0xbff0a2b2cb3cc600, 0x3fd6a09da0804598),
+            (0x3ff0a2b23134ae00, 0x4006a09e52a8ce91),
+            (0xbff0a2b23134ae00, 0x3fd6a09e7a55a91a),
+            (0x3ff0a2b294727680, 0x4006a09edf0203cc),
+            (0xbff0a2b294727680, 0x3fd6a09dedfc764f),
+            (0x3ff0a2b23bd7d400, 0x4006a09e61b3eb94),
+            (0xbff0a2b23bd7d400, 0x3fd6a09e6b4a8c06),
+            (0x3ff0a2b2357da480, 0x4006a09e58b8258a),
+            (0xbff0a2b2357da480, 0x3fd6a09e74465218),
+            (0x3ff0a2b2c99e6b00, 0x4006a09f2a343bfe),
+            (0xbff0a2b2c99e6b00, 0x3fd6a09da2ca4238),
+            (0x3ff0a2b2df0df000, 0x4006a09f4884c360),
+            (0xbff0a2b2df0df000, 0x3fd6a09d8479bd0a),
+            (0x3ff0a2b2d80f9000, 0x4006a09f3ea0ca03),
+            (0xbff0a2b2d80f9000, 0x3fd6a09d8e5db5a6),
+            (0x3ff0a2b21c80b000, 0x4006a09e35617c9c),
+            (0xbff0a2b21c80b000, 0x3fd6a09e979cfb68),
+            (0x3ff0a2b2786b5080, 0x4006a09eb75ed1e6),
+            (0xbff0a2b2786b5080, 0x3fd6a09e159fa6d4),
+            (0x3ff0a2b2bb38a600, 0x4006a09f15d7c43b),
+            (0xbff0a2b2bb38a600, 0x3fd6a09db726b8ad),
+            (0x3ff0a2b25db30e00, 0x4006a09e91953aee),
+            (0xbff0a2b25db30e00, 0x3fd6a09e3b693cfc),
+            (0x3ff0a2b247815600, 0x4006a09e723210e0),
+            (0xbff0a2b247815600, 0x3fd6a09e5acc66c0),
+            (0x3ff0a2b25e45fe00, 0x4006a09e926507ff),
+            (0xbff0a2b25e45fe00, 0x3fd6a09e3a996ff0),
+            (0x3ff0a2b2eb318600, 0x4006a09f59af8e5c),
+            (0xbff0a2b2eb318600, 0x3fd6a09d734ef373),
+            (0x3ff0a2b2deea6e00, 0x4006a09f48528c2b),
+            (0xbff0a2b2deea6e00, 0x3fd6a09d84abf43c),
+            (0x3ff0a2b26b553600, 0x4006a09ea4dd0ea4),
+            (0xbff0a2b26b553600, 0x3fd6a09e282169a1),
+            (0x3ff0a2b26dbc5e00, 0x4006a09ea8430508),
+            (0xbff0a2b26dbc5e00, 0x3fd6a09e24bb7350),
+            (0x3ff0a2b2d1d86600, 0x4006a09f35d68ac4),
+            (0xbff0a2b2d1d86600, 0x3fd6a09d9727f441),
+            (0x3ff0a2b22c37ce00, 0x4006a09e4b9b0878),
+            (0xbff0a2b22c37ce00, 0x3fd6a09e81636f42),
+            (0x3ff0a2b228871680, 0x4006a09e4663007a),
+            (0xbff0a2b228871680, 0x3fd6a09e869b774c),
+            (0x3ff0a2b2515ff500, 0x4006a09e80273f76),
+            (0xbff0a2b2515ff500, 0x3fd6a09e4cd73840),
+            (0x3ff0a2b26081b100, 0x4006a09e958d893f),
+            (0xbff0a2b26081b100, 0x3fd6a09e3770eebc),
+            (0x3ff0a2b28126bd00, 0x4006a09ec3b82ff5),
+            (0xbff0a2b28126bd00, 0x3fd6a09e09464924),
+            (0x3ff0a2b2f914d800, 0x4006a09f6d538aa9),
+            (0xbff0a2b2f914d800, 0x3fd6a09d5faaf8dd),
+            (0x3ff0a2b277b05800, 0x4006a09eb6566742),
+            (0xbff0a2b277b05800, 0x3fd6a09e16a81171),
+            (0x3ff0a2b2c0e5d800, 0x4006a09f1ddee562),
+            (0xbff0a2b2c0e5d800, 0x3fd6a09daf1f9806),
+            (0x3ff0a2b239ad5800, 0x4006a09e5ea3c2cc),
+            (0xbff0a2b239ad5800, 0x3fd6a09e6e5ab4d0),
+            (0xbc90000000000000, 0x3ff0000000000000),
+            (0xbca8000000000000, 0x3feffffffffffffe),
+            (0xbcb4000000000000, 0x3feffffffffffffe),
+            (0xbcbc000000000000, 0x3feffffffffffffc),
+            (0xbcc2000000000000, 0x3feffffffffffffc),
+            (0xbcc6000000000000, 0x3feffffffffffffa),
+        ];
+        for &(x, expected) in table {
+            let (x, expected) = (f64::from_bits(x), f64::from_bits(expected));
+            let got = js_exp(x);
+            if expected.is_nan() {
+                // A NaN comes back quiet, whatever bits of its payload are set.
+                assert!(got.is_nan(), "exp({x:e}) should be NaN, got {got:e}");
+                assert_eq!(got.to_bits() >> 51 & 1, 1, "exp({x:e}) is a signalling NaN");
+            } else {
+                assert_eq!(
+                    got.to_bits(),
+                    expected.to_bits(),
+                    "exp({x:e}) = {got:e}, V8 says {expected:e}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_sign_of_zero_is_zero() {
+        assert_eq!(js_sign(3.5), 1.0);
+        assert_eq!(js_sign(-0.25), -1.0);
+        assert_eq!(js_sign(0.0).to_bits(), 0.0f64.to_bits());
+        assert_eq!(js_sign(-0.0).to_bits(), (-0.0f64).to_bits());
+    }
+
+    #[test]
+    fn the_standard_deviation_is_the_spread_around_the_mean() {
+        assert_eq!(
+            standard_deviation(&[2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]),
+            2.0
+        );
+        assert_eq!(standard_deviation(&[5.0, 5.0, 5.0]), 0.0);
+        // Not whole numbers, so the order of the arithmetic shows in the last bit.
+        let values = [10.1, 33.3, 47.7, 52.9, 0.3, 99.9, 71.2];
+        assert_eq!(standard_deviation(&values).to_bits(), 0x403f_e64f_f80e_3431);
+    }
+
+    #[test]
+    fn a_fen_tag_is_found_after_empty_and_unclosed_ones() {
+        assert_eq!(
+            fen_tag("[Event \"x\"]\n[FEN \"8/8/8/8/8/8/8/8 w - - 0 1\"]"),
+            Some("8/8/8/8/8/8/8/8 w - - 0 1")
+        );
+        assert_eq!(
+            fen_tag("[Event \"x\"]\n[FEN \"\"]\n[FEN \"abc\" x]\n[FEN \"8/8 w\"]"),
+            Some("8/8 w")
+        );
+        assert_eq!(fen_tag("[FEN \"\"]"), None);
+        assert_eq!(fen_tag("[FEN \"abc"), None);
+    }
+
+    #[test]
+    fn variant_lichess_lines_ignore_repeated_spaces() {
+        let (_, moves) = lichess_line_in(Variant::Standard, "e4  e5   Nf3", None, None).unwrap();
+        assert_eq!(moves, ["e2e4", "e7e5", "g1f3"]);
+        // A PGN's FEN tag gives the start, an empty PGN none.
+        let tag = "[FEN \"8/8/8/8/8/8/8/K6k w - - 0 1\"]";
+        let (fen, moves) = lichess_line_in(Variant::Standard, "Kb2", Some(tag), None).unwrap();
+        assert_eq!(fen, "8/8/8/8/8/8/8/K6k w - - 0 1");
+        assert_eq!(moves, ["a1b2"]);
+        let (fen, _) = lichess_line_in(Variant::Standard, "", Some(""), None).unwrap();
+        assert_eq!(fen, INITIAL_FEN);
+    }
+
+    /// Black, left with no pieces in Antichess, has won, and that counts as Black's mate in the
+    /// last position even though it carries no score.
+    #[test]
+    fn a_won_variant_ending_without_a_score_favours_the_winner() {
+        let review = stored(json!({
+            "fen": "8/8/8/8/8/1p6/P7/8 w - - 0 1", "variant": "antichess",
+            "moves": ["a2b3"], "evals": [{ "cp": 0 }, null],
+        }));
+        let analysis = analyse(&review).unwrap();
+        let chances = analysis.moves[0].chances.expect("the ending is scored");
+        assert!(chances < -0.9, "Black has won: {chances}");
+    }
+
+    fn sacrifice_in<'a>(fen: &str, uci: &str, reply: [&'a str; 2]) -> bool {
+        let pos = rules::setup_start(Variant::Standard, fen).unwrap();
+        let m = rules::parse_uci(uci)
+            .and_then(|u| rules::legal_move(&pos, u))
+            .unwrap();
+        let eval = |pv: &[&'a str]| Eval {
+            score: Score {
+                cp: Some(0.0),
+                mate: None,
+            },
+            best: None,
+            pv: pv.to_vec(),
+            depth: 18.0,
+        };
+        sound_sacrifice(&pos, m, &eval(&[]), &eval(&reply))
+    }
+
+    #[test]
+    fn a_sacrifice_needs_a_choice_of_moves_and_a_reply_on_its_square() {
+        // Two legal moves, the bishop's and a pawn's: Qxb2 wins the bishop.
+        let two = "4k3/8/8/8/8/2P5/5q2/B6K w - - 0 1";
+        assert!(sacrifice_in(two, "a1b2", ["f2b2", "h1g1"]));
+        // The same bishop move is forced once the pawn is blocked: no choice, no brilliancy.
+        let forced = "4k3/8/8/8/2p5/2P5/5q2/B6K w - - 0 1";
+        assert!(!sacrifice_in(forced, "a1b2", ["f2b2", "h1g1"]));
+        // A reply that wins a rook elsewhere does not take the sacrificed piece.
+        let elsewhere = "r3k3/8/8/R7/8/3B4/4K3/8 w - - 0 1";
+        assert!(!sacrifice_in(elsewhere, "d3h7", ["a8a5", "e2e3"]));
+    }
+
     #[test]
     fn reads_lichess_lines() {
         let (fen, moves) = lichess_line(

@@ -688,6 +688,36 @@ mod tests {
         assert_eq!(tree.children[0].children.len(), 2);
     }
 
+    /// The line to a move keeps that line's moves, comments and annotations and the variant, and
+    /// nothing of the side lines or the game's other headers.
+    #[test]
+    fn a_line_is_a_tree_of_its_own_moves() {
+        let tree = TreeNode::from_pgn(
+            "[Variant \"Atomic\"]\n[Event \"x\"]\n\n1. e4 {good} e5 (1... c5 {side} 2. Nf3) 2. Nf3 $1 *",
+        )
+        .unwrap();
+        let line = tree.line_to("e2e4 e7e5");
+        let (e4, e5) = (&line.children[0], &line.children[0].children[0]);
+        assert_eq!((e4.uci.as_str(), e5.uci.as_str()), ("e2e4", "e7e5"));
+        assert!(e5.children.is_empty(), "the line stops at its last move");
+        assert_eq!(line.children.len(), 1);
+        assert_eq!(e4.comments, tree.children[0].comments);
+        assert!(e4.comments.is_some());
+        assert_eq!(e4.fen, tree.children[0].fen);
+        assert_eq!(e5.ply, tree.children[0].children[0].ply);
+        assert_eq!(line.variant(), Variant::Atomic);
+        assert_eq!(line.headers.as_ref().map(|headers| headers.len()), Some(1));
+        // A side line is followed by its own moves.
+        let side = tree.line_to("e2e4 c7c5 g1f3");
+        let c5 = &side.children[0].children[0];
+        assert_eq!(c5.uci, "c7c5");
+        assert_eq!(c5.comments, tree.children[0].children[1].comments);
+        assert_eq!(c5.children[0].uci, "g1f3");
+        // A move that is not in the tree ends the line where the tree does.
+        assert_eq!(tree.line_to("e2e4 d7d5").children[0].children.len(), 0);
+        assert_eq!(tree.line_to("").children.len(), 0);
+    }
+
     /// A tree is played in its Variant header's variant, standard without one.
     #[test]
     fn a_tree_reads_its_variant_from_its_headers() {

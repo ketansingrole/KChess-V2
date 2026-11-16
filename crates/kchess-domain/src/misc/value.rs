@@ -481,4 +481,81 @@ mod tests {
             serde_json::json!({ "a": [1, 0.5] })
         );
     }
+
+    /// What a visitor is told about the size of the list or object it reads.
+    struct Hint(Option<usize>);
+
+    impl<'de> Deserialize<'de> for Hint {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Hint, D::Error> {
+            struct Probe;
+            impl<'de> Visitor<'de> for Probe {
+                type Value = Hint;
+
+                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    f.write_str("a list or an object")
+                }
+
+                fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Hint, A::Error> {
+                    let hint = seq.size_hint();
+                    while seq.next_element::<de::IgnoredAny>()?.is_some() {}
+                    Ok(Hint(hint))
+                }
+
+                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Hint, A::Error> {
+                    let hint = map.size_hint();
+                    while map
+                        .next_entry::<de::IgnoredAny, de::IgnoredAny>()?
+                        .is_some()
+                    {}
+                    Ok(Hint(hint))
+                }
+            }
+            deserializer.deserialize_any(Probe)
+        }
+    }
+
+    /// A list or an object says how many entries it holds, so what reads it can size itself.
+    #[test]
+    fn a_list_and_an_object_tell_their_size() {
+        let list = J::Arr(vec![J::Num(1.0), J::Num(2.0), J::Num(3.0)]);
+        assert_eq!(decode::<Hint>(list).unwrap().0, Some(3));
+        let object = obj(vec![("a", J::Null), ("b", J::Null)]);
+        assert_eq!(decode::<Hint>(object).unwrap().0, Some(2));
+    }
+
+    #[test]
+    fn javascript_truthiness() {
+        for falsy in [
+            J::Undef,
+            J::Null,
+            J::Bool(false),
+            J::Num(0.0),
+            J::Num(-0.0),
+            J::Num(f64::NAN),
+            J::Str(String::new()),
+        ] {
+            assert!(!falsy.truthy(), "{falsy:?}");
+        }
+        for truthy in [
+            J::Bool(true),
+            J::Num(1.0),
+            J::Num(-2.5),
+            J::Num(f64::INFINITY),
+            J::Str("0".into()),
+            J::Arr(vec![]),
+            J::Obj(vec![]),
+        ] {
+            assert!(truthy.truthy(), "{truthy:?}");
+        }
+    }
+
+    /// Whole numbers become integers, but integers stay as they are, beyond a float's reach too.
+    #[test]
+    fn integral_leaves_integers_exact() {
+        let big = serde_json::json!([9_007_199_254_740_993_i64, u64::MAX, 2.0, 2.5]);
+        assert_eq!(
+            integral(big),
+            serde_json::json!([9_007_199_254_740_993_i64, u64::MAX, 2, 2.5])
+        );
+    }
 }

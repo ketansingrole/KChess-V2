@@ -507,6 +507,82 @@ mod tests {
         assert_eq!(study.chapter("c3"), None);
     }
 
+    /// A cloud link names a Lichess study by its eight-character id.
+    #[test]
+    fn a_cloud_link_needs_an_eight_character_id() {
+        let cloud = |id: &str| {
+            let stored = json!({ "id": "s", "name": "S", "pgn": "*", "updatedAt": 1,
+                "cloud": { "account": "a", "id": id, "downloadedPgn": "" } });
+            decode_study(&stored).unwrap().cloud.map(|cloud| cloud.id)
+        };
+        assert_eq!(cloud("abcdEFG1").as_deref(), Some("abcdEFG1"));
+        for broken in ["abcd-FGH", "abcdEFG", "abcdEFGH1", ""] {
+            assert_eq!(cloud(broken), None, "{broken:?}");
+        }
+    }
+
+    /// A study library is version 1 or 2, with its items.
+    #[test]
+    fn a_study_library_has_a_known_version_and_its_items() {
+        let study = json!({ "id": "s", "name": "S", "pgn": "1. e4 *", "updatedAt": 1 });
+        let count = |doc: Value| decode_studies(&doc).map(|studies| studies.len());
+        assert_eq!(count(json!({ "version": 1, "items": [study] })), Some(1));
+        assert_eq!(count(json!({ "version": 2, "items": [study] })), Some(1));
+        assert_eq!(count(json!({ "version": 3, "items": [study] })), None);
+        assert_eq!(count(json!({ "items": [study] })), None);
+        assert_eq!(count(json!({ "version": 2 })), None);
+        assert_eq!(count(json!({ "version": 2, "items": {} })), None);
+    }
+
+    /// A study holds 1 to 64 chapters.
+    #[test]
+    fn a_study_holds_between_one_and_64_chapters() {
+        let with = |count: usize| {
+            let chapters: Vec<Value> = (0..count)
+                .map(|i| json!({ "id": format!("c{i}"), "name": "C", "pgn": "1. e4 *" }))
+                .collect();
+            decode_study(&json!({ "id": "s", "name": "S", "pgn": "*", "updatedAt": 1,
+                "chapters": chapters }))
+            .map(|study| study.chapters.len())
+        };
+        assert_eq!(with(0), None);
+        assert_eq!(with(1), Some(1));
+        assert_eq!(with(64), Some(64));
+        assert_eq!(with(65), None);
+    }
+
+    /// A played game holds 1024 moves at most.
+    #[test]
+    fn a_played_game_holds_1024_moves_at_most() {
+        let shuffle = |count: usize| {
+            ["g1f3", "g8f6", "f3g1", "f6g8"]
+                .iter()
+                .cycle()
+                .take(count)
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        let kept = decode_archived_game(&game(&shuffle(1024))).expect("1024 moves are kept");
+        assert_eq!(kept.moves.len(), 1024);
+        assert!(decode_archived_game(&game(&shuffle(1025))).is_none());
+    }
+
+    /// A drill from a variant game is replayed by that variant's rules, and kept with it.
+    #[test]
+    fn a_variant_drill_is_kept_when_its_solution_is_playable() {
+        let drills = |solution: Value| {
+            decode_mistakes(&json!({ "version": 1, "items": [
+                { "id": "m", "fen": START, "variant": "atomic", "solution": solution,
+                  "dueAt": 1, "streak": 0, "attempts": 0 },
+            ]}))
+            .unwrap()
+        };
+        let kept = drills(json!(["e2e4", "e7e5"]));
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].variant, Some(Variant::Atomic));
+        assert!(drills(json!(["e2e4", "e2e4"])).is_empty());
+    }
+
     /// A played game keeps the variant it was played in, and one KChess does not know is
     /// refused rather than read as standard chess.
     #[test]
