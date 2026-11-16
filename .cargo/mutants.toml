@@ -195,7 +195,7 @@ exclude_re = [
     'kchess-domain/src/online_game/events\.rs:.*: replace > with >= in Run<.*>::read_state$',
     # The calendar takes only years -9999 to 9999, far inside the limit, so the guard only saves
     # work; `is_finite` is the one that refuses.
-    "kchess-domain/src/records/ratings\.rs:.*: replace > with (==|>=) in utc_date$",
+    'kchess-domain/src/records/ratings\.rs:.*: replace > with (==|>=) in utc_date$',
     # Clamped to ±1000, the two forms differ only past 99,000 moves to mate; `Mate(0)` is taken by
     # the arm above.
     'kchess-domain/src/training/guess\.rs:.*: replace - with \+ in Eval::centipawns$',
