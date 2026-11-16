@@ -298,4 +298,17 @@ mod tests {
         assert_eq!(run.over.as_deref(), Some("strikes"));
         assert_eq!(run.accuracy(), 25.0);
     }
+    #[test]
+    fn the_clock_shows_tenths_only_below_ten_seconds() {
+        assert_eq!(format_run_clock(9_999.0), "0:09.9");
+        assert_eq!(format_run_clock(10_000.0), "0:10");
+        assert_eq!(format_run_clock(60_000.0), "1:00");
+    }
+
+    #[test]
+    fn every_tenth_combo_past_thirty_earns_ten_seconds() {
+        assert_eq!(combo_bonus_ms(30.0), 10_000.0);
+        assert_eq!(combo_bonus_ms(31.0), 0.0);
+        assert_eq!(combo_bonus_ms(50.0), 10_000.0);
+    }
 }

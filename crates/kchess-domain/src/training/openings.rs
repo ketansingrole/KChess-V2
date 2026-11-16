@@ -50,34 +50,36 @@ fn lines() -> &'static [Line] {
 /// The named positions: the index of the line naming each, keyed by the first four FEN fields.
 fn table() -> &'static HashMap<String, usize> {
     static TABLE: OnceLock<HashMap<String, usize>> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        let mut table: HashMap<String, usize> = HashMap::new();
-        let Some(start) = rules::setup_start(Variant::Standard, START) else {
-            return table;
-        };
-        let all = lines();
-        for (index, line) in all.iter().enumerate() {
-            let mut pos = start.clone();
-            let played = line.moves.iter().all(|uci| {
-                let Some(m) = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u)) else {
-                    return false;
-                };
-                pos.play_unchecked(m);
-                true
-            });
-            if !played {
-                continue;
-            }
-            let key = rules::repetition_key(&rules::make_fen(&pos)).to_string();
-            let shorter = table
-                .get(&key)
-                .is_none_or(|&known| line.moves.len() < all[known].moves.len());
-            if shorter {
-                table.insert(key, index);
-            }
+    TABLE.get_or_init(|| build_table(lines()))
+}
+
+/// Each position `all` reaches, with the index of the first of the shortest lines reaching it.
+fn build_table(all: &[Line]) -> HashMap<String, usize> {
+    let mut table: HashMap<String, usize> = HashMap::new();
+    let Some(start) = rules::setup_start(Variant::Standard, START) else {
+        return table;
+    };
+    for (index, line) in all.iter().enumerate() {
+        let mut pos = start.clone();
+        let played = line.moves.iter().all(|uci| {
+            let Some(m) = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u)) else {
+                return false;
+            };
+            pos.play_unchecked(m);
+            true
+        });
+        if !played {
+            continue;
         }
-        table
-    })
+        let key = rules::repetition_key(&rules::make_fen(&pos)).to_string();
+        let shorter = table
+            .get(&key)
+            .is_none_or(|&known| line.moves.len() < all[known].moves.len());
+        if shorter {
+            table.insert(key, index);
+        }
+    }
+    table
 }
 
 /// The pieces' placement and the side to move, hashed: every position of the table has one of
@@ -209,13 +211,13 @@ impl OpeningNode {
 /// Every named opening by family, alphabetically at each level.
 pub fn opening_tree() -> &'static Vec<OpeningNode> {
     static TREE: OnceLock<Vec<OpeningNode>> = OnceLock::new();
-    TREE.get_or_init(build_opening_tree)
+    TREE.get_or_init(|| build_opening_tree(lines()))
 }
 
-fn build_opening_tree() -> Vec<OpeningNode> {
+fn build_opening_tree(lines: &[Line]) -> Vec<OpeningNode> {
     let mut families: Vec<OpeningNode> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
-    for line in lines() {
+    for line in lines {
         let (family, variations) = match line.name.split_once(": ") {
             Some((family, rest)) => (family, rest.split(", ").collect::<Vec<_>>()),
             None => (line.name.as_str(), Vec::new()),
@@ -245,9 +247,7 @@ fn build_opening_tree() -> Vec<OpeningNode> {
         names
             .iter()
             .filter(|other| {
-                name.len() > other.len()
-                    && name.starts_with(other.as_str())
-                    && name[other.len()..].starts_with(' ')
+                name.starts_with(other.as_str()) && name[other.len()..].starts_with(' ')
             })
             .max_by_key(|other| other.len())
             .cloned()
@@ -543,5 +543,97 @@ mod tests {
         assert_eq!(opening_replies(&rare, false), ["a"]);
         assert!(opening_replies(&moves(&[("a", 0.0)]), false).is_empty());
         assert!(opening_replies(&[], true).is_empty());
+    }
+    fn walk<'a>(nodes: &'a [OpeningNode], into: &mut HashMap<&'a str, &'a OpeningNode>) {
+        for node in nodes {
+            into.insert(node.name.as_str(), node);
+            walk(&node.children, into);
+        }
+    }
+
+    /// Of several lines with one name, the entry opens the shortest, the first on a tie.
+    fn line(eco: &str, name: &str, moves: &str) -> Line {
+        Line {
+            eco: eco.to_string(),
+            name: name.to_string(),
+            moves: moves.split(' ').map(str::to_string).collect(),
+        }
+    }
+
+    /// Of the lines with one name, the entry opens the shortest, and the first of equally short.
+    #[test]
+    fn an_entry_opens_the_first_of_the_shortest_lines_with_its_name() {
+        let tree = build_opening_tree(&[
+            line("C19", "Test: Line", "e2e4 e7e5 g1f3 b8c6"),
+            line("C20", "Test: Line", "e2e4 e7e5 g1f3"),
+            line("C21", "Test: Line", "g1f3 e7e5 e2e4"),
+        ]);
+        let mut nodes = HashMap::new();
+        walk(&tree, &mut nodes);
+        assert_eq!(nodes["Test: Line"].eco.as_deref(), Some("C20"));
+    }
+
+    /// A position several lines reach takes the name of the shortest, and the first of equally
+    /// short ones.
+    #[test]
+    fn a_position_takes_the_name_of_the_first_of_the_shortest_lines() {
+        let all = [
+            line("C40", "Long", "e2e4 e7e5 g1f3 b8c6 f3g1 c6b8 g1f3"),
+            line("C41", "First", "e2e4 e7e5 g1f3"),
+            line("C42", "Second", "g1f3 e7e5 e2e4"),
+        ];
+        let start = rules::setup_start(Variant::Standard, START).expect("start");
+        let mut pos = start.clone();
+        for uci in &all[1].moves {
+            let m = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u));
+            pos.play_unchecked(m.expect("a legal move"));
+        }
+        let key = rules::repetition_key(&rules::make_fen(&pos)).to_string();
+        assert_eq!(build_table(&all).get(&key), Some(&1));
+    }
+
+    #[test]
+    fn wikibooks_pages_reach_forty_plies_and_no_further() {
+        let shuffle = |plies: usize| -> Vec<&'static str> {
+            ["g1f3", "g8f6", "f3g1", "f6g8"]
+                .iter()
+                .copied()
+                .cycle()
+                .take(plies)
+                .collect()
+        };
+        assert!(wikibooks_title(&shuffle(39)).is_some());
+        assert!(wikibooks_title(&shuffle(40)).is_some());
+        assert!(wikibooks_title(&shuffle(41)).is_none());
+    }
+
+    #[test]
+    fn keys_drop_the_accents_of_every_letter_group() {
+        assert_eq!(
+            opening_key("áàâäãå éèêë íìîï óòôöõ úùûü ćçč ñń"),
+            "aaaaaa_eeee_iiii_ooooo_uuuu_ccc_nn"
+        );
+    }
+
+    #[test]
+    fn a_reply_needs_one_game_in_twenty() {
+        let moves = |games: &[f64]| -> Vec<ExplorerMove> {
+            games
+                .iter()
+                .enumerate()
+                .map(|(i, white)| ExplorerMove {
+                    uci: format!("m{i}"),
+                    white: *white,
+                    draws: 0.0,
+                    black: 0.0,
+                })
+                .collect()
+        };
+        // One in twenty exactly still counts.
+        let exact = moves(&[50.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0]);
+        assert_eq!(opening_replies(&exact, false), ["m0", "m1", "m2"]);
+        // Less does not, though the replies so far cover only half the games.
+        let rare = moves(&[50.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0]);
+        assert_eq!(opening_replies(&rare, false), ["m0"]);
     }
 }

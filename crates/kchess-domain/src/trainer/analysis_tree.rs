@@ -363,4 +363,12 @@ mod tests {
         assert_eq!(with_comment_text("old", "new"), "new");
         assert_eq!(comment_text(&with_comment_text(clock, "Strong ")), "Strong");
     }
+    #[test]
+    fn numbers_too_large_or_not_numbers_print_as_they_are() {
+        assert_eq!(to_fixed(f64::NAN, 2), "NaN");
+        assert_eq!(to_fixed(f64::INFINITY, 2), "Infinity");
+        assert_eq!(to_fixed(1e21, 2), "1e+21");
+        assert_eq!(to_fixed(1e20, 1), "100000000000000000000.0");
+        assert_eq!(to_fixed(0.125, 2), "0.13");
+    }
 }
