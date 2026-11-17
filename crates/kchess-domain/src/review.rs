@@ -1338,6 +1338,9 @@ mod tests {
         // A reply that wins a rook elsewhere does not take the sacrificed piece.
         let elsewhere = "r3k3/8/8/R7/8/3B4/4K3/8 w - - 0 1";
         assert!(!sacrifice_in(elsewhere, "d3h7", ["a8a5", "e2e3"]));
+        // A bishop for a knight is an even trade, not a sacrifice.
+        let trade = "4k3/5n2/8/8/8/8/8/2B3RK w - - 0 1";
+        assert!(!sacrifice_in(trade, "c1g5", ["f7g5", "g1g5"]));
     }
 
     #[test]
