@@ -25,23 +25,22 @@ pub struct ActivityGroup {
 
 /// The day as people say it: today, yesterday, a weekday this week, then the date (with its year
 /// when it is not this one).
-fn day_label(millis: f64, today: chrono::NaiveDate) -> String {
-    use chrono::{Datelike as _, TimeZone as _};
-    let Some(day) = chrono::Local.timestamp_millis_opt(millis as i64).single() else {
+fn day_label(millis: f64, today: jiff::civil::Date) -> String {
+    let Some(day) = crate::dates::local(millis) else {
         return String::new();
     };
-    let date = day.date_naive();
-    match (today - date).num_days() {
+    let date = day.date();
+    match today.since(date).map_or(-1, |span| span.get_days()) {
         0 => "Today".to_string(),
         1 => "Yesterday".to_string(),
-        2..=6 => day.format("%A").to_string(),
-        _ if date.year() == today.year() => day.format("%-d %b").to_string(),
-        _ => day.format("%-d %b %Y").to_string(),
+        2..=6 => day.strftime("%A").to_string(),
+        _ if date.year() == today.year() => day.strftime("%-d %b").to_string(),
+        _ => day.strftime("%-d %b %Y").to_string(),
     }
 }
 
-fn today() -> chrono::NaiveDate {
-    chrono::Local::now().date_naive()
+fn today() -> jiff::civil::Date {
+    jiff::ZonedDateTime::now().date()
 }
 
 /// A player's activity (`ActivityDay`s), one heading per day.
@@ -67,7 +66,7 @@ pub fn timeline_groups(entries: &[TimelineEntry]) -> Vec<ActivityGroup> {
     timeline_groups_on(entries, today())
 }
 
-fn timeline_groups_on(entries: &[TimelineEntry], today: chrono::NaiveDate) -> Vec<ActivityGroup> {
+fn timeline_groups_on(entries: &[TimelineEntry], today: jiff::civil::Date) -> Vec<ActivityGroup> {
     let mut groups: Vec<ActivityGroup> = Vec::new();
     for entry in entries {
         let label = day_label(entry.date, today);
@@ -288,7 +287,7 @@ mod tests {
             { "date": day - 3.0 * 86_400_000.0, "player": "Cal", "item": { "kind": "games", "text": "c" } },
         ]))
         .unwrap();
-        let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 3).unwrap();
+        let today = jiff::civil::date(2026, 11, 3);
         let groups = timeline_groups_on(&entries, today);
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].rows.len(), 2);
@@ -297,13 +296,9 @@ mod tests {
 
     #[test]
     fn days_read_as_people_say_them() {
-        use chrono::TimeZone as _;
-        let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 3).unwrap();
+        let today = jiff::civil::date(2026, 11, 3);
         let at = |y, m, d| {
-            chrono::Local
-                .with_ymd_and_hms(y, m, d, 12, 0, 0)
-                .unwrap()
-                .timestamp_millis() as f64
+            crate::dates::local_millis(jiff::civil::date(y, m, d).at(12, 0, 0, 0)).unwrap()
         };
         assert_eq!(day_label(at(2026, 11, 3), today), "Today");
         assert_eq!(day_label(at(2026, 11, 2), today), "Yesterday");

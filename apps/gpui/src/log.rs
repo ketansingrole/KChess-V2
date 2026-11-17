@@ -79,7 +79,7 @@ pub fn write(level: Level, scope: &str, message: &str) {
     if let Some(log) = LOG.get()
         && let Ok(mut log) = log.lock()
     {
-        let time = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let time = crate::dates::rfc3339_millis(jiff::Timestamp::now());
         let line = redact(&format!(
             "{time} {} [{scope}] {message}\n",
             level.name().to_uppercase()
@@ -95,7 +95,7 @@ pub fn session_id() -> &'static str {
     ID.get_or_init(|| {
         let mut bytes = [0u8; 16];
         if getrandom::fill(&mut bytes).is_err() {
-            let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default();
+            let now = jiff::Timestamp::now().as_nanosecond() as i64;
             bytes[..8].copy_from_slice(&now.to_le_bytes());
         }
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()

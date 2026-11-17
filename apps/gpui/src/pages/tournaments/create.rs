@@ -51,12 +51,16 @@ fn key(value: f64) -> String {
 
 /// "2026-10-25 14:00" in local time, as milliseconds.
 fn parse_start(text: &str) -> Option<f64> {
-    use chrono::TimeZone as _;
-    let naive = chrono::NaiveDateTime::parse_from_str(text.trim(), "%Y-%m-%d %H:%M").ok()?;
-    chrono::Local
-        .from_local_datetime(&naive)
-        .single()
-        .map(|time| time.timestamp_millis() as f64)
+    let time = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M", text.trim()).ok()?;
+    crate::dates::local_millis(time)
+}
+
+/// The round hour an hour of real time after `now`, as a set start reads it: across a
+/// daylight-saving change it is a time the clock shows, never one it skips.
+fn next_round_hour(now: &jiff::ZonedDateTime) -> String {
+    now.checked_add(jiff::Span::new().hours(1))
+        .map(|next| next.strftime("%Y-%m-%d %H:00").to_string())
+        .unwrap_or_default()
 }
 
 type Choices = Entity<SelectState<Vec<Choice>>>;
@@ -146,13 +150,7 @@ impl CreateArena {
             key(5.),
         );
         // A set start defaults to the next round hour.
-        let next_hour = {
-            use chrono::Timelike as _;
-            let next = chrono::Local::now() + chrono::Duration::hours(1);
-            next.with_minute(0)
-                .map(|time| time.format("%Y-%m-%d %H:%M").to_string())
-                .unwrap_or_default()
-        };
+        let next_hour = next_round_hour(&jiff::ZonedDateTime::now());
         let start_at = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("YYYY-MM-DD HH:MM")
@@ -404,7 +402,7 @@ impl Render for CreateArena {
 
 #[cfg(test)]
 mod tests {
-    use super::{duration_label, minutes_label, parse_start};
+    use super::{duration_label, minutes_label, next_round_hour, parse_start};
 
     #[test]
     fn choices_read_like_lichess() {
@@ -418,5 +416,19 @@ mod tests {
     fn a_set_start_reads_as_local_time() {
         assert!(parse_start("2026-10-25 14:00").is_some());
         assert!(parse_start("tomorrow").is_none());
+    }
+
+    #[test]
+    fn the_next_round_hour_skips_the_spring_forward_gap() {
+        let zone = jiff::tz::TimeZone::get("America/New_York").unwrap();
+        let at = |hour, minute| {
+            jiff::civil::date(2026, 3, 8)
+                .at(hour, minute, 0, 0)
+                .to_zoned_datetime(zone.clone())
+                .unwrap()
+        };
+        assert_eq!(next_round_hour(&at(0, 30)), "2026-03-08 01:00");
+        // 01:30 EST plus an hour is 03:30 EDT: 02:00 never happens that night.
+        assert_eq!(next_round_hour(&at(1, 30)), "2026-03-08 03:00");
     }
 }

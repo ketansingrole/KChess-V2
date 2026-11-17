@@ -121,9 +121,9 @@ fn open_releases(releases: Vec<Release>, window: &mut Window, cx: &mut App) {
 
 /// `Nov 4, 2026` from `2026-11-04`.
 fn date_label(date: &str) -> Option<String> {
-    chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+    jiff::civil::Date::strptime("%Y-%m-%d", date)
         .ok()
-        .map(|date| date.format("%b %-d, %Y").to_string())
+        .map(|date| date.strftime("%b %-d, %Y").to_string())
 }
 
 fn list(releases: &[Release], palette: &Palette, height: Pixels) -> impl IntoElement {

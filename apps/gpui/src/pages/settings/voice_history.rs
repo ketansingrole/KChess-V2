@@ -207,13 +207,7 @@ fn percent(value: f64) -> String {
 }
 
 fn when(at: f64) -> String {
-    chrono::DateTime::from_timestamp_millis(at as i64)
-        .map(|time| {
-            time.with_timezone(&chrono::Local)
-                .format("%b %-d, %-I:%M %p")
-                .to_string()
-        })
-        .unwrap_or_default()
+    crate::dates::local_format(at, "%b %-d, %-I:%M %p")
 }
 
 pub struct VoiceHistory {
@@ -273,7 +267,7 @@ impl VoiceHistory {
                 Ok(text) => {
                     let name = format!(
                         "kchess-voice-history-{}.json",
-                        chrono::Local::now().format("%Y-%m-%d")
+                        crate::dates::today("%Y-%m-%d")
                     );
                     match cx.update(|_, cx| crate::export::save_text(&name, text, cx)) {
                         Ok(saving) => saving.await,

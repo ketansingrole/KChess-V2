@@ -207,9 +207,7 @@ fn pgn(game: &PlayedGame) -> Option<String> {
 
 /// PGN's `Date`: the UTC day the game started, "2026.10.22".
 fn date_header(millis: f64) -> String {
-    chrono::DateTime::from_timestamp_millis(millis as i64)
-        .map(|date| date.format("%Y.%m.%d").to_string())
-        .unwrap_or_else(|| "????.??.??".into())
+    crate::dates::utc_format(millis, "%Y.%m.%d").unwrap_or_else(|| "????.??.??".into())
 }
 
 /// The game the last swipe back closed, to open again going forward while nothing changed since.
@@ -809,7 +807,7 @@ impl HistoryPage {
             } else {
                 "board"
             },
-            chrono::Local::now().format("%Y-%m-%d")
+            crate::dates::today("%Y-%m-%d")
         );
         let saved = crate::export::save_text(&name, pgns.join("\n\n"), cx);
         cx.spawn(async move |this, cx| {

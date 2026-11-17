@@ -41,11 +41,7 @@ const YEARS_SPAN_MS: f64 = 400. * DAY_MS;
 pub(crate) fn chart_dates(first: f64, last: f64) -> impl Fn(f64) -> (SharedString, SharedString) {
     let years = last - first > YEARS_SPAN_MS;
     move |millis| {
-        let format = |pattern: &str| {
-            chrono::DateTime::from_timestamp_millis(millis as i64)
-                .map(|date| date.format(pattern).to_string())
-                .unwrap_or_default()
-        };
+        let format = |pattern: &str| crate::dates::utc_format(millis, pattern).unwrap_or_default();
         (
             format(if years { "%b %y" } else { "%b %-d" }).into(),
             format("%b %-d, %Y").into(),
@@ -85,13 +81,19 @@ pub struct RatingHistory {
 
 /// `[year, month0, day, rating]` as a UTC time and a rating.
 fn point_of(&[year, month0, day, rating]: &[i64; 4]) -> Option<(f64, f64)> {
-    let date = chrono::NaiveDate::from_ymd_opt(
-        i32::try_from(year).ok()?,
-        u32::try_from(month0 + 1).ok()?,
-        u32::try_from(day).ok()?,
-    )?;
-    let millis = date.and_hms_opt(0, 0, 0)?.and_utc().timestamp_millis() as f64;
-    Some((millis, rating as f64))
+    let date = jiff::civil::Date::new(
+        i16::try_from(year).ok()?,
+        i8::try_from(month0 + 1).ok()?,
+        i8::try_from(day).ok()?,
+    )
+    .ok()?;
+    Some((utc_midnight_millis(date)?, rating as f64))
+}
+
+/// The UTC midnight starting `date`, in milliseconds.
+fn utc_midnight_millis(date: jiff::civil::Date) -> Option<f64> {
+    let start = date.to_zoned_datetime(jiff::tz::TimeZone::UTC).ok()?;
+    Some(start.timestamp().as_millisecond() as f64)
 }
 
 /// A series' points as UTC times and ratings.
@@ -114,21 +116,22 @@ pub fn has_points(history: &[RatingSeries]) -> bool {
 }
 
 /// The earliest time a range shows; 0 for all of it.
-fn range_start(range: &str, now: chrono::DateTime<chrono::Utc>) -> f64 {
+fn range_start(range: &str, now: jiff::Timestamp) -> f64 {
     let days = match range {
         "1M" => 30.,
         "3M" => 90.,
         "6M" => 180.,
         "1Y" => 365.,
         "YTD" => {
-            use chrono::Datelike as _;
-            return chrono::NaiveDate::from_ymd_opt(now.year(), 1, 1)
-                .and_then(|day| day.and_hms_opt(0, 0, 0))
-                .map_or(0., |start| start.and_utc().timestamp_millis() as f64);
+            let year = now.to_zoned_datetime(jiff::tz::TimeZone::UTC).year();
+            return jiff::civil::Date::new(year, 1, 1)
+                .ok()
+                .and_then(utc_midnight_millis)
+                .unwrap_or(0.);
         }
         _ => return 0.,
     };
-    now.timestamp_millis() as f64 - days * DAY_MS
+    now.as_millisecond() as f64 - days * DAY_MS
 }
 
 fn choices(items: impl IntoIterator<Item = (String, String)>) -> Vec<Choice> {
@@ -275,7 +278,7 @@ impl RatingHistory {
         {
             self.mode = mode.to_string();
         }
-        let start = range_start(self.range, chrono::Utc::now());
+        let start = range_start(self.range, jiff::Timestamp::now());
         let points: Vec<(f64, f64)> = points_of(&history, &self.mode)
             .into_iter()
             .filter(|(date, _)| *date >= start)
@@ -316,7 +319,7 @@ impl RatingHistory {
     }
 
     fn values(&self) -> Vec<f64> {
-        let start = range_start(self.range, chrono::Utc::now());
+        let start = range_start(self.range, jiff::Timestamp::now());
         points_of(&self.history(), &self.mode)
             .into_iter()
             .filter(|(date, _)| *date >= start)
@@ -429,9 +432,9 @@ mod tests {
         let (date, rating) = point_of(&[2026, 0, 5, 1712]).unwrap();
         assert_eq!(rating, 1712.);
         assert_eq!(
-            chrono::DateTime::from_timestamp_millis(date as i64)
+            jiff::Timestamp::from_millisecond(date as i64)
                 .unwrap()
-                .format("%Y-%m-%d")
+                .strftime("%Y-%m-%d")
                 .to_string(),
             "2026-01-05"
         );
@@ -440,20 +443,18 @@ mod tests {
 
     #[test]
     fn ranges_start_where_they_say() {
-        let now = chrono::DateTime::parse_from_rfc3339("2026-10-24T12:00:00Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
+        let now: jiff::Timestamp = "2026-10-24T12:00:00Z".parse().unwrap();
         assert_eq!(range_start("All", now), 0.);
         let ytd = range_start("YTD", now);
         assert_eq!(
-            chrono::DateTime::from_timestamp_millis(ytd as i64)
+            jiff::Timestamp::from_millisecond(ytd as i64)
                 .unwrap()
-                .format("%m-%d")
+                .strftime("%m-%d")
                 .to_string(),
             "01-01"
         );
         assert!(
-            (now.timestamp_millis() as f64 - range_start("1M", now) - 30. * 86_400_000.).abs() < 1.
+            (now.as_millisecond() as f64 - range_start("1M", now) - 30. * 86_400_000.).abs() < 1.
         );
     }
 }

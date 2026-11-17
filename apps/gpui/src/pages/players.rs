@@ -100,11 +100,8 @@ fn hours(seconds: f64) -> String {
 }
 
 fn local_date(millis: f64) -> String {
-    use chrono::TimeZone as _;
-    chrono::Local
-        .timestamp_millis_opt(millis as i64)
-        .single()
-        .map(|date| date.format("%-d %b %Y").to_string())
+    crate::dates::local(millis)
+        .map(|date| date.strftime("%-d %b %Y").to_string())
         .unwrap_or_else(|| "?".into())
 }
 
@@ -1246,8 +1243,8 @@ impl PlayersPage {
             Some(mark) => format!(
                 "{} · {}",
                 mark.rating,
-                chrono::DateTime::parse_from_rfc3339(&mark.at)
-                    .map(|at| at.format("%-d %b %Y").to_string())
+                crate::dates::written_date(&mark.at)
+                    .map(|at| at.strftime("%-d %b %Y").to_string())
                     .unwrap_or_default()
             ),
             None => "–".into(),

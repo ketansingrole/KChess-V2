@@ -1035,16 +1035,18 @@ fn walk(seed: u64, points: usize, end: i64, spread: i64) -> Vec<i64> {
 
 /// Lichess's rating history: one series per speed, a point a few days apart.
 fn showcase_history() -> Value {
-    use chrono::{Datelike as _, Duration as Days, Utc};
-    let today = Utc::now().date_naive();
+    let today = jiff::Timestamp::now()
+        .to_zoned_datetime(jiff::tz::TimeZone::UTC)
+        .date();
     let series = |name: &str, seed: u64, points: usize, end: i64, every: i64| {
         let ratings = walk(seed, points, end, 34);
         let points: Vec<Value> = ratings
             .iter()
             .enumerate()
             .map(|(index, rating)| {
-                let day = today - Days::days((points - 1 - index) as i64 * every);
-                json!([day.year(), day.month0(), day.day(), rating])
+                let back = jiff::Span::new().days((points - 1 - index) as i64 * every);
+                let day = today.checked_sub(back).expect("a day in range");
+                json!([day.year(), day.month() - 1, day.day(), rating])
             })
             .collect();
         json!({ "name": name, "points": points })

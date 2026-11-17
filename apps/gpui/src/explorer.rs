@@ -1188,9 +1188,7 @@ impl Render for PositionExplorer {
         let result = self.result.clone();
         let body = result.map(|result| {
             let total = result.saved.total.filter(|total| *total > 0);
-            let fetched = chrono::DateTime::from_timestamp_millis(result.saved.fetched_at)
-                .map(|date| date.with_timezone(&chrono::Local).format("%b %-d, %Y").to_string())
-                .unwrap_or_default();
+            let fetched = crate::dates::local_format(result.saved.fetched_at as f64, "%b %-d, %Y");
             let empty = result.saved.moves.is_empty();
             v_flex()
                 .gap(px(8.))
