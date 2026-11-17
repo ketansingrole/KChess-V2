@@ -14,6 +14,7 @@ mod bench;
 mod board;
 mod chart;
 mod core;
+mod dates;
 mod dock_icon;
 #[cfg(test)]
 mod e2e;
