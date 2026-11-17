@@ -83,7 +83,9 @@ fn file(dir: &Path) -> PathBuf {
     dir.join("interface-zoom.json")
 }
 
+#[track_caller]
 fn read(dir: &Path) -> Setting {
+    crate::slow_calls::call("the interface zoom file");
     match std::fs::read_to_string(file(dir)) {
         Ok(text) => serde_json::from_str::<Value>(&text)
             .map_or(Setting::Auto, |saved| Setting::parse(&saved["zoom"])),

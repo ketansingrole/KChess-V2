@@ -6,6 +6,9 @@
 //! (`target/release/KChess`), copied aside, since the next build replaces it. Nothing else should
 //! run while measuring. A run whose window was covered for a while (`visible_fraction` below 1)
 //! draws no frames then; it is reported and left out.
+//!
+//! `--fail-above <ratio>` makes it a gate (CI's nightly `bench.yml`): it fails when the first
+//! build's frames cost over `ratio` times the last build's in any scenario (`GATED`).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -49,7 +52,13 @@ struct Options {
     seconds: u64,
     scenarios: Vec<String>,
     out: Option<PathBuf>,
+    fail_above: Option<f64>,
 }
+
+/// The figures the gate compares, each with the least rise that counts: a frame of 0.3 ms
+/// that doubles is noise on a shared runner, one of 1.4 ms that grows to 9 is not (#211, the
+/// voice bar asking macOS about the microphone on every frame).
+const GATED: [(&str, f64); 2] = [("draw_ms_p50", 1.), ("main_thread_busy_fraction", 0.1)];
 
 fn options(args: &[String]) -> Result<Options> {
     let mut options = Options {
@@ -58,6 +67,7 @@ fn options(args: &[String]) -> Result<Options> {
         seconds: 30,
         scenarios: SCENARIOS.iter().map(|name| name.to_string()).collect(),
         out: None,
+        fail_above: None,
     };
     let mut args = args.iter();
     while let Some(arg) = args.next() {
@@ -82,6 +92,13 @@ fn options(args: &[String]) -> Result<Options> {
                 options.scenarios = value()?.split(',').map(str::to_string).collect();
             }
             "--out" => options.out = Some(PathBuf::from(value()?)),
+            "--fail-above" => {
+                let ratio: f64 = value()?.parse().map_err(|_| "--fail-above is a ratio.")?;
+                if ratio <= 1. {
+                    return Err("--fail-above is a ratio over 1.".into());
+                }
+                options.fail_above = Some(ratio);
+            }
             other => return Err(format!("Unknown bench option {other}.")),
         }
     }
@@ -92,7 +109,7 @@ fn options(args: &[String]) -> Result<Options> {
 }
 
 /// `cargo xtask bench --build <label>=<binary> [--build …] [--runs 5] [--seconds 30]
-/// [--scenarios a,b] [--out results.json]`
+/// [--scenarios a,b] [--out results.json] [--fail-above <ratio>]`
 pub fn run(args: &[String]) -> Result {
     let options = options(args)?;
     let engine = crate::app::engine()?;
@@ -125,7 +142,62 @@ pub fn run(args: &[String]) -> Result {
         std::fs::write(out, text).map_err(|e| format!("Could not write {}: {e}", out.display()))?;
     }
     print!("{}", summary(&options, &results));
-    Ok(())
+    gate(&options, &results)
+}
+
+/// With `--fail-above`, an error naming each regression (`regressions`).
+fn gate(options: &Options, results: &[Value]) -> Result {
+    let Some(ratio) = options.fail_above else {
+        return Ok(());
+    };
+    let found = regressions(options, results, ratio);
+    if found.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "Frames cost more on {} than on {}:\n  {}",
+        options.builds[0].0,
+        options.builds[options.builds.len() - 1].0,
+        found.join("\n  ")
+    ))
+}
+
+/// What the gate fails on: each scenario's `GATED` figure whose median on the first build is over
+/// `ratio` times the last build's and over it by more than its least rise, or that either build
+/// never measured (a scenario that drew nothing proves nothing).
+fn regressions(options: &Options, results: &[Value], ratio: f64) -> Vec<String> {
+    let (new, base) = (
+        &options.builds[0].0,
+        &options.builds[options.builds.len() - 1].0,
+    );
+    let figure = |label: &str, scenario: &str, metric: &str| {
+        median(
+            results
+                .iter()
+                .filter(|r| r["build"] == label && r["report"]["scenario"] == scenario)
+                .filter_map(|r| r["report"][metric].as_f64())
+                .collect(),
+        )
+    };
+    let mut found = Vec::new();
+    for scenario in &options.scenarios {
+        for (metric, least) in GATED {
+            match (
+                figure(new, scenario, metric),
+                figure(base, scenario, metric),
+            ) {
+                (Some(now), Some(was)) if now > was * ratio && now - was > least => {
+                    found.push(format!(
+                        "{scenario} {metric}: {now:.3} against {was:.3} (×{:.2})",
+                        now / was
+                    ))
+                }
+                (Some(_), Some(_)) => {}
+                _ => found.push(format!("{scenario} {metric}: not measured on both builds")),
+            }
+        }
+    }
+    found
 }
 
 /// One run of one scenario, on a profile of its own. The `lichess-*` scenarios sign in to a
@@ -318,6 +390,7 @@ mod tests {
             seconds: 1,
             scenarios: vec!["home-idle".into()],
             out: None,
+            fail_above: None,
         };
         let run = |build: &str, draws: f64| {
             json!({
@@ -353,6 +426,110 @@ mod tests {
                 "play"
             )),
             "{text}"
+        );
+    }
+
+    fn gated(build: &str, draw: f64, busy: f64) -> Value {
+        json!({
+            "build": build,
+            "report": {"scenario": "analysis-stepping", "draw_ms_p50": draw, "main_thread_busy_fraction": busy}
+        })
+    }
+
+    fn two_builds() -> Options {
+        Options {
+            builds: vec![("main".into(), "a".into()), ("base".into(), "b".into())],
+            runs: 1,
+            seconds: 1,
+            scenarios: vec!["analysis-stepping".into()],
+            out: None,
+            fail_above: Some(2.),
+        }
+    }
+
+    /// #211 on CI's terms: the analysis board's frames went from 1.4 to 9 ms and its main thread
+    /// from 17% to 91% busy.
+    #[test]
+    fn the_gate_fails_on_the_voice_bar_regression() {
+        let results = [gated("main", 9.15, 0.91), gated("base", 1.38, 0.17)];
+        assert_eq!(
+            regressions(&two_builds(), &results, 2.),
+            [
+                "analysis-stepping draw_ms_p50: 9.150 against 1.380 (×6.63)",
+                "analysis-stepping main_thread_busy_fraction: 0.910 against 0.170 (×5.35)",
+            ]
+        );
+    }
+
+    /// Faster, a little slower, or twice as slow by less than the least rise: no regression.
+    #[test]
+    fn the_gate_passes_noise_and_gains() {
+        for (draw, busy) in [(0.9, 0.1), (1.38, 0.17), (2.7, 0.33), (0.6, 0.08)] {
+            let results = [gated("main", draw, busy), gated("base", 1.38, 0.17)];
+            assert!(
+                regressions(&two_builds(), &results, 2.).is_empty(),
+                "{draw} {busy}"
+            );
+        }
+        // Small frames that doubled: under the least rise.
+        let results = [gated("main", 0.9, 0.05), gated("base", 0.3, 0.02)];
+        assert!(regressions(&two_builds(), &results, 2.).is_empty());
+        // Over the ratio by more than the least rise in only one figure.
+        let results = [gated("main", 2.5, 0.2), gated("base", 1., 0.15)];
+        assert_eq!(
+            regressions(&two_builds(), &results, 2.),
+            ["analysis-stepping draw_ms_p50: 2.500 against 1.000 (×2.50)"]
+        );
+        // Exactly at the ratio is not over it.
+        let results = [gated("main", 4., 0.2), gated("base", 2., 0.15)];
+        assert!(regressions(&two_builds(), &results, 2.).is_empty());
+        // Exactly the least rise over is not more than it.
+        let results = [gated("main", 1.5, 0.15), gated("base", 0.5, 0.05)];
+        assert!(regressions(&two_builds(), &results, 2.).is_empty());
+    }
+
+    #[test]
+    fn the_gate_fails_only_when_asked() {
+        let slower = [gated("main", 9.15, 0.91), gated("base", 1.38, 0.17)];
+        let same = [gated("main", 1.38, 0.17), gated("base", 1.38, 0.17)];
+        let error = gate(&two_builds(), &slower).unwrap_err();
+        assert!(
+            error.starts_with(
+                "Frames cost more on main than on base:\n  analysis-stepping draw_ms_p50"
+            ),
+            "{error}"
+        );
+        assert!(gate(&two_builds(), &same).is_ok());
+        let unasked = Options {
+            fail_above: None,
+            ..two_builds()
+        };
+        assert!(gate(&unasked, &slower).is_ok());
+    }
+
+    #[test]
+    fn the_gate_fails_a_scenario_that_measured_nothing() {
+        let results = [gated("base", 1.38, 0.17)];
+        assert_eq!(
+            regressions(&two_builds(), &results, 2.),
+            [
+                "analysis-stepping draw_ms_p50: not measured on both builds",
+                "analysis-stepping main_thread_busy_fraction: not measured on both builds",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_gate_takes_a_ratio_over_one() {
+        let args = |ratio: &str| ["--build", "a=b", "--fail-above", ratio].map(str::to_string);
+        assert_eq!(options(&args("2.5")).unwrap().fail_above, Some(2.5));
+        assert!(options(&args("1")).is_err());
+        assert!(options(&args("fast")).is_err());
+        assert_eq!(
+            options(&["--build".into(), "a=b".into()])
+                .unwrap()
+                .fail_above,
+            None
         );
     }
 }

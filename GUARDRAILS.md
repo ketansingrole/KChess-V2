@@ -23,6 +23,13 @@ compare pictures of every page before and after: on macOS,
 `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens -- --ignored` renders them
 offscreen into `<dir>/<width>x<height>/<page>.png`.
 
+Frame cost has two guards ([docs/benchmarks/frame-guards.md](docs/benchmarks/frame-guards.md)).
+Every end-to-end test fails when a frame it draws waits outside the main thread: a call to the
+system, the core, the clipboard or the disk says so with `slow_calls::call`, and the tests draw
+every frame inside `slow_calls::drawing`; mark a new such call the same way. The nightly
+`Frame bench` workflow runs `cargo xtask bench` on macOS, main against the last passing night,
+and opens an issue when a scenario's frames cost over twice as much.
+
 `cargo xtask install-hooks` points Git at `.githooks`. Its pre-push hook runs the full
 `cargo xtask check` when a push updates `main`, and refuses if the pushed commit is not HEAD or
 the working tree has uncommitted or untracked files, since `check` would test those instead. A

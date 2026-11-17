@@ -1,0 +1,132 @@
+name: Frame bench
+
+# The app's frame benchmark (`cargo xtask bench`, apps/gpui/src/bench.rs) on a real macOS window:
+# main against the main commit the last passing night measured, so a change that makes frames
+# cost more is found the next morning, not nine days later (#211 took the analysis board's frames
+# from 1.4 to 9 ms and nothing noticed; docs/benchmarks/frame-guards.md). Both builds run on the
+# same runner, alternating run by run, so the runner's speed falls on both; the gate fails only on
+# a rise of over 2× and more than 1 ms (or 10 points of main-thread time), far above a shared
+# runner's noise. A failed night opens an issue, and keeps failing until the frames are fixed: the
+# base moves only on a passing night. The headless guard that catches the commonest cause on
+# every pull request is `slow_calls` (apps/gpui/src/slow_calls.rs).
+#
+# A pull request that changes the benchmark or this workflow measures itself against its base.
+# By hand, `base` measures main against any commit.
+on:
+  schedule:
+    - cron: '53 3 * * *'
+  workflow_dispatch:
+    inputs:
+      base:
+        description: The commit to measure main against (default the last passing night's)
+        default: ''
+  pull_request:
+    paths:
+      - .github/workflows/bench.yml
+      - apps/gpui/src/bench.rs
+      - tooling/xtask/src/bench.rs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      # The last passing night's commit.
+      actions: read
+      # A failed night's issue.
+      issues: write
+    env:
+      # Both builds alike, and without the release profile's fat LTO, whose link would take most
+      # of the job; the gate compares them with each other, not with a release.
+      CARGO_PROFILE_RELEASE_LTO: 'off'
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+      SCENARIOS: analysis-stepping,board-animation,local-clock,pages-tour
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          INPUT: ${{ inputs.base }}
+        run: |
+          base=""
+          if [ "$EVENT" = pull_request ]; then
+            base="$PR_BASE"
+          elif [ -n "$INPUT" ]; then
+            base="$(git rev-parse --verify "$INPUT^{commit}")"
+          else
+            for sha in $(gh run list --workflow bench.yml --branch main --status success --limit 30 \
+                --json headSha,event --jq '.[] | select(.event == "schedule" or .event == "workflow_dispatch") | .headSha'); do
+              if git merge-base --is-ancestor "$sha" HEAD 2>/dev/null; then base="$sha"; break; fi
+            done
+            # The first night: the commit before.
+            base="${base:-$(git rev-parse HEAD^)}"
+          fi
+          echo "Measuring $(git rev-parse HEAD) against $base"
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+          if [ "$base" = "$(git rev-parse HEAD)" ]; then echo "same=true" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.base.outputs.same != 'true'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: bench
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The base first, so the second build reuses what the two share; the xtask that measures is
+      # this commit's.
+      - name: Build both
+        if: steps.base.outputs.same != 'true'
+        env:
+          BASE: ${{ steps.base.outputs.sha }}
+        run: |
+          head="$(git rev-parse HEAD)"
+          git checkout -q --detach "$BASE"
+          cargo build --release --locked -p kchess-gpui --features bench
+          cp target/release/KChess "$RUNNER_TEMP/KChess-base"
+          git checkout -q --detach "$head"
+          cargo build --release --locked -p kchess-gpui --features bench
+          cp target/release/KChess "$RUNNER_TEMP/KChess-main"
+      - name: Measure
+        if: steps.base.outputs.same != 'true'
+        run: |
+          set -o pipefail
+          cargo xtask bench --build "main=$RUNNER_TEMP/KChess-main" --build "base=$RUNNER_TEMP/KChess-base" \
+            --runs 3 --seconds 15 --scenarios "$SCENARIOS" --fail-above 2 --out "$RUNNER_TEMP/bench.json" \
+            2>&1 | tee "$RUNNER_TEMP/bench.txt"
+      - if: always() && steps.base.outputs.same != 'true'
+        run: |
+          { echo '```'; cat "$RUNNER_TEMP/bench.txt" 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - if: always() && steps.base.outputs.same != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: bench
+          path: ${{ runner.temp }}/bench.*
+          if-no-files-found: ignore
+      # One open issue for a regression on main: a new failed night comments on it.
+      - if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE: ${{ steps.base.outputs.sha }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Frames cost more on main"
+          body="$(printf 'The nightly frame bench failed on %s against %s: %s\n\n```\n%s\n```' \
+            "$(git rev-parse --short HEAD)" "${BASE:0:8}" "$RUN" "$(tail -n 40 "$RUNNER_TEMP/bench.txt" 2>/dev/null)")"
+          issue="$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number')"
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
