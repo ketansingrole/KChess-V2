@@ -62,51 +62,51 @@ pub fn parse_info(text: &str, white_to_move: bool) -> Option<Info> {
     let mut mate: Option<f64> = None;
     let mut nps: Option<f64> = None;
     let mut pv: Option<Vec<&str>> = None;
-    let mut i = 1;
-    while let Some(&token) = tokens.get(i) {
-        let value = tokens.get(i + 1).copied();
-        match token {
-            "depth" => depth = Some(number_of(value)),
-            "multipv" => rank = number_of(value),
-            "nps" => nps = Some(number_of(value)),
+    let mut rest = tokens.get(1..).unwrap_or_default();
+    while let [token, tail @ ..] = rest {
+        let value = tail.first().copied();
+        // How many values follow the key: `score` takes two, `wdl` three, every other key one.
+        let values = match *token {
+            "depth" => {
+                depth = Some(number_of(value));
+                1
+            }
+            "multipv" => {
+                rank = number_of(value);
+                1
+            }
+            "nps" => {
+                nps = Some(number_of(value));
+                1
+            }
             "score" => {
-                let amount = number_of(tokens.get(i + 2).copied());
+                let amount = number_of(tail.get(1).copied());
                 match value {
                     Some("cp") => cp = Some(amount),
                     Some("mate") => mate = Some(amount),
                     _ => {}
                 }
-                i += 2;
                 // A lower or upper bound is a provisional score from a fail-high or fail-low.
-                if matches!(
-                    tokens.get(i + 1).copied(),
-                    Some("lowerbound" | "upperbound")
-                ) {
+                if matches!(tail.get(2).copied(), Some("lowerbound" | "upperbound")) {
                     return None;
                 }
-                i += 1;
-                continue;
+                2
             }
             "pv" => {
                 pv = Some(
-                    tokens
-                        .get(i + 1..)
-                        .unwrap_or_default()
-                        .iter()
+                    tail.iter()
                         .copied()
                         .filter(|move_| is_uci_move(move_))
                         .collect(),
                 );
                 break;
             }
-            _ => {}
-        }
-        // `string` is free text with no PV; `wdl` takes three values; every other key takes one.
-        if token == "string" {
-            return None;
-        }
-        i += if token == "wdl" { 3 } else { 1 };
-        i += 1;
+            // `string` is free text with no PV.
+            "string" => return None,
+            "wdl" => 3,
+            _ => 1,
+        };
+        rest = tail.get(values..).unwrap_or_default();
     }
     let depth = depth.filter(|d| d.is_finite())?;
     let pv = pv.filter(|moves| !moves.is_empty())?;
@@ -133,6 +133,19 @@ pub fn parse_info(text: &str, white_to_move: bool) -> Option<Info> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `string` is free text to the end of the line, so a PV inside it is not the line's.
+    #[test]
+    fn a_pv_inside_a_string_is_not_read() {
+        assert!(parse_info("info depth 9 score cp 50 string x pv e2e4", true).is_none());
+    }
+
+    /// `wdl` takes three values, so the words after the first two are not keys.
+    #[test]
+    fn wdl_takes_three_values() {
+        let line = parse_info("info depth 9 score cp 50 wdl 0 depth 4 pv e2e4", true).unwrap();
+        assert_eq!(line.line.depth, 9.0);
+    }
 
     #[test]
     fn variant_lines_keep_their_drops_and_king_promotions() {

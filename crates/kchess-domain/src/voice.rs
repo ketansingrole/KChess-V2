@@ -287,11 +287,11 @@ fn phrase(words: &[String]) -> String {
 fn tokens(text: &str) -> Vec<String> {
     let words = split_words(text);
     let mut out = Vec::new();
-    let mut i = 0;
-    while i < words.len() {
-        let word = words[i].as_str();
-        let next = words.get(i + 1).map(String::as_str);
-        let after = words.get(i + 2).map(String::as_str);
+    let mut rest = &words[..];
+    while let [word, tail @ ..] = rest {
+        let word = word.as_str();
+        let next = tail.first().map(String::as_str);
+        let after = tail.get(1).map(String::as_str);
         let file = if word == "eight"
             && next.and_then(rank_word).is_some()
             && after.and_then(file_word).is_none()
@@ -307,7 +307,7 @@ fn tokens(text: &str) -> Vec<String> {
         match (file, rank) {
             (Some(file), Some(rank)) => {
                 out.push(format!("{file}{rank}"));
-                i += 2;
+                rest = tail.get(1..).unwrap_or_default();
             }
             (file, _) => {
                 out.push(
@@ -315,7 +315,7 @@ fn tokens(text: &str) -> Vec<String> {
                         .or_else(|| rank_word(word).map(String::from))
                         .unwrap_or_else(|| word.to_string()),
                 );
-                i += 1;
+                rest = tail;
             }
         }
     }
