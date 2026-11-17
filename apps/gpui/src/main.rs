@@ -60,6 +60,7 @@ mod reviews;
 mod settings;
 mod shell;
 mod shortcuts;
+mod slow_calls;
 mod sound;
 mod startup;
 mod studies;

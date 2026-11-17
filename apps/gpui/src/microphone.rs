@@ -82,8 +82,11 @@ fn pinned(cx: &App) -> Host {
 /// On macOS this asks the privacy service, a round trip of about 6 ms: read it when Settings
 /// shows the microphone or the window comes back, never while drawing. A view drawn every frame
 /// that called it (the voice bar, for its Privacy settings link) took the analysis board's frames
-/// from 1.4 to 9 ms; `privacy_settings` answers that without asking.
+/// from 1.4 to 9 ms; `privacy_settings` answers that without asking. A test fails if a frame
+/// reads it (`slow_calls`).
+#[track_caller]
 pub fn host(cx: &App) -> Host {
+    crate::slow_calls::call("the system's microphone access (microphone::host)");
     #[cfg(test)]
     {
         HOST_READS.set(HOST_READS.get() + 1);

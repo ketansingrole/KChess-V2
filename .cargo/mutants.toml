@@ -134,6 +134,9 @@ exclude_re = [
     # `chunk_args`, `merge`, `verdict`, `in_parallel`); the Mutants workflow's `gpui-plan` and
     # `gpui` jobs run them every Sunday.
     'tooling/xtask/src/app_mutants\.rs:.*: (replace (plan|list|cpus|coverage|instrumented|test_names|run_test|llvm_tools|lines_of|shard) -> .* with |.* in (plan|list|coverage|instrumented|test_names|run_test|llvm_tools|lines_of|shard)$)',
+    # `bench` runs real builds of the app for minutes each, so only a benchmark run sees `run`.
+    # What it decides is tested (`options`, `summary`, `regressions`, `gate`).
+    'tooling/xtask/src/bench\.rs:.*: replace run -> Result with ',
     # Talk to GitHub through gh: the Electron step's download and manifests, the release check of
     # a commit's CI, the draft upload and the Snap download. What they decide is tested
     # (`check_step`, `check_sums`, `matches`, `manifest_text`, `ci_verdict`, `needs_ci`,

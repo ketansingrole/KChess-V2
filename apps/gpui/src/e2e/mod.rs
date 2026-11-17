@@ -61,9 +61,12 @@ const SIZES: [(f32, f32); 3] = [(640., 620.), (1024., 768.), (1320., 880.)];
 /// Draw the window as it is drawn on screen: the next-frame callbacks the platform's frame
 /// delivers, then only the views that changed, cached ones reused. (`render_frame` redraws every
 /// view, which would hide a view that caching leaves stale.)
+/// One frame, which may ask nothing outside the main thread (`slow_calls`).
 fn draw(window: &mut Window, cx: &mut App) {
-    window.simulate_next_frame(cx);
-    window.draw(cx).clear(cx);
+    crate::slow_calls::drawing(|| {
+        window.simulate_next_frame(cx);
+        window.draw(cx).clear(cx);
+    });
 }
 
 /// How often a wait looks again.

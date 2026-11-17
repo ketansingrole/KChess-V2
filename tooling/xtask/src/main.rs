@@ -70,12 +70,19 @@ const COMMANDS: &[Command] = &[
     },
     Command {
         name: "bench",
-        forms: &[(
-            "--build <label>=<binary>… [--runs 5] [--seconds 30] [--scenarios a,b] [--out <file>]",
-            "The app's frame benchmarks for builds made with \
-             `cargo build --release -p kchess-gpui --features bench`, alternating run by run on \
-             fresh profiles; prints each scenario's medians",
-        )],
+        forms: &[
+            (
+                "--build <label>=<binary>… [--runs 5] [--seconds 30] [--scenarios a,b] [--out <file>]",
+                "The app's frame benchmarks for builds made with \
+                 `cargo build --release -p kchess-gpui --features bench`, alternating run by run \
+                 on fresh profiles; prints each scenario's medians",
+            ),
+            (
+                "--build <new>=<binary> --build <base>=<binary> … --fail-above <ratio>",
+                "Also fail when a scenario's frames cost over <ratio> times as much on the first \
+                 build as on the last, or a scenario drew no frames",
+            ),
+        ],
         run: bench::run,
     },
     Command {

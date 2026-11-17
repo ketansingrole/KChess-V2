@@ -238,6 +238,7 @@ pub fn open_pasted(window: &mut Window, cx: &mut App) {
     if window.has_active_dialog(cx) {
         return;
     }
+    crate::slow_calls::call("the clipboard");
     let text = cx
         .read_from_clipboard()
         .and_then(|item| item.text())

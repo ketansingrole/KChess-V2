@@ -136,10 +136,12 @@ impl CoreBridge {
 
     /// A typed core call waited for: only before the window opens, as the app needs its library
     /// and preferences before it draws.
+    #[track_caller]
     pub fn request_now<C: CoreCall + Send + 'static>(&self, call: C) -> Result<C::Answer, CoreError>
     where
         C::Answer: Send,
     {
+        crate::slow_calls::call("a core call waited for (AppCore::request_now)");
         let answer = self.request(call);
         self.runtime.block_on(answer)
     }
@@ -155,7 +157,9 @@ impl CoreBridge {
 
     /// Done with the core: an embedded one cancels its work and releases the profile, waiting at
     /// most a few seconds; the shared core closes on its own once no window uses it.
+    #[track_caller]
     pub fn close(&self) {
+        crate::slow_calls::call("the core closing (AppCore::close)");
         let handle = self.handle.clone();
         let closing = self.runtime.spawn(async move { handle.close().await });
         let _ = self.runtime.block_on(async {
