@@ -131,6 +131,28 @@ fn the_arrow_keys_step_through_the_moves(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.enabled("analysis-back"));
 }
 
+/// Drawing never asks the system about the microphone. The voice bar read the whole microphone
+/// state for its Privacy settings link on every frame, and on macOS that asks the privacy
+/// service (about 6 ms), which took the analysis board's frames from 1.4 to 9 ms while it
+/// stepped through a game.
+#[gpui_kit::test]
+fn stepping_through_moves_never_asks_the_system_about_the_microphone(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 2. Nf3 *");
+    let before = crate::microphone::host_reads();
+    for key in ["left", "left", "right", "home", "end"] {
+        app.press(key);
+    }
+    assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
+    assert_eq!(
+        crate::microphone::host_reads() - before,
+        0,
+        "frames drawn while stepping asked the system about the microphone"
+    );
+}
+
 /// A promotion from the keyboard: the cursor walks from e2 to the pawn on a7, Enter picks it up,
 /// Up and Enter play it to a8, and the picker takes the arrows and Enter (Left from the queen
 /// goes round to the knight). The keys the board does not take still reach the page.
