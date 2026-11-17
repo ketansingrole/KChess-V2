@@ -18,7 +18,7 @@ use crate::time::now_ms;
 
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::sync::{OnceCell, watch};
+use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 
 use super::client::{Auth, Lane, LichessClient, TokenSource};
@@ -298,13 +298,10 @@ pub struct Lichess {
     pending: Mutex<HashMap<String, Arc<OnceCell<CoreResult<Value>>>>>,
     last_following: Mutex<HashMap<String, Value>>,
     last_following_epoch: AtomicU64,
-    syncs: Mutex<HashMap<String, (u64, SyncOutcome)>>,
-    next_sync: AtomicU64,
+    syncs: crate::tasks::SingleFlight<CoreResult<usize>>,
     /// Puzzle ids recently drawn per account, oldest first (see `puzzles::puzzle_next`).
     drawn_puzzles: Mutex<HashMap<String, VecDeque<String>>>,
 }
-
-type SyncOutcome = watch::Receiver<Option<Result<usize, CoreError>>>;
 
 use crate::tasks::lock;
 
@@ -328,8 +325,7 @@ impl Lichess {
             pending: Mutex::new(HashMap::new()),
             last_following: Mutex::new(HashMap::new()),
             last_following_epoch: AtomicU64::new(0),
-            syncs: Mutex::new(HashMap::new()),
-            next_sync: AtomicU64::new(0),
+            syncs: crate::tasks::SingleFlight::default(),
             drawn_puzzles: Mutex::new(HashMap::new()),
         }
     }
@@ -487,14 +483,14 @@ impl Lichess {
                 epochs.insert(key.clone(), next);
             }
             self.forget_profile(name);
-            lock(&self.syncs).remove(&key);
+            self.syncs.forget(&key);
         }
     }
 
     /// Ends every login epoch and running sync, and drops the in-memory profiles.
     pub fn reset(&self) {
         self.login_epoch.fetch_add(1, Ordering::SeqCst);
-        let running: Vec<String> = lock(&self.syncs).keys().cloned().collect();
+        let running = self.syncs.running();
         self.cancel_account_syncs(&running);
         lock(&self.profiles).clear();
         lock(&self.last_following).clear();
@@ -1168,39 +1164,22 @@ impl Lichess {
         play_time: Option<i64>,
         epoch: u64,
     ) -> CoreResult<usize> {
-        let key = row.username.to_lowercase();
-        let joined = lock(&self.syncs)
-            .get(&key)
-            .map(|(_, outcome)| outcome.clone());
-        if let Some(outcome) = joined {
-            return wait_for(outcome).await;
-        }
-        let generation = self.next_sync.fetch_add(1, Ordering::SeqCst) + 1;
-        let (send, receive) = watch::channel(None);
-        lock(&self.syncs).insert(key.clone(), (generation, receive));
-        // Forgotten however the run ends: a cancelled call left its entry behind, and every
-        // later sync of this player joined it and failed at once ("Sync was cancelled.").
-        let forget = crate::tasks::on_drop(|| {
-            let mut syncs = lock(&self.syncs);
-            if syncs
-                .get(&key)
-                .is_some_and(|(current, _)| *current == generation)
-            {
-                syncs.remove(&key);
+        let run = async {
+            let result = self.run_sync(row, play_time, epoch).await;
+            if let Ok(fetched) = &result {
+                self.host.log(
+                    Level::Info,
+                    "lichess",
+                    &format!("Game sync completed: {} fetched={fetched}", row.username),
+                );
             }
-        });
-        let result = self.run_sync(row, play_time, epoch).await;
-        drop(forget);
-        let shared = result.clone();
-        let _ = send.send(Some(shared));
-        if let Ok(fetched) = &result {
-            self.host.log(
-                Level::Info,
-                "lichess",
-                &format!("Game sync completed: {} fetched={fetched}", row.username),
-            );
-        }
-        result
+            result
+        };
+        self.syncs
+            .run(&row.username.to_lowercase(), run, || {
+                Err(CoreError::new("Sync was cancelled."))
+            })
+            .await
     }
 
     /// `row` as read under the account's `epoch`.
@@ -1405,18 +1384,6 @@ impl Lichess {
 
 fn sync_cancelled() -> CoreError {
     CoreError::new("Sync was cancelled.")
-}
-
-/// Waits for a running sync (joined by a second request) to finish, and shares its result.
-async fn wait_for(mut outcome: SyncOutcome) -> CoreResult<usize> {
-    loop {
-        if let Some(result) = outcome.borrow().clone() {
-            return result;
-        }
-        if outcome.changed().await.is_err() {
-            return Err(CoreError::new("Sync was cancelled."));
-        }
-    }
 }
 
 /// A game record Lichess sent, read as a game.
