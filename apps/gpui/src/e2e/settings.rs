@@ -1,7 +1,7 @@
 //! Settings: changes are saved to the profile, shown at once and kept across launches.
 
 use super::Harness;
-use gpui_kit::test::TestQueryExt as _;
+use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
 use serde_json::json;
 
 #[gpui_kit::test]
@@ -178,10 +178,11 @@ fn moves_can_be_shown_with_piece_symbols(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(app.find("tree-g1f3").label(), Some("Nf3"));
 }
 
-/// ⌘K finds a category by any row title it shows, so a new row is found as soon as it is added.
+/// ⌘K finds a category by any row title it shows, so a new row is found as soon as it is added,
+/// and can open the category at it.
 #[gpui_kit::test]
 fn every_settings_row_is_found_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::settings::{Section, section_keywords};
+    use crate::pages::settings::{Section, section_keywords, section_rows};
     use gpui_kit::test::TestQueryExt as _;
     let mut app = Harness::start(cx);
     let mut checked = 0;
@@ -202,25 +203,98 @@ fn every_settings_row_is_found_from_quick_pick(cx: &mut gpui_kit::TestAppContext
                 .collect()
         });
         let keywords = section_keywords(section).to_lowercase();
+        let rows = section_rows(section);
         for title in titles {
             assert!(
-                keywords.contains(&title.to_lowercase()),
-                "{label}: {title:?} is missing from section_keywords"
+                rows.contains(&title.as_str()),
+                "{label}: {title:?} is missing from section_rows"
             );
+            assert!(keywords.contains(&title.to_lowercase()));
             checked += 1;
         }
     }
     assert!(checked > 40, "only {checked} row titles were drawn");
 }
 
+/// A row title is its own result, named as the row is, and opens its category there.
 #[gpui_kit::test]
 fn a_row_title_finds_its_category_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.press("secondary-k");
     app.type_text("#piece notation");
-    super::palette::wait_for_first(&mut app, "Appearance");
+    super::palette::wait_for_first(&mut app, "Piece notation");
     app.press("enter");
     app.find(("notation", 1usize));
+}
+
+/// The row ⌘K lit on the Settings page, if any.
+fn revealed(app: &mut Harness) -> Option<&'static str> {
+    app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::settings::SettingsPage>(cx)
+            .and_then(|page| page.read(cx).revealed())
+    })
+}
+
+/// A row at the foot of a long category is scrolled into view and lit, then the light goes.
+#[gpui_kit::test]
+fn a_row_found_in_quick_pick_is_scrolled_to_and_lit(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.press("secondary-k");
+    app.type_text("#board theme");
+    super::palette::wait_for_first(&mut app, "Board theme");
+    app.press("enter");
+    assert_eq!(revealed(&mut app), Some("Board theme"));
+    app.wait_for("the row in view", |window, _| {
+        let (Some(page), Some(row)) = (
+            window.try_find(gpui_kit::ElementId::from("settings-page")),
+            window.try_find(gpui_kit::ElementId::from("revealed-row")),
+        ) else {
+            return false;
+        };
+        let (page, row) = (page.bounds(), row.bounds());
+        // Board theme is the last row: the page scrolls to its end, which shows all of it.
+        row.top() > page.top() && row.bottom() <= page.bottom()
+    });
+    app.wait_for("the light to go", |window, _| {
+        window
+            .try_find(gpui_kit::ElementId::from("revealed-row"))
+            .is_none()
+    });
+    assert_eq!(revealed(&mut app), None);
+}
+
+/// A category's own name finds the category, not one of its rows.
+#[gpui_kit::test]
+fn a_category_name_finds_the_category(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.press("secondary-k");
+    app.type_text("#gestures");
+    super::palette::wait_for_first(&mut app, "Gestures");
+    app.press("enter");
+    assert_eq!(revealed(&mut app), None);
+}
+
+/// A toggle ⌘K switches itself stays that toggle, rather than becoming a row to open.
+#[gpui_kit::test]
+fn a_quick_toggle_is_not_a_row_result(cx: &mut gpui_kit::TestAppContext) {
+    let toggle = crate::pages::settings::TOGGLES
+        .iter()
+        .find(|toggle| toggle.title == "Show possible moves")
+        .expect("the toggle");
+    assert!(toggle.quick.is_some());
+    let mut app = Harness::start(cx);
+    app.press("secondary-k");
+    app.type_text("#show possible moves");
+    super::palette::wait_for_first(&mut app, toggle.label());
+    app.with_window(|window, _| {
+        let rows: Vec<_> = (0..64usize)
+            .map_while(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect();
+        // The toggle alone: no second result opens Gameplay at its row.
+        let named = rows.iter().filter(|label| *label == toggle.label()).count();
+        assert_eq!(named, 1, "{rows:?}");
+    });
 }
 
 /// Settings → Updates links to the website, the source and the issue tracker.

@@ -11,7 +11,7 @@ use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::types::{EngineStatus, ReviewAuto, ReviewPause, ReviewStatus, Settings};
 
-use super::{Rows, SettingsPage, choice, info};
+use super::{SettingsPage, choice, info};
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::reviews::ReviewHandle;
@@ -432,7 +432,7 @@ impl SettingsPage {
             widgets::badge("Not found", Look::Warning, palette)
                 .child(icon("triangle-alert").size(px(14.)))
         };
-        let mut rows = Rows::new(self.narrow()).row(
+        let mut rows = self.rows().row(
             "Status",
             Some(if ready && !name.is_empty() {
                 name.into()
@@ -469,7 +469,8 @@ impl SettingsPage {
         }
         let review = cx.global::<ReviewHandle>().0.read(cx).status.clone();
         let auto = settings.core.review_auto;
-        let review_rows = Rows::new(self.narrow())
+        let review_rows = self
+            .rows()
             .row(
                 "Review my games automatically",
                 Some("Runs in the background after syncing".into()),

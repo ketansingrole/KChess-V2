@@ -16,6 +16,7 @@ use crate::pages::{ActionRole, Page, PageCommand, Run};
 use crate::quick_pick::{self, Mode};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
+use crate::widgets;
 
 const RECENT_KEY: &str = "kchess:palette-recent";
 const RECENT_KEPT: usize = 8;
@@ -50,6 +51,8 @@ struct Command {
     run: Run,
     /// Switches the palette's mode instead of running.
     prefix: Option<&'static str>,
+    /// A Settings category's rows, any of which a search may open it at.
+    rows: Option<(Section, Vec<&'static str>)>,
 }
 
 impl Command {
@@ -70,6 +73,7 @@ impl Command {
             kbds: None,
             run: Rc::new(run),
             prefix: None,
+            rows: None,
         }
     }
 
@@ -112,7 +116,40 @@ impl Command {
             kbds: None,
             run,
             prefix: None,
+            rows: None,
         }
+    }
+
+    /// The category's rows a search finds it by, as its own results.
+    fn rows(mut self, section: Section, rows: Vec<&'static str>) -> Command {
+        self.rows = Some((section, rows));
+        self
+    }
+
+    /// A category found by one of its rows rather than its name: the result is that row, named
+    /// as Settings names it with the matched letters lit, and it opens the category there.
+    fn at_row(&self, text: &str) -> Option<(Command, quick_pick::Match)> {
+        let (section, rows) = self.rows.as_ref()?;
+        if quick_pick::match_query(text, &self.label, "").is_some() {
+            return None;
+        }
+        let section = *section;
+        let (row, found) = rows
+            .iter()
+            .filter_map(|row| Some((*row, quick_pick::match_query(text, row, "")?)))
+            .max_by(|a, b| a.1.score.total_cmp(&b.1.score))?;
+        let command = Command {
+            label: row.to_string(),
+            detail: Some(format!("Settings › {}", section.label())),
+            hint: None,
+            keywords: SharedString::default(),
+            run: Rc::new(move |window, cx| {
+                crate::shell::open_settings_at(section, row, window, cx)
+            }),
+            rows: None,
+            ..self.clone()
+        };
+        Some((command, found))
     }
 }
 
@@ -161,7 +198,11 @@ fn searched(
                 command.detail.clone().unwrap_or_default(),
                 command.keywords
             );
-            quick_pick::match_query(text, &command.label, &extra).map(|m| (index, command, m))
+            let found = quick_pick::match_query(text, &command.label, &extra)?;
+            Some(match command.at_row(text) {
+                Some((row, at_row)) => (index, row, at_row),
+                None => (index, command, found),
+            })
         })
         .collect();
     ranked.sort_by(|a, b| b.2.score.total_cmp(&a.2.score).then(a.0.cmp(&b.0)));
@@ -279,10 +320,24 @@ fn settings_commands(cx: &App) -> Vec<Command> {
                 (section == Section::Updates)
                     .then(|| crate::updates::client_version(&crate::updates::current_version())),
             )
-            .keywords(crate::pages::settings::section_keywords(section)),
+            .keywords(crate::pages::settings::section_keywords(section))
+            .rows(section, searched_rows(section)),
         );
     }
     list
+}
+
+/// The rows that find a Settings category as their own results: all but the toggles ⌘K offers
+/// itself, whose result switches them.
+fn searched_rows(section: Section) -> Vec<&'static str> {
+    crate::pages::settings::section_rows(section)
+        .into_iter()
+        .filter(|title| {
+            !crate::pages::settings::TOGGLES
+                .iter()
+                .any(|toggle| toggle.title == *title && toggle.quick.is_some())
+        })
+        .collect()
 }
 
 /// Actions for the page in view, first in command mode, each with the key that also runs it:
@@ -923,7 +978,6 @@ impl Render for CommandPalette {
                             let at = index;
                             index += 1;
                             let chosen = at == selected;
-                            let segments = quick_pick::segments(&command.label, &ranges);
                             let run = command.clone();
                             h_flex()
                                 .id(("palette-item", at))
@@ -964,15 +1018,10 @@ impl Render for CommandPalette {
                                         .flex_1()
                                         .min_w_0()
                                         .gap(px(8.))
-                                        .child(h_flex().children(segments.into_iter().map(
-                                            |(part, mark)| {
-                                                div()
-                                                    .when(mark, |part| {
-                                                        part.text_color(palette.primary)
-                                                            .font_weight(FontWeight::MEDIUM)
-                                                    })
-                                                    .child(part)
-                                            },
+                                        .child(div().flex_none().child(widgets::highlighted(
+                                            command.label.clone(),
+                                            &ranges,
+                                            &palette,
                                         )))
                                         .children(command.detail.map(|detail| {
                                             div()

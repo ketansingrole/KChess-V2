@@ -32,6 +32,7 @@ use crate::pages::Page;
 use crate::play_layout::{
     Measured, PAGE_BOTTOM, PAGE_TOP, PANEL_MAX, PANEL_MIN, PlayLayout, side_padding,
 };
+use crate::quick_pick;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill};
@@ -153,7 +154,9 @@ fn entry(moves: &[String], name: Option<&str>) -> Option<Entry> {
 
 /// Search ignores case, accents and the kind of apostrophe.
 fn fold(text: &str) -> String {
+    // Lower case first, so a capital with an accent (É) loses its accent too.
     text.chars()
+        .flat_map(char::to_lowercase)
         .map(|letter| match letter {
             'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => 'a',
             'ç' => 'c',
@@ -166,8 +169,18 @@ fn fold(text: &str) -> String {
             '’' | '`' => '\'',
             letter => letter,
         })
-        .flat_map(char::to_lowercase)
         .collect()
+}
+
+/// One character as `fold` reads it, for lighting what the search found: one that folds to
+/// several characters stays as it is.
+fn fold_char(letter: char) -> char {
+    let folded = fold(letter.encode_utf8(&mut [0; 4]));
+    let mut chars = folded.chars();
+    match (chars.next(), chars.next()) {
+        (Some(one), None) => one,
+        _ => letter,
+    }
 }
 
 fn first_move(node: &OpeningNode) -> Option<&str> {
@@ -625,6 +638,7 @@ impl OpeningsPage {
             edited: None,
             rows: 2,
             menu: None,
+            found: Vec::new(),
             action: Button::new(SharedString::from(format!("train-{}", item.name)))
                 .outline()
                 .small()
@@ -766,10 +780,8 @@ impl OpeningsPage {
                 .text_color(palette.highlighted)
                 .child(title)
         };
-        let words: Vec<String> = fold(&self.query)
-            .split_whitespace()
-            .map(str::to_string)
-            .collect();
+        let folded = fold(&self.query);
+        let words: Vec<&str> = folded.split_whitespace().collect();
         let mut body = v_flex().gap(px(24.)).w_full().max_w(px(1100.)).child(
             Input::new(&self.search)
                 .prefix(icon("search"))
@@ -780,7 +792,7 @@ impl OpeningsPage {
             let matches: Vec<_> = catalog
                 .named
                 .iter()
-                .filter(|(_, _, _, key)| words.iter().all(|word| key.contains(word.as_str())))
+                .filter(|(_, _, _, key)| words.iter().all(|word| key.contains(word)))
                 .collect();
             let total = matches.len();
             let rows: Vec<AnyElement> = matches
@@ -802,7 +814,11 @@ impl OpeningsPage {
                                 .min_w_0()
                                 .cursor_pointer()
                                 .pressable_link()
-                                .child(name.clone()),
+                                .child(widgets::highlighted(
+                                    name.clone(),
+                                    &quick_pick::found(name, &words, fold_char),
+                                    palette,
+                                )),
                         )
                         .child(
                             div()
@@ -1364,7 +1380,20 @@ impl crate::pages::PageView for OpeningsPage {
 mod tests {
     use std::sync::Arc;
 
-    use super::{OpeningNode, catalog, entry, fold, group_of, opening_tree};
+    use super::{OpeningNode, catalog, entry, fold, fold_char, group_of, opening_tree};
+
+    /// A result lights what its search found, accents and case aside.
+    #[test]
+    fn results_light_what_the_search_found() {
+        assert_eq!(fold_char('É'), 'e');
+        assert_eq!(fold_char('’'), '\'');
+        assert_eq!(fold_char('x'), 'x');
+        let words: Vec<&str> = vec!["reti"];
+        assert_eq!(
+            crate::quick_pick::found("Réti Opening", &words, fold_char),
+            vec![(0, 3)]
+        );
+    }
 
     /// Each Openings page made the catalog again as it opened, from a JSON copy of the rules'
     /// tree.

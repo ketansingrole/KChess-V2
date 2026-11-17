@@ -50,6 +50,8 @@ pub struct StudyCard {
     pub width: Pixels,
     /// Clicking its picture or its name opens it.
     pub on_open: OpenHandler,
+    /// The words a search found it by (in lower case), lit in its name and second line.
+    pub found: Vec<String>,
 }
 
 impl RenderOnce for StudyCard {
@@ -61,7 +63,12 @@ impl RenderOnce for StudyCard {
 fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
     let (width, open) = (card.width, card.on_open.clone());
     let open_title = open.clone();
-    let row = |text: Option<String>| {
+    let words: Vec<&str> = card.found.iter().map(String::as_str).collect();
+    let lit = |text: String| {
+        let found = crate::quick_pick::found(&text, &words, crate::quick_pick::lower);
+        highlighted(text, &found, palette)
+    };
+    let row = |text: Option<StyledText>| {
         div()
             .h(px(15.))
             .text_size(px(12.))
@@ -70,9 +77,9 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
             .children(text)
     };
     let mut details = vec![
-        row(Some(card.location)),
-        row(card.description),
-        row(card.edited),
+        row(Some(StyledText::new(card.location))),
+        row(card.description.map(&lit)),
+        row(card.edited.map(StyledText::new)),
     ];
     details.truncate(card.rows);
     v_flex()
@@ -142,7 +149,7 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
                                 .text_ellipsis()
                                 .cursor_pointer()
                                 .on_click(move |_, window, cx| open_title(window, cx))
-                                .child(card.name),
+                                .child(lit(card.name)),
                         )
                         .children(card.menu),
                 )

@@ -5,7 +5,7 @@ use gpui_kit::component::select::Select;
 use gpui_kit::component::{Disableable as _, IndexPath, Sizable as _, h_flex};
 use gpui_kit::*;
 
-use super::{Rows, SettingsPage};
+use super::SettingsPage;
 use crate::ai::{self, USAGE_SETTINGS};
 use crate::assets::icon;
 use crate::theme::Palette;
@@ -121,7 +121,7 @@ impl SettingsPage {
             _ if connected => "Connected".into(),
             _ => "Explain mistakes and puzzles with your Plus or Pro plan".into(),
         };
-        let rows = Rows::new(self.narrow()).row("ChatGPT", Some(hint), account, palette);
+        let rows = self.rows().row("ChatGPT", Some(hint), account, palette);
         if !connected {
             return rows.card(palette);
         }

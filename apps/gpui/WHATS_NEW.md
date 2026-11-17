@@ -12,6 +12,7 @@ refuses to release with nothing there.
 - **Brilliant moves**: game reviews run on your computer now mark your brilliant moves too.
 - **Say “next” in puzzles**: with voice on, voice keeps listening once you finish a puzzle or a mistake drill, and saying “next” takes you to the next one.
 - **See a line before you play it**: hover over a move in the engine lines, the Explorer's move list or a ChatGPT explanation to see the position it leads to.
+- **Find a setting in one go**: search for a setting at the top of the window and it opens Settings right at that row, lit up. Searching History, Studies and Openings now highlights the words that matched.
 - **Captured pieces on the analysis board**: the pieces each side has won, and who is ahead, show above and below the board as they do in your games.
 - **Fixes**: A wrong move in a puzzle goes back, so you can try another right away. Insights opened during a sync fill in once it finishes. Cancel seek no longer goes missing right after you sign in to Lichess. The voice meter moves as you speak. Plus many smaller fixes.
 

@@ -178,46 +178,78 @@ fn zoom_hint(cx: &App) -> String {
     )
 }
 
-/// What finds a category in ⌘K besides its name: every row title it shows (checked by a test, so
-/// a new row is found too), what the custom rows hold, and other names for it.
-pub fn section_keywords(section: Section) -> String {
+/// The titles of a category's rows, as they are drawn (a test checks every drawn title is here,
+/// so a new row is found too): ⌘K finds the category by each, and opens it at that row.
+pub fn section_rows(section: Section) -> Vec<&'static str> {
     toggles::titles(section)
-        .chain([other_keywords(section)])
+        .chain(other_rows(section).iter().copied())
+        .collect()
+}
+
+/// What finds a category in ⌘K besides its name: its rows' titles, what the custom rows hold,
+/// and other names for it.
+pub fn section_keywords(section: Section) -> String {
+    section_rows(section)
+        .into_iter()
+        .chain([other_words(section)])
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-/// A category's search words besides its toggles' titles.
-fn other_keywords(section: Section) -> &'static str {
+/// The titles of a category's rows that are not toggles.
+fn other_rows(section: Section) -> &'static [&'static str] {
     match section {
-        Section::Appearance => {
-            "Theme Interface size zoom Board coordinates Piece animation Piece notation figurine \
-             symbols letters Piece set Board theme colors"
-        }
-        Section::Themes => {
-            "Appearance Light mode theme Dark mode theme Your own themes app theme colors custom"
-        }
-        Section::Sound => "Volume mute audio",
-        Section::Notifications => "Try it alerts",
-        Section::Gameplay => {
-            "legal dots Pawn promotion \
-             auto-queen Computer levels auto next"
-        }
+        Section::Appearance => &[
+            "Theme",
+            "Interface size",
+            "Board coordinates",
+            "Piece animation",
+            "Piece notation",
+            "Piece set",
+            "Board theme",
+        ],
+        Section::Themes => &[
+            "Appearance",
+            "Light mode theme",
+            "Dark mode theme",
+            "Your own themes",
+        ],
+        Section::Sound => &["Volume"],
+        Section::Notifications => &["Try it"],
+        Section::Gameplay => &["Pawn promotion", "Computer levels"],
+        Section::Voice => &["Microphone access", "Test your microphone"],
+        Section::Engine => &["Status", "Game review", "Review my games automatically"],
+        Section::Ai => &["ChatGPT"],
+        Section::Online => &["Check correspondence games"],
+        Section::Data => &["Diagnostics"],
+        Section::Gestures
+        | Section::Analysis
+        | Section::Accounts
+        | Section::Offline
+        | Section::Updates => &[],
+    }
+}
+
+/// A category's other search words: what its custom rows hold, and other names for it.
+fn other_words(section: Section) -> &'static str {
+    match section {
+        Section::Appearance => "zoom figurine symbols letters colors",
+        Section::Themes => "app theme colors custom",
+        Section::Sound => "mute audio",
+        Section::Notifications => "alerts",
+        Section::Gameplay => "legal dots auto-queen auto next",
         Section::Gestures => "trackpad back forward",
-        Section::Voice => "Microphone access speech",
-        Section::Engine => {
-            "Status Review my games automatically Game review Stockfish \
-             executable download update"
-        }
+        Section::Voice => "speech",
+        Section::Engine => "Stockfish executable download update",
         Section::Analysis => "analysis",
-        Section::Ai => "ChatGPT model effort usage coach explain",
+        Section::Ai => "model effort usage coach explain",
         Section::Accounts => {
             "my accounts lichess sign in log in connect disconnect sync tracked Use for online play"
         }
-        Section::Online => "Check correspondence games",
+        Section::Online => "",
         Section::Offline => "Downloaded puzzles voice model Saved games and studies engine",
         Section::Data => {
-            "Diagnostics Export diagnostics Clear local scores Reset counters Database file storage"
+            "Export diagnostics Clear local scores Reset counters Database file storage"
         }
         Section::Updates => {
             "version about upgrade Check for updates What's new release notes \
@@ -265,6 +297,10 @@ fn level_id(id: &str) -> Result<EngineLevel, String> {
 pub struct SettingsPage {
     section: Section,
     area: Measured,
+    /// The page's scroll, which a revealed row moves.
+    scroll: ScrollHandle,
+    /// The row ⌘K opened the category at, lit for a moment.
+    reveal: Option<Reveal>,
     volume: Entity<SliderState>,
     poll: Entity<SelectState<Vec<SharedString>>>,
     /// Interface size: Auto (its percent here) and the steps; refilled when either changes.
@@ -492,6 +528,8 @@ impl SettingsPage {
         SettingsPage {
             section: Section::Appearance,
             area: Measured::default(),
+            scroll: ScrollHandle::new(),
+            reveal: None,
             volume,
             poll,
             zoom,
@@ -532,6 +570,8 @@ impl SettingsPage {
             self.stop_mic_test(cx);
         }
         self.section = section;
+        self.reveal = None;
+        self.scroll.set_offset(Point::default());
         if section == Section::Voice {
             self.refresh_microphone(cx);
             match &self.voice_history {
@@ -627,6 +667,148 @@ impl SettingsPage {
         let width = self.area.size().width;
         width > px(0.) && width < NARROW
     }
+
+    /// Show one category scrolled to the row titled `title` (as `section_rows` names it), which
+    /// is lit for a moment so the eye finds it: ⌘K found the category by that row.
+    pub fn reveal(&mut self, section: Section, title: &'static str, cx: &mut Context<Self>) {
+        self.show(section, cx);
+        let fade = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(REVEAL_LIT).await;
+            let _ = this.update(cx, |this, cx| {
+                this.reveal = None;
+                cx.notify();
+            });
+        });
+        self.reveal = Some(Reveal {
+            title,
+            pin: std::rc::Rc::new(std::cell::Cell::new(Pin::Start)),
+            scroll: self.scroll.clone(),
+            _fade: fade,
+        });
+        cx.notify();
+    }
+
+    /// The row the page is revealing, if any.
+    #[cfg(test)]
+    pub fn revealed(&self) -> Option<&'static str> {
+        self.reveal.as_ref().map(|reveal| reveal.title)
+    }
+
+    /// A category's rows, the row being revealed among them marked.
+    fn rows(&self) -> Rows {
+        Rows {
+            narrow: self.narrow(),
+            reveal: self.reveal.as_ref().map(Reveal::mark),
+            rows: Vec::new(),
+        }
+    }
+}
+
+/// How long a revealed row stays lit.
+const REVEAL_LIT: std::time::Duration = std::time::Duration::from_millis(2000);
+/// The room left above a revealed row.
+const REVEAL_ROOM: Pixels = px(16.);
+
+/// A row the page scrolls to and lights.
+struct Reveal {
+    title: &'static str,
+    /// Where the page keeps the row while it is lit.
+    pin: std::rc::Rc<std::cell::Cell<Pin>>,
+    scroll: ScrollHandle,
+    _fade: Task<()>,
+}
+
+impl Reveal {
+    fn mark(&self) -> RowMark {
+        RowMark {
+            title: self.title,
+            pin: self.pin.clone(),
+            scroll: self.scroll.clone(),
+        }
+    }
+}
+
+/// How the page keeps a revealed row in view while it is lit: the pictures above it (piece sets,
+/// boards) can still be loading, so the page keeps the row where it scrolled it until they are,
+/// and lets go once the person scrolls.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Pin {
+    /// Not scrolled yet.
+    Start,
+    /// Scrolled to this offset.
+    At(Pixels),
+    /// The person scrolled: the page leaves the scroll to them.
+    Left,
+}
+
+/// The scroll offset that puts a row at `row_top` (in the window, as the page is scrolled now)
+/// `REVEAL_ROOM` below the top of a page whose view starts at `view_top`, as far as `max` allows;
+/// `None` once the person has scrolled away from where the page put it.
+fn pin_scroll(
+    pin: Pin,
+    offset: Pixels,
+    view_top: Pixels,
+    row_top: Pixels,
+    max: Pixels,
+) -> Option<Pixels> {
+    match pin {
+        Pin::Left => None,
+        Pin::At(set) if set != offset => None,
+        Pin::Start | Pin::At(_) => {
+            Some((offset + view_top + REVEAL_ROOM - row_top).clamp(-max, px(0.)))
+        }
+    }
+}
+
+/// What `Rows` needs to scroll to and light the revealed row.
+#[derive(Clone)]
+struct RowMark {
+    title: &'static str,
+    pin: std::rc::Rc<std::cell::Cell<Pin>>,
+    scroll: ScrollHandle,
+}
+
+impl RowMark {
+    /// The row lit, with a probe that scrolls the page to it on its first frame.
+    fn light(&self, row: AnyElement, palette: &Palette) -> AnyElement {
+        let (pin, scroll) = (self.pin.clone(), self.scroll.clone());
+        let probe = canvas(
+            move |bounds, window, _| {
+                let offset = scroll.offset();
+                let Some(target) = pin_scroll(
+                    pin.get(),
+                    offset.y,
+                    scroll.bounds().origin.y,
+                    bounds.origin.y,
+                    scroll.max_offset().y,
+                ) else {
+                    pin.set(Pin::Left);
+                    return;
+                };
+                pin.set(Pin::At(target));
+                if target != offset.y {
+                    scroll.set_offset(point(offset.x, target));
+                    window.on_next_frame(|window, _| window.refresh());
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
+        div()
+            .id("revealed-row")
+            .test_support()
+            .relative()
+            .m(px(-8.))
+            .p(px(8.))
+            .rounded(radii::SM)
+            .bg(crate::theme::tint(palette.primary, 12.))
+            .child(row)
+            .child(probe)
+            .into_any_element()
+    }
 }
 
 /// A row's title and its optional hint.
@@ -637,15 +819,19 @@ fn info(title: impl Into<SharedString>, hint: Option<SharedString>, palette: &Pa
 /// The category's rows, with dividers between them.
 struct Rows {
     narrow: bool,
+    /// The row being revealed, lit when it is added.
+    reveal: Option<RowMark>,
     rows: Vec<AnyElement>,
 }
 
 impl Rows {
-    fn new(narrow: bool) -> Rows {
-        Rows {
-            narrow,
-            rows: Vec::new(),
-        }
+    /// Add a row titled `title`, lit if it is the one being revealed.
+    fn push(&mut self, title: &str, row: AnyElement, palette: &Palette) {
+        let row = match &self.reveal {
+            Some(mark) if mark.title == title => mark.light(row, palette),
+            _ => row,
+        };
+        self.rows.push(row);
     }
 
     /// A setting row: the title and its hint on the left, the control at the right edge.
@@ -656,11 +842,18 @@ impl Rows {
         control: impl IntoElement,
         palette: &Palette,
     ) -> Rows {
-        self.row_with(info(title, hint, palette), control)
+        let title = title.into();
+        self.row_with(&title.clone(), info(title, hint, palette), control, palette)
     }
 
     /// A row whose title column says more than a title and a hint (a level meter).
-    fn row_with(mut self, info: Div, control: impl IntoElement) -> Rows {
+    fn row_with(
+        mut self,
+        title: &str,
+        info: Div,
+        control: impl IntoElement,
+        palette: &Palette,
+    ) -> Rows {
         let row = if self.narrow {
             v_flex()
                 .gap(px(8.))
@@ -670,7 +863,7 @@ impl Rows {
         } else {
             widgets::setting_row(info.min_w(px(200.)), control).into_any_element()
         };
-        self.rows.push(row);
+        self.push(title, row, palette);
         self
     }
 
@@ -696,13 +889,12 @@ impl Rows {
                 }),
         );
         // A switch is small enough to stay beside its title in the narrowest window.
-        self.rows.push(
-            widgets::setting_row(
-                info(toggle.title, toggle.hint.map(SharedString::from), palette).min_w_0(),
-                control,
-            )
-            .into_any_element(),
-        );
+        let row = widgets::setting_row(
+            info(toggle.title, toggle.hint.map(SharedString::from), palette).min_w_0(),
+            control,
+        )
+        .into_any_element();
+        self.push(toggle.title, row, palette);
         self
     }
 
@@ -714,13 +906,12 @@ impl Rows {
         control: impl IntoElement,
         palette: &Palette,
     ) -> Rows {
-        self.rows.push(
-            v_flex()
-                .gap(px(8.))
-                .child(info(title, hint.map(SharedString::from), palette))
-                .child(control)
-                .into_any_element(),
-        );
+        let row = v_flex()
+            .gap(px(8.))
+            .child(info(title, hint.map(SharedString::from), palette))
+            .child(control)
+            .into_any_element();
+        self.push(title, row, palette);
         self
     }
 
@@ -1025,7 +1216,7 @@ impl SettingsPage {
                 .into_any_element()
             })
             .collect();
-        Rows::new(self.narrow())
+        self.rows()
             .row(
                 "Theme",
                 None,
@@ -1176,7 +1367,7 @@ impl SettingsPage {
                     .text_color(palette.warning)
                     .child(format!("• {problem}"))
             }));
-        Rows::new(self.narrow())
+        self.rows()
             .row(
                 "Appearance",
                 None,
@@ -1256,7 +1447,8 @@ impl SettingsPage {
                     crate::settings::change(cx, move |s| s.core.engine_levels = defaults);
                 }),
         );
-        let mut rows = Rows::new(self.narrow())
+        let mut rows = self
+            .rows()
             .switch("legal-moves", settings, true, palette)
             .switch("premove", settings, true, palette)
             .switch("confirm-move", settings, true, palette)
@@ -1290,7 +1482,7 @@ impl SettingsPage {
 
     fn gestures(&self, settings: &Settings, palette: &Palette) -> Div {
         let frontend = &settings.frontend;
-        Rows::new(self.narrow())
+        self.rows()
             .switch("swipe-navigation", settings, true, palette)
             .switch(
                 "swipe-indicator",
@@ -1302,7 +1494,7 @@ impl SettingsPage {
     }
 
     fn online(&self, settings: &Settings, palette: &Palette) -> Div {
-        Rows::new(self.narrow())
+        self.rows()
             .switch("receive-challenges", settings, true, palette)
             .switch("online-chat", settings, true, palette)
             .row(
@@ -1317,14 +1509,14 @@ impl SettingsPage {
     }
 
     fn analysis(&self, settings: &Settings, palette: &Palette) -> Div {
-        Rows::new(self.narrow())
+        self.rows()
             .switch("cloud-eval", settings, true, palette)
             .card(palette)
     }
 
     fn sound(&self, settings: &Settings, palette: &Palette) -> Div {
         let frontend = &settings.frontend;
-        Rows::new(self.narrow())
+        self.rows()
             .switch("sound", settings, true, palette)
             .row(
                 "Volume",
@@ -1381,7 +1573,7 @@ impl SettingsPage {
     fn notifications(&self, settings: &Settings, palette: &Palette, cx: &mut Context<Self>) -> Div {
         let frontend = &settings.frontend;
         let enabled = frontend.notifications_enabled;
-        let mut rows = Rows::new(self.narrow()).switch("notifications", settings, true, palette);
+        let mut rows = self.rows().switch("notifications", settings, true, palette);
         for id in [
             "notify-active",
             "notify-background",
@@ -1484,6 +1676,7 @@ impl Render for SettingsPage {
             .size_full()
             .relative()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .child(self.area.probe(cx))
             .child(
                 v_flex()
@@ -1528,6 +1721,39 @@ mod tests {
     use gpui_kit::px;
     use kchess_contracts::types::AppTheme;
     use serde_json::json;
+
+    #[test]
+    fn a_revealed_row_is_kept_near_the_top_until_the_person_scrolls() {
+        use super::{Pin, REVEAL_ROOM, pin_scroll};
+        let (view, max) = (px(100.), px(500.));
+        // A row 400 px down a page not yet scrolled: up 300, less the room above it.
+        let first = pin_scroll(Pin::Start, px(0.), view, px(400.), max);
+        assert_eq!(first, Some(px(-300.) + REVEAL_ROOM));
+        // Pictures above it loaded and pushed it 50 px down: the page follows it.
+        let set = first.unwrap();
+        let moved = pin_scroll(Pin::At(set), set, view, view + REVEAL_ROOM + px(50.), max);
+        assert_eq!(moved, Some(set - px(50.)));
+        // Where it is: nothing to move.
+        assert_eq!(
+            pin_scroll(Pin::At(set), set, view, view + REVEAL_ROOM, max),
+            Some(set)
+        );
+        // Never past the end of the page, nor above its top.
+        assert_eq!(
+            pin_scroll(Pin::Start, px(0.), view, px(2000.), max),
+            Some(-max)
+        );
+        assert_eq!(
+            pin_scroll(Pin::Start, px(0.), view, px(50.), max),
+            Some(px(0.))
+        );
+        // The person scrolled: the page lets go, and stays let go.
+        assert_eq!(
+            pin_scroll(Pin::At(set), set - px(10.), view, px(400.), max),
+            None
+        );
+        assert_eq!(pin_scroll(Pin::Left, px(0.), view, px(400.), max), None);
+    }
 
     #[test]
     fn pickers_fill_the_width_in_whole_columns() {

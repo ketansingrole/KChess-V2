@@ -397,6 +397,14 @@ pub fn open_settings(section: Section, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Open Settings at one category's row (`section_rows` names it), scrolled to it and lit.
+pub fn open_settings_at(section: Section, row: &'static str, window: &mut Window, cx: &mut App) {
+    open(Page::Settings, window, cx);
+    if let Some(workspace) = workspace(cx) {
+        workspace.update(cx, |workspace, cx| workspace.reveal_row(section, row, cx));
+    }
+}
+
 /// Redraw the shell, as its network, account and update observers do.
 #[cfg(any(test, feature = "bench"))]
 pub fn notify_shell(cx: &mut App) {

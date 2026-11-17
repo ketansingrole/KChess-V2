@@ -173,6 +173,37 @@ fn settings_sidebar() {
     }
 }
 
+/// A row ⌘K opened Settings at, scrolled to and lit, in both appearances:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::settings_reveal -- --ignored`
+/// writes `<dir>/settings-reveal/<appearance>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn settings_reveal() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("settings-reveal");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), 1320., 880.);
+        cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
+        cx.update_window(window, |_, window, cx| {
+            let section = crate::pages::settings::Section::Appearance;
+            crate::shell::open_settings_at(section, "Piece set", window, cx)
+        })
+        .expect("the window");
+        // Within the light's two seconds.
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("{name}.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::quit::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}
+
 /// Every Settings category, dark, wide and narrow: `KCHESS_SCREENSHOTS=<dir> cargo test -p
 /// kchess-gpui e2e::screens::settings_sections -- --ignored` writes
 /// `<dir>/settings/<width>-<category>.png`.
