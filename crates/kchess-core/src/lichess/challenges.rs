@@ -313,7 +313,13 @@ mod tests {
         inbox.ingest("Alice", &cancelled);
         assert!(inbox.list().is_empty());
         inbox.ingest("Alice", &challenge(json!({})));
-        clock.fetch_add(31 * 60_000, Ordering::SeqCst);
+        clock.fetch_add(29 * 60_000, Ordering::SeqCst);
+        assert_eq!(
+            inbox.list().len(),
+            1,
+            "a live challenge is kept for half an hour"
+        );
+        clock.fetch_add(2 * 60_000, Ordering::SeqCst);
         assert!(inbox.list().is_empty());
         inbox.ingest(
             "Alice",

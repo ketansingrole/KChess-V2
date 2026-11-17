@@ -187,6 +187,18 @@ pub fn merge_rating_series(
 mod tests {
     use super::*;
 
+    /// A series is told by its name, as Lichess writes it: only the puzzle rating's is puzzles.
+    #[test]
+    fn a_series_knows_its_key_and_whether_it_is_puzzles() {
+        let series = |name: &str| RatingSeries {
+            name: name.into(),
+            points: Vec::new(),
+        };
+        assert!(series("Puzzles").is_puzzles());
+        assert!(!series("Blitz").is_puzzles());
+        assert_eq!(series("King of the Hill").key(), "kingOfTheHill");
+    }
+
     #[test]
     fn keys_normalize_like_lichess_names() {
         assert_eq!(normalize_rating_key("King of the Hill"), "kingOfTheHill");

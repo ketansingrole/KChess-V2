@@ -1,7 +1,12 @@
 //! Lichess analysis as a review.
 
+use std::sync::Arc;
+
+use crate::fixtures::{
+    MemoryStore, MemoryTokens, Recording, Reply, lichess_service, ndjson, serve,
+};
 use kchess_contracts::types::{Judgment, ReviewEval, ReviewSource};
-use kchess_core::lichess::reviews::review_from_lichess;
+use kchess_core::lichess::reviews::{fetch_lichess_reviews, review_from_lichess};
 use kchess_domain::review::analyse;
 use serde_json::{Value, json};
 
@@ -115,4 +120,28 @@ fn skips_games_lichess_has_not_analysed_and_variants() {
     let mut variant = game();
     variant["variant"] = json!("chess960");
     assert!(review_from_lichess(&variant).is_none());
+}
+
+/// The reviews Lichess has are saved, and every game asked about is remembered as checked.
+#[tokio::test]
+async fn fetched_reviews_are_saved_and_every_game_asked_is_checked() {
+    let fixture = serve(|_| Reply::Text(200, "application/x-ndjson", ndjson(&[game()]))).await;
+    let store = MemoryStore::with_accounts(&[("Alice", true)]);
+    let lichess = lichess_service(
+        &fixture.base,
+        &Arc::new(Recording::default()),
+        store.clone(),
+        MemoryTokens::with(&[("Alice", "lip_alice")]),
+    );
+    let ids = ["abcdefgh".to_string(), "unknown1".to_string()];
+    let found = fetch_lichess_reviews(&lichess, "Alice", &ids)
+        .await
+        .expect("the reviews");
+    assert_eq!(found.len(), 1);
+    assert_eq!(store.reviews.lock().unwrap().len(), 1);
+    assert_eq!(*store.checked.lock().unwrap(), ids);
+    assert_eq!(
+        fixture.to("/api/games/export/_ids")[0].body,
+        "abcdefgh,unknown1"
+    );
 }

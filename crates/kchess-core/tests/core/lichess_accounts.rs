@@ -1184,3 +1184,34 @@ async fn a_missing_user_is_not_served_from_the_saved_copy() {
     let error = lichess.profile("alice").await.unwrap_err();
     assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::NotFound));
 }
+
+/// Closing the core ends the login under way and forgets the profiles kept in memory: the next
+/// read asks Lichess again.
+#[tokio::test]
+async fn a_reset_ends_the_login_and_forgets_the_profiles_in_memory() {
+    let fixture = serve(|_| {
+        Reply::Json(
+            200,
+            json!({ "id": "bob", "username": "Bob", "perfs": {} }).to_string(),
+        )
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let lichess = service(
+        &fixture.base,
+        &host,
+        MemoryStore::with_accounts(&[]),
+        MemoryTokens::with(&[]),
+    );
+    lichess.profile("Bob").await.expect("the profile");
+    lichess.profile("Bob").await.expect("the profile, kept");
+    assert_eq!(fixture.to("/api/user/Bob").len(), 1);
+    let epoch = lichess.login_epoch();
+    lichess.reset();
+    assert!(
+        lichess.login_epoch() > epoch,
+        "a login under way no longer counts"
+    );
+    lichess.profile("Bob").await.expect("the profile again");
+    assert_eq!(fixture.to("/api/user/Bob").len(), 2);
+}

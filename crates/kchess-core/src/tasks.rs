@@ -113,7 +113,7 @@ impl<T: Clone> SingleFlight<T> {
                 }
             }
         }
-        let generation = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let generation = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let (send, receive) = tokio::sync::watch::channel(None);
         lock(&self.runs).insert(key.to_string(), (generation, receive));
         // Forgotten however the run ends: a cancelled call once left its entry behind, and every
@@ -179,6 +179,39 @@ mod tests {
                 .is_err()
         );
         assert_eq!(flight.run("b", async { 3 }, || 0).await, 3);
+    }
+
+    /// A forgotten key's next run starts afresh while the first still runs, and the first one
+    /// ending leaves the new run in place for later runs to join.
+    #[tokio::test]
+    async fn a_forgotten_key_runs_afresh() {
+        let flight = Arc::new(SingleFlight::<u32>::default());
+        let start = |value: u32| {
+            let (release, wait) = tokio::sync::oneshot::channel::<()>();
+            let flight = Arc::clone(&flight);
+            let run = tokio::spawn(async move {
+                let work = async move {
+                    let _ = wait.await;
+                    value
+                };
+                flight.run("a", work, || 0).await
+            });
+            (release, run)
+        };
+        let (release_first, first) = start(1);
+        tokio::task::yield_now().await;
+        assert_eq!(flight.running(), ["a"]);
+        flight.forget("a");
+        assert!(flight.running().is_empty());
+        let (release_second, second) = start(2);
+        tokio::task::yield_now().await;
+        let _ = release_first.send(());
+        assert_eq!(first.await.unwrap(), 1);
+        assert_eq!(flight.running(), ["a"]);
+        let (_, third) = start(3);
+        tokio::task::yield_now().await;
+        let _ = release_second.send(());
+        assert_eq!((second.await.unwrap(), third.await.unwrap()), (2, 2));
     }
 
     #[tokio::test]

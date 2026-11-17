@@ -33,8 +33,8 @@ enum Script {
     Now(Option<String>),
     /// Waits for the gate, then answers.
     Gate(watch::Receiver<bool>, Option<String>),
-    /// The credential store fails.
-    Fail(String),
+    /// Waits for the gate, then the credential store fails.
+    Fail(watch::Receiver<bool>, String),
 }
 
 /// Tokens per account. Each account answers with its queued scripts in order; the last one
@@ -93,7 +93,14 @@ impl TokenSource for ScriptedTokens {
                     }
                     Ok(token)
                 }
-                Script::Fail(message) => Err(CoreError::new(message)),
+                Script::Fail(mut gate, message) => {
+                    while !*gate.borrow() {
+                        if gate.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(CoreError::new(message))
+                }
             }
         })
     }
@@ -1281,14 +1288,13 @@ async fn treats_a_late_credential_failure_for_a_cancelled_attachment_as_cancella
     let fixture = serve(|_| Reply::Hang).await;
     let (host, store, tokens) = rig(&[("Alice", true)]);
     let (token_tx, token) = watch::channel(false);
-    tokens.set("Alice", Script::Gate(token, None));
+    // The store fails only after the cancellation: it is not an error to report.
+    tokens.set("Alice", Script::Fail(token, "Old login failure".into()));
     let online = session(&fixture.base, &host, &store, &tokens);
     let attaching = online.clone();
     let pending = tokio::spawn(async move { attaching.attach("Alice", "AbCd1234").await });
     until("credentials requested", || tokens.calls_for("Alice") >= 1).await;
     online.cancel();
-    // A failing store answers only after the cancellation: it is not an error to report.
-    tokens.set("Alice", Script::Fail("Old login failure".into()));
     let _ = token_tx.send(true);
     assert!(pending.await.unwrap().is_err_and(|cause| cause.aborted));
     assert!(fixture.to("/api/board/game/stream/AbCd1234").is_empty());
