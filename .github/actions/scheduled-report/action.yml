@@ -1,0 +1,37 @@
+name: Report a scheduled run
+description: >-
+  Keeps one open issue per scheduled check while it fails: a failed run opens it or adds the run to
+  it, and the next run that passes closes it. Fuzz failed every week from 2026-11-09 and the
+  mutants of main's rules every Saturday, each a red run nobody was told about.
+
+inputs:
+  name:
+    description: What ran, as the issue's title names it ("Fuzz", "Mutants of the rules").
+    required: true
+  failed:
+    description: Whether any of the run's jobs failed or was cancelled ('true' or 'false').
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        NAME: ${{ inputs.name }}
+        FAILED: ${{ inputs.failed }}
+        URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        title="Scheduled run failing: $NAME"
+        issue="$(gh issue list --state open --limit 100 --json number,title \
+          | jq -r --arg title "$title" 'first(.[] | select(.title == $title) | .number) // empty')"
+        if [ "$FAILED" = true ]; then
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "Failed again: $URL"
+          else
+            gh issue create --title "$title" --body "$(printf '%s failed: %s\n\nThe next run that passes closes this issue. Fix the cause (AGENTS.md), never only the run.' "$NAME" "$URL")"
+          fi
+        elif [ -n "$issue" ]; then
+          gh issue close "$issue" --comment "Passed: $URL"
+        fi

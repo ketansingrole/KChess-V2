@@ -10,14 +10,10 @@ async fn a_fresh_profile_starts_without_asking_the_secret_store() {
     let dir = tempfile::tempdir().expect("profile");
     let host = TestHost::new();
     let core = Core::open(Config::new(dir.path().to_path_buf()), host.clone()).expect("opens");
-    // An unanswered request would make this wait for the capability deadline; it must not ask.
-    let data = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        core.call("loadData", vec![]),
-    )
-    .await
-    .expect("loadData answers without waiting on the host")
-    .expect("loadData");
+    // What it asked the host is the test, not how long it took: a five-second limit failed on a
+    // loaded Windows runner whose startup asked nothing (2026-11-14). A startup that asked would
+    // wait out the capability deadline and is then refused below by what it asked.
+    let data = core.call("loadData", vec![]).await.expect("loadData");
     assert!(data.is_object());
     let asked: Vec<_> = host.named("host:request");
     assert!(

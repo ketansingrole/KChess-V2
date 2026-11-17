@@ -50,3 +50,20 @@ jobs:
           threads=$(( $(nproc 2>/dev/null || sysctl -n hw.ncpu) * 4 ))
           cargo nextest run -p kchess-gpui -p kchess-core -p kchess-service --locked \
             --test-threads "$threads" --stress-count "$STRESS_COUNT"
+
+  # A scheduled run's failure opens an issue, and its next pass closes it (.github/actions/scheduled-report).
+  report:
+    needs: [stress]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/scheduled-report
+        with:
+          name: Stress
+          failed: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}

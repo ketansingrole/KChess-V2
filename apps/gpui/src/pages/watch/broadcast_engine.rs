@@ -25,7 +25,7 @@ use crate::core::AppCore;
 use crate::game::tree::{analysis_context, format_eval};
 use crate::game::view;
 use crate::online::OnlineHandle;
-use crate::position_engine::PositionEngine;
+use crate::position_engine::{EngineLook, PositionEngine};
 use crate::theme::Palette;
 use crate::widgets::Choice;
 
@@ -35,7 +35,8 @@ const INFINITE: &str = "kchess:broadcast-engine-infinite";
 const ARROWS: &str = "kchess:broadcast-engine-arrows";
 const BAR: &str = "kchess:broadcast-engine-bar";
 pub(super) const GRID_EVALUATIONS: &str = "kchess:broadcast-grid-evaluations";
-/// A grid estimate stops here, or after this long, and the next board's starts.
+/// A grid estimate stops here, or after this long of the engine's search, and the next board's
+/// starts.
 const PREVIEW_DEPTH: f64 = 12.;
 const PREVIEW_TIME: Duration = Duration::from_millis(1500);
 
@@ -52,7 +53,7 @@ pub(super) struct BroadcastEngine {
     previews: HashMap<String, Preview>,
     /// The grid board being estimated now, and its position's context.
     previewing: Option<(String, String)>,
-    _preview_done: Option<Task<()>>,
+    preview_look: EngineLook,
     /// Moves played from an engine line over the game (Explore), from where they leave it.
     pub(super) variation_base: Option<Vec<String>>,
     pub(super) variation: Vec<String>,
@@ -98,7 +99,7 @@ impl BroadcastEngine {
             ready: false,
             previews: HashMap::new(),
             previewing: None,
-            _preview_done: None,
+            preview_look: EngineLook::default(),
             variation_base: None,
             variation: Vec::new(),
             lines_select,
@@ -278,12 +279,14 @@ impl WatchPage {
         if previewing != self.broadcasts.engine.previewing {
             self.broadcasts.engine.previewing = previewing.clone();
             // An estimate ends after a while even if the engine never reaches its depth.
-            self.broadcasts.engine._preview_done = previewing.map(|_| {
-                cx.spawn(async move |this, cx| {
-                    cx.background_executor().timer(PREVIEW_TIME).await;
-                    let _ = this.update(cx, |this, cx| this.finish_preview(cx));
-                })
-            });
+            if previewing.is_some() {
+                self.broadcasts
+                    .engine
+                    .preview_look
+                    .start(PREVIEW_TIME, Self::finish_preview, cx);
+            } else {
+                self.broadcasts.engine.preview_look.clear();
+            }
         }
         let engine = &mut self.broadcasts.engine.engine;
         engine.search(request, engine_of, cx);
@@ -297,7 +300,7 @@ impl WatchPage {
         let Some((id, context)) = engine.previewing.take() else {
             return;
         };
-        engine._preview_done = None;
+        engine.preview_look.clear();
         let line = engine
             .engine
             .update
@@ -315,6 +318,12 @@ impl WatchPage {
         }
         let previewing = self.broadcasts.engine.previewing.clone();
         if let Some((_, context)) = previewing {
+            if update.context == context {
+                self.broadcasts
+                    .engine
+                    .preview_look
+                    .reported(Self::finish_preview, cx);
+            }
             let engine = &self.broadcasts.engine.engine;
             let reached =
                 update.context == context && (update.depth >= PREVIEW_DEPTH || update.done);

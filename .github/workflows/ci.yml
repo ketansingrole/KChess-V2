@@ -181,6 +181,33 @@ jobs:
       # The fuzz workspace has its own lock file.
       - run: cargo deny --manifest-path fuzz/Cargo.toml check
 
+  # Every workflow and action against GitHub's own rules, as GitHub reads them on a push: an empty
+  # `env:` in release.yml made GitHub refuse the file, and 48 pushes from 2026-11-09 to 11-15 failed
+  # a Release run before a tag would have found it. xtask's `workflows` tests check the scripts.
+  workflows:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # actionlint's own release, pinned by version and checksum: install-action has no manifest
+      # for it, and fell back to cargo-binstall, which found no crate.
+      - name: Install actionlint
+        env:
+          VERSION: 1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive="actionlint_${VERSION}_linux_amd64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/${archive}"
+          echo "$SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      # The scripts' shell is checked by xtask (`every_workflow_step_parses_in_bash`).
+      - run: actionlint -color -shellcheck= -pyflakes=
+
   # The app's unit and end-to-end tests (`src/e2e`, headless) on every platform; `headless` runs
   # the rest beside it on Windows, the workspace's lints included. On macOS this job runs them
   # itself, after the app's tests: GitHub runs short of macOS arm64 runners (2026-11-11: jobs
@@ -507,7 +534,7 @@ jobs:
   # cannot name the jobs themselves.
   ci-passed:
     if: always()
-    needs: [changes, check, deny, gpui, headless, mutants-plan, mutants, package, package-cache, windows-upgrade]
+    needs: [changes, check, deny, workflows, gpui, headless, mutants-plan, mutants, package, package-cache, windows-upgrade]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or was skipped
@@ -516,3 +543,20 @@ jobs:
         run: |
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           echo "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' > /dev/null
+
+  # A scheduled run's failure opens an issue, and its next pass closes it (.github/actions/scheduled-report).
+  report:
+    needs: [ci-passed]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/scheduled-report
+        with:
+          name: Nightly CI
+          failed: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}

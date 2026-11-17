@@ -434,18 +434,27 @@ impl Harness {
         found.expect("found")
     }
 
-    /// Wait until the element is shown and has stopped moving (a dialog slides in), as a
-    /// person's click would wait for it.
+    /// Wait until the element is shown, has stopped moving (a dialog slides in) and takes clicks,
+    /// as a person's click would wait for it. A control is disabled until the core answers what
+    /// it needs (the engine switch, until the engine's status is known): clicked at once on a
+    /// loaded machine, the click did nothing and `the_engine_can_be_switched_off_and_on` failed
+    /// (Stress, 2026-11-11, and here under 48 threads, 2026-11-17).
     fn settled(&mut self, id: &ElementId) -> ElementSnapshot {
         let mut last = None;
         let mut found = None;
-        self.wait_for(&format!("{id:?} to stop moving"), |window, _| {
-            found = window.try_find(id.clone()).filter(ElementSnapshot::visible);
-            let bounds = found.as_ref().map(ElementSnapshot::bounds);
-            let still = bounds.is_some() && bounds == last;
-            last = bounds;
-            still
-        });
+        self.wait_for(
+            &format!("{id:?} to stop moving and take clicks"),
+            |window, _| {
+                found = window.try_find(id.clone()).filter(ElementSnapshot::visible);
+                let bounds = found.as_ref().map(ElementSnapshot::bounds);
+                let still = bounds.is_some() && bounds == last;
+                last = bounds;
+                still
+                    && found
+                        .as_ref()
+                        .is_some_and(|found| found.disabled() != Some(true))
+            },
+        );
         found.expect("found")
     }
 
