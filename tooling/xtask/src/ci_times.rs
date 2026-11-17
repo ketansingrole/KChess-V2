@@ -41,19 +41,21 @@ const READS: u32 = 3;
 /// report makes only reads, so asking again changes nothing. GitHub answered 502 to one of a
 /// week's hundreds of reads on 2026-11-16, and the whole report failed. Any other error is final.
 fn read_again_on_server_error(gh: Gh, pause: &dyn Fn(u32), args: &[&str]) -> Result<String> {
-    let mut attempt = 1;
-    loop {
-        match gh(args) {
-            Err(error) if attempt < READS && server_error(&error) => {
+    let mut answer = gh(args);
+    // Bounded by its attempts, whatever the answers: never a loop that waits on GitHub forever.
+    for attempt in 1..READS {
+        match &answer {
+            Err(error) if server_error(error) => {
                 say(&format!(
                     "GitHub answered a server error; asking again: {error}"
                 ));
                 pause(attempt);
-                attempt += 1;
+                answer = gh(args);
             }
-            answer => return answer,
+            _ => break,
         }
     }
+    answer
 }
 
 /// The pause before asking a read again for the `attempt`th time: ten seconds more each time.
