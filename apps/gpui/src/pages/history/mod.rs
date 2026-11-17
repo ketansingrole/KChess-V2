@@ -23,6 +23,7 @@ use crate::assets::icon;
 use crate::pages::Page;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::{PlayedGames, PlayedHandle};
+use crate::quick_pick;
 use crate::replay::GameReplay;
 
 pub(crate) mod lichess;
@@ -1158,6 +1159,8 @@ impl HistoryPage {
                 div().into_any_element(),
             ],
         );
+        // The rows light what the search found, as the search reads it (in lower case).
+        let searched = self.search.to_lowercase();
         let rows = shown
             .iter()
             .skip(current * PAGE_SIZE)
@@ -1187,6 +1190,11 @@ impl HistoryPage {
                 if variant != Variant::Standard {
                     kind.push_str(&format!(" · {}", variant.label()));
                 }
+                // What the search found in the row, lit: the opponent, or the opening.
+                let lit = |text: String| {
+                    let found = quick_pick::found(&text, &[searched.as_str()], quick_pick::lower);
+                    widgets::highlighted(text, &found, palette)
+                };
                 let players = v_flex()
                     .min_w_0()
                     .child(
@@ -1195,7 +1203,7 @@ impl HistoryPage {
                             .min_w_0()
                             .font_weight(FontWeight::MEDIUM)
                             .children(side.map(widgets::side_dot))
-                            .child(div().min_w_0().truncate().child(opponent(game))),
+                            .child(div().min_w_0().truncate().child(lit(opponent(game)))),
                     )
                     .when(!details.is_empty(), |cell| {
                         cell.child(
@@ -1203,7 +1211,7 @@ impl HistoryPage {
                                 .truncate()
                                 .text_size(px(12.))
                                 .text_color(palette.text_muted)
-                                .child(details),
+                                .child(lit(details)),
                         )
                     });
                 let game_cell = v_flex()

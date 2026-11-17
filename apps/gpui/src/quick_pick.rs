@@ -156,23 +156,46 @@ pub fn match_query(query: &str, label: &str, extra: &str) -> Option<Match> {
     })
 }
 
-/// The label split at the matched ranges: `(text, matched)` runs.
-pub fn segments(label: &str, ranges: &[(usize, usize)]) -> Vec<(String, bool)> {
-    let chars: Vec<char> = label.chars().collect();
-    let mut out = Vec::new();
-    let mut push = |from: usize, to: usize, mark: bool| {
-        if from < to {
-            out.push((chars[from..to].iter().collect(), mark));
+/// The matched characters' byte ranges in `text`, for a `StyledText` to highlight.
+pub fn byte_ranges(text: &str, ranges: &[(usize, usize)]) -> Vec<std::ops::Range<usize>> {
+    let starts: Vec<usize> = text
+        .char_indices()
+        .map(|(at, _)| at)
+        .chain([text.len()])
+        .collect();
+    ranges
+        .iter()
+        .filter(|(start, end)| start <= end && end + 1 < starts.len())
+        .map(|&(start, end)| starts[start]..starts[end + 1])
+        .collect()
+}
+
+/// Where a list's search finds each of `words` in `text`, as the inclusive character ranges
+/// `Match` has: every place, compared character by character as `fold` reads them (`words` come
+/// folded the same way). A list that finds its rows by plain substrings shows why each row is
+/// there with these.
+pub fn found(text: &str, words: &[&str], fold: impl Fn(char) -> char) -> Vec<(usize, usize)> {
+    let folded: Vec<char> = text.chars().map(&fold).collect();
+    let mut ranges = Vec::new();
+    for word in words {
+        let word: Vec<char> = word.chars().collect();
+        let mut from = 0;
+        while let Some(at) = find(&folded, &word, from) {
+            ranges.push((at, at + word.len() - 1));
+            from = at + word.len();
         }
-    };
-    let mut from = 0;
-    for &(start, end) in ranges {
-        push(from, start, false);
-        push(start, end + 1, true);
-        from = end + 1;
     }
-    push(from, chars.len(), false);
-    out
+    merge(ranges)
+}
+
+/// A character in lower case, as the lists' searches compare them: one that lowers to several
+/// characters (İ) stays as it is, so the ranges keep to the text's own characters.
+pub fn lower(c: char) -> char {
+    let mut lowered = c.to_lowercase();
+    match (lowered.next(), lowered.next()) {
+        (Some(one), None) => one,
+        _ => c,
+    }
 }
 
 /// Most recent first, without repeats, capped.
@@ -185,7 +208,7 @@ pub fn push_recent(recent: &[String], id: &str, limit: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Mode, match_query, parse, push_recent, segments};
+    use super::{Mode, byte_ranges, found, lower, match_query, parse, push_recent};
 
     #[test]
     fn prefixes_pick_the_mode() {
@@ -224,11 +247,34 @@ mod tests {
     }
 
     #[test]
-    fn labels_split_at_their_matches() {
+    fn matched_characters_become_byte_ranges() {
+        assert_eq!(byte_ranges("Puzzles", &[(0, 2)]), vec![0..3]);
+        // "é" takes two bytes: the ranges count characters, the result bytes.
+        assert_eq!(byte_ranges("Réti", &[(1, 2)]), vec![1..4]);
+        assert_eq!(byte_ranges("abc", &[(0, 0), (2, 2)]), vec![0..1, 2..3]);
+        // A range past the text is left out rather than cutting a character.
+        assert!(byte_ranges("ab", &[(1, 2)]).is_empty());
+    }
+
+    #[test]
+    fn a_list_search_finds_every_place_of_each_word() {
+        assert_eq!(found("Bob vs bobby", &["bob"], lower), vec![(0, 2), (7, 9)]);
         assert_eq!(
-            segments("Puzzles", &[(0, 2)]),
-            vec![("Puz".to_string(), true), ("zles".to_string(), false)]
+            found("Sicilian Defense", &["def", "sic"], lower),
+            vec![(0, 2), (9, 11)]
         );
+        // Overlapping and touching places join into one range.
+        assert_eq!(found("aaaa", &["aa", "aaa"], lower), vec![(0, 3)]);
+        assert!(found("Sicilian", &["xyz"], lower).is_empty());
+        assert!(found("Sicilian", &[], lower).is_empty());
+        assert!(found("Sicilian", &[""], lower).is_empty());
+    }
+
+    #[test]
+    fn lowering_keeps_one_character_for_each() {
+        assert_eq!(lower('A'), 'a');
+        assert_eq!(lower('é'), 'é');
+        assert_eq!(lower('\u{130}'), '\u{130}');
     }
 
     #[test]

@@ -48,6 +48,20 @@ impl Workspace {
         cx.notify();
     }
 
+    /// One category's row shown and lit, as ⌘K opens it.
+    pub(super) fn reveal_row(
+        &mut self,
+        section: Section,
+        row: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(settings) = self.pages.get::<SettingsPage>() {
+            settings.update(cx, |page, cx| page.reveal(section, row, cx));
+        }
+        self.sections.scroll_to(section);
+        cx.notify();
+    }
+
     /// Settings' categories in its dialog, in their groups.
     fn section_blocks(&self, cx: &mut Context<Self>) -> Vec<NavBlock> {
         let shown = self

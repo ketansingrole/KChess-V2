@@ -406,7 +406,8 @@ impl SettingsPage {
                     .clone()
                     .map(|note| widgets::hint(note, palette)),
             );
-        let diagnostics = super::Rows::new(self.narrow())
+        let diagnostics = self
+            .rows()
             .row(
                 "Diagnostics",
                 Some(self.diagnostics_note.clone().unwrap_or_else(|| {

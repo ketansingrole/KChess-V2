@@ -8,7 +8,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::types::Settings;
 
-use super::{Rows, SettingsPage};
+use super::SettingsPage;
 use crate::assets::icon;
 use crate::theme::Palette;
 use crate::updates::{Phase, Updates, UpdatesHandle};
@@ -446,7 +446,7 @@ impl SettingsPage {
         let can_check = updates.can_check();
         v_flex().gap(px(16.)).child(status).when(can_check, |page| {
             page.child(
-                Rows::new(self.narrow())
+                self.rows()
                     .switch("update-auto-check", settings, true, palette)
                     .switch("update-auto-download", settings, true, palette)
                     .switch("update-install-on-quit", settings, true, palette)

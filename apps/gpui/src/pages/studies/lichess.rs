@@ -522,6 +522,7 @@ impl StudiesPage {
                         .then(|| format!("Edited {}", time_ago(item.updated_at as f64, at))),
                     rows: 3,
                     menu: None,
+                    found: Vec::new(),
                     action: Button::new(SharedString::from(format!("keep-{id}")))
                         .outline()
                         .xsmall()

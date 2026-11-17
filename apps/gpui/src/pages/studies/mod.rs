@@ -890,6 +890,7 @@ impl StudiesPage {
     fn render_cards(
         &mut self,
         studies: Vec<Study>,
+        found: Vec<String>,
         width: Pixels,
         window: &Window,
         cx: &mut Context<Self>,
@@ -996,6 +997,7 @@ impl StudiesPage {
                         on_open: std::rc::Rc::new(move |window, cx| {
                             Self::open(open_id.clone(), window, cx)
                         }),
+                        found: found.clone(),
                     }
                     .into_any_element()
                 })
@@ -1096,6 +1098,7 @@ impl StudiesPage {
         }
         let query = self.search.read(cx).value().to_lowercase();
         let words: Vec<&str> = query.split_whitespace().collect();
+        let found: Vec<String> = words.iter().map(|word| word.to_string()).collect();
         let by_name = crate::prefs::get::<String>(cx, SORT, "recent".into()) == "name";
         // Summaries of studies no longer in the library (edited, removed) are let go.
         let listed: std::collections::HashSet<&str> =
@@ -1160,7 +1163,7 @@ impl StudiesPage {
                 ))
                 .into_any_element()
         } else {
-            self.render_cards(studies, width, window, cx)
+            self.render_cards(studies, found, width, window, cx)
         };
         v_flex()
             .child(toolbar)

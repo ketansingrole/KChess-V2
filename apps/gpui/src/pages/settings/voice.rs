@@ -7,7 +7,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::{Rows, SettingsPage};
+use super::SettingsPage;
 use crate::assets::icon;
 use crate::microphone::Access;
 use crate::theme::Palette;
@@ -191,9 +191,10 @@ impl SettingsPage {
                     .label("Privacy settings")
                     .on_click(move |_, _, cx| cx.open_url(url))
             }));
-        Rows::new(self.narrow())
-            .row_with(access_info, access_actions)
+        self.rows()
+            .row_with("Microphone access", access_info, access_actions, palette)
             .row_with(
+                "Test your microphone",
                 v_flex()
                     .gap(px(4.))
                     .child(
@@ -225,6 +226,7 @@ impl SettingsPage {
                         .label(if test.is_some() { "Stop" } else { "Start test" })
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_mic_test(cx))),
                 ),
+                palette,
             )
             .switch("voice-confirm", settings, true, palette)
             .switch("voice-push-to-talk", settings, true, palette)
