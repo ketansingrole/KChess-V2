@@ -9,10 +9,10 @@ use crate::members::{APP, APP_FILES};
 use crate::util::{Result, git, merge_base, root, say, succeeds, without_git_location};
 
 /// Where the diff cargo-mutants reads is written, under the (ignored) target directory.
-const DIFF: &str = "target/mutants-diff.patch";
+pub(crate) const DIFF: &str = "target/mutants-diff.patch";
 
 /// The nextest profile each mutant's tests run under: it stops at the first failure.
-const NEXTEST_PROFILE: &str = "mutants";
+pub(crate) const NEXTEST_PROFILE: &str = "mutants";
 
 /// The base to diff against: `--base <ref>`, else where this branch left `origin/main`.
 fn base_of(repo: &Path, args: &[String]) -> Result<String> {
@@ -273,7 +273,7 @@ fn cargo_has(cargo: &str, repo: &Path, args: &[&str]) -> bool {
 }
 
 /// Write the Rust changes since `base` where cargo-mutants reads them (`DIFF`); whether there are any.
-fn write_diff(repo: &Path, base: &str) -> Result<bool> {
+pub(crate) fn write_diff(repo: &Path, base: &str) -> Result<bool> {
     let diff = diff_since(repo, base)?;
     if !changes_rust(&diff) {
         return Ok(false);
@@ -358,11 +358,24 @@ fn count_listed(list: &str) -> usize {
 }
 
 /// `mutants [--plan | --warm] [--app] [--base <ref> | --all] [--in-place] [-- <cargo-mutants
-/// arguments>]`.
+/// arguments>]`, or the weekly run of the app's mutants (`app_mutants`): `mutants --app-plan
+/// --base <ref>`, then `mutants --app-shard <k>` on each shard.
 pub fn run(args: &[String]) -> Result {
     match args.first().map(String::as_str) {
         Some("--plan") => plan(&args[1..]),
         Some("--warm") => warm(),
+        Some("--app-plan") => {
+            let repo = root();
+            let base = base_of(&repo, &args[1..])?;
+            crate::app_mutants::plan(&repo, &base)
+        }
+        Some("--app-shard") => {
+            let shard = args
+                .get(1)
+                .and_then(|shard| shard.parse().ok())
+                .ok_or("--app-shard needs the shard's number.")?;
+            crate::app_mutants::shard(&root(), shard)
+        }
         _ => run_in(&root(), "cargo", args),
     }
 }

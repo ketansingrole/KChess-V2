@@ -2,6 +2,7 @@
 
 mod app;
 mod app_icon;
+mod app_mutants;
 mod bench;
 #[cfg(test)]
 mod boundaries;
@@ -127,13 +128,21 @@ const COMMANDS: &[Command] = &[
     },
     Command {
         name: "mutants",
-        forms: &[(
-            "[--plan|--warm] [--app] [--base <ref>|--all] [--in-place] [-- <cargo-mutants arguments>]",
-            "Mutation testing of the lines changed since main (or <ref>), the app's left out \
+        forms: &[
+            (
+                "[--plan|--warm] [--app] [--base <ref>|--all] [--in-place] [-- <cargo-mutants arguments>]",
+                "Mutation testing of the lines changed since main (or <ref>), the app's left out \
              unless --app; fails when a mutant survives (docs/mutation-testing.md); with --plan, \
              only count them and print CI's shards; --warm builds what the mutants build on; --all \
              every file; --in-place mutates the checkout itself",
-        )],
+            ),
+            (
+                "--app-plan --base <ref> | --app-shard <k>",
+                "The weekly run of the app's mutants on the lines changed since <ref>: --app-plan \
+             measures which tests run each mutant's lines and plans the shards (GitHub outputs); \
+             --app-shard tests shard <k>'s mutants with those tests alone, in the checkout",
+            ),
+        ],
         run: mutants::run,
     },
     Command {
