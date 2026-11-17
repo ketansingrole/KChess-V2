@@ -14,6 +14,7 @@ use gpui_kit::profiler::{ViewPhase, set_trace_enabled};
 use gpui_kit::*;
 use serde_json::{Value, json};
 
+use crate::game::session::SessionSaver;
 use crate::pages::Page;
 use crate::pages::analysis::AnalysisPage;
 use crate::pages::local::LocalPage;
@@ -184,16 +185,25 @@ fn set_up(scenario: Scenario, window: &mut Window, cx: &mut App) {
             shell::open(Page::Local, window, cx);
             if let Some(local) = shell::view::<LocalPage>(cx) {
                 local.update(cx, |local, cx| {
-                    let clock = json!({
-                        "white": { "minutes": 5, "increment": 3 },
-                        "black": { "minutes": 5, "increment": 3 },
-                    });
-                    let setup = kchess_domain::variant::Setup {
-                        variant: kchess_domain::variant::Variant::Standard,
-                        fen: START_FEN.to_string(),
-                    };
-                    local.replace_game(setup, clock, window, cx);
-                    local.play("e2e4", cx);
+                    // Once the saved game is read: a move before it is not taken, and the clock
+                    // never started (`local-clock` drew nothing for its clock).
+                    SessionSaver::when_read(
+                        local,
+                        |local, window, cx| {
+                            let clock = json!({
+                                "white": { "minutes": 5, "increment": 3 },
+                                "black": { "minutes": 5, "increment": 3 },
+                            });
+                            let setup = kchess_domain::variant::Setup {
+                                variant: kchess_domain::variant::Variant::Standard,
+                                fen: START_FEN.to_string(),
+                            };
+                            local.replace_game(setup, clock, window, cx);
+                            local.play("e2e4", cx);
+                        },
+                        window,
+                        cx,
+                    );
                 });
             }
         }

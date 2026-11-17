@@ -69,17 +69,53 @@ pub struct Pinned(pub Host);
 #[cfg(test)]
 impl gpui_kit::Global for Pinned {}
 
+/// What the test pinned, `Host::TEST` unless it pinned another.
+#[cfg(test)]
+fn pinned(cx: &App) -> Host {
+    cx.try_global::<Pinned>()
+        .map_or(Host::TEST, |pinned| pinned.0)
+}
+
 /// What the system says about the microphone: in a test, what it pinned (`Host::TEST` unless it
 /// pinned another), never the machine's.
+///
+/// On macOS this asks the privacy service, a round trip of about 6 ms: read it when Settings
+/// shows the microphone or the window comes back, never while drawing. A view drawn every frame
+/// that called it (the voice bar, for its Privacy settings link) took the analysis board's frames
+/// from 1.4 to 9 ms; `privacy_settings` answers that without asking.
 pub fn host(cx: &App) -> Host {
     #[cfg(test)]
-    return cx
-        .try_global::<Pinned>()
-        .map_or(Host::TEST, |pinned| pinned.0);
+    {
+        HOST_READS.set(HOST_READS.get() + 1);
+        pinned(cx)
+    }
     #[cfg(not(test))]
     {
         let _ = cx;
         Host::system()
+    }
+}
+
+/// How many times this thread read `host`, so a test can check that drawing never asks the system.
+#[cfg(test)]
+pub fn host_reads() -> usize {
+    HOST_READS.get()
+}
+
+#[cfg(test)]
+thread_local! {
+    static HOST_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The system's microphone privacy settings, where there are any to open (`Host::privacy_settings`),
+/// without asking the system anything: cheap enough to read while drawing.
+pub fn privacy_settings(cx: &App) -> Option<&'static str> {
+    #[cfg(test)]
+    return pinned(cx).privacy_settings;
+    #[cfg(not(test))]
+    {
+        let _ = cx;
+        privacy_settings_url()
     }
 }
 
