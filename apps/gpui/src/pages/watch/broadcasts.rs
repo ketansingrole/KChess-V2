@@ -97,12 +97,7 @@ fn timing(item: &BroadcastSummary, now: f64) -> String {
     } else if minutes < 24. * 60. {
         format!("in {} hours", (minutes / 60.).ceil())
     } else {
-        use chrono::TimeZone as _;
-        chrono::Local
-            .timestamp_millis_opt(starts as i64)
-            .single()
-            .map(|date| date.format("%b %-d, %-I:%M %p").to_string())
-            .unwrap_or_default()
+        crate::dates::local_format(starts, "%b %-d, %-I:%M %p")
     }
 }
 

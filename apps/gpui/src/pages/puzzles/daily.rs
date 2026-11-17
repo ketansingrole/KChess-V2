@@ -42,7 +42,7 @@ pub struct DailyPuzzle {
 }
 
 fn utc_day() -> String {
-    chrono::Utc::now().format("%Y-%m-%d").to_string()
+    jiff::Timestamp::now().strftime("%Y-%m-%d").to_string()
 }
 
 impl DailyPuzzle {

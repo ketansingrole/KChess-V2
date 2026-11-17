@@ -500,12 +500,11 @@ impl OpeningsPage {
             .iter()
             .filter_map(|month| {
                 let key = &month.month;
-                let date =
-                    chrono::NaiveDate::parse_from_str(&format!("{key}-01"), "%Y-%m-%d").ok()?;
+                let date = jiff::civil::Date::strptime("%Y-%m-%d", format!("{key}-01")).ok()?;
                 Some(ChartPoint {
                     value: (month.share * 1000.).round() / 10.,
-                    short: date.format("%b %y").to_string().into(),
-                    long: date.format("%b %-d, %Y").to_string().into(),
+                    short: date.strftime("%b %y").to_string().into(),
+                    long: date.strftime("%b %-d, %Y").to_string().into(),
                 })
             })
             .collect();

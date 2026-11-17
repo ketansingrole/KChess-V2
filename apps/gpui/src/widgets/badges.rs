@@ -75,12 +75,7 @@ pub fn time_ago(timestamp: f64, now: f64) -> String {
         return format!("{days} day{} ago", if days == 1. { "" } else { "s" });
     }
     // The numeric date, 12/30/2025.
-    use chrono::TimeZone as _;
-    chrono::Local
-        .timestamp_millis_opt(timestamp as i64)
-        .single()
-        .map(|date| date.format("%-m/%-d/%Y").to_string())
-        .unwrap_or_default()
+    crate::dates::local_format(timestamp, "%-m/%-d/%Y")
 }
 
 /// How a badge is drawn: its color and fill.

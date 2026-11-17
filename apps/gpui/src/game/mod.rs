@@ -80,25 +80,17 @@ pub fn engine_level_label(level: &str) -> String {
 
 /// "Oct 22, 2026" in local time.
 pub fn game_date(millis: f64) -> String {
-    use chrono::TimeZone as _;
-    chrono::Local
-        .timestamp_millis_opt(millis as i64)
-        .single()
-        .map(|date| date.format("%b %-d, %Y").to_string())
-        .unwrap_or_default()
+    crate::dates::local_format(millis, "%b %-d, %Y")
 }
 
 /// "Nov 4", or "Nov 4, 2025" outside this year: a game's day where space is short.
 pub fn short_game_date(millis: f64) -> String {
-    use chrono::{Datelike as _, TimeZone as _};
-    chrono::Local
-        .timestamp_millis_opt(millis as i64)
-        .single()
+    crate::dates::local(millis)
         .map(|date| {
-            if date.year() == chrono::Local::now().year() {
-                date.format("%b %-d").to_string()
+            if date.year() == jiff::ZonedDateTime::now().year() {
+                date.strftime("%b %-d").to_string()
             } else {
-                date.format("%b %-d, %Y").to_string()
+                date.strftime("%b %-d, %Y").to_string()
             }
         })
         .unwrap_or_default()

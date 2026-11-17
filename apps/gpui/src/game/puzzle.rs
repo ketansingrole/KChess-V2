@@ -8,7 +8,7 @@ pub use kchess_games::puzzle::OnBoard;
 
 /// The local calendar day, `YYYY-MM-DD`, which the day streak counts.
 pub fn local_day() -> String {
-    chrono::Local::now().format("%Y-%m-%d").to_string()
+    crate::dates::today("%Y-%m-%d")
 }
 
 #[cfg(test)]
