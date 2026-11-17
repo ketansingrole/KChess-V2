@@ -206,8 +206,8 @@ impl Lane {
         usable_connection(&self.connection, self.host.as_ref(), self.scope).take();
     }
 
-    /// Whether a connection is open now.
-    pub fn is_open(&self) -> bool {
+    #[cfg(test)]
+    fn is_open(&self) -> bool {
         usable_connection(&self.connection, self.host.as_ref(), self.scope).is_some()
     }
 }

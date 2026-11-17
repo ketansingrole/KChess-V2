@@ -198,15 +198,6 @@ impl Auth {
         self.token = Some(token.into());
         self
     }
-
-    /// The same caller without a login (counted against the same account).
-    #[must_use]
-    pub fn without_login(&self) -> Auth {
-        Auth {
-            usage: self.usage.clone(),
-            token: None,
-        }
-    }
 }
 
 /// A request's body.

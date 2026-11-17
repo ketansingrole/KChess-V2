@@ -101,19 +101,6 @@ pub fn keep_last<T>(mut items: Vec<T>, n: usize) -> Vec<T> {
     items
 }
 
-/// The strings of a JSON array; anything else is empty.
-pub fn string_list(value: Option<&Value>) -> Vec<String> {
-    value
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .map(|item| item.as_str().unwrap_or_default().to_string())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// A session of `kind` as stored, with its kind's version.
 pub(crate) fn encode_session(kind: &str, session: &Value) -> Value {
     kchess_domain::misc::documents::encode_session(kind, &J::from(session)).into_value()
@@ -1113,10 +1100,10 @@ mod tests {
     fn a_variant_games_mistake_becomes_a_drill_in_its_variant() {
         let db = drills_db();
         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
-        let moves = json!(["e2e4", "d7d5", "e4d5", "d8d5", "g1f3"]);
+        let moves = ["e2e4", "d7d5", "e4d5", "d8d5", "g1f3"].map(String::from);
         let key = json!(kchess_domain::records::review::review_key(
             fen,
-            &string_list(Some(&moves)),
+            &moves,
             Some(kchess_domain::variant::Variant::Crazyhouse)
         ));
         let mut evals: Vec<Value> = (0..4)

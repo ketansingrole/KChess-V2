@@ -11,6 +11,8 @@ use std::time::Duration;
 
 #[cfg(unix)]
 use kchess_contracts::error::CoreError;
+#[cfg(unix)]
+use kchess_core::engine::uci::EngineHub;
 use kchess_core::engine::uci::{UciController, search_cancelled};
 #[cfg(unix)]
 use tokio::sync::oneshot;
@@ -198,14 +200,11 @@ async fn waits_for_process_exit_before_replacement_and_blocks_new_engines_until_
         let hub = Arc::clone(&hub);
         let replaced = Arc::clone(&replaced);
         tokio::spawn(async move {
-            hub.with_maintenance(
-                || {},
-                move || async move {
-                    replaced.store(true, Ordering::SeqCst);
-                    let _ = released.await;
-                    Ok::<(), CoreError>(())
-                },
-            )
+            maintained(&hub, move || async move {
+                replaced.store(true, Ordering::SeqCst);
+                let _ = released.await;
+                Ok::<(), CoreError>(())
+            })
             .await
         })
     };
@@ -236,12 +235,10 @@ async fn waits_for_process_exit_before_replacement_and_blocks_new_engines_until_
     hub.assert_available()
         .expect("available again after maintenance");
 
-    let failed = hub
-        .with_maintenance(
-            || {},
-            || async { Err::<(), _>(CoreError::new("replacement failed")) },
-        )
-        .await;
+    let failed = maintained(&hub, || async {
+        Err::<(), _>(CoreError::new("replacement failed"))
+    })
+    .await;
     assert_eq!(failed.unwrap_err().message, "replacement failed");
     hub.assert_available()
         .expect("a failed replacement also clears the flag");
@@ -258,15 +255,11 @@ async fn retains_the_executable_when_an_engine_will_not_exit_before_the_maintena
     engine.ready().await.expect("handshake");
 
     let calls = AtomicUsize::new(0);
-    let operation = hub
-        .with_maintenance(
-            || {},
-            || {
-                calls.fetch_add(1, Ordering::SeqCst);
-                async { Ok::<(), CoreError>(()) }
-            },
-        )
-        .await;
+    let operation = maintained(&hub, || {
+        calls.fetch_add(1, Ordering::SeqCst);
+        async { Ok::<(), CoreError>(()) }
+    })
+    .await;
     let error = operation.unwrap_err();
     assert!(
         error.message.contains("previous engine was retained"),
@@ -281,4 +274,14 @@ async fn retains_the_executable_when_an_engine_will_not_exit_before_the_maintena
     tokio::time::timeout(Duration::from_secs(5), engine.closed())
         .await
         .expect("the SIGKILL escalation ends the engine");
+}
+
+#[cfg(unix)]
+/// `action` run with every engine stopped and new ones refused, as an engine replacement runs.
+async fn maintained<T, Fut: std::future::Future<Output = Result<T, CoreError>>>(
+    hub: &EngineHub,
+    action: impl FnOnce() -> Fut,
+) -> Result<T, CoreError> {
+    let _hold = hub.suspend(|| {}).await?;
+    action().await
 }
