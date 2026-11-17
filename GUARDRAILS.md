@@ -26,9 +26,9 @@ offscreen into `<dir>/<width>x<height>/<page>.png`.
 Frame cost has two guards ([docs/benchmarks/frame-guards.md](docs/benchmarks/frame-guards.md)).
 Every end-to-end test fails when a frame it draws waits outside the main thread: a call to the
 system, the core, the clipboard or the disk says so with `slow_calls::call`, and the tests draw
-every frame inside `slow_calls::drawing`; mark a new such call the same way. The nightly
-`Frame bench` workflow runs `cargo xtask bench` on macOS, main against the last passing night,
-and opens an issue when a scenario's frames cost over twice as much.
+every frame inside `slow_calls::drawing`; mark a new such call the same way. Any other frame cost
+needs `cargo xtask bench` on a Mac; `--fail-above 2` fails when the first build's frames cost
+over twice the last's. A GitHub macOS runner draws no frames, so CI cannot run it.
 
 `cargo xtask install-hooks` points Git at `.githooks`. Its pre-push hook runs the full
 `cargo xtask check` when a push updates `main`, and refuses if the pushed commit is not HEAD or

@@ -7,8 +7,9 @@
 //! run while measuring. A run whose window was covered for a while (`visible_fraction` below 1)
 //! draws no frames then; it is reported and left out.
 //!
-//! `--fail-above <ratio>` makes it a gate (CI's nightly `bench.yml`): it fails when the first
-//! build's frames cost over `ratio` times the last build's in any scenario (`GATED`).
+//! `--fail-above <ratio>` makes it a gate: it fails when the first build's frames cost over
+//! `ratio` times the last build's in any scenario (`GATED`), or a scenario drew no frames
+//! (docs/benchmarks/frame-guards.md).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -164,7 +165,8 @@ fn gate(options: &Options, results: &[Value]) -> Result {
 
 /// What the gate fails on: each scenario's `GATED` figure whose median on the first build is over
 /// `ratio` times the last build's and over it by more than its least rise, or that either build
-/// never measured (a scenario that drew nothing proves nothing).
+/// never measured, and each scenario that drew no frames on a build: one that drew nothing proves
+/// nothing, and its times are 0 (a GitHub macOS runner draws none; frame-guards.md).
 fn regressions(options: &Options, results: &[Value], ratio: f64) -> Vec<String> {
     let (new, base) = (
         &options.builds[0].0,
@@ -181,6 +183,11 @@ fn regressions(options: &Options, results: &[Value], ratio: f64) -> Vec<String> 
     };
     let mut found = Vec::new();
     for scenario in &options.scenarios {
+        for label in [new, base] {
+            if figure(label, scenario, "draws_per_s").is_some_and(|draws| draws <= 0.) {
+                found.push(format!("{scenario}: drew no frames on {label}"));
+            }
+        }
         for (metric, least) in GATED {
             match (
                 figure(new, scenario, metric),
@@ -505,6 +512,32 @@ mod tests {
             ..two_builds()
         };
         assert!(gate(&unasked, &slower).is_ok());
+    }
+
+    /// What a GitHub macOS runner reports: no frames, so times of 0 on both builds.
+    #[test]
+    fn the_gate_fails_a_scenario_that_drew_no_frames() {
+        let idle = |build: &str, draws: f64| {
+            json!({
+                "build": build,
+                "report": {"scenario": "analysis-stepping", "draws_per_s": draws,
+                    "draw_ms_p50": 0., "main_thread_busy_fraction": 0.002}
+            })
+        };
+        assert_eq!(
+            regressions(&two_builds(), &[idle("main", 0.), idle("base", 0.)], 2.),
+            [
+                "analysis-stepping: drew no frames on main",
+                "analysis-stepping: drew no frames on base",
+            ]
+        );
+        assert_eq!(
+            regressions(&two_builds(), &[idle("main", 0.), idle("base", 120.)], 2.),
+            ["analysis-stepping: drew no frames on main"]
+        );
+        assert!(
+            regressions(&two_builds(), &[idle("main", 120.), idle("base", 0.5)], 2.).is_empty()
+        );
     }
 
     #[test]

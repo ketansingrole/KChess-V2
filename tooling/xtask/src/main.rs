@@ -80,7 +80,7 @@ const COMMANDS: &[Command] = &[
             (
                 "--build <new>=<binary> --build <base>=<binary> … --fail-above <ratio>",
                 "Also fail when a scenario's frames cost over <ratio> times as much on the first \
-                 build as on the last (the nightly Frame bench workflow)",
+                 build as on the last, or a scenario drew no frames",
             ),
         ],
         run: bench::run,

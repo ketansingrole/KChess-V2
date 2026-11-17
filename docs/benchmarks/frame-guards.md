@@ -3,8 +3,8 @@
 #211 (2026-11-11) made the voice bar ask macOS for the microphone permission on every frame,
 about 6 ms each, which took the analysis board's frames from 1.4 to 9 ms
 ([the fix](2026-11-17-voice-bar-frame-cost.md)). Nothing ran the frame benchmark, so `main` kept it
-for nine days. Two guards now watch for it, a cheap exact one on every pull request and a
-measured one each night.
+for nine days. A headless guard now catches that kind of regression on every pull request. A
+gate on the frame benchmark catches any other kind, on a Mac.
 
 ## On every pull request: no slow call while drawing
 
@@ -31,22 +31,30 @@ a frame waited outside the main thread while drawing; read it before drawing and
 
 It cannot see a frame that is slow for another reason (more work in a view, a slower layout).
 
-## Each night: the frame benchmark on macOS
+## Any other frame cost: the frame benchmark on a Mac
 
-`.github/workflows/bench.yml` builds `main` and the commit the last passing night measured (the
-first night: the commit before), both without fat LTO, and runs `cargo xtask bench` on a macOS
-runner with `analysis-stepping`, `board-animation`, `local-clock` and `pages-tour`: three runs of
-15 s each, the builds alternating run by run, so a change in the runner's speed falls on both.
-`--fail-above 2` fails the job when a scenario's median draw time is over twice the base's and
-more than 1 ms over it, or its main thread is over twice as busy and by more than 10 points, or a
-scenario measured nothing on one of the builds. #211 was 6.6× and 7.7 ms on draw time.
+`cargo xtask bench` measures real frames, so it sees any cost, but it needs a Mac that draws.
+`--fail-above <ratio>` makes it a gate between two builds: it fails when a scenario's median draw
+time on the first build is over `ratio` times the last build's and more than 1 ms over it, or its
+main thread is over `ratio` times as busy and by more than 10 points, or a scenario drew no frames
+or measured nothing on either build. #211 was 6.6× and 7.7 ms on draw time.
 
-A failed night opens the issue "Frames cost more on main" (or comments on it if it is open), with
-the figures; the run's summary and its `bench` artifact hold them all. The base moves only on a
-passing night, so a regression fails every night until it is fixed. The repository is public, so
-the macOS runner costs nothing; the job takes about N minutes, mostly the two builds.
+```
+cargo build --release -p kchess-gpui --features bench && cp target/release/KChess /tmp/KChess-new
+# … the same on the base commit, to /tmp/KChess-base
+cargo xtask bench --build new=/tmp/KChess-new --build base=/tmp/KChess-base \
+  --runs 3 --seconds 15 --scenarios analysis-stepping,board-animation,local-clock,pages-tour \
+  --fail-above 2
+```
 
-A pull request that changes the benchmark or the workflow runs it against its base. Both builds
-must know every scenario in the workflow's `SCENARIOS`, so add a new scenario there only once it is
-on `main` (a base without it writes no report, and the job fails). Run it by hand
-against any commit with `gh workflow run bench.yml -f base=<commit>`.
+### Why not nightly in CI
+
+The first design ran this each night on `macos-latest`: main against the last passing night,
+opening an issue when the gate failed. Its trial run on #245 had #211's line put back in the
+measured build, and the gate passed, because the runner's window draws almost nothing.
+`analysis-stepping`, `local-clock` and `pages-tour` drew 0 frames a second, and `board-animation`
+0.2 (120 on a Mac), with the window counted as visible. Every time was 0 or a handful of samples,
+and `draw_ms_p50` was 0 on both builds. The gate now fails on a scenario that drew no frames, so
+it can no longer pass such a run. A CI runner cannot guard frame time until it draws frames (a
+self-hosted Mac, or a runner with a display). Until then, the headless guard above is CI's
+protection, and the benchmark is run by hand before and after work on drawing.
