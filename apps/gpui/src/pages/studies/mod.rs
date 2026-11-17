@@ -371,14 +371,14 @@ impl StudiesPage {
         self.previews
             .entry(fen.to_string())
             .or_insert_with(|| {
-                let position = kchess_domain::rules::setup_start(
-                    kchess_domain::variant::Variant::Standard,
-                    fen,
-                )
-                .unwrap_or_default();
-                let mut state = BoardState::of(&position, Color::White, None, None);
-                state.preview = true;
-                cx.new(|_| ChessBoard::new(state))
+                cx.new(|_| {
+                    ChessBoard::new(BoardState::preview(
+                        fen,
+                        kchess_domain::variant::Variant::Standard,
+                        Color::White,
+                        None,
+                    ))
+                })
             })
             .clone()
     }

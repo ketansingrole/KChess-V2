@@ -26,8 +26,8 @@ use crate::board::{BoardEvent, BoardState, ChessBoard};
 use crate::chart::{ChartPoint, LineChart};
 use crate::core::AppCore;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
+use crate::game::STANDARD_FEN;
 use crate::game::surface::TakesKeys as _;
-use crate::game::{STANDARD_FEN, view};
 use crate::pages::Page;
 use crate::play_layout::{
     Measured, PAGE_BOTTOM, PAGE_TOP, PANEL_MAX, PANEL_MIN, PlayLayout, side_padding,
@@ -278,7 +278,7 @@ pub struct OpeningsPage {
     board: Entity<ChessBoard>,
     layout: PlayLayout,
     orientation: Color,
-    move_input: Entity<InputState>,
+    move_box: crate::game::surface::MoveBox,
     description: Option<OpeningDescription>,
     full_description: bool,
     description_task: Option<Task<()>>,
@@ -308,7 +308,7 @@ impl OpeningsPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> OpeningsPage {
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search openings or ECO codes"));
-        let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
+        let (move_box, typed) = crate::game::surface::MoveBox::new(Self::typed_move, window, cx);
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
                 &kchess_domain::rules::setup_start(
@@ -349,15 +349,7 @@ impl OpeningsPage {
                     this.show_line(Some(moves), cx);
                 }
             }),
-            cx.subscribe_in(
-                &move_input,
-                window,
-                |this, _, event: &InputEvent, window, cx| {
-                    if let InputEvent::PressEnter { .. } = event {
-                        this.typed_move(window, cx);
-                    }
-                },
-            ),
+            typed,
         ];
         OpeningsPage {
             catalog: catalog(),
@@ -373,7 +365,7 @@ impl OpeningsPage {
             board,
             layout: PlayLayout::default(),
             orientation: Color::White,
-            move_input,
+            move_box,
             description: None,
             full_description: false,
             description_task: None,
@@ -401,14 +393,14 @@ impl OpeningsPage {
         self.previews
             .entry(fen.to_string())
             .or_insert_with(|| {
-                let position = kchess_domain::rules::setup_start(
-                    kchess_domain::variant::Variant::Standard,
-                    fen,
-                )
-                .unwrap_or_default();
-                let mut state = BoardState::of(&position, Color::White, None, None);
-                state.preview = true;
-                cx.new(|_| ChessBoard::new(state))
+                cx.new(|_| {
+                    ChessBoard::new(BoardState::preview(
+                        fen,
+                        kchess_domain::variant::Variant::Standard,
+                        Color::White,
+                        None,
+                    ))
+                })
             })
             .clone()
     }
@@ -556,18 +548,13 @@ impl OpeningsPage {
     }
 
     fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.move_input.read(cx).value().trim().to_string();
         let line = self.line.clone().unwrap_or_default();
         let fen = line_of(&line)
             .last()
             .map_or_else(|| STANDARD_FEN.to_string(), |(_, _, fen)| fen.clone());
-        let setup = kchess_domain::variant::Setup::standard_at(fen.clone());
-        let typed =
-            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &fen)
-                .and_then(|position| view::typed_uci(&setup, &position, &text));
-        if let Some(uci) = typed {
-            self.move_input
-                .update(cx, |input, cx| input.set_value("", window, cx));
+        let variant = kchess_domain::variant::Variant::Standard;
+        let position = kchess_domain::rules::setup_start(variant, &fen);
+        if let Some(uci) = self.move_box.take(variant, position.as_ref(), window, cx) {
             let mut moves = line;
             moves.push(uci);
             self.show_line(Some(moves), cx);
@@ -1004,7 +991,7 @@ impl OpeningsPage {
             .as_ref()
             .map_or_else(|| "Starting position".to_string(), |(name, _)| name.clone());
         let board_size = self.layout.board_size(window);
-        let entry = widgets::move_entry(&self.move_input, true, palette);
+        let entry = widgets::move_entry(&self.move_box.input, true, palette);
         let board_column = v_flex()
             .w(board_size)
             .flex_none()

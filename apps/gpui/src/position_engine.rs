@@ -27,6 +27,25 @@ fn context_of(request: &AnalysisRequest) -> String {
     analysis_context(root, request.moves.as_deref().unwrap_or_default())
 }
 
+/// Stop the core's search; `release` lets the engine go too, where a pause keeps it warm.
+/// A failure is only logged, under `source`.
+pub fn stop_analysis(release: bool, source: &'static str, cx: &mut App) {
+    let stop = cx.global::<AppCore>().request(calls::StopAnalysis {
+        kill: release.then_some(true),
+    });
+    cx.background_executor()
+        .spawn(async move {
+            if let Err(cause) = stop.await {
+                crate::log::write(
+                    Level::Warn,
+                    source,
+                    &format!("stopping analysis failed: {}", cause.message),
+                );
+            }
+        })
+        .detach();
+}
+
 #[derive(Default)]
 pub struct PositionEngine {
     /// The search asked for, or none.
@@ -82,20 +101,7 @@ impl PositionEngine {
         let Some(mut request) = request else {
             // Cancellation reaches the core's search, not only its answers.
             self._start = None;
-            let stopped = cx
-                .global::<AppCore>()
-                .request(calls::StopAnalysis { kill: None });
-            cx.background_executor()
-                .spawn(async move {
-                    if let Err(cause) = stopped.await {
-                        crate::log::write(
-                            Level::Warn,
-                            "position-engine",
-                            &format!("stopping analysis failed: {}", cause.message),
-                        );
-                    }
-                })
-                .detach();
+            stop_analysis(false, "position-engine", cx);
             return;
         };
         request.client_id = Some(id);

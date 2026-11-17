@@ -17,7 +17,6 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -34,8 +33,8 @@ use super::run;
 use crate::assets::icon;
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
 use crate::core::AppCore;
+use crate::game::STANDARD_FEN;
 use crate::game::tree::{TreeNode, child_path, comment_text};
-use crate::game::{STANDARD_FEN, view};
 use crate::pages::Page;
 use crate::pages::openings::OpeningChoice;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
@@ -257,7 +256,7 @@ pub struct Repertoire {
     reply: Option<Task<()>>,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
-    move_input: Entity<InputState>,
+    move_box: crate::game::surface::MoveBox,
     study_select: Entity<SelectState<Vec<Choice>>>,
     chapter_select: Entity<SelectState<Vec<Choice>>>,
     /// The selects' items are rebuilt on the next frame, where there is a window.
@@ -281,7 +280,7 @@ impl Repertoire {
                 None,
             ))
         });
-        let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
+        let (move_box, typed) = crate::game::surface::MoveBox::new(Self::typed_move, window, cx);
         let study_select = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
         let chapter_select = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
         let settings = cx.global::<SettingsHandle>().0.clone();
@@ -300,15 +299,7 @@ impl Repertoire {
                     this.play(uci, cx);
                 }
             }),
-            cx.subscribe_in(
-                &move_input,
-                window,
-                |this, _, event: &InputEvent, window, cx| {
-                    if let InputEvent::PressEnter { .. } = event {
-                        this.typed_move(window, cx);
-                    }
-                },
-            ),
+            typed,
             cx.subscribe(
                 &study_select,
                 |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
@@ -362,7 +353,7 @@ impl Repertoire {
             reply: None,
             board,
             layout: PlayLayout::default(),
-            move_input,
+            move_box,
             study_select,
             chapter_select,
             stale_selects: true,
@@ -812,14 +803,9 @@ impl Repertoire {
         let Some(node) = self.node() else {
             return;
         };
-        let text = self.move_input.read(cx).value().trim().to_string();
-        let setup = kchess_domain::variant::Setup::standard_at(node.fen.clone());
-        let typed =
-            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &node.fen)
-                .and_then(|position| view::typed_uci(&setup, &position, &text));
-        if let Some(uci) = typed {
-            self.move_input
-                .update(cx, |input, cx| input.set_value("", window, cx));
+        let variant = kchess_domain::variant::Variant::Standard;
+        let position = kchess_domain::rules::setup_start(variant, &node.fen);
+        if let Some(uci) = self.move_box.take(variant, position.as_ref(), window, cx) {
             self.play(&uci, cx);
         }
     }
@@ -1212,7 +1198,7 @@ impl Render for Repertoire {
             board_column
                 .child(crate::board::cached(&self.board))
                 .child(widgets::lone_entry(widgets::move_entry(
-                    &self.move_input,
+                    &self.move_box.input,
                     your_turn,
                     &palette,
                 )))

@@ -5,7 +5,6 @@ use kchess_contracts::calls;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -22,7 +21,6 @@ use super::run::{self, TrainingItem};
 use crate::assets::icon;
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard, Circle};
 use crate::core::AppCore;
-use crate::game::view;
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
@@ -145,7 +143,7 @@ pub struct EndgameLesson {
     reply: Option<Task<()>>,
     engine: EngineMove,
     board: Entity<ChessBoard>,
-    move_input: Entity<InputState>,
+    move_box: crate::game::surface::MoveBox,
     layout: PlayLayout,
     _subscriptions: Vec<Subscription>,
 }
@@ -177,8 +175,7 @@ impl EndgameLesson {
                 None,
             ))
         });
-        let move_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Type a move: Nf3 or g1f3"));
+        let (move_box, typed) = crate::game::surface::MoveBox::new(Self::typed_move, window, cx);
         let settings = cx.global::<SettingsHandle>().0.clone();
         let subscriptions = vec![
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
@@ -186,15 +183,7 @@ impl EndgameLesson {
                     this.on_move(uci, cx);
                 }
             }),
-            cx.subscribe_in(
-                &move_input,
-                window,
-                |this, _, event: &InputEvent, window, cx| {
-                    if let InputEvent::PressEnter { .. } = event {
-                        this.typed_move(window, cx);
-                    }
-                },
-            ),
+            typed,
             cx.subscribe(&settings, |this, _, _: &SettingsChanged, cx| {
                 this.redraw(cx)
             }),
@@ -218,7 +207,7 @@ impl EndgameLesson {
             reply: None,
             engine: EngineMove::default(),
             board,
-            move_input,
+            move_box,
             layout: PlayLayout::default(),
             _subscriptions: subscriptions,
         };
@@ -403,15 +392,9 @@ impl EndgameLesson {
     }
 
     fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let fen = self.status().fen;
-        let text = self.move_input.read(cx).value().trim().to_string();
-        let setup = kchess_domain::variant::Setup::standard_at(fen.clone());
-        let typed =
-            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &fen)
-                .and_then(|position| view::typed_uci(&setup, &position, &text));
-        if let Some(uci) = typed {
-            self.move_input
-                .update(cx, |input, cx| input.set_value("", window, cx));
+        let variant = kchess_domain::variant::Variant::Standard;
+        let position = kchess_domain::rules::setup_start(variant, &self.status().fen);
+        if let Some(uci) = self.move_box.take(variant, position.as_ref(), window, cx) {
             self.on_move(&uci, cx);
         }
     }
@@ -867,7 +850,7 @@ impl Render for EndgameLesson {
             .gap(widgets::STACK_GAP)
             .child(crate::board::cached(&self.board))
             .child(widgets::lone_entry(widgets::move_entry(
-                &self.move_input,
+                &self.move_box.input,
                 your_turn,
                 &palette,
             )));

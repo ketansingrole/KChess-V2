@@ -357,13 +357,12 @@ impl OnlinePage {
             .map(|(index, game)| {
                 let id = game.game_id.clone();
                 let orientation = game.color.unwrap_or(shakmaty::Color::White);
-                let mut state = BoardState::shown(
+                let state = BoardState::preview(
                     &game.fen,
                     kchess_domain::variant::Variant::Standard,
                     orientation,
                     game.last_move.as_deref().filter(|uci| uci.len() >= 4),
                 );
-                state.preview = true;
                 let board = match self.previews.get(&id) {
                     Some(board) => {
                         board.update(cx, |board, cx| board.set_state(state, cx));

@@ -463,7 +463,7 @@ impl TournamentsPage {
     ) -> Option<Div> {
         let featured = detail.extras.featured.clone()?;
         let orientation = featured.orientation;
-        let mut state = BoardState::shown(
+        let state = BoardState::preview(
             &featured.fen,
             kchess_domain::variant::Variant::Standard,
             orientation,
@@ -472,7 +472,6 @@ impl TournamentsPage {
                 .as_deref()
                 .filter(|uci| !uci.contains('@')),
         );
-        state.preview = true;
         let board = match &self.featured_board {
             Some(board) => {
                 board.update(cx, |board, cx| board.set_state(state, cx));

@@ -5,7 +5,6 @@
 use crate::loading::Epoch;
 use std::time::Duration;
 
-use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 use kchess_contracts::types::{Puzzle, PuzzleWrongMove};
@@ -14,8 +13,8 @@ use kchess_domain::variant::Setup;
 use shakmaty::Color;
 
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
+use crate::game::STANDARD_FEN;
 use crate::game::puzzle::{OnBoard, PuzzleStatus};
-use crate::game::{STANDARD_FEN, view};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii, tint};
 use crate::voice::moves::{Access, Action, BoardBar, Turn, VoiceMoves, board_bar};
@@ -54,8 +53,7 @@ pub enum Feedback {
 pub struct PuzzleBoard {
     on_board: Option<OnBoard>,
     board: Entity<ChessBoard>,
-    move_input: Entity<InputState>,
-    move_message: Option<SharedString>,
+    move_box: crate::game::surface::MoveBox,
     /// Each side's captured material above and below the board (the Train tab's look).
     material: bool,
     waiting: bool,
@@ -130,7 +128,7 @@ impl PuzzleBoard {
                 None,
             ))
         });
-        let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
+        let (move_box, typed) = crate::game::surface::MoveBox::new(Self::typed_move, window, cx);
         let voice = crate::voice::handle(cx);
         let subscriptions = vec![
             cx.subscribe(&voice, |this, _, event: &crate::voice::VoiceEvent, cx| {
@@ -142,21 +140,12 @@ impl PuzzleBoard {
                     this.on_move(uci, cx)
                 }
             }),
-            cx.subscribe_in(
-                &move_input,
-                window,
-                |this, _, event: &InputEvent, window, cx| {
-                    if let InputEvent::PressEnter { .. } = event {
-                        this.typed_move(window, cx);
-                    }
-                },
-            ),
+            typed,
         ];
         PuzzleBoard {
             on_board: None,
             board,
-            move_input,
-            move_message: None,
+            move_box,
             material,
             waiting: false,
             mistakes: 0,
@@ -202,7 +191,7 @@ impl PuzzleBoard {
         self.nudged = false;
         self.feedback = Feedback::None;
         self.flash = false;
-        self.move_message = None;
+        self.move_box.clear_message();
         self.redraw(cx);
     }
 
@@ -281,7 +270,11 @@ impl PuzzleBoard {
 
     /// Whether the keys are with the typed-move field.
     pub fn move_field_focused(&self, window: &Window, cx: &App) -> bool {
-        self.move_input.read(cx).focus_handle(cx).is_focused(window)
+        self.move_box
+            .input
+            .read(cx)
+            .focus_handle(cx)
+            .is_focused(window)
     }
 
     /// Solved, failed or its solution shown: what is left is the next puzzle.
@@ -666,28 +659,15 @@ impl PuzzleBoard {
     }
 
     fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.move_input.read(cx).value().trim().to_string();
         let Some(board) = &self.on_board else { return };
-        if text.is_empty() || !self.playing() {
+        if !self.playing() {
             return;
         }
-        let setup = Setup {
-            variant: board.variant(),
-            fen: board.fen().to_string(),
-        };
-        let typed = kchess_domain::rules::setup_start(board.variant(), board.fen())
-            .and_then(|position| view::typed_uci(&setup, &position, &text));
-        match typed {
-            Some(uci) => {
-                self.move_message = None;
-                self.move_input
-                    .update(cx, |input, cx| input.set_value("", window, cx));
-                self.on_move(&uci, cx);
-            }
-            None => {
-                self.move_message = Some("Enter a legal move, such as Nf3 or g1f3".into());
-                cx.notify();
-            }
+        let variant = board.variant();
+        let position = kchess_domain::rules::setup_start(variant, board.fen());
+        match self.move_box.take(variant, position.as_ref(), window, cx) {
+            Some(uci) => self.on_move(&uci, cx),
+            None => cx.notify(),
         }
     }
 }
@@ -709,7 +689,7 @@ impl Render for PuzzleBoard {
             .piece_set
             .clone();
         let orientation = self.orientation();
-        let entry = widgets::move_entry(&self.move_input, true, &palette);
+        let entry = widgets::move_entry(&self.move_box.input, true, &palette);
         let (listening, grammar) = (self.voice_listening(), self.voice_grammar());
         let (voice, voice_line) = board_bar(
             &self.voice,
@@ -772,12 +752,7 @@ impl Render for PuzzleBoard {
         column
             .w_full()
             .children(voice_line)
-            .children(self.move_message.clone().map(|message| {
-                div()
-                    .text_size(px(12.))
-                    .text_color(palette.text_muted)
-                    .child(message)
-            }))
+            .children(self.move_box.message(&palette))
     }
 }
 

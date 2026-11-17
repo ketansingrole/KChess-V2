@@ -290,6 +290,20 @@ impl BoardState {
     }
 }
 
+impl BoardState {
+    /// A small board of a position that is only looked at: no keys or coordinates of its own.
+    pub fn preview(
+        fen: &str,
+        variant: kchess_domain::variant::Variant,
+        orientation: Color,
+        last: Option<&str>,
+    ) -> BoardState {
+        let mut state = BoardState::shown(fen, variant, orientation, last);
+        state.preview = true;
+        state
+    }
+}
+
 /// The squares a UCI move marks as the last move; a drop (`N@f3`) marks the one it landed on.
 pub fn last_squares(uci: &str) -> Option<(Square, Square)> {
     if uci.get(1..2) == Some("@") {
@@ -313,24 +327,13 @@ pub fn preview_tip(
     orientation: Color,
 ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
     move |window, cx| {
-        let board = cx.new(|_| ChessBoard::new(preview_state(&fen, &uci, variant, orientation)));
+        let board = cx
+            .new(|_| ChessBoard::new(BoardState::preview(&fen, variant, orientation, Some(&uci))));
         gpui_kit::component::tooltip::Tooltip::element(move |_, _| {
             div().w(PREVIEW_TIP).py(px(6.)).child(board.clone())
         })
         .build(window, cx)
     }
-}
-
-/// A preview board's position: only looked at, small, with no keys or coordinates of its own.
-fn preview_state(
-    fen: &str,
-    uci: &str,
-    variant: kchess_domain::variant::Variant,
-    orientation: Color,
-) -> BoardState {
-    let mut state = BoardState::shown(fen, variant, orientation, Some(uci));
-    state.preview = true;
-    state
 }
 
 /// What the board tells its page.
@@ -2403,18 +2406,18 @@ mod description_tests {
 
 #[cfg(test)]
 mod preview_tests {
-    use super::preview_state;
+    use super::BoardState;
     use shakmaty::{Color, Square};
 
     /// A move's preview shows the position it reaches from the side the board beside it is seen
     /// from, the move marked, and takes no part in the page.
     #[test]
     fn a_preview_shows_where_a_move_leads() {
-        let state = preview_state(
+        let state = BoardState::preview(
             "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
-            "e2e4",
             kchess_domain::variant::Variant::Standard,
             Color::Black,
+            Some("e2e4"),
         );
         assert!(state.preview);
         assert_eq!(state.orientation, Color::Black);

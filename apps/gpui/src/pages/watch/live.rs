@@ -431,13 +431,12 @@ impl Live {
                     .past
                     .entry(id.clone())
                     .or_insert_with(|| {
-                        let mut state = BoardState::shown(
+                        let state = BoardState::preview(
                             &entry.fen,
                             kchess_domain::variant::Variant::Standard,
                             orientation,
                             entry.last_move.as_deref().filter(|uci| !uci.contains('@')),
                         );
-                        state.preview = true;
                         cx.new(|_| ChessBoard::new(state))
                     })
                     .clone();
