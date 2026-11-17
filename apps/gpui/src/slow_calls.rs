@@ -62,10 +62,18 @@ mod tests {
         assert_eq!(drawing(|| 7), 7);
     }
 
+    /// The report names the call and the line that made it (on Windows with backslashes in the path).
     #[test]
-    #[should_panic(expected = "the system at apps/gpui/src/slow_calls.rs:68:")]
     fn a_call_while_drawing_fails_naming_it() {
-        drawing(|| call("the system"));
+        let line = line!() + 1;
+        let failed = std::panic::catch_unwind(|| drawing(|| call("the system")));
+        let report = failed.expect_err("the frame fails");
+        let report = report.downcast_ref::<String>().expect("a message");
+        assert!(report.contains("  the system at "), "{report}");
+        assert!(
+            report.contains(&format!("slow_calls.rs:{line}:")),
+            "{report}"
+        );
     }
 
     #[test]
