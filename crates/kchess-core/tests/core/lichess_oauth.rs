@@ -95,7 +95,7 @@ async fn a_login_completes_through_the_loopback_callback() {
         visit(callback, report.clone());
     }));
 
-    let connected = lichess.connect_lichess(None, None).await.unwrap();
+    let connected = lichess.connect_lichess(None).await.unwrap();
     assert_eq!(connected.username, "Alice");
 
     // The browser was sent to Lichess with the S256 challenge and every scope.
@@ -178,7 +178,7 @@ async fn a_callback_with_the_wrong_state_or_path_does_not_end_the_login() {
         });
     }));
 
-    let connected = lichess.connect_lichess(None, None).await.unwrap();
+    let connected = lichess.connect_lichess(None).await.unwrap();
     assert_eq!(connected.username, "Alice");
     let statuses: Vec<u16> = {
         let mut seen = Vec::new();
@@ -205,7 +205,7 @@ async fn a_login_nobody_completes_times_out() {
     let lichess = service(&origin.base, &host, Arc::clone(&store));
 
     let error = lichess
-        .connect_lichess_within(None, None, Duration::from_millis(150))
+        .connect_lichess_within(None, Duration::from_millis(150))
         .await
         .unwrap_err();
     assert_eq!(error.message, "Lichess login timed out.");
@@ -231,7 +231,7 @@ async fn a_denied_login_is_reported_and_saves_nothing() {
         visit(callback, report.clone());
     }));
 
-    let error = lichess.connect_lichess(None, None).await.unwrap_err();
+    let error = lichess.connect_lichess(None).await.unwrap_err();
     assert_eq!(error.message, "Lichess login was not completed.");
     let (status, page) = visits.recv().await.unwrap();
     assert_eq!(status, 400);
@@ -261,7 +261,7 @@ async fn a_login_that_a_logout_overtakes_saves_nothing() {
         visit(callback, report.clone());
     }));
 
-    let error = lichess.connect_lichess(None, None).await.unwrap_err();
+    let error = lichess.connect_lichess(None).await.unwrap_err();
     assert_eq!(error.message, "Login was cancelled by logout.");
     assert!(store.logins.lock().unwrap().is_empty());
     let _ = visits.recv().await;

@@ -201,9 +201,7 @@ impl Accounts {
             .iter()
             .map(|name| name.to_lowercase())
             .collect();
-        let connected = cx
-            .global::<AppCore>()
-            .request(calls::ConnectLichess { look: None });
+        let connected = cx.global::<AppCore>().request(calls::ConnectLichess {});
         cx.spawn_in(window, async move |this, cx| {
             let result = connected.await;
             let connected = this.update_in(cx, |this, window, cx| {

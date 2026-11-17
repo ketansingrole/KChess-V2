@@ -19,7 +19,7 @@ use crate::ai::{
 };
 use crate::core::Core;
 use crate::host::Level;
-use crate::lichess::oauth::{Redirect, default_look, new_pkce, new_state, wait_for_redirect};
+use crate::lichess::oauth::{Redirect, look, new_pkce, new_state, wait_for_redirect};
 use crate::time::now_ms;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_delta::hex;
@@ -174,7 +174,7 @@ impl Core {
             nonce: &nonce,
             challenge: &pkce.challenge,
         })?;
-        let look = default_look();
+        let look = look();
         let page = |authorized: bool| connection_page(authorized, &look, "ChatGPT");
         let opening = async {
             self.capabilities.open_external(&url).await?;

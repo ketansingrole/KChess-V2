@@ -194,11 +194,10 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
             })),
             None => Err("response.status must be a number".into()),
         },
-        "oauthLook" => Ok(oauth::look(arg(args, 0).unwrap_or(&Value::Null)).unwrap_or(Value::Null)),
-        "oauthLookDefault" => Ok(oauth::default_look()),
+        "oauthLookDefault" => Ok(oauth::look()),
         "oauthPage" => {
             let authorized = arg(args, 0).and_then(Value::as_bool).unwrap_or(false);
-            let look = arg(args, 1).cloned().unwrap_or_else(oauth::default_look);
+            let look = arg(args, 1).cloned().unwrap_or_else(oauth::look);
             Ok(Value::String(oauth::callback_page(authorized, &look)))
         }
         "analysisContext" => match arg(args, 1) {

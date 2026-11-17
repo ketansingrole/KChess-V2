@@ -156,9 +156,7 @@ core_api! {
         RatingHistory = "ratingHistory" fn rating_history(username: Username) -> Vec<RatingSeries>;
         /// Sign in through the browser. `username` is the account Lichess authorised.
         #[writes(Accounts)]
-        ConnectLichess = "connectLichess" fn connect_lichess(;
-            look: Option<Value>
-        ) -> ConnectedLichess;
+        ConnectLichess = "connectLichess" fn connect_lichess() -> ConnectedLichess;
         /// Keep this connected account's Lichess event stream open while no game is being
         /// played, so challenges and tournament pairings arrive; empty closes it.
         StayConnected = "stayConnected" fn stay_connected(account: OptionalAccount) -> ();

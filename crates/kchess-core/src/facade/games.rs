@@ -8,7 +8,6 @@ use kchess_contracts::types::{
     AppData, CachedProfile, ConnectedLichess, FollowingReport, GameLibraryOverview, GamePage,
     GamePageQuery, InsightsQuery, InsightsReport, LichessUser, RatingSeries,
 };
-use serde_json::Value;
 
 use crate::core::Core;
 use crate::store::games;
@@ -67,9 +66,7 @@ impl GamesApi for Core {
         self.services.lichess().rating_history(&username.0).await
     }
 
-    async fn connect_lichess(&self, look: Option<Value>) -> Result<ConnectedLichess> {
-        // An unreadable look falls back to the safe default colours.
-        let look = kchess_domain::records::oauth::look(&look.unwrap_or(Value::Null));
+    async fn connect_lichess(&self) -> Result<ConnectedLichess> {
         // The window is focused when the browser returns.
         let capabilities = Arc::clone(&self.capabilities);
         let focus = move || {
@@ -81,7 +78,7 @@ impl GamesApi for Core {
         let connected = self
             .services
             .lichess()
-            .connect_lichess(look.as_ref(), Some(&focus))
+            .connect_lichess(Some(&focus))
             .await?;
         Ok(ConnectedLichess {
             data: self.app_data().await?,

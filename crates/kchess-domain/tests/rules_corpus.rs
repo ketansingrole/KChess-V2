@@ -30,6 +30,7 @@ const RETIRED: &[&str] = &[
     "materialBalance",
     "mergeRatingHistories",
     "nearestEngineLevel",
+    "oauthLook",
     "pgnFromMoves",
     "playMove",
     "puzzleFromDb",
@@ -159,7 +160,7 @@ fn check_the_corpus() {
     }
     assert_eq!(
         cases + superseded,
-        29_884,
+        29_684,
         "the corpus checks {cases} cases"
     );
     assert_eq!(
