@@ -73,7 +73,7 @@ fn with_extension(path: PathBuf, extension: Option<&std::ffi::OsStr>) -> PathBuf
 
 /// A file name from the players and today's date (`ExportGame`'s): safe characters only.
 pub fn game_file_name(white: &str, black: &str) -> String {
-    let today = chrono::Local::now().format("%Y-%m-%d");
+    let today = crate::dates::today("%Y-%m-%d");
     format!("{white} vs {black} {today}")
         .chars()
         .filter(|c| c.is_alphanumeric() || " _.()+-".contains(*c))
@@ -106,7 +106,7 @@ fn game_pgn(game: &PlayedGame) -> Option<String> {
         return Some(pgn.clone());
     }
     let result = kchess_domain::games::Outcome::tag(game.result);
-    let date = chrono::Local::now().format("%Y.%m.%d").to_string();
+    let date = crate::dates::today("%Y.%m.%d");
     kchess_domain::pgn::setup_pgn(
         game.setup.variant,
         &game.setup.fen,

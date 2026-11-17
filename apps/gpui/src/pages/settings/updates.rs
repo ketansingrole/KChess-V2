@@ -398,9 +398,8 @@ impl SettingsPage {
                         .text_size(px(12.))
                         .text_color(palette.text_muted)
                         .children(updates.released.as_ref().and_then(|date| {
-                            chrono::DateTime::parse_from_rfc3339(date)
-                                .ok()
-                                .map(|date| format!("Released {}", date.format("%b %-d, %Y")))
+                            crate::dates::written_date(date)
+                                .map(|date| format!("Released {}", date.strftime("%b %-d, %Y")))
                         }))
                         .child(notes()),
                 )

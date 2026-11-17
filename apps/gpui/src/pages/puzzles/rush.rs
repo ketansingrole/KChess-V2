@@ -550,12 +550,8 @@ impl PuzzleRush {
                         .child(cell("ACCURACY".into(), 80.)),
                 )
                 .children(recent.iter().map(|run| {
-                    use chrono::TimeZone as _;
-                    let when = chrono::Local
-                        .timestamp_millis_opt(run.played_at)
-                        .single()
-                        .map(|at| at.format("%b %-d, %Y %-I:%M %p").to_string())
-                        .unwrap_or_default();
+                    let when =
+                        crate::dates::local_format(run.played_at as f64, "%b %-d, %Y %-I:%M %p");
                     let variant = run.variant.as_str();
                     h_flex()
                         .py(px(4.))

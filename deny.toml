@@ -19,6 +19,10 @@ ignore = [
   { id = "RUSTSEC-2026-0370", reason = "zvariant: unmaintained, through GPUI Kit on Linux (D-Bus)" },
   { id = "RUSTSEC-2026-0371", reason = "zbus_names: unmaintained, through GPUI Kit on Linux (D-Bus)" },
   { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: unmaintained, through GPUI Kit on Linux (D-Bus)" },
+  # KChess's own dates use jiff, as the advisory recommends; chrono stays in public APIs of GPUI
+  # Kit 0.10 (gpui-base's calendar and time field, gpui-component's date picker) and of Zed's
+  # gpui-pre-scheduler (`Clock::utc_now`). Upstream: https://github.com/chronotope/chrono/issues/1768
+  { id = "RUSTSEC-2026-0543", reason = "chrono: unmaintained, through GPUI Kit's date picker and Zed's scheduler" },
 ]
 
 [licenses]
