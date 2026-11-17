@@ -1,6 +1,6 @@
-# gpui-pre 0.3.11, patched for KChess
+# gpui-pre 0.3.12, patched for KChess
 
-This is the published `gpui-pre` 0.3.11 crate (Zed's GPUI, Apache-2.0, see `LICENSE-APACHE`),
+This is the published `gpui-pre` 0.3.12 crate (Zed's GPUI, Apache-2.0, see `LICENSE-APACHE`),
 used through `[patch.crates-io]` in the workspace `Cargo.toml`. Its `examples/` and `tests/`
 are left out, and so are their targets in `Cargo.toml`. Everything else is unchanged except for
 the lines marked `KChess patch`, which add a **window zoom** for the GPUI app's Settings →
@@ -98,5 +98,5 @@ new release, since input handling and view caching may have moved.
 
 A three-way merge does most of it: the published the previous release as the base, this folder as one side and
 the new release as the other (0.3.9 → 0.3.11 conflicted only in `src/window.rs` and
-`src/text_system/line_layout.rs`). Keep the gpui-kit pin in `apps/gpui/Cargo.toml` on the
+`src/text_system/line_layout.rs`; 0.3.11 → 0.3.12 merged cleanly). Keep the gpui-kit pin in `apps/gpui/Cargo.toml` on the
 release whose `gpui-pre` this folder holds.

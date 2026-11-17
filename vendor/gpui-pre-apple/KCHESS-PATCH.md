@@ -1,6 +1,6 @@
-# gpui-pre-apple 0.3.11, patched for KChess
+# gpui-pre-apple 0.3.12, patched for KChess
 
-This is the published `gpui-pre-apple` 0.3.11 crate (Zed's `gpui_apple`, Apache-2.0, see
+This is the published `gpui-pre-apple` 0.3.12 crate (Zed's `gpui_apple`, Apache-2.0, see
 `LICENSE-APACHE`), used through `[patch.crates-io]` in the workspace `Cargo.toml`. Everything is
 unchanged except for the lines marked `KChess patch`.
 
@@ -17,7 +17,7 @@ both. `test_large_system_font_glyphs_are_not_clipped` keeps it.
 
 ## Why `vendor/gpui` is here
 
-`vendor/gpui/src` holds five sources of the upstream, unpatched `gpui-pre` 0.3.11 (`scene.rs`,
+`vendor/gpui/src` holds five sources of the upstream, unpatched `gpui-pre` 0.3.12 (`scene.rs`,
 `geometry.rs`, `color.rs`, `window.rs`, `platform.rs`). They are not compiled: the published crate
 ships them so its build script (`build.rs`, macOS only) can generate the Metal shaders' header,
 `scene.h`, from the scene's types. They are not a stale copy of `../gpui-pre`: the KChess patches
