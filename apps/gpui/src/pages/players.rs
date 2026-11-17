@@ -1240,7 +1240,8 @@ impl PlayersPage {
         let Some(stats) = &self.stats else {
             return card.child(widgets::loading("Loading…", palette));
         };
-        let count = |key: &str| stats.count[key].as_f64().unwrap_or_default();
+        let counts = stats.count.clone().unwrap_or_default();
+        let count = |value: Option<i64>| value.unwrap_or_default() as f64;
         let mark = |mark: &Option<kchess_contracts::types::PerfMark>| match mark {
             Some(mark) => format!(
                 "{} · {}",
@@ -1257,13 +1258,20 @@ impl PlayersPage {
         let rows = [
             (
                 "Games",
-                format!("{} · {} rated", count("all"), count("rated")),
+                format!("{} · {} rated", count(counts.all), count(counts.rated)),
             ),
-            ("Opponents' average", count("opAvg").round().to_string()),
-            ("Time played", hours(count("seconds"))),
+            (
+                "Opponents' average",
+                counts.op_avg.unwrap_or_default().round().to_string(),
+            ),
+            ("Time played", hours(count(counts.seconds))),
             (
                 "Tournament games",
-                format!("{} · berserked {}", count("tour"), count("berserk")),
+                format!(
+                    "{} · berserked {}",
+                    count(counts.tour),
+                    count(counts.berserk)
+                ),
             ),
             ("Highest", mark(&stats.highest)),
             ("Lowest", mark(&stats.lowest)),
@@ -1274,7 +1282,7 @@ impl PlayersPage {
             .child(widgets::result_row(
                 "Results",
                 None,
-                (count("win"), count("draw"), count("loss")),
+                (count(counts.win), count(counts.draw), count(counts.loss)),
                 palette,
             ))
             .child(v_flex().children(rows.into_iter().map(|(label, value)| {

@@ -962,6 +962,31 @@ pub struct PerfResult {
     pub game_id: String,
 }
 
+/// Lichess's game counts for one speed.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PerfCount {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rated: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub win: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loss: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draw: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tour: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub berserk: Option<i64>,
+    /// The opponents' average rating.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub op_avg: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seconds: Option<i64>,
+}
+
 /// A rating and the game it came from.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -997,9 +1022,8 @@ pub struct PerfStats {
     pub percentile: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<i64>,
-    /// Lichess's game counts as it sent them (`all`, `rated`, `win`, `loss`, `draw`, `tour`,
-    /// `berserk`, `opAvg`, `seconds`, `disconnects`), null when it sent none.
-    pub count: Value,
+    /// Lichess's game counts, null when it sent none.
+    pub count: Option<PerfCount>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highest: Option<PerfMark>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

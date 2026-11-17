@@ -1453,7 +1453,7 @@ struct Glicko {
 #[derive(Debug, Deserialize)]
 struct PerfStat {
     #[serde(default)]
-    count: Value,
+    count: Option<kchess_contracts::types::PerfCount>,
     #[serde(default)]
     highest: Option<PerfPoint>,
     #[serde(default)]
@@ -1560,7 +1560,7 @@ fn perf_stats(perf: PerfType, raw: PerfResponse) -> PerfStats {
         rank: raw.rank,
         percentile: raw.percentile,
         progress: raw.perf.progress,
-        count: raw.stat.count.clone(),
+        count: raw.stat.count,
         highest: mark(raw.stat.highest),
         lowest: mark(raw.stat.lowest),
         best_wins: results(raw.stat.best_wins),
