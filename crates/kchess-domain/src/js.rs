@@ -478,3 +478,41 @@ mod tests {
         );
     }
 }
+
+/// A number as JavaScript writes it: a whole one without a fraction (`3`, not `3.0`). For numbers
+/// the core keeps as written by `JSON.stringify` (stored documents, Lichess's answers).
+pub mod number {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    const MAX_SAFE: f64 = 9_007_199_254_740_991.0;
+
+    pub fn serialize<S: Serializer>(n: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+        if n.fract() == 0.0 && n.abs() <= MAX_SAFE {
+            serializer.serialize_i64(*n as i64)
+        } else {
+            serializer.serialize_f64(*n)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+        f64::deserialize(deserializer)
+    }
+
+    /// An optional one; `None` is `null` unless the field is skipped.
+    pub mod option {
+        use serde::{Deserialize, Deserializer, Serializer};
+
+        pub fn serialize<S: Serializer>(n: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error> {
+            match n {
+                Some(n) => super::serialize(n, serializer),
+                None => serializer.serialize_none(),
+            }
+        }
+
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Option<f64>, D::Error> {
+            Option::<f64>::deserialize(deserializer)
+        }
+    }
+}

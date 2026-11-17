@@ -20,7 +20,7 @@ use kchess_contracts::types::{
     Puzzle, PuzzleAttempt, PuzzleAttemptOutcome, PuzzleProgress, PuzzleProgressQuery,
 };
 use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
-use serde_json::{Value, json};
+use serde_json::Value;
 use shakmaty::Color;
 
 use crate::assets::icon;
@@ -32,7 +32,7 @@ use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
 use crate::puzzle_db::PuzzleDbHandle;
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii, tint};
-use kchess_domain::trainer::puzzle_session::{Detail, Request, Resume};
+use kchess_domain::trainer::puzzle_session::{Answer, Detail, Reply, Request, Resume};
 mod daily;
 mod history;
 mod rush;
@@ -563,8 +563,8 @@ impl PuzzlesPage {
 }
 
 /// A core call's answer, on its way.
-type Answer = std::pin::Pin<
-    Box<dyn std::future::Future<Output = Result<Value, kchess_contracts::CoreError>>>,
+type Sent = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Answer, kchess_contracts::CoreError>>>,
 >;
 
 /// The session's value as the contract's type of it, read by the contract's own check as the
@@ -578,20 +578,29 @@ fn as_contract<T: kchess_contracts::check::Validate>(
         .map_err(kchess_contracts::CoreError::new)
 }
 
-/// A call's answer, as the session reads it.
+/// A call sent, its answer as the session reads it.
 fn answer<C: kchess_contracts::calls::CoreCall + Send + 'static>(
     core: &AppCore,
     call: Result<C, kchess_contracts::CoreError>,
-) -> Answer
+    read: fn(C::Answer) -> Answer,
+) -> Sent
 where
-    C::Answer: serde::Serialize + Send,
+    C::Answer: Send,
 {
     let sent = call.map(|call| core.request(call));
-    Box::pin(async move { sent?.await.map(|answer| json!(answer)) })
+    Box::pin(async move { sent?.await.map(read) })
+}
+
+/// Lichess's answer, or that the account must be reconnected.
+fn lichess<T>(reply: kchess_contracts::types::Reply<T>, read: impl FnOnce(T) -> Answer) -> Answer {
+    match reply {
+        kchess_contracts::types::Reply::Done(answer) => read(answer),
+        kchess_contracts::types::Reply::NeedsReconnect => Answer::NeedsReconnect,
+    }
 }
 
 /// A puzzle step's core call, sent, and its method's name.
-fn puzzle_request(core: &AppCore, request: &Request) -> (&'static str, Answer) {
+fn puzzle_request(core: &AppCore, request: &Request) -> (&'static str, Sent) {
     use kchess_contracts::calls::CoreCall;
     match request {
         Request::LocalPuzzles(query) => (
@@ -599,6 +608,7 @@ fn puzzle_request(core: &AppCore, request: &Request) -> (&'static str, Answer) {
             answer(
                 core,
                 as_contract(query).map(|query| calls::LocalPuzzles { query }),
+                Answer::Local,
             ),
         ),
         Request::PuzzleNext(draw) => (
@@ -606,6 +616,12 @@ fn puzzle_request(core: &AppCore, request: &Request) -> (&'static str, Answer) {
             answer(
                 core,
                 as_contract(draw).map(|request| calls::PuzzleNext { request }),
+                |reply| {
+                    lichess(reply, |draw| Answer::Drawn {
+                        puzzle: draw.puzzle,
+                        rating: draw.glicko.and_then(|glicko| glicko.rating),
+                    })
+                },
             ),
         ),
         Request::PuzzleSolve(solve) => (
@@ -613,6 +629,11 @@ fn puzzle_request(core: &AppCore, request: &Request) -> (&'static str, Answer) {
             answer(
                 core,
                 as_contract(solve).map(|request| calls::PuzzleSolve { request }),
+                |reply| {
+                    lichess(reply, |solved| Answer::Solved {
+                        rating_diff: solved.rating_diff.flatten().map(|diff| diff as f64),
+                    })
+                },
             ),
         ),
     }
@@ -655,13 +676,8 @@ impl PuzzlesPage {
         let ready = self.session.phase() == "ready";
         let key = self.session.puzzle_key();
         let shown = self.puzzle.read(cx).puzzle().is_some();
-        let current = self
-            .session
-            .current()
-            .cloned()
-            .map(serde_json::from_value::<Puzzle>);
-        match current {
-            Some(Ok(puzzle)) if ready && (!shown || key != self.shown_key) => {
+        match self.session.current().cloned() {
+            Some(puzzle) if ready && (!shown || key != self.shown_key) => {
                 self.shown_key = key;
                 let outcome = self.session.state().attempt_outcome;
                 self.puzzle
@@ -739,7 +755,7 @@ impl PuzzlesPage {
     }
 
     /// `retry`: play an earlier puzzle again on the Train tab (unrated, not counted).
-    pub(crate) fn retry(&mut self, puzzle: Value, cx: &mut Context<Self>) {
+    pub(crate) fn retry(&mut self, puzzle: Puzzle, cx: &mut Context<Self>) {
         Tab::Train.store(cx);
         let step = self
             .session
@@ -1468,7 +1484,7 @@ impl PuzzlesPage {
                                     .icon(icon("rotate-ccw"))
                                     .on_click(move |_, _, cx| {
                                         let _ = page
-                                            .update(cx, |page, cx| page.retry(json!(puzzle), cx));
+                                            .update(cx, |page, cx| page.retry(puzzle.clone(), cx));
                                     }),
                             )
                             .item(
@@ -1908,7 +1924,7 @@ impl Render for PuzzlesPage {
                         &history,
                         window,
                         |this, _, event: &history::HistoryEvent, window, cx| match event {
-                            history::HistoryEvent::Retry(puzzle) => this.retry(json!(puzzle), cx),
+                            history::HistoryEvent::Retry(puzzle) => this.retry(puzzle.clone(), cx),
                             history::HistoryEvent::Analyse(puzzle, wrong) => {
                                 crate::pages::analysis::analyse_puzzle(
                                     puzzle.clone(),
@@ -2166,7 +2182,7 @@ impl Settle {
         self,
         session: &mut PuzzleSession,
         resume: Resume,
-        reply: Result<Value, String>,
+        reply: Reply,
         selection: &Selection,
     ) -> Step {
         match self {

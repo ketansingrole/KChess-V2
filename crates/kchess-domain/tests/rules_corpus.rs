@@ -26,6 +26,7 @@ const RETIRED: &[&str] = &[
     "drawReason",
     "gameResult",
     "hasScore",
+    "isReconnect",
     "materialBalance",
     "mergeRatingHistories",
     "nearestEngineLevel",
@@ -158,7 +159,7 @@ fn check_the_corpus() {
     }
     assert_eq!(
         cases + superseded,
-        30_084,
+        29_884,
         "the corpus checks {cases} cases"
     );
     assert_eq!(

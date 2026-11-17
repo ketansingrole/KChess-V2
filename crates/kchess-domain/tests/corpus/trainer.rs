@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 use kchess_domain::position;
 use kchess_domain::trainer::analysis_tree::{self as tree, MoveInput, Score};
 use kchess_domain::trainer::puzzle_session::{
-    self as session, Detail, PuzzleSession, Reply, Resume, Selection, Step,
+    self as session, Answer, Detail, PuzzleSession, Reply, Resume, Selection, Step,
 };
 
 use super::{Out, arg};
@@ -23,7 +23,6 @@ fn puzzle_session(method: &str, args: &[Value]) -> Option<Out> {
         "puzzleSessionInitial" => {
             serde_json::to_value(PuzzleSession::new()).map_err(|e| e.to_string())
         }
-        "isReconnect" => Ok(json!(args.first().is_some_and(session::is_reconnect))),
         "puzzleSessionInvalidate" => step(input, |session, _, day| Ok(session.invalidate(day))),
         "puzzleSessionLoadBegin" => step(input, |session, arg, day| {
             let selection: Selection = take(arg, "selection")?;
@@ -37,12 +36,12 @@ fn puzzle_session(method: &str, args: &[Value]) -> Option<Out> {
             Ok(session.load_settled(token, outcome, &now, day))
         }),
         "puzzleSessionRetry" => step(input, |session, arg, day| {
-            let puzzle = arg.get("puzzle").cloned().unwrap_or(Value::Null);
+            let puzzle = take(arg, "puzzle")?;
             let selection: Selection = take(arg, "selection")?;
             Ok(session.retry(puzzle, &selection, day))
         }),
         "puzzleSessionShow" => step(input, |session, arg, day| {
-            let puzzle = arg.get("puzzle").cloned().unwrap_or(Value::Null);
+            let puzzle = take(arg, "puzzle")?;
             let selection: Selection = take(arg, "selection")?;
             Ok(session.show(puzzle, &selection, day))
         }),
@@ -84,7 +83,32 @@ fn reply(arg: &Map<String, Value>) -> Result<Reply, String> {
     if let Some(text) = outcome.get("error") {
         return Ok(Err(text.as_str().unwrap_or_default().to_string()));
     }
-    Ok(Ok(outcome.get("ok").cloned().unwrap_or(Value::Null)))
+    let ok = outcome.get("ok").unwrap_or(&Value::Null);
+    let number = |value: Option<&Value>| value.and_then(Value::as_f64);
+    let answer = match ok {
+        Value::Array(_) => {
+            Answer::Local(serde_json::from_value(ok.clone()).map_err(|e| e.to_string())?)
+        }
+        Value::Object(object) if object.contains_key("needsReconnect") => Answer::NeedsReconnect,
+        Value::Object(object) if object.contains_key("ratingDiff") => Answer::Solved {
+            rating_diff: number(object.get("ratingDiff")),
+        },
+        _ => Answer::Drawn {
+            puzzle: take_or_none(ok, "puzzle")?,
+            rating: number(ok.get("glicko").and_then(|glicko| glicko.get("rating"))),
+        },
+    };
+    Ok(Ok(answer))
+}
+
+/// A field that may be absent or null.
+fn take_or_none<T: DeserializeOwned>(value: &Value, key: &str) -> Result<Option<T>, String> {
+    match value.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(field) => serde_json::from_value(field.clone())
+            .map(Some)
+            .map_err(|e| e.to_string()),
+    }
 }
 
 /// One step over the `{ state, internal, day, … }` input.

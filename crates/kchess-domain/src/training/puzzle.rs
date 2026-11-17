@@ -9,6 +9,36 @@ use shakmaty::{Color, Position as _, Role};
 use crate::variant::Variant;
 use crate::{js, position, rules};
 
+/// One puzzle, whichever source it came from.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Puzzle {
+    pub id: String,
+    /// The position the player starts from: it is the player's move, after the opponent's `lastMove`.
+    pub fen: String,
+    /// UCI of the opponent's move that led here (for the board highlight).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_move: Option<String>,
+    /// UCI moves, alternating player, opponent, … and ending with the player's move.
+    pub solution: Vec<String>,
+    #[serde(with = "crate::js::number")]
+    pub rating: f64,
+    pub themes: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::js::number::option"
+    )]
+    pub plays: Option<f64>,
+    /// Lichess game the position came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_id: Option<String>,
+    /// A drill's variant (a mistake from a Crazyhouse game); every Lichess puzzle is standard
+    /// chess.
+    #[serde(default, skip_serializing_if = "Variant::is_standard")]
+    pub variant: Variant,
+}
+
 /// How a solve stands: still being played, solved, failed, or given up with its solution shown.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
