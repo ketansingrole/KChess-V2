@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use kchess_domain::js;
 use kchess_domain::online_game::model::{
-    Call, Ctx, GamePhase, Left, Model, Op, Outcome, Pending, Reply, Resumed, Run,
+    Call, Ctx, GamePhase, Left, Model, OnlineAction, Op, Outcome, Pending, Reply, Resumed, Run,
 };
 use kchess_domain::online_game::server::ServerEvent;
 
@@ -116,6 +116,10 @@ fn text(value: Option<&Value>) -> String {
     js::string(value).unwrap_or("").to_string()
 }
 
+fn action(name: &str) -> Result<OnlineAction, String> {
+    OnlineAction::from_key(name).ok_or_else(|| format!("unknown online action {name}"))
+}
+
 fn unknown(op: &str) -> String {
     format!("unknown online game operation {op}")
 }
@@ -133,7 +137,7 @@ fn op(name: &Value, input: &Value) -> Result<Op, String> {
             id: text(input.get("id")),
         },
         "move" => Op::Move(text(Some(input))),
-        "action" => Op::Action(text(Some(input))),
+        "action" => Op::Action(action(&text(Some(input)))?),
         "chat" => Op::Chat(text(Some(input))),
         other => return Err(unknown(other)),
     })
@@ -183,7 +187,7 @@ fn pending(token: &Value) -> Result<Pending, String> {
             generation: request(generation),
             id: text(token.get("id")),
             epoch: number("epoch"),
-            action: text(token.get("action")),
+            action: action(&text(token.get("action")))?,
         },
         "chat" => Pending::Chat {
             id: text(token.get("id")),

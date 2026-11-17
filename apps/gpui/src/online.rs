@@ -14,12 +14,12 @@ use futures::FutureExt as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use kchess_contracts::check::{GameId, PresenceUsers, Uci, Username, Validate};
-use kchess_contracts::types::OnlineOptions;
 use kchess_contracts::types::{
     ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, LobbyState, NotificationKind,
     OngoingGame, PresenceReport,
 };
 use kchess_contracts::types::{Lane, OnlineConnection, OnlinePhase};
+use kchess_contracts::types::{OnlineAction, OnlineOptions};
 use kchess_contracts::{CoreError, ErrorKind, Level};
 use kchess_domain::online_game::model::{
     Call, ChatEntry, Ctx, Effect, GamePhase, Model, Op, Outcome, Rematch, Reply, View,
@@ -430,16 +430,13 @@ impl OnlineState {
                 }),
                 done,
             ),
-            Call::OnlineAction { id, action } => match typed(&json!(action)) {
-                Ok(action) => reply(
-                    core.request(calls::OnlineAction {
-                        id: GameId(id),
-                        action,
-                    }),
-                    done,
-                ),
-                Err(refused) => futures::future::ready(Err(refused)).boxed_local(),
-            },
+            Call::OnlineAction { id, action } => reply(
+                core.request(calls::OnlineAction {
+                    id: GameId(id),
+                    action,
+                }),
+                done,
+            ),
             Call::OnlineChat { id } => reply(
                 core.request(calls::OnlineChat { id: GameId(id) }),
                 |lines| {
@@ -633,8 +630,8 @@ impl OnlineState {
     }
 
     /// `onlineAction`: resign, abort, draw and takeback offers, claiming the win, berserk.
-    pub fn action(&mut self, action: &str, cx: &mut Context<Self>) {
-        self.perform(Op::Action(action.to_string()), cx).detach();
+    pub fn action(&mut self, action: OnlineAction, cx: &mut Context<Self>) {
+        self.perform(Op::Action(action), cx).detach();
     }
 
     pub fn send_chat(

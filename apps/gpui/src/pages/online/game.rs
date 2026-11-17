@@ -22,7 +22,7 @@ use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 use kchess_contracts::ErrorKind;
-use kchess_contracts::types::{DeclineReason, OnlinePhase};
+use kchess_contracts::types::{DeclineReason, OnlineAction, OnlinePhase};
 use kchess_domain::online_game::model::{Model, Offer};
 
 /// The player may touch pieces: the game is on, at its last move.
@@ -30,7 +30,7 @@ pub fn can_play(online: &OnlineState) -> bool {
     online.phase == Phase::Playing && online.view_ply.is_none()
 }
 
-fn action(name: &'static str) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+fn action(name: OnlineAction) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| crate::online::handle(cx).update(cx, |online, cx| online.action(name, cx))
 }
 
@@ -118,10 +118,10 @@ pub(crate) fn run_live_action(action: LiveAction, window: &mut Window, cx: &mut 
             return online.update(cx, |online, cx| online.stop(cx));
         }
         LiveAction::Flip => return flip(cx),
-        LiveAction::Berserk => "berserk",
-        LiveAction::Takeback => "takeback",
-        LiveAction::OfferDraw => "offerDraw",
-        LiveAction::Abort => "abort",
+        LiveAction::Berserk => OnlineAction::Berserk,
+        LiveAction::Takeback => OnlineAction::Takeback,
+        LiveAction::OfferDraw => OnlineAction::OfferDraw,
+        LiveAction::Abort => OnlineAction::Abort,
     };
     online.update(cx, |online, cx| online.action(name, cx));
 }
@@ -144,7 +144,8 @@ fn ask_resign(window: &mut Window, cx: &mut App) {
             .cancel_text("Cancel")
             .show_cancel(true)
             .on_ok(|_, _, cx| {
-                crate::online::handle(cx).update(cx, |online, cx| online.action("resign", cx));
+                crate::online::handle(cx)
+                    .update(cx, |online, cx| online.action(OnlineAction::Resign, cx));
                 true
             })
     });
@@ -829,7 +830,7 @@ impl OnlinePage {
                 .into_any_element(),
             );
         }
-        let small = |id: &'static str, label: &'static str, primary: bool, run: &'static str| {
+        let small = |id: &'static str, label: &'static str, primary: bool, run: OnlineAction| {
             Button::new(id)
                 .xsmall()
                 .when(primary, |button| button.primary())
@@ -845,8 +846,8 @@ impl OnlinePage {
                         "handshake",
                         format!("{opponent} offers a draw"),
                         vec![
-                            small("draw-accept", "Accept", true, "acceptDraw"),
-                            small("draw-decline", "Decline", false, "declineDraw"),
+                            small("draw-accept", "Accept", true, OnlineAction::AcceptDraw),
+                            small("draw-decline", "Decline", false, OnlineAction::DeclineDraw),
                         ],
                         palette,
                     )
@@ -856,7 +857,12 @@ impl OnlinePage {
                     offer(
                         "handshake",
                         "You offered a draw".into(),
-                        vec![small("draw-cancel", "Cancel offer", false, "declineDraw")],
+                        vec![small(
+                            "draw-cancel",
+                            "Cancel offer",
+                            false,
+                            OnlineAction::DeclineDraw,
+                        )],
                         palette,
                     )
                     .into_any_element(),
@@ -869,8 +875,13 @@ impl OnlinePage {
                         "undo-2",
                         format!("{opponent} asks to take back a move"),
                         vec![
-                            small("takeback-accept", "Accept", true, "takeback"),
-                            small("takeback-decline", "Decline", false, "declineTakeback"),
+                            small("takeback-accept", "Accept", true, OnlineAction::Takeback),
+                            small(
+                                "takeback-decline",
+                                "Decline",
+                                false,
+                                OnlineAction::DeclineTakeback,
+                            ),
                         ],
                         palette,
                     )
@@ -880,7 +891,12 @@ impl OnlinePage {
                     offer(
                         "undo-2",
                         "Takeback requested".into(),
-                        vec![small("takeback-cancel", "Cancel", false, "declineTakeback")],
+                        vec![small(
+                            "takeback-cancel",
+                            "Cancel",
+                            false,
+                            OnlineAction::DeclineTakeback,
+                        )],
                         palette,
                     )
                     .into_any_element(),
@@ -901,8 +917,18 @@ impl OnlinePage {
                         Vec::new()
                     } else {
                         vec![
-                            small("claim-win", "Claim victory", true, "claimVictory"),
-                            small("claim-draw", "Call it a draw", false, "claimDraw"),
+                            small(
+                                "claim-win",
+                                "Claim victory",
+                                true,
+                                OnlineAction::ClaimVictory,
+                            ),
+                            small(
+                                "claim-draw",
+                                "Call it a draw",
+                                false,
+                                OnlineAction::ClaimDraw,
+                            ),
                         ]
                     },
                     palette,
@@ -965,7 +991,7 @@ impl OnlinePage {
                             .warning()
                             .icon(icon("flame"))
                             .label("Berserk")
-                            .on_click(action("berserk")),
+                            .on_click(action(OnlineAction::Berserk)),
                     )
                 })
                 .when(live.contains(&LiveAction::Takeback), |row| {
@@ -976,7 +1002,7 @@ impl OnlinePage {
                             .outline()
                             .icon(icon("undo-2"))
                             .label("Takeback")
-                            .on_click(action("takeback")),
+                            .on_click(action(OnlineAction::Takeback)),
                     )
                 })
                 .when(live.contains(&LiveAction::OfferDraw), |row| {
@@ -987,7 +1013,7 @@ impl OnlinePage {
                             .outline()
                             .icon(icon("handshake"))
                             .label("Offer draw")
-                            .on_click(action("offerDraw")),
+                            .on_click(action(OnlineAction::OfferDraw)),
                     )
                 })
                 .child(if live.contains(&LiveAction::Resign) {
@@ -1007,7 +1033,7 @@ impl OnlinePage {
                         .danger()
                         .icon(icon("ban"))
                         .label("Abort")
-                        .on_click(action("abort"))
+                        .on_click(action(OnlineAction::Abort))
                 })
                 .when(online.correspondence(), |row| {
                     row.child(

@@ -187,7 +187,7 @@ pub enum Call {
     },
     OnlineAction {
         id: String,
-        action: String,
+        action: OnlineAction,
     },
     OnlineChat {
         id: String,
@@ -232,7 +232,7 @@ pub enum Pending {
         generation: f64,
         id: String,
         epoch: f64,
-        action: String,
+        action: OnlineAction,
     },
     Chat {
         id: String,
@@ -251,9 +251,22 @@ pub enum Op {
         id: String,
     },
     Move(String),
-    Action(String),
+    Action(OnlineAction),
     Chat(String),
 }
+
+crate::wire_enum!(#[doc = "An action the player can take in an online game, such as resigning, aborting, offering or declining a takeback or draw, claiming a result, or going berserk."] OnlineAction, ONLINE_ACTIONS {
+    Resign = "resign",
+    Abort = "abort",
+    Takeback = "takeback",
+    DeclineTakeback = "declineTakeback",
+    OfferDraw = "offerDraw",
+    AcceptDraw = "acceptDraw",
+    DeclineDraw = "declineDraw",
+    ClaimVictory = "claimVictory",
+    ClaimDraw = "claimDraw",
+    Berserk = "berserk",
+});
 
 /// The core's reply to a call: what the rules read of its answer, or a failure whose cause the
 /// driver keeps.

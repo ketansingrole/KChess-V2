@@ -11,7 +11,9 @@ pub mod server;
 use crate::js;
 use crate::records::challenge::OnlineOptions;
 use connection::OnlineConnection;
-use model::{Call, Ctx, GamePhase, Left, Model, Offer, Op, Outcome, Pending, Reply, Run, View};
+use model::{
+    Call, Ctx, GamePhase, Left, Model, Offer, OnlineAction, Op, Outcome, Pending, Reply, Run, View,
+};
 use server::ServerEvent;
 
 impl Model {
@@ -108,7 +110,7 @@ impl Model {
                 action,
             } => {
                 let current = same_request(&run, *generation, id, *epoch);
-                settle_action(run, action, ok, current)
+                settle_action(run, *action, ok, current)
             }
             Pending::Chat { id } => settle_chat(run, id, reply),
         }
@@ -214,7 +216,7 @@ fn move_uci(run: Run, uci: String) -> Outcome {
 }
 
 /// Resign, offer or answer a draw or takeback, claim, berserk.
-fn act(run: Run, action: String) -> Outcome {
+fn act(run: Run, action: OnlineAction) -> Outcome {
     if run.m.online_id.is_empty() {
         return run.done();
     }
@@ -223,7 +225,7 @@ fn act(run: Run, action: String) -> Outcome {
         generation: run.m.generation,
         id: id.clone(),
         epoch: run.m.state_epoch,
-        action: action.clone(),
+        action,
     };
     run.call(Call::OnlineAction { id, action }, pending)
 }
@@ -349,7 +351,7 @@ fn settle_move(mut run: Run, sent: f64, ok: bool, current: bool) -> Outcome {
     run.done()
 }
 
-fn settle_action(mut run: Run, action: &str, ok: bool, current: bool) -> Outcome {
+fn settle_action(mut run: Run, action: OnlineAction, ok: bool, current: bool) -> Outcome {
     if !ok {
         run.warn("[onlineGame] request failed:");
         run.effect(model::Effect::Failed);
@@ -357,17 +359,17 @@ fn settle_action(mut run: Run, action: &str, ok: bool, current: bool) -> Outcome
     }
     if current {
         match action {
-            "offerDraw" => run.m.draw_offer = Offer::Mine,
-            "declineDraw" | "acceptDraw" => run.m.draw_offer = Offer::None,
-            "takeback" => {
+            OnlineAction::OfferDraw => run.m.draw_offer = Offer::Mine,
+            OnlineAction::DeclineDraw | OnlineAction::AcceptDraw => run.m.draw_offer = Offer::None,
+            OnlineAction::Takeback => {
                 run.m.takeback_offer = if run.m.takeback_offer == Offer::Theirs {
                     Offer::None
                 } else {
                     Offer::Mine
                 }
             }
-            "declineTakeback" => run.m.takeback_offer = Offer::None,
-            "berserk" => run.m.berserked = true,
+            OnlineAction::DeclineTakeback => run.m.takeback_offer = Offer::None,
+            OnlineAction::Berserk => run.m.berserked = true,
             _ => {}
         }
     }
@@ -474,7 +476,7 @@ mod tests {
     #[test]
     fn a_late_offer_reply_leaves_a_finished_game_alone() {
         let mut model = playing();
-        let begun = model.begin(Op::Action("offerDraw".into()), &ctx(10.0));
+        let begun = model.begin(Op::Action(OnlineAction::OfferDraw), &ctx(10.0));
         model.online_phase = GamePhase::Finished;
         model.settle(&begun.pending.unwrap(), Reply::Done, &ctx(20.0));
         assert_eq!(model.draw_offer, Offer::None);
@@ -491,7 +493,10 @@ mod tests {
         ] {
             let mut model = playing();
             model.takeback_offer = before;
-            let begun = model.begin(Op::Action(action.into()), &ctx(10.0));
+            let begun = model.begin(
+                Op::Action(OnlineAction::from_key(action).unwrap()),
+                &ctx(10.0),
+            );
             model.settle(&begun.pending.unwrap(), Reply::Done, &ctx(20.0));
             assert_eq!(model.takeback_offer, after, "{action} after {before:?}");
         }

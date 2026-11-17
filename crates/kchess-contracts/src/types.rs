@@ -23,7 +23,9 @@ pub use kchess_domain::misc::constants::{
     SESSION_KINDS, SessionKind, TournamentSystem,
 };
 pub use kchess_domain::online_game::connection::{Lane, OnlineConnection, OnlinePhase};
-pub use kchess_domain::online_game::model::{CHAT_ROOMS, ChatRoom, Resumed};
+pub use kchess_domain::online_game::model::{
+    CHAT_ROOMS, ChatRoom, ONLINE_ACTIONS, OnlineAction, Resumed,
+};
 
 /* ── Choices and settings ───────────────────────────────────────────── */
 
@@ -42,18 +44,6 @@ wire_enum!(#[doc = "How long a piece takes to slide to its square."] PieceAnimat
     Fast = "fast",
     Normal = "normal",
     Slow = "slow",
-});
-wire_enum!(#[doc = "An action the player can take in an online game, such as resigning, aborting, offering or declining a takeback or draw, claiming a result, or going berserk."] OnlineAction, ONLINE_ACTIONS {
-    Resign = "resign",
-    Abort = "abort",
-    Takeback = "takeback",
-    DeclineTakeback = "declineTakeback",
-    OfferDraw = "offerDraw",
-    AcceptDraw = "acceptDraw",
-    DeclineDraw = "declineDraw",
-    ClaimVictory = "claimVictory",
-    ClaimDraw = "claimDraw",
-    Berserk = "berserk",
 });
 wire_enum!(#[doc = "Reasons Lichess accepts when declining a challenge (it translates them for the challenger)."] DeclineReason, DECLINE_REASONS {
     Generic = "generic",
