@@ -4,10 +4,10 @@
 
 use crate::loading::{Epoch, Turn};
 use kchess_contracts::calls;
-use kchess_contracts::check::{GameId, LichessId, MessageText, PresenceUsers, StudyId, Username};
+use kchess_contracts::check::{MessageText, PresenceUsers, Username};
 use kchess_contracts::types::{
     ActivityDay, Crosstable, LeaderboardEntry, LichessGame, LichessRelation, PerfResult, PerfStats,
-    PerfType, PlayerSuggestion, RelationAction, Reply, UserPresence,
+    PerfType, RelationAction, Reply, UserPresence,
 };
 use std::rc::Rc;
 
@@ -18,25 +18,20 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::types::LichessUser;
 use kchess_domain::perf::{Perf, Speed};
-use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::played::GameOrigin;
-use crate::pages::analysis::Opening;
 use crate::pages::history::lichess::{RowDetail, game_row};
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
+use crate::player_search::{self, NameMatches, SUGGESTED, chip_row, name_chip};
 use crate::rating_history::{Retry, has_points};
 use crate::rating_speeds::RatingSpeeds;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Look};
 
-/// Recent lookups kept (`kchess:players-recent`), and names offered under the search.
-pub(crate) const RECENT_KEY: &str = "kchess:players-recent";
-const RECENT_KEPT: usize = 8;
-pub(crate) const SUGGESTED: usize = 12;
 const BOARD_PERF_KEY: &str = "kchess:leaderboard-perf";
 /// Which players the leaderboard shows: `all`, `titled` or one title.
 const BOARD_TITLE_KEY: &str = "kchess:leaderboard-title";
@@ -44,8 +39,6 @@ const BOARD_TITLE_KEY: &str = "kchess:leaderboard-title";
 const TITLES: [&str; 11] = [
     "GM", "IM", "FM", "CM", "NM", "WGM", "WIM", "WFM", "WCM", "LM", "BOT",
 ];
-/// How long typing settles before names are searched.
-pub(crate) const SEARCH_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
 /// Rating categories with a Lichess leaderboard: every one but correspondence.
 fn board_perfs() -> impl Iterator<Item = Perf> {
     Perf::ALL
@@ -72,11 +65,8 @@ fn perf_type(key: &str) -> PerfType {
 }
 
 /// The speeds a player has games in, most played first.
-fn played_perfs(profile: &Value) -> Vec<(&'static str, &'static str)> {
-    let games = |key: &str| profile["perfs"][key]["games"].as_f64().unwrap_or_default();
-    let mut perfs: Vec<_> = perfs().filter(|(key, _)| games(key) > 0.).collect();
-    perfs.sort_by(|a, b| games(b.0).total_cmp(&games(a.0)));
-    perfs
+fn played_perfs(profile: &LichessUser) -> Vec<(&'static str, &'static str)> {
+    profile.played(perfs())
 }
 
 /// Recent lookups, then followed players not among them, each name once and at most
@@ -118,96 +108,6 @@ fn local_date(millis: f64) -> String {
         .unwrap_or_else(|| "?".into())
 }
 
-/// The small muted word before a group of names under the search.
-/// A group of name chips under the search: its label in a fixed column on the left, so it reads
-/// as a heading and not as one more name, then its chips, wrapping, and an action at the end.
-pub(crate) fn chip_row(
-    label: &'static str,
-    chips: Vec<AnyElement>,
-    action: Option<AnyElement>,
-    palette: &Palette,
-) -> Div {
-    h_flex()
-        .items_start()
-        .gap(px(8.))
-        .child(
-            div()
-                .w(px(72.))
-                .flex_none()
-                .h(px(24.))
-                .flex()
-                .items_center()
-                .text_size(px(12.))
-                .text_color(palette.text_muted)
-                .child(label),
-        )
-        .child(
-            h_flex()
-                .flex_1()
-                .min_w_0()
-                .flex_wrap()
-                .items_center()
-                .gap(px(6.))
-                .children(chips)
-                .children(action),
-        )
-}
-
-/// A player's name as a filled chip under the search: their title in the leaderboard's colour,
-/// and a dot while they are online.
-pub(crate) fn name_chip(
-    id: impl Into<ElementId>,
-    name: &str,
-    title: Option<&str>,
-    online: bool,
-    palette: &Palette,
-    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let label = match title {
-        Some(title) => format!("{title} {name}"),
-        None => name.to_string(),
-    };
-    h_flex()
-        .id(id)
-        .on_click(on_click)
-        .test_support()
-        .role(Role::Button)
-        .aria_label(if online {
-            format!("{label}, online")
-        } else {
-            label
-        })
-        .keyboard_focus(palette.primary)
-        .cursor_pointer()
-        .h(px(24.))
-        .px(px(8.))
-        .gap(px(4.))
-        .rounded(radii::SM)
-        .bg(palette.accented)
-        .text_size(px(13.))
-        .text_color(palette.toned)
-        .pressable_text(palette.highlighted)
-        .when(online, |chip| {
-            chip.child(div().size(px(6.)).rounded_full().bg(palette.success))
-        })
-        .children(title.map(|title| {
-            div()
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(palette.warning)
-                .child(title.to_string())
-        }))
-        .child(name.to_string())
-}
-
-/// Put a player looked up first among the recent ones, here and wherever players are searched.
-pub(crate) fn remember(username: &str, cx: &mut App) {
-    let mut recent: Vec<String> = crate::prefs::get(cx, RECENT_KEY, Vec::new());
-    recent.retain(|name| !name.eq_ignore_ascii_case(username));
-    recent.insert(0, username.to_string());
-    recent.truncate(RECENT_KEPT);
-    crate::prefs::set(cx, RECENT_KEY, recent);
-}
-
 fn message_of(cause: &kchess_contracts::CoreError) -> SharedString {
     cause.message.clone().into()
 }
@@ -230,7 +130,7 @@ fn follow(name: String, window: &mut Window, cx: &mut App) {
 
 pub struct PlayersPage {
     input: Entity<InputState>,
-    profile: Option<Value>,
+    profile: Option<LichessUser>,
     /// `UserPresence`, once known.
     status: Option<UserPresence>,
     perf: String,
@@ -265,8 +165,7 @@ pub struct PlayersPage {
     /// The `board_epoch` whose titles `title_select` offers.
     title_choices_for: Option<Turn>,
     /// `PlayerSuggestion`s for what is typed.
-    matches: Vec<PlayerSuggestion>,
-    search_epoch: Epoch,
+    names: NameMatches,
     error: Option<SharedString>,
     loading: bool,
     /// Each lookup; answers to an older one are dropped.
@@ -379,8 +278,7 @@ impl PlayersPage {
             board_title,
             title_select,
             title_choices_for: None,
-            matches: Vec::new(),
-            search_epoch: Epoch::default(),
+            names: NameMatches::default(),
             error: None,
             loading: false,
             epoch: Epoch::default(),
@@ -451,51 +349,19 @@ impl PlayersPage {
 
     /// Players whose names start with what is typed, once typing settles.
     fn search_names(&mut self, cx: &mut Context<Self>) {
-        let epoch = self.search_epoch.next();
-        let term = self.input.read(cx).value().trim().to_string();
-        let shown = self
-            .username()
-            .is_some_and(|name| name.eq_ignore_ascii_case(&term));
-        if term.chars().count() < 3
-            || !crate::game::is_username(&term)
-            || shown
-            || !crate::network::online(cx)
-        {
-            self.matches.clear();
-            cx.notify();
-            return;
-        }
-        let core = cx.global::<AppCore>().clone();
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(SEARCH_WAIT).await;
-            let current = this
-                .read_with(cx, |this, _| this.search_epoch.is_current(epoch))
-                .unwrap_or(false);
-            if !current {
-                return;
-            }
-            let found = core
-                .request(calls::SearchPlayers {
-                    term: Username(term),
-                })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                if !this.search_epoch.is_current(epoch) {
-                    return;
-                }
-                if let Ok(found) = found {
-                    this.matches = found;
-                    this.matches.truncate(SUGGESTED);
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+        let typed = self.input.read(cx).value().to_string();
+        let shown = self.username();
+        self.names.search(
+            &typed,
+            shown.as_deref(),
+            |page: &mut Self| &mut page.names,
+            cx,
+        );
     }
 
     /// A profile link opened elsewhere (`/players?name=`): look the player up, unless shown.
     pub fn show_player(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let shown = self.profile.as_ref().and_then(|p| p["username"].as_str());
+        let shown = self.profile.as_ref().map(|p| p.username.as_str());
         if shown.is_some_and(|shown| shown.eq_ignore_ascii_case(name)) {
             return;
         }
@@ -541,9 +407,9 @@ impl PlayersPage {
         self.days_error = false;
         self.relation = None;
         self.account_epoch.invalidate();
-        self.matches.clear();
+        self.names.clear();
         self.history.update(cx, |history, cx| {
-            history.set(Value::Null, Value::Null, cx);
+            history.set(Vec::new(), Vec::new(), cx);
             history.set_withheld(None, cx);
         });
         cx.notify();
@@ -575,13 +441,13 @@ impl PlayersPage {
         .detach();
     }
 
-    fn found(&mut self, found: Value, window: &mut Window, cx: &mut Context<Self>) {
-        let username = found["username"].as_str().unwrap_or_default().to_string();
+    fn found(&mut self, found: LichessUser, window: &mut Window, cx: &mut Context<Self>) {
+        let username = found.username.clone();
         self.input.update(cx, |input, cx| {
             input.set_value(username.clone(), window, cx)
         });
-        remember(&username, cx);
-        let current = found["perfs"].clone();
+        player_search::remember(&username, cx);
+        let current = found.perfs.clone();
         self.history
             .update(cx, |history, cx| history.set_current(current, cx));
         let perfs = played_perfs(&found);
@@ -847,7 +713,7 @@ impl PlayersPage {
             username: Username(username.clone()),
         });
         cx.spawn(async move |this, cx| {
-            let official = official.await.unwrap_or(json!([]));
+            let official = official.await.unwrap_or_default();
             let rebuilt = if has_points(&official) {
                 None
             } else {
@@ -855,10 +721,9 @@ impl PlayersPage {
                     username: Username(username),
                     rated: Some(true),
                 });
-                let rated = json!(rated.await.unwrap_or_default());
-                let games = rated.as_array().map_or(&[][..], Vec::as_slice);
-                Some(kchess_domain::records::ratings::rating_history_from_games(
-                    games,
+                let rated = rated.await.unwrap_or_default();
+                Some(kchess_domain::records::ratings::rating_series(
+                    rated.iter().filter_map(LichessGame::rated_game),
                 ))
             };
             let _ = this.update(cx, |this, cx| {
@@ -867,7 +732,7 @@ impl PlayersPage {
                 }
                 let withheld = this.withheld(cx);
                 this.history.update(cx, |history, cx| {
-                    history.set(official, rebuilt.unwrap_or(json!([])), cx);
+                    history.set(official, rebuilt.unwrap_or_default(), cx);
                     history.set_withheld(withheld, cx);
                 });
             });
@@ -896,18 +761,16 @@ impl PlayersPage {
     pub(crate) fn username(&self) -> Option<String> {
         self.profile
             .as_ref()
-            .and_then(|profile| profile["username"].as_str().map(str::to_string))
+            .map(|profile| profile.username.clone())
     }
 
     /// Open one of their games on the analysis board, from their side.
     pub fn open_game(game: LichessGame, window: &mut Window, cx: &mut App) {
-        let (account, opponent) = (json!(game.account), json!(game.opponent));
-        let (white_name, black_name) = match game.color {
-            shakmaty::Color::White => (account, opponent),
-            shakmaty::Color::Black => (opponent, account),
+        let (white, black) = match game.color {
+            shakmaty::Color::White => (game.account, game.opponent),
+            shakmaty::Color::Black => (game.opponent, game.account),
         };
-        let color = game.color;
-        open_exported(&game.id, white_name, black_name, color, window, cx);
+        crate::pages::analysis::open_exported(&game.id, white, black, game.color, window, cx);
     }
 
     /// What the open player's buttons can do now.
@@ -966,7 +829,7 @@ impl PlayersPage {
     }
 
     #[cfg(test)]
-    pub(crate) fn show_profile(&mut self, profile: Value, cx: &mut Context<Self>) {
+    pub(crate) fn show_profile(&mut self, profile: LichessUser, cx: &mut Context<Self>) {
         self.profile = Some(profile);
         cx.notify();
     }
@@ -997,7 +860,7 @@ impl PlayersPage {
                 .filter(|name| name.to_lowercase() != shown)
                 .collect()
         };
-        let recent = others(crate::prefs::get(cx, RECENT_KEY, Vec::new()));
+        let recent = others(player_search::recent(cx));
         let (recent, followed) = suggestions(&recent, &others(followed.to_vec()));
         let online = crate::network::online(cx);
         let typed = !self.input.read(cx).value().trim().is_empty();
@@ -1018,7 +881,7 @@ impl PlayersPage {
                 })
                 .collect()
         };
-        let groups: Vec<AnyElement> = if self.matches.is_empty() {
+        let groups: Vec<AnyElement> = if self.names.found().is_empty() {
             let mut groups = Vec::new();
             if !recent.is_empty() {
                 let clear = Button::new("players-recent-clear")
@@ -1028,7 +891,7 @@ impl PlayersPage {
                     .label("Clear")
                     .accessibility_label("Clear recent players")
                     .on_click(cx.listener(|_, _, _, cx| {
-                        crate::prefs::set(cx, RECENT_KEY, Vec::<String>::new());
+                        player_search::clear_recent(cx);
                         cx.notify();
                     }));
                 groups.push(
@@ -1054,23 +917,13 @@ impl PlayersPage {
             }
             groups
         } else {
-            let found = self
-                .matches
-                .iter()
-                .enumerate()
-                .map(|(index, found)| {
-                    let name = found.username.clone();
-                    name_chip(
-                        ("players-match", index),
-                        &name,
-                        found.title.as_deref(),
-                        found.online == Some(true),
-                        palette,
-                        pick(name.clone()),
-                    )
-                    .into_any_element()
+            let page = cx.entity().downgrade();
+            let found = player_search::match_chips("players-match", &self.names, palette, |name| {
+                let page = page.clone();
+                Box::new(move |_, window, cx| {
+                    let _ = page.update(cx, |page, cx| page.show_player(&name, window, cx));
                 })
-                .collect();
+            });
             vec![chip_row("Matches", found, None, palette).into_any_element()]
         };
         widgets::card(palette)
@@ -1115,8 +968,13 @@ impl PlayersPage {
             })
     }
 
-    fn profile_card(&self, profile: &Value, cx: &mut Context<Self>, palette: &Palette) -> Div {
-        let username = profile["username"].as_str().unwrap_or_default().to_string();
+    fn profile_card(
+        &self,
+        profile: &LichessUser,
+        cx: &mut Context<Self>,
+        palette: &Palette,
+    ) -> Div {
+        let username = profile.username.clone();
         let accounts = crate::accounts::handle(cx).read(cx);
         let me = accounts.active(cx);
         let connected = !accounts.connected().is_empty();
@@ -1130,14 +988,22 @@ impl PlayersPage {
             .is_none_or(|me| !me.eq_ignore_ascii_case(&username));
         let status = self.status.clone().unwrap_or_default();
         let playing_id = status.playing_id.clone();
-        let title = profile["title"].as_str();
+        let title = profile.title.as_deref();
         let mut line = format!(
             "{} games · joined {}",
-            widgets::format_count(profile["count"]["all"].as_f64().unwrap_or_default()),
-            profile["createdAt"].as_f64().map_or("?".into(), local_date)
+            widgets::format_count(
+                profile
+                    .count
+                    .as_ref()
+                    .and_then(|count| count.all)
+                    .unwrap_or_default() as f64
+            ),
+            profile
+                .created_at
+                .map_or("?".into(), |at| local_date(at as f64))
         );
-        if let Some(seen) = profile["seenAt"].as_f64() {
-            line.push_str(&format!(" · seen {}", local_date(seen)));
+        if let Some(seen) = profile.seen_at {
+            line.push_str(&format!(" · seen {}", local_date(seen as f64)));
         }
         let score = self
             .record
@@ -1293,9 +1159,11 @@ impl PlayersPage {
                 ))
             })
             .children(
-                profile["profile"]["bio"]
-                    .as_str()
-                    .map(|bio| div().text_size(px(13.)).child(bio.to_string())),
+                profile
+                    .profile
+                    .as_ref()
+                    .and_then(|profile| profile.bio.clone())
+                    .map(|bio| div().text_size(px(13.)).child(bio)),
             )
             .children(score.map(|score| {
                 h_flex()
@@ -1372,7 +1240,8 @@ impl PlayersPage {
         let Some(stats) = &self.stats else {
             return card.child(widgets::loading("Loading…", palette));
         };
-        let count = |key: &str| stats.count[key].as_f64().unwrap_or_default();
+        let counts = stats.count.clone().unwrap_or_default();
+        let count = |value: Option<i64>| value.unwrap_or_default() as f64;
         let mark = |mark: &Option<kchess_contracts::types::PerfMark>| match mark {
             Some(mark) => format!(
                 "{} · {}",
@@ -1389,13 +1258,20 @@ impl PlayersPage {
         let rows = [
             (
                 "Games",
-                format!("{} · {} rated", count("all"), count("rated")),
+                format!("{} · {} rated", count(counts.all), count(counts.rated)),
             ),
-            ("Opponents' average", count("opAvg").round().to_string()),
-            ("Time played", hours(count("seconds"))),
+            (
+                "Opponents' average",
+                counts.op_avg.unwrap_or_default().round().to_string(),
+            ),
+            ("Time played", hours(count(counts.seconds))),
             (
                 "Tournament games",
-                format!("{} · berserked {}", count("tour"), count("berserk")),
+                format!(
+                    "{} · berserked {}",
+                    count(counts.tour),
+                    count(counts.berserk)
+                ),
             ),
             ("Highest", mark(&stats.highest)),
             ("Lowest", mark(&stats.lowest)),
@@ -1406,7 +1282,7 @@ impl PlayersPage {
             .child(widgets::result_row(
                 "Results",
                 None,
-                (count("win"), count("draw"), count("loss")),
+                (count(counts.win), count(counts.draw), count(counts.loss)),
                 palette,
             ))
             .child(v_flex().children(rows.into_iter().map(|(label, value)| {
@@ -1666,125 +1542,6 @@ impl PlayersPage {
     }
 }
 
-/// A finished Lichess game, fetched as PGN (`exportGame`), on the analysis board facing
-/// `orientation`; asks first when that replaces unsaved analysis.
-pub fn open_exported(
-    id: &str,
-    white: Value,
-    black: Value,
-    orientation: shakmaty::Color,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    open_exported_at(id, white, black, orientation, 0, window, cx);
-}
-
-/// A Lichess game by its link (`crate::game::game_link`), from the side and at the move it names.
-pub fn open_linked(link: &crate::game::GameLink, window: &mut Window, cx: &mut App) {
-    open_exported_at(
-        &link.id,
-        Value::Null,
-        Value::Null,
-        link.orientation,
-        link.ply.unwrap_or(0),
-        window,
-        cx,
-    );
-}
-
-fn open_exported_at(
-    id: &str,
-    white: Value,
-    black: Value,
-    orientation: shakmaty::Color,
-    ply: usize,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let export = cx.global::<AppCore>().request(calls::ExportGame {
-        id: GameId(id.to_string()),
-    });
-    let opening = Opening {
-        ply,
-        orientation: Some(orientation),
-        origin: Some(GameOrigin {
-            game_id: Some(id.to_string()),
-            ..GameOrigin::named(&white, &black)
-        }),
-        review: false,
-    };
-    let pgn = async move {
-        match export.await {
-            Ok(pgn) => Ok(pgn),
-            Err(cause) => Err(format!("Could not open the game: {}", cause.message)),
-        }
-    };
-    open_fetched(pgn, opening, window, cx);
-}
-
-/// A public Lichess study's chapter (its first when `chapter` is empty), from the side the study
-/// shows it.
-pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App) {
-    let fetch = cx.global::<AppCore>().request(calls::LichessStudyChapter {
-        id: LichessId(study.to_string()),
-        chapter: StudyId(chapter.to_string()),
-    });
-    window
-        .spawn(cx, async move |cx| {
-            let pgn = match fetch.await {
-                Ok(found) => Some(found.pgn),
-                Err(cause) => {
-                    let message = format!("Could not open the study: {}", cause.message);
-                    let _ = cx.update(|window, cx| window.push_notification(message, cx));
-                    return;
-                }
-            };
-            let _ = cx.update(|window, cx| {
-                let orientation = pgn.as_deref().and_then(crate::game::pgn_orientation);
-                let pgn =
-                    async move { pgn.ok_or_else(|| "That study could not be read".to_string()) };
-                let opening = Opening {
-                    orientation,
-                    ..Opening::default()
-                };
-                open_fetched(pgn, opening, window, cx);
-            });
-        })
-        .detach();
-}
-
-/// Open a game fetched from Lichess on the analysis board (asking first when the board holds
-/// unsaved work), or say why it cannot be opened.
-pub fn open_fetched(
-    pgn: impl std::future::Future<Output = Result<String, String>> + 'static,
-    opening: Opening,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    window
-        .spawn(cx, async move |cx| {
-            let pgn = pgn.await;
-            let _ = cx.update(|window, cx| match pgn {
-                // A variant the analysis board cannot play (Crazyhouse, Atomic…): say so before
-                // asking to replace anything.
-                Ok(pgn)
-                    if !crate::game::pgn_analysable(&pgn)
-                        || crate::game::tree::TreeNode::from_pgn(&pgn).is_none() =>
-                {
-                    window.push_notification("The analysis board cannot open this game", cx)
-                }
-                Ok(pgn) => {
-                    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-                        analysis.open_pgn(&pgn, opening.clone(), cx)
-                    });
-                }
-                Err(message) => window.push_notification(message, cx),
-            });
-        })
-        .detach();
-}
-
-/// A name that opens the player's profile; `ring` outlines it under the keyboard.
 /// Whether a player with `title` passes the leaderboard's `filter`.
 fn title_shown(filter: &str, title: Option<&str>) -> bool {
     match filter {
@@ -1815,6 +1572,7 @@ fn title_choices(board: &[LeaderboardEntry], chosen: &str) -> Vec<Choice> {
     choices
 }
 
+/// A name that opens the player's profile; `ring` outlines it under the keyboard.
 pub fn player_link(id: impl Into<ElementId>, name: String, ring: Hsla) -> Stateful<Div> {
     div()
         .id(id)
@@ -2148,12 +1906,14 @@ mod tests {
 
     #[test]
     fn played_speeds_come_most_played_first() {
-        let profile = json!({ "perfs": {
-            "blitz": { "games": 10 },
-            "rapid": { "games": 40 },
-            "bullet": { "games": 0 },
-            "puzzle": { "games": 900 },
-        }});
+        let profile: kchess_contracts::types::LichessUser =
+            serde_json::from_value(json!({ "perfs": {
+                "blitz": { "games": 10 },
+                "rapid": { "games": 40 },
+                "bullet": { "games": 0 },
+                "puzzle": { "games": 900 },
+            }}))
+            .expect("a user");
         let keys: Vec<_> = played_perfs(&profile)
             .into_iter()
             .map(|(key, _)| key)

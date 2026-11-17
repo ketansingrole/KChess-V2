@@ -7,20 +7,18 @@ use std::collections::HashSet;
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use std::collections::BTreeMap;
+
+use kchess_contracts::types::{RatingSeries, UserPerf};
 
 use crate::assets::icon;
 use crate::chart::{ChartDate, LineChart, Series};
-use crate::rating_history::{
-    DAY_MS, Retry, chart_dates, entries, has_points, point_of, rating_domain,
-};
+use crate::rating_history::{DAY_MS, Retry, chart_dates, has_points, rating_domain, series_points};
 use crate::theme::{Palette, radii};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
-use kchess_domain::records::ratings::{
-    is_puzzle_history, merge_rating_histories, normalize_rating_key, rating_display_name,
-};
+use kchess_domain::records::ratings::{merge_rating_series, rating_display_name};
 
 /// Colour follows the speed, never its rank: each keeps its slot when others are hidden. One
 /// variant, the most played, takes the last slot.
@@ -60,30 +58,15 @@ pub struct Speed {
 }
 
 /// The speeds in a rating history with points, in slot order; puzzles are left out.
-pub fn speeds(history: &Value) -> Vec<Speed> {
+pub fn speeds(history: &[RatingSeries]) -> Vec<Speed> {
     let with_points: Vec<Speed> = history
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry["name"].clone();
-            if name.as_str().is_none_or(str::is_empty)
-                || name.as_str().is_some_and(is_puzzle_history)
-            {
-                return None;
-            }
-            let points: Vec<(f64, f64)> = entry["points"]
-                .as_array()?
-                .iter()
-                .filter_map(point_of)
-                .collect();
-            if points.is_empty() {
-                return None;
-            }
-            let name = name.as_str().unwrap_or_default();
-            Some(Speed {
-                key: normalize_rating_key(name),
-                name: rating_display_name(name),
+        .iter()
+        .filter(|series| !series.name.is_empty() && !series.is_puzzles())
+        .filter_map(|series| {
+            let points = series_points(series);
+            (!points.is_empty()).then(|| Speed {
+                key: series.key(),
+                name: rating_display_name(&series.name),
                 slot: 0,
                 points,
             })
@@ -154,10 +137,10 @@ pub fn rows(shown: &[&Speed], since: f64) -> Vec<(f64, Vec<Option<f64>>)> {
 }
 
 pub struct RatingSpeeds {
-    official: Value,
-    fallback: Value,
-    /// The player's ratings now by perf key (`perfs`): `rating`, `prov`, `prog`.
-    current: Value,
+    official: Vec<RatingSeries>,
+    fallback: Vec<RatingSeries>,
+    /// The player's ratings now by perf key.
+    current: BTreeMap<String, UserPerf>,
     hidden: HashSet<String>,
     range: &'static str,
     chart: Entity<LineChart>,
@@ -170,9 +153,9 @@ pub struct RatingSpeeds {
 impl RatingSpeeds {
     pub fn new(games_hint: impl Into<SharedString>, cx: &mut Context<Self>) -> RatingSpeeds {
         RatingSpeeds {
-            official: Value::Null,
-            fallback: Value::Null,
-            current: Value::Null,
+            official: Vec::new(),
+            fallback: Vec::new(),
+            current: BTreeMap::new(),
             hidden: HashSet::new(),
             range: "All",
             chart: cx.new(|_| LineChart::new(px(260.), |rating| format!("{}", rating.round()))),
@@ -181,16 +164,21 @@ impl RatingSpeeds {
         }
     }
 
-    /// Lichess's history and the one from games (either may be `null` while unknown). Another
+    /// Lichess's history and the one from games (either empty while unknown). Another
     /// player's history shows every speed again.
-    pub fn set(&mut self, official: Value, fallback: Value, cx: &mut Context<Self>) {
+    pub fn set(
+        &mut self,
+        official: Vec<RatingSeries>,
+        fallback: Vec<RatingSeries>,
+        cx: &mut Context<Self>,
+    ) {
         self.official = official;
         self.fallback = fallback;
         self.hidden.clear();
         self.draw(cx);
     }
 
-    pub fn set_current(&mut self, current: Value, cx: &mut Context<Self>) {
+    pub fn set_current(&mut self, current: BTreeMap<String, UserPerf>, cx: &mut Context<Self>) {
         self.current = current;
         cx.notify();
     }
@@ -205,8 +193,8 @@ impl RatingSpeeds {
     }
 
     /// Lichess's own wins; games fill speeds it has no points for.
-    fn history(&self) -> Value {
-        merge_rating_histories(entries(&self.official), entries(&self.fallback))
+    fn history(&self) -> Vec<RatingSeries> {
+        merge_rating_series(&self.official, &self.fallback)
     }
 
     fn since(&self) -> f64 {
@@ -289,12 +277,15 @@ impl RatingSpeeds {
     /// A speed's chip: its colour (an outline while hidden), name, rating now and its change.
     fn chip(&self, speed: &Speed, cx: &mut Context<Self>, palette: &Palette) -> impl IntoElement {
         let hidden = self.hidden.contains(&speed.key);
-        let current = &self.current[&speed.key];
-        let rating = current["rating"]
-            .as_f64()
+        let current = self.current.get(&speed.key);
+        let rating = current
+            .and_then(|perf| perf.rating)
+            .map(|rating| rating as f64)
             .or(speed.points.last().map(|point| point.1));
-        let provisional = current["prov"] == json!(true);
-        let progress = current["prog"].as_f64().filter(|change| *change != 0.);
+        let provisional = current.and_then(|perf| perf.prov) == Some(true);
+        let progress = current
+            .and_then(|perf| perf.prog)
+            .filter(|change| *change != 0);
         let key = speed.key.clone();
         let color = slot_color(speed.slot, palette.dark);
         let action = if hidden { "Show" } else { "Hide" };
@@ -344,12 +335,12 @@ impl RatingSpeeds {
             .children(progress.map(|change| {
                 div()
                     .text_size(px(12.))
-                    .text_color(if change > 0. {
+                    .text_color(if change > 0 {
                         palette.success
                     } else {
                         palette.error
                     })
-                    .child(if change > 0. {
+                    .child(if change > 0 {
                         format!("+{change}")
                     } else {
                         format!("{change}")
@@ -462,7 +453,7 @@ impl Render for RatingSpeeds {
 #[cfg(test)]
 mod tests {
     use super::{Speed, rows, speeds};
-    use serde_json::json;
+    use kchess_contracts::types::RatingSeries;
 
     fn speed(key: &str, points: &[(f64, f64)]) -> Speed {
         Speed {
@@ -475,14 +466,18 @@ mod tests {
 
     #[test]
     fn colours_follow_the_speed_and_puzzles_stay_out() {
-        let history = json!([
-            { "name": "Rapid", "points": [[2026, 0, 1, 1500]] },
-            { "name": "Bullet", "points": [[2026, 0, 2, 1400]] },
-            { "name": "Puzzles", "points": [[2026, 0, 2, 2000]] },
-            { "name": "Atomic", "points": [[2026, 0, 3, 1300]] },
-            { "name": "Horde", "points": [[2026, 0, 3, 1200], [2026, 0, 4, 1210]] },
-            { "name": "Classical", "points": [] },
-        ]);
+        let series = |name: &str, points: &[[i64; 4]]| RatingSeries {
+            name: name.into(),
+            points: points.to_vec(),
+        };
+        let history = [
+            series("Rapid", &[[2026, 0, 1, 1500]]),
+            series("Bullet", &[[2026, 0, 2, 1400]]),
+            series("Puzzles", &[[2026, 0, 2, 2000]]),
+            series("Atomic", &[[2026, 0, 3, 1300]]),
+            series("Horde", &[[2026, 0, 3, 1200], [2026, 0, 4, 1210]]),
+            series("Classical", &[]),
+        ];
         let slots: Vec<(String, usize)> = speeds(&history)
             .into_iter()
             .map(|speed| (speed.key, speed.slot))

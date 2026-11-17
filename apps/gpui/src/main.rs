@@ -42,6 +42,7 @@ mod palette;
 mod part;
 mod play_layout;
 mod played;
+mod player_search;
 mod position_engine;
 mod power;
 mod prefs;

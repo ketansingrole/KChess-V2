@@ -368,9 +368,7 @@ impl WatchPage {
     /// The stream on a lost connection ended with it: what is watched streams again.
     fn reconnected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // The engine's search ended with the connection too.
-        let request = self.broadcasts.engine.engine.wanted().cloned();
-        self.broadcasts.engine.engine.restart(
-            request,
+        self.broadcasts.engine.engine.retry(
             |page: &mut WatchPage| &mut page.broadcasts.engine.engine,
             cx,
         );

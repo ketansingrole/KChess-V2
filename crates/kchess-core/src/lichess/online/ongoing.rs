@@ -44,7 +44,9 @@ pub(crate) fn ongoing_game(game: &Value, account: &str) -> OngoingGame {
             provisional: None,
             online: None,
         },
-        color: game["color"].as_str().unwrap_or("").to_string(),
+        color: game["color"]
+            .as_str()
+            .and_then(kchess_domain::color::from_name),
         fen: game["fen"].as_str().unwrap_or("").to_string(),
         last_move: game["lastMove"]
             .as_str()

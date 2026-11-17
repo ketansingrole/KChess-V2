@@ -327,9 +327,7 @@ async fn with_core(
             }
             Command::Login => {
                 // The sign-in page is opened (or printed) while the core waits for it.
-                print(json!(
-                    core.request(calls::ConnectLichess { look: None }).await?
-                ));
+                print(json!(core.request(calls::ConnectLichess {}).await?));
             }
             Command::Call => {
                 let method = rest.first().map(String::as_str).unwrap_or_default();

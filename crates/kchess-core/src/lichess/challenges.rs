@@ -18,7 +18,7 @@ pub use kchess_domain::records::challenge::{
 
 /// A real-time challenge Lichess stops reporting is forgotten after this long.
 const LIVE_TTL_MS: i64 = 30 * 60_000;
-/// `CORRESPONDENCE_TTL_MS`.
+/// A correspondence challenge, after this long.
 const CORRESPONDENCE_TTL_MS: i64 = 14 * 86_400_000;
 /// The inbox keeps this many; the oldest sighting goes first.
 pub const MAX_CHALLENGES: usize = 50;
@@ -313,7 +313,13 @@ mod tests {
         inbox.ingest("Alice", &cancelled);
         assert!(inbox.list().is_empty());
         inbox.ingest("Alice", &challenge(json!({})));
-        clock.fetch_add(31 * 60_000, Ordering::SeqCst);
+        clock.fetch_add(29 * 60_000, Ordering::SeqCst);
+        assert_eq!(
+            inbox.list().len(),
+            1,
+            "a live challenge is kept for half an hour"
+        );
+        clock.fetch_add(2 * 60_000, Ordering::SeqCst);
         assert!(inbox.list().is_empty());
         inbox.ingest(
             "Alice",

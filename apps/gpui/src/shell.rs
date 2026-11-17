@@ -23,7 +23,6 @@ mod settings_dialog;
 /// The window's height above the page.
 pub const TOPBAR_HEIGHT: Pixels = px(52.);
 
-/// Whether the sidebar is open.
 const SIDEBAR_OPEN: &str = "kchess:sidebar-open";
 
 /// The sidebar's width while open.
@@ -1294,7 +1293,7 @@ fn game_mark(cx: &App) -> Option<GameMark> {
     let correspondence_turn = online
         .ongoing
         .iter()
-        .any(|game| game.speed == "correspondence" && game.is_my_turn);
+        .any(|game| game.correspondence() && game.is_my_turn);
     if my_turn || correspondence_turn {
         Some(GameMark::Turn)
     } else if live {

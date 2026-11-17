@@ -71,11 +71,148 @@ pub(crate) fn spawn_guarded(
     })
 }
 
+/// The answer of a run going, once it has one.
+type Answer<T> = tokio::sync::watch::Receiver<Option<T>>;
+
+/// Runs by key, one at a time: a run asked for while one of its key is going joins it and
+/// answers with its result. A forgotten key starts afresh on the next run, while the run going
+/// still answers those waiting on it.
+pub(crate) struct SingleFlight<T> {
+    runs: std::sync::Mutex<std::collections::HashMap<String, (u64, Answer<T>)>>,
+    next: std::sync::atomic::AtomicU64,
+}
+
+impl<T> Default for SingleFlight<T> {
+    fn default() -> Self {
+        SingleFlight {
+            runs: std::sync::Mutex::new(std::collections::HashMap::new()),
+            next: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}
+
+impl<T: Clone> SingleFlight<T> {
+    /// `run`'s result, or that of the run of `key` already going; `cancelled` when that one was
+    /// dropped before it answered.
+    pub(crate) async fn run(
+        &self,
+        key: &str,
+        run: impl Future<Output = T>,
+        cancelled: impl Fn() -> T,
+    ) -> T {
+        let joined = lock(&self.runs)
+            .get(key)
+            .map(|(_, outcome)| outcome.clone());
+        if let Some(mut outcome) = joined {
+            loop {
+                if let Some(result) = outcome.borrow().clone() {
+                    return result;
+                }
+                if outcome.changed().await.is_err() {
+                    return cancelled();
+                }
+            }
+        }
+        let generation = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let (send, receive) = tokio::sync::watch::channel(None);
+        lock(&self.runs).insert(key.to_string(), (generation, receive));
+        // Forgotten however the run ends: a cancelled call once left its entry behind, and every
+        // later run of its key joined it and failed at once.
+        let forget = on_drop(|| {
+            let mut runs = lock(&self.runs);
+            if runs
+                .get(key)
+                .is_some_and(|(current, _)| *current == generation)
+            {
+                runs.remove(key);
+            }
+        });
+        let result = run.await;
+        drop(forget);
+        let _ = send.send(Some(result.clone()));
+        result
+    }
+
+    /// Later runs of `key` start afresh.
+    pub(crate) fn forget(&self, key: &str) {
+        lock(&self.runs).remove(key);
+    }
+
+    /// The keys running now.
+    pub(crate) fn running(&self) -> Vec<String> {
+        lock(&self.runs).keys().cloned().collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// A run asked for while its key runs answers with that run; a cancelled run leaves nothing
+    /// for the next to join.
+    #[tokio::test]
+    async fn a_second_run_joins_the_first() {
+        let flight = SingleFlight::<u32>::default();
+        let (release, wait) = tokio::sync::oneshot::channel::<()>();
+        let first = flight.run(
+            "a",
+            async {
+                let _ = wait.await;
+                1
+            },
+            || 0,
+        );
+        let second = flight.run("a", async { 2 }, || 0);
+        let (first, second) = tokio::join!(first, async {
+            tokio::task::yield_now().await;
+            let _ = release.send(());
+            second.await
+        });
+        assert_eq!((first, second), (1, 1));
+        assert!(flight.running().is_empty());
+        let cancelled = flight.run("b", std::future::pending::<u32>(), || 0);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(10), cancelled)
+                .await
+                .is_err()
+        );
+        assert_eq!(flight.run("b", async { 3 }, || 0).await, 3);
+    }
+
+    /// A forgotten key's next run starts afresh while the first still runs, and the first one
+    /// ending leaves the new run in place for later runs to join.
+    #[tokio::test]
+    async fn a_forgotten_key_runs_afresh() {
+        let flight = Arc::new(SingleFlight::<u32>::default());
+        let start = |value: u32| {
+            let (release, wait) = tokio::sync::oneshot::channel::<()>();
+            let flight = Arc::clone(&flight);
+            let run = tokio::spawn(async move {
+                let work = async move {
+                    let _ = wait.await;
+                    value
+                };
+                flight.run("a", work, || 0).await
+            });
+            (release, run)
+        };
+        let (release_first, first) = start(1);
+        tokio::task::yield_now().await;
+        assert_eq!(flight.running(), ["a"]);
+        flight.forget("a");
+        assert!(flight.running().is_empty());
+        let (release_second, second) = start(2);
+        tokio::task::yield_now().await;
+        let _ = release_first.send(());
+        assert_eq!(first.await.unwrap(), 1);
+        assert_eq!(flight.running(), ["a"]);
+        let (_, third) = start(3);
+        tokio::task::yield_now().await;
+        let _ = release_second.send(());
+        assert_eq!((second.await.unwrap(), third.await.unwrap()), (2, 2));
+    }
 
     #[tokio::test]
     async fn a_panic_becomes_an_error() {

@@ -40,7 +40,11 @@ impl Global for Pending {}
 pub fn position(game: &OngoingGame) -> Option<String> {
     let placement = game.fen.split_whitespace().next()?;
     let board: shakmaty::Board = placement.parse().ok()?;
-    let side = if game.color == "black" { "b" } else { "w" };
+    let side = if game.color == Some(shakmaty::Color::Black) {
+        "b"
+    } else {
+        "w"
+    };
     let piece = |square: Square, letter: char| {
         board
             .piece_at(square)

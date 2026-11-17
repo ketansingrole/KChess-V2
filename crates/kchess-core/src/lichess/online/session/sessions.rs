@@ -134,10 +134,7 @@ impl OnlineSession {
             self.st().attaching_account.clear();
         }
         match outcome {
-            Err(cause) if !current => {
-                let _ = cause;
-                Err(CoreError::aborted("Attachment cancelled."))
-            }
+            Err(_) if !current => Err(CoreError::aborted("Attachment cancelled.")),
             outcome => outcome,
         }
     }

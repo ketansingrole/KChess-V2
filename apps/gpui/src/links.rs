@@ -101,7 +101,7 @@ impl Link {
                     "",
                 ),
                 None,
-                move |window, cx| crate::pages::players::open_study(&study, &chapter, window, cx),
+                move |window, cx| crate::pages::analysis::open_study(&study, &chapter, window, cx),
             )],
             Link::Broadcast(link) => vec![command(
                 ActionInfo::new("pasted:broadcast", "Watch this broadcast", "radio", ""),
@@ -167,7 +167,7 @@ impl Link {
                         "",
                     ),
                     Some(id),
-                    move |window, cx| crate::pages::players::open_linked(&link, window, cx),
+                    move |window, cx| crate::pages::analysis::open_linked(&link, window, cx),
                 )]
             }
             Link::Moves(pgn) => vec![command(
@@ -278,6 +278,32 @@ pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
         analysis.import_text(text.clone(), window, cx);
         true
     });
+}
+
+/// Ask for a game file, then hand `read` its text (`read_game_file`), or `None` when it cannot be
+/// read as one. Nothing happens when the dialog is cancelled.
+pub fn choose_game_file<V: 'static>(
+    window: &mut Window,
+    cx: &mut Context<V>,
+    read: impl FnOnce(&mut V, Option<String>, &mut Window, &mut Context<V>) + 'static,
+) {
+    let chosen = cx.prompt_for_paths(PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: Some("Open".into()),
+    });
+    cx.spawn_in(window, async move |this, cx| {
+        let Ok(Ok(Some(paths))) = chosen.await else {
+            return;
+        };
+        let Some(path) = paths.first() else {
+            return;
+        };
+        let text = read_game_file(path);
+        let _ = this.update_in(cx, |this, window, cx| read(this, text, window, cx));
+    })
+    .detach();
 }
 
 /// A PGN or FEN file's text (`.pgn`, `.fen` or `.txt`, up to 2 MB), or `None`.

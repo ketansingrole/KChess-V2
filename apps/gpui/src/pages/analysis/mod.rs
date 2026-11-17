@@ -16,7 +16,7 @@ mod tree_view;
 use crate::game::surface::TakesKeys as _;
 use crate::game::tree::TreePgn as _;
 use crate::shortcuts::{PageKey, page_key};
-use engine::{prefs_lines, stop_analysis};
+use engine::prefs_lines;
 use kchess_contracts::calls;
 use kchess_contracts::types::AnalysisUpdate;
 use tree_view::{TreeView, flow};
@@ -73,7 +73,8 @@ pub(crate) const KEYS: &[PageKey<AnalysisKey>] = &[
 ];
 
 pub use load::{
-    analyse_puzzle, board, new_board, open_line, practise_game, replace, replace_read, when_read,
+    analyse_puzzle, board, new_board, open_exported, open_line, open_linked, open_study,
+    practise_game, replace, replace_read, when_read,
 };
 pub use review::{Opening, classification_look};
 
@@ -86,7 +87,7 @@ use futures::FutureExt as _;
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{InputEvent, InputState, Redo, Textarea, TextareaState, Undo};
+use gpui_kit::component::input::{InputEvent, Redo, Textarea, TextareaState, Undo};
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::popover::Popover;
@@ -108,6 +109,7 @@ use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::engine_view::EVAL_BAR;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
 use crate::export::Exporter;
+use crate::game::STANDARD_FEN;
 use crate::game::played::PlayedGame;
 use crate::game::session::{Resumes, SAVE_DELAY, SessionSaver};
 use crate::game::surface::Steps;
@@ -116,7 +118,6 @@ use crate::game::tree::{
     moves_of, path_of, pv_san,
 };
 use crate::game::view::Way;
-use crate::game::{STANDARD_FEN, view};
 use crate::online::OnlineHandle;
 use crate::pages::study_bar::{STUDY_BAR, StudyBar};
 use crate::part::Part;
@@ -288,8 +289,7 @@ pub struct AnalysisPage {
     exporter: Entity<Exporter>,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
-    move_input: Entity<InputState>,
-    move_message: Option<SharedString>,
+    move_box: crate::game::surface::MoveBox,
     lines_choice: Entity<SelectState<Vec<SharedString>>>,
     import: Entity<TextareaState>,
     import_error: Option<SharedString>,
@@ -402,7 +402,7 @@ impl AnalysisPage {
                 None,
             ))
         });
-        let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
+        let (move_box, typed) = crate::game::surface::MoveBox::new(Self::typed_move, window, cx);
         let lines = prefs_lines(cx);
         let lines_choice = cx.new(|cx| {
             SelectState::new(
@@ -461,15 +461,7 @@ impl AnalysisPage {
                 |this, _, event: &crate::voice::VoiceEvent, cx| this.voice_heard(event, cx),
             ),
             cx.observe(&crate::voice::handle(cx), |_, _, cx| cx.notify()),
-            cx.subscribe_in(
-                &move_input,
-                window,
-                |this, _, event: &InputEvent, window, cx| {
-                    if let InputEvent::PressEnter { .. } = event {
-                        this.typed_move(window, cx);
-                    }
-                },
-            ),
+            typed,
             cx.subscribe(
                 &lines_choice,
                 |this, state, _: &SelectEvent<Vec<SharedString>>, cx| {
@@ -547,8 +539,7 @@ impl AnalysisPage {
             exporter: cx.new(|_| Exporter::default()),
             board,
             layout: PlayLayout::default(),
-            move_input,
-            move_message: None,
+            move_box,
             lines_choice,
             import,
             import_error: None,
@@ -944,28 +935,15 @@ impl AnalysisPage {
     }
 
     fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.move_input.read(cx).value().trim().to_string();
-        if text.is_empty() {
-            return;
-        }
-        let setup = Setup {
-            variant: self.root.variant(),
-            fen: self.node().fen.clone(),
-        };
-        let typed = self
-            .position()
-            .and_then(|position| view::typed_uci(&setup, &position, &text));
-        match typed {
+        let position = self.position();
+        match self
+            .move_box
+            .take(self.root.variant(), position.as_ref(), window, cx)
+        {
             Some(uci) => {
-                self.move_message = None;
-                self.move_input
-                    .update(cx, |input, cx| input.set_value("", window, cx));
                 self.play(&uci, cx);
             }
-            None => {
-                self.move_message = Some("Enter a legal move, such as Nf3 or g1f3".into());
-                cx.notify();
-            }
+            None => cx.notify(),
         }
     }
 
@@ -1892,7 +1870,7 @@ impl Render for AnalysisPage {
         // The column always keeps the eval bar's width beside the board.
         // The column holds the board and the move box under it.
         let board_size = self.board_size(window);
-        let entry = widgets::move_entry(&self.move_input, true, &palette);
+        let entry = widgets::move_entry(&self.move_box.input, true, &palette);
         let (voice, voice_line) = board_bar(
             &self.voice,
             cx.entity().downgrade(),
@@ -1984,12 +1962,7 @@ impl Render for AnalysisPage {
                             .child(widgets::move_row(entry, voice)),
                     )
                     .children(voice_line)
-                    .children(self.move_message.clone().map(|message| {
-                        div()
-                            .text_size(px(12.))
-                            .text_color(palette.text_muted)
-                            .child(message)
-                    }))
+                    .children(self.move_box.message(&palette))
                     .children(self.saver.problems(cx).into_iter().enumerate().map(
                         |(ix, error)| {
                             div()

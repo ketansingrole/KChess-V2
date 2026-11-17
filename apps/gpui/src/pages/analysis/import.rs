@@ -91,33 +91,17 @@ impl AnalysisPage {
     /// Pick a PGN or FEN file and import it, as if its text were pasted; one that cannot be
     /// read says so under the field.
     pub(super) fn choose_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let chosen = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Open".into()),
+        crate::links::choose_game_file(window, cx, |this, text, window, cx| match text {
+            Some(text) => {
+                this.import
+                    .update(cx, |field, cx| field.set_value(text, window, cx));
+                this.run_import(window, cx);
+            }
+            None => {
+                this.import_error = Some("Choose a PGN or FEN file under 2 MB".into());
+                window.refresh();
+            }
         });
-        cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(paths))) = chosen.await else {
-                return;
-            };
-            let Some(path) = paths.first() else {
-                return;
-            };
-            let text = crate::links::read_game_file(path);
-            let _ = this.update_in(cx, |this, window, cx| match text {
-                Some(text) => {
-                    this.import
-                        .update(cx, |field, cx| field.set_value(text, window, cx));
-                    this.run_import(window, cx);
-                }
-                None => {
-                    this.import_error = Some("Choose a PGN or FEN file under 2 MB".into());
-                    window.refresh();
-                }
-            });
-        })
-        .detach();
     }
 
     /// Import `text` as the import dialog would, from a file dropped on the window: the dialog

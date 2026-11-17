@@ -43,15 +43,6 @@ pub fn first_move(setup: &Setup) -> crate::widgets::FirstMove {
     }
 }
 
-/// A move typed as SAN or UCI, as UCI when it is legal in `position` (`kchess_games::typed_uci`).
-pub fn typed_uci(setup: &Setup, position: &VariantPosition, text: &str) -> Option<String> {
-    kchess_games::typed_uci(
-        setup.variant,
-        &kchess_domain::rules::make_fen(position),
-        text,
-    )
-}
-
 /// The board for the game at `ply`, with `movable` the side that may move now.
 pub fn board_state(
     setup: &Setup,

@@ -4,7 +4,7 @@
 //! Lichess game.
 
 use kchess_contracts::calls;
-use kchess_contracts::types::{AnalysisUpdate, BroadcastGame, EngineLine};
+use kchess_contracts::types::{AnalysisRequest, AnalysisUpdate, BroadcastGame, EngineLine};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -15,7 +15,6 @@ use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
 use shakmaty::{Color, Position as _, Square};
 
 use super::WatchPage;
@@ -219,7 +218,7 @@ impl WatchPage {
 
     /// The search the broadcasts want now: the open board's, or the next grid board without an
     /// estimate for its position.
-    fn engine_request(&self, cx: &App) -> (Option<Value>, Option<(String, String)>) {
+    fn engine_request(&self, cx: &App) -> (Option<AnalysisRequest>, Option<(String, String)>) {
         let broadcasts = &self.broadcasts;
         let visible = self.shown && self.tab == super::Tab::Broadcasts;
         if !visible || !broadcasts.engine.ready || !assistance(cx) {
@@ -235,13 +234,15 @@ impl WatchPage {
                 .as_ref()
                 .map(kchess_domain::rules::make_fen)
                 .unwrap_or_default();
-            let request = json!({
-                "fen": fen,
-                "rootFen": game.start_fen,
-                "moves": history,
-                "lines": crate::prefs::get::<usize>(cx, LINES, 3).clamp(1, 5),
-                "infinite": crate::prefs::get(cx, INFINITE, false),
-            });
+            let request = AnalysisRequest {
+                fen,
+                lines: crate::prefs::get::<u32>(cx, LINES, 3).clamp(1, 5),
+                infinite: Some(crate::prefs::get(cx, INFINITE, false)),
+                root_fen: Some(game.start_fen.clone()),
+                moves: Some(history),
+                client_id: None,
+                variant: None,
+            };
             return (Some(request), None);
         }
         if broadcasts.tour.is_none() || !crate::prefs::get(cx, GRID_EVALUATIONS, true) {
@@ -258,12 +259,15 @@ impl WatchPage {
         let Some(game) = next else {
             return (None, None);
         };
-        let request = json!({
-            "fen": game.fen,
-            "rootFen": game.start_fen,
-            "moves": game.moves,
-            "lines": 1,
-        });
+        let request = AnalysisRequest {
+            fen: game.fen.clone(),
+            lines: 1,
+            infinite: None,
+            root_fen: Some(game.start_fen.clone()),
+            moves: Some(game.moves.clone()),
+            client_id: None,
+            variant: None,
+        };
         let previewing = (game.id.clone(), context_of(game));
         (Some(request), Some(previewing))
     }
@@ -546,9 +550,7 @@ impl WatchPage {
                         .icon(icon("refresh-cw"))
                         .label("Retry engine")
                         .on_click(cx.listener(|this, _, _, cx| {
-                            let request = this.broadcasts.engine.engine.wanted().cloned();
-                            let engine = &mut this.broadcasts.engine.engine;
-                            engine.restart(request, engine_of, cx);
+                            this.broadcasts.engine.engine.retry(engine_of, cx);
                             cx.notify();
                         })),
                 )

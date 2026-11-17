@@ -158,7 +158,6 @@ fn an_answer_waits_for_the_client_to_hang_up() {
     waiter.join().unwrap().unwrap();
 }
 
-/// A dropped server stops listening.
 #[test]
 fn a_dropped_server_stops_listening() {
     let server = Server::start(|_, out| json(out, 200, &json!({}))).unwrap();

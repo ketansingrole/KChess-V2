@@ -12,7 +12,8 @@ use super::client::Lane;
 use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
 use kchess_contracts::types::{
     ActivityDay, ActivityItem, ImportedGame, LeaderboardEntry, LichessGame, LichessRelation,
-    PerfType, PlayerSuggestion, RatingChange, RelationAction, TimelineEntry, UsageKind,
+    LichessUser, PerfType, PlayerSuggestion, RatingChange, RelationAction, TimelineEntry,
+    UsageKind,
 };
 use kchess_domain::records::RATING_DISPLAY_NAMES;
 
@@ -75,10 +76,10 @@ impl Lichess {
 
     /// Many players at once (`POST /api/users`), in requests of 300; Lichess leaves
     /// out names it does not know.
-    pub async fn profiles(&self, usernames: &[String]) -> CoreResult<Vec<Value>> {
+    pub async fn profiles(&self, usernames: &[String]) -> CoreResult<Vec<LichessUser>> {
         let mut users = Vec::new();
         for chunk in usernames.chunks(USERS_PER_REQUEST) {
-            let page: Vec<Value> = self
+            let page: Vec<LichessUser> = self
                 .client()
                 .post("/api/users", &self.anonymous(UsageKind::Profile))
                 .text(chunk.join(","))

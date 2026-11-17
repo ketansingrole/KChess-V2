@@ -10,8 +10,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::{Days, Username};
-use kchess_contracts::types::Reply;
-use serde_json::{Value, json};
+use kchess_contracts::types::{
+    LichessUser, PuzzleDashboard, RatingSeries, Reply, StormDashboard, StormHighs,
+};
 
 use super::{Theme, theme_name};
 use crate::assets::icon;
@@ -54,22 +55,22 @@ struct ThemeRow {
     performance: f64,
 }
 
-fn theme_rows(dashboard: &Value, sort: &str) -> Vec<ThemeRow> {
-    let mut rows: Vec<ThemeRow> = dashboard["themes"]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .map(|(key, entry)| {
-            let results = &entry["results"];
-            let attempts = results["nb"].as_u64().unwrap_or_default();
-            let wins = results["firstWins"].as_u64().unwrap_or_default();
+fn theme_rows(dashboard: &PuzzleDashboard, sort: &str) -> Vec<ThemeRow> {
+    let mut rows: Vec<ThemeRow> = dashboard
+        .themes
+        .iter()
+        .map(|(key, theme)| {
+            let results = &theme.results;
+            let count = |count: Option<i64>| u64::try_from(count.unwrap_or_default()).unwrap_or(0);
+            let attempts = count(results.nb);
+            let wins = count(results.first_wins);
             ThemeRow {
                 key: key.clone(),
                 attempts,
                 first_try: (wins * 100 + attempts / 2)
                     .checked_div(attempts)
                     .unwrap_or(0),
-                performance: results["performance"].as_f64().unwrap_or_default(),
+                performance: results.performance.unwrap_or_default() as f64,
             }
         })
         .collect();
@@ -93,10 +94,11 @@ fn theme_rows(dashboard: &Value, sort: &str) -> Vec<ThemeRow> {
 pub struct PuzzleStats {
     account: String,
     accounts: Vec<String>,
-    profile: Value,
-    history: Value,
-    dashboard: Value,
-    storm: Value,
+    profile: LichessUser,
+    history: Vec<RatingSeries>,
+    /// None until read.
+    dashboard: Option<PuzzleDashboard>,
+    storm: Option<StormDashboard>,
     loading: crate::loading::Loading,
     reconnect: bool,
     sort: &'static str,
@@ -172,10 +174,10 @@ impl PuzzleStats {
         PuzzleStats {
             account: String::new(),
             accounts: Vec::new(),
-            profile: Value::Null,
-            history: Value::Null,
-            dashboard: Value::Null,
-            storm: Value::Null,
+            profile: LichessUser::default(),
+            history: Vec::new(),
+            dashboard: None,
+            storm: None,
             loading: Default::default(),
             reconnect: false,
             sort: "weak",
@@ -217,10 +219,10 @@ impl PuzzleStats {
     pub fn load(&mut self, cx: &mut Context<Self>) {
         let who = self.account.clone();
         if who.is_empty() {
-            self.profile = Value::Null;
-            self.history = Value::Null;
-            self.dashboard = Value::Null;
-            self.storm = Value::Null;
+            self.profile = LichessUser::default();
+            self.history = Vec::new();
+            self.dashboard = None;
+            self.storm = None;
             self.loading.stop();
             cx.notify();
             return;
@@ -253,17 +255,17 @@ impl PuzzleStats {
                 if !this.loading.answered(turn) {
                     return;
                 }
-                this.profile = profile.unwrap_or(Value::Null);
-                this.history = history.unwrap_or(Value::Null);
-                this.storm = storm.unwrap_or(Value::Null);
+                this.profile = profile.unwrap_or_default();
+                this.history = history.unwrap_or_default();
+                this.storm = storm.ok();
                 match dashboard {
                     Ok(Reply::NeedsReconnect) => {
-                        this.dashboard = Value::Null;
+                        this.dashboard = None;
                         this.reconnect = true;
                     }
-                    Ok(Reply::Done(board)) => this.dashboard = board,
+                    Ok(Reply::Done(board)) => this.dashboard = Some(board),
                     Err(cause) => {
-                        this.dashboard = Value::Null;
+                        this.dashboard = None;
                         this.loading.failed("puzzles", &cause);
                     }
                 }
@@ -275,19 +277,7 @@ impl PuzzleStats {
 
     /// The puzzle rating history on the chart.
     fn draw(&mut self, cx: &mut Context<Self>) {
-        let points: Vec<(f64, f64)> = self
-            .history
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|entry| {
-                entry["name"].as_str().is_some_and(|name| {
-                    name.eq_ignore_ascii_case("puzzle") || name.eq_ignore_ascii_case("puzzles")
-                })
-            })
-            .and_then(|entry| entry["points"].as_array())
-            .map(|points| points.iter().filter_map(point_of).collect())
-            .unwrap_or_default();
+        let points = self.puzzle_points();
         let format = |millis: f64, pattern: &str| {
             chrono::DateTime::from_timestamp_millis(millis as i64)
                 .map(|date| date.format(pattern).to_string())
@@ -323,34 +313,21 @@ impl PuzzleStats {
         cx.notify();
     }
 
+    /// The puzzle rating's history as UTC times and ratings.
+    fn puzzle_points(&self) -> Vec<(f64, f64)> {
+        self.history
+            .iter()
+            .find(|series| series.is_puzzles())
+            .map(crate::rating_history::series_points)
+            .unwrap_or_default()
+    }
+
     fn point_count(&self) -> usize {
         self.history
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|entry| {
-                entry["name"].as_str().is_some_and(|name| {
-                    name.eq_ignore_ascii_case("puzzle") || name.eq_ignore_ascii_case("puzzles")
-                })
-            })
-            .and_then(|entry| entry["points"].as_array())
-            .map_or(0, Vec::len)
+            .iter()
+            .find(|series| series.is_puzzles())
+            .map_or(0, |series| series.points.len())
     }
-}
-
-/// `[year, month0, day, rating]` as a UTC time and a rating.
-fn point_of(raw: &Value) -> Option<(f64, f64)> {
-    let parts = raw.as_array()?;
-    let number = |index: usize| parts.get(index)?.as_f64().filter(|n| n.is_finite());
-    let date = chrono::NaiveDate::from_ymd_opt(
-        number(0)? as i32,
-        number(1)? as u32 + 1,
-        number(2)? as u32,
-    )?;
-    Some((
-        date.and_hms_opt(0, 0, 0)?.and_utc().timestamp_millis() as f64,
-        number(3)?,
-    ))
 }
 
 fn stat(
@@ -388,36 +365,35 @@ fn stat(
 }
 
 /// Storm high scores, the best Storm and Streak, and recent Storm days.
-pub fn storm_card(storm: &Value, profile: &Value, palette: &Palette) -> Div {
+pub fn storm_card(storm: &StormDashboard, profile: &LichessUser, palette: &Palette) -> Div {
     let label = |text: &str| {
         div()
             .text_size(px(12.))
             .text_color(palette.text_muted)
             .child(text.to_string())
     };
-    let value = |value: &Value| {
+    let value = |value: Option<i64>| {
         div()
             .text_size(px(20.))
             .font_weight(FontWeight::MEDIUM)
-            .child(
-                value
-                    .as_f64()
-                    .map_or_else(|| "—".to_string(), |n| n.to_string()),
-            )
+            .child(value.map_or_else(|| "—".to_string(), |n| n.to_string()))
     };
     let highs = h_flex().flex_wrap().gap(px(16.)).children(
         [
-            ("Today", "day"),
-            ("This week", "week"),
-            ("This month", "month"),
-            ("All time", "allTime"),
+            (
+                "Today",
+                (|high: &StormHighs| high.day) as fn(&StormHighs) -> Option<i64>,
+            ),
+            ("This week", |high| high.week),
+            ("This month", |high| high.month),
+            ("All time", |high| high.all_time),
         ]
-        .map(|(text, key)| {
+        .map(|(text, high)| {
             v_flex()
                 .min_w(px(110.))
                 .gap(px(2.))
                 .child(label(text))
-                .child(value(&storm["high"][key]))
+                .child(value(high(&storm.high)))
         }),
     );
     let best = |text: &str, perf: &str| {
@@ -425,7 +401,7 @@ pub fn storm_card(storm: &Value, profile: &Value, palette: &Palette) -> Div {
             .min_w(px(110.))
             .gap(px(2.))
             .child(label(text))
-            .child(value(&profile["perfs"][perf]["score"]))
+            .child(value(profile.perfs.get(perf).and_then(|perf| perf.score)))
             .child(
                 div()
                     .text_size(px(12.))
@@ -433,18 +409,16 @@ pub fn storm_card(storm: &Value, profile: &Value, palette: &Palette) -> Div {
                     .child(format!(
                         "{} runs",
                         widgets::format_count(
-                            profile["perfs"][perf]["runs"].as_f64().unwrap_or_default()
+                            profile
+                                .perfs
+                                .get(perf)
+                                .and_then(|perf| perf.runs)
+                                .unwrap_or_default() as f64
                         )
                     )),
             )
     };
-    let days: Vec<Value> = storm["days"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .take(8)
-        .cloned()
-        .collect();
+    let days = &storm.days[..storm.days.len().min(8)];
     let table = if days.is_empty() {
         widgets::hint("No Storm runs on Lichess in the last 30 days", palette).into_any_element()
     } else {
@@ -464,10 +438,9 @@ pub fn storm_card(storm: &Value, profile: &Value, palette: &Palette) -> Div {
                     .child(cell("BEST COMBO".into(), 100.)),
             )
             .children(days.iter().map(|day| {
-                let number = |key: &str| day[key].as_f64().unwrap_or_default();
-                let tried = number("moves") + number("errors");
-                let accuracy = if tried > 0. {
-                    (number("moves") / tried * 100.).round()
+                let tried = day.moves + day.errors;
+                let accuracy = if tried > 0 {
+                    (day.moves as f64 / tried as f64 * 100.).round()
                 } else {
                     0.
                 };
@@ -475,14 +448,11 @@ pub fn storm_card(storm: &Value, profile: &Value, palette: &Palette) -> Div {
                     .py(px(4.))
                     .border_t_1()
                     .border_color(palette.border)
-                    .child(cell(
-                        day["_id"].as_str().unwrap_or_default().replace('/', "-"),
-                        110.,
-                    ))
-                    .child(cell(number("runs").to_string(), 70.))
-                    .child(cell(number("score").to_string(), 100.))
+                    .child(cell(day.id.replace('/', "-"), 110.))
+                    .child(cell(day.runs.to_string(), 70.))
+                    .child(cell(day.score.to_string(), 100.))
                     .child(cell(format!("{accuracy}%"), 90.))
-                    .child(cell(number("combo").to_string(), 100.))
+                    .child(cell(day.combo.to_string(), 100.))
             }))
             .into_any_element()
     };
@@ -545,13 +515,22 @@ impl Render for PuzzleStats {
             );
         }
         let days = crate::prefs::get::<u32>(cx, DAYS, 30);
-        let perf = &self.profile["perfs"]["puzzle"];
-        let global = &self.dashboard["global"];
-        let first_try = global["nb"]
-            .as_f64()
-            .filter(|nb| *nb > 0.)
-            .map(|nb| (global["firstWins"].as_f64().unwrap_or_default() / nb * 100.).round());
-        let progress = perf["prog"].as_f64().filter(|prog| *prog != 0.);
+        let perf = self
+            .profile
+            .perfs
+            .get("puzzle")
+            .cloned()
+            .unwrap_or_default();
+        let global = self
+            .dashboard
+            .as_ref()
+            .map(|dashboard| dashboard.global.clone())
+            .unwrap_or_default();
+        let first_try = global
+            .nb
+            .filter(|nb| *nb > 0)
+            .map(|nb| (global.first_wins.unwrap_or_default() as f64 / nb as f64 * 100.).round());
+        let progress = perf.prog.filter(|prog| *prog != 0);
         let controls = h_flex()
             .justify_end()
             .gap(px(8.))
@@ -588,21 +567,16 @@ impl Render for PuzzleStats {
             .child(stat(
                 0,
                 "Puzzle rating",
-                perf["rating"].as_f64().map_or_else(
+                perf.rating.map_or_else(
                     || "—".into(),
-                    |rating| {
-                        format!(
-                            "{rating}{}",
-                            if perf["prov"] == json!(true) { "?" } else { "" }
-                        )
-                    },
+                    |rating| format!("{rating}{}", if perf.prov == Some(true) { "?" } else { "" }),
                 ),
                 Some(match progress {
                     Some(prog) => div()
-                        .text_color(if prog > 0. { palette.win } else { palette.loss })
+                        .text_color(if prog > 0 { palette.win } else { palette.loss })
                         .child(format!(
                             "{} {} recently",
-                            if prog > 0. { "▲" } else { "▼" },
+                            if prog > 0 { "▲" } else { "▼" },
                             prog.abs()
                         ))
                         .into_any_element(),
@@ -613,9 +587,8 @@ impl Render for PuzzleStats {
             .child(stat(
                 1,
                 "Puzzles played",
-                perf["games"]
-                    .as_f64()
-                    .map_or_else(|| "—".into(), widgets::format_count),
+                perf.games
+                    .map_or_else(|| "—".into(), |games| widgets::format_count(games as f64)),
                 None,
                 &palette,
             ))
@@ -629,13 +602,13 @@ impl Render for PuzzleStats {
             .child(stat(
                 3,
                 "Performance",
-                global["performance"]
-                    .as_f64()
+                global
+                    .performance
                     .map_or_else(|| "—".into(), |n| n.to_string()),
                 Some(
                     div()
-                        .child(match global["nb"].as_f64() {
-                            Some(nb) => widgets::format_counted(nb, "puzzle", "puzzles"),
+                        .child(match global.nb {
+                            Some(nb) => widgets::format_counted(nb as f64, "puzzle", "puzzles"),
                             None => format!("Last {days} days"),
                         })
                         .into_any_element(),
@@ -658,7 +631,11 @@ impl Render for PuzzleStats {
                     &palette,
                 ))
             });
-        let rows = theme_rows(&self.dashboard, self.sort);
+        let rows = self
+            .dashboard
+            .as_ref()
+            .map(|dashboard| theme_rows(dashboard, self.sort))
+            .unwrap_or_default();
         let themes_body: AnyElement = if self.reconnect {
             widgets::empty_state(
                 icon("key-round"),
@@ -806,14 +783,19 @@ impl PuzzleStats {
                 )
                 .into_any_element();
         }
-        if self.loading.busy() && !self.storm.is_object() {
+        if self.loading.busy() && self.storm.is_none() {
             return widgets::card(palette)
                 .gap(px(12.))
                 .child(widgets::heading("Your results on Lichess", palette))
                 .child(crate::widgets::loading("Loading from Lichess…", palette))
                 .into_any_element();
         }
-        storm_card(&self.storm, &self.profile, palette).into_any_element()
+        storm_card(
+            &self.storm.clone().unwrap_or_default(),
+            &self.profile,
+            palette,
+        )
+        .into_any_element()
     }
 }
 
@@ -824,11 +806,12 @@ mod tests {
 
     #[test]
     fn themes_sort_by_strength_and_leave_out_the_rarely_tried() {
-        let dashboard = json!({ "themes": {
+        let dashboard = serde_json::from_value(json!({ "themes": {
             "fork": { "results": { "nb": 10, "firstWins": 5, "performance": 1500 } },
             "pin": { "results": { "nb": 4, "firstWins": 4, "performance": 1900 } },
             "skewer": { "results": { "nb": 2, "firstWins": 0, "performance": 1100 } },
-        }});
+        }}))
+        .expect("a dashboard");
         let weak: Vec<String> = theme_rows(&dashboard, "weak")
             .into_iter()
             .map(|row| row.key)

@@ -9,7 +9,6 @@
 //! sync reads one small list and usually one month.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -41,8 +40,6 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// The largest answer read: a month of a very busy player is a few megabytes.
 const MAX_BODY: usize = 64 * 1024 * 1024;
 
-type Outcome = watch::Receiver<Option<std::result::Result<usize, CoreError>>>;
-
 /// The Chess.com sync of one core.
 pub struct Chesscom {
     http: reqwest::Client,
@@ -53,8 +50,7 @@ pub struct Chesscom {
     /// One request at a time, as Chess.com asks.
     turn: tokio::sync::Mutex<()>,
     /// The sync running per player (lowercase name), which a second request joins.
-    syncs: Mutex<HashMap<String, (u64, Outcome)>>,
-    next_sync: AtomicU64,
+    syncs: crate::tasks::SingleFlight<Result<usize>>,
     /// Bumped when a player is removed, so an add or sync that started before stops and writes
     /// nothing after.
     epochs: Mutex<HashMap<String, u64>>,
@@ -123,8 +119,7 @@ impl Chesscom {
             host,
             lifetime,
             turn: tokio::sync::Mutex::new(()),
-            syncs: Mutex::new(HashMap::new()),
-            next_sync: AtomicU64::new(0),
+            syncs: crate::tasks::SingleFlight::default(),
             epochs: Mutex::new(HashMap::new()),
             removals: watch::Sender::new(()),
         }
@@ -307,7 +302,7 @@ impl Chesscom {
         let key = name.to_lowercase();
         *lock(&self.epochs).entry(key.clone()).or_insert(0) += 1;
         self.removals.send_replace(());
-        lock(&self.syncs).remove(&key);
+        self.syncs.forget(&key);
         let name = name.to_string();
         self.database
             .write_async(move |ctx| store::remove_account(ctx.db, &name))
@@ -355,44 +350,20 @@ impl Chesscom {
     /// One player's sync as of `epoch`; a second request for the same player joins the running
     /// one.
     async fn sync_one(&self, name: &str, epoch: u64) -> Result<usize> {
-        let key = name.to_lowercase();
-        let joined = lock(&self.syncs)
-            .get(&key)
-            .map(|(_, outcome)| outcome.clone());
-        if let Some(mut outcome) = joined {
-            loop {
-                if let Some(result) = outcome.borrow().clone() {
-                    return result;
-                }
-                if outcome.changed().await.is_err() {
-                    return Err(cancelled());
-                }
+        let run = async {
+            let result = self.run(name, epoch).await;
+            if let Ok(fetched) = &result {
+                self.host.log(
+                    Level::Info,
+                    "chesscom",
+                    &format!("Game sync completed: {name} fetched={fetched}"),
+                );
             }
-        }
-        let generation = self.next_sync.fetch_add(1, Ordering::SeqCst) + 1;
-        let (send, receive) = watch::channel(None);
-        lock(&self.syncs).insert(key.clone(), (generation, receive));
-        // Forgotten however the run ends, a cancelled call included (see `sync_account`).
-        let forget = crate::tasks::on_drop(|| {
-            let mut syncs = lock(&self.syncs);
-            if syncs
-                .get(&key)
-                .is_some_and(|(current, _)| *current == generation)
-            {
-                syncs.remove(&key);
-            }
-        });
-        let result = self.run(name, epoch).await;
-        drop(forget);
-        let _ = send.send(Some(result.clone()));
-        if let Ok(fetched) = &result {
-            self.host.log(
-                Level::Info,
-                "chesscom",
-                &format!("Game sync completed: {name} fetched={fetched}"),
-            );
-        }
-        result
+            result
+        };
+        self.syncs
+            .run(&name.to_lowercase(), run, || Err(cancelled()))
+            .await
     }
 
     async fn run(&self, name: &str, epoch: u64) -> Result<usize> {

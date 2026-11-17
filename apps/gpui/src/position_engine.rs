@@ -1,42 +1,69 @@
 //! One visible position's engine search, for boards that are not the
-//! analysis board: a new request replaces the search running (stopping it in the engine, not only
-//! dropping its answers), and only updates for the request asked last are kept.
+//! analysis board: a new request replaces the search running (the core cancels it when the next
+//! starts), and only updates for the request asked last are kept.
+//!
+//! A search asked for after a stop starts once the core has answered the stop. The core runs
+//! calls in any order, and a stop that lands while the next search is starting aborts that search.
 
+use futures::future::{BoxFuture, FutureExt as _, Shared};
 use kchess_contracts::calls;
-use kchess_contracts::check::check;
 use kchess_contracts::types::{AnalysisRequest, AnalysisUpdate, EngineLine};
-use kchess_domain::misc::value::J;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use gpui_kit::*;
 use kchess_contracts::Level;
-use serde_json::{Value, json};
 
 use crate::core::AppCore;
 use crate::game::tree::analysis_context;
 
-/// Client ids unique across every position engine in the app.
+/// Client ids unique across every engine search in the app, the analysis board's included.
 static NEXT_CLIENT: AtomicU64 = AtomicU64::new(0);
 
-fn next_client() -> u64 {
+pub fn next_client() -> u64 {
     let now = chrono::Utc::now().timestamp_millis().max(0) as u64;
     let _ = NEXT_CLIENT.compare_exchange(0, now, Ordering::Relaxed, Ordering::Relaxed);
     NEXT_CLIENT.fetch_add(1, Ordering::Relaxed) + 1
 }
 
 /// The context an update must carry to belong to a request.
-fn context_of(request: &Value) -> String {
-    let fen = request["fen"].as_str().unwrap_or_default();
-    let root = request["rootFen"].as_str().unwrap_or(fen);
-    let moves: Vec<String> = serde_json::from_value(request["moves"].clone()).unwrap_or_default();
-    analysis_context(root, &moves)
+fn context_of(request: &AnalysisRequest) -> String {
+    let root = request.root_fen.as_deref().unwrap_or(&request.fen);
+    analysis_context(root, request.moves.as_deref().unwrap_or_default())
+}
+
+/// Stop the core's search; `release` lets the engine go too, where a pause keeps it warm.
+/// A failure is only logged, under `source`.
+pub fn stop_analysis(release: bool, source: &'static str, cx: &mut App) {
+    drop(stopping(release, source, cx));
+}
+
+/// A stop sent to the core, ending once the core has answered it.
+type Stopped = Shared<BoxFuture<'static, ()>>;
+
+/// `stop_analysis`, and when the core has answered.
+fn stopping(release: bool, source: &'static str, cx: &mut App) -> Stopped {
+    let stop = cx.global::<AppCore>().request(calls::StopAnalysis {
+        kill: release.then_some(true),
+    });
+    let stopped = async move {
+        if let Err(cause) = stop.await {
+            crate::log::write(
+                Level::Warn,
+                source,
+                &format!("stopping analysis failed: {}", cause.message),
+            );
+        }
+    }
+    .boxed()
+    .shared();
+    cx.background_executor().spawn(stopped.clone()).detach();
+    stopped
 }
 
 #[derive(Default)]
 pub struct PositionEngine {
-    /// The search asked for (`AnalysisRequest`), or none.
-    wanted: Option<Value>,
+    /// The search asked for, or none.
+    wanted: Option<AnalysisRequest>,
     context: String,
     client_id: u64,
     latest_id: u64,
@@ -44,19 +71,17 @@ pub struct PositionEngine {
     pub update: Option<AnalysisUpdate>,
     pub error: Option<String>,
     pub busy: bool,
+    /// The last stop sent: the next search starts once it is answered.
+    stopped: Option<Stopped>,
     _start: Option<Task<()>>,
 }
 
 impl PositionEngine {
-    pub fn wanted(&self) -> Option<&Value> {
-        self.wanted.as_ref()
-    }
-
     /// Search `request` (or nothing), replacing the search running; the same request again
     /// changes nothing. `engine` finds this engine in its owner.
     pub fn search<V: 'static>(
         &mut self,
-        request: Option<Value>,
+        request: Option<AnalysisRequest>,
         engine: fn(&mut V) -> &mut PositionEngine,
         cx: &mut Context<V>,
     ) {
@@ -66,10 +91,18 @@ impl PositionEngine {
         self.restart(request, engine, cx);
     }
 
-    /// Search `request` again from the start (a retry, or after the core reconnected).
-    pub fn restart<V: 'static>(
+    /// Search what was asked for again from the start (a retry, or after the core reconnected).
+    pub fn retry<V: 'static>(
         &mut self,
-        request: Option<Value>,
+        engine: fn(&mut V) -> &mut PositionEngine,
+        cx: &mut Context<V>,
+    ) {
+        self.restart(self.wanted.clone(), engine, cx);
+    }
+
+    fn restart<V: 'static>(
+        &mut self,
+        request: Option<AnalysisRequest>,
         engine: fn(&mut V) -> &mut PositionEngine,
         cx: &mut Context<V>,
     ) {
@@ -81,64 +114,38 @@ impl PositionEngine {
         self.update = None;
         self.error = None;
         self.busy = request.is_some();
-        // Cancellation reaches the core's search, including when nothing replaces it.
-        let stopped = cx
-            .global::<AppCore>()
-            .request(calls::StopAnalysis { kill: None });
-        let Some(request) = request else {
+        let Some(mut request) = request else {
+            // Cancellation reaches the core's search, not only its answers.
             self._start = None;
-            cx.background_executor()
-                .spawn(async move {
-                    if let Err(cause) = stopped.await {
-                        crate::log::write(
-                            Level::Warn,
-                            "position-engine",
-                            &format!("stopping analysis failed: {}", cause.message),
-                        );
-                    }
-                })
-                .detach();
+            self.stopped = Some(stopping(false, "position-engine", cx));
             return;
         };
+        request.client_id = Some(id);
+        let stopped = self.stopped.clone();
+        let core = cx.global::<AppCore>().clone();
+        // Dropped unsent when a newer request replaces it.
         self._start = Some(cx.spawn(async move |this, cx| {
-            let _ = stopped.await;
-            cx.background_executor()
-                .timer(Duration::from_millis(100))
-                .await;
-            let start = this.update(cx, |owner, cx| {
-                (engine(owner).client_id == id).then(|| {
-                    let mut request = request;
-                    request["clientId"] = json!(id);
-                    let request = check::<AnalysisRequest>(J::from(&request))
-                        .map_err(kchess_contracts::CoreError::new)?;
-                    Ok(cx
-                        .global::<AppCore>()
-                        .request(calls::StartAnalysis { request }))
-                })
-            });
-            let Ok(Some(start)) = start else {
+            if let Some(stopped) = stopped {
+                stopped.await;
+            }
+            let start = core.request(calls::StartAnalysis { request });
+            let Err(cause) = start.await else {
                 return;
             };
-            let started = match start {
-                Ok(start) => start.await.map(drop),
-                Err(cause) => Err(cause),
-            };
-            if let Err(cause) = started {
-                let _ = this.update(cx, |owner, cx| {
-                    let engine = engine(owner);
-                    if engine.client_id != id {
-                        return;
-                    }
-                    crate::log::write(
-                        Level::Warn,
-                        "position-engine",
-                        &format!("starting analysis failed: {}", cause.message),
-                    );
-                    engine.error = Some(cause.message);
-                    engine.busy = false;
-                    cx.notify();
-                });
-            }
+            let _ = this.update(cx, |owner, cx| {
+                let engine = engine(owner);
+                if engine.client_id != id {
+                    return;
+                }
+                crate::log::write(
+                    Level::Warn,
+                    "position-engine",
+                    &format!("starting analysis failed: {}", cause.message),
+                );
+                engine.error = Some(cause.message);
+                engine.busy = false;
+                cx.notify();
+            });
         }));
     }
 
@@ -148,7 +155,7 @@ impl PositionEngine {
             return false;
         };
         if update.client_id != i64::try_from(self.client_id).ok()
-            || wanted["fen"].as_str() != Some(update.fen.as_str())
+            || wanted.fen != update.fen
             || update.context != self.context
             || update.id < self.latest_id
         {
@@ -176,7 +183,89 @@ impl PositionEngine {
 #[cfg(test)]
 mod tests {
     use super::{PositionEngine, next_client};
+    use kchess_contracts::types::AnalysisRequest;
     use serde_json::json;
+
+    fn search(fen: &str) -> AnalysisRequest {
+        AnalysisRequest {
+            fen: fen.to_string(),
+            lines: 1,
+            infinite: Some(true),
+            root_fen: None,
+            moves: Some(Vec::new()),
+            client_id: None,
+            variant: None,
+        }
+    }
+
+    /// A search asked for after a stop starts only once the core has answered the stop. The core
+    /// runs calls in any order, and a stop that landed while the next search was starting aborted
+    /// it: on CI, Guess the move judged a guess with no engine lines (2026-11-17).
+    #[gpui_kit::test]
+    fn a_search_after_a_stop_waits_for_its_answer(cx: &mut gpui_kit::TestAppContext) {
+        use crate::core::{AppCore, ClientEvent, CoreEvent};
+        use futures::FutureExt as _;
+        use gpui_kit::AppContext as _;
+
+        struct Owner {
+            engine: PositionEngine,
+            _events: gpui_kit::Subscription,
+        }
+        fn engine_of(owner: &mut Owner) -> &mut PositionEngine {
+            &mut owner.engine
+        }
+        let mut app = crate::e2e::Harness::start(cx);
+        let owner = app.cx.update(|cx| {
+            let events = cx.global::<AppCore>().events.clone();
+            cx.new(|cx| Owner {
+                engine: PositionEngine::default(),
+                _events: cx.subscribe(&events, |owner: &mut Owner, _, event: &ClientEvent, cx| {
+                    if let ClientEvent::Event(CoreEvent::Analysis(update)) = event
+                        && owner.engine.receive(update)
+                    {
+                        cx.notify();
+                    }
+                }),
+            })
+        });
+        let found = |app: &mut crate::e2e::Harness| {
+            app.cx.update(|cx| owner.read(cx).engine.best().is_some())
+        };
+        // The engine running already, so a search sent comes back at once.
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        app.cx.update(|cx| {
+            owner.update(cx, |owner, cx| {
+                owner.engine.search(Some(search(start)), engine_of, cx)
+            })
+        });
+        app.wait_for("the first search's lines", |_, cx| {
+            owner.read(cx).engine.best().is_some()
+        });
+
+        // A stop the core has not answered yet.
+        let (answer, answered) = futures::channel::oneshot::channel::<()>();
+        let after_e4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+        app.cx.update(|cx| {
+            owner.update(cx, |owner, cx| {
+                owner.engine.stopped = Some(answered.map(drop).boxed().shared());
+                owner.engine.search(Some(search(after_e4)), engine_of, cx);
+            })
+        });
+        for _ in 0..25 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            app.cx.run_until_parked();
+            assert!(
+                !found(&mut app),
+                "the search started before the stop was answered"
+            );
+        }
+        answer.send(()).expect("the search waits for the stop");
+        app.wait_for("the search's lines once the stop is answered", |_, cx| {
+            owner.read(cx).engine.best().is_some()
+        });
+        let error = app.cx.update(|cx| owner.read(cx).engine.error.clone());
+        assert_eq!(error, None);
+    }
 
     #[test]
     fn client_ids_never_repeat() {
@@ -187,7 +276,15 @@ mod tests {
     #[test]
     fn only_the_search_asked_for_is_kept() {
         let fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
-        let request = json!({ "fen": fen, "moves": [] });
+        let request = AnalysisRequest {
+            fen: fen.to_string(),
+            lines: 1,
+            infinite: None,
+            root_fen: None,
+            moves: Some(Vec::new()),
+            client_id: None,
+            variant: None,
+        };
         let mut engine = PositionEngine {
             context: super::context_of(&request),
             wanted: Some(request),

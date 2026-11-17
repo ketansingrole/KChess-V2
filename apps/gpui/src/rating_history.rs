@@ -7,13 +7,13 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::Value;
 
 use crate::assets::icon;
 use crate::chart::{ChartPoint, LineChart};
 use crate::theme::Palette;
 use crate::widgets::{self, Choice};
-use kchess_domain::records::ratings::{merge_rating_histories, normalize_rating_key};
+use kchess_contracts::types::RatingSeries;
+use kchess_domain::records::ratings::merge_rating_series;
 
 /// The chart's speeds, by perf key.
 const MODES: [(&str, &str); 6] = [
@@ -69,8 +69,8 @@ pub type Retry = Rc<dyn Fn(&mut Window, &mut App)>;
 
 pub struct RatingHistory {
     /// Lichess's rating history, and one rebuilt from games for modes it has none of.
-    official: Value,
-    fallback: Value,
+    official: Vec<RatingSeries>,
+    fallback: Vec<RatingSeries>,
     mode: String,
     /// The speed is chosen here, not by the cards beside the chart (Home's).
     mode_picker: bool,
@@ -84,37 +84,33 @@ pub struct RatingHistory {
 }
 
 /// `[year, month0, day, rating]` as a UTC time and a rating.
-pub(crate) fn point_of(raw: &Value) -> Option<(f64, f64)> {
-    let parts = raw.as_array()?;
-    let number = |index: usize| parts.get(index)?.as_f64().filter(|n| n.is_finite());
+fn point_of(&[year, month0, day, rating]: &[i64; 4]) -> Option<(f64, f64)> {
     let date = chrono::NaiveDate::from_ymd_opt(
-        number(0)? as i32,
-        number(1)? as u32 + 1,
-        number(2)? as u32,
+        i32::try_from(year).ok()?,
+        u32::try_from(month0 + 1).ok()?,
+        u32::try_from(day).ok()?,
     )?;
     let millis = date.and_hms_opt(0, 0, 0)?.and_utc().timestamp_millis() as f64;
-    Some((millis, number(3)?))
+    Some((millis, rating as f64))
+}
+
+/// A series' points as UTC times and ratings.
+pub(crate) fn series_points(series: &RatingSeries) -> Vec<(f64, f64)> {
+    series.points.iter().filter_map(point_of).collect()
 }
 
 /// The points of one mode in a rating history.
-fn points_of(history: &Value, mode: &str) -> Vec<(f64, f64)> {
+fn points_of(history: &[RatingSeries], mode: &str) -> Vec<(f64, f64)> {
     history
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|entry| normalize_rating_key(entry["name"].as_str().unwrap_or_default()) == mode)
-        .and_then(|entry| entry["points"].as_array())
-        .map(|points| points.iter().filter_map(point_of).collect())
+        .iter()
+        .find(|series| series.key() == mode)
+        .map(series_points)
         .unwrap_or_default()
 }
 
 /// Whether a rating history has any points at all.
-pub fn has_points(history: &Value) -> bool {
-    history.as_array().into_iter().flatten().any(|entry| {
-        entry["points"]
-            .as_array()
-            .is_some_and(|points| !points.is_empty())
-    })
+pub fn has_points(history: &[RatingSeries]) -> bool {
+    history.iter().any(|series| !series.points.is_empty())
 }
 
 /// The earliest time a range shows; 0 for all of it.
@@ -140,10 +136,6 @@ fn choices(items: impl IntoIterator<Item = (String, String)>) -> Vec<Choice> {
         .into_iter()
         .map(|(value, label)| Choice::new(value, label))
         .collect()
-}
-
-pub(crate) fn entries(value: &Value) -> &[Value] {
-    value.as_array().map_or(&[], Vec::as_slice)
 }
 
 impl RatingHistory {
@@ -199,8 +191,8 @@ impl RatingHistory {
             ),
         ];
         RatingHistory {
-            official: Value::Null,
-            fallback: Value::Null,
+            official: Vec::new(),
+            fallback: Vec::new(),
             mode: "blitz".into(),
             mode_picker: true,
             range: "All",
@@ -237,26 +229,33 @@ impl RatingHistory {
         &self.mode
     }
 
-    /// Lichess's history and the one from games (either may be `null` while unknown).
-    pub fn set(&mut self, official: Value, fallback: Value, cx: &mut Context<Self>) {
+    /// Lichess's history and the one from games (either empty while unknown).
+    pub fn set(
+        &mut self,
+        official: Vec<RatingSeries>,
+        fallback: Vec<RatingSeries>,
+        cx: &mut Context<Self>,
+    ) {
         self.official = official;
         self.fallback = fallback;
         self.draw(cx);
     }
 
-    pub fn set_official(&mut self, official: Value, cx: &mut Context<Self>) {
+    /// Lichess's history (empty while unknown).
+    pub fn set_official(&mut self, official: Vec<RatingSeries>, cx: &mut Context<Self>) {
         self.official = official;
         self.draw(cx);
     }
 
-    pub fn set_fallback(&mut self, fallback: Value, cx: &mut Context<Self>) {
+    /// The history from games, for the modes Lichess has no points for.
+    pub fn set_fallback(&mut self, fallback: Vec<RatingSeries>, cx: &mut Context<Self>) {
         self.fallback = fallback;
         self.draw(cx);
     }
 
     /// Lichess's own wins; games fill modes it has no points for.
-    fn history(&self) -> Value {
-        merge_rating_histories(entries(&self.official), entries(&self.fallback))
+    fn history(&self) -> Vec<RatingSeries> {
+        merge_rating_series(&self.official, &self.fallback)
     }
 
     /// The chosen mode's points come from games.
@@ -422,13 +421,12 @@ impl Render for RatingHistory {
 
 #[cfg(test)]
 mod tests {
-    use super::{has_points, point_of, range_start};
-    use serde_json::json;
+    use super::{point_of, range_start};
 
     #[test]
     fn lichess_points_are_utc_days() {
         // Lichess counts months from 0.
-        let (date, rating) = point_of(&json!([2026, 0, 5, 1712])).unwrap();
+        let (date, rating) = point_of(&[2026, 0, 5, 1712]).unwrap();
         assert_eq!(rating, 1712.);
         assert_eq!(
             chrono::DateTime::from_timestamp_millis(date as i64)
@@ -437,7 +435,7 @@ mod tests {
                 .to_string(),
             "2026-01-05"
         );
-        assert!(point_of(&json!([2026, 0, 5])).is_none());
+        assert!(point_of(&[2026, 12, 5, 1712]).is_none());
     }
 
     #[test]
@@ -457,14 +455,5 @@ mod tests {
         assert!(
             (now.timestamp_millis() as f64 - range_start("1M", now) - 30. * 86_400_000.).abs() < 1.
         );
-    }
-
-    #[test]
-    fn an_empty_history_has_no_points() {
-        assert!(!has_points(&json!(null)));
-        assert!(!has_points(&json!([{ "name": "Blitz", "points": [] }])));
-        assert!(has_points(
-            &json!([{ "name": "Blitz", "points": [[2026, 0, 1, 1500]] }])
-        ));
     }
 }

@@ -672,14 +672,9 @@ impl PositionExplorer {
             .entry(key)
             .or_insert_with(|| {
                 let variant = self.variant.unwrap_or_default();
-                let position = kchess_domain::rules::setup_start(variant, fen).unwrap_or_default();
-                let last = uci
-                    .get(0..2)
-                    .and_then(|from| from.parse().ok())
-                    .zip(uci.get(2..4).and_then(|to| to.parse().ok()));
-                let mut state = BoardState::of(&position, Color::White, None, last);
-                state.preview = true;
-                cx.new(|_| ChessBoard::new(state))
+                cx.new(|_| {
+                    ChessBoard::new(BoardState::preview(fen, variant, Color::White, Some(uci)))
+                })
             })
             .clone()
     }

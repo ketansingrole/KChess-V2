@@ -167,11 +167,7 @@ impl GameOptions {
         let level_row = ids.iter().position(|id| *id == current.level);
         let level =
             cx.new(|cx| SelectState::new(labels, level_row.map(IndexPath::new), window, cx));
-        let preview = cx.new(|_| {
-            let mut state = preview_state(&chess960(518));
-            state.preview = true;
-            ChessBoard::new(state)
-        });
+        let preview = cx.new(|_| ChessBoard::new(preview_state(&chess960(518))));
         let subscriptions = vec![
             cx.subscribe(&number, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -257,8 +253,7 @@ impl GameOptions {
 
     fn refresh_preview(&mut self, cx: &mut Context<Self>) {
         let fen = chess960(self.number960(cx).unwrap_or(518));
-        let mut state = preview_state(&fen);
-        state.preview = true;
+        let state = preview_state(&fen);
         self.preview
             .update(cx, |board, cx| board.set_state(state, cx));
         cx.notify();
@@ -356,23 +351,14 @@ impl GameOptions {
     }
 }
 
+/// The Chess960 start shown beside its number.
 fn preview_state(fen: &str) -> BoardState {
-    let position = kchess_domain::rules::setup_start(
-        kchess_domain::variant::Variant::Chess960,
+    BoardState::preview(
         fen,
+        kchess_domain::variant::Variant::Chess960,
+        shakmaty::Color::White,
+        None,
     )
-    .or_else(|| {
-        kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, INITIAL_FEN)
-    });
-    match position {
-        Some(position) => BoardState::of(&position, shakmaty::Color::White, None, None),
-        None => BoardState::of(
-            &shakmaty::variant::VariantPosition::Chess(shakmaty::Chess::default()),
-            shakmaty::Color::White,
-            None,
-            None,
-        ),
-    }
 }
 
 impl Render for GameOptions {

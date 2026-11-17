@@ -23,7 +23,9 @@ pub use kchess_domain::misc::constants::{
     SESSION_KINDS, SessionKind, TournamentSystem,
 };
 pub use kchess_domain::online_game::connection::{Lane, OnlineConnection, OnlinePhase};
-pub use kchess_domain::online_game::model::{CHAT_ROOMS, ChatRoom};
+pub use kchess_domain::online_game::model::{
+    CHAT_ROOMS, ChatRoom, ONLINE_ACTIONS, OnlineAction, Resumed,
+};
 
 /* ── Choices and settings ───────────────────────────────────────────── */
 
@@ -43,18 +45,6 @@ wire_enum!(#[doc = "How long a piece takes to slide to its square."] PieceAnimat
     Normal = "normal",
     Slow = "slow",
 });
-wire_enum!(#[doc = "An action the player can take in an online game, such as resigning, aborting, offering or declining a takeback or draw, claiming a result, or going berserk."] OnlineAction, ONLINE_ACTIONS {
-    Resign = "resign",
-    Abort = "abort",
-    Takeback = "takeback",
-    DeclineTakeback = "declineTakeback",
-    OfferDraw = "offerDraw",
-    AcceptDraw = "acceptDraw",
-    DeclineDraw = "declineDraw",
-    ClaimVictory = "claimVictory",
-    ClaimDraw = "claimDraw",
-    Berserk = "berserk",
-});
 wire_enum!(#[doc = "Reasons Lichess accepts when declining a challenge (it translates them for the challenger)."] DeclineReason, DECLINE_REASONS {
     Generic = "generic",
     Later = "later",
@@ -65,11 +55,6 @@ wire_enum!(#[doc = "Reasons Lichess accepts when declining a challenge (it trans
     Casual = "casual",
     Standard = "standard",
     Variant = "variant",
-});
-wire_enum!(#[doc = "Which color the challenger requests."] ChallengeColor, CHALLENGE_COLORS {
-    Random = "random",
-    White = "white",
-    Black = "black",
 });
 wire_enum!(#[doc = "How far from your Lichess puzzle rating the next puzzle is aimed."] PuzzleDifficulty, PUZZLE_DIFFICULTIES {
     Easiest = "easiest",
@@ -423,6 +408,18 @@ pub struct LichessGame {
     pub pgn: Option<String>,
 }
 
+impl LichessGame {
+    /// The game as a rating history counts it: rated, with the player's rating and its change.
+    pub fn rated_game(&self) -> Option<kchess_domain::records::ratings::RatedGame<'_>> {
+        (self.rated).then_some(())?;
+        Some(kchess_domain::records::ratings::RatedGame {
+            created_at: self.created_at,
+            perf: &self.perf,
+            rating: self.player_rating? + self.rating_diff?,
+        })
+    }
+}
+
 /// A page of the synced games, filtered.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(expecting = "an object")]
@@ -647,12 +644,217 @@ pub struct GameLibraryOverview {
     pub versus: BTreeMap<String, GameRecord>,
 }
 
-/// One rating category's rating, the last rated one each day: `[year, month (0–11), day,
-/// rating]`.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct RatingSeries {
-    pub name: String,
-    pub points: Vec<[i64; 4]>,
+pub use kchess_domain::records::ratings::RatingSeries;
+
+/// A Lichess user as its profile (`profile`) and the many-players lookup (`profiles`) report
+/// them: what KChess reads of it. Lichess leaves out what a user has not got.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LichessUser {
+    #[serde(default)]
+    pub username: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// By rating category: `blitz`, `puzzle`, `storm`…
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub perfs: BTreeMap<String, UserPerf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<UserCount>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seen_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub play_time: Option<PlayTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<UserBio>,
+}
+
+impl LichessUser {
+    /// The games played in rating category `key`; 0 when none.
+    pub fn games(&self, key: &str) -> i64 {
+        self.perfs
+            .get(key)
+            .and_then(|perf| perf.games)
+            .unwrap_or_default()
+    }
+
+    /// The time they have spent playing, in seconds: it grows with every finished game.
+    pub fn played_seconds(&self) -> Option<i64> {
+        self.play_time.as_ref()?.total
+    }
+
+    /// Lichess has games of theirs a sync that saw `synced` seconds of play did not download.
+    pub fn has_games_since(&self, synced: Option<i64>) -> bool {
+        matches!((synced, self.played_seconds()), (Some(synced), Some(now)) if now > synced)
+    }
+
+    /// Of `perfs` (key, name), those with games, most played first.
+    pub fn played<'a>(
+        &self,
+        perfs: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Vec<(&'a str, &'a str)> {
+        let mut played: Vec<_> = perfs
+            .into_iter()
+            .filter(|(key, _)| self.games(key) > 0)
+            .collect();
+        played.sort_by_key(|(key, _)| std::cmp::Reverse(self.games(key)));
+        played
+    }
+}
+
+/// A user's record in one rating category (or their Storm and Streak bests).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UserPerf {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub games: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<i64>,
+    /// The rating's recent change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prog: Option<i64>,
+    /// Provisional: too few games for the rating to settle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prov: Option<bool>,
+    /// Storm and Streak: the runs played and the best score.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runs: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<i64>,
+}
+
+/// A user's lifetime games.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct UserCount {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub win: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loss: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draw: Option<i64>,
+}
+
+/// Time spent playing, in seconds: it grows with every finished game.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct PlayTime {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct UserBio {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bio: Option<String>,
+}
+
+/// An account's puzzle results over a period, as Lichess reports them.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct PuzzleDashboard {
+    #[serde(default)]
+    pub global: PuzzleResults,
+    /// By theme key, in Lichess's order.
+    #[serde(default, with = "ordered_map")]
+    pub themes: Vec<(String, PuzzleTheme)>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct PuzzleTheme {
+    #[serde(default)]
+    pub results: PuzzleResults,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PuzzleResults {
+    /// Puzzles played.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nb: Option<i64>,
+    /// Solved at the first try.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_wins: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub performance: Option<i64>,
+}
+
+/// Anyone's Storm results: the high scores and the days played lately.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct StormDashboard {
+    #[serde(default)]
+    pub high: StormHighs,
+    #[serde(default)]
+    pub days: Vec<StormDay>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct StormHighs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub day: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub week: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub month: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all_time: Option<i64>,
+}
+
+/// One day's Storm runs.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct StormDay {
+    /// The day, `YYYY/MM/DD`.
+    #[serde(rename = "_id", default)]
+    pub id: String,
+    #[serde(default)]
+    pub runs: i64,
+    #[serde(default)]
+    pub score: i64,
+    #[serde(default)]
+    pub moves: i64,
+    #[serde(default)]
+    pub errors: i64,
+    #[serde(default)]
+    pub combo: i64,
+}
+
+/// A JSON object as its entries in order (`serde_json`'s `preserve_order` keeps Lichess's).
+mod ordered_map {
+    use serde::de::{DeserializeOwned, MapAccess, Visitor};
+    use serde::ser::SerializeMap;
+    use serde::{Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer, T: Serialize>(
+        entries: &[(String, T)],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(entries.len()))?;
+        for (key, value) in entries {
+            map.serialize_entry(key, value)?;
+        }
+        map.end()
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>, T: DeserializeOwned>(
+        deserializer: D,
+    ) -> Result<Vec<(String, T)>, D::Error> {
+        struct Entries<T>(std::marker::PhantomData<T>);
+        impl<'de, T: DeserializeOwned> Visitor<'de> for Entries<T> {
+            type Value = Vec<(String, T)>;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("an object")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut entries = Vec::new();
+                while let Some(entry) = map.next_entry()? {
+                    entries.push(entry);
+                }
+                Ok(entries)
+            }
+        }
+        deserializer.deserialize_map(Entries(std::marker::PhantomData))
+    }
 }
 
 /// A Lichess account or added player, with what was synced.
@@ -701,10 +903,10 @@ pub struct ChesscomAccount {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CachedProfile {
-    /// The Lichess user as Lichess sent it; null when never fetched.
-    pub profile: Option<Value>,
-    /// The rating history as Lichess sent it; null when never fetched.
-    pub rating_history: Option<Value>,
+    /// Null when never fetched.
+    pub profile: Option<LichessUser>,
+    /// Null when never fetched.
+    pub rating_history: Option<Vec<RatingSeries>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_fetched_at: Option<i64>,
 }
@@ -745,6 +947,31 @@ pub struct PerfResult {
     pub game_id: String,
 }
 
+/// Lichess's game counts for one speed.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PerfCount {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rated: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub win: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loss: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draw: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tour: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub berserk: Option<i64>,
+    /// The opponents' average rating.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub op_avg: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seconds: Option<i64>,
+}
+
 /// A rating and the game it came from.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -780,9 +1007,8 @@ pub struct PerfStats {
     pub percentile: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<i64>,
-    /// Lichess's game counts as it sent them (`all`, `rated`, `win`, `loss`, `draw`, `tour`,
-    /// `berserk`, `opAvg`, `seconds`, `disconnects`), null when it sent none.
-    pub count: Value,
+    /// Lichess's game counts, null when it sent none.
+    pub count: Option<PerfCount>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highest: Option<PerfMark>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1160,35 +1386,7 @@ pub struct UsageReport {
     pub db_bytes: u64,
 }
 
-/// One puzzle, whichever source it came from.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Puzzle {
-    pub id: String,
-    /// The position the player starts from: it is the player's move, after the opponent's `lastMove`.
-    pub fen: String,
-    /// UCI of the opponent's move that led here (for the board highlight).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_move: Option<String>,
-    /// UCI moves, alternating player, opponent, … and ending with the player's move.
-    pub solution: Vec<String>,
-    #[serde(with = "js_number")]
-    pub rating: f64,
-    pub themes: Vec<String>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "js_number::option"
-    )]
-    pub plays: Option<f64>,
-    /// Lichess game the position came from.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub game_id: Option<String>,
-    /// A drill's variant (a mistake from a Crazyhouse game); every Lichess puzzle is standard
-    /// chess.
-    #[serde(default, skip_serializing_if = "Variant::is_standard")]
-    pub variant: Variant,
-}
+pub use kchess_domain::training::puzzle::Puzzle;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -2082,37 +2280,10 @@ pub use kchess_domain::games::session::{
 pub use kchess_domain::keyed::Keyed;
 pub use kchess_domain::library::{Drill, PlayedGame, Study, StudyChapter, StudyCloud};
 pub use kchess_domain::records::challenge::{
-    ChallengeDirection, ChallengeInfo, PlayerRef, TimeControl as ChallengeTimeControl,
+    CHALLENGE_COLORS, ChallengeColor, ChallengeDirection, ChallengeInfo, OnlineOptions, PlayerRef,
+    TimeControl as ChallengeTimeControl,
 };
 pub use kchess_domain::training::repetition::{RepertoireMisses, RepertoireSchedule};
-
-/// What to play online and how: a public seek, or a challenge to `target`.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct OnlineOptions {
-    /// Minutes on the clock; ignored for correspondence games (`days`).
-    pub minutes: u32,
-    /// Seconds added per move.
-    pub increment: u32,
-    /// Correspondence: days per move instead of a clock.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub days: Option<u32>,
-    /// Standard when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variant: Option<Variant>,
-    /// A direct challenge from this position (standard or Chess960 rules).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fen: Option<String>,
-    pub color: ChallengeColor,
-    /// Rated games change the Lichess rating; casual ones do not.
-    pub rated: bool,
-    /// The player challenged; a public seek without one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
-    /// Which connected account plays; the first connected one without one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub account: Option<String>,
-}
 
 /// What `startOnline` began: a challenge (its id and address), a public seek, or a
 /// correspondence game.
@@ -2129,13 +2300,6 @@ pub struct StartResult {
     pub correspondence: Option<bool>,
 }
 
-/// The game in progress `resumeOnline` put back on the board, and its account.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct Resumed {
-    pub id: String,
-    pub account: String,
-}
-
 /// A game a connected account is playing, real-time or correspondence.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -2143,8 +2307,13 @@ pub struct OngoingGame {
     pub game_id: String,
     pub account: String,
     pub opponent: PlayerRef,
-    /// `white` or `black`, as Lichess says (empty when it does not).
-    pub color: String,
+    /// Your side, when Lichess says.
+    #[serde(
+        default,
+        with = "kchess_domain::color::option_by_name",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub color: Option<Color>,
     pub fen: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_move: Option<String>,
@@ -2164,6 +2333,12 @@ pub struct OngoingGame {
 
 fn playable_by_default() -> bool {
     true
+}
+
+impl OngoingGame {
+    pub fn correspondence(&self) -> bool {
+        self.speed == "correspondence"
+    }
 }
 
 /// Lichess's view of one user's connection. `signal` runs 1 (poor, lag > 500 ms) to 4 (great,
@@ -2524,43 +2699,7 @@ pub struct NewArena {
 
 /* ── The library, puzzles and preferences ────────────────────────────── */
 
-/// A number as JavaScript writes it: a whole one without a fraction (`3`, not `3.0`). For numbers
-/// the core keeps as written by `JSON.stringify` (stored documents, Lichess's answers).
-pub mod js_number {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    const MAX_SAFE: f64 = 9_007_199_254_740_991.0;
-
-    pub fn serialize<S: Serializer>(n: &f64, serializer: S) -> Result<S::Ok, S::Error> {
-        if n.fract() == 0.0 && n.abs() <= MAX_SAFE {
-            serializer.serialize_i64(*n as i64)
-        } else {
-            serializer.serialize_f64(*n)
-        }
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
-        f64::deserialize(deserializer)
-    }
-
-    /// An optional one; `None` is `null` unless the field is skipped.
-    pub mod option {
-        use serde::{Deserialize, Deserializer, Serializer};
-
-        pub fn serialize<S: Serializer>(n: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error> {
-            match n {
-                Some(n) => super::serialize(n, serializer),
-                None => serializer.serialize_none(),
-            }
-        }
-
-        pub fn deserialize<'de, D: Deserializer<'de>>(
-            deserializer: D,
-        ) -> Result<Option<f64>, D::Error> {
-            Option::<f64>::deserialize(deserializer)
-        }
-    }
-}
+pub use kchess_domain::js::number as js_number;
 
 /// A study chapter, as Lichess sends it or to save: its name and PGN.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -2785,6 +2924,23 @@ pub struct MistakeGame {
 
 #[cfg(test)]
 mod tests {
+    use super::LichessUser;
+
+    /// Lichess's play time grows with every finished game: more than at the sync means new ones.
+    #[test]
+    fn a_longer_play_time_than_at_the_sync_means_new_games() {
+        let played = |total: Option<i64>| -> LichessUser {
+            serde_json::from_value(serde_json::json!({ "playTime": { "total": total } }))
+                .expect("a user")
+        };
+        assert!(played(Some(1300)).has_games_since(Some(1000)));
+        assert!(!played(Some(1000)).has_games_since(Some(1000)));
+        // Without a play time saved at a sync, or in the profile, nothing is claimed.
+        assert!(!played(Some(1300)).has_games_since(None));
+        assert!(!played(None).has_games_since(Some(1000)));
+        assert!(!LichessUser::default().has_games_since(Some(1000)));
+    }
+
     use super::*;
 
     /// Accuracy and time use, which the recorded reports leave out, keep the numbers the core

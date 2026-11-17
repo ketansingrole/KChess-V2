@@ -128,7 +128,8 @@ pub fn board_options(state: &mut BoardState, live: bool, premove: Option<Color>,
     state.premove = premove.filter(|_| frontend.premove);
 }
 
-/// The box a move is typed into, SAN or UCI, and what it says of a move it cannot play.
+/// The box a move is typed into, SAN or UCI, and what it says of a move it cannot play; a page
+/// that keeps quiet about such a move leaves `message` out.
 pub struct MoveBox {
     pub input: Entity<InputState>,
     message: Option<SharedString>,
@@ -186,6 +187,11 @@ impl MoveBox {
             None => self.message = Some("Enter a legal move, such as Nf3 or g1f3".into()),
         }
         uci
+    }
+
+    /// The box says nothing of the last move typed.
+    pub fn clear_message(&mut self) {
+        self.message = None;
     }
 
     /// What the box says under the board, if anything.

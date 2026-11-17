@@ -116,20 +116,6 @@ impl EngineHub {
         Ok(())
     }
 
-    /// Stops every engine, waits for all to exit within the deadline,
-    /// then runs `action`. The flag clears on every exit path.
-    pub async fn with_maintenance<T, Fut>(
-        &self,
-        stop_owners: impl FnOnce(),
-        action: impl FnOnce() -> Fut,
-    ) -> Result<T>
-    where
-        Fut: Future<Output = Result<T>>,
-    {
-        let _hold = self.suspend(stop_owners).await?;
-        action().await
-    }
-
     /// Terminates every engine and waits for their exit.
     pub async fn close_engines(&self) -> Result<()> {
         self.close_all("Stockfish did not exit during shutdown.")

@@ -229,7 +229,7 @@ async fn the_token_is_sent_as_a_bearer_header_and_never_logged() {
     assert!(!host.logged().contains("lip_secret"));
     // Without a login, no header at all.
     client
-        .get("/api/user/alice", &auth.without_login())
+        .get("/api/user/alice", &nobody(&client))
         .read_json::<Value>()
         .await
         .unwrap();

@@ -110,7 +110,6 @@ pub(crate) fn replace_timer(slot: &mut Option<AbortHandle>, next: Option<AbortHa
     *slot = next;
 }
 
-/// Clears a timer.
 pub(crate) fn clear_timer(slot: &mut Option<AbortHandle>) {
     replace_timer(slot, None);
 }

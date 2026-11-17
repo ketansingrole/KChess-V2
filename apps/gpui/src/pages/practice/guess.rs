@@ -5,17 +5,17 @@
 //! (`kchess_domain::training::guess`); the other side's moves are played for you.
 
 use kchess_contracts::calls;
-use kchess_contracts::types::{AnalysisUpdate, EngineLine};
+use kchess_contracts::types::{AnalysisRequest, AnalysisUpdate, EngineLine};
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{InputEvent, InputState, Textarea, TextareaState};
+use gpui_kit::component::input::{Textarea, TextareaState};
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_domain::training::guess::{self, Eval, Evals, Flaw, Grade, Judged};
 use kchess_domain::variant::{Setup, Variant};
-use serde_json::{Value, json};
+use serde_json::Value;
 use shakmaty::{Color, Position as _};
 
 use super::guess_find::{Found, GameFinder};
@@ -39,7 +39,7 @@ const REPLY: Duration = Duration::from_millis(450);
 const PROBE_DEPTH: f64 = 14.;
 const PROBE_TIME: Duration = Duration::from_millis(2000);
 /// The engine's best lines looked at for a guess before searching the guess itself.
-const LINES: usize = 3;
+const LINES: u32 = 3;
 
 /// A game to guess through: its start, its moves and who played it.
 #[derive(Clone)]
@@ -172,7 +172,7 @@ pub struct GuessMoves {
     error: Option<String>,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
-    move_input: Entity<InputState>,
+    move_box: crate::game::surface::MoveBox,
     pgn: Entity<TextareaState>,
     finder: Entity<GameFinder>,
     deadline: Option<Task<()>>,
@@ -195,7 +195,7 @@ impl GuessMoves {
                 None,
             ))
         });
-        let move_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a move"));
+        let (move_box, typed) = crate::game::surface::MoveBox::new(Self::typed_move, window, cx);
         let pgn = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .rows(6)
@@ -214,15 +214,7 @@ impl GuessMoves {
                     this.guess(uci.clone(), cx);
                 }
             }),
-            cx.subscribe_in(
-                &move_input,
-                window,
-                |this, _, event: &InputEvent, window, cx| {
-                    if let InputEvent::PressEnter { .. } = event {
-                        this.typed_move(window, cx);
-                    }
-                },
-            ),
+            typed,
             cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
                 if let ClientEvent::Event(CoreEvent::Analysis(update)) = event {
                     this.engine_update(update, cx);
@@ -257,7 +249,7 @@ impl GuessMoves {
             error: None,
             board,
             layout: PlayLayout::default(),
-            move_input,
+            move_box,
             pgn,
             finder,
             deadline: None,
@@ -405,12 +397,9 @@ impl GuessMoves {
         let Some(game) = &self.game else {
             return;
         };
-        let text = self.move_input.read(cx).value().trim().to_string();
-        let typed = view::position_at(&game.setup, &game.moves, self.ply)
-            .and_then(|position| view::typed_uci(&game.setup, &position, &text));
-        if let Some(uci) = typed {
-            self.move_input
-                .update(cx, |input, cx| input.set_value("", window, cx));
+        let variant = game.setup.variant;
+        let position = view::position_at(&game.setup, &game.moves, self.ply);
+        if let Some(uci) = self.move_box.take(variant, position.as_ref(), window, cx) {
             self.guess(uci, cx);
         }
     }
@@ -619,13 +608,19 @@ impl GuessMoves {
         let Some(position) = view::position_at(&game.setup, &history, history.len()) else {
             return;
         };
-        let request = json!({
-            "fen": kchess_domain::rules::make_fen(&position),
-            "rootFen": game.setup.fen,
-            "moves": history,
-            "lines": if matches!(probe, Probe::Best(_)) { LINES } else { 1 },
-            "infinite": true,
-        });
+        let request = AnalysisRequest {
+            fen: kchess_domain::rules::make_fen(&position),
+            lines: if matches!(probe, Probe::Best(_)) {
+                LINES
+            } else {
+                1
+            },
+            infinite: Some(true),
+            root_fen: Some(game.setup.fen.clone()),
+            moves: Some(history),
+            client_id: None,
+            variant: None,
+        };
         self.probe = Some(probe);
         self.engine.search(Some(request), engine_of, cx);
         // A look ends after a while even if the engine never reaches its depth.
@@ -698,9 +693,7 @@ impl GuessMoves {
     fn stop_engine(&mut self, cx: &mut Context<Self>) {
         self.probe = None;
         self.deadline = None;
-        if self.engine.wanted().is_some() {
-            self.engine.search(None, engine_of, cx);
-        }
+        self.engine.search(None, engine_of, cx);
     }
 
     /// Look at a finished game's move.
@@ -744,33 +737,17 @@ impl GuessMoves {
     }
 
     fn choose_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let chosen = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Open".into()),
+        crate::links::choose_game_file(window, cx, |this, text, window, cx| match text {
+            Some(text) => {
+                this.pgn
+                    .update(cx, |field, cx| field.set_value(text.clone(), window, cx));
+                this.load(&text, None, cx);
+            }
+            None => {
+                this.error = Some("Choose a PGN file under 2 MB".into());
+                cx.notify();
+            }
         });
-        cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(paths))) = chosen.await else {
-                return;
-            };
-            let Some(path) = paths.first() else {
-                return;
-            };
-            let text = crate::links::read_game_file(path);
-            let _ = this.update_in(cx, |this, window, cx| match text {
-                Some(text) => {
-                    this.pgn
-                        .update(cx, |field, cx| field.set_value(text.clone(), window, cx));
-                    this.load(&text, None, cx);
-                }
-                None => {
-                    this.error = Some("Choose a PGN file under 2 MB".into());
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
     }
 
     fn side_pills(
@@ -1022,7 +999,7 @@ impl GuessMoves {
             .gap(widgets::STACK_GAP)
             .child(crate::board::cached(&self.board))
             .child(widgets::lone_entry(widgets::move_entry(
-                &self.move_input,
+                &self.move_box.input,
                 your_turn,
                 palette,
             )));

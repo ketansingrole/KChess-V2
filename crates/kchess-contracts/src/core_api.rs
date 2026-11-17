@@ -152,15 +152,11 @@ core_api! {
         CachedProfile = "cachedProfile" fn cached_profile(
             username: Username
         ) -> crate::types::CachedProfile;
-        /// A Lichess user as Lichess sent it.
-        Profile = "profile" fn profile(username: Username) -> Value;
-        /// A player's rating history as Lichess sent it.
-        RatingHistory = "ratingHistory" fn rating_history(username: Username) -> Value;
+        Profile = "profile" fn profile(username: Username) -> LichessUser;
+        RatingHistory = "ratingHistory" fn rating_history(username: Username) -> Vec<RatingSeries>;
         /// Sign in through the browser. `username` is the account Lichess authorised.
         #[writes(Accounts)]
-        ConnectLichess = "connectLichess" fn connect_lichess(;
-            look: Option<Value>
-        ) -> ConnectedLichess;
+        ConnectLichess = "connectLichess" fn connect_lichess() -> ConnectedLichess;
         /// Keep this connected account's Lichess event stream open while no game is being
         /// played, so challenges and tournament pairings arrive; empty closes it.
         StayConnected = "stayConnected" fn stay_connected(account: OptionalAccount) -> ();
@@ -324,8 +320,8 @@ core_api! {
             action: RelationAction
         ) -> Reply<bool>;
         /// Many players' Lichess profiles at once (fewer details than `profile`), unknown names
-        /// left out, as Lichess sent them.
-        Profiles = "profiles" fn profiles(usernames: FriendList) -> Vec<Value>;
+        /// left out.
+        Profiles = "profiles" fn profiles(usernames: FriendList) -> Vec<LichessUser>;
         /// The top players of a rating category.
         Leaderboard = "leaderboard" fn leaderboard(perf: PerfType) -> Vec<LeaderboardEntry>;
         /// Players whose names start with `term` (three characters or more).
@@ -420,17 +416,17 @@ core_api! {
         PuzzleDashboard = "puzzleDashboard" fn puzzle_dashboard(
             account: Username,
             days: Days
-        ) -> Reply<Value>;
+        ) -> Reply<crate::types::PuzzleDashboard>;
         /// Read-only: the account's most recent puzzle attempts.
         PuzzleActivity = "puzzleActivity" fn puzzle_activity(
             account: Username,
             max: ActivityMax
         ) -> Reply<Vec<PuzzleActivityEntry>>;
-        /// Read-only: anyone's public Storm dashboard, as Lichess reports it.
+        /// Read-only: anyone's public Storm dashboard.
         StormDashboard = "stormDashboard" fn storm_dashboard(
             username: Username,
             days: Days
-        ) -> Value;
+        ) -> crate::types::StormDashboard;
         /// Local puzzle database (downloaded from database.lichess.org).
         PuzzleDbStatus = "puzzleDbStatus" fn puzzle_db_status() -> crate::types::PuzzleDbStatus;
         #[writes(Puzzles)]

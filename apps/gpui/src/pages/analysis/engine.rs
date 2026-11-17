@@ -59,7 +59,7 @@ impl AnalysisPage {
         self.cloud_request += 1;
         self.wanted.clear();
         self.engine_busy = false;
-        stop_analysis(true, cx);
+        crate::position_engine::stop_analysis(true, "analysis", cx);
     }
 
     pub(super) fn engine_changed(&mut self, cx: &mut Context<Self>) {
@@ -76,7 +76,7 @@ impl AnalysisPage {
         }
         let fen = self.engine_fen();
         let threat = self.threat_position().is_some();
-        self.client_id += 1;
+        self.client_id = crate::position_engine::next_client();
         let request = self.client_id;
         self.engine_error = None;
         let engine_on = Self::engine_on(cx);
@@ -93,7 +93,7 @@ impl AnalysisPage {
             self.wanted.clear();
             self.engine_busy = false;
             // Turning analysis off releases the engine; other pauses keep it warm.
-            stop_analysis(!engine_on, cx);
+            crate::position_engine::stop_analysis(!engine_on, "analysis", cx);
             cx.notify();
             return;
         }
@@ -108,7 +108,7 @@ impl AnalysisPage {
         {
             self.wanted = fen;
             self.engine_busy = false;
-            stop_analysis(false, cx);
+            crate::position_engine::stop_analysis(false, "analysis", cx);
             cx.notify();
             return;
         }
@@ -754,22 +754,4 @@ impl AnalysisPage {
 /// The engine lines chosen (1–5, three by default).
 pub(super) fn prefs_lines(cx: &App) -> usize {
     crate::prefs::get::<usize>(cx, ENGINE_LINES, 3).clamp(1, 5)
-}
-
-/// Stop the search; `release` also closes the engine.
-pub(super) fn stop_analysis(release: bool, cx: &mut App) {
-    let stop = cx.global::<AppCore>().request(calls::StopAnalysis {
-        kill: release.then_some(true),
-    });
-    cx.background_executor()
-        .spawn(async move {
-            if let Err(cause) = stop.await {
-                crate::log::write(
-                    Level::Warn,
-                    "analysis",
-                    &format!("stopping analysis failed: {}", cause.message),
-                );
-            }
-        })
-        .detach();
 }

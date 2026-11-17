@@ -331,13 +331,12 @@ impl Broadcasts {
         self.previews
             .entry(game.id.clone())
             .or_insert_with(|| {
-                let mut state = BoardState::shown(
+                let state = BoardState::preview(
                     &game.fen,
                     kchess_domain::variant::Variant::Standard,
                     Color::White,
                     game.last_move.as_deref(),
                 );
-                state.preview = true;
                 cx.new(|_| ChessBoard::new(state))
             })
             .clone()

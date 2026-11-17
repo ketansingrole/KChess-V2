@@ -19,7 +19,7 @@ use kchess_contracts::Level;
 use serde_json::{Number, Value, json};
 use shakmaty::Color;
 
-use super::{AnalysisPage, TOOL, stop_analysis};
+use super::{AnalysisPage, TOOL};
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::played::{GameOrigin, PlayedGame};
@@ -309,7 +309,7 @@ impl AnalysisPage {
         }
         self.review.requested = self.mainline_key();
         self.wanted.clear();
-        stop_analysis(false, cx);
+        crate::position_engine::stop_analysis(false, "analysis", cx);
         let origin = self.review.origin.clone().unwrap_or_default();
         let request = ReviewRequest {
             fen: self.root.fen.clone(),

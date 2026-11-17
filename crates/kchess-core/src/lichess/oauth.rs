@@ -8,7 +8,6 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::Deserialize;
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -95,7 +94,7 @@ pub fn authorize_url(
     Ok(url.into())
 }
 
-pub use kchess_domain::records::oauth::{callback_page, default_look};
+pub use kchess_domain::records::oauth::{callback_page, look};
 
 /// A callback request's target, parsed: its path and first value of `state` and `code`.
 pub struct Callback {
@@ -269,12 +268,12 @@ fn same_secret(a: &str, b: &str) -> bool {
 pub async fn wait_for_callback(
     listener: &TcpListener,
     state: &str,
-    look: &Value,
     timeout: Duration,
     cancel: &CancellationToken,
     on_return: &(dyn Fn() + Sync),
 ) -> CoreResult<String> {
-    let page = |authorized| callback_page(authorized, look);
+    let look = look();
+    let page = |authorized| callback_page(authorized, &look);
     let redirect = Redirect {
         path: "/callback",
         state,
@@ -308,22 +307,19 @@ impl Lichess {
     /// Signs an account in through the browser.
     pub async fn connect_lichess(
         &self,
-        look: Option<&Value>,
         on_return: Option<&(dyn Fn() + Sync)>,
     ) -> CoreResult<Connected> {
-        self.connect_lichess_within(look, on_return, CALLBACK_TIMEOUT)
+        self.connect_lichess_within(on_return, CALLBACK_TIMEOUT)
             .await
     }
 
     /// Signs an account in with a callback deadline of `timeout`.
     pub async fn connect_lichess_within(
         &self,
-        look: Option<&Value>,
         on_return: Option<&(dyn Fn() + Sync)>,
         timeout: Duration,
     ) -> CoreResult<Connected> {
         let epoch = self.login_epoch();
-        let look = look.cloned().unwrap_or_else(default_look);
         let pkce = new_pkce()?;
         let state = new_state()?;
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -352,7 +348,7 @@ impl Lichess {
             }
         };
         let code = tokio::select! {
-            answer = wait_for_callback(&listener, &state, &look, timeout, &cancel, on_return) => answer?,
+            answer = wait_for_callback(&listener, &state, timeout, &cancel, on_return) => answer?,
             answer = opening => answer?,
         };
         if let Err(cause) = self.capabilities().focus().await {
@@ -447,12 +443,12 @@ mod tests {
 
     #[test]
     fn the_page_is_self_contained_and_escapes_nothing_it_was_not_given() {
-        let page = callback_page(true, &default_look());
+        let page = callback_page(true, &look());
         assert!(page.contains("Signed in to Lichess"));
         assert!(!page.contains("__"));
         assert!(!page.contains("<script"));
         assert!(!page.contains("http://") && !page.contains("https://"));
-        let cancelled = callback_page(false, &default_look());
+        let cancelled = callback_page(false, &look());
         assert!(cancelled.contains("Connection cancelled"));
     }
 
@@ -490,7 +486,6 @@ mod tests {
         let code = wait_for_callback(
             &listener,
             "ST",
-            &default_look(),
             Duration::from_secs(30),
             &CancellationToken::new(),
             &|| {},

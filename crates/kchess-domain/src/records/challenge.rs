@@ -8,6 +8,40 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 
+crate::wire_enum!(#[doc = "Which color the challenger requests."] ChallengeColor, CHALLENGE_COLORS {
+    Random = "random",
+    White = "white",
+    Black = "black",
+});
+
+/// What to play online and how: a public seek, or a challenge to `target`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineOptions {
+    /// Minutes on the clock; ignored for correspondence games (`days`).
+    pub minutes: u32,
+    /// Seconds added per move.
+    pub increment: u32,
+    /// Correspondence: days per move instead of a clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub days: Option<u32>,
+    /// Standard when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<crate::variant::Variant>,
+    /// A direct challenge from this position (standard or Chess960 rules).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fen: Option<String>,
+    pub color: ChallengeColor,
+    /// Rated games change the Lichess rating; casual ones do not.
+    pub rated: bool,
+    /// The player challenged; a public seek without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// Which connected account plays; the first connected one without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+}
+
 /// A Lichess game id: `^[a-zA-Z0-9]{8,12}$`.
 fn is_game_id(text: &str) -> bool {
     (8..=12).contains(&text.len()) && text.bytes().all(|byte| byte.is_ascii_alphanumeric())
@@ -58,8 +92,7 @@ pub struct ChallengeInfo {
     pub rated: bool,
     pub speed: String,
     pub time_control: TimeControl,
-    /// `random`, `white` or `black`.
-    pub color: String,
+    pub color: ChallengeColor,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rematch_of: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -180,13 +213,11 @@ struct Challenge {
     rated: bool,
     speed: String,
     time_control: TimeControl,
-    color: Option<String>,
+    color: Option<ChallengeColor>,
     direction: Option<ChallengeDirection>,
     initial_fen: Option<String>,
     rematch_of: Option<String>,
 }
-
-const COLORS: &[&str] = &["white", "black", "random"];
 
 fn challenge(object: &Object) -> Option<Challenge> {
     let id = game_id(object.get("id")?)?.to_string();
@@ -200,7 +231,9 @@ fn challenge(object: &Object) -> Option<Challenge> {
     let rated = object.get("rated")?.as_bool()?;
     let speed = text(object.get("speed")?, 20)?.to_string();
     let time_control = time_control(object.get("timeControl")?)?;
-    let color = optional(object, "color", |v| picklist(v, COLORS))?.map(str::to_string);
+    let color = optional(object, "color", |v| {
+        picklist(v, CHALLENGE_COLORS).and_then(ChallengeColor::from_key)
+    })?;
     let direction = optional(object, "direction", |v| {
         v.as_str().and_then(ChallengeDirection::from_key)
     })?;
@@ -318,7 +351,7 @@ pub fn read_challenge_event(account: &str, raw: &Value, now: i64) -> Option<Chal
         rated: parsed.rated,
         speed: parsed.speed,
         time_control: parsed.time_control,
-        color: parsed.color.unwrap_or_else(|| "random".to_string()),
+        color: parsed.color.unwrap_or(ChallengeColor::Random),
         rematch_of: parsed.rematch_of,
         initial_fen,
         playable: problem.is_none(),
@@ -410,7 +443,7 @@ mod tests {
     fn a_color_is_white_black_or_random() {
         for color in ["white", "black", "random"] {
             let event = event_of(json!({ "color": color })).unwrap();
-            assert_eq!(event.info.color, color);
+            assert_eq!(event.info.color.as_str(), color);
         }
         assert!(event_of(json!({ "color": "green" })).is_none());
         assert_eq!(event_of(json!({ "color": null })), None);

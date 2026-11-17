@@ -4,9 +4,9 @@ use kchess_contracts::check::{FriendList, MessageText, OptionalAccount, PgnText,
 use kchess_contracts::core_api::SocialApi;
 use kchess_contracts::types::{
     ActivityDay, Crosstable, ImportedGame, LeaderboardEntry, LichessGame, LichessRelation,
-    MessageSent, PerfStats, PerfType, PlayerSuggestion, RelationAction, Reply, TimelineEntry,
+    LichessUser, MessageSent, PerfStats, PerfType, PlayerSuggestion, RelationAction, Reply,
+    TimelineEntry,
 };
-use serde_json::Value;
 
 use crate::core::Core;
 use kchess_contracts::error::Result;
@@ -74,7 +74,7 @@ impl SocialApi for Core {
         })
     }
 
-    async fn profiles(&self, usernames: FriendList) -> Result<Vec<Value>> {
+    async fn profiles(&self, usernames: FriendList) -> Result<Vec<LichessUser>> {
         self.services.lichess().profiles(&usernames.0).await
     }
 

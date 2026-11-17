@@ -551,7 +551,6 @@ mod tests {
         assert_eq!(with(65), None);
     }
 
-    /// A played game holds 1024 moves at most.
     #[test]
     fn a_played_game_holds_1024_moves_at_most() {
         let shuffle = |count: usize| {

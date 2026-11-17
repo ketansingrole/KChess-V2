@@ -26,6 +26,8 @@ fn format() -> Result {
     run("cargo", &["fmt", "--all", "--check"])
 }
 
+/// Every target, with the app's frame benchmarks (`bench`) too: nothing else builds them, and
+/// they once stopped compiling unnoticed when the pages they drive changed.
 fn clippy_workspace() -> Result {
     run(
         "cargo",
@@ -33,6 +35,8 @@ fn clippy_workspace() -> Result {
             "clippy",
             "--workspace",
             "--all-targets",
+            "--features",
+            "kchess-gpui/bench",
             "--locked",
             "--",
             "-D",

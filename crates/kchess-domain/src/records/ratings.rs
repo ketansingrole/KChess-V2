@@ -3,16 +3,13 @@
 
 use crate::perf::Speed;
 use crate::variant::Variant;
-use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use serde_json::{Map, Value, json};
+use serde::{Deserialize, Serialize};
 
 use crate::js;
 
-const DAY_MS: f64 = 86_400_000.0;
-/// `ms` for `Date`'s range: beyond it a JavaScript Date is invalid.
-const MAX_DATE_MS: f64 = 8.64e15;
+const DAY_MS: i64 = 86_400_000;
 
 const fn named(variant: Variant) -> (&'static str, &'static str) {
     (variant.key(), variant.label())
@@ -98,182 +95,170 @@ pub fn is_puzzle_history(name: &str) -> bool {
     normalize_rating_key(name) == "puzzle"
 }
 
-/// The key of a history entry's or game's `name`: '' for anything but a string.
-fn normalize(name: Option<&Value>) -> String {
-    normalize_rating_key(name.and_then(Value::as_str).unwrap_or_default())
+/// One rating category's rating, the last rated one each day: `[year, month (0–11), day,
+/// rating]`, as Lichess sends its rating history.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RatingSeries {
+    pub name: String,
+    pub points: Vec<[i64; 4]>,
 }
 
-/// The rating key of a game's `perf`. A non-string perf is its own key (None when absent).
-fn perf_key(perf: Option<&Value>) -> Option<Value> {
-    match perf {
-        Some(Value::String(_)) => Some(json!(normalize(perf))),
-        other => other.cloned(),
+impl RatingSeries {
+    /// Its rating-history key: `blitz`, `puzzle`, `kingOfTheHill`…
+    pub fn key(&self) -> String {
+        normalize_rating_key(&self.name)
+    }
+
+    /// The puzzle rating's, which is no speed of play.
+    pub fn is_puzzles(&self) -> bool {
+        is_puzzle_history(&self.name)
     }
 }
 
-/// A key's identity: values are equal when their JSON is.
-fn key_id(key: &Option<Value>) -> String {
-    match key {
-        None => "undefined".into(),
-        Some(value) => format!("value:{value}"),
-    }
+/// A rated game as a rating history counts it: when it was played, its rating category and the
+/// player's rating after it.
+#[derive(Clone, Copy, Debug)]
+pub struct RatedGame<'a> {
+    pub created_at: i64,
+    pub perf: &'a str,
+    pub rating: i64,
 }
 
-/// `createdAt`, as the arithmetic reads it (NaN when absent).
-fn created_at(game: &Value) -> f64 {
-    js::to_number(game.get("createdAt"))
-}
-
-/// A `Map` key for a day: SameValueZero, so NaN and -0 are one key each.
-fn day_id(day: f64) -> u64 {
-    if day.is_nan() {
-        u64::MAX
-    } else if day == 0.0 {
-        0
-    } else {
-        day.to_bits()
-    }
-}
-
-struct Perf {
-    name: Option<Value>,
-    /// (day start in ms, rating after the day's last game), in first-seen order.
-    days: Vec<(f64, f64)>,
-    day_index: HashMap<u64, usize>,
-}
-
-/// Rating histories rebuilt from games: one point per UTC day per perf, the day's last rated
-/// game, as `[year, month0, day, rating]`.
-pub fn rating_history_from_games(games: &[Value]) -> Value {
-    let mut sorted: Vec<&Value> = games.iter().collect();
-    sorted.sort_by(|a, b| {
-        created_at(a)
-            .partial_cmp(&created_at(b))
-            .unwrap_or(Ordering::Equal)
-    });
-    let mut perfs: Vec<Perf> = Vec::new();
-    let mut perf_index: HashMap<String, usize> = HashMap::new();
-    for game in sorted {
-        if js::falsy(game.get("rated")) {
-            continue;
-        }
-        let (Some(before), Some(diff)) = (game.get("playerRating"), game.get("ratingDiff")) else {
-            continue;
-        };
-        let rating = js::to_number(Some(before)) + js::to_number(Some(diff));
-        let name = perf_key(game.get("perf"));
-        let day = (created_at(game) / DAY_MS).floor() * DAY_MS;
-        let slot = match perf_index.get(&key_id(&name)) {
-            Some(&slot) => slot,
+/// Rating histories rebuilt from rated games: one point per UTC day per rating category, the
+/// day's last game, the categories in the order first played.
+pub fn rating_series<'a>(games: impl IntoIterator<Item = RatedGame<'a>>) -> Vec<RatingSeries> {
+    let mut games: Vec<RatedGame> = games.into_iter().collect();
+    games.sort_by_key(|game| game.created_at);
+    let mut series: Vec<(String, Vec<(i64, i64)>)> = Vec::new();
+    for game in games {
+        let key = normalize_rating_key(game.perf);
+        let day = game.created_at.div_euclid(DAY_MS);
+        let index = match series.iter().position(|(name, _)| *name == key) {
+            Some(index) => index,
             None => {
-                perfs.push(Perf {
-                    name: name.clone(),
-                    days: Vec::new(),
-                    day_index: HashMap::new(),
-                });
-                perf_index.insert(key_id(&name), perfs.len() - 1);
-                perfs.len() - 1
+                series.push((key, Vec::new()));
+                series.len() - 1
             }
         };
-        let perf = &mut perfs[slot];
-        match perf.day_index.get(&day_id(day)) {
-            Some(&at) => perf.days[at].1 = rating,
-            None => {
-                perf.day_index.insert(day_id(day), perf.days.len());
-                perf.days.push((day, rating));
-            }
+        let days = &mut series[index].1;
+        match days.last_mut() {
+            Some(last) if last.0 == day => last.1 = game.rating,
+            _ => days.push((day, game.rating)),
         }
     }
-    Value::Array(
-        perfs
-            .into_iter()
-            .map(|perf| {
-                let mut entry = Map::new();
-                if let Some(name) = perf.name {
-                    entry.insert("name".into(), name);
-                }
-                let points = perf
-                    .days
-                    .iter()
-                    .map(|&(day, rating)| {
-                        let (year, month0, date) = utc_date(day);
-                        json!([year, month0, date, rating])
-                    })
-                    .collect();
-                entry.insert("points".into(), Value::Array(points));
-                Value::Object(entry)
-            })
-            .collect(),
-    )
+    series
+        .into_iter()
+        .map(|(name, days)| RatingSeries {
+            name,
+            points: days
+                .into_iter()
+                .filter_map(|(day, rating)| {
+                    let (year, month, date) = crate::calendar::civil_from_days(day)?;
+                    Some([year, month - 1, date, rating])
+                })
+                .collect(),
+        })
+        .collect()
 }
 
-/// `[year, month0, day]` of a day start in UTC; nulls for a date outside the calendar's range.
-fn utc_date(day: f64) -> (Value, Value, Value) {
-    if !day.is_finite() || day.abs() > MAX_DATE_MS {
-        return (Value::Null, Value::Null, Value::Null);
-    }
-    match crate::calendar::civil_from_days((day / DAY_MS).round() as i64) {
-        Some((year, month, date)) => (json!(year), json!(month - 1), json!(date)),
-        None => (Value::Null, Value::Null, Value::Null),
-    }
-}
-
-/// Whether a history entry has points: a non-empty `points` list (or string).
-fn has_points(entry: &Value) -> bool {
-    match entry.get("points") {
-        Some(Value::Array(points)) => !points.is_empty(),
-        Some(Value::String(text)) => !text.is_empty(),
-        _ => false,
-    }
-}
-
-/// Lichess's rating histories, plus the game-built ones for perfs it has no points for.
-pub fn merge_rating_histories(official: &[Value], from_games: &[Value]) -> Value {
+/// Lichess's rating histories, then the ones rebuilt from games for the categories Lichess has
+/// no points for.
+pub fn merge_rating_series(
+    official: &[RatingSeries],
+    from_games: &[RatingSeries],
+) -> Vec<RatingSeries> {
     let covered: HashSet<String> = official
         .iter()
-        .filter(|entry| has_points(entry))
-        .map(|entry| normalize(entry.get("name")))
+        .filter(|series| !series.points.is_empty())
+        .map(RatingSeries::key)
         .collect();
-    let mut merged = official.to_vec();
-    merged.extend(
-        from_games
-            .iter()
-            .filter(|entry| !covered.contains(&normalize(entry.get("name"))))
-            .cloned(),
-    );
-    Value::Array(merged)
+    official
+        .iter()
+        .chain(
+            from_games
+                .iter()
+                .filter(|series| !covered.contains(&series.key())),
+        )
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// A series is told by its name, as Lichess writes it: only the puzzle rating's is puzzles.
+    #[test]
+    fn a_series_knows_its_key_and_whether_it_is_puzzles() {
+        let series = |name: &str| RatingSeries {
+            name: name.into(),
+            points: Vec::new(),
+        };
+        assert!(series("Puzzles").is_puzzles());
+        assert!(!series("Blitz").is_puzzles());
+        assert_eq!(series("King of the Hill").key(), "kingOfTheHill");
+    }
+
     #[test]
     fn keys_normalize_like_lichess_names() {
-        let name = |s: &str| json!(s);
         assert_eq!(normalize_rating_key("King of the Hill"), "kingOfTheHill");
         assert_eq!(normalize_rating_key("Puzzles"), "puzzle");
         assert_eq!(normalize_rating_key("Unknown_Thing"), "Unknown_Thing");
         assert_eq!(normalize_rating_key(""), "");
-        assert_eq!(normalize(Some(&name("Puzzles"))), "puzzle");
-        assert_eq!(normalize(Some(&json!(3))), "");
-        assert_eq!(normalize(None), "");
     }
 
-    #[test]
-    fn invalid_dates_become_null() {
-        assert_eq!(utc_date(f64::NAN).0, Value::Null);
-        assert_eq!(utc_date(9.0e15).0, Value::Null);
+    const DAY: i64 = DAY_MS;
+
+    fn game(created_at: i64, perf: &str, rating: i64) -> RatedGame<'_> {
+        RatedGame {
+            created_at,
+            perf,
+            rating,
+        }
     }
 
-    /// A history entry has points when it lists some, as a list or as text.
+    /// A day's last game is its point, whatever order the games come in; each category keeps
+    /// its own points, in the order first played.
     #[test]
-    fn an_entry_has_points_when_it_lists_some() {
-        assert!(has_points(&json!({ "points": [[2026, 0, 1, 1500]] })));
-        assert!(has_points(&json!({ "points": "1500" })));
-        assert!(!has_points(&json!({ "points": [] })));
-        assert!(!has_points(&json!({ "points": "" })));
-        assert!(!has_points(&json!({ "points": 3 })));
-        assert!(!has_points(&json!({})));
+    fn a_days_last_game_is_its_point() {
+        let series = rating_series([
+            game(DAY + 50, "blitz", 1510),
+            game(DAY + 10, "Blitz", 1500),
+            game(DAY + 20, "rapid", 1700),
+            game(3 * DAY, "blitz", 1490),
+        ]);
+        assert_eq!(
+            series,
+            [
+                RatingSeries {
+                    name: "blitz".into(),
+                    points: vec![[1970, 0, 2, 1510], [1970, 0, 4, 1490]],
+                },
+                RatingSeries {
+                    name: "rapid".into(),
+                    points: vec![[1970, 0, 2, 1700]],
+                },
+            ]
+        );
+    }
+
+    /// Games fill only the categories Lichess has no points for.
+    #[test]
+    fn lichess_points_win_over_games() {
+        let series = |name: &str, points: Vec<[i64; 4]>| RatingSeries {
+            name: name.into(),
+            points,
+        };
+        let official = [
+            series("Blitz", vec![[2026, 0, 1, 1500]]),
+            series("Rapid", vec![]),
+        ];
+        let from_games = [
+            series("blitz", vec![[2026, 0, 2, 1400]]),
+            series("rapid", vec![[2026, 0, 2, 1600]]),
+        ];
+        let merged = merge_rating_series(&official, &from_games);
+        let names: Vec<&str> = merged.iter().map(|series| series.name.as_str()).collect();
+        assert_eq!(names, ["Blitz", "Rapid", "rapid"]);
     }
 }

@@ -132,11 +132,6 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
                 .map(|(key, label)| ((*key).to_string(), json!(label)))
                 .collect(),
         )),
-        "ratingHistoryFromGames" => list(args, 0, "games").map(ratings::rating_history_from_games),
-        "mergeRatingHistories" => list(args, 0, "official").and_then(|official| {
-            list(args, 1, "fromGames")
-                .map(|from_games| ratings::merge_rating_histories(official, from_games))
-        }),
         "summarizeStudy" => arg(args, 0)
             .and_then(Value::as_str)
             .map(|pgn| Ok(json!(studies::summarize_study(pgn))))
@@ -199,11 +194,10 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
             })),
             None => Err("response.status must be a number".into()),
         },
-        "oauthLook" => Ok(oauth::look(arg(args, 0).unwrap_or(&Value::Null)).unwrap_or(Value::Null)),
-        "oauthLookDefault" => Ok(oauth::default_look()),
+        "oauthLookDefault" => Ok(oauth::look()),
         "oauthPage" => {
             let authorized = arg(args, 0).and_then(Value::as_bool).unwrap_or(false);
-            let look = arg(args, 1).cloned().unwrap_or_else(oauth::default_look);
+            let look = arg(args, 1).cloned().unwrap_or_else(oauth::look);
             Ok(Value::String(oauth::callback_page(authorized, &look)))
         }
         "analysisContext" => match arg(args, 1) {

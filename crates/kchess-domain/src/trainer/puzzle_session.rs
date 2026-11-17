@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use super::puzzle_progress::{Outcome, Verdict, classify, moves};
 use crate::js;
+use crate::training::puzzle::Puzzle;
 
 const OFFLINE_TEXT: &str = "You’re offline. Choose Downloaded to use puzzles on this device, or reconnect for online puzzles.";
 const REJECTED_TEXT: &str = "Lichess did not accept the result: reconnect your account.";
@@ -74,7 +75,7 @@ pub struct State {
     /// `idle`, `loading`, `ready`, `exhausted`, `nodb`, `noaccount`, `reconnect` or `error`.
     pub phase: String,
     #[serde(default)]
-    pub current: Option<Value>,
+    pub current: Option<Puzzle>,
     pub puzzle_key: u64,
     pub is_retry: bool,
     pub train_error: String,
@@ -160,7 +161,7 @@ pub struct Resume {
     #[serde(default)]
     win: bool,
     #[serde(default)]
-    puzzle_id: Value,
+    puzzle_id: Option<String>,
     selection: Selection,
 }
 
@@ -208,7 +209,7 @@ pub struct Solve {
     pub account: String,
     pub angle: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<Value>,
+    pub id: Option<String>,
     pub win: bool,
     pub rated: bool,
 }
@@ -264,13 +265,6 @@ fn offset(difficulty: &str) -> f64 {
     }
 }
 
-/// A non-array object with a `needsReconnect` property.
-pub fn is_reconnect(value: &Value) -> bool {
-    value
-        .as_object()
-        .is_some_and(|object| object.contains_key("needsReconnect"))
-}
-
 fn initial_state() -> State {
     State {
         phase: "idle".into(),
@@ -310,13 +304,30 @@ fn resume(stage: &str, generation: u64, selection: &Selection) -> Resume {
         version: 0,
         key: 0,
         win: false,
-        puzzle_id: Value::Null,
+        puzzle_id: None,
         selection: selection.clone(),
     }
 }
 
-/// A reply's outcome: `Ok(value)` or the failure's message.
-pub type Reply = Result<Value, String>;
+/// What a host call answered.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Answer {
+    /// Downloaded puzzles (`localPuzzles`).
+    Local(Vec<Puzzle>),
+    /// The next Lichess puzzle, none when the theme and difficulty have run out, and the
+    /// account's puzzle rating (`puzzleNext`).
+    Drawn {
+        puzzle: Option<Puzzle>,
+        rating: Option<f64>,
+    },
+    /// Lichess took the result, with the rating change when it rated it (`puzzleSolve`).
+    Solved { rating_diff: Option<f64> },
+    /// The account must be reconnected to give the puzzle permission.
+    NeedsReconnect,
+}
+
+/// A reply's outcome: the answer or the failure's message.
+pub type Reply = Result<Answer, String>;
 
 impl Session<'_> {
     fn invalidate(&mut self) {
@@ -329,7 +340,7 @@ impl Session<'_> {
     /// Show `puzzle` as a new attempt; `retry` (tried again from the history) is logged, not
     /// counted. It is this attempt's alone: kept in the state, it carried over to the puzzles
     /// shown after a retry.
-    fn show(&mut self, puzzle: Value, selection: &Selection, retry: bool) {
+    fn show(&mut self, puzzle: Puzzle, selection: &Selection, retry: bool) {
         self.end_attempt();
         self.state.is_retry = retry;
         self.state.current = Some(puzzle);
@@ -349,7 +360,7 @@ impl Session<'_> {
         self.state.phase = "ready".into();
     }
 
-    fn retry(&mut self, puzzle: Value, selection: &Selection) {
+    fn retry(&mut self, puzzle: Puzzle, selection: &Selection) {
         self.end_attempt();
         self.internal.load_gen += 1;
         self.state.last_report = None;
@@ -415,17 +426,19 @@ impl Session<'_> {
             return;
         }
         let selection = token.selection.clone();
-        let value = match reply {
-            Ok(value) => value,
+        let answer = match reply {
+            Ok(answer) => answer,
             Err(text) => return self.fail(&selection, &text),
         };
         match token.stage.as_str() {
-            "offline" => match value.as_array().and_then(|puzzles| puzzles.first()) {
-                Some(puzzle) if !puzzle.is_null() => self.show(puzzle.clone(), &selection, false),
+            "offline" => match answer {
+                Answer::Local(mut puzzles) if !puzzles.is_empty() => {
+                    self.show(puzzles.swap_remove(0), &selection, false)
+                }
                 _ => self.exhausted(),
             },
             "draw" => {
-                if is_reconnect(&value) {
+                if answer == Answer::NeedsReconnect {
                     if selection.mode == "rated" {
                         self.state.phase = "reconnect".into();
                         return;
@@ -437,30 +450,32 @@ impl Session<'_> {
                     });
                     return;
                 }
-                if let Some(rating) = value
-                    .get("glicko")
-                    .and_then(|glicko| glicko.get("rating"))
-                    .and_then(Value::as_f64)
-                {
+                let Answer::Drawn { puzzle, rating } = answer else {
+                    return self.exhausted();
+                };
+                if let Some(rating) = rating {
                     self.state.rating = Some(js::round(rating));
                 }
-                match value.get("puzzle").filter(|puzzle| !puzzle.is_null()) {
-                    Some(puzzle) => self.show(puzzle.clone(), &selection, false),
+                match puzzle {
+                    Some(puzzle) => self.show(puzzle, &selection, false),
                     None => self.exhausted(),
                 }
             }
             _ => {
-                if is_reconnect(&value) {
+                if answer == Answer::NeedsReconnect {
                     return;
                 }
-                match value.get("puzzle").filter(|puzzle| !puzzle.is_null()) {
-                    Some(puzzle) => {
-                        self.show(puzzle.clone(), &selection, false);
+                match answer {
+                    Answer::Drawn {
+                        puzzle: Some(puzzle),
+                        ..
+                    } => {
+                        self.show(puzzle, &selection, false);
                         if let Some(attempt) = self.internal.attempt.as_mut() {
                             attempt.anonymous = true;
                         }
                     }
-                    None => self.exhausted(),
+                    _ => self.exhausted(),
                 }
             }
         }
@@ -493,7 +508,7 @@ impl Session<'_> {
     /// The attempt is over (solved, solution shown, or the puzzle replaced): count it, unless it is
     /// a retry, and hand it to the host's log. An attempt without a verdict was not played.
     fn end_attempt(&mut self) {
-        let puzzle = self.state.current.clone().filter(|value| !value.is_null());
+        let puzzle = self.state.current.clone();
         let Some(attempt) = self.internal.attempt.as_mut() else {
             return;
         };
@@ -538,7 +553,7 @@ impl Session<'_> {
     /// the local score waits for the attempt to end. A retry is never sent to Lichess.
     fn report_begin(&mut self, win: bool, detail: Option<Detail>, selection: &Selection) {
         let attempt = self.internal.attempt.clone();
-        let puzzle = self.state.current.clone().filter(|value| !value.is_null());
+        let puzzle = self.state.current.clone();
         let (Some(puzzle), Some(started)) = (puzzle, attempt) else {
             return;
         };
@@ -566,11 +581,10 @@ impl Session<'_> {
         if !syncs_to_lichess(self.state, selection) || started.anonymous {
             return;
         }
-        let puzzle_id = puzzle.get("id").cloned().unwrap_or(Value::Null);
         let solve = Solve {
             account: started.account.clone(),
             angle: started.angle.clone(),
-            id: puzzle.get("id").cloned(),
+            id: Some(puzzle.id.clone()),
             win,
             rated: counts_for_rating(&started.mode, detail.hinted),
         };
@@ -578,7 +592,7 @@ impl Session<'_> {
         token.version = self.internal.session_version;
         token.key = started.key;
         token.win = win;
-        token.puzzle_id = puzzle_id;
+        token.puzzle_id = Some(puzzle.id);
         self.call = Some(Call {
             request: Request::PuzzleSolve(solve),
             resume: token,
@@ -602,8 +616,8 @@ impl Session<'_> {
             return;
         }
         let win = token.win;
-        let result = match reply {
-            Ok(result) => result,
+        let answer = match reply {
+            Ok(answer) => answer,
             Err(text) => {
                 self.warn = true;
                 self.state.last_report = Some(Report {
@@ -615,7 +629,7 @@ impl Session<'_> {
             }
         };
         let rated = token.selection.mode == "rated";
-        if is_reconnect(&result) {
+        if answer == Answer::NeedsReconnect {
             // Practice goes on without the account; only rated puzzles need it back.
             if rated {
                 self.state.phase = "reconnect".into();
@@ -627,7 +641,10 @@ impl Session<'_> {
             });
             return;
         }
-        let rating_diff = result.get("ratingDiff").and_then(Value::as_f64);
+        let rating_diff = match answer {
+            Answer::Solved { rating_diff } => rating_diff,
+            _ => None,
+        };
         if let Some(diff) = rating_diff {
             self.state.session.rating_change += diff;
             if let Some(rating) = self.state.rating {
@@ -638,8 +655,7 @@ impl Session<'_> {
             .state
             .current
             .as_ref()
-            .and_then(|puzzle| puzzle.get("id"))
-            .is_some_and(|id| *id == token.puzzle_id);
+            .is_some_and(|puzzle| Some(&puzzle.id) == token.puzzle_id.as_ref());
         // A practice result changes nothing to show; only a rated one has a rating change.
         if same_puzzle && rated {
             self.state.last_report = Some(Report {
@@ -683,11 +699,8 @@ impl PuzzleSession {
     }
 
     /// The puzzle shown, if any.
-    pub fn current(&self) -> Option<&Value> {
-        self.state
-            .current
-            .as_ref()
-            .filter(|current| !current.is_null())
+    pub fn current(&self) -> Option<&Puzzle> {
+        self.state.current.as_ref()
     }
 
     /// Changes with each puzzle shown.
@@ -732,12 +745,12 @@ impl PuzzleSession {
     }
 
     /// Plays an earlier `puzzle` again, unrated and uncounted.
-    pub fn retry(&mut self, puzzle: Value, selection: &Selection, day: &str) -> Step {
+    pub fn retry(&mut self, puzzle: Puzzle, selection: &Selection, day: &str) -> Step {
         self.step(day, |session| session.retry(puzzle, selection))
     }
 
     /// Shows a chosen `puzzle`, replacing whatever a load still on its way would show.
-    pub fn show(&mut self, puzzle: Value, selection: &Selection, day: &str) -> Step {
+    pub fn show(&mut self, puzzle: Puzzle, selection: &Selection, day: &str) -> Step {
         self.step(day, |session| {
             session.internal.load_gen += 1;
             session.show(puzzle, selection, false);
@@ -794,15 +807,16 @@ mod tests {
         }
     }
 
-    fn puzzle(id: &str) -> Value {
-        json!({
+    fn puzzle(id: &str) -> Puzzle {
+        serde_json::from_value(json!({
             "id": id,
             "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             "solution": ["e2e4", "e7e5"],
             "rating": 1500,
             "themes": ["mix"],
             "plays": 1,
-        })
+        }))
+        .unwrap()
     }
 
     /// A puzzle tried again from the history marked the session as retrying, and that mark
@@ -823,9 +837,9 @@ mod tests {
         let mut session = PuzzleSession::new();
         let call = session.load_begin(&selection(), true, "").call.unwrap();
         session.show(puzzle("chosen"), &selection(), "");
-        let late = Ok(json!([puzzle("loaded")]));
+        let late = Ok(Answer::Local(vec![puzzle("loaded")]));
         session.load_settled(call.resume, late, &selection(), "");
-        assert_eq!(session.state().current.as_ref().unwrap()["id"], "chosen");
+        assert_eq!(session.state().current.as_ref().unwrap().id, "chosen");
     }
 
     /// What the page reads: the phase, the puzzle shown and a key that changes with each one.
@@ -836,15 +850,13 @@ mod tests {
         let first = session.puzzle_key();
         session.show(puzzle("one"), &selection(), "");
         assert_eq!(session.phase(), "ready");
-        assert_eq!(session.current().map(|p| &p["id"]), Some(&json!("one")));
+        assert_eq!(session.current().map(|p| p.id.as_str()), Some("one"));
         session.show(puzzle("two"), &selection(), "");
-        assert_eq!(session.current().map(|p| &p["id"]), Some(&json!("two")));
+        assert_eq!(session.current().map(|p| p.id.as_str()), Some("two"));
         assert_eq!(session.puzzle_key(), first + 2);
-        session.state.current = Some(Value::Null);
-        assert_eq!(session.current(), None);
         let call = session.load_begin(&selection(), true, "").call.unwrap();
         assert_eq!(session.phase(), "loading");
-        session.load_settled(call.resume, Ok(json!([null])), &selection(), "");
+        session.load_settled(call.resume, Ok(Answer::Local(Vec::new())), &selection(), "");
         assert_eq!(session.phase(), "exhausted");
     }
 
