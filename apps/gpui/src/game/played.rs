@@ -3,7 +3,6 @@
 
 use kchess_domain::games::Outcome;
 use kchess_domain::variant::Setup;
-use serde_json::Value;
 use shakmaty::Color;
 
 /// Where a game on the analysis board came from: its players, the side you played and its
@@ -25,15 +24,6 @@ impl GameOrigin {
     pub fn lichess(id: impl Into<String>) -> GameOrigin {
         GameOrigin {
             game_id: Some(id.into()),
-            ..GameOrigin::default()
-        }
-    }
-
-    /// The players' names, as a document (a mistake drill's game, an explorer game) gives them.
-    pub fn named(white: &Value, black: &Value) -> GameOrigin {
-        GameOrigin {
-            white: white.as_str().map(str::to_string),
-            black: black.as_str().map(str::to_string),
             ..GameOrigin::default()
         }
     }

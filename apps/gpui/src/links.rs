@@ -101,7 +101,7 @@ impl Link {
                     "",
                 ),
                 None,
-                move |window, cx| crate::pages::players::open_study(&study, &chapter, window, cx),
+                move |window, cx| crate::pages::analysis::open_study(&study, &chapter, window, cx),
             )],
             Link::Broadcast(link) => vec![command(
                 ActionInfo::new("pasted:broadcast", "Watch this broadcast", "radio", ""),
@@ -167,7 +167,7 @@ impl Link {
                         "",
                     ),
                     Some(id),
-                    move |window, cx| crate::pages::players::open_linked(&link, window, cx),
+                    move |window, cx| crate::pages::analysis::open_linked(&link, window, cx),
                 )]
             }
             Link::Moves(pgn) => vec![command(

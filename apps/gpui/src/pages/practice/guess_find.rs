@@ -8,14 +8,14 @@ use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::{GameId, Username};
-use kchess_contracts::types::{LichessGame, PlayerSuggestion};
+use kchess_contracts::types::LichessGame;
 use shakmaty::Color;
 
 use super::classics::{CLASSICS, winner};
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::pages::history::lichess::{RowDetail, game_row};
-use crate::pages::players;
+use crate::player_search::{self, NameMatches};
 use crate::theme::Palette;
 use crate::widgets;
 
@@ -27,8 +27,7 @@ pub enum Found {
 pub struct GameFinder {
     input: Entity<InputState>,
     /// Players whose names start with what is typed.
-    matches: Vec<PlayerSuggestion>,
-    search_epoch: Epoch,
+    names: NameMatches,
     /// The player whose games are shown, and their games once Lichess sends them.
     player: Option<String>,
     games: Option<Vec<LichessGame>>,
@@ -55,8 +54,7 @@ impl GameFinder {
         )];
         GameFinder {
             input,
-            matches: Vec::new(),
-            search_epoch: Epoch::default(),
+            names: NameMatches::default(),
             player: None,
             games: None,
             epoch: Epoch::default(),
@@ -68,47 +66,14 @@ impl GameFinder {
 
     /// Players whose names start with what is typed, once typing settles.
     fn search_names(&mut self, cx: &mut Context<Self>) {
-        let epoch = self.search_epoch.next();
-        let term = self.input.read(cx).value().trim().to_string();
-        let shown = self
-            .player
-            .as_ref()
-            .is_some_and(|player| player.eq_ignore_ascii_case(&term));
-        if term.chars().count() < 3
-            || !crate::game::is_username(&term)
-            || shown
-            || !crate::network::online(cx)
-        {
-            self.matches.clear();
-            cx.notify();
-            return;
-        }
-        let core = cx.global::<AppCore>().clone();
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(players::SEARCH_WAIT).await;
-            let current = this
-                .read_with(cx, |this, _| this.search_epoch.is_current(epoch))
-                .unwrap_or(false);
-            if !current {
-                return;
-            }
-            let found = core
-                .request(calls::SearchPlayers {
-                    term: Username(term),
-                })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                if !this.search_epoch.is_current(epoch) {
-                    return;
-                }
-                if let Ok(found) = found {
-                    this.matches = found;
-                    this.matches.truncate(players::SUGGESTED);
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+        let typed = self.input.read(cx).value().to_string();
+        let shown = self.player.clone();
+        self.names.search(
+            &typed,
+            shown.as_deref(),
+            |finder: &mut Self| &mut finder.names,
+            cx,
+        );
     }
 
     /// A player's recent games: `name`, or the one typed.
@@ -124,8 +89,7 @@ impl GameFinder {
             return;
         }
         let epoch = self.epoch.next();
-        self.search_epoch.invalidate();
-        self.matches.clear();
+        self.names.clear();
         self.player = Some(name.clone());
         self.games = None;
         self.opening = None;
@@ -148,7 +112,7 @@ impl GameFinder {
                             this.player = Some(game.account.clone());
                         }
                         if let Some(player) = this.player.clone() {
-                            players::remember(&player, cx);
+                            player_search::remember(&player, cx);
                         }
                         this.games = Some(games);
                     }
@@ -209,16 +173,16 @@ impl GameFinder {
                 this.pick(name.clone(), window, cx)
             })
         };
-        let chips = |id: &'static str, names: Vec<(String, Option<String>, bool)>| {
+        let chips = |id: &'static str, names: Vec<String>| {
             names
                 .into_iter()
                 .enumerate()
-                .map(|(index, (name, title, online))| {
-                    players::name_chip(
+                .map(|(index, name)| {
+                    player_search::name_chip(
                         (id, index),
                         &name,
-                        title.as_deref(),
-                        online,
+                        None,
+                        false,
                         palette,
                         pick(name.clone()),
                     )
@@ -227,16 +191,14 @@ impl GameFinder {
                 .collect::<Vec<_>>()
         };
         // What is typed matches these players; before that, the ones looked up lately.
-        let suggestions = if self.matches.is_empty() {
+        let suggestions = if self.names.found().is_empty() {
             let shown = self.player.clone().unwrap_or_default().to_lowercase();
-            let recent: Vec<_> =
-                crate::prefs::get::<Vec<String>>(cx, players::RECENT_KEY, Vec::new())
-                    .into_iter()
-                    .filter(|name| name.to_lowercase() != shown)
-                    .map(|name| (name, None, false))
-                    .collect();
+            let recent: Vec<_> = player_search::recent(cx)
+                .into_iter()
+                .filter(|name| name.to_lowercase() != shown)
+                .collect();
             (!recent.is_empty()).then(|| {
-                players::chip_row(
+                player_search::chip_row(
                     "Recent",
                     chips("guess-recent-player", recent),
                     None,
@@ -244,23 +206,16 @@ impl GameFinder {
                 )
             })
         } else {
-            let found = self
-                .matches
-                .iter()
-                .map(|found| {
-                    (
-                        found.username.clone(),
-                        found.title.clone(),
-                        found.online == Some(true),
-                    )
-                })
-                .collect();
-            Some(players::chip_row(
-                "Matches",
-                chips("guess-player-match", found),
-                None,
-                palette,
-            ))
+            let finder = cx.entity().downgrade();
+            let found =
+                player_search::match_chips("guess-player-match", &self.names, palette, |name| {
+                    let finder = finder.clone();
+                    Box::new(move |_, window, cx| {
+                        let _ =
+                            finder.update(cx, |finder, cx| finder.pick(name.clone(), window, cx));
+                    })
+                });
+            Some(player_search::chip_row("Matches", found, None, palette))
         };
         let finder = cx.entity().downgrade();
         let games: Option<Div> = self.player.as_ref().map(|player| {
@@ -337,7 +292,7 @@ impl GameFinder {
 
     fn classics_card(&self, cx: &mut Context<Self>, palette: &Palette) -> Div {
         let chips = CLASSICS.iter().enumerate().map(|(index, classic)| {
-            players::name_chip(
+            player_search::name_chip(
                 ("guess-classic", index),
                 classic.name,
                 None,

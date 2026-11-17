@@ -73,7 +73,8 @@ pub(crate) const KEYS: &[PageKey<AnalysisKey>] = &[
 ];
 
 pub use load::{
-    analyse_puzzle, board, new_board, open_line, practise_game, replace, replace_read, when_read,
+    analyse_puzzle, board, new_board, open_exported, open_line, open_linked, open_study,
+    practise_game, replace, replace_read, when_read,
 };
 pub use review::{Opening, classification_look};
 

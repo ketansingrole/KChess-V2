@@ -16,7 +16,6 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::Value;
 use shakmaty::Color;
 
 use super::{WatchPage, label, live_badge, origin_of, player_of, turn_of};
@@ -479,10 +478,10 @@ impl Live {
                             .aria_label("Open game on the analysis board")
                             .cursor_pointer()
                             .on_click(move |_, window, cx| {
-                                crate::pages::players::open_exported(
+                                crate::pages::analysis::open_exported(
                                     &open.game_id,
-                                    Value::String(open.white.name.clone()),
-                                    Value::String(open.black.name.clone()),
+                                    open.white.name.clone(),
+                                    open.black.name.clone(),
                                     open.orientation,
                                     window,
                                     cx,
@@ -962,10 +961,10 @@ impl WatchPage {
             }
         }
         window.defer(cx, move |window, cx| {
-            crate::pages::players::open_exported(
+            crate::pages::analysis::open_exported(
                 &frame.game_id,
-                Value::String(frame.white.name),
-                Value::String(frame.black.name),
+                frame.white.name,
+                frame.black.name,
                 orientation,
                 window,
                 cx,

@@ -1,10 +1,16 @@
 //! How other pages put something on the analysis board and show it.
 
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::*;
 
-use super::AnalysisPage;
+use kchess_contracts::calls;
+use kchess_contracts::check::{GameId, LichessId, StudyId};
+
+use super::{AnalysisPage, Opening};
+use crate::core::AppCore;
+use crate::game::played::GameOrigin;
 use crate::game::session::SessionSaver;
 use crate::pages::Page;
 
@@ -139,4 +145,122 @@ pub fn analyse_puzzle(
     replace(window, cx, move |analysis, _, cx| {
         analysis.open_puzzle(&puzzle, &wrong_moves, cx)
     });
+}
+
+/// A finished Lichess game, fetched as PGN (`exportGame`), on the analysis board facing
+/// `orientation`; asks first when that replaces unsaved analysis.
+pub fn open_exported(
+    id: &str,
+    white: String,
+    black: String,
+    orientation: shakmaty::Color,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let origin = GameOrigin {
+        white: Some(white),
+        black: Some(black),
+        ..GameOrigin::lichess(id)
+    };
+    open_exported_at(id, origin, orientation, 0, window, cx);
+}
+
+/// A Lichess game by its link (`crate::game::game_link`), from the side and at the move it names.
+pub fn open_linked(link: &crate::game::GameLink, window: &mut Window, cx: &mut App) {
+    open_exported_at(
+        &link.id,
+        GameOrigin::lichess(&link.id),
+        link.orientation,
+        link.ply.unwrap_or(0),
+        window,
+        cx,
+    );
+}
+
+fn open_exported_at(
+    id: &str,
+    origin: GameOrigin,
+    orientation: shakmaty::Color,
+    ply: usize,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let export = cx.global::<AppCore>().request(calls::ExportGame {
+        id: GameId(id.to_string()),
+    });
+    let opening = Opening {
+        ply,
+        orientation: Some(orientation),
+        origin: Some(origin),
+        review: false,
+    };
+    let pgn = async move {
+        match export.await {
+            Ok(pgn) => Ok(pgn),
+            Err(cause) => Err(format!("Could not open the game: {}", cause.message)),
+        }
+    };
+    open_fetched(pgn, opening, window, cx);
+}
+
+/// A public Lichess study's chapter (its first when `chapter` is empty), from the side the study
+/// shows it.
+pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App) {
+    let fetch = cx.global::<AppCore>().request(calls::LichessStudyChapter {
+        id: LichessId(study.to_string()),
+        chapter: StudyId(chapter.to_string()),
+    });
+    window
+        .spawn(cx, async move |cx| {
+            let pgn = match fetch.await {
+                Ok(found) => Some(found.pgn),
+                Err(cause) => {
+                    let message = format!("Could not open the study: {}", cause.message);
+                    let _ = cx.update(|window, cx| window.push_notification(message, cx));
+                    return;
+                }
+            };
+            let _ = cx.update(|window, cx| {
+                let orientation = pgn.as_deref().and_then(crate::game::pgn_orientation);
+                let pgn =
+                    async move { pgn.ok_or_else(|| "That study could not be read".to_string()) };
+                let opening = Opening {
+                    orientation,
+                    ..Opening::default()
+                };
+                open_fetched(pgn, opening, window, cx);
+            });
+        })
+        .detach();
+}
+
+/// Open a game fetched from Lichess on the analysis board (asking first when the board holds
+/// unsaved work), or say why it cannot be opened.
+fn open_fetched(
+    pgn: impl std::future::Future<Output = Result<String, String>> + 'static,
+    opening: Opening,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window
+        .spawn(cx, async move |cx| {
+            let pgn = pgn.await;
+            let _ = cx.update(|window, cx| match pgn {
+                // A variant the analysis board cannot play (Crazyhouse, Atomic…): say so before
+                // asking to replace anything.
+                Ok(pgn)
+                    if !crate::game::pgn_analysable(&pgn)
+                        || crate::game::tree::TreeNode::from_pgn(&pgn).is_none() =>
+                {
+                    window.push_notification("The analysis board cannot open this game", cx)
+                }
+                Ok(pgn) => {
+                    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
+                        analysis.open_pgn(&pgn, opening.clone(), cx)
+                    });
+                }
+                Err(message) => window.push_notification(message, cx),
+            });
+        })
+        .detach();
 }
