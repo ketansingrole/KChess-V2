@@ -32,7 +32,6 @@ impl<T: Copy> Sides<T> {
     }
 }
 
-/// `Clock`'s state.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClockState {

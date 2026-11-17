@@ -18,7 +18,7 @@ pub use kchess_domain::records::challenge::{
 
 /// A real-time challenge Lichess stops reporting is forgotten after this long.
 const LIVE_TTL_MS: i64 = 30 * 60_000;
-/// `CORRESPONDENCE_TTL_MS`.
+/// A correspondence challenge, after this long.
 const CORRESPONDENCE_TTL_MS: i64 = 14 * 86_400_000;
 /// The inbox keeps this many; the oldest sighting goes first.
 pub const MAX_CHALLENGES: usize = 50;
