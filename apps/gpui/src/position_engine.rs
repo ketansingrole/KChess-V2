@@ -225,6 +225,7 @@ impl EngineLook {
         self.reported = false;
     }
 
+    #[cfg(test)]
     pub fn running(&self) -> bool {
         self.ends.is_some()
     }
