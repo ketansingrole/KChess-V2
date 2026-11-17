@@ -6,7 +6,6 @@
 //! crosses the boundary.
 
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::js;
 use crate::review::js_exp;
@@ -167,17 +166,6 @@ fn to_fixed(x: f64, digits: usize) -> String {
 pub struct Score {
     pub cp: Option<f64>,
     pub mate: Option<f64>,
-}
-
-impl Score {
-    /// The score of an engine line (`{ cp, mate, … }`); none when it is not an object.
-    pub fn of_line(line: &Value) -> Option<Score> {
-        let line = line.as_object()?;
-        Some(Score {
-            cp: line.get("cp").and_then(Value::as_f64),
-            mate: line.get("mate").and_then(Value::as_f64),
-        })
-    }
 }
 
 /// “+0.34”, “−1.20”, “#3”, “#−2”, or “…” without a line.

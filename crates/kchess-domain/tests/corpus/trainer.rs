@@ -205,9 +205,18 @@ fn add_move_plan(input: Option<&Value>) -> Out {
     serde_json::to_value(plan).map_err(|e| e.to_string())
 }
 
+/// The score of an engine line (`{ cp, mate, … }`); none when it is not an object.
+fn score_of_line(line: &Value) -> Option<Score> {
+    let line = line.as_object()?;
+    Some(Score {
+        cp: line.get("cp").and_then(Value::as_f64),
+        mate: line.get("mate").and_then(Value::as_f64),
+    })
+}
+
 fn analysis_tree(method: &str, args: &[Value]) -> Option<Out> {
     let arg = |i: usize| arg(args, i);
-    let score = |i: usize| arg(i).and_then(Score::of_line);
+    let score = |i: usize| arg(i).and_then(score_of_line);
     let result = match method {
         "moveGlyph" => Ok(json!(tree::move_glyph(&numbers(arg(0))))),
         "setMoveGlyph" => Ok(json!(tree::set_move_glyph(
