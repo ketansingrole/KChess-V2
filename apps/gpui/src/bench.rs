@@ -188,9 +188,12 @@ fn set_up(scenario: Scenario, window: &mut Window, cx: &mut App) {
                         "white": { "minutes": 5, "increment": 3 },
                         "black": { "minutes": 5, "increment": 3 },
                     });
-                    let setup = json!({ "variant": "standard", "fen": START_FEN });
+                    let setup = kchess_domain::variant::Setup {
+                        variant: kchess_domain::variant::Variant::Standard,
+                        fen: START_FEN.to_string(),
+                    };
                     local.replace_game(setup, clock, window, cx);
-                    local.play("e2e4", window, cx);
+                    local.play("e2e4", cx);
                 });
             }
         }
