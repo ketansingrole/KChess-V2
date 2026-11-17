@@ -353,6 +353,7 @@ mod tests {
         cx.executor().advance_clock(Duration::from_secs(3));
         cx.run_until_parked();
         assert_eq!(ended(cx), 0, "a slow start does not end the look");
+        assert!(cx.read_entity(&owner, |owner, _| owner.look.running()));
         cx.update(|cx| owner.update(cx, |owner, cx| owner.look.reported(done, cx)));
         cx.executor().advance_clock(long - Duration::from_millis(1));
         cx.run_until_parked();

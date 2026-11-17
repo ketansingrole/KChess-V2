@@ -24,8 +24,7 @@ pub fn run(args: &[String]) -> Result {
         .map_err(|cause| cause.to_string())?
         .as_secs();
     let ask = |args: &[&str]| output("gh", args);
-    let pause =
-        |attempt: u32| std::thread::sleep(std::time::Duration::from_secs(10 * u64::from(attempt)));
+    let pause = |attempt| std::thread::sleep(pause_before(attempt));
     print!(
         "{}",
         report_for(days, now, &|args| read_again_on_server_error(
@@ -55,6 +54,11 @@ fn read_again_on_server_error(gh: Gh, pause: &dyn Fn(u32), args: &[&str]) -> Res
             answer => return answer,
         }
     }
+}
+
+/// The pause before asking a read again for the `attempt`th time: ten seconds more each time.
+fn pause_before(attempt: u32) -> std::time::Duration {
+    std::time::Duration::from_secs(10 * u64::from(attempt))
 }
 
 /// `gh`'s report of an HTTP 5xx answer ("gh: Server Error (HTTP 502)").
@@ -470,6 +474,12 @@ mod tests {
         };
         assert!(read_again_on_server_error(&gh, &|_| {}, &["api"]).is_err());
         assert_eq!(*asked.borrow(), 1);
+    }
+
+    #[test]
+    fn each_read_again_waits_ten_seconds_longer() {
+        assert_eq!(pause_before(1).as_secs(), 10);
+        assert_eq!(pause_before(2).as_secs(), 20);
     }
 
     #[test]
