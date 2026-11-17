@@ -541,8 +541,8 @@ async fn concurrent_profile_reads_share_one_request() {
     );
 
     let (first, second) = tokio::join!(lichess.profile("Alice"), lichess.profile("Alice"));
-    assert_eq!(first.unwrap()["title"], "IM");
-    assert_eq!(second.unwrap()["title"], "IM");
+    assert_eq!(first.unwrap().title.as_deref(), Some("IM"));
+    assert_eq!(second.unwrap().title.as_deref(), Some("IM"));
     assert_eq!(fixture.to("/api/user/Alice").len(), 1);
 }
 
@@ -566,7 +566,7 @@ async fn a_profile_is_served_from_the_saved_copy_when_lichess_is_unreachable() {
     );
 
     let profile = lichess.profile("alice").await.unwrap();
-    assert_eq!(profile["title"], "IM");
+    assert_eq!(profile.title.as_deref(), Some("IM"));
     let cached = lichess.cached_profile("alice").await.unwrap();
     assert_eq!(cached.profile_fetched_at, Some(42));
 }
@@ -728,7 +728,6 @@ impl LichessStore for PageOnly {
     }
     fn save_reviews<'a>(
         &'a self,
-        _account: &'a str,
         _reviews: &'a [StoredReview],
         _current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Vec<StoredReview>>>
@@ -738,6 +737,23 @@ impl LichessStore for PageOnly {
                 "Reviews are saved with their page.",
             ))
         })
+    }
+    fn save_synced_play_time<'a>(
+        &'a self,
+        account: &'a str,
+        play_time: i64,
+        current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<()>> {
+        Box::pin(async move {
+            self.0
+                .save_synced_play_time(account, play_time, current)
+                .await
+        })
+    }
+    fn receives_challenges<'a>(
+        &'a self,
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<bool>> {
+        Box::pin(async move { self.0.receives_challenges().await })
     }
     fn mark_checked<'a>(
         &'a self,

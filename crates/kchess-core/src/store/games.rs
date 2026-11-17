@@ -19,9 +19,9 @@ use kchess_contracts::types::{
     Account, AppData, GameLibraryOverview, GamePage, GamePageQuery, GameRecord, LichessGame,
     RatingSeries, Settings, StoredReview,
 };
-use kchess_domain::calendar::civil_from_days;
 use kchess_domain::color::Color;
 use kchess_domain::misc::value::J;
+use kchess_domain::records::ratings::{RatedGame, rating_series};
 
 /// Games kept per account.
 pub const MAX_GAMES: i64 = 5000;
@@ -517,42 +517,30 @@ pub fn rating_history(db: &Connection, account: &str) -> Result<Vec<RatingSeries
     let after_game = kchess_domain::chesscom::username_of(account).is_some();
     let mut statement = db
         .prepare(
-            "SELECT perf, day, rating FROM (
-    SELECT perf, CAST(createdAt / 86400000 AS INTEGER) * 86400000 AS day,
-      playerRating + COALESCE(ratingDiff, 0) AS rating,
-      ROW_NUMBER() OVER (PARTITION BY perf, CAST(createdAt / 86400000 AS INTEGER)
-        ORDER BY createdAt DESC, id DESC) AS rank
+            "SELECT createdAt, perf, playerRating + COALESCE(ratingDiff, 0)
     FROM games WHERE account = ?1 COLLATE NOCASE AND rated = 1
       AND playerRating IS NOT NULL AND (ratingDiff IS NOT NULL OR ?2)
-  ) WHERE rank = 1 ORDER BY day, perf",
+    ORDER BY createdAt, id",
         )
         .sql()?;
     let rows = statement
         .query_map(params![account, after_game], |row| {
             Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
                 row.get::<_, i64>(2)?,
             ))
         })
         .sql()?
         .collect::<rusqlite::Result<Vec<_>>>()
         .sql()?;
-    let mut series: Vec<RatingSeries> = Vec::new();
-    for (perf, day, rating) in rows {
-        let Some((year, month, date)) = civil_from_days(day.div_euclid(86_400_000)) else {
-            continue;
-        };
-        let point = [year, month - 1, date, rating];
-        match series.iter().position(|entry| entry.name == perf) {
-            Some(index) => series[index].points.push(point),
-            None => series.push(RatingSeries {
-                name: perf,
-                points: vec![point],
-            }),
-        }
-    }
-    Ok(series)
+    Ok(rating_series(rows.iter().map(
+        |(created_at, perf, rating)| RatedGame {
+            created_at: *created_at,
+            perf,
+            rating: *rating,
+        },
+    )))
 }
 
 pub fn pending_game_ids(db: &Connection, account: &str) -> Result<Vec<String>> {

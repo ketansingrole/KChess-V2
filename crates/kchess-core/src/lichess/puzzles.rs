@@ -8,8 +8,8 @@
 use std::collections::VecDeque;
 
 use kchess_contracts::types::{
-    Puzzle, PuzzleActivityEntry, PuzzleDraw, PuzzleGlicko, PuzzleRequest, PuzzleSolveRequest,
-    PuzzleSolveResult, UsageKind,
+    Puzzle, PuzzleActivityEntry, PuzzleDashboard, PuzzleDraw, PuzzleGlicko, PuzzleRequest,
+    PuzzleSolveRequest, PuzzleSolveResult, StormDashboard, UsageKind,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -246,7 +246,7 @@ pub async fn puzzle_dashboard(
     lichess: &Lichess,
     account: &str,
     days: u32,
-) -> CoreResult<Reply<Value>> {
+) -> CoreResult<Reply<PuzzleDashboard>> {
     lichess
         .as_account(account, UsageKind::Puzzles, |auth| async move {
             let path = format!("/api/puzzle/dashboard/{days}");
@@ -293,7 +293,11 @@ pub async fn puzzle_activity(
 }
 
 /// Anyone's public Storm results; needs no login.
-pub async fn storm_dashboard(lichess: &Lichess, username: &str, days: u32) -> CoreResult<Value> {
+pub async fn storm_dashboard(
+    lichess: &Lichess,
+    username: &str,
+    days: u32,
+) -> CoreResult<StormDashboard> {
     let path = format!("/api/storm/dashboard/{}", path_segment(username));
     lichess
         .client()

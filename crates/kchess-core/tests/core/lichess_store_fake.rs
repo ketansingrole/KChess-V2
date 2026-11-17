@@ -56,7 +56,7 @@ async fn script(store: &dyn LichessStore) -> Vec<String> {
         .await
         .unwrap_err();
     seen.push(format!("cancelled page {}", refused.message));
-    let refused = store.save_reviews("Alice", &[], &no).await.unwrap_err();
+    let refused = store.save_reviews(&[], &no).await.unwrap_err();
     seen.push(format!("cancelled reviews {}", refused.message));
     let refused = store
         .mark_checked(&["g1".to_string()], &no)

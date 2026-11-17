@@ -419,7 +419,14 @@ fn a_player_is_messaged_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
             crate::shell::view::<crate::pages::players::PlayersPage>(cx).expect("the Players page");
         page.update(cx, |page, cx| {
             page.show_profile(
-                serde_json::json!({ "id": "rival", "username": "Rival", "count": { "all": 3 } }),
+                kchess_contracts::types::LichessUser {
+                    username: "Rival".into(),
+                    count: Some(kchess_contracts::types::UserCount {
+                        all: Some(3),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
                 cx,
             )
         });

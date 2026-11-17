@@ -129,13 +129,21 @@ async fn the_daily_puzzle_kchess_cannot_read_is_an_error() {
 
 #[tokio::test]
 async fn the_puzzle_dashboard_is_the_accounts_own_results_for_the_days_asked() {
-    let fixture = serve(|_| Reply::Json(200, json!({ "solved": 7, "days": 30 }).to_string())).await;
+    let body = json!({
+        "days": 30,
+        "global": { "nb": 7, "firstWins": 5, "performance": 1610 },
+        "themes": { "fork": { "theme": "Fork", "results": { "nb": 3, "firstWins": 2 } } },
+    });
+    let fixture = serve(move |_| Reply::Json(200, body.to_string())).await;
     let lichess = service(&fixture.base);
     let Outcome::Done(dashboard) = puzzle_dashboard(&lichess, "Alice", 30).await.unwrap() else {
         panic!("the login is connected");
     };
 
-    assert_eq!(dashboard, json!({ "solved": 7, "days": 30 }));
+    assert_eq!(dashboard.global.nb, Some(7));
+    assert_eq!(dashboard.global.first_wins, Some(5));
+    assert_eq!(dashboard.themes[0].0, "fork");
+    assert_eq!(dashboard.themes[0].1.results.nb, Some(3));
     let sent = &fixture.requests()[0];
     assert_eq!(sent.path(), "/api/puzzle/dashboard/30");
     assert_eq!(sent.header("authorization"), Some("Bearer lip_alice"));
@@ -181,7 +189,11 @@ async fn puzzle_activity_keeps_the_readable_results_newest_first_and_skips_the_r
 async fn storm_dashboard_needs_no_login_and_names_an_unknown_user() {
     let fixture = serve(|seen| {
         if seen.path().ends_with("/Bob") {
-            Reply::Json(200, json!({ "high": 42, "games": 3 }).to_string())
+            let body = json!({
+                "high": { "allTime": 42, "day": 12 },
+                "days": [{ "_id": "2026/11/01", "runs": 3, "score": 42 }],
+            });
+            Reply::Json(200, body.to_string())
         } else {
             Reply::Json(404, "{}".into())
         }
@@ -190,7 +202,9 @@ async fn storm_dashboard_needs_no_login_and_names_an_unknown_user() {
     let lichess = service(&fixture.base);
 
     let dashboard = storm_dashboard(&lichess, "Bob", 30).await.unwrap();
-    assert_eq!(dashboard, json!({ "high": 42, "games": 3 }));
+    assert_eq!(dashboard.high.all_time, Some(42));
+    assert_eq!(dashboard.days[0].id, "2026/11/01");
+    assert_eq!(dashboard.days[0].runs, 3);
     let sent = &fixture.requests()[0];
     assert_eq!(sent.path(), "/api/storm/dashboard/Bob");
     assert!(

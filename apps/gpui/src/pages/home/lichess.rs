@@ -13,9 +13,9 @@ use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::{GameAccount, Username};
 use kchess_contracts::types::{
-    GameLibraryOverview, GamePage, GamePageQuery, InsightsQuery, LichessGame, RatingSeries,
+    GameLibraryOverview, GamePage, GamePageQuery, InsightsQuery, LichessGame, LichessUser,
+    RatingSeries, UserPerf,
 };
-use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -77,7 +77,7 @@ impl Source {
 pub struct LichessActivity {
     account: String,
     source: Source,
-    profile: Value,
+    profile: LichessUser,
     history: Entity<RatingHistory>,
     /// `gameLibraryOverview`: wins, losses and draws by account.
     overview: Option<GameLibraryOverview>,
@@ -104,7 +104,7 @@ impl LichessActivity {
         LichessActivity {
             account: String::new(),
             source: Source::Lichess,
-            profile: Value::Null,
+            profile: LichessUser::default(),
             history: cx
                 .new(|cx| RatingHistory::new(LICHESS_HINT, window, cx).without_mode_picker()),
             overview: None,
@@ -126,11 +126,11 @@ impl LichessActivity {
         if self.account != account {
             self.account = account.to_string();
             self.source = Source::of(account);
-            self.profile = Value::Null;
+            self.profile = LichessUser::default();
             let hint = self.source.games_hint();
             self.history.update(cx, |history, cx| {
                 history.set_games_hint(hint, cx);
-                history.set(Value::Null, Value::Null, cx)
+                history.set(Vec::new(), Vec::new(), cx)
             });
             self.recent.clear();
             self.loaded = false;
@@ -194,9 +194,9 @@ impl LichessActivity {
                     return;
                 }
                 if let Ok(saved) = saved {
-                    this.profile = saved.profile.unwrap_or(Value::Null);
+                    this.profile = saved.profile.unwrap_or_default();
                     this.history.update(cx, |history, cx| {
-                        history.set_official(saved.rating_history.unwrap_or(Value::Null), cx)
+                        history.set_official(saved.rating_history.unwrap_or_default(), cx)
                     });
                 }
                 let (overview, recent, fallback) = local;
@@ -242,38 +242,45 @@ impl LichessActivity {
         self.loaded = true;
         if let Some(fallback) = fallback {
             self.history
-                .update(cx, |history, cx| history.set_fallback(json!(fallback), cx));
+                .update(cx, |history, cx| history.set_fallback(fallback, cx));
         }
         cx.notify();
     }
 }
 
-/// A profile's `perfs` from the games synced here (a Chess.com player's): each speed's latest
-/// rating from `gameRatingHistory`, and its games from the `insights` report's `bySpeed`.
+/// A profile from the games synced here (a Chess.com player's): each speed's latest rating
+/// from `gameRatingHistory`, and its games from the `insights` report's `bySpeed`.
 fn local_profile(
     history: &[RatingSeries],
     report: Option<&kchess_contracts::types::InsightsReport>,
-) -> Value {
-    let mut perfs = serde_json::Map::new();
+) -> LichessUser {
+    let mut perfs = std::collections::BTreeMap::new();
     for (key, _) in PERFS {
         let rating = history
             .iter()
             .find(|series| series.name == key)
             .and_then(|series| series.points.last())
-            .map(|point| json!(point[3]));
+            .map(|point| point[3]);
         let games = report
             .into_iter()
             .flat_map(|report| &report.by_speed)
             .find(|speed| speed.speed == key)
-            .map(|speed| json!(speed.record.total));
+            .map(|speed| speed.record.total);
         if rating.is_some() || games.is_some() {
             perfs.insert(
                 key.to_string(),
-                json!({ "rating": rating, "games": games.unwrap_or(json!(0)) }),
+                UserPerf {
+                    rating,
+                    games: Some(games.unwrap_or_default()),
+                    ..UserPerf::default()
+                },
             );
         }
     }
-    json!({ "perfs": perfs })
+    LichessUser {
+        perfs,
+        ..LichessUser::default()
+    }
 }
 
 /// The speeds a rating card can show, in Lichess's order.
@@ -290,16 +297,11 @@ const CARDS: usize = 4;
 
 /// The speeds to show a card for: those played, most games first; Blitz and Rapid until the
 /// profile is known.
-fn shown_perfs(profile: &Value) -> Vec<(&'static str, &'static str)> {
-    let games = |key: &str| profile["perfs"][key]["games"].as_f64().unwrap_or_default();
-    let mut played: Vec<_> = PERFS
-        .into_iter()
-        .filter(|(key, _)| games(key) > 0.)
-        .collect();
+fn shown_perfs(profile: &LichessUser) -> Vec<(&'static str, &'static str)> {
+    let mut played = profile.played(PERFS);
     if played.is_empty() {
         return vec![PERFS[1], PERFS[2]];
     }
-    played.sort_by(|a, b| games(b.0).total_cmp(&games(a.0)));
     played.truncate(CARDS);
     played
 }
@@ -307,10 +309,11 @@ fn shown_perfs(profile: &Value) -> Vec<(&'static str, &'static str)> {
 impl LichessActivity {
     /// The games, wins, losses and draws: Lichess's lifetime counts, else the synced games'.
     fn counts(&self) -> [f64; 4] {
-        let count = &self.profile["count"];
-        if count["all"].is_number() {
-            let of = |key: &str| count[key].as_f64().unwrap_or_default();
-            return [of("all"), of("win"), of("loss"), of("draw")];
+        if let Some(count) = &self.profile.count
+            && let Some(all) = count.all
+        {
+            let of = |count: Option<i64>| count.unwrap_or_default() as f64;
+            return [all as f64, of(count.win), of(count.loss), of(count.draw)];
         }
         self.overview
             .as_ref()
@@ -410,10 +413,10 @@ impl Render for LichessActivity {
             .items_stretch()
             .gap(px(12.))
             .children(shown_perfs(&self.profile).into_iter().map(|(key, label)| {
-                let perf = &self.profile["perfs"][key];
-                let rating = perf["rating"].as_f64();
-                let progress = perf["prog"].as_f64().filter(|prog| *prog != 0.);
-                let played = perf["games"].as_f64().unwrap_or_default();
+                let perf = self.profile.perfs.get(key).cloned().unwrap_or_default();
+                let rating = perf.rating;
+                let progress = perf.prog.filter(|prog| *prog != 0);
+                let played = perf.games.unwrap_or_default();
                 let chosen = chart_mode == key;
                 let history = self.history.clone();
                 v_flex()
@@ -473,10 +476,10 @@ impl Render for LichessActivity {
                                 div()
                                     .text_size(px(13.))
                                     .font_weight(FontWeight::MEDIUM)
-                                    .text_color(if prog > 0. { palette.win } else { palette.loss })
+                                    .text_color(if prog > 0 { palette.win } else { palette.loss })
                                     .child(format!(
                                         "{}{}",
-                                        if prog > 0. { "+" } else { "−" },
+                                        if prog > 0 { "+" } else { "−" },
                                         prog.abs()
                                     ))
                             })),
@@ -485,10 +488,10 @@ impl Render for LichessActivity {
                         div()
                             .text_size(px(12.))
                             .text_color(palette.text_muted)
-                            .child(if played > 0. {
+                            .child(if played > 0 {
                                 format!(
                                     "{} {}",
-                                    widgets::format_count(played),
+                                    widgets::format_count(played as f64),
                                     if key == "puzzle" { "puzzles" } else { "games" }
                                 )
                             } else {
@@ -612,9 +615,9 @@ mod tests {
         };
         let profile = local_profile(&history, Some(&report));
         assert_eq!(
-            profile["perfs"],
+            json!(profile.perfs),
             json!({
-                "bullet": { "rating": null, "games": 1 },
+                "bullet": { "games": 1 },
                 "blitz": { "rating": 1300, "games": 5 },
                 "rapid": { "rating": 1500, "games": 2 },
             })
@@ -628,20 +631,21 @@ mod tests {
 
     #[test]
     fn the_speeds_played_most_get_the_cards() {
-        let profile = json!({ "perfs": {
+        let profile = serde_json::from_value(json!({ "perfs": {
             "bullet": { "games": 10 },
             "blitz": { "games": 900 },
             "rapid": { "games": 300 },
             "classical": { "games": 0 },
             "puzzle": { "games": 400 },
             "correspondence": { "games": 2 },
-        } });
+        } }))
+        .expect("a user");
         let keys: Vec<_> = shown_perfs(&profile)
             .into_iter()
             .map(|(key, _)| key)
             .collect();
         assert_eq!(keys, ["blitz", "puzzle", "rapid", "bullet"]);
-        let unknown: Vec<_> = shown_perfs(&json!(null))
+        let unknown: Vec<_> = shown_perfs(&Default::default())
             .into_iter()
             .map(|(key, _)| key)
             .collect();

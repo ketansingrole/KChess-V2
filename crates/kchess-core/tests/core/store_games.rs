@@ -8,9 +8,7 @@ use kchess_core::store::{
     reviews,
 };
 use serde_json::{Value, json};
-use support::store::{
-    Secrets, Store, canonical, check_page_query, game_page, library_game, list, profile,
-};
+use support::store::{Secrets, Store, check_page_query, game_page, library_game, list, profile};
 
 const SYNCED_AT: i64 = 1_790_812_800_000;
 
@@ -304,15 +302,12 @@ fn stable_tie_ordering_and_aggregates_match_the_daily_rating_fallback() {
     );
     assert!(overview["versus"].get("alice").is_none());
 
-    // The rule the store's history must match.
-    let expected = kchess_domain::records::ratings::rating_history_from_games(&games[..3]);
+    // Each day's last rated game is its point; the unrated game counts for nothing.
     assert_eq!(
-        canonical(
-            &store
-                .read(|c| games::rating_history(c.db, "alice"))
-                .expect("gameRatingHistory")
-        ),
-        canonical(&expected)
+        store
+            .read(|c| games::rating_history(c.db, "alice"))
+            .expect("gameRatingHistory"),
+        json!([{ "name": "blitz", "points": [[2026, 9, 1, 1508], [2026, 9, 2, 1492]] }])
     );
 
     let first = page(&store, json!({ "offset": 0, "limit": 2 }));

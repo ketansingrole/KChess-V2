@@ -27,11 +27,13 @@ const RETIRED: &[&str] = &[
     "gameResult",
     "hasScore",
     "materialBalance",
+    "mergeRatingHistories",
     "nearestEngineLevel",
     "pgnFromMoves",
     "playMove",
     "puzzleFromDb",
     "puzzleSessionSyncs",
+    "ratingHistoryFromGames",
 ];
 
 /// The cases recorded with a game session on an illegal setup.
@@ -156,7 +158,7 @@ fn check_the_corpus() {
     }
     assert_eq!(
         cases + superseded,
-        30_232,
+        30_084,
         "the corpus checks {cases} cases"
     );
     assert_eq!(

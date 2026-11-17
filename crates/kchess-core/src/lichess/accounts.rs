@@ -29,8 +29,8 @@ use crate::store::games::EXPORTED_GAME_CACHE;
 use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
 use kchess_contracts::types::{
     CachedProfile, Crosstable, CrosstableMatchup, FollowedRatings, FollowedUser, FollowingProblem,
-    FollowingReport, LichessGame, PerfMark, PerfResult, PerfStats, PerfStreak, PerfType,
-    StoredReview, UsageKind,
+    FollowingReport, LichessGame, LichessUser, PerfMark, PerfResult, PerfStats, PerfStreak,
+    PerfType, RatingSeries, StoredReview, UsageKind,
 };
 use kchess_domain::color::Color;
 
@@ -121,7 +121,6 @@ pub trait LichessStore: Send + Sync {
     /// returned.
     fn save_reviews<'a>(
         &'a self,
-        account: &'a str,
         reviews: &'a [StoredReview],
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<StoredReview>>>;
@@ -131,14 +130,9 @@ pub trait LichessStore: Send + Sync {
         account: &'a str,
         play_time: i64,
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
-        let _ = (account, play_time, current);
-        Box::pin(async { Ok(()) })
-    }
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
     /// Whether the user takes challenges.
-    fn receives_challenges<'a>(&'a self) -> futures_util::future::BoxFuture<'a, CoreResult<bool>> {
-        Box::pin(async { Ok(true) })
-    }
+    fn receives_challenges<'a>(&'a self) -> futures_util::future::BoxFuture<'a, CoreResult<bool>>;
     /// Games Lichess was asked about, so they are not asked again soon.
     fn mark_checked<'a>(
         &'a self,
@@ -275,6 +269,12 @@ pub fn path_segment(text: &str) -> String {
         }
     }
     out
+}
+
+/// What Lichess sent (or the cache kept of it) read as `T`.
+fn decoded<T: serde::de::DeserializeOwned>(raw: &Value, what: &str) -> CoreResult<T> {
+    T::deserialize(raw)
+        .map_err(|cause| CoreError::new(format!("Lichess sent an unreadable {what}: {cause}")))
 }
 
 pub(super) fn profile_key(username: &str, kind: &str) -> String {
@@ -787,8 +787,8 @@ impl Lichess {
             .await;
         Ok(CachedProfile {
             profile_fetched_at: profile.as_ref().map(|hit| hit.fetched_at),
-            profile: profile.map(|hit| hit.value),
-            rating_history: rating.map(|hit| hit.value),
+            profile: profile.and_then(|hit| decoded(&hit.value, "profile").ok()),
+            rating_history: rating.and_then(|hit| decoded(&hit.value, "rating history").ok()),
         })
     }
 
@@ -923,18 +923,20 @@ impl Lichess {
         Ok(())
     }
 
-    /// A Lichess user as Lichess sent it, cached. A missing user names the user.
-    pub async fn profile(&self, username: &str) -> CoreResult<Value> {
+    /// A Lichess user, cached. A missing user names the user.
+    pub async fn profile(&self, username: &str) -> CoreResult<LichessUser> {
         let key = profile_key(username, "profile");
-        self.cached_fetch(&key, username, || async {
-            let auth = self.client.counted(username, UsageKind::Profile);
-            self.client
-                .get(&format!("/api/user/{}", path_segment(username)), &auth)
-                .read_json::<Value>()
-                .await
-                .map_err(|failure| no_such_user(username, failure))
-        })
-        .await
+        let raw = self
+            .cached_fetch(&key, username, || async {
+                let auth = self.client.counted(username, UsageKind::Profile);
+                self.client
+                    .get(&format!("/api/user/{}", path_segment(username)), &auth)
+                    .read_json::<Value>()
+                    .await
+                    .map_err(|failure| no_such_user(username, failure))
+            })
+            .await?;
+        decoded(&raw, "profile")
     }
 
     /// One player's record in one rating category (public).
@@ -1080,18 +1082,20 @@ impl Lichess {
     }
 
     /// The rating history of a player, cached.
-    pub async fn rating_history(&self, username: &str) -> CoreResult<Value> {
+    pub async fn rating_history(&self, username: &str) -> CoreResult<Vec<RatingSeries>> {
         let key = profile_key(username, "rating");
-        self.cached_fetch(&key, username, || async {
-            let path = format!("/api/user/{}/rating-history", path_segment(username));
-            self.as_any_account(Some(username), UsageKind::Profile, |auth| {
-                let path = &path;
-                async move { self.client.get(path, &auth).read_json::<Value>().await }
+        let raw = self
+            .cached_fetch(&key, username, || async {
+                let path = format!("/api/user/{}/rating-history", path_segment(username));
+                self.as_any_account(Some(username), UsageKind::Profile, |auth| {
+                    let path = &path;
+                    async move { self.client.get(path, &auth).read_json::<Value>().await }
+                })
+                .await
+                .map_err(|failure| no_such_user(username, failure))
             })
-            .await
-            .map_err(|failure| no_such_user(username, failure))
-        })
-        .await
+            .await?;
+        decoded(&raw, "rating history")
     }
 
     /// Syncs the connected accounts (or one of them), in turn. Every account still
@@ -1136,12 +1140,7 @@ impl Lichess {
         match self.profiles(&names).await {
             Ok(users) => users
                 .iter()
-                .filter_map(|user| {
-                    Some((
-                        user["username"].as_str()?.to_lowercase(),
-                        user["playTime"]["total"].as_i64()?,
-                    ))
-                })
+                .filter_map(|user| Some((user.username.to_lowercase(), user.played_seconds()?)))
                 .collect(),
             Err(cause) => {
                 self.host.log(

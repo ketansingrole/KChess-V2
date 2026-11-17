@@ -477,7 +477,6 @@ impl LichessStore for MemoryStore {
 
     fn save_reviews<'a>(
         &'a self,
-        _account: &'a str,
         reviews: &'a [StoredReview],
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<StoredReview>>> {
@@ -490,6 +489,19 @@ impl LichessStore for MemoryStore {
             self.reviews.lock().unwrap().extend(reviews.iter().cloned());
             Ok(reviews.to_vec())
         })
+    }
+
+    fn save_synced_play_time<'a>(
+        &'a self,
+        _account: &'a str,
+        _play_time: i64,
+        _current: &'a (dyn Fn() -> bool + Sync),
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn receives_challenges<'a>(&'a self) -> futures_util::future::BoxFuture<'a, CoreResult<bool>> {
+        Box::pin(async { Ok(true) })
     }
 
     fn mark_checked<'a>(

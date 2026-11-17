@@ -205,12 +205,10 @@ impl LichessStore for DbLichessStore {
 
     fn save_reviews<'a>(
         &'a self,
-        account: &'a str,
         reviews: &'a [StoredReview],
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<StoredReview>>> {
         Box::pin(async move {
-            let _ = account;
             if !current() {
                 return Err(CoreError::new("Sync was cancelled."));
             }

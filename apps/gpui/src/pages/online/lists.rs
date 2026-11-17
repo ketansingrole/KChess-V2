@@ -356,11 +356,7 @@ impl OnlinePage {
             .enumerate()
             .map(|(index, game)| {
                 let id = game.game_id.clone();
-                let orientation = if game.color == "black" {
-                    shakmaty::Color::Black
-                } else {
-                    shakmaty::Color::White
-                };
+                let orientation = game.color.unwrap_or(shakmaty::Color::White);
                 let mut state = BoardState::shown(
                     &game.fen,
                     kchess_domain::variant::Variant::Standard,
@@ -380,16 +376,15 @@ impl OnlinePage {
                     }
                 };
                 let mine = game.is_my_turn;
-                let speed = game.speed.as_str();
                 let mut sub = format!(
                     "{} · {} · you play {}",
-                    if speed == "correspondence" {
+                    if game.correspondence() {
                         "Correspondence"
                     } else {
-                        speed
+                        &game.speed
                     },
                     if game.rated { "Rated" } else { "Casual" },
-                    game.color
+                    game.color.map_or("", kchess_domain::color::name)
                 );
                 if several {
                     sub.push_str(&format!(" · @{}", game.account));

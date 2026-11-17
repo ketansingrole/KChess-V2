@@ -762,7 +762,7 @@ impl OnlineState {
                             let id = game.game_id.clone();
                             let mine = game.is_my_turn;
                             let before = this.turns.get(&id).copied();
-                            if game.speed == "correspondence"
+                            if game.correspondence()
                                 && mine
                                 && before == Some(false)
                                 && id != this.id()

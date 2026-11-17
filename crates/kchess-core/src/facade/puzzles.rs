@@ -4,11 +4,10 @@ use kchess_contracts::check::{ActivityMax, Days, PuzzleId, Username, VoiceId, Vo
 use kchess_contracts::core_api::PuzzlesApi;
 use kchess_contracts::types::{
     LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleActivityEntry, PuzzleAttemptInput,
-    PuzzleDbStatus, PuzzleDraw, PuzzleProgress, PuzzleProgressQuery, PuzzleRequest,
-    PuzzleSolveRequest, PuzzleSolveResult, Reply, RunInput, RunKind, RunSaved, RunSummary,
-    VoiceAttempt, VoiceAttemptInput, VoiceUpdate,
+    PuzzleDashboard, PuzzleDbStatus, PuzzleDraw, PuzzleProgress, PuzzleProgressQuery,
+    PuzzleRequest, PuzzleSolveRequest, PuzzleSolveResult, Reply, RunInput, RunKind, RunSaved,
+    RunSummary, StormDashboard, VoiceAttempt, VoiceAttemptInput, VoiceUpdate,
 };
-use serde_json::Value;
 
 use crate::core::Core;
 use crate::lichess::puzzles as lichess;
@@ -32,7 +31,11 @@ impl PuzzlesApi for Core {
         lichess::puzzle_by_id(self.services.lichess(), &id.0).await
     }
 
-    async fn puzzle_dashboard(&self, account: Username, days: Days) -> Result<Reply<Value>> {
+    async fn puzzle_dashboard(
+        &self,
+        account: Username,
+        days: Days,
+    ) -> Result<Reply<PuzzleDashboard>> {
         lichess::puzzle_dashboard(self.services.lichess(), &account.0, days.0).await
     }
 
@@ -44,7 +47,7 @@ impl PuzzlesApi for Core {
         lichess::puzzle_activity(self.services.lichess(), &account.0, max.0).await
     }
 
-    async fn storm_dashboard(&self, username: Username, days: Days) -> Result<Value> {
+    async fn storm_dashboard(&self, username: Username, days: Days) -> Result<StormDashboard> {
         lichess::storm_dashboard(self.services.lichess(), &username.0, days.0).await
     }
 

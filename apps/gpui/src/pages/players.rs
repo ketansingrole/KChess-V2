@@ -18,8 +18,8 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::types::LichessUser;
 use kchess_domain::perf::{Perf, Speed};
-use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -65,11 +65,8 @@ fn perf_type(key: &str) -> PerfType {
 }
 
 /// The speeds a player has games in, most played first.
-fn played_perfs(profile: &Value) -> Vec<(&'static str, &'static str)> {
-    let games = |key: &str| profile["perfs"][key]["games"].as_f64().unwrap_or_default();
-    let mut perfs: Vec<_> = perfs().filter(|(key, _)| games(key) > 0.).collect();
-    perfs.sort_by(|a, b| games(b.0).total_cmp(&games(a.0)));
-    perfs
+fn played_perfs(profile: &LichessUser) -> Vec<(&'static str, &'static str)> {
+    profile.played(perfs())
 }
 
 /// Recent lookups, then followed players not among them, each name once and at most
@@ -133,7 +130,7 @@ fn follow(name: String, window: &mut Window, cx: &mut App) {
 
 pub struct PlayersPage {
     input: Entity<InputState>,
-    profile: Option<Value>,
+    profile: Option<LichessUser>,
     /// `UserPresence`, once known.
     status: Option<UserPresence>,
     perf: String,
@@ -364,7 +361,7 @@ impl PlayersPage {
 
     /// A profile link opened elsewhere (`/players?name=`): look the player up, unless shown.
     pub fn show_player(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let shown = self.profile.as_ref().and_then(|p| p["username"].as_str());
+        let shown = self.profile.as_ref().map(|p| p.username.as_str());
         if shown.is_some_and(|shown| shown.eq_ignore_ascii_case(name)) {
             return;
         }
@@ -412,7 +409,7 @@ impl PlayersPage {
         self.account_epoch.invalidate();
         self.names.clear();
         self.history.update(cx, |history, cx| {
-            history.set(Value::Null, Value::Null, cx);
+            history.set(Vec::new(), Vec::new(), cx);
             history.set_withheld(None, cx);
         });
         cx.notify();
@@ -444,13 +441,13 @@ impl PlayersPage {
         .detach();
     }
 
-    fn found(&mut self, found: Value, window: &mut Window, cx: &mut Context<Self>) {
-        let username = found["username"].as_str().unwrap_or_default().to_string();
+    fn found(&mut self, found: LichessUser, window: &mut Window, cx: &mut Context<Self>) {
+        let username = found.username.clone();
         self.input.update(cx, |input, cx| {
             input.set_value(username.clone(), window, cx)
         });
         player_search::remember(&username, cx);
-        let current = found["perfs"].clone();
+        let current = found.perfs.clone();
         self.history
             .update(cx, |history, cx| history.set_current(current, cx));
         let perfs = played_perfs(&found);
@@ -716,7 +713,7 @@ impl PlayersPage {
             username: Username(username.clone()),
         });
         cx.spawn(async move |this, cx| {
-            let official = official.await.unwrap_or(json!([]));
+            let official = official.await.unwrap_or_default();
             let rebuilt = if has_points(&official) {
                 None
             } else {
@@ -724,10 +721,9 @@ impl PlayersPage {
                     username: Username(username),
                     rated: Some(true),
                 });
-                let rated = json!(rated.await.unwrap_or_default());
-                let games = rated.as_array().map_or(&[][..], Vec::as_slice);
-                Some(kchess_domain::records::ratings::rating_history_from_games(
-                    games,
+                let rated = rated.await.unwrap_or_default();
+                Some(kchess_domain::records::ratings::rating_series(
+                    rated.iter().filter_map(LichessGame::rated_game),
                 ))
             };
             let _ = this.update(cx, |this, cx| {
@@ -736,7 +732,7 @@ impl PlayersPage {
                 }
                 let withheld = this.withheld(cx);
                 this.history.update(cx, |history, cx| {
-                    history.set(official, rebuilt.unwrap_or(json!([])), cx);
+                    history.set(official, rebuilt.unwrap_or_default(), cx);
                     history.set_withheld(withheld, cx);
                 });
             });
@@ -765,7 +761,7 @@ impl PlayersPage {
     pub(crate) fn username(&self) -> Option<String> {
         self.profile
             .as_ref()
-            .and_then(|profile| profile["username"].as_str().map(str::to_string))
+            .map(|profile| profile.username.clone())
     }
 
     /// Open one of their games on the analysis board, from their side.
@@ -833,7 +829,7 @@ impl PlayersPage {
     }
 
     #[cfg(test)]
-    pub(crate) fn show_profile(&mut self, profile: Value, cx: &mut Context<Self>) {
+    pub(crate) fn show_profile(&mut self, profile: LichessUser, cx: &mut Context<Self>) {
         self.profile = Some(profile);
         cx.notify();
     }
@@ -972,8 +968,13 @@ impl PlayersPage {
             })
     }
 
-    fn profile_card(&self, profile: &Value, cx: &mut Context<Self>, palette: &Palette) -> Div {
-        let username = profile["username"].as_str().unwrap_or_default().to_string();
+    fn profile_card(
+        &self,
+        profile: &LichessUser,
+        cx: &mut Context<Self>,
+        palette: &Palette,
+    ) -> Div {
+        let username = profile.username.clone();
         let accounts = crate::accounts::handle(cx).read(cx);
         let me = accounts.active(cx);
         let connected = !accounts.connected().is_empty();
@@ -987,14 +988,22 @@ impl PlayersPage {
             .is_none_or(|me| !me.eq_ignore_ascii_case(&username));
         let status = self.status.clone().unwrap_or_default();
         let playing_id = status.playing_id.clone();
-        let title = profile["title"].as_str();
+        let title = profile.title.as_deref();
         let mut line = format!(
             "{} games · joined {}",
-            widgets::format_count(profile["count"]["all"].as_f64().unwrap_or_default()),
-            profile["createdAt"].as_f64().map_or("?".into(), local_date)
+            widgets::format_count(
+                profile
+                    .count
+                    .as_ref()
+                    .and_then(|count| count.all)
+                    .unwrap_or_default() as f64
+            ),
+            profile
+                .created_at
+                .map_or("?".into(), |at| local_date(at as f64))
         );
-        if let Some(seen) = profile["seenAt"].as_f64() {
-            line.push_str(&format!(" · seen {}", local_date(seen)));
+        if let Some(seen) = profile.seen_at {
+            line.push_str(&format!(" · seen {}", local_date(seen as f64)));
         }
         let score = self
             .record
@@ -1150,9 +1159,11 @@ impl PlayersPage {
                 ))
             })
             .children(
-                profile["profile"]["bio"]
-                    .as_str()
-                    .map(|bio| div().text_size(px(13.)).child(bio.to_string())),
+                profile
+                    .profile
+                    .as_ref()
+                    .and_then(|profile| profile.bio.clone())
+                    .map(|bio| div().text_size(px(13.)).child(bio)),
             )
             .children(score.map(|score| {
                 h_flex()
@@ -1887,12 +1898,14 @@ mod tests {
 
     #[test]
     fn played_speeds_come_most_played_first() {
-        let profile = json!({ "perfs": {
-            "blitz": { "games": 10 },
-            "rapid": { "games": 40 },
-            "bullet": { "games": 0 },
-            "puzzle": { "games": 900 },
-        }});
+        let profile: kchess_contracts::types::LichessUser =
+            serde_json::from_value(json!({ "perfs": {
+                "blitz": { "games": 10 },
+                "rapid": { "games": 40 },
+                "bullet": { "games": 0 },
+                "puzzle": { "games": 900 },
+            }}))
+            .expect("a user");
         let keys: Vec<_> = played_perfs(&profile)
             .into_iter()
             .map(|(key, _)| key)

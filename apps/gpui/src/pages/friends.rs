@@ -7,8 +7,8 @@ use crate::loading::Epoch;
 use kchess_contracts::calls;
 use kchess_contracts::check::{FriendList, PresenceUsers, Username};
 use kchess_contracts::types::{
-    Account, FollowedUser, FollowingProblem, FollowingReport, GameRecord, TimelineEntry,
-    UserPresence,
+    Account, FollowedUser, FollowingProblem, FollowingReport, GameRecord, LichessUser,
+    TimelineEntry, UserPresence,
 };
 use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
@@ -22,7 +22,6 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::Value;
 
 use crate::accounts::{Accounts, AccountsHandle};
 use crate::assets::icon;
@@ -62,7 +61,7 @@ fn sync_all(window: &mut Window, cx: &mut App) {
 pub struct FriendsPage {
     input: Entity<InputState>,
     /// Profiles by lowercase name, and presence (`UserPresence`).
-    profiles: HashMap<String, Value>,
+    profiles: HashMap<String, LichessUser>,
     /// When every profile was last asked for.
     profiles_asked: Option<std::time::Instant>,
     status: HashMap<String, UserPresence>,
@@ -86,18 +85,6 @@ pub struct FriendsPage {
 impl Focusable for FriendsPage {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
-    }
-}
-
-/// Whether Lichess has games of the player that the last sync did not download: their play time
-/// grows with every finished game, so a profile with more than the sync saved has new ones.
-fn has_new_games(friend: &Account, profile: &Value) -> bool {
-    match (
-        friend.synced_play_time,
-        profile["playTime"]["total"].as_f64(),
-    ) {
-        (Some(synced), Some(now)) => now > synced as f64,
-        _ => false,
     }
 }
 
@@ -236,7 +223,7 @@ impl FriendsPage {
                         username: Username(name.clone()),
                     })
                     .await
-                    && let Some(profile) = saved.profile.filter(Value::is_object)
+                    && let Some(profile) = saved.profile
                 {
                     let recent = saved
                         .profile_fetched_at
@@ -263,10 +250,8 @@ impl FriendsPage {
                     .await
                 {
                     let _ = this.update(cx, |this, cx| {
-                        for user in users {
-                            if let Some(name) = user["username"].as_str() {
-                                this.profiles.insert(key(name), user.clone());
-                            }
+                        for user in users.into_iter().filter(|user| !user.username.is_empty()) {
+                            this.profiles.insert(key(&user.username), user);
                         }
                         cx.notify();
                     });
@@ -419,11 +404,7 @@ impl FriendsPage {
         palette: &Palette,
     ) -> AnyElement {
         let name = friend.username.clone();
-        let profile = self
-            .profiles
-            .get(&key(&name))
-            .cloned()
-            .unwrap_or(Value::Null);
+        let profile = self.profiles.get(&key(&name)).cloned().unwrap_or_default();
         let presence = self.status.get(&key(&name)).cloned();
         let (games, stored) = accounts.stored(&name);
         let (label, dot) = match &presence {
@@ -435,11 +416,13 @@ impl FriendsPage {
         let seen = presence
             .as_ref()
             .filter(|presence| !presence.online)
-            .and(profile["seenAt"].as_f64())
-            .map(|seen| format!(" · seen {}", ago(seen)));
+            .and(profile.seen_at)
+            .map(|seen| format!(" · seen {}", ago(seen as f64)));
         let rating = |perf: &str| {
-            profile["perfs"][perf]["rating"]
-                .as_f64()
+            profile
+                .perfs
+                .get(perf)
+                .and_then(|perf| perf.rating)
                 .map_or_else(|| "—".to_string(), |rating| rating.to_string())
         };
         let versus = self
@@ -451,7 +434,7 @@ impl FriendsPage {
             .and_then(|presence| presence.playing_id.clone());
         let synced = friend.last_synced_at.map(|at| at as f64);
         // Lichess has games the last sync did not download.
-        let mut new_badge = has_new_games(friend, &profile).then(|| {
+        let mut new_badge = profile.has_games_since(friend.synced_play_time).then(|| {
             div()
                 .id(("friend-new-games", index))
                 .test_support()
@@ -510,8 +493,8 @@ impl FriendsPage {
                                             })
                                             .child(format!("@{name}")),
                                     )
-                                    .children(profile["title"].as_str().map(|title| {
-                                        widgets::badge(title.to_string(), Look::Primary, palette)
+                                    .children(profile.title.clone().map(|title| {
+                                        widgets::badge(title, Look::Primary, palette)
                                     })),
                             )
                             .child(
@@ -716,7 +699,7 @@ impl Render for FriendsPage {
             .filter(|friend| {
                 self.profiles
                     .get(&key(&friend.username))
-                    .is_some_and(|profile| has_new_games(friend, profile))
+                    .is_some_and(|profile| profile.has_games_since(friend.synced_play_time))
             })
             .count();
         let has_connected = !accounts.connected().is_empty();
@@ -1259,37 +1242,5 @@ impl crate::pages::PageView for FriendsPage {
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
         this.update(cx, |page, cx| page.act(action, window, cx));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::has_new_games;
-    use kchess_contracts::types::Account;
-    use serde_json::json;
-
-    #[test]
-    fn a_longer_play_time_than_at_the_sync_means_new_games() {
-        let friend = |synced_play_time| Account {
-            username: "dana".into(),
-            connected: false,
-            last_synced_at: None,
-            synced_play_time,
-        };
-        let synced = friend(Some(1000));
-        assert!(has_new_games(
-            &synced,
-            &json!({ "playTime": { "total": 1300 } })
-        ));
-        assert!(!has_new_games(
-            &synced,
-            &json!({ "playTime": { "total": 1000 } })
-        ));
-        // Without a play time saved at a sync, or in the profile, nothing is claimed.
-        assert!(!has_new_games(
-            &friend(None),
-            &json!({ "playTime": { "total": 1300 } })
-        ));
-        assert!(!has_new_games(&synced, &json!({})));
     }
 }

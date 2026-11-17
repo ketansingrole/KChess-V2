@@ -6,7 +6,7 @@ use kchess_contracts::check::{FriendList, GameAccount, GameId, OptionalAccount, 
 use kchess_contracts::core_api::GamesApi;
 use kchess_contracts::types::{
     AppData, CachedProfile, ConnectedLichess, FollowingReport, GameLibraryOverview, GamePage,
-    GamePageQuery, InsightsQuery, InsightsReport, RatingSeries,
+    GamePageQuery, InsightsQuery, InsightsReport, LichessUser, RatingSeries,
 };
 use serde_json::Value;
 
@@ -59,11 +59,11 @@ impl GamesApi for Core {
         self.services.lichess().cached_profile(&username.0).await
     }
 
-    async fn profile(&self, username: Username) -> Result<Value> {
+    async fn profile(&self, username: Username) -> Result<LichessUser> {
         self.services.lichess().profile(&username.0).await
     }
 
-    async fn rating_history(&self, username: Username) -> Result<Value> {
+    async fn rating_history(&self, username: Username) -> Result<Vec<RatingSeries>> {
         self.services.lichess().rating_history(&username.0).await
     }
 
