@@ -100,7 +100,7 @@ pub fn voice_bar(
         .voice_push_to_talk;
     let line = status(&bar, cx).filter(|_| bar.inline);
     let denied = matches!(voice.error, Some((_, ErrorKind::Denied)));
-    let privacy = crate::microphone::privacy_settings(cx);
+    let privacy = crate::microphone::host(cx).privacy_settings;
     let enabled = bar.enabled;
     h_flex()
         .id(bar.id)
