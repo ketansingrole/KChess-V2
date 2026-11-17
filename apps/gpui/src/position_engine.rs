@@ -215,6 +215,11 @@ mod tests {
             &mut owner.engine
         }
         let mut app = crate::e2e::Harness::start(cx);
+        // As every page searching does: the core refuses analysis until its startup check for a
+        // live Lichess game is over, and a search sent sooner came back refused (1 run in 10).
+        app.wait_for("the startup check to finish", |_, cx| {
+            crate::online::handle(cx).read(cx).assistance_allowed()
+        });
         let owner = app.cx.update(|cx| {
             let events = cx.global::<AppCore>().events.clone();
             cx.new(|cx| Owner {
@@ -231,16 +236,20 @@ mod tests {
         let found = |app: &mut crate::e2e::Harness| {
             app.cx.update(|cx| owner.read(cx).engine.best().is_some())
         };
-        // The engine running already, so a search sent comes back at once.
+        // The scripted engine answers a search at once.
         let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         app.cx.update(|cx| {
             owner.update(cx, |owner, cx| {
                 owner.engine.search(Some(search(start)), engine_of, cx)
             })
         });
-        app.wait_for("the first search's lines", |_, cx| {
-            owner.read(cx).engine.best().is_some()
+        // A refused search fails here with its reason, not after the wait's timeout.
+        app.wait_for("the first search's lines or its error", |_, cx| {
+            let engine = &owner.read(cx).engine;
+            engine.best().is_some() || engine.error.is_some()
         });
+        let error = app.cx.update(|cx| owner.read(cx).engine.error.clone());
+        assert_eq!(error, None, "the first search was refused");
 
         // A stop the core has not answered yet.
         let (answer, answered) = futures::channel::oneshot::channel::<()>();
