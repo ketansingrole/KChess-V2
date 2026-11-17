@@ -19,6 +19,8 @@ ignore = [
   { id = "RUSTSEC-2026-0370", reason = "zvariant: unmaintained, through GPUI Kit on Linux (D-Bus)" },
   { id = "RUSTSEC-2026-0371", reason = "zbus_names: unmaintained, through GPUI Kit on Linux (D-Bus)" },
   { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: unmaintained, through GPUI Kit on Linux (D-Bus)" },
+  # Stopgap for the app's own dates, which move off chrono in their own change; GPUI Kit's stays.
+  { id = "RUSTSEC-2026-0543", reason = "chrono: unmaintained, through GPUI Kit, and the app's own dates until they move off it" },
 ]
 
 [licenses]
