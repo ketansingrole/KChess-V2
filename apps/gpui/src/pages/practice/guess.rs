@@ -5,7 +5,7 @@
 //! (`kchess_domain::training::guess`); the other side's moves are played for you.
 
 use kchess_contracts::calls;
-use kchess_contracts::types::{AnalysisUpdate, EngineLine};
+use kchess_contracts::types::{AnalysisRequest, AnalysisUpdate, EngineLine};
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -15,7 +15,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_domain::training::guess::{self, Eval, Evals, Flaw, Grade, Judged};
 use kchess_domain::variant::{Setup, Variant};
-use serde_json::{Value, json};
+use serde_json::Value;
 use shakmaty::{Color, Position as _};
 
 use super::guess_find::{Found, GameFinder};
@@ -39,7 +39,7 @@ const REPLY: Duration = Duration::from_millis(450);
 const PROBE_DEPTH: f64 = 14.;
 const PROBE_TIME: Duration = Duration::from_millis(2000);
 /// The engine's best lines looked at for a guess before searching the guess itself.
-const LINES: usize = 3;
+const LINES: u32 = 3;
 
 /// A game to guess through: its start, its moves and who played it.
 #[derive(Clone)]
@@ -619,13 +619,19 @@ impl GuessMoves {
         let Some(position) = view::position_at(&game.setup, &history, history.len()) else {
             return;
         };
-        let request = json!({
-            "fen": kchess_domain::rules::make_fen(&position),
-            "rootFen": game.setup.fen,
-            "moves": history,
-            "lines": if matches!(probe, Probe::Best(_)) { LINES } else { 1 },
-            "infinite": true,
-        });
+        let request = AnalysisRequest {
+            fen: kchess_domain::rules::make_fen(&position),
+            lines: if matches!(probe, Probe::Best(_)) {
+                LINES
+            } else {
+                1
+            },
+            infinite: Some(true),
+            root_fen: Some(game.setup.fen.clone()),
+            moves: Some(history),
+            client_id: None,
+            variant: None,
+        };
         self.probe = Some(probe);
         self.engine.search(Some(request), engine_of, cx);
         // A look ends after a while even if the engine never reaches its depth.
@@ -698,9 +704,7 @@ impl GuessMoves {
     fn stop_engine(&mut self, cx: &mut Context<Self>) {
         self.probe = None;
         self.deadline = None;
-        if self.engine.wanted().is_some() {
-            self.engine.search(None, engine_of, cx);
-        }
+        self.engine.search(None, engine_of, cx);
     }
 
     /// Look at a finished game's move.

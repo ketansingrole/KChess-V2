@@ -76,7 +76,7 @@ impl AnalysisPage {
         }
         let fen = self.engine_fen();
         let threat = self.threat_position().is_some();
-        self.client_id += 1;
+        self.client_id = crate::position_engine::next_client();
         let request = self.client_id;
         self.engine_error = None;
         let engine_on = Self::engine_on(cx);
