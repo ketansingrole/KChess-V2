@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use kchess_domain::js;
 use kchess_domain::online_game::model::{
-    Call, Ctx, GamePhase, Left, Model, Op, Outcome, Pending, Reply, Run,
+    Call, Ctx, GamePhase, Left, Model, Op, Outcome, Pending, Reply, Resumed, Run,
 };
 use kchess_domain::online_game::server::ServerEvent;
 
@@ -42,7 +42,22 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
             let pending = pending(argument(args, 1))?;
             let outcome = argument(args, 2);
             let reply = if outcome.get("ok").and_then(Value::as_bool).unwrap_or(false) {
-                Reply::Ok(outcome.get("value").cloned().unwrap_or(Value::Null))
+                let value = outcome.get("value").unwrap_or(&NULL);
+                match &pending {
+                    Pending::Start { .. } => Reply::Started {
+                        challenge: js::truthy(value.get("url")),
+                    },
+                    Pending::Reconnect { .. } => {
+                        Reply::Resumed(js::truthy(Some(value)).then(|| Resumed {
+                            id: js::to_string(value.get("id")),
+                            account: js::to_string(value.get("account")),
+                        }))
+                    }
+                    Pending::Chat { .. } => {
+                        Reply::Chat(serde_json::from_value(value.clone()).unwrap_or_default())
+                    }
+                    _ => Reply::Done,
+                }
             } else {
                 Reply::Failed
             };
@@ -87,7 +102,7 @@ fn step(
 /// A call as the recorded suites wrote it: the core method's name and arguments.
 fn method_and_args(call: &Call) -> (&'static str, Vec<Value>) {
     match call {
-        Call::StartOnline(options) => ("startOnline", vec![options.clone()]),
+        Call::StartOnline(options) => ("startOnline", vec![json!(options)]),
         Call::CancelOnline => ("cancelOnline", Vec::new()),
         Call::ResumeOnline => ("resumeOnline", Vec::new()),
         Call::OpenGame { account, id } => ("openGame", vec![json!(account), json!(id)]),
@@ -108,7 +123,9 @@ fn unknown(op: &str) -> String {
 /// `op` with its input as the suites passed them.
 fn op(name: &Value, input: &Value) -> Result<Op, String> {
     Ok(match js::string(Some(name)).unwrap_or("") {
-        "start" => Op::Start(input.clone()),
+        "start" => {
+            Op::Start(serde_json::from_value(input.clone()).map_err(|error| error.to_string())?)
+        }
         "stop" => Op::Stop,
         "reconnect" => Op::Reconnect,
         "open" => Op::Open {

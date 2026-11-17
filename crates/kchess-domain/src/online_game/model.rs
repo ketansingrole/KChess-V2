@@ -2,7 +2,9 @@
 //! the driver: the effects the host must see in order, and any network call the driver must make.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+
+use crate::records::challenge::OnlineOptions;
+use crate::variant::Variant;
 
 use super::connection::OnlineConnection;
 use crate::color::{self, Color};
@@ -172,7 +174,7 @@ pub enum Effect {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Call {
     /// A seek or challenge with these options.
-    StartOnline(Value),
+    StartOnline(OnlineOptions),
     CancelOnline,
     ResumeOnline,
     OpenGame {
@@ -241,7 +243,7 @@ pub enum Pending {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
     /// A seek or challenge with these options.
-    Start(Value),
+    Start(OnlineOptions),
     Stop,
     Reconnect,
     Open {
@@ -253,11 +255,27 @@ pub enum Op {
     Chat(String),
 }
 
-/// The core's reply to a call: its answer, or a failure whose cause the driver keeps.
+/// The core's reply to a call: what the rules read of its answer, or a failure whose cause the
+/// driver keeps.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Reply {
-    Ok(Value),
     Failed,
+    /// A call whose answer the rules do not read.
+    Done,
+    /// A seek or challenge began; a challenge has an address to wait at.
+    Started {
+        challenge: bool,
+    },
+    /// Lichess's game in progress, if it has one.
+    Resumed(Option<Resumed>),
+    Chat(Vec<ChatEntry>),
+}
+
+/// The game in progress `resumeOnline` put back on the board, and its account.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Resumed {
+    pub id: String,
+    pub account: String,
 }
 
 /// What a transition returns to its driver; the state changed in place.
@@ -287,7 +305,29 @@ pub struct View {
     pub own_moves: usize,
     pub correspondence: bool,
     /// The challenge that starts a rematch of the last game.
-    pub rematch: Option<Value>,
+    pub rematch: Option<Rematch>,
+}
+
+/// The challenge that starts a rematch of a finished game: its opponent and clock, colours
+/// swapped. A set-up position is sent only for standard rules.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Rematch {
+    pub target: String,
+    pub account: String,
+    #[serde(with = "color::by_name")]
+    pub color: Color,
+    pub rated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minutes: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub increment: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub days: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant: Option<Variant>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fen: Option<String>,
 }
 
 /// A replay of the moves: the position they reach and the SAN of each move played.
@@ -429,28 +469,21 @@ impl Model {
     }
 
     /// The challenge that starts a rematch of the last game, colours swapped.
-    pub fn rematch(&self) -> Option<Value> {
+    pub fn rematch(&self) -> Option<Rematch> {
         let game = self.last_game.as_ref()?;
-        let mut out = Map::new();
-        out.insert("target".into(), game.opponent.clone().into());
-        out.insert("account".into(), game.account.clone().into());
-        out.insert("color".into(), color::name(!game.color).into());
-        out.insert("rated".into(), game.rated.into());
-        if let Some(minutes) = game.minutes {
-            out.insert("minutes".into(), minutes.into());
-        }
-        if let Some(increment) = game.increment {
-            out.insert("increment".into(), increment.into());
-        }
-        if let Some(days) = game.days {
-            out.insert("days".into(), days.into());
-        }
-        if !game.setup.variant.is_standard() {
-            out.insert("variant".into(), game.setup.variant.key().into());
-        } else if game.setup.fen != INITIAL_FEN {
-            out.insert("fen".into(), game.setup.fen.clone().into());
-        }
-        Some(Value::Object(out))
+        let variant = (!game.setup.variant.is_standard()).then_some(game.setup.variant);
+        Some(Rematch {
+            target: game.opponent.clone(),
+            account: game.account.clone(),
+            color: !game.color,
+            rated: game.rated,
+            minutes: game.minutes,
+            increment: game.increment,
+            days: game.days,
+            variant,
+            fen: (variant.is_none() && game.setup.fen != INITIAL_FEN)
+                .then(|| game.setup.fen.clone()),
+        })
     }
 
     /// A board with no game.

@@ -196,7 +196,7 @@ fn incoming(overrides: Value) -> ChallengeInfo {
             limit: Number::from(600),
             increment: Number::from(0),
         },
-        color: "random".into(),
+        color: kchess_contracts::types::ChallengeColor::Random,
         rematch_of: None,
         initial_fen: None,
         playable: true,

@@ -8,14 +8,10 @@ pub mod events;
 pub mod model;
 pub mod server;
 
-use serde_json::Value;
-
 use crate::js;
+use crate::records::challenge::OnlineOptions;
 use connection::OnlineConnection;
-use model::{
-    Call, ChatEntry, Ctx, GamePhase, Left, Model, Offer, Op, Outcome, Pending, Reply, Run, View,
-};
-use serde::Deserialize as _;
+use model::{Call, Ctx, GamePhase, Left, Model, Offer, Op, Outcome, Pending, Reply, Run, View};
 use server::ServerEvent;
 
 impl Model {
@@ -71,11 +67,7 @@ impl Model {
     /// The core's reply to a call `begin` made.
     pub fn settle(&mut self, pending: &Pending, reply: Reply, ctx: &Ctx) -> Outcome {
         let run = Run::new(self, ctx);
-        let value = match &reply {
-            Reply::Ok(value) => Some(value),
-            Reply::Failed => None,
-        };
-        let ok = value.is_some();
+        let ok = reply != Reply::Failed;
         match pending {
             Pending::Start {
                 generation,
@@ -84,13 +76,13 @@ impl Model {
                 left,
             } => {
                 let current = *generation == run.m.generation;
-                settle_start(run, *correspondence, *previous, left, value, current)
+                settle_start(run, *correspondence, *previous, left, &reply, current)
             }
             Pending::Stop if !ok => run.rethrow(),
             Pending::Stop => run.done(),
             Pending::Reconnect { generation } => {
                 let current = *generation == run.m.generation;
-                settle_reconnect(run, value, current)
+                settle_reconnect(run, reply, current)
             }
             Pending::Open {
                 generation,
@@ -118,7 +110,7 @@ impl Model {
                 let current = same_request(&run, *generation, id, *epoch);
                 settle_action(run, action, ok, current)
             }
-            Pending::Chat { id } => settle_chat(run, id, value),
+            Pending::Chat { id } => settle_chat(run, id, reply),
         }
     }
 }
@@ -126,7 +118,7 @@ impl Model {
 /// A seek or challenge. A game being played, a seek in progress, or Lichess
 /// still being asked for a game in progress refuses it: the seek cut that check short, and its
 /// end put the state back to idle while Lichess held the seek.
-fn start(mut run: Run, options: Value) -> Outcome {
+fn start(mut run: Run, options: OnlineOptions) -> Outcome {
     let phase = run.m.online_phase;
     // What `checking` (and the core's report of the check) leaves; a report left over once the
     // phase moved on (a finished game, idle) does not hold seeks back.
@@ -144,7 +136,7 @@ fn start(mut run: Run, options: Value) -> Outcome {
         return run.answer(false);
     }
     let generation = run.next_generation();
-    let correspondence = options.get("days").is_some();
+    let correspondence = options.days.is_some();
     // A real-time seek from a correspondence game being played: the game it leaves, to go back to
     // if the seek fails.
     let left = (phase == GamePhase::Playing).then(|| Left {
@@ -154,9 +146,9 @@ fn start(mut run: Run, options: Value) -> Outcome {
     if !correspondence {
         run.m.online_id.clear();
         run.m.online_account = options
-            .get("account")
-            .and_then(Value::as_str)
-            .map_or_else(|| run.ctx.active_account.clone(), str::to_string);
+            .account
+            .clone()
+            .unwrap_or_else(|| run.ctx.active_account.clone());
         run.m.online_phase = GamePhase::Seeking;
         run.m.online_status = "Looking for an opponent…".into();
     }
@@ -260,10 +252,10 @@ fn settle_start(
     correspondence: bool,
     previous: GamePhase,
     left: &Option<Left>,
-    value: Option<&Value>,
+    reply: &Reply,
     current: bool,
 ) -> Outcome {
-    let Some(value) = value else {
+    if *reply == Reply::Failed {
         run.warn("[onlineGame] starting game failed:");
         if !current {
             return run.answer(false);
@@ -282,12 +274,12 @@ fn settle_start(
             run.m.online_status.clear();
         }
         return run.rethrow();
-    };
+    }
     if !current {
         return run.answer(false);
     }
     if !correspondence && run.m.online_phase == GamePhase::Seeking {
-        run.m.online_status = if js::truthy(value.get("url")) {
+        run.m.online_status = if *reply == (Reply::Started { challenge: true }) {
             "Challenge sent. Waiting for acceptance…"
         } else {
             "Looking for an opponent…"
@@ -297,14 +289,16 @@ fn settle_start(
     run.answer(true)
 }
 
-fn settle_reconnect(run: Run, value: Option<&Value>, current: bool) -> Outcome {
-    let Some(value) = value else {
-        return run.rethrow();
+fn settle_reconnect(run: Run, reply: Reply, current: bool) -> Outcome {
+    let resumed = match reply {
+        Reply::Failed => return run.rethrow(),
+        Reply::Resumed(resumed) => resumed,
+        _ => None,
     };
     if current {
-        if js::truthy(Some(value)) {
-            run.m.online_account = js::to_string(value.get("account"));
-            run.m.online_id = js::to_string(value.get("id"));
+        if let Some(resumed) = resumed {
+            run.m.online_account = resumed.account;
+            run.m.online_id = resumed.id;
             run.m.online_status = "Reconnecting…".into();
         } else {
             run.m.online_phase = GamePhase::Idle;
@@ -380,13 +374,16 @@ fn settle_action(mut run: Run, action: &str, ok: bool, current: bool) -> Outcome
     run.done()
 }
 
-fn settle_chat(mut run: Run, id: &str, value: Option<&Value>) -> Outcome {
-    let Some(value) = value else {
-        run.warn("[onlineGame] request failed:");
-        return run.done();
+fn settle_chat(mut run: Run, id: &str, reply: Reply) -> Outcome {
+    let mut chat = match reply {
+        Reply::Failed => {
+            run.warn("[onlineGame] request failed:");
+            return run.done();
+        }
+        Reply::Chat(chat) => chat,
+        _ => Vec::new(),
     };
     if run.m.online_id == id {
-        let mut chat: Vec<ChatEntry> = Vec::deserialize(value).unwrap_or_default();
         chat.extend(run.m.chat.iter().filter(|line| !line.players()).cloned());
         run.m.chat = chat;
     }
@@ -397,7 +394,7 @@ fn settle_chat(mut run: Run, id: &str, value: Option<&Value>) -> Outcome {
 mod tests {
     use serde_json::json;
 
-    use super::model::{ChatRoom, Effect, Setup};
+    use super::model::{ChatEntry, ChatRoom, Effect, Setup};
     use super::server::ServerEvent;
     use super::*;
 
@@ -410,7 +407,12 @@ mod tests {
     }
 
     fn seek() -> Op {
-        Op::Start(json!({ "minutes": 5, "increment": 0, "color": "random", "rated": false }))
+        Op::Start(
+            serde_json::from_value(
+                json!({ "minutes": 5, "increment": 0, "color": "random", "rated": false }),
+            )
+            .unwrap(),
+        )
     }
 
     fn playing() -> Model {
@@ -461,7 +463,7 @@ mod tests {
         model.begin(Op::Stop, &ctx(0.0));
         let late = model.settle(
             &begun.pending.unwrap(),
-            Reply::Ok(json!({ "url": "https://lichess.org/x" })),
+            Reply::Started { challenge: true },
             &ctx(0.0),
         );
         assert_eq!(late.ret, Some(false));
@@ -474,7 +476,7 @@ mod tests {
         let mut model = playing();
         let begun = model.begin(Op::Action("offerDraw".into()), &ctx(10.0));
         model.online_phase = GamePhase::Finished;
-        model.settle(&begun.pending.unwrap(), Reply::Ok(json!(true)), &ctx(20.0));
+        model.settle(&begun.pending.unwrap(), Reply::Done, &ctx(20.0));
         assert_eq!(model.draw_offer, Offer::None);
     }
 
@@ -490,7 +492,7 @@ mod tests {
             let mut model = playing();
             model.takeback_offer = before;
             let begun = model.begin(Op::Action(action.into()), &ctx(10.0));
-            model.settle(&begun.pending.unwrap(), Reply::Ok(json!(true)), &ctx(20.0));
+            model.settle(&begun.pending.unwrap(), Reply::Done, &ctx(20.0));
             assert_eq!(model.takeback_offer, after, "{action} after {before:?}");
         }
     }
@@ -509,8 +511,12 @@ mod tests {
             line("watching", ChatRoom::Spectator),
         ];
         let begun = model.begin(Op::Chat("AbCd1234".into()), &ctx(0.0));
-        let reply = json!([{ "user": "Bob", "text": "new", "room": "player" }]);
-        model.settle(&begun.pending.unwrap(), Reply::Ok(reply), &ctx(1.0));
+        let reply = Reply::Chat(vec![ChatEntry {
+            user: Some("Bob".into()),
+            text: Some("new".into()),
+            room: ChatRoom::Player,
+        }]);
+        model.settle(&begun.pending.unwrap(), reply, &ctx(1.0));
         assert_eq!(
             model.chat,
             [
@@ -551,11 +557,7 @@ mod tests {
     fn a_confirmed_move_reports_how_long_the_server_took() {
         let mut model = playing();
         let begun = model.begin(Op::Move("e2e4".into()), &ctx(1000.0));
-        let confirmed = model.settle(
-            &begun.pending.unwrap(),
-            Reply::Ok(json!(true)),
-            &ctx(1250.0),
-        );
+        let confirmed = model.settle(&begun.pending.unwrap(), Reply::Done, &ctx(1250.0));
         assert!(
             confirmed
                 .effects

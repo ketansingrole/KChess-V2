@@ -14,6 +14,7 @@ use futures::FutureExt as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use kchess_contracts::check::{GameId, PresenceUsers, Uci, Username, Validate};
+use kchess_contracts::types::OnlineOptions;
 use kchess_contracts::types::{
     ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, LobbyState, NotificationKind,
     OngoingGame, PresenceReport,
@@ -21,7 +22,7 @@ use kchess_contracts::types::{
 use kchess_contracts::types::{Lane, OnlineConnection, OnlinePhase};
 use kchess_contracts::{CoreError, ErrorKind, Level};
 use kchess_domain::online_game::model::{
-    Call, Ctx, Effect, GamePhase, Model, Op, Outcome, Reply, View,
+    Call, ChatEntry, Ctx, Effect, GamePhase, Model, Op, Outcome, Rematch, Reply, View,
 };
 use kchess_domain::online_game::server::ServerEvent;
 use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
@@ -404,36 +405,62 @@ impl OnlineState {
             return Task::ready(begun.ret);
         };
         let core = cx.global::<AppCore>();
-        // The rules keep their calls and answers as JSON: each is typed on its way to the core.
+        let done = |_| Reply::Done;
         let call = match call {
-            Call::StartOnline(options) => match typed(&options) {
-                Ok(options) => answer(core.request(calls::StartOnline { options })),
-                Err(refused) => futures::future::ready(Err(refused)).boxed_local(),
-            },
-            Call::CancelOnline => answer(core.request(calls::CancelOnline {})),
-            Call::ResumeOnline => answer(core.request(calls::ResumeOnline {})),
-            Call::OpenGame { account, id } => answer(core.request(calls::OpenGame {
-                account: Username(account),
-                id: GameId(id),
-            })),
-            Call::PlayOnline { id, uci } => answer(core.request(calls::PlayOnline {
-                id: GameId(id),
-                r#move: Uci(uci),
-            })),
-            Call::OnlineAction { id, action } => match typed(&json!(action)) {
-                Ok(action) => answer(core.request(calls::OnlineAction {
+            Call::StartOnline(options) => {
+                reply(core.request(calls::StartOnline { options }), |started| {
+                    Reply::Started {
+                        challenge: started.url.is_some_and(|url| !url.is_empty()),
+                    }
+                })
+            }
+            Call::CancelOnline => reply(core.request(calls::CancelOnline {}), done),
+            Call::ResumeOnline => reply(core.request(calls::ResumeOnline {}), Reply::Resumed),
+            Call::OpenGame { account, id } => reply(
+                core.request(calls::OpenGame {
+                    account: Username(account),
                     id: GameId(id),
-                    action,
-                })),
+                }),
+                done,
+            ),
+            Call::PlayOnline { id, uci } => reply(
+                core.request(calls::PlayOnline {
+                    id: GameId(id),
+                    r#move: Uci(uci),
+                }),
+                done,
+            ),
+            Call::OnlineAction { id, action } => match typed(&json!(action)) {
+                Ok(action) => reply(
+                    core.request(calls::OnlineAction {
+                        id: GameId(id),
+                        action,
+                    }),
+                    done,
+                ),
                 Err(refused) => futures::future::ready(Err(refused)).boxed_local(),
             },
-            Call::OnlineChat { id } => answer(core.request(calls::OnlineChat { id: GameId(id) })),
+            Call::OnlineChat { id } => reply(
+                core.request(calls::OnlineChat { id: GameId(id) }),
+                |lines| {
+                    Reply::Chat(
+                        lines
+                            .into_iter()
+                            .map(|line| ChatEntry {
+                                user: Some(line.user),
+                                text: Some(line.text),
+                                room: line.room,
+                            })
+                            .collect(),
+                    )
+                },
+            ),
         };
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             this.update(cx, |this, cx| {
                 let (reply, cause) = match answer {
-                    Ok(value) => (Reply::Ok(value), None),
+                    Ok(reply) => (reply, None),
                     Err(error) => (Reply::Failed, Some(error.message)),
                 };
                 let settled = this.transition(
@@ -480,10 +507,10 @@ impl OnlineState {
         self.start(None, cx);
     }
 
-    pub fn start(&mut self, rematch: Option<Value>, cx: &mut Context<Self>) {
+    pub fn start(&mut self, rematch: Option<Rematch>, cx: &mut Context<Self>) {
         let form = self.form.clone();
         let correspondence = match &rematch {
-            Some(options) => !options["days"].is_null(),
+            Some(rematch) => rematch.days.is_some(),
             None => form.correspondence,
         };
         let account = if rematch.is_some() && !self.account().is_empty() {
@@ -513,15 +540,20 @@ impl OnlineState {
         if correspondence && rematch.is_none() {
             wanted["days"] = json!(form.days);
         }
-        if let Some(options) = rematch.as_ref().and_then(Value::as_object) {
+        if let Some(Value::Object(options)) = rematch.as_ref().map(|rematch| json!(rematch)) {
             for (key, value) in options {
-                if !value.is_null() {
-                    wanted[key] = value.clone();
-                }
+                wanted[key] = value;
             }
         }
-        let target = wanted["target"].as_str().map(str::to_string);
-        let started = self.run_busy(Op::Start(wanted), cx);
+        let options: OnlineOptions = match typed(&wanted) {
+            Ok(options) => options,
+            Err(refused) => {
+                notice(cx, refused.message);
+                return;
+            }
+        };
+        let target = options.target.clone();
+        let started = self.run_busy(Op::Start(options), cx);
         cx.spawn(async move |_, cx| {
             let started = started.await;
             if started == Some(true) && correspondence {
@@ -558,16 +590,16 @@ impl OnlineState {
     /// from a set-up position.
     pub fn new_opponent_form(&self) -> Option<Form> {
         let options = self.view().rematch?;
-        if !options["days"].is_null() || !options["fen"].is_null() {
+        if options.days.is_some() || options.fen.is_some() {
             return None;
         }
         Some(Form {
-            minutes: options["minutes"].as_f64()?,
-            increment: options["increment"].as_f64().unwrap_or_default(),
+            minutes: options.minutes?,
+            increment: options.increment.unwrap_or_default(),
             target: String::new(),
             color: "random".into(),
-            rated: options["rated"] == json!(true),
-            variant: Variant::from_lichess(options["variant"].as_str())?,
+            rated: options.rated,
+            variant: options.variant.unwrap_or_default(),
             correspondence: false,
             days: self.form.days,
         })
@@ -1206,12 +1238,12 @@ fn typed<T: Validate>(value: &Value) -> Result<T, CoreError> {
     T::validate(value.into()).map_err(CoreError::new)
 }
 
-/// A typed answer as the rules read it.
-fn answer<T: serde::Serialize + 'static>(
+/// What the rules read of a call's answer.
+fn reply<T: 'static>(
     call: impl Future<Output = Result<T, CoreError>> + 'static,
-) -> futures::future::LocalBoxFuture<'static, Result<Value, CoreError>> {
-    call.map(|answer| answer.map(|answer| serde_json::to_value(answer).unwrap_or_default()))
-        .boxed_local()
+    read: impl FnOnce(T) -> Reply + 'static,
+) -> futures::future::LocalBoxFuture<'static, Result<Reply, CoreError>> {
+    call.map(|answer| answer.map(read)).boxed_local()
 }
 
 /// A challenge's notification: who sent it, then its clock, variant and whether it is rated

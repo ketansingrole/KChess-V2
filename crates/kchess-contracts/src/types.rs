@@ -23,7 +23,7 @@ pub use kchess_domain::misc::constants::{
     SESSION_KINDS, SessionKind, TournamentSystem,
 };
 pub use kchess_domain::online_game::connection::{Lane, OnlineConnection, OnlinePhase};
-pub use kchess_domain::online_game::model::{CHAT_ROOMS, ChatRoom};
+pub use kchess_domain::online_game::model::{CHAT_ROOMS, ChatRoom, Resumed};
 
 /* ── Choices and settings ───────────────────────────────────────────── */
 
@@ -65,11 +65,6 @@ wire_enum!(#[doc = "Reasons Lichess accepts when declining a challenge (it trans
     Casual = "casual",
     Standard = "standard",
     Variant = "variant",
-});
-wire_enum!(#[doc = "Which color the challenger requests."] ChallengeColor, CHALLENGE_COLORS {
-    Random = "random",
-    White = "white",
-    Black = "black",
 });
 wire_enum!(#[doc = "How far from your Lichess puzzle rating the next puzzle is aimed."] PuzzleDifficulty, PUZZLE_DIFFICULTIES {
     Easiest = "easiest",
@@ -2323,37 +2318,10 @@ pub use kchess_domain::games::session::{
 pub use kchess_domain::keyed::Keyed;
 pub use kchess_domain::library::{Drill, PlayedGame, Study, StudyChapter, StudyCloud};
 pub use kchess_domain::records::challenge::{
-    ChallengeDirection, ChallengeInfo, PlayerRef, TimeControl as ChallengeTimeControl,
+    CHALLENGE_COLORS, ChallengeColor, ChallengeDirection, ChallengeInfo, OnlineOptions, PlayerRef,
+    TimeControl as ChallengeTimeControl,
 };
 pub use kchess_domain::training::repetition::{RepertoireMisses, RepertoireSchedule};
-
-/// What to play online and how: a public seek, or a challenge to `target`.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct OnlineOptions {
-    /// Minutes on the clock; ignored for correspondence games (`days`).
-    pub minutes: u32,
-    /// Seconds added per move.
-    pub increment: u32,
-    /// Correspondence: days per move instead of a clock.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub days: Option<u32>,
-    /// Standard when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variant: Option<Variant>,
-    /// A direct challenge from this position (standard or Chess960 rules).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fen: Option<String>,
-    pub color: ChallengeColor,
-    /// Rated games change the Lichess rating; casual ones do not.
-    pub rated: bool,
-    /// The player challenged; a public seek without one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
-    /// Which connected account plays; the first connected one without one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub account: Option<String>,
-}
 
 /// What `startOnline` began: a challenge (its id and address), a public seek, or a
 /// correspondence game.
@@ -2368,13 +2336,6 @@ pub struct StartResult {
     pub seeking: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correspondence: Option<bool>,
-}
-
-/// The game in progress `resumeOnline` put back on the board, and its account.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct Resumed {
-    pub id: String,
-    pub account: String,
 }
 
 /// A game a connected account is playing, real-time or correspondence.
