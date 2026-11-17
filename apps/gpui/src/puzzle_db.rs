@@ -245,11 +245,12 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
             widgets::format_counted(this.status.count as f64, "puzzle", "puzzles"),
             format_bytes(this.status.bytes as f64)
         );
-        if let Some(at) = this.status.imported_at {
-            use chrono::TimeZone as _;
-            if let Some(day) = chrono::Local.timestamp_millis_opt(at).single() {
-                line.push_str(&format!(" · downloaded {}", day.format("%-m/%-d/%Y")));
-            }
+        if let Some(day) = this
+            .status
+            .imported_at
+            .and_then(|at| crate::dates::local(at as f64))
+        {
+            line.push_str(&format!(" · downloaded {}", day.strftime("%-m/%-d/%Y")));
         }
         v_flex()
             .gap(px(8.))

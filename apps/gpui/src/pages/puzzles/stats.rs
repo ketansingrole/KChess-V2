@@ -279,9 +279,7 @@ impl PuzzleStats {
     fn draw(&mut self, cx: &mut Context<Self>) {
         let points = self.puzzle_points();
         let format = |millis: f64, pattern: &str| {
-            chrono::DateTime::from_timestamp_millis(millis as i64)
-                .map(|date| date.format(pattern).to_string())
-                .unwrap_or_default()
+            crate::dates::utc_format(millis, pattern).unwrap_or_default()
         };
         let years =
             points.len() > 1 && points[points.len() - 1].0 - points[0].0 > 400. * 86_400_000.;

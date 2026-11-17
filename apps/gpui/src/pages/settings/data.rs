@@ -182,7 +182,7 @@ impl SettingsPage {
         self.exporting = true;
         self.diagnostics_note = None;
         let report = json!({
-            "generatedAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "generatedAt": crate::dates::rfc3339_millis(jiff::Timestamp::now()),
             "sessionId": crate::log::session_id(),
             "version": crate::updates::current_version(),
             "client": "gpui",
@@ -193,7 +193,7 @@ impl SettingsPage {
         });
         let name = format!(
             "kchess-diagnostics-{}.json",
-            chrono::Local::now().format("%Y-%m-%d")
+            crate::dates::today("%Y-%m-%d")
         );
         let text = serde_json::to_string_pretty(&report).unwrap_or_default();
         let saving = crate::export::save_text(&name, text, cx);
@@ -238,13 +238,8 @@ impl SettingsPage {
             .sum();
         let since = usage
             .since
-            .and_then(|millis| chrono::DateTime::from_timestamp_millis(millis as i64))
-            .map(|date| {
-                format!(
-                    " since {}",
-                    date.with_timezone(&chrono::Local).format("%-m/%-d/%Y")
-                )
-            })
+            .and_then(crate::dates::local)
+            .map(|date| format!(" since {}", date.strftime("%-m/%-d/%Y")))
             .unwrap_or_default();
         let muted = |text: String| {
             div()

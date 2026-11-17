@@ -797,7 +797,7 @@ impl LocalPage {
     }
 
     fn copy_pgn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let date = chrono::Local::now().format("%Y.%m.%d").to_string();
+        let date = crate::dates::today("%Y.%m.%d");
         let headers = json!({
             "Event": local::EVENT,
             "Date": date,

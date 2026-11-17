@@ -137,12 +137,7 @@ fn continue_line(session: &ComputerSession) -> Option<Unfinished> {
 
 /// "Oct 22": the day a game started, in local time.
 fn short_date(millis: f64) -> String {
-    use chrono::TimeZone as _;
-    chrono::Local
-        .timestamp_millis_opt(millis as i64)
-        .single()
-        .map(|date| date.format("%b %-d").to_string())
-        .unwrap_or_default()
+    crate::dates::local_format(millis, "%b %-d")
 }
 
 /// Home's buttons, as Quick Pick offers them; its Sync games is the app's own _Sync Lichess

@@ -170,21 +170,20 @@ fn rows_of(local: &[PuzzleAttempt], lichess: &[PuzzleActivityEntry]) -> Vec<Row>
 }
 
 /// The time today, "Yesterday" and the time, else the date.
-fn played_text(at: f64, now: chrono::DateTime<chrono::Local>) -> String {
-    use chrono::TimeZone as _;
-    let Some(played) = chrono::Local.timestamp_millis_opt(at as i64).single() else {
+fn played_text(at: f64, now: &jiff::ZonedDateTime) -> String {
+    let Some(played) = crate::dates::local(at) else {
         return String::new();
     };
-    let today = now.date_naive();
-    let time = played.format("%-I:%M %p").to_string();
-    if played.date_naive() == today {
+    let today = now.date();
+    let time = played.strftime("%-I:%M %p").to_string();
+    if played.date() == today {
         time
-    } else if today.pred_opt() == Some(played.date_naive()) {
+    } else if today.yesterday().ok() == Some(played.date()) {
         format!("Yesterday {time}")
-    } else if played.format("%Y").to_string() == now.format("%Y").to_string() {
-        played.format("%b %-d").to_string()
+    } else if played.year() == now.year() {
+        played.strftime("%b %-d").to_string()
     } else {
-        played.format("%b %-d, %Y").to_string()
+        played.strftime("%b %-d, %Y").to_string()
     }
 }
 
@@ -250,7 +249,7 @@ impl PuzzleHistory {
 
     /// The tab was shown for `account` (the rated account; empty without one).
     pub fn shown(&mut self, account: String, cx: &mut Context<Self>) {
-        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let today = crate::dates::today("%Y-%m-%d");
         let progress = cx.global::<AppCore>().request(calls::PuzzleProgress {
             query: PuzzleProgressQuery { today, limit: 200 },
         });
@@ -454,7 +453,7 @@ impl Render for PuzzleHistory {
                         .on_click(cx.listener(|this, _, _, cx| this.load_activity(true, cx))),
                 )
             });
-        let now = chrono::Local::now();
+        let now = jiff::ZonedDateTime::now();
         let body: AnyElement = if self.loading && rows.is_empty() {
             crate::widgets::loading("Loading from Lichess…", &palette).into_any_element()
         } else if any && rows.is_empty() && unsolved_only && shown_count > 0 {
@@ -514,7 +513,7 @@ impl Render for PuzzleHistory {
                 let (retry, analysed, wrong) =
                     (row.puzzle.clone(), row.puzzle.clone(), row.wrong.clone());
                 let rating = format!("{}", row.puzzle.rating);
-                let played = played_text(row.at, now);
+                let played = played_text(row.at, &now);
                 let badge = div().w(px(96.)).flex_none().child(
                     widgets::badge(row.badge.0, row.badge.1, &palette)
                         .w(px(80.))

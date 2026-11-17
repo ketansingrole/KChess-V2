@@ -208,17 +208,12 @@ fn perf_icon(arena: &TournamentSummary) -> gpui_kit::component::Icon {
 
 /// "Hourly Blitz Arena, 3+0 rated, 120 players, running".
 fn describe(arena: &TournamentSummary) -> String {
-    use chrono::TimeZone as _;
     let state = match arena.status {
         TournamentStatus::Finished => "finished".to_string(),
         TournamentStatus::Started => "running".to_string(),
         TournamentStatus::Created => format!(
             "starts {}",
-            chrono::Local
-                .timestamp_millis_opt(start_of(arena) as i64)
-                .single()
-                .map(|time| time.format("%H:%M").to_string())
-                .unwrap_or_default()
+            crate::dates::local_format(start_of(arena), "%H:%M")
         ),
     };
     format!(
@@ -304,13 +299,12 @@ impl TournamentsPage {
         let mut ticks = Vec::new();
         let mut time = start;
         while time <= end {
-            use chrono::{TimeZone as _, Timelike as _};
-            let local = chrono::Local.timestamp_millis_opt(time as i64).single();
-            let hour = local.is_some_and(|local| local.minute() == 0);
+            let local = crate::dates::local(time);
+            let hour = local.as_ref().is_some_and(|local| local.minute() == 0);
             let label = local
                 .map(|local| {
                     if hour {
-                        local.format("%-I:%M %p").to_string()
+                        local.strftime("%-I:%M %p").to_string()
                     } else {
                         format!(":{:02}", local.minute())
                     }

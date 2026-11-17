@@ -118,7 +118,7 @@ fn copy_pgn_dates_the_game_today(cx: &mut gpui_kit::TestAppContext) {
         .read_from_clipboard()
         .and_then(|item| item.text())
         .expect("a copied PGN");
-    let today = chrono::Local::now().format("%Y.%m.%d").to_string();
+    let today = crate::dates::today("%Y.%m.%d");
     assert!(pgn.contains(&format!("[Date \"{today}\"]")), "{pgn}");
     assert!(pgn.contains("1. e4 e5"), "{pgn}");
 }
