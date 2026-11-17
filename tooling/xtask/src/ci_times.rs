@@ -23,8 +23,46 @@ pub fn run(args: &[String]) -> Result {
         .duration_since(UNIX_EPOCH)
         .map_err(|cause| cause.to_string())?
         .as_secs();
-    print!("{}", report_for(days, now, &|args| output("gh", args))?);
+    let ask = |args: &[&str]| output("gh", args);
+    let pause =
+        |attempt: u32| std::thread::sleep(std::time::Duration::from_secs(10 * u64::from(attempt)));
+    print!(
+        "{}",
+        report_for(days, now, &|args| read_again_on_server_error(
+            &ask, &pause, args
+        ))?
+    );
     Ok(())
+}
+
+/// How many times a read is asked in all while GitHub answers it with a server error.
+const READS: u32 = 3;
+
+/// Asks `gh` again, after a pause, while GitHub answers a server error (HTTP 5xx): every call this
+/// report makes only reads, so asking again changes nothing. GitHub answered 502 to one of a
+/// week's hundreds of reads on 2026-11-16, and the whole report failed. Any other error is final.
+fn read_again_on_server_error(gh: Gh, pause: &dyn Fn(u32), args: &[&str]) -> Result<String> {
+    let mut attempt = 1;
+    loop {
+        match gh(args) {
+            Err(error) if attempt < READS && server_error(&error) => {
+                say(&format!(
+                    "GitHub answered a server error; asking again: {error}"
+                ));
+                pause(attempt);
+                attempt += 1;
+            }
+            answer => return answer,
+        }
+    }
+}
+
+/// `gh`'s report of an HTTP 5xx answer ("gh: Server Error (HTTP 502)").
+fn server_error(error: &str) -> bool {
+    error
+        .split("(HTTP ")
+        .skip(1)
+        .any(|rest| rest.len() >= 4 && rest.starts_with('5') && rest.as_bytes()[3] == b')')
 }
 
 fn days(args: &[String]) -> Result<u64> {
@@ -388,6 +426,61 @@ fn date(seconds: u64) -> String {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn a_read_github_failed_with_a_server_error_is_asked_again() {
+        let asked = RefCell::new(0);
+        let pauses = RefCell::new(Vec::new());
+        let gh = |args: &[&str]| {
+            assert_eq!(args, ["api", "x"]);
+            *asked.borrow_mut() += 1;
+            if *asked.borrow() < 3 {
+                Err("gh api x failed: gh: Server Error (HTTP 502)".to_string())
+            } else {
+                Ok("answer".to_string())
+            }
+        };
+        let pause = |attempt| pauses.borrow_mut().push(attempt);
+        assert_eq!(
+            read_again_on_server_error(&gh, &pause, &["api", "x"]).unwrap(),
+            "answer"
+        );
+        assert_eq!(*asked.borrow(), 3);
+        assert_eq!(*pauses.borrow(), [1, 2]);
+    }
+
+    #[test]
+    fn a_read_is_asked_three_times_at_most() {
+        let asked = RefCell::new(0);
+        let gh = |_: &[&str]| {
+            *asked.borrow_mut() += 1;
+            Err("gh: Server Error (HTTP 503)".to_string())
+        };
+        let error = read_again_on_server_error(&gh, &|_| {}, &["api"]).unwrap_err();
+        assert_eq!(error, "gh: Server Error (HTTP 503)");
+        assert_eq!(*asked.borrow(), 3);
+    }
+
+    #[test]
+    fn any_other_failure_is_final() {
+        let asked = RefCell::new(0);
+        let gh = |_: &[&str]| {
+            *asked.borrow_mut() += 1;
+            Err("gh: Not Found (HTTP 404)".to_string())
+        };
+        assert!(read_again_on_server_error(&gh, &|_| {}, &["api"]).is_err());
+        assert_eq!(*asked.borrow(), 1);
+    }
+
+    #[test]
+    fn only_an_http_5xx_is_a_server_error() {
+        assert!(server_error("gh: Server Error (HTTP 502)"));
+        assert!(server_error("x (HTTP 500)"));
+        assert!(!server_error("gh: Not Found (HTTP 404)"));
+        assert!(!server_error("gh: (HTTP 5)"));
+        assert!(!server_error("gh: (HTTP 5000)"));
+        assert!(!server_error("could not connect"));
+    }
 
     fn job(id: u64, run: u64, attempt: u32, name: &str, conclusion: &str, minutes: u64) -> Job {
         Job {

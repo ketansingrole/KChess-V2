@@ -149,3 +149,20 @@ jobs:
           name: mutants-gpui-week-${{ matrix.shard }}
           path: mutants.out
           retention-days: 14
+
+  # A scheduled run's failure opens an issue, and its next pass closes it (.github/actions/scheduled-report).
+  report:
+    needs: [mutants, gpui-plan, gpui]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/scheduled-report
+        with:
+          name: ${{ github.event.schedule == '17 3 * * 6' && 'Mutants of the rules' || 'Mutants of the app''s week' }}
+          failed: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
