@@ -9,6 +9,7 @@ use futures::future::{BoxFuture, FutureExt as _, Shared};
 use kchess_contracts::calls;
 use kchess_contracts::types::{AnalysisRequest, AnalysisUpdate, EngineLine};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use gpui_kit::*;
 use kchess_contracts::Level;
@@ -180,6 +181,66 @@ impl PositionEngine {
     }
 }
 
+/// The longest an engine is waited for to start reporting on a look before the look ends anyway.
+/// The core bounds an engine's start and answers a failed one with an error, so this only ends a
+/// look whose engine went silent.
+const LOOK_START: Duration = Duration::from_secs(20);
+
+/// A look at a position that ends at a depth or after a while of the engine's own search: the
+/// while counts from the engine's first report, not from the request. Counted from the request,
+/// the time a loaded machine took to start the engine and hand it the position used up Guess the
+/// move's two seconds, and a guess was judged with no engine lines (`d5` where the engine marks
+/// `d5?!`, Windows CI, 2026-11-10 to 11-17). Same position, same verdict, however busy the machine.
+#[derive(Default)]
+pub struct EngineLook {
+    ends: Option<Task<()>>,
+    reported: bool,
+    long: Duration,
+}
+
+impl EngineLook {
+    /// Start a look lasting `long` of the engine's search; `done` ends it, once.
+    pub fn start<V: 'static>(
+        &mut self,
+        long: Duration,
+        done: fn(&mut V, &mut Context<V>),
+        cx: &mut Context<V>,
+    ) {
+        self.long = long;
+        self.reported = false;
+        self.ends = Some(Self::end_after(LOOK_START, done, cx));
+    }
+
+    /// The engine reported on the look: its time starts now, at the first report.
+    pub fn reported<V: 'static>(&mut self, done: fn(&mut V, &mut Context<V>), cx: &mut Context<V>) {
+        if self.ends.is_some() && !self.reported {
+            self.reported = true;
+            self.ends = Some(Self::end_after(self.long, done, cx));
+        }
+    }
+
+    /// No look running any more: its end is dropped unsent.
+    pub fn clear(&mut self) {
+        self.ends = None;
+        self.reported = false;
+    }
+
+    pub fn running(&self) -> bool {
+        self.ends.is_some()
+    }
+
+    fn end_after<V: 'static>(
+        after: Duration,
+        done: fn(&mut V, &mut Context<V>),
+        cx: &mut Context<V>,
+    ) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(after).await;
+            let _ = this.update(cx, done);
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{PositionEngine, next_client};
@@ -265,6 +326,70 @@ mod tests {
         });
         let error = app.cx.update(|cx| owner.read(cx).engine.error.clone());
         assert_eq!(error, None);
+    }
+
+    /// A look's time counts from the engine's first report: a slow start does not use it up.
+    #[gpui_kit::test]
+    fn a_look_lasts_its_time_from_the_engines_first_report(cx: &mut gpui_kit::TestAppContext) {
+        use super::{EngineLook, LOOK_START};
+        use gpui_kit::AppContext as _;
+        use std::time::Duration;
+
+        #[derive(Default)]
+        struct Owner {
+            look: EngineLook,
+            ended: u32,
+        }
+        fn done(owner: &mut Owner, _: &mut gpui_kit::Context<Owner>) {
+            owner.ended += 1;
+            owner.look.clear();
+        }
+        let owner = cx.new(|_| Owner::default());
+        let ended =
+            |cx: &mut gpui_kit::TestAppContext| cx.read_entity(&owner, |owner, _| owner.ended);
+        let long = Duration::from_secs(2);
+        cx.update(|cx| owner.update(cx, |owner, cx| owner.look.start(long, done, cx)));
+        // The engine takes three seconds to start: longer than the look, not over yet.
+        cx.executor().advance_clock(Duration::from_secs(3));
+        cx.run_until_parked();
+        assert_eq!(ended(cx), 0, "a slow start does not end the look");
+        cx.update(|cx| owner.update(cx, |owner, cx| owner.look.reported(done, cx)));
+        cx.executor().advance_clock(long - Duration::from_millis(1));
+        cx.run_until_parked();
+        // A later report does not start the time again.
+        cx.update(|cx| owner.update(cx, |owner, cx| owner.look.reported(done, cx)));
+        assert_eq!(ended(cx), 0);
+        cx.executor().advance_clock(Duration::from_millis(1));
+        cx.run_until_parked();
+        assert_eq!(
+            ended(cx),
+            1,
+            "the look ends its time after the first report"
+        );
+        assert!(!cx.read_entity(&owner, |owner, _| owner.look.running()));
+
+        // A report after the look ended starts nothing.
+        cx.update(|cx| owner.update(cx, |owner, cx| owner.look.reported(done, cx)));
+        cx.executor().advance_clock(Duration::from_secs(60));
+        cx.run_until_parked();
+        assert_eq!(ended(cx), 1);
+
+        // An engine that never reports: the look ends once it has waited for the start.
+        cx.update(|cx| owner.update(cx, |owner, cx| owner.look.start(long, done, cx)));
+        cx.executor()
+            .advance_clock(LOOK_START - Duration::from_millis(1));
+        cx.run_until_parked();
+        assert_eq!(ended(cx), 1);
+        cx.executor().advance_clock(Duration::from_millis(1));
+        cx.run_until_parked();
+        assert_eq!(ended(cx), 2, "a silent engine's look still ends");
+
+        // A cleared look never ends.
+        cx.update(|cx| owner.update(cx, |owner, cx| owner.look.start(long, done, cx)));
+        cx.update(|cx| owner.update(cx, |owner, _| owner.look.clear()));
+        cx.executor().advance_clock(LOOK_START);
+        cx.run_until_parked();
+        assert_eq!(ended(cx), 2);
     }
 
     #[test]

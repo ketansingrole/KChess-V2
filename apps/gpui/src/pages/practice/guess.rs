@@ -27,7 +27,7 @@ use crate::game::tree::TreeNode;
 use crate::game::view;
 use crate::online::OnlineHandle;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
-use crate::position_engine::PositionEngine;
+use crate::position_engine::{EngineLook, PositionEngine};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::widgets::{self, Pill, Tone};
@@ -35,7 +35,7 @@ use crate::widgets::{self, Pill, Tone};
 const SIDE: &str = "kchess:guess-side";
 /// The other side's move follows a guess after this long.
 const REPLY: Duration = Duration::from_millis(450);
-/// An engine look at a position stops at this depth, or after this long.
+/// An engine look at a position stops at this depth, or after this long of the engine's search.
 const PROBE_DEPTH: f64 = 14.;
 const PROBE_TIME: Duration = Duration::from_millis(2000);
 /// The engine's best lines looked at for a guess before searching the guess itself.
@@ -175,7 +175,7 @@ pub struct GuessMoves {
     move_box: crate::game::surface::MoveBox,
     pgn: Entity<TextareaState>,
     finder: Entity<GameFinder>,
-    deadline: Option<Task<()>>,
+    look: EngineLook,
     reply: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -252,7 +252,7 @@ impl GuessMoves {
             move_box,
             pgn,
             finder,
-            deadline: None,
+            look: EngineLook::default(),
             reply: None,
             _subscriptions: subscriptions,
         }
@@ -624,16 +624,14 @@ impl GuessMoves {
         self.probe = Some(probe);
         self.engine.search(Some(request), engine_of, cx);
         // A look ends after a while even if the engine never reaches its depth.
-        self.deadline = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(PROBE_TIME).await;
-            let _ = this.update(cx, |this, cx| this.probe_done(cx));
-        }));
+        self.look.start(PROBE_TIME, Self::probe_done, cx);
     }
 
     fn engine_update(&mut self, update: &AnalysisUpdate, cx: &mut Context<Self>) {
         if self.probe.is_none() || !self.engine.receive(update) {
             return;
         }
+        self.look.reported(Self::probe_done, cx);
         let reached = update.depth >= PROBE_DEPTH || update.done;
         if reached || self.engine.error.is_some() {
             self.probe_done(cx);
@@ -692,7 +690,7 @@ impl GuessMoves {
 
     fn stop_engine(&mut self, cx: &mut Context<Self>) {
         self.probe = None;
-        self.deadline = None;
+        self.look.clear();
         self.engine.search(None, engine_of, cx);
     }
 
