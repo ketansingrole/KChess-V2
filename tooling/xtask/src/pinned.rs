@@ -74,9 +74,9 @@ pub const APPIMAGE_RUNTIME: Pin = Pin {
 pub const FAIRY_STOCKFISH: Pin = Pin {
     name: "Fairy-Stockfish",
     repo: "fairy-stockfish/Fairy-Stockfish",
-    version: "2f1959e1f0b44d4648ff35015b89d8e918a5c746",
+    version: "014b0775c0e282ce104c76cf271abe31873eb9d7",
     file: "Fairy-Stockfish.tar.gz",
-    sha256: "f226f3c67cb30e87b6990ce7d38cf29cbaca59709f2dba23f421fafdecbb67e5",
+    sha256: "17dfaebb411893d62887d15325a667fe1fa8595fb62acefbbd73bcb53de5aabe",
     source: Source::Commit { branch: "master" },
 };
 
