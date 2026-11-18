@@ -255,7 +255,7 @@ pub struct StudiesPage {
     /// The Lichess tab: the account's studies and what is being done with them.
     lichess: lichess::LichessTab,
     uploading: Option<String>,
-    previews: HashMap<String, Entity<ChessBoard>>,
+    previews: crate::board::Previews,
     /// The page's scrolling, and where the cards' grid lies in it: only the rows of cards in view
     /// (and a margin around it) are made, laid out and drawn. Fifty cards, the library's limit,
     /// were most of opening the page.
@@ -326,7 +326,7 @@ impl StudiesPage {
             sort,
             lichess,
             uploading: None,
-            previews: HashMap::new(),
+            previews: Default::default(),
             scroll: ScrollHandle::new(),
             grid: Measured::default(),
             row_heights: Default::default(),
@@ -364,19 +364,8 @@ impl StudiesPage {
 
     /// A small board picturing a position, made once per position.
     fn preview(&mut self, fen: &str, cx: &mut Context<Self>) -> Entity<ChessBoard> {
-        self.previews
-            .entry(fen.to_string())
-            .or_insert_with(|| {
-                cx.new(|_| {
-                    ChessBoard::new(BoardState::preview(
-                        fen,
-                        kchess_domain::variant::Variant::Standard,
-                        Color::White,
-                        None,
-                    ))
-                })
-            })
-            .clone()
+        let state = || BoardState::preview(fen, Default::default(), Color::White, None);
+        self.previews.board(fen.to_string(), state, cx)
     }
 
     /* ── Opening and starting studies ─────────────────────────────────── */
@@ -899,7 +888,7 @@ impl StudiesPage {
             .iter()
             .filter_map(|study| self.summary(&study.pgn).map(|summary| summary.fen))
             .collect();
-        self.previews.retain(|fen, _| listed.contains(fen));
+        self.previews.retain(|fen| listed.contains(fen));
         let rows = studies.len().div_ceil(count);
         let heights = {
             let mut measured = self.row_heights.borrow_mut();

@@ -11,7 +11,7 @@ use serde_json::Number;
 
 use super::OnlinePage;
 use crate::assets::icon;
-use crate::board::{BoardState, ChessBoard};
+use crate::board::BoardState;
 use crate::online::OnlineHandle;
 use crate::pages::Page;
 use crate::pages::players::player_link;
@@ -350,7 +350,7 @@ impl OnlinePage {
         let several = crate::accounts::handle(cx).read(cx).connected().len() > 1;
         // Boards of games no longer ongoing are let go.
         self.previews
-            .retain(|id, _| games.iter().any(|game| game.game_id == *id));
+            .retain(|id| games.iter().any(|game| game.game_id == *id));
         let rows: Vec<AnyElement> = games
             .iter()
             .enumerate()
@@ -363,17 +363,7 @@ impl OnlinePage {
                     orientation,
                     game.last_move.as_deref().filter(|uci| uci.len() >= 4),
                 );
-                let board = match self.previews.get(&id) {
-                    Some(board) => {
-                        board.update(cx, |board, cx| board.set_state(state, cx));
-                        board.clone()
-                    }
-                    None => {
-                        let board = cx.new(|_| ChessBoard::new(state));
-                        self.previews.insert(id.clone(), board.clone());
-                        board
-                    }
-                };
+                let board = self.previews.show(id.clone(), state, cx);
                 let mine = game.is_my_turn;
                 let mut sub = format!(
                     "{} · {} · you play {}",

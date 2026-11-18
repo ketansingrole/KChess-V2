@@ -7,7 +7,7 @@ use crate::pages::PageView;
 use kchess_contracts::calls;
 use kchess_contracts::check::Moves;
 use kchess_contracts::types::{DescriptionBlock, OpeningDescription, PopularityMonth};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -272,7 +272,7 @@ pub struct OpeningsPage {
     /// A line was just opened from the list: its page takes the keys from the search field.
     focus_line: bool,
     expanded: HashSet<String>,
-    previews: HashMap<String, Entity<ChessBoard>>,
+    previews: crate::board::Previews,
     area: Measured,
     /// The opening shown, when one is: its moves from the starting position.
     line: Option<Vec<String>>,
@@ -355,7 +355,7 @@ impl OpeningsPage {
             clear_search: false,
             focus_line: false,
             expanded: HashSet::new(),
-            previews: HashMap::new(),
+            previews: Default::default(),
             area: Measured::default(),
             line: None,
             board,
@@ -379,26 +379,15 @@ impl OpeningsPage {
     #[cfg(test)]
     pub(crate) fn kept_previews(&self) -> std::collections::BTreeMap<String, gpui_kit::EntityId> {
         self.previews
-            .iter()
+            .kept()
             .map(|(fen, board)| (fen.clone(), board.entity_id()))
             .collect()
     }
 
     /// A small board picturing a position, made once per position.
     fn preview(&mut self, fen: &str, cx: &mut Context<Self>) -> Entity<ChessBoard> {
-        self.previews
-            .entry(fen.to_string())
-            .or_insert_with(|| {
-                cx.new(|_| {
-                    ChessBoard::new(BoardState::preview(
-                        fen,
-                        kchess_domain::variant::Variant::Standard,
-                        Color::White,
-                        None,
-                    ))
-                })
-            })
-            .clone()
+        let state = || BoardState::preview(fen, Default::default(), Color::White, None);
+        self.previews.board(fen.to_string(), state, cx)
     }
 
     fn recent(cx: &App) -> Vec<OpeningChoice> {
@@ -832,7 +821,7 @@ impl OpeningsPage {
             .collect();
         // Pictures of openings that left Recent are let go; the popular ones are always shown.
         let catalog = self.catalog.clone();
-        self.previews.retain(|fen, _| {
+        self.previews.retain(|fen| {
             recent.iter().any(|item| &item.fen == fen)
                 || catalog.popular.iter().any(|item| &item.fen == fen)
         });

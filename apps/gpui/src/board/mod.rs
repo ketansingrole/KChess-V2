@@ -6,6 +6,8 @@
 mod keyboard;
 pub mod looks;
 mod pocket;
+pub mod previews;
+pub use previews::Previews;
 
 pub use pocket::{PieceGhost, pocket};
 

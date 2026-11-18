@@ -142,7 +142,7 @@ pub struct Broadcasts {
     board: Entity<ChessBoard>,
     /// Stockfish on the board followed and the grid's estimates.
     pub(super) engine: BroadcastEngine,
-    previews: HashMap<String, Entity<ChessBoard>>,
+    previews: crate::board::Previews,
     _search: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -196,7 +196,7 @@ impl Broadcasts {
                     None,
                 ))
             }),
-            previews: HashMap::new(),
+            previews: Default::default(),
             engine: BroadcastEngine::new(window, cx),
             _search: None,
             _subscriptions: subscriptions,
@@ -323,18 +323,15 @@ impl Broadcasts {
     }
 
     fn preview(&mut self, game: &BroadcastGame, cx: &mut App) -> Entity<ChessBoard> {
-        self.previews
-            .entry(game.id.clone())
-            .or_insert_with(|| {
-                let state = BoardState::preview(
-                    &game.fen,
-                    kchess_domain::variant::Variant::Standard,
-                    Color::White,
-                    game.last_move.as_deref(),
-                );
-                cx.new(|_| ChessBoard::new(state))
-            })
-            .clone()
+        let state = || {
+            BoardState::preview(
+                &game.fen,
+                Default::default(),
+                Color::White,
+                game.last_move.as_deref(),
+            )
+        };
+        self.previews.board(game.id.clone(), state, cx)
     }
 
     pub fn load(&mut self, cx: &mut Context<WatchPage>) {

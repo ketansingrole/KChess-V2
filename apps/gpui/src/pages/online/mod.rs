@@ -74,7 +74,7 @@ pub struct OnlinePage {
     chat_read: usize,
     chat_game: String,
     exporter: Entity<Exporter>,
-    previews: std::collections::HashMap<String, Entity<ChessBoard>>,
+    previews: crate::board::Previews,
     /// The game's panel beside the board, drawn as a cached view of its own
     /// (`render_game_panel`), so a sliding move redraws the page around the board alone.
     game_panel: Entity<crate::part::Part<OnlinePage>>,
@@ -207,7 +207,7 @@ impl OnlinePage {
             chat_read: 0,
             chat_game: String::new(),
             exporter: cx.new(|_| Exporter::default()),
-            previews: std::collections::HashMap::new(),
+            previews: Default::default(),
             game_panel: crate::part::Part::panel(
                 |this, window, cx| this.render_game_panel(window, cx),
                 cx,
