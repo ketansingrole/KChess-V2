@@ -29,6 +29,7 @@ use crate::theme::{Palette, judgment_color, radii};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
+pub use kchess_board::analysis::{Opening, classification_look};
 
 /// What a move's label looks like: its name, glyph and colour.
 /// The NAG of a review's judgment: ?! dubious, ? mistake, ?? blunder.
@@ -37,19 +38,6 @@ fn tried_nag(judgment: Judgment) -> i64 {
         Judgment::Inaccuracy => 6,
         Judgment::Mistake => 2,
         Judgment::Blunder => 4,
-    }
-}
-
-pub fn classification_look(classification: &str, dark: bool) -> (&'static str, &'static str, Hsla) {
-    let fixed = |hex: u32| -> Hsla { rgb(hex).into() };
-    match classification {
-        "brilliant" => ("Brilliant", "!!", fixed(0x168c9c)),
-        "best" => ("Best", "★", fixed(0x538425)),
-        "excellent" => ("Excellent", "✓", fixed(0x658443)),
-        "good" => ("Good", "•", fixed(0x697f51)),
-        "inaccuracy" => ("Inaccuracy", "?!", judgment_color("inaccuracy", dark)),
-        "mistake" => ("Mistake", "?", judgment_color("mistake", dark)),
-        _ => ("Blunder", "??", judgment_color("blunder", dark)),
     }
 }
 
@@ -65,19 +53,6 @@ pub struct ReviewMark {
     pub index: usize,
     pub color: Color,
     pub classification: Option<Classification>,
-}
-
-/// How a game opens on the board.
-#[derive(Clone, Default)]
-pub struct Opening {
-    /// The move shown.
-    pub ply: usize,
-    /// How the board faces; as it was when `None`.
-    pub orientation: Option<Color>,
-    /// Where the game came from.
-    pub origin: Option<GameOrigin>,
-    /// Review it once open.
-    pub review: bool,
 }
 
 #[derive(Default)]

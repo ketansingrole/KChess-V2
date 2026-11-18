@@ -25,7 +25,6 @@ use kchess_domain::records::studies::StudySummary;
 use serde_json::{Value, json};
 use shakmaty::Color;
 
-use super::Page;
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
@@ -372,48 +371,13 @@ impl StudiesPage {
 
     /// Show a study on the analysis board; never silently throw away an unsaved board.
     fn open(id: String, window: &mut Window, cx: &mut App) {
-        crate::pages::analysis::when_read(window, cx, move |analysis, window, cx| {
-            if analysis.read(cx).study_id() == id {
-                crate::shell::open(Page::Analysis, window, cx);
-                return;
-            }
-            crate::pages::analysis::replace_read(
-                analysis,
-                window,
-                cx,
-                move |analysis, window, cx| match analysis.open_study(&id, None, cx) {
-                    Ok(()) => true,
-                    Err(cause) => {
-                        window.push_notification(Notification::error(cause), cx);
-                        false
-                    }
-                },
-            );
-        });
+        kchess_board::analysis::open(kchess_board::analysis::Open::Study(id), window, cx);
     }
 
     /// `New study`: an empty board, kept as a study at once.
     pub(crate) fn create(window: &mut Window, cx: &mut App) {
         let name = Self::library(cx).read(cx).fresh_name("Untitled study");
-        crate::pages::analysis::replace(window, cx, move |analysis, window, cx| {
-            analysis.load(None, cx);
-            let saved = analysis.save_as_study(name.clone(), cx);
-            window
-                .spawn(cx, async move |cx| {
-                    if let Err(cause) = saved.await {
-                        crate::log::write(
-                            Level::Warn,
-                            "studies",
-                            &format!("Could not save study: {cause}"),
-                        );
-                        let _ = cx.update(|window, cx| {
-                            window.push_notification(Notification::error(cause), cx)
-                        });
-                    }
-                })
-                .detach();
-            true
-        });
+        kchess_board::analysis::open(kchess_board::analysis::Open::NewStudy(name), window, cx);
     }
 
     /// Practice → Repertoire on this study.
@@ -580,8 +544,7 @@ impl StudiesPage {
         self.uploading = Some(id.clone());
         cx.notify();
         // The board's last edits first, when it shows this study.
-        let flushed = crate::pages::analysis::board(window, cx)
-            .map(|analysis| analysis.update(cx, |analysis, cx| analysis.flush_study(cx)));
+        let flushed = kchess_board::analysis::save_study(window, cx);
         let core = cx.global::<AppCore>().clone();
         cx.spawn_in(window, async move |this, cx| {
             let outcome: Result<(), String> = async {

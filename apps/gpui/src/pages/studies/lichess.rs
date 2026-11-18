@@ -312,8 +312,7 @@ impl StudiesPage {
         self.lichess.message.clear();
         cx.notify();
         // The board's own edits reach the library before the cloud copy is merged in.
-        let flushed = crate::pages::analysis::board(window, cx)
-            .map(|analysis| analysis.update(cx, |analysis, cx| analysis.flush_study(cx)));
+        let flushed = kchess_board::analysis::save_study(window, cx);
         cx.spawn_in(window, async move |this, cx| {
             if let Some(flushed) = flushed {
                 let _ = flushed.await;
@@ -333,20 +332,11 @@ impl StudiesPage {
             window,
             cx,
             move |saved, conflict, window, cx| {
-                if let Some(analysis) = crate::pages::analysis::board(window, cx)
-                    && analysis.read(cx).study_id() == saved
-                {
-                    let chapter = analysis.read(cx).chapter_id().to_string();
-                    analysis.update(cx, |analysis, cx| {
-                        // Edits made while the cloud copy downloaded are not replaced by it: their
-                        // save, refused against the new copy, keeps them as an unsaved copy.
-                        if analysis.unsaved_study_edits() {
-                            drop(analysis.flush_study(cx));
-                        } else {
-                            let _ = analysis.open_study(&saved, Some(&chapter), cx);
-                        }
-                    });
-                }
+                kchess_board::analysis::open(
+                    kchess_board::analysis::Open::StudyChanged(saved),
+                    window,
+                    cx,
+                );
                 let _ = page.update(cx, |page, cx| {
                     page.lichess.busy = false;
                     page.lichess.message = if conflict {
@@ -369,21 +359,20 @@ impl StudiesPage {
 
     /// `send`: the analysis board as a chapter of a study (or a new private one).
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(analysis) = crate::pages::analysis::board(window, cx) else {
+        let Some(board) = kchess_board::analysis::shown(window, cx) else {
             return;
         };
         let (pgn, chapter_name) = {
-            let board = analysis.read(cx);
             let study = cx
                 .global::<StudyHandle>()
                 .0
                 .read(cx)
-                .study(board.study_id())
+                .study(&board.study_id)
                 .map(|study| study.name.clone());
             let name = study
-                .or_else(|| Some(board.header("Event")).filter(|event| !event.is_empty()))
+                .or_else(|| Some(board.event).filter(|event| !event.is_empty()))
                 .unwrap_or_else(|| "KChess analysis".into());
-            (board.pgn(), name.chars().take(100).collect::<String>())
+            (board.pgn, name.chars().take(100).collect::<String>())
         };
         let account = self.lichess.account.clone();
         let target = self

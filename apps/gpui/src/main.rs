@@ -130,6 +130,7 @@ fn start_models(library: &kchess_contracts::types::Library, cx: &mut App) {
     played::init(library, cx);
     studies::init(library, cx);
     reviews::init(cx);
+    pages::analysis::init(cx);
     accounts::init(cx);
     ai::init(cx);
     puzzle_db::init(cx);

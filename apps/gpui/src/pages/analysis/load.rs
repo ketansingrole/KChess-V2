@@ -3,10 +3,14 @@
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
 
 use kchess_contracts::calls;
 use kchess_contracts::check::{GameId, LichessId, StudyId};
+
+use kchess_board::analysis::{Analysis, AnalysisBoard, Open, Saving, Shown};
+use kchess_contracts::Level;
 
 use super::{AnalysisPage, Opening};
 use crate::core::AppCore;
@@ -263,4 +267,146 @@ fn open_fetched(
             });
         })
         .detach();
+}
+
+/// Show a library study; never silently throw away an unsaved board.
+fn open_library_study(id: String, window: &mut Window, cx: &mut App) {
+    when_read(window, cx, move |analysis, window, cx| {
+        if analysis.read(cx).study_id() == id {
+            crate::shell::open(Page::Analysis, window, cx);
+            return;
+        }
+        replace_read(
+            analysis,
+            window,
+            cx,
+            move |analysis, window, cx| match analysis.open_study(&id, None, cx) {
+                Ok(()) => true,
+                Err(cause) => {
+                    window.push_notification(Notification::error(cause), cx);
+                    false
+                }
+            },
+        );
+    });
+}
+
+/// A new study named `name`: an empty board, kept as a study at once.
+fn new_study(name: String, window: &mut Window, cx: &mut App) {
+    replace(window, cx, move |analysis, window, cx| {
+        analysis.load(None, cx);
+        let saved = analysis.save_as_study(name.clone(), cx);
+        window
+            .spawn(cx, async move |cx| {
+                if let Err(cause) = saved.await {
+                    crate::log::write(
+                        Level::Warn,
+                        "studies",
+                        &format!("Could not save study: {cause}"),
+                    );
+                    let _ = cx.update(|window, cx| {
+                        window.push_notification(Notification::error(cause), cx)
+                    });
+                }
+            })
+            .detach();
+        true
+    });
+}
+
+/// A library study was replaced: shown again if the board shows it, unless the board has unsaved
+/// edits to it, which are saved over it instead.
+fn study_changed(saved: String, window: &mut Window, cx: &mut App) {
+    if let Some(analysis) = board(window, cx)
+        && analysis.read(cx).study_id() == saved
+    {
+        let chapter = analysis.read(cx).chapter_id().to_string();
+        analysis.update(cx, |analysis, cx| {
+            // Edits made while the cloud copy downloaded are not replaced by it: their
+            // save, refused against the new copy, keeps them as an unsaved copy.
+            if analysis.unsaved_study_edits() {
+                drop(analysis.flush_study(cx));
+            } else {
+                let _ = analysis.open_study(&saved, Some(&chapter), cx);
+            }
+        });
+    }
+}
+
+/// The analysis board as other pages reach it (`kchess_board::analysis`): each request opens as
+/// this page's own entry points open it, asking first when it would replace unsaved analysis.
+struct Board;
+
+impl AnalysisBoard for Board {
+    fn open(&self, open: Open, window: &mut Window, cx: &mut App) {
+        match open {
+            Open::Pgn {
+                pgn,
+                opening,
+                unreadable,
+            } => replace(window, cx, move |analysis, window, cx| {
+                let opened = analysis.open_pgn(&pgn, opening.clone(), cx);
+                if !opened && unreadable {
+                    window.push_notification(
+                        Notification::error("That game could not be read")
+                            .title("Could not open the game"),
+                        cx,
+                    );
+                }
+                opened
+            }),
+            Open::Position(fen) => replace(window, cx, move |analysis, _, cx| {
+                analysis.load(fen.as_deref(), cx);
+                true
+            }),
+            Open::Import(text) => replace(window, cx, move |analysis, window, cx| {
+                analysis.import_text(text.clone(), window, cx);
+                true
+            }),
+            Open::Played { game, review } => replace(window, cx, move |analysis, _, cx| {
+                analysis.open_played(&game, review, cx)
+            }),
+            Open::Setup { setup, orientation } => replace(window, cx, move |analysis, _, cx| {
+                analysis.analyse_setup(&setup, orientation, cx)
+            }),
+            Open::Line(moves) => open_line(moves, window, cx),
+            Open::Study(id) => open_library_study(id, window, cx),
+            Open::NewStudy(name) => new_study(name, window, cx),
+            Open::StudyChanged(id) => study_changed(id, window, cx),
+            Open::LichessChapter { study, chapter } => open_study(&study, &chapter, window, cx),
+            Open::Linked(link) => open_linked(&link, window, cx),
+            Open::Exported {
+                id,
+                white,
+                black,
+                orientation,
+            } => open_exported(&id, white, black, orientation, window, cx),
+            Open::Puzzle {
+                puzzle,
+                wrong_moves,
+            } => analyse_puzzle(puzzle, wrong_moves, window, cx),
+            Open::Practise { game, items } => practise_game(game, items, window, cx),
+        }
+    }
+
+    fn shown(&self, window: &mut Window, cx: &mut App) -> Option<Shown> {
+        let board = board(window, cx)?;
+        let board = board.read(cx);
+        Some(Shown {
+            study_id: board.study_id().to_string(),
+            pgn: board.pgn(),
+            event: board.header("Event"),
+        })
+    }
+
+    fn save_study(&self, window: &mut Window, cx: &mut App) -> Option<Saving> {
+        let board = board(window, cx)?;
+        let saving = board.update(cx, |board, cx| board.flush_study(cx));
+        Some(Box::pin(saving))
+    }
+}
+
+/// Let other pages reach the analysis board.
+pub fn init(cx: &mut App) {
+    cx.set_global(Analysis(std::rc::Rc::new(Board)));
 }

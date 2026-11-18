@@ -1,9 +1,11 @@
-//! The board and the games on it, over GPUI: the board (`board`), game sessions as views drive
-//! them (`game`), notation as Settings shows it (`notation`), move and game sounds (`sound`), the
-//! boards, pieces and sounds embedded (`assets`), and the board pages' own widgets (`widgets`).
+//! The board and the games on it, over GPUI: the board (`board`), opening a game on the analysis
+//! board from any page (`analysis`), game sessions as views drive them (`game`), notation as
+//! Settings shows it (`notation`), move and game sounds (`sound`), the boards, pieces and sounds
+//! embedded (`assets`), and the board pages' own widgets (`widgets`).
 //! It depends on the design system (`kchess-ui`) and the app's services (`kchess-app`), never on
 //! the app: what it needs from it (whether voice owns Space) the app passes in.
 
+pub mod analysis;
 pub mod assets;
 pub mod board;
 pub mod game;

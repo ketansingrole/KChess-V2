@@ -24,12 +24,12 @@ use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::played::GameOrigin;
 use crate::game::view;
-use crate::pages::analysis::Opening;
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, panel_style};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
+use kchess_board::analysis::Opening;
 
 /// Whether KChess plays the variant of a game Lichess sends (standard chess when it names none).
 fn plays_variant(frame: &WatchFrame) -> bool {
@@ -477,11 +477,13 @@ impl Live {
                             .aria_label("Open game on the analysis board")
                             .cursor_pointer()
                             .on_click(move |_, window, cx| {
-                                crate::pages::analysis::open_exported(
-                                    &open.game_id,
-                                    open.white.name.clone(),
-                                    open.black.name.clone(),
-                                    open.orientation,
+                                kchess_board::analysis::open(
+                                    kchess_board::analysis::Open::Exported {
+                                        id: open.game_id.clone(),
+                                        white: open.white.name.clone(),
+                                        black: open.black.name.clone(),
+                                        orientation: open.orientation,
+                                    },
                                     window,
                                     cx,
                                 )
@@ -946,25 +948,32 @@ impl WatchPage {
                 let ply = self.live.shown_ply();
                 // Once this page is no longer being updated: leaving Watch tells it it is hidden.
                 window.defer(cx, move |window, cx| {
-                    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-                        let opening = Opening {
-                            ply,
-                            orientation: Some(orientation),
-                            origin: Some(origin.clone()),
-                            review: false,
-                        };
-                        analysis.open_pgn(&pgn, opening, cx)
-                    });
+                    kchess_board::analysis::open(
+                        kchess_board::analysis::Open::Pgn {
+                            pgn,
+                            opening: Opening {
+                                ply,
+                                orientation: Some(orientation),
+                                origin: Some(origin.clone()),
+                                review: false,
+                            },
+                            unreadable: false,
+                        },
+                        window,
+                        cx,
+                    );
                 });
                 return;
             }
         }
         window.defer(cx, move |window, cx| {
-            crate::pages::analysis::open_exported(
-                &frame.game_id,
-                frame.white.name,
-                frame.black.name,
-                orientation,
+            kchess_board::analysis::open(
+                kchess_board::analysis::Open::Exported {
+                    id: frame.game_id.clone(),
+                    white: frame.white.name,
+                    black: frame.black.name,
+                    orientation,
+                },
                 window,
                 cx,
             );

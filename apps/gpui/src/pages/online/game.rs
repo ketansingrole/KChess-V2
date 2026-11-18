@@ -1241,9 +1241,11 @@ fn analyse(window: &mut Window, cx: &mut App) {
         account: Some(model.online_account.clone()),
         ..PlayedGame::new(online.setup().clone(), online.moves(), color, white, black)
     };
-    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-        analysis.open_played(&game, true, cx)
-    });
+    kchess_board::analysis::open(
+        kchess_board::analysis::Open::Played { game, review: true },
+        window,
+        cx,
+    );
 }
 
 #[cfg(test)]

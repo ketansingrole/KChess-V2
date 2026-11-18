@@ -537,9 +537,11 @@ impl EditorPage {
             return;
         }
         let (setup, orientation) = (self.game_setup(), self.orientation);
-        crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-            analysis.analyse_setup(&setup, orientation, cx)
-        });
+        kchess_board::analysis::open(
+            kchess_board::analysis::Open::Setup { setup, orientation },
+            window,
+            cx,
+        );
     }
 
     fn voice_heard(&mut self, event: &VoiceEvent, window: &mut Window, cx: &mut Context<Self>) {

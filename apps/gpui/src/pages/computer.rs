@@ -507,9 +507,11 @@ impl ComputerPage {
             crate::game::engine_level_label(self.game.level())
         );
         let game = self.played_game(&engine);
-        crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-            analysis.open_played(&game, true, cx)
-        });
+        kchess_board::analysis::open(
+            kchess_board::analysis::Open::Played { game, review: true },
+            window,
+            cx,
+        );
     }
 
     fn moves(&self) -> Vec<String> {
