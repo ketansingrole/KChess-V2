@@ -26,10 +26,10 @@ use crate::core::AppCore;
 use crate::game::played::GameOrigin;
 use crate::game::tree::TreeNode;
 use crate::pages::Page;
-use crate::pages::analysis::Opening;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
+use kchess_board::analysis::Opening;
 
 const RESULTS: [(&str, &str); 4] = [
     ("all", "All"),
@@ -1002,7 +1002,7 @@ pub fn game_row(
                     )
                     .children(worst.map(|(judgment, text)| {
                         let (_, _, color) =
-                            crate::pages::analysis::classification_look(judgment, palette.dark);
+                            kchess_board::analysis::classification_look(judgment, palette.dark);
                         div().text_size(px(12.)).text_color(color).child(text)
                     })),
             )
@@ -1041,15 +1041,20 @@ pub(super) fn open_review(game: LichessGame, ply: usize, window: &mut Window, cx
         white: Some(white),
         black: Some(black),
     };
-    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-        let opening = Opening {
-            ply,
-            orientation: Some(color),
-            origin: Some(origin.clone()),
-            review: true,
-        };
-        analysis.open_pgn(&pgn, opening, cx)
-    });
+    kchess_board::analysis::open(
+        kchess_board::analysis::Open::Pgn {
+            pgn,
+            opening: Opening {
+                ply,
+                orientation: Some(color),
+                origin: Some(origin.clone()),
+                review: true,
+            },
+            unreadable: false,
+        },
+        window,
+        cx,
+    );
 }
 
 #[cfg(test)]

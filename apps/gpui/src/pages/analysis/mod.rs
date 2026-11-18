@@ -72,11 +72,10 @@ pub(crate) const KEYS: &[PageKey<AnalysisKey>] = &[
     },
 ];
 
-pub use load::{
-    analyse_puzzle, board, new_board, open_exported, open_line, open_linked, open_study,
-    practise_game, replace, replace_read, when_read,
-};
-pub use review::{Opening, classification_look};
+#[cfg(test)]
+pub use load::board;
+pub use load::{init, new_board, open_linked, open_study, replace};
+pub use review::Opening;
 
 use crate::voice::moves::{Access, Action, BoardBar, Reply, Turn, VoiceMoves, board_bar};
 use std::collections::{HashMap, VecDeque};

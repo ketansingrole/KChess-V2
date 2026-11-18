@@ -29,12 +29,12 @@ use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::tree::format_eval;
 use crate::game::view;
-use crate::pages::analysis::Opening;
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Side, Tone};
+use kchess_board::analysis::Opening;
 
 /// Typing pauses this long before a search is sent.
 const SEARCH_DELAY: Duration = Duration::from_millis(350);
@@ -1211,15 +1211,20 @@ fn analyse_board(
     window: &mut Window,
     cx: &mut App,
 ) {
-    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-        let opening = Opening {
-            ply,
-            orientation: Some(orientation),
-            origin: Some(origin.clone()),
-            review: false,
-        };
-        analysis.open_pgn(&pgn, opening, cx)
-    });
+    kchess_board::analysis::open(
+        kchess_board::analysis::Open::Pgn {
+            pgn,
+            opening: Opening {
+                ply,
+                orientation: Some(orientation),
+                origin: Some(origin.clone()),
+                review: false,
+            },
+            unreadable: false,
+        },
+        window,
+        cx,
+    );
 }
 
 #[cfg(test)]

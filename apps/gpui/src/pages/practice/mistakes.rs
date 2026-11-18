@@ -546,9 +546,11 @@ impl Mistakes {
                                 crate::game::game_date(game.played_at)
                             ))
                             .on_click(move |_, window, cx| {
-                                crate::pages::analysis::practise_game(
-                                    practised.clone(),
-                                    all.clone(),
+                                kchess_board::analysis::open(
+                                    kchess_board::analysis::Open::Practise {
+                                        game: practised.clone(),
+                                        items: all.clone(),
+                                    },
                                     window,
                                     cx,
                                 )

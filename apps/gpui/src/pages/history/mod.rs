@@ -29,10 +29,10 @@ use replay::GameReplay;
 
 pub(crate) mod lichess;
 mod replay;
-use crate::pages::analysis::Opening;
 use crate::theme::Palette;
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Look, Pill};
+use kchess_board::analysis::Opening;
 
 const PAGE_SIZE: usize = 20;
 /// Below this page width the list keeps only the result and the players.
@@ -232,9 +232,15 @@ pub(crate) enum Action {
 /// Open the saved game on the analysis board.
 fn analyse(game: &PlayedGame, window: &mut Window, cx: &mut App) {
     let Some(pgn) = pgn(game) else { return };
-    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-        analysis.open_pgn(&pgn, Opening::default(), cx)
-    });
+    kchess_board::analysis::open(
+        kchess_board::analysis::Open::Pgn {
+            pgn,
+            opening: Opening::default(),
+            unreadable: false,
+        },
+        window,
+        cx,
+    );
 }
 
 pub struct HistoryPage {

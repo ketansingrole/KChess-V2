@@ -558,7 +558,9 @@ impl OpeningsPage {
                     opening.map_or_else(|| "Starting position".to_string(), |(name, _)| name);
                 Self::train(OpeningChoice { name, moves: line }, window, cx);
             }
-            Action::Analyse => crate::pages::analysis::open_line(line, window, cx),
+            Action::Analyse => {
+                kchess_board::analysis::open(kchess_board::analysis::Open::Line(line), window, cx)
+            }
             Action::Puzzles => {
                 if let Some((name, _)) = opening {
                     crate::pages::puzzles::open_opening(&name, window, cx);
@@ -1148,7 +1150,7 @@ impl OpeningsPage {
                             .icon(icon("microscope"))
                             .label("Analyse")
                             .on_click(move |_, window, cx| {
-                                crate::pages::analysis::open_line(analyse_line.clone(), window, cx)
+                                kchess_board::analysis::open(kchess_board::analysis::Open::Line(analyse_line.clone()), window, cx)
                             }),
                     )
                     .children(puzzles.map(|(name, _)| {

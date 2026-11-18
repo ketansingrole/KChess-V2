@@ -1083,9 +1083,11 @@ pub(crate) fn status_panel(
                         .label("Analyse")
                         .tooltip("Analysis board")
                         .on_click(move |_, window, cx| {
-                            crate::pages::analysis::analyse_puzzle(
-                                studied.clone(),
-                                wrong.clone(),
+                            kchess_board::analysis::open(
+                                kchess_board::analysis::Open::Puzzle {
+                                    puzzle: studied.clone(),
+                                    wrong_moves: wrong.clone(),
+                                },
                                 window,
                                 cx,
                             )
@@ -1481,9 +1483,11 @@ impl PuzzlesPage {
                                 PopupMenuItem::new("Analysis board")
                                     .icon(icon("microscope"))
                                     .on_click(move |_, window, cx| {
-                                        crate::pages::analysis::analyse_puzzle(
-                                            studied.clone(),
-                                            wrong.clone(),
+                                        kchess_board::analysis::open(
+                                            kchess_board::analysis::Open::Puzzle {
+                                                puzzle: studied.clone(),
+                                                wrong_moves: wrong.clone(),
+                                            },
                                             window,
                                             cx,
                                         )
@@ -1796,7 +1800,14 @@ impl PuzzlesPage {
         };
         let wrong = board.wrong_moves().to_vec();
         window.defer(cx, move |window, cx| {
-            crate::pages::analysis::analyse_puzzle(puzzle, wrong, window, cx)
+            kchess_board::analysis::open(
+                kchess_board::analysis::Open::Puzzle {
+                    puzzle,
+                    wrong_moves: wrong,
+                },
+                window,
+                cx,
+            )
         });
     }
 
@@ -1879,9 +1890,11 @@ impl Render for PuzzlesPage {
                         |this, _, event: &history::HistoryEvent, window, cx| match event {
                             history::HistoryEvent::Retry(puzzle) => this.retry(puzzle.clone(), cx),
                             history::HistoryEvent::Analyse(puzzle, wrong) => {
-                                crate::pages::analysis::analyse_puzzle(
-                                    puzzle.clone(),
-                                    wrong.clone(),
+                                kchess_board::analysis::open(
+                                    kchess_board::analysis::Open::Puzzle {
+                                        puzzle: puzzle.clone(),
+                                        wrong_moves: wrong.clone(),
+                                    },
                                     window,
                                     cx,
                                 )

@@ -791,9 +791,14 @@ impl LocalPage {
             ply: Some(self.shown_ply()),
             ..self.played_game(cx)
         };
-        crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
-            analysis.open_played(&game, false, cx)
-        });
+        kchess_board::analysis::open(
+            kchess_board::analysis::Open::Played {
+                game,
+                review: false,
+            },
+            window,
+            cx,
+        );
     }
 
     fn copy_pgn(&mut self, window: &mut Window, cx: &mut Context<Self>) {

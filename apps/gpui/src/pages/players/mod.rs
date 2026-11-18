@@ -765,7 +765,16 @@ impl PlayersPage {
             shakmaty::Color::White => (game.account, game.opponent),
             shakmaty::Color::Black => (game.opponent, game.account),
         };
-        crate::pages::analysis::open_exported(&game.id, white, black, game.color, window, cx);
+        kchess_board::analysis::open(
+            kchess_board::analysis::Open::Exported {
+                id: game.id.clone(),
+                white,
+                black,
+                orientation: game.color,
+            },
+            window,
+            cx,
+        );
     }
 
     /// Run an action as its button does, if it is still allowed.
