@@ -23,6 +23,8 @@ crates/
                          switches, the App Store sandbox, log redaction, links a browser may open
   kchess-ui/             The app's design system over GPUI Kit: theme, motion, the line chart
                          (`docs/app-crates.md`: splitting the app into crates)
+  kchess-app/            The app's services: the core as the app holds it, Settings, view
+                         preferences, the log, quitting
   kchess-testkit/        The loopback HTTP/1.1 server the tests' and xtask's stand-ins answer through
   kchess-hack/           The workspace hack (`cargo hakari`): one feature set for every dependency
 tooling/xtask/           `cargo xtask`: checks, the pre-push hook, release versions, packaging

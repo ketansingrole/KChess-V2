@@ -11,7 +11,8 @@ gate on the frame benchmark catches any other kind, on a Mac.
 The commonest way a frame gets slow is a view that waits on something outside the main thread
 while it draws: the system (the microphone permission), the core (`AppCore::request_now`), the
 clipboard, a file. Each of those calls says so with `slow_calls::call`
-(`apps/gpui/src/slow_calls.rs`). The end-to-end tests draw every frame through `e2e::draw`, inside
+(`crates/kchess-app/src/slow_calls.rs`, recording under its `test-support` feature, which the
+app's tests turn on). The end-to-end tests draw every frame through `e2e::draw`, inside
 `slow_calls::drawing`, which fails the test when the frame made one, naming the call and where it
 was made (the slow functions are `#[track_caller]`, so that is the view's line, not theirs).
 
