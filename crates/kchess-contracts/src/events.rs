@@ -248,9 +248,9 @@ mod tests {
         crosses_as(
             CoreEvent::HostRequest(crate::host::HostAsk {
                 id: 4,
-                request: crate::host::HostRequest::OnBattery,
+                request: crate::host::HostRequest::Focus,
             }),
-            r#"{"id":4,"kind":"onBattery","payload":null}"#,
+            r#"{"id":4,"kind":"focus","payload":null}"#,
         );
     }
 

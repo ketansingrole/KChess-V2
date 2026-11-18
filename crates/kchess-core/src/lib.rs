@@ -16,6 +16,7 @@ pub mod ids;
 pub mod lichess;
 pub mod loopback;
 mod panics;
+pub mod power;
 mod process;
 pub mod profile_lock;
 pub mod puzzles;

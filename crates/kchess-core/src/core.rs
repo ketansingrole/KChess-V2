@@ -161,7 +161,7 @@ impl Core {
             Capabilities::with_credentials(Arc::clone(&host), credentials)
                 .with_connections(Arc::clone(&connections)),
         );
-        let battery = Battery::new(Arc::clone(&host), Arc::clone(&capabilities));
+        let battery = Battery::new();
         let scheduler = Arc::new(Scheduler::new(Arc::clone(&battery)));
         let hub = Arc::new(EngineHub::new(Arc::clone(&host)));
         let ctx = EngineContext::new(Arc::clone(&host), hub, scheduler, engine_locations(&config));

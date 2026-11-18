@@ -3,8 +3,8 @@
 //! (settings, accounts, Lichess, events), and the handoff that suspends engines while an
 //! executable is replaced.
 //!
-//! The battery reading never makes a lease wait for the host: a refresh asks the host in the
-//! background and the next lease uses whatever reading has arrived.
+//! The battery reading never makes a lease wait: a refresh reads the OS in the background and
+//! the next lease uses whatever reading has arrived.
 
 use kchess_contracts::CoreEvent;
 use std::future::Future;
@@ -26,7 +26,7 @@ use super::scheduler::Power;
 use super::search::Search;
 use super::uci::EngineHub;
 use crate::capabilities::Capabilities;
-use crate::host::{Host, Level};
+use crate::host::Host;
 use crate::store::{Database, chesscom, games};
 use kchess_contracts::error::Result;
 
@@ -36,8 +36,11 @@ const REFRESH_EVERY: Duration = Duration::from_secs(15);
 #[cfg(test)]
 const REFRESH_EVERY: Duration = Duration::from_millis(10);
 
-/// The battery reading the scheduler consults. A refresh asks the host once at a time, in the
-/// background.
+/// How the battery is read: `crate::power::on_battery` outside tests.
+pub type PowerReader = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// The battery reading the scheduler consults. A refresh reads the OS once at a time, on a
+/// blocking thread.
 ///
 /// Intentionally stale-tolerant: refreshed at most every 15 s and before each lease without
 /// waiting, never blocking lease admission. A plug/unplug flip mid-queue uses the last reading
@@ -46,22 +49,25 @@ pub struct Battery {
     value: AtomicBool,
     refreshing: AtomicBool,
     closed: AtomicBool,
-    /// Ends the refresh loop the moment the core closes, so it lets go of the capabilities (and
-    /// the connections they reach) then rather than at its next tick.
+    /// Ends the refresh loop the moment the core closes rather than at its next tick.
     stopped: CancellationToken,
-    host: Arc<dyn Host>,
-    capabilities: Arc<Capabilities>,
+    read: PowerReader,
 }
 
 impl Battery {
-    pub fn new(host: Arc<dyn Host>, capabilities: Arc<Capabilities>) -> Arc<Battery> {
+    /// The computer's own battery.
+    pub fn new() -> Arc<Battery> {
+        Battery::reading(Arc::new(crate::power::on_battery))
+    }
+
+    /// A battery read by `read`.
+    pub fn reading(read: PowerReader) -> Arc<Battery> {
         Arc::new(Battery {
             value: AtomicBool::new(false),
             refreshing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             stopped: CancellationToken::new(),
-            host,
-            capabilities,
+            read,
         })
     }
 
@@ -70,8 +76,8 @@ impl Battery {
         self.value.load(Ordering::SeqCst)
     }
 
-    /// Asks the host for the reading without waiting for the answer. A refresh already in flight
-    /// is not repeated. Outside a runtime nothing is asked.
+    /// Reads the battery without waiting for the reading. A refresh already in flight is not
+    /// repeated. Outside a runtime, or once closed, nothing is read.
     pub fn refresh(self: &Arc<Self>) {
         if self.closed.load(Ordering::SeqCst) || self.refreshing.swap(true, Ordering::SeqCst) {
             return;
@@ -81,15 +87,8 @@ impl Battery {
             return;
         };
         let battery = Arc::clone(self);
-        runtime.spawn(async move {
-            match battery.capabilities.on_battery().await {
-                Ok(on_battery) => battery.value.store(on_battery, Ordering::SeqCst),
-                Err(cause) => battery.host.log(
-                    Level::Debug,
-                    "engine",
-                    &format!("Battery check failed: {}", cause.message),
-                ),
-            }
+        runtime.spawn_blocking(move || {
+            battery.value.store((battery.read)(), Ordering::SeqCst);
             battery.refreshing.store(false, Ordering::SeqCst);
         });
     }
@@ -279,46 +278,73 @@ impl EngineHandoff for EngineOwners {
 mod tests {
     use super::*;
     use crate::engine::scheduler::{Priority, Scheduler};
-    use crate::test_host::TestHost;
+    use std::sync::atomic::AtomicUsize;
 
-    fn battery() -> (Arc<TestHost>, Arc<Capabilities>, Arc<Battery>) {
-        let host = TestHost::new();
-        let caps = Arc::new(Capabilities::new(host.clone()));
-        let battery = Battery::new(host.clone(), Arc::clone(&caps));
-        (host, caps, battery)
+    /// A battery that reads `on`, and counts its readings.
+    fn battery(on: bool) -> (Arc<AtomicUsize>, Arc<Battery>) {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&reads);
+        let battery = Battery::reading(Arc::new(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            on
+        }));
+        (reads, battery)
     }
 
-    /// Waits until the host has been asked for the battery reading.
-    async fn asked(host: &TestHost) {
+    /// Waits until the battery has been read.
+    async fn read(reads: &AtomicUsize) {
         tokio::time::timeout(Duration::from_secs(5), async {
-            while host.requests("onBattery").is_empty() {
+            while reads.load(Ordering::SeqCst) == 0 {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
         })
         .await
-        .expect("the host was asked for the battery reading");
+        .expect("the battery was read");
     }
 
-    /// A lease refreshes the reading the scheduler consults.
+    /// A lease refreshes the reading the scheduler consults, and a battery reading limits the
+    /// threads the next one may use.
     #[tokio::test]
-    async fn a_lease_asks_for_the_battery_reading() {
-        let (host, caps, battery) = battery();
-        let scheduler = Scheduler::with_budget(1, Arc::clone(&battery));
+    async fn a_lease_reads_the_battery_for_the_next() {
+        let (reads, battery) = battery(true);
+        let scheduler = Scheduler::with_budget(4, Arc::clone(&battery));
+        assert_eq!(scheduler.search_threads(), 4, "unread: plugged in");
         let lease = scheduler
             .acquire(Priority::Analysis, &CancellationToken::new())
             .await
             .unwrap();
-        asked(&host).await;
+        read(&reads).await;
         drop(lease);
-        caps.close();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !battery.value() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the reading arrived");
+        assert_eq!(scheduler.search_threads(), 2);
     }
 
     #[tokio::test]
     async fn the_reading_is_refreshed_while_the_core_runs() {
-        let (host, caps, battery) = battery();
+        let (reads, battery) = battery(false);
         battery.start_refreshing();
-        asked(&host).await;
+        read(&reads).await;
         battery.close();
-        caps.close();
+    }
+
+    /// 2026-11-10, CI on Windows: a core's battery refresh, spawned by its first call, ran only
+    /// after the core had closed and then waited 30 s on the host, so cores opened and closed in
+    /// a row were still held (`tests/memory.rs`, `cores_opened_and_closed`). A closed battery
+    /// reads nothing more.
+    #[tokio::test]
+    async fn a_closed_battery_reads_nothing_more() {
+        let (reads, battery) = battery(true);
+        battery.close();
+        battery.refresh();
+        battery.start_refreshing();
+        tokio::time::sleep(REFRESH_EVERY * 5).await;
+        assert_eq!(reads.load(Ordering::SeqCst), 0);
+        assert!(!battery.value());
     }
 }

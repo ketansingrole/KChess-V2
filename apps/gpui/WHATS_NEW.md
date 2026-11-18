@@ -14,6 +14,7 @@ refuses to release with nothing there.
 - **See a line before you play it**: hover over a move in the engine lines, the Explorer's move list or a ChatGPT explanation to see the position it leads to.
 - **Find a setting in one go**: search for a setting at the top of the window and it opens Settings right at that row, lit up. Searching History, Studies and Openings now highlights the words that matched.
 - **Captured pieces on the analysis board**: the pieces each side has won, and who is ahead, show above and below the board as they do in your games.
+- **Easier on your battery**: on a laptop running on battery, automatic game reviews now wait for a charger unless Also on battery power is on, and the engine uses fewer cores.
 - **Fixes**: A wrong move in a puzzle goes back, so you can try another right away. Insights opened during a sync fill in once it finishes. Cancel seek no longer goes missing right after you sign in to Lichess. The voice meter moves as you speak. Plus many smaller fixes.
 
 ## 2026.11.7 (2026-11-09)

@@ -1,6 +1,6 @@
 //! The core's wiring of the engine services (`crates/kchess-core/src/core.rs`): driven through
 //! `Core::call` with a recording host and scripted engines. Covers the
-//! battery reading (never waiting on the host), the managed engine handoff, the exact event
+//! battery reading (never waiting on it), the managed engine handoff, the exact event
 //! payloads, the busy state of automatic reviews, and closing the core.
 
 use crate::support;
@@ -34,19 +34,15 @@ async fn with_engine(core: &Core, script: &str) {
         .expect("no game to resume");
 }
 
-fn expected_threads_on_battery() -> usize {
-    let cpus = std::thread::available_parallelism().map_or(1, |count| count.get());
-    default_budget(cpus).min(2)
-}
-
+/// A lease never waits on the battery reading, and the computer's own power state reaches the
+/// thread budget once read: at most two threads on battery.
 #[tokio::test]
-async fn a_lease_never_waits_on_an_unanswered_battery_request() {
+async fn the_computers_power_reaches_the_thread_budget() {
     let dir = profile();
     let host = TestHost::new();
     let core = core(&host, dir.path());
     let script = support::engine_copy(dir.path(), "search");
     with_engine(&core, &script).await;
-    // The host never answers `onBattery`: the search must still start and finish.
     let answer = tokio::time::timeout(
         WAIT,
         core.call(
@@ -58,41 +54,16 @@ async fn a_lease_never_waits_on_an_unanswered_battery_request() {
     .expect("the search does not wait for the battery")
     .expect("a move");
     assert!(answer.is_string(), "{answer}");
-    assert!(
-        !host.requests("onBattery").is_empty(),
-        "the battery was asked"
-    );
-    core.close().await;
-}
-
-#[tokio::test]
-async fn the_hosts_battery_reading_reaches_the_thread_budget() {
-    let dir = profile();
-    let host = TestHost::new();
-    let core = core(&host, dir.path());
-    // The first call starts the battery refresh; the reading is still the default (off battery).
-    core.call("loadData", vec![]).await.expect("loadData");
-    let off = core.engine_threads_for_tests();
-    let request = support::wait_until(WAIT, "the battery request", || {
-        host.requests("onBattery").pop()
+    let cpus = std::thread::available_parallelism().map_or(1, |count| count.get());
+    let expected = if kchess_core::power::on_battery() {
+        default_budget(cpus).min(2)
+    } else {
+        default_budget(cpus)
+    };
+    support::wait_until(WAIT, "the battery reading", || {
+        (core.engine_threads_for_tests() == expected).then_some(())
     })
     .await;
-    core.call(
-        "host.reply",
-        vec![request["id"].clone(), json!({ "value": true })],
-    )
-    .await
-    .expect("reply");
-    let on = support::wait_until(WAIT, "the battery reading", || {
-        let threads = core.engine_threads_for_tests();
-        (threads == expected_threads_on_battery()).then_some(threads)
-    })
-    .await;
-    assert_eq!(on, expected_threads_on_battery());
-    assert!(
-        on <= off,
-        "battery power never grants more threads ({on} > {off})"
-    );
     core.close().await;
 }
 

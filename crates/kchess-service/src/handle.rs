@@ -449,17 +449,13 @@ mod tests {
         let Backend::Embedded(inner) = &core.backend else {
             panic!("embedded");
         };
-        let on_battery = inner.capabilities().on_battery().await.expect("answered");
-        assert!(on_battery);
-        // The core's own battery reading may ask too.
-        let asked = lock(&asked).clone();
-        assert!(
-            !asked.is_empty()
-                && asked
-                    .iter()
-                    .all(|request| *request == HostRequest::OnBattery),
-            "{asked:?}"
-        );
+        let answer = inner
+            .capabilities()
+            .request(HostRequest::Focus)
+            .await
+            .expect("answered");
+        assert_eq!(answer, json!(true));
+        assert_eq!(lock(&asked).clone(), [HostRequest::Focus]);
         while let Ok(event) = events.try_recv() {
             assert!(
                 !matches!(event, ClientEvent::Event(CoreEvent::HostRequest(_))),
@@ -503,14 +499,14 @@ mod tests {
             panic!("embedded");
         };
         let capabilities = inner.capabilities();
-        let mut asking = tokio::spawn(async move { capabilities.on_battery().await });
-        // Every request is answered: the core's own battery reading may ask too.
-        let on_battery = loop {
+        let mut asking =
+            tokio::spawn(async move { capabilities.request(HostRequest::Focus).await });
+        let answer = loop {
             tokio::select! {
                 asked = &mut asking => break asked.expect("asked").expect("answered"),
                 Some(event) = events.recv() => {
                     if let ClientEvent::Event(CoreEvent::HostRequest(ask)) = event {
-                        assert_eq!(ask.request, HostRequest::OnBattery);
+                        assert_eq!(ask.request, HostRequest::Focus);
                         core.reply(ask.id, HostReply::Value(json!(true)))
                             .await
                             .expect("replied");
@@ -518,7 +514,7 @@ mod tests {
                 }
             }
         };
-        assert!(on_battery);
+        assert_eq!(answer, json!(true));
         core.close().await;
         let refused = core.call("library", Vec::new()).await;
         assert!(refused.is_err(), "a closed core answers nothing");

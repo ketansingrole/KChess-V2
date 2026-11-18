@@ -156,6 +156,10 @@ exclude_re = [
     'tooling/xtask/src/package/mac\.rs:.*: replace sign -> Result with ',
     'tooling/xtask/src/package/(mac|mas)\.rs:.*: replace package -> Result<Vec<PathBuf>> with ',
     'tooling/xtask/src/package/mod\.rs:.*: replace run -> Result with ',
+    # The power state read from the OS: no test can unplug the computer. What Linux's supplies
+    # decide is tested (`supplies_on_battery`); the battery's use of a reading is tested with a
+    # stand-in reader (`engine::bridge`).
+    'kchess-core/src/power\.rs:.*(replace (os::)?on_battery -> bool with |in (os::)?on_battery$)',
     # ── kchess-domain: mutants whose program behaves the same ──
     # `|` and `^` (or `+` and `-`, or `&` and `|`) agree on bitboards or numbers that share no bit:
     # a king's square and its rooks', the first and eighth ranks, queens and rooks, pawn pushes and

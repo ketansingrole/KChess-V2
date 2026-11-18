@@ -135,6 +135,9 @@ These stay in the reports on purpose; each is listed with the reason.
   nothing until a call overflows it, and no deterministic test overflows a 1 MiB stack on
   Linux or macOS (the case it guards, an embedded sign-in in a Windows debug build, needs
   Windows).
+- **The power state** (`kchess-core/src/power.rs`, `on_battery`): it reads the OS, and no test
+  can unplug the computer. Linux's rule over its power supplies and the battery's use of a
+  reading are tested; the readers are excluded in `.cargo/mutants.toml`.
 - **The service's slow-reader cleanup** (`server.rs`, `handle`'s last `if`): whether a writer
   stuck on a client that stopped reading is cancelled now or left until the client reads again,
   the client receives the same frames and the same end.

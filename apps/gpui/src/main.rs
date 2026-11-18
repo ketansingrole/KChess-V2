@@ -44,7 +44,6 @@ mod play_layout;
 mod played;
 mod player_search;
 mod position_engine;
-mod power;
 mod prefs;
 mod profile;
 mod puzzle_board;

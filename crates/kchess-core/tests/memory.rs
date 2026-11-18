@@ -96,7 +96,8 @@ async fn settled(tasks: isize) -> isize {
 /// counted as kept. A closed core leaves none, so the wait normally ends at once. When loaded
 /// Windows runners left 12 and then 14 alive after 20 open/close cycles (2026-11-10, read as 964
 /// and 972 B kept per cycle), the tasks were not slow but stuck: a battery refresh first polled
-/// after close asked the closed host and waited 30 s for its answer (`Capabilities::close`).
+/// after close asked the closed host and waited 30 s for its answer (`Capabilities::close`; the
+/// battery is now read from the OS, `power.rs`).
 const TASKS_SETTLE: Duration = Duration::from_secs(5);
 
 /// Runs `cycle` `warmup` times, then `batches` × `per_batch` times, sampling the settled heap
