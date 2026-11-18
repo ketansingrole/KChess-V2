@@ -1,2 +1,4 @@
 # Limit for the workspace `cognitive_complexity` lint (Cargo.toml). Clippy default is 25.
 cognitive-complexity-threshold = 25
+# `wildcard_imports` (Cargo.toml): GPUI Kit puts GPUI at its root and is used as a prelude.
+allowed-wildcard-imports = ["gpui_kit"]
