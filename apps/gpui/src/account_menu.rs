@@ -20,7 +20,7 @@ pub struct MenuInputs {
 
 impl MenuInputs {
     pub fn of(cx: &App) -> MenuInputs {
-        let accounts = super::handle(cx).read(cx);
+        let accounts = crate::accounts::handle(cx).read(cx);
         MenuInputs {
             online: crate::network::online(cx),
             busy: accounts.busy,

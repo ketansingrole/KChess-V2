@@ -5,7 +5,7 @@
 // profile's log file). Debug builds keep the console for `cargo run` output.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod accounts;
+mod account_menu;
 mod activity;
 mod assets;
 #[cfg(feature = "bench")]
@@ -47,7 +47,8 @@ use kchess_contracts::Level;
 use kchess_ui::{chart, dates, motion, name_dialog, quick_pick};
 // The app's services (`crates/kchess-app`), under the names the app's modules use.
 use kchess_app::{
-    loading, log, network, played, prefs, quit, reviews, settings, slow_calls, studies, timer,
+    accounts, loading, log, network, played, prefs, quit, reviews, settings, slow_calls, studies,
+    timer,
 };
 // The board and the games on it (`crates/kchess-board`).
 use kchess_board::{
@@ -124,6 +125,11 @@ fn start_models(library: &kchess_contracts::types::Library, cx: &mut App) {
     studies::init(library, cx);
     reviews::init(cx);
     pages::analysis::init(cx);
+    cx.set_global(accounts::AccountHooks {
+        connected: Some(online::account_connected),
+        signed_out: Some(pages::puzzles::signed_out),
+        restart_pages: Some(shell::restart_pages),
+    });
     accounts::init(cx);
     ai::init(cx);
     puzzle_db::init(cx);
