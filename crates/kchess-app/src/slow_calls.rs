@@ -5,28 +5,29 @@
 //!
 //! Such a call says so with `call` (`#[track_caller]`, as are the functions that make it, so the
 //! report names the view that asked). The end-to-end tests draw every frame inside `drawing`,
-//! which fails the test when a frame made one: every page, panel and dialog the tests open is
+//! which fails the test when a frame made one (with this crate's `test-support` feature, which the
+//! app's tests turn on): every page, panel and dialog the tests open is
 //! checked on every pull request, on each platform. Read the value once (when the page opens,
 //! the window comes back or a setting changes) and keep it for drawing.
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use std::cell::{Cell, RefCell};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use std::panic::Location;
 
 /// A call that waits outside the main thread: `what` it asks, for the report.
 #[track_caller]
 pub fn call(what: &'static str) {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if DRAWING.get() {
         let at = Location::caller();
         MADE.with_borrow_mut(|made| made.push((what, at)));
     }
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-support")))]
     let _ = what;
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     static DRAWING: Cell<bool> = const { Cell::new(false) };
     static MADE: RefCell<Vec<(&'static str, &'static Location<'static>)>> =
@@ -34,7 +35,7 @@ thread_local! {
 }
 
 /// Draw a frame with `draw`, and fail if it made a slow call, naming each and where.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn drawing<R>(draw: impl FnOnce() -> R) -> R {
     let outer = DRAWING.replace(true);
     let result = draw();

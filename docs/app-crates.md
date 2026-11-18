@@ -96,11 +96,12 @@ Each step is one pull request, each green on its own.
    the `icon` they draw with (the icons stay embedded in the app; `icon` only names a path). Cards,
    `highlight` and `quick_pick` change more and stay; so do the domain widgets (moves, players,
    setting rows) until a board crate exists.
-3. **The app's services as a crate** (`kchess-app`), the part of them that rarely changes: view
-   preferences (`prefs`), settings, the log, accounts, sound, timers, and navigation as a trait or
-   global that the shell implements, so a page opens another page without naming the shell or
-   that page. `core.rs` and `online.rs` change often: the crate reaches them through a trait the
-   app implements until they settle.
+3. **The app's services as a crate** (`crates/kchess-app`): the core as the app holds it
+   (`AppCore`, its calls, reads, profile changes, alerts), Settings, view preferences (`prefs`),
+   the log, quitting, loading states, timers and the slow-call check. The app keeps opening the
+   core and answering its host requests (`apps/gpui/src/core.rs`), the only code that names
+   `kchess_core`; its test switches are an app global. Accounts, sound and navigation wait for the
+   steps that need them: accounts reach the shell and the pages, sound the board's settings.
 4. **The board** (`kchess-board`): the board, its looks, pockets and previews, `game`, notation,
    and the domain widgets left from step 2.
 5. **Feature crates for the pages that rarely change**, the largest first: practice (9,000 lines),
@@ -123,6 +124,10 @@ Each step is one pull request, each green on its own.
   macOS in `headless`).
 - Its sources in xtask's `boundaries.rs` `APP_SOURCES`, so the app's rules of look (spinners,
   named selects, corners, clocks) and the core's boundaries hold there too.
+- No `#[cfg(test)]` outside its test modules: the app's tests build the crate without it, so code
+  that only exists for them (`slow_calls`' record of a frame's slow calls) sits behind a
+  `test-support` feature the app's `[dev-dependencies]` turns on, with a test in the app that it
+  is on. The check went quiet without it, and nothing failed.
 - No `unwrap` or `expect` outside tests: a library is linted for them (`cargo xtask check`),
   where the app's binary is not.
 - A place in the Mutants workflow's package list (`.github/workflows/mutants.yml`), with GPUI's

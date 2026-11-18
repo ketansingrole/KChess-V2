@@ -79,7 +79,7 @@ pub fn write(level: Level, scope: &str, message: &str) {
     if let Some(log) = LOG.get()
         && let Ok(mut log) = log.lock()
     {
-        let time = crate::dates::rfc3339_millis(jiff::Timestamp::now());
+        let time = kchess_ui::dates::rfc3339_millis(jiff::Timestamp::now());
         let line = redact(&format!(
             "{time} {} [{scope}] {message}\n",
             level.name().to_uppercase()
@@ -118,3 +118,25 @@ pub fn read() -> Vec<String> {
 }
 
 use kchess_host::redact;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A line reaches the profile's log with its time and level, redacted as it is written.
+    #[test]
+    fn a_line_is_written_to_the_profiles_log_redacted() {
+        let dir = std::env::temp_dir().join(format!("kchess-app-log-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        init(&dir);
+        write(Level::Warn, "test", "sent by me@example.com");
+        let log = read().join("");
+        let _ = fs::remove_dir_all(&dir);
+        let line = log
+            .lines()
+            .find(|line| line.contains("[test]"))
+            .unwrap_or_else(|| panic!("no line written: {log:?}"));
+        assert!(line.contains(" WARN [test] sent by [redacted]"), "{line}");
+        assert!(line.starts_with("20"), "the time first: {line}");
+    }
+}

@@ -494,7 +494,7 @@ impl WatchPage {
 
     /// `watch`: stream a channel or a game; its updates carry the session the core answers.
     fn watch(&mut self, target: Target, cx: &mut Context<Self>) {
-        let epoch = self.epoch.next();
+        let epoch = self.epoch.start();
         self.early.clear();
         self.session = None;
         self.round_session = None;

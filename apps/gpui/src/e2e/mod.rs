@@ -69,6 +69,16 @@ fn draw(window: &mut Window, cx: &mut App) {
     });
 }
 
+/// The app's tests build `kchess-app` with its `test-support` feature, or `call` records nothing
+/// and every frame drawn here passes: the check went quiet when `slow_calls` left the app.
+#[test]
+fn a_frame_that_waits_outside_the_main_thread_fails() {
+    let failed = std::panic::catch_unwind(|| {
+        crate::slow_calls::drawing(|| crate::slow_calls::call("the system"));
+    });
+    assert!(failed.is_err());
+}
+
 /// How often a wait looks again.
 const POLL: Duration = Duration::from_millis(5);
 

@@ -165,7 +165,7 @@ impl FriendsPage {
 
     /// What the players on the list did lately, from their Lichess activity.
     fn load_timeline(&mut self, cx: &mut Context<Self>) {
-        let epoch = self.timeline_epoch.next();
+        let epoch = self.timeline_epoch.start();
         self.timeline_error = None;
         if Self::friends(cx).is_empty() || !crate::network::online(cx) {
             self.timeline = None;

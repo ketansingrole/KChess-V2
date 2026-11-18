@@ -217,7 +217,7 @@ impl HistoryPage {
     /// `gamePage`: the page of games the filters ask for, and their reviews.
     pub(super) fn load_lichess(&mut self, cx: &mut Context<Self>) {
         let tab = &mut self.lichess;
-        let epoch = tab.epoch.next();
+        let epoch = tab.epoch.start();
         tab.loading = true;
         tab.error = None;
         // Filters left at "all" are left out.
@@ -334,7 +334,7 @@ impl HistoryPage {
 
     /// Read the game's PGN (list rows carry none) and go through it.
     pub fn open_lichess(&mut self, game: LichessGame, window: &mut Window, cx: &mut Context<Self>) {
-        let opening = self.lichess.opening.next();
+        let opening = self.lichess.opening.start();
         let read = if game.pgn.is_some() {
             None
         } else {

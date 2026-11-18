@@ -526,7 +526,7 @@ impl HistoryPage {
     }
 
     fn load_bookmarks(&mut self, cx: &mut Context<Self>) {
-        let epoch = self.bookmarks_epoch.next();
+        let epoch = self.bookmarks_epoch.start();
         self.bookmarks = None;
         self.bookmarks_error = None;
         self.bookmarks_reconnect = false;

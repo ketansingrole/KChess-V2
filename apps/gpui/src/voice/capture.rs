@@ -50,11 +50,7 @@ impl CaptureError {
 
 /// The test file to play instead of the microphone (`TestSwitches::voice_audio`).
 fn test_audio(cx: &gpui_kit::App) -> Option<PathBuf> {
-    cx.try_global::<crate::core::AppCore>()?
-        .test
-        .as_ref()?
-        .voice_audio
-        .clone()
+    crate::core::test_switches(cx)?.voice_audio.clone()
 }
 
 /// Start capturing: chunks arrive on the returned receiver until the capture is dropped.

@@ -348,7 +348,7 @@ impl TournamentsPage {
         let Some(open) = &mut self.open else {
             return;
         };
-        let epoch = open.epoch.next();
+        let epoch = open.epoch.start();
         let (system, id, page) = (open.system.clone(), open.id.clone(), open.page);
         let call = cx.global::<AppCore>().request(calls::Tournament {
             system: system_named(&system),

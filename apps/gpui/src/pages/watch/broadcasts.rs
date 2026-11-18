@@ -364,7 +364,7 @@ impl WatchPage {
     fn search(&mut self, cx: &mut Context<Self>) {
         let broadcasts = &mut self.broadcasts;
         let query = broadcasts.query.read(cx).value().trim().to_string();
-        let epoch = broadcasts.search_epoch.next();
+        let epoch = broadcasts.search_epoch.start();
         broadcasts.results.clear();
         broadcasts.search_error = None;
         broadcasts.searching = !query.is_empty();
@@ -476,7 +476,7 @@ impl WatchPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let epoch = self.epoch.next();
+        let epoch = self.epoch.start();
         self.early.clear();
         self.session = None;
         self.round_session = None;

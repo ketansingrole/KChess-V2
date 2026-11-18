@@ -965,8 +965,8 @@ mod tests {
             let stats = cx.new(|cx| super::super::stats::PuzzleStats::new(Vec::new(), window, cx));
             let rush = cx.new(|cx| super::PuzzleRush::new(stats, window, cx));
             rush.update(cx, |rush, cx| {
-                let earlier = rush.generation.next();
-                let latest = rush.generation.next();
+                let earlier = rush.generation.start();
+                let latest = rush.generation.start();
                 rush.run_saved(earlier, "storm".into(), Err("The disk is full".into()), cx);
                 let late = rush.error.clone();
                 rush.run_saved(latest, "storm".into(), Err("The disk is full".into()), cx);

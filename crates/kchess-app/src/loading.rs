@@ -16,7 +16,7 @@ pub struct Epoch(u64);
 
 impl Epoch {
     /// A request goes out: answers to the ones before it no longer count.
-    pub fn next(&mut self) -> Turn {
+    pub fn start(&mut self) -> Turn {
         self.0 += 1;
         Turn(self.0)
     }
@@ -56,7 +56,7 @@ impl Loading {
     pub fn start(&mut self) -> Turn {
         self.busy = true;
         self.error = None;
-        self.epoch.next()
+        self.epoch.start()
     }
 
     /// Nothing is asked after all (no account to ask for): earlier answers no longer count.
