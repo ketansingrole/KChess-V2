@@ -4446,6 +4446,7 @@ dependencies = [
  "arrayvec",
  "bitflags 2.13.2",
  "bytemuck",
+ "byteorder",
  "crc32fast",
  "crossbeam-utils",
  "crypto-common 0.2.2",
