@@ -29,10 +29,11 @@ pub const APP: &str = "kchess-gpui";
 
 /// The app's sources from the repository root: its own and its UI crates' (`Role::Ui`), which
 /// the app's rules of look (`boundaries`) and its icons (`icons`) are read from.
-pub const APP_SOURCES: [&str; 3] = [
+pub const APP_SOURCES: [&str; 4] = [
     "apps/gpui/src",
     "crates/kchess-ui/src",
     "crates/kchess-app/src",
+    "crates/kchess-board/src",
 ];
 
 /// The app's sources, as cargo-mutants' file globs name them.
@@ -106,7 +107,7 @@ mod tests {
     fn the_app_and_tooling_are_uncovered() {
         assert_eq!(
             uncovered().collect::<Vec<_>>(),
-            [APP, "kchess-ui", "kchess-app", "xtask"]
+            [APP, "kchess-ui", "kchess-app", "kchess-board", "xtask"]
         );
         assert_eq!(
             shipped().collect::<Vec<_>>(),
