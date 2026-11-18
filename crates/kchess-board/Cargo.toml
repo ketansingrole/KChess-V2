@@ -35,6 +35,8 @@ rodio = { version = "0.23", default-features = false, features = ["playback", "m
 # Voice input: the microphone (cpal, already in Cargo.lock through rodio) and the PCM the core's
 # recognizer takes, as base64 (already in Cargo.lock through the core).
 cpal = "0.18"
+# The Downloads folder exports start in (`src/export.rs`).
+dirs = "7"
 base64 = "0.23"
 kchess-hack = { version = "0.1", path = "../kchess-hack" }
 
@@ -50,6 +52,8 @@ block2 = "0.6"
 gpui-kit = { version = "=0.10.0", features = ["test-support"] }
 # Default Settings without a core, for the tests (`settings::init_for_tests`).
 kchess-app = { workspace = true, features = ["test-support"] }
+# Scratch folders for the export tests.
+tempfile = "3"
 
 [lints]
 workspace = true

@@ -303,8 +303,8 @@ impl PuzzleBoard {
     }
 
     /// The position shown while stepping back, counted from the puzzle's start.
-    #[cfg(test)]
-    pub(crate) fn viewing(&self) -> Option<usize> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn viewing(&self) -> Option<usize> {
         self.viewing
     }
 
@@ -557,8 +557,8 @@ impl PuzzleBoard {
     }
 
     /// `text` said clearly, with voice on: as the recognizer's phrase reaches the board.
-    #[cfg(test)]
-    pub(crate) fn hear(&mut self, text: &str, cx: &mut Context<Self>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hear(&mut self, text: &str, cx: &mut Context<Self>) {
         self.voice.control.enabled = true;
         let heard = crate::voice::Heard {
             text: text.into(),
@@ -572,8 +572,8 @@ impl PuzzleBoard {
     }
 
     /// What voice answered to the last phrase.
-    #[cfg(test)]
-    pub(crate) fn voice_feedback(&self) -> Option<String> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn voice_feedback(&self) -> Option<String> {
         self.voice
             .control
             .feedback
@@ -582,7 +582,7 @@ impl PuzzleBoard {
     }
 
     /// Voice takes a phrase now: a move while playing, or “next” once the puzzle is over.
-    pub(crate) fn voice_listening(&self) -> bool {
+    pub fn voice_listening(&self) -> bool {
         self.playing() || (self.next && self.over())
     }
 
@@ -758,17 +758,71 @@ impl Render for PuzzleBoard {
 
 #[cfg(test)]
 mod tests {
-    use super::{PuzzleBoard, counts_as_solved};
-    use crate::e2e::Harness;
-    use gpui_kit::AppContext as _;
     use std::time::Duration;
+
+    use gpui_kit::AppContext as _;
+
+    use super::{PuzzleBoard, counts_as_solved};
+
+    /// The app as a puzzle board needs it: a core of the test's own, Settings, the theme and
+    /// voice, and a window to put the board in.
+    struct Started {
+        cx: gpui_kit::TestAppContext,
+        window: gpui_kit::AnyWindowHandle,
+        _core: kchess_app::tests::TestCore,
+    }
+
+    struct Blank;
+
+    impl gpui_kit::Render for Blank {
+        fn render(
+            &mut self,
+            _: &mut gpui_kit::Window,
+            _: &mut gpui_kit::Context<Self>,
+        ) -> impl gpui_kit::IntoElement {
+            gpui_kit::div()
+        }
+    }
+
+    impl Started {
+        fn new(cx: &mut gpui_kit::TestAppContext) -> Started {
+            let core = cx.update(|cx| {
+                gpui_kit::init(cx);
+                let core = kchess_app::tests::start_core(cx);
+                kchess_app::settings::init_for_tests(cx);
+                let colors = kchess_ui::theme::colors("kchess", &[], false);
+                cx.set_global(kchess_ui::theme::Palette::of(&colors, false));
+                crate::voice::init(cx);
+                core
+            });
+            let window = cx.update(|cx| {
+                gpui_kit::open_window(Default::default(), cx, |_, cx| cx.new(|_| Blank))
+                    .expect("a window")
+                    .0
+            });
+            Started {
+                cx: cx.clone(),
+                window,
+                _core: core,
+            }
+        }
+
+        fn with_window<R>(
+            &mut self,
+            work: impl FnOnce(&mut gpui_kit::Window, &mut gpui_kit::App) -> R,
+        ) -> R {
+            self.cx
+                .update_window(self.window, |_, window, cx| work(window, cx))
+                .expect("the window")
+        }
+    }
 
     /// Show solution pressed while the opponent's reply was on its way played the solution's
     /// next move before that reply: it was the opponent's, so the solution stopped there. Only a
     /// reply quicker than a solution step (as now) kept it whole.
     #[gpui_kit::test]
     fn the_solution_waits_for_a_reply_on_its_way(cx: &mut gpui_kit::TestAppContext) {
-        let mut app = Harness::start(cx);
+        let mut app = Started::new(cx);
         let board = app.with_window(|window, cx| {
             let board = cx.new(|cx| PuzzleBoard::new(false, window, cx));
             board.update(cx, |board, cx| {

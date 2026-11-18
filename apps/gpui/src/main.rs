@@ -15,7 +15,6 @@ mod dock_icon;
 #[cfg(test)]
 mod e2e;
 mod explorer;
-mod export;
 #[cfg(test)]
 mod gpui_patches;
 mod interface_zoom;
@@ -25,10 +24,8 @@ mod notifications;
 mod online;
 mod pages;
 mod palette;
-mod player_search;
 mod position_engine;
 mod profile;
-mod puzzle_board;
 mod remote_image;
 mod shell;
 mod shortcuts;
@@ -50,8 +47,8 @@ use kchess_app::{
 };
 // The board and the games on it (`crates/kchess-board`).
 use kchess_board::{
-    ai, board, engine_view, game, game_image, microphone, notation, puzzle_db, rating_history,
-    sound, voice, widgets,
+    ai, board, engine_view, export, game, game_image, microphone, notation, player_search,
+    puzzle_board, puzzle_db, rating_history, sound, voice, widgets,
 };
 // The pages as the shell drives them (`crates/kchess-nav`).
 use kchess_nav::{part, play_layout, swipe};
