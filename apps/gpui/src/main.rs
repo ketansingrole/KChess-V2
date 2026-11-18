@@ -32,7 +32,6 @@ mod log;
 mod menu;
 mod microphone;
 mod motion;
-mod move_reply;
 mod name_dialog;
 mod network;
 mod notation;
@@ -53,9 +52,7 @@ mod puzzle_db;
 mod quick_pick;
 mod quit;
 mod rating_history;
-mod rating_speeds;
 mod remote_image;
-mod replay;
 mod reviews;
 mod settings;
 mod shell;
@@ -73,8 +70,6 @@ mod whats_new;
 mod widgets;
 mod window_state;
 // Only the app itself stamps the shortcuts: a test run would change its runner's.
-#[cfg(all(windows, not(test)))]
-mod windows_shortcuts;
 
 use gpui_kit::*;
 use kchess_contracts::Level;

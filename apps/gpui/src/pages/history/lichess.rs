@@ -20,13 +20,13 @@ use serde_json::Number;
 use shakmaty::Color;
 
 use super::HistoryPage;
+use super::replay::GameReplay;
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::played::GameOrigin;
 use crate::game::tree::TreeNode;
 use crate::pages::Page;
 use crate::pages::analysis::Opening;
-use crate::replay::GameReplay;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};

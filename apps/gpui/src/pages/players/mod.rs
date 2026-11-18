@@ -2,6 +2,8 @@
 //! online, your record against them, their rating history, their record in a speed, and their
 //! recent games — and follow, challenge, message or watch them.
 
+mod rating_speeds;
+
 use crate::loading::{Epoch, Turn};
 use kchess_contracts::calls;
 use kchess_contracts::check::{MessageText, PresenceUsers, Username};
@@ -27,10 +29,10 @@ use crate::pages::history::lichess::{RowDetail, game_row};
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::player_search::{self, NameMatches, SUGGESTED, chip_row, name_chip};
 use crate::rating_history::{Retry, has_points};
-use crate::rating_speeds::RatingSpeeds;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Look};
+use rating_speeds::RatingSpeeds;
 
 const BOARD_PERF_KEY: &str = "kchess:leaderboard-perf";
 /// Which players the leaderboard shows: `all`, `titled` or one title.

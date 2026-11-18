@@ -24,9 +24,10 @@ use crate::pages::Page;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::{PlayedGames, PlayedHandle};
 use crate::quick_pick;
-use crate::replay::GameReplay;
+use replay::GameReplay;
 
 pub(crate) mod lichess;
+mod replay;
 use crate::pages::analysis::Opening;
 use crate::theme::Palette;
 use crate::widgets::Pressable as _;
