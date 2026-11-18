@@ -290,7 +290,8 @@ impl Global for Navigator {}
 
 // How a page reaches the shell (`kchess_nav::shell`), answered by the workspace below.
 pub use kchess_nav::shell::{
-    TOPBAR_HEIGHT, current_page, go, keeping_keys_since, made, open, show, view,
+    TOPBAR_HEIGHT, current_page, go, keeping_keys_since, made, open, open_settings,
+    open_settings_at, show, view,
 };
 
 /// The workspace as pages reach it (`kchess_nav::shell::Shell`).
@@ -320,6 +321,15 @@ impl kchess_nav::shell::Shell for WorkspaceShell {
     fn go(&self, direction: crate::swipe::Direction, window: &mut Window, cx: &mut App) {
         if let Some(workspace) = workspace(cx) {
             workspace.update(cx, |workspace, cx| workspace.go(direction, window, cx));
+        }
+    }
+
+    fn choose_section(&self, section: Section, row: Option<&'static str>, cx: &mut App) {
+        if let Some(workspace) = workspace(cx) {
+            workspace.update(cx, |workspace, cx| match row {
+                Some(row) => workspace.reveal_row(section, row, cx),
+                None => workspace.choose_section(section, cx),
+            });
         }
     }
 }
@@ -354,22 +364,6 @@ pub fn restart_pages(window: &mut Window, cx: &mut App) {
             workspace.pages = Pages::new(window, cx);
             workspace.choose(Page::Dashboard, window, cx);
         });
-    }
-}
-
-/// Open Settings at one section, e.g. the engine setup a page points at.
-pub fn open_settings(section: Section, window: &mut Window, cx: &mut App) {
-    open(Page::Settings, window, cx);
-    if let Some(workspace) = workspace(cx) {
-        workspace.update(cx, |workspace, cx| workspace.choose_section(section, cx));
-    }
-}
-
-/// Open Settings at one category's row (`section_rows` names it), scrolled to it and lit.
-pub fn open_settings_at(section: Section, row: &'static str, window: &mut Window, cx: &mut App) {
-    open(Page::Settings, window, cx);
-    if let Some(workspace) = workspace(cx) {
-        workspace.update(cx, |workspace, cx| workspace.reveal_row(section, row, cx));
     }
 }
 

@@ -2062,6 +2062,14 @@ mod tests {
             _: &mut gpui_kit::App,
         ) {
         }
+
+        fn choose_section(
+            &self,
+            _: kchess_nav::sections::Section,
+            _: Option<&'static str>,
+            _: &mut gpui_kit::App,
+        ) {
+        }
     }
 
     /// Another page opens Puzzles at what it asked for: a linked puzzle on Daily, an opening's

@@ -759,24 +759,6 @@ impl PlayersPage {
             .map(|profile| profile.username.clone())
     }
 
-    /// Open one of their games on the analysis board, from their side.
-    pub fn open_game(game: LichessGame, window: &mut Window, cx: &mut App) {
-        let (white, black) = match game.color {
-            shakmaty::Color::White => (game.account, game.opponent),
-            shakmaty::Color::Black => (game.opponent, game.account),
-        };
-        kchess_board::analysis::open(
-            kchess_board::analysis::Open::Exported {
-                id: game.id.clone(),
-                white,
-                black,
-                orientation: game.color,
-            },
-            window,
-            cx,
-        );
-    }
-
     /// Run an action as its button does, if it is still allowed.
     pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         if !self.actions(cx).contains(&action) {
@@ -1507,7 +1489,9 @@ impl PlayersPage {
                     game,
                     None,
                     RowDetail::NoReview,
-                    move |window, cx| Self::open_game(chosen.clone(), window, cx),
+                    move |window, cx| {
+                        kchess_board::analysis::open_lichess_game(chosen.clone(), window, cx)
+                    },
                     palette,
                 )
             })),

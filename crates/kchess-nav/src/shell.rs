@@ -6,6 +6,7 @@ use std::rc::Rc;
 use gpui_kit::*;
 
 use crate::page::{Page, PageView};
+use crate::sections::Section;
 use crate::swipe::Direction;
 
 /// The top bar's height, which pages lay out under.
@@ -23,6 +24,8 @@ pub trait Shell {
     fn made(&self, page: Page, window: &mut Window, cx: &mut App) -> Option<AnyView>;
     /// Back (-1) or forward (1): out of the page's inner level, then through the pages visited.
     fn go(&self, direction: Direction, window: &mut Window, cx: &mut App);
+    /// Show Settings' `section`, with its `row` (as `section_rows` names it) scrolled to and lit.
+    fn choose_section(&self, section: Section, row: Option<&'static str>, cx: &mut App);
 }
 
 /// The window's shell (`cx.set_global(Navigator(Rc::new(…)))`).
@@ -40,6 +43,22 @@ fn shell(cx: &App) -> Option<Rc<dyn Shell>> {
 pub fn open(page: Page, window: &mut Window, cx: &mut App) {
     if let Some(shell) = shell(cx) {
         shell.open(page, window, cx);
+    }
+}
+
+/// Open Settings at one category, e.g. the engine setup a page points at.
+pub fn open_settings(section: Section, window: &mut Window, cx: &mut App) {
+    open(Page::Settings, window, cx);
+    if let Some(shell) = shell(cx) {
+        shell.choose_section(section, None, cx);
+    }
+}
+
+/// Open Settings at one category's row (`section_rows` names it), scrolled to it and lit.
+pub fn open_settings_at(section: Section, row: &'static str, window: &mut Window, cx: &mut App) {
+    open(Page::Settings, window, cx);
+    if let Some(shell) = shell(cx) {
+        shell.choose_section(section, Some(row), cx);
     }
 }
 
