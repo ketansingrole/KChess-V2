@@ -33,6 +33,8 @@ kchess-hack = { version = "0.1", path = "../kchess-hack" }
 [dev-dependencies]
 # Headless windows for the tests (`#[gpui_kit::test]`).
 gpui-kit = { version = "=0.10.0", features = ["test-support"] }
+# Default Settings without a core, for the tests (`settings::init_for_tests`).
+kchess-app = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

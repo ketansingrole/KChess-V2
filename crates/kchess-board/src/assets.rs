@@ -25,3 +25,20 @@ pub fn sound(name: &str) -> Option<Cow<'static, [u8]>> {
 pub fn paths() -> impl Iterator<Item = Cow<'static, str>> {
     Files::iter()
 }
+
+#[cfg(test)]
+mod tests {
+    /// Every path listed is one the board can load, and the boards and sounds are among them.
+    #[test]
+    fn every_listed_file_loads() {
+        let paths: Vec<_> = super::paths().collect();
+        for path in &paths {
+            assert!(super::shared(path).is_some(), "{path}");
+        }
+        assert!(
+            paths.iter().any(|path| path == "boards/brown.png"),
+            "{paths:?}"
+        );
+        assert!(super::sound("Move.mp3").is_some());
+    }
+}

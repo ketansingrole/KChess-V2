@@ -59,6 +59,30 @@ pub struct SettingsHandle(pub Entity<AppSettings>);
 impl Global for SettingsHandle {}
 
 /// What a fresh profile stores (the contract defaults).
+/// Settings at their defaults with no core behind them, for the tests of the crates the app is
+/// built from (`test-support`): their saves go nowhere.
+#[cfg(any(test, feature = "test-support"))]
+pub fn init_for_tests(cx: &mut App) -> Entity<AppSettings> {
+    let (writes, _) = mpsc::unbounded();
+    let stored = defaults();
+    let entity = cx.new(|_| AppSettings {
+        settings: stored.clone(),
+        queued: stored.clone(),
+        stored,
+        custom_themes: Vec::new(),
+        themes_dir: String::new(),
+        theme_problems: Vec::new(),
+        dirty: false,
+        pending: 0,
+        failed: false,
+        save_soon: None,
+        writes,
+        reads: Reads::default(),
+    });
+    cx.set_global(SettingsHandle(entity.clone()));
+    entity
+}
+
 fn defaults() -> Settings {
     match kchess_contracts::defaults::default_settings() {
         Ok(settings) => settings,
@@ -364,6 +388,18 @@ mod tests {
     use futures::channel::mpsc;
     use kchess_contracts::types::Settings;
     use serde_json::Value;
+
+    #[gpui_kit::test]
+    fn tests_get_the_default_settings_without_a_core(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            let entity = super::init_for_tests(cx);
+            assert_eq!(*super::frontend(cx), defaults().frontend);
+            assert_eq!(
+                cx.global::<super::SettingsHandle>().0.entity_id(),
+                entity.entity_id()
+            );
+        });
+    }
 
     fn settings(writes: mpsc::UnboundedSender<Write>) -> AppSettings {
         let stored = defaults();
