@@ -495,17 +495,20 @@ pub fn opened_by(page: Page) -> Option<Box<dyn gpui_kit::Action>> {
 
 pub struct Pages {
     current: Page,
+    /// The current page, made: what the window draws.
+    shown: Rc<dyn AnyPage>,
     views: HashMap<Page, Rc<dyn AnyPage>>,
 }
 
 impl Pages {
     pub fn new(window: &mut Window, cx: &mut App) -> Pages {
-        let mut pages = Pages {
+        let home = (registry()[Page::Dashboard as usize].create)(window, cx);
+        window.focus(&home.focus(cx), cx);
+        Pages {
             current: Page::Dashboard,
-            views: HashMap::new(),
-        };
-        pages.show(Page::Dashboard, window, cx);
-        pages
+            shown: home.clone(),
+            views: HashMap::from([(Page::Dashboard, home)]),
+        }
     }
 
     pub fn current(&self) -> Page {
@@ -522,8 +525,8 @@ impl Pages {
     /// Show a page, creating it the first time, with its keys going to it.
     fn show(&mut self, page: Page, window: &mut Window, cx: &mut App) {
         self.current = page;
-        let focus = self.made(page, window, cx).focus(cx);
-        window.focus(&focus, cx);
+        self.shown = self.made(page, window, cx);
+        window.focus(&self.shown.focus(cx), cx);
     }
 
     /// Show `page` in place of the current one, as the sidebar does: the page left is told, then
@@ -558,27 +561,18 @@ impl Pages {
         self.views.get(&V::INFO.page)?.view().downcast().ok()
     }
 
-    /// Page `V`'s view, made now (without showing it) if it has not been.
-    pub fn get_made<V: PageView>(&mut self, window: &mut Window, cx: &mut App) -> Entity<V> {
-        self.made(V::INFO.page, window, cx)
-            .view()
-            .downcast()
-            .expect("the registry makes each page's own view")
-    }
-
-    /// A page's view, if it has been made.
     /// `page`'s view, made now if it has not been.
     pub fn made_view(&mut self, page: Page, window: &mut Window, cx: &mut App) -> AnyView {
         self.made(page, window, cx).view()
     }
 
+    /// A page's view, if it has been made.
     pub fn view_for(&self, page: Page) -> Option<AnyView> {
         self.views.get(&page).map(|shown| shown.view())
     }
 
     pub fn view(&self) -> AnyView {
-        self.view_for(self.current)
-            .expect("the current page was created by show")
+        self.shown.view()
     }
 
     fn current_page(&self) -> Option<&Rc<dyn AnyPage>> {
