@@ -27,10 +27,11 @@ struct Rule {
 }
 
 /// The frontends' sources, searched from the repository root: the app's and the CLI's.
-const FRONTENDS: [&str; 4] = [
+const FRONTENDS: [&str; 5] = [
     APP_SOURCES[0],
     APP_SOURCES[1],
     APP_SOURCES[2],
+    APP_SOURCES[3],
     "apps/cli/src",
 ];
 

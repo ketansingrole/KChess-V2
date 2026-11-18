@@ -1,4 +1,4 @@
-//! Boards and pieces (`apps/gpui/data/looks.json`): the
+//! Boards and pieces (`crates/kchess-board/data/looks.json`): the
 //! board images and their coordinate colors, and the piece sets, rasterized at the exact size they
 //! are shown so they stay sharp at any board size.
 
@@ -6,8 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, LazyLock};
 
 use gpui_kit::{
-    App, AppContext as _, AssetSource as _, DevicePixels, EntityId, Global, RenderImage,
-    SvgRenderer, SvgSize, size,
+    App, AppContext as _, DevicePixels, EntityId, Global, RenderImage, SvgRenderer, SvgSize, size,
 };
 use serde::Deserialize;
 use shakmaty::{Color, Piece, Role};
@@ -157,8 +156,8 @@ fn release(dropped: Vec<Arc<RenderImage>>, cx: &mut App) {
 }
 
 /// The piece images kept now, of `pixels` device pixels.
-#[cfg(test)]
-pub(crate) fn kept_images(pixels: u32, cx: &mut App) -> Vec<Arc<RenderImage>> {
+#[cfg(any(test, feature = "test-support"))]
+pub fn kept_images(pixels: u32, cx: &mut App) -> Vec<Arc<RenderImage>> {
     cx.default_global::<PieceImages>()
         .images
         .iter()
@@ -211,7 +210,7 @@ pub fn piece_image(
 }
 
 fn rasterize(path: &str, pixels: u32, renderer: &SvgRenderer) -> Option<Arc<RenderImage>> {
-    let bytes = crate::assets::Assets.load(path).ok()??;
+    let bytes = crate::assets::shared(path)?;
     let parsed = renderer.parse_svg(&bytes).ok()?;
     let side = DevicePixels(pixels as i32);
     renderer
@@ -332,19 +331,13 @@ mod tests {
             for color in Color::ALL {
                 for role in Role::ALL {
                     let path = piece_path(&set.id, Piece { color, role });
-                    assert!(
-                        crate::assets::Assets.load(&path).ok().flatten().is_some(),
-                        "{path}"
-                    );
+                    assert!(crate::assets::shared(&path).is_some(), "{path}");
                 }
             }
         }
         for board in &LOOKS.boards {
             let path = format!("boards/{}", board.image);
-            assert!(
-                crate::assets::Assets.load(&path).ok().flatten().is_some(),
-                "{path}"
-            );
+            assert!(crate::assets::shared(&path).is_some(), "{path}");
         }
     }
 

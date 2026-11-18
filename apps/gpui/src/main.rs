@@ -11,7 +11,6 @@ mod ai;
 mod assets;
 #[cfg(feature = "bench")]
 mod bench;
-mod board;
 mod core;
 mod dock_icon;
 #[cfg(test)]
@@ -19,7 +18,6 @@ mod e2e;
 mod engine_view;
 mod explorer;
 mod export;
-mod game;
 mod game_image;
 #[cfg(test)]
 mod gpui_patches;
@@ -29,14 +27,12 @@ mod menu;
 mod microphone;
 mod name_dialog;
 mod network;
-mod notation;
 mod notifications;
 mod online;
 mod pages;
 mod palette;
 mod part;
 mod play_layout;
-mod played;
 mod player_search;
 mod position_engine;
 mod profile;
@@ -48,7 +44,6 @@ mod remote_image;
 mod reviews;
 mod shell;
 mod shortcuts;
-mod sound;
 mod startup;
 mod studies;
 mod swipe;
@@ -65,7 +60,9 @@ use kchess_contracts::Level;
 // The design system (`crates/kchess-ui`), under the names the app's modules use.
 use kchess_ui::{chart, dates, motion};
 // The app's services (`crates/kchess-app`), under the names the app's modules use.
-use kchess_app::{loading, log, prefs, quit, settings, slow_calls, timer};
+use kchess_app::{loading, log, played, prefs, quit, settings, slow_calls, timer};
+// The board and the games on it (`crates/kchess-board`).
+use kchess_board::{board, game, notation, sound};
 
 fn main() {
     let data_dir = match profile::data_dir() {

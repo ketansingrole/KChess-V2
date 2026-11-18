@@ -1,0 +1,38 @@
+[package]
+name = "kchess-board"
+description = "KChess's board and the games on it over GPUI: the board, game sessions as views drive them, notation, sounds."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# What the app's end-to-end tests read: the sounds played, the board images kept, a session's
+# pending question.
+test-support = ["kchess-app/test-support"]
+
+[dependencies]
+kchess-app.workspace = true
+kchess-contracts.workspace = true
+kchess-domain.workspace = true
+kchess-games.workspace = true
+kchess-ui.workspace = true
+# Pinned with the app's (apps/gpui/Cargo.toml).
+gpui-kit = "=0.10.0"
+serde.workspace = true
+serde_json.workspace = true
+shakmaty.workspace = true
+futures = "0.3"
+jiff = "1.0"
+# The boards, pieces and sounds, embedded (`src/assets.rs`).
+rust-embed = "8"
+# Move and game sounds: the default output device (cpal) and the MP3 clips (Symphonia).
+rodio = { version = "0.23", default-features = false, features = ["playback", "mp3"] }
+kchess-hack = { version = "0.1", path = "../kchess-hack" }
+
+[dev-dependencies]
+# Headless windows for the tests (`#[gpui_kit::test]`).
+gpui-kit = { version = "=0.10.0", features = ["test-support"] }
+
+[lints]
+workspace = true

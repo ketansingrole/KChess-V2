@@ -1092,7 +1092,7 @@ impl ChessBoard {
         }
         let key = event.keystroke.key.as_str();
         // Held for push to talk, Space is the voice's.
-        if key == "space" && crate::voice::handle(cx).read(cx).can_talk() {
+        if key == "space" && crate::space_talks(cx) {
             return;
         }
         if self.keyboard(key, cx) {

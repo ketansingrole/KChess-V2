@@ -128,13 +128,13 @@ impl<V: Resumes> SessionSaver<V> {
     }
 
     /// Back to before the read, as on a profile slow to answer.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn forget(&mut self) {
         self.state = Resume::Reading;
     }
 
     /// The read after `forget` answers now, with nothing to resume: the work waiting runs.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn answer(this: &mut V, window: &mut Window, cx: &mut Context<V>) {
         this.saver().state = Resume::Ready;
         Self::run_waiting(this, window, cx);

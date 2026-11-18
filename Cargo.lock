@@ -4305,6 +4305,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "kchess-board"
+version = "2026.11.7"
+dependencies = [
+ "futures",
+ "gpui-kit",
+ "jiff",
+ "kchess-app",
+ "kchess-contracts",
+ "kchess-domain",
+ "kchess-games",
+ "kchess-hack",
+ "kchess-ui",
+ "rodio",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "shakmaty",
+]
+
+[[package]]
 name = "kchess-cli"
 version = "2026.11.7"
 dependencies = [
@@ -4424,6 +4444,7 @@ dependencies = [
  "image",
  "jiff",
  "kchess-app",
+ "kchess-board",
  "kchess-contracts",
  "kchess-core",
  "kchess-delta",
@@ -4443,7 +4464,6 @@ dependencies = [
  "reqwest",
  "resvg 0.49.0",
  "ring",
- "rodio",
  "rusqlite",
  "rust-embed",
  "rustix",
