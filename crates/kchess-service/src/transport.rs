@@ -16,7 +16,7 @@ pub type Stream = Box<dyn Io>;
 
 #[cfg(unix)]
 mod imp {
-    use super::*;
+    use super::{Path, Stream};
     use tokio::net::{UnixListener, UnixStream};
 
     pub struct Listener {

@@ -10,7 +10,7 @@ use kchess_domain::misc::patterns;
 use kchess_domain::misc::value::J;
 use kchess_domain::variant::{VARIANTS, Variant};
 
-use super::*;
+use super::{Refusal, decode, plain, Msg, ensure, Validate, fen, matches, max_chars, js, min_chars, USERNAME, username, max_items, within, Bounded, picked, one_of};
 use crate::types::{
     CHALLENGE_COLORS, CHAT_ROOMS, ChallengeColor, ChatRoom, DECLINE_REASONS, DeclineReason,
     NewArena, ONLINE_ACTIONS, OnlineAction, OnlineOptions, TournamentSystem, WatchTarget,

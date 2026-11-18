@@ -12,9 +12,9 @@ use kchess_domain::misc::value::J;
 
 pub use crate::api::{Assist, Method, Param, as_checked};
 use crate::api::{answer, core_api, count_error};
-use crate::check::*;
+use crate::check::{Fen, Username, LichessId, StudyId, ChapterName, PgnText, GameId, Moves, Position, Bounded, ChesscomUsername, GameAccount, OptionalAccount, FriendList, AiModelName, ReviewKey, GameIds, Uci, FullFen, ChatText, PresenceUsers, MessageText, WatchSession, BroadcastQuery, TournamentId, StandingPage, TournamentPassword, PuzzleId, Days, ActivityMax, VoiceId, VoiceLimit, VoiceGrammar, SampleRate, VoiceAudio, ArchivedGame, LibraryId, Side, SessionObject, RepertoireKey, MissCounts, RepertoireLine, ViewPreferenceKey};
 use crate::error::CoreError;
-use crate::types::*;
+use crate::types::{PositionLookupKind, LookupOptions, StudySyncRequest, CoreSettings, Settings, InsightsQuery, AiEffort, AiRequest, EngineLevel, BestMoveOptions, AnalysisRequest, ChatRoom, DeclineReason, PerfType, RelationAction, WatchTarget, TournamentSystem, NewArena, PuzzleSolveRequest, LocalPuzzleQuery, LocalLadderQuery, PuzzleAttemptInput, PuzzleProgressQuery, RunInput, RunKind, VoiceAttemptInput, VoiceUpdate, SessionKind, Reply, LichessStudy, StudyExport, PopularityMonth, AppData, ChesscomAccount, InsightsReport, RatingSeries, LichessUser, ConnectedLichess, FollowingReport, AiConnection, AiModelList, AiExplanation, EngineInstalled, StoredReview, Keyed, ReviewSummary, StartResult, Resumed, ChatLine, PresenceReport, ChallengeInfo, OngoingGame, PerfStats, LichessGame, MessageSent, LichessRelation, LeaderboardEntry, PlayerSuggestion, ActivityDay, TimelineEntry, ImportedGame, TvChannel, BroadcastSummary, BroadcastTourDetail, BroadcastRoundPlace, TournamentList, TournamentDetail, TournamentSummary, PuzzleDraw, PuzzleSolveResult, Puzzle, PuzzleActivityEntry, RunSaved, VoiceAttempt, StudyCommandResult, MistakesAdded, Drill, MistakeGame, JoinedTournament, SessionDocument, RepertoireMisses, RepertoireSchedule, UsageReport, CustomThemeReport, ProfileArea};
 
 /// The method `name`, as `METHODS` declares it.
 pub fn method(name: &str) -> Option<&'static Method> {

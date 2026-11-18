@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::types::*;
+use crate::types::{OnlineConnection, PuzzleDbProgress, AnalysisUpdate, ReviewUpdate, ReviewStatus, ChallengeInfo, LobbyState, WatchState, WatchFrame, BroadcastUpdate, CoreSettings, ProfileChange, AlertOwner};
 
 /// What an event holds: its contract type, read from and written to the JSON it crosses as.
 pub trait EventPayload: Serialize + DeserializeOwned {

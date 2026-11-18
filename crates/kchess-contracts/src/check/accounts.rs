@@ -7,7 +7,7 @@ use kchess_domain::misc::patterns;
 use kchess_domain::misc::value::J;
 use kchess_domain::variant::VARIANTS;
 
-use super::*;
+use super::{Validate, Refusal, decode, USERNAME, matches, Username, ensure, max_items, min_chars, max_chars, picked, Msg, one_of, within};
 use crate::types::{
     APPEARANCES, COORDINATE_MODES, CoreSettings, ENGINE_LEVELS, EXPLORER_SPEEDS,
     FrontendPreferences, GamePageQuery, InsightsQuery, PERF_TYPES, PIECE_ANIMATIONS,

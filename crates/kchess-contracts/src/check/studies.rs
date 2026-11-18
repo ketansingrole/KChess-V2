@@ -8,7 +8,7 @@ use kchess_domain::misc::constants::MAX_MOVES;
 use kchess_domain::misc::patterns;
 use kchess_domain::misc::value::J;
 
-use super::*;
+use super::{Validate, Refusal, LichessId, decode, plain, min_chars, max_chars, Msg, uci, max_items, USERNAME, matches, ensure};
 use crate::types::StudySyncRequest;
 
 /// A Lichess study's id, or empty for a new study (or a study's first chapter).

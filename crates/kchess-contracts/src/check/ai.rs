@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use kchess_domain::misc::value::J;
 
-use super::*;
+use super::{Validate, Refusal, decode, ensure, picked};
 use crate::types::{AI_EFFORTS, AiEffort, AiRequest};
 
 const MODEL: &str = "Invalid model.";

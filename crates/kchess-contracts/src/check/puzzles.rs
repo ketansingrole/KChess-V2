@@ -8,7 +8,7 @@ use kchess_domain::color;
 use kchess_domain::misc::patterns;
 use kchess_domain::misc::value::J;
 
-use super::*;
+use super::{Refusal, matches, decode, plain, within, Validate, username, one_of, ensure, USERNAME, Msg, fen, uci, max_items, picked, max_chars};
 use crate::types::{
     LocalLadderQuery, LocalPuzzleQuery, PUZZLE_DIFFICULTIES, PUZZLE_TRAIN_MODES, Puzzle,
     PuzzleAttemptInput, PuzzleProgressQuery, PuzzleRequest, PuzzleSolveRequest, PuzzleWrongMove,
