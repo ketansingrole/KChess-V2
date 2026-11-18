@@ -61,13 +61,19 @@ fn sweep_deletes_replaced_builds_and_on_macos_the_objects_no_program_uses() {
     let replaced = replaced_build(&target.path().join("debug"));
     let sweep = |dry_run: bool| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
-        command.arg("sweep").env("CARGO_TARGET_DIR", target.path());
+        // Space to spare, whatever this disk has: a sweep refuses a build on a full disk, and
+        // with little free it takes the other worktrees' build folders.
+        command
+            .arg("sweep")
+            .env("CARGO_TARGET_DIR", target.path())
+            .env("KCHESS_FREE_SPACE", "1000000000000");
         if dry_run {
             command.arg("--dry-run");
         }
         let out = command.output().expect("xtask runs");
-        assert!(out.status.success());
-        String::from_utf8_lossy(&out.stderr).into_owned()
+        let said = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "{said}");
+        said
     };
     let said = sweep(true);
     assert!(
@@ -91,6 +97,29 @@ fn sweep_deletes_replaced_builds_and_on_macos_the_objects_no_program_uses() {
         assert!(objects.iter().all(|object| object.exists()));
         assert!(!said.contains("object file"), "{said}");
     }
+}
+
+#[test]
+fn a_dry_run_sweep_says_when_the_stated_free_space_is_too_little_for_a_build() {
+    let target = tempfile::tempdir().unwrap();
+    let sweep = |free: &str| {
+        let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .args(["sweep", "--dry-run"])
+            .env("CARGO_TARGET_DIR", target.path())
+            .env("KCHESS_FREE_SPACE", free)
+            .output()
+            .expect("xtask runs");
+        let said = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "{said}");
+        said
+    };
+    let said = sweep("1000000000");
+    assert!(
+        said.contains("A build would be refused: Only 1.0 GB is free on this disk"),
+        "{said}"
+    );
+    let said = sweep("1000000000000");
+    assert!(!said.contains("would be refused"), "{said}");
 }
 
 #[test]

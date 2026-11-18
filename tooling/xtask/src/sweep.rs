@@ -40,7 +40,8 @@ const LONGEST_PATH: usize = 4096;
 /// then on macOS the objects no program uses, saying what went; then the build folder of the
 /// checkout's mutants tree, unless a push is testing in it; then the build folders of the other
 /// worktrees nobody is building in (`worktrees.rs`). With `dry_run`, deletes nothing and says
-/// what would go. Refuses a build afterwards when the disk is still too full for one.
+/// what would go, and whether a build would be refused. Refuses a build afterwards when the disk
+/// is still too full for one.
 pub fn build_folder(dry_run: bool) -> crate::util::Result {
     let target = target_folder(std::env::var_os("CARGO_TARGET_DIR"));
     let root = crate::util::root();
@@ -50,10 +51,14 @@ pub fn build_folder(dry_run: bool) -> crate::util::Result {
     for message in messages {
         say(&message);
     }
+    let space = crate::worktrees::enough_space(crate::worktrees::free_space(&root));
     if dry_run {
+        if let Err(why) = space {
+            say(&format!("A build would be refused: {why}"));
+        }
         Ok(())
     } else {
-        crate::worktrees::enough_space(crate::worktrees::free_space(&root))
+        space
     }
 }
 
