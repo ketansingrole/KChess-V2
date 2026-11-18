@@ -9,11 +9,11 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
 
-use crate::assets::icon;
 use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, format_bytes};
 use kchess_contracts::types::{ProfileArea, PuzzleDbPhase, PuzzleDbProgress, PuzzleDbStatus};
+use kchess_ui::icon;
 
 pub struct PuzzleDb {
     pub status: PuzzleDbStatus,

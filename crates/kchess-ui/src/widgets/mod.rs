@@ -206,7 +206,9 @@ impl Element for LiveRegion {
 }
 
 mod badges;
+mod cards;
 mod dialogs;
+mod highlight;
 mod panel;
 mod pills;
 mod status;
@@ -214,7 +216,9 @@ mod status;
 mod tests;
 
 pub use badges::*;
+pub use cards::*;
 pub use dialogs::*;
+pub use highlight::*;
 pub use panel::*;
 pub use pills::*;
 pub use status::*;

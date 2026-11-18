@@ -8,12 +8,12 @@ use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::assets::icon;
 use crate::chart::{ChartPoint, LineChart};
 use crate::theme::Palette;
 use crate::widgets::{self, Choice};
 use kchess_contracts::types::RatingSeries;
 use kchess_domain::records::ratings::merge_rating_series;
+use kchess_ui::icon;
 
 /// The chart's speeds, by perf key.
 const MODES: [(&str, &str); 6] = [
@@ -30,7 +30,7 @@ const RANGES: [&str; 6] = ["1M", "3M", "6M", "YTD", "1Y", "All"];
 fn fit_select(label: &str) -> Pixels {
     px(label.chars().count() as f32 * 7. + 40.)
 }
-pub(crate) const DAY_MS: f64 = 86_400_000.;
+pub const DAY_MS: f64 = 86_400_000.;
 /// Ratings are padded by this much above and below.
 const RATING_PAD: f64 = 15.;
 /// Longer than this, dates read as month and year.
@@ -38,7 +38,7 @@ const YEARS_SPAN_MS: f64 = 400. * DAY_MS;
 
 /// A rating chart's date, short under the axis and long in its tooltip: with the year once the
 /// chart spans `first` to `last` over a year.
-pub(crate) fn chart_dates(first: f64, last: f64) -> impl Fn(f64) -> (SharedString, SharedString) {
+pub fn chart_dates(first: f64, last: f64) -> impl Fn(f64) -> (SharedString, SharedString) {
     let years = last - first > YEARS_SPAN_MS;
     move |millis| {
         let format = |pattern: &str| crate::dates::utc_format(millis, pattern).unwrap_or_default();
@@ -50,7 +50,7 @@ pub(crate) fn chart_dates(first: f64, last: f64) -> impl Fn(f64) -> (SharedStrin
 }
 
 /// The ratings' lowest and highest, the chart's range padded around them; 0 to 1 for none.
-pub(crate) fn rating_domain(ratings: impl Iterator<Item = f64>) -> (f64, f64) {
+pub fn rating_domain(ratings: impl Iterator<Item = f64>) -> (f64, f64) {
     let (low, high) = ratings.fold((f64::MAX, f64::MIN), |(low, high), rating| {
         (low.min(rating), high.max(rating))
     });
@@ -97,7 +97,7 @@ fn utc_midnight_millis(date: jiff::civil::Date) -> Option<f64> {
 }
 
 /// A series' points as UTC times and ratings.
-pub(crate) fn series_points(series: &RatingSeries) -> Vec<(f64, f64)> {
+pub fn series_points(series: &RatingSeries) -> Vec<(f64, f64)> {
     series.points.iter().filter_map(point_of).collect()
 }
 
