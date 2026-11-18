@@ -8,7 +8,7 @@ use std::pin::Pin;
 use std::rc::Rc;
 
 use gpui_kit::{App, Global, Hsla, Window, rgb};
-use kchess_contracts::types::{Drill, MistakeGame, Puzzle, PuzzleWrongMove};
+use kchess_contracts::types::{Drill, LichessGame, MistakeGame, Puzzle, PuzzleWrongMove};
 use kchess_domain::variant::Setup;
 use shakmaty::Color;
 
@@ -136,6 +136,24 @@ pub fn open(open: Open, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Open a Lichess game of an account's on the analysis board, from that account's side.
+pub fn open_lichess_game(game: LichessGame, window: &mut Window, cx: &mut App) {
+    let (white, black) = match game.color {
+        Color::White => (game.account, game.opponent),
+        Color::Black => (game.opponent, game.account),
+    };
+    open(
+        Open::Exported {
+            id: game.id,
+            white,
+            black,
+            orientation: game.color,
+        },
+        window,
+        cx,
+    );
+}
+
 /// What the analysis board shows, when it has been made.
 pub fn shown(window: &mut Window, cx: &mut App) -> Option<Shown> {
     board(cx)?.shown(window, cx)
@@ -158,8 +176,18 @@ mod tests {
 
     impl AnalysisBoard for Kept {
         fn open(&self, open: Open, _: &mut Window, _: &mut App) {
-            if let Open::Study(id) = open {
-                self.0.borrow_mut().push(id);
+            match open {
+                Open::Study(id) => self.0.borrow_mut().push(id),
+                Open::Exported {
+                    id,
+                    white,
+                    black,
+                    orientation,
+                } => self
+                    .0
+                    .borrow_mut()
+                    .push(format!("{id}: {white} v {black}, {orientation:?} below")),
+                _ => {}
             }
         }
 
@@ -202,6 +230,15 @@ mod tests {
                 assert!(save_study(window, cx).is_none());
                 cx.set_global(Analysis(board.clone()));
                 open(Open::Study("after".into()), window, cx);
+                for color in ["white", "black"] {
+                    let game = serde_json::from_value(serde_json::json!({
+                        "id": "g1", "account": "alice", "opponent": "bob", "color": color,
+                        "createdAt": 0, "lastMoveAt": 0, "rated": true, "speed": "blitz",
+                        "perf": "blitz", "status": "mate", "moves": "e4 e5",
+                    }))
+                    .expect("a game");
+                    open_lichess_game(game, window, cx);
+                }
                 assert_eq!(
                     shown(window, cx).map(|shown| shown.pgn),
                     Some("1. e4".into())
@@ -209,7 +246,14 @@ mod tests {
                 save_study(window, cx).expect("a save")
             })
             .unwrap();
-        assert_eq!(*board.0.borrow(), ["after"]);
+        assert_eq!(
+            *board.0.borrow(),
+            [
+                "after",
+                "g1: alice v bob, White below",
+                "g1: bob v alice, Black below"
+            ]
+        );
         assert_eq!(
             futures::executor::block_on(saved),
             Err("refused".to_string())

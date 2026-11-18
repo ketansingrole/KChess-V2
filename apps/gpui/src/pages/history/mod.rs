@@ -621,11 +621,7 @@ impl HistoryPage {
                         None,
                         lichess::RowDetail::NoReview,
                         move |window, cx| {
-                            crate::pages::players::PlayersPage::open_game(
-                                chosen.clone(),
-                                window,
-                                cx,
-                            )
+                            kchess_board::analysis::open_lichess_game(chosen.clone(), window, cx)
                         },
                         palette,
                     )

@@ -12,6 +12,7 @@ use crate::page::{
     NavGroup, Page, PageCommand, PageInfo, PageTab, PageView, Registered, TabInfo, register,
     set_registry, tab_places,
 };
+use crate::sections::Section;
 use crate::shell::{self, Navigator, Shell};
 use crate::swipe::Direction;
 
@@ -206,6 +207,11 @@ impl Shell for Kept {
     fn go(&self, direction: Direction, _: &mut Window, _: &mut App) {
         self.asked.borrow_mut().push(format!("go {direction}"));
     }
+    fn choose_section(&self, section: Section, row: Option<&'static str>, _: &mut App) {
+        self.asked
+            .borrow_mut()
+            .push(format!("section {section:?} {row:?}"));
+    }
 }
 
 struct Blank;
@@ -242,6 +248,8 @@ fn a_page_reaches_others_through_the_shell(cx: &mut TestAppContext) {
         shell::show::<Stand<12>>(window, cx, |page, _, _| page.acted += 1);
         assert_eq!(shell::current_page(cx), Some(Page::Watch));
         shell::go(-1, window, cx);
+        shell::open_settings(Section::Accounts, window, cx);
+        shell::open_settings_at(Section::Engine, "engine-threads", window, cx);
         // The page shown has the keys until they go elsewhere.
         let pages = kept.pages.borrow();
         let pages = pages.as_ref().expect("the pages");
@@ -252,7 +260,17 @@ fn a_page_reaches_others_through_the_shell(cx: &mut TestAppContext) {
     .unwrap();
     let shown = cx.read(|cx| shell::view::<Stand<12>>(cx).map(|page| page.read(cx).acted));
     assert_eq!(shown, Some(1));
-    assert_eq!(*kept.asked.borrow(), ["open Watch", "go -1"]);
+    assert_eq!(
+        *kept.asked.borrow(),
+        [
+            "open Watch",
+            "go -1",
+            "open Settings",
+            "section Accounts None",
+            "open Settings",
+            "section Engine Some(\"engine-threads\")"
+        ]
+    );
 }
 
 /// A page opened for something asked takes the keys, unless the person gave them elsewhere since
