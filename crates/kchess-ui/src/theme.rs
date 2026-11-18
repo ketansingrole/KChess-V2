@@ -1,0 +1,381 @@
+//! The app's colors: KChess's default look or the theme chosen in Settings, resolved by
+//! `kchess_domain::theme`, then given to GPUI Kit's
+//! theme so every component paints with them. Follows the system appearance when Settings says so.
+
+use std::rc::Rc;
+
+use gpui_kit::component::{Theme, ThemeConfig};
+use gpui_kit::{App, Global, Hsla, Rgba, Window, WindowAppearance, rgb};
+use kchess_contracts::types::{AppTheme, Appearance, ThemePalette};
+use kchess_domain::theme;
+use serde_json::{Map, Value, json};
+
+/// Corner radii: one scale for every rounded box, so neighbouring surfaces agree. A box nested in
+/// another takes a step down the scale (about the outer radius less the gap between them), so
+/// their corners stay concentric.
+pub mod radii {
+    use gpui_kit::{Pixels, px};
+
+    /// Badges, swatches, small chips such as a move in the tree.
+    pub const XS: Pixels = px(4.);
+    /// Controls: buttons, tabs in a segmented row, tags, tooltips (GPUI Kit's `radius`).
+    pub const SM: Pixels = px(6.);
+    /// Inputs, list rows, segmented rows, menus and dialogs (GPUI Kit's `radius.lg`).
+    pub const MD: Pixels = px(8.);
+    /// Boxes inside a card: lists, banners, icon tiles.
+    pub const LG: Pixels = px(10.);
+    /// Cards, side panels and page tiles.
+    pub const XL: Pixels = px(14.);
+    /// The board: Lichess's 8px, tight enough that the corner coordinates stay inside it.
+    pub const BOARD: Pixels = px(8.);
+}
+
+/// The default theme's id: no palette, KChess's own colors.
+const DEFAULT_THEME: &str = "kchess";
+
+/// GPUI Kit's theme keys, and the KChess color each one takes (`--ui-*`, `theme::NAMES`).
+/// Keys left out are derived by GPUI Kit from these.
+const KEYS: &[(&str, &str)] = &[
+    ("background", "--ui-bg"),
+    ("foreground", "--ui-text"),
+    ("border", "--ui-border"),
+    ("input.border", "--ui-border-accented"),
+    ("muted.background", "--ui-bg-elevated"),
+    ("muted.foreground", "--ui-text-muted"),
+    ("accent.background", "--ui-bg-elevated"),
+    ("accent.foreground", "--ui-text-highlighted"),
+    ("primary.background", "--ui-primary"),
+    ("primary.foreground", "--ui-text-inverted"),
+    ("secondary.background", "--ui-bg-elevated"),
+    ("secondary.foreground", "--ui-text"),
+    ("secondary.hover.background", "--ui-bg-accented"),
+    ("danger.background", "--ui-error"),
+    ("danger.foreground", "--ui-text-inverted"),
+    ("success.background", "--ui-success"),
+    ("success.foreground", "--ui-text-inverted"),
+    ("warning.background", "--ui-warning"),
+    ("warning.foreground", "--ui-text-inverted"),
+    ("info.background", "--ui-info"),
+    ("info.foreground", "--ui-text-inverted"),
+    ("ring", "--ui-primary"),
+    ("link", "--ui-primary"),
+    ("caret", "--ui-primary"),
+    ("popover.background", "--ui-bg"),
+    ("popover.foreground", "--ui-text"),
+    ("sidebar.background", "--ui-bg"),
+    // Navigation: muted items, the current one in the primary color.
+    ("sidebar.foreground", "--ui-text-muted"),
+    ("sidebar.border", "--ui-border"),
+    ("sidebar.accent.background", "--ui-bg-elevated"),
+    ("sidebar.accent.foreground", "--ui-primary"),
+    ("sidebar.primary.background", "--ui-primary"),
+    ("sidebar.primary.foreground", "--ui-text-inverted"),
+    ("title_bar.background", "--ui-bg"),
+    ("title_bar.border", "--ui-border"),
+    ("list.hover.background", "--ui-bg-elevated"),
+    ("list.active.background", "--ui-bg-elevated"),
+    ("table.hover.background", "--ui-bg-elevated"),
+    ("tab_bar.background", "--ui-bg-elevated"),
+    ("tab.active.background", "--ui-bg"),
+    ("skeleton.background", "--ui-bg-accented"),
+    ("switch.background", "--ui-border-accented"),
+    ("progress.bar.background", "--ui-primary"),
+    ("slider.background", "--ui-primary"),
+    ("base.red", "--ui-error"),
+    ("base.green", "--ui-success"),
+    ("base.blue", "--ui-info"),
+    ("base.yellow", "--ui-warning"),
+];
+
+/// `#rrggbb` as a color; transparent when it is not one.
+pub fn hex(text: &str) -> Hsla {
+    u32::from_str_radix(text.trim_start_matches('#'), 16)
+        .map(|value| rgb(value).into())
+        .unwrap_or_else(|_| Rgba::default().into())
+}
+
+/// KChess's own colors, by name, for what GPUI Kit's theme has no slot for
+/// (accented backgrounds, toned and dimmed text, wins and losses): `cx.global::<Palette>()`.
+#[derive(Clone, Copy)]
+pub struct Palette {
+    pub dark: bool,
+    pub bg: Hsla,
+    pub elevated: Hsla,
+    pub accented: Hsla,
+    pub border: Hsla,
+    pub border_accented: Hsla,
+    pub text: Hsla,
+    pub highlighted: Hsla,
+    pub toned: Hsla,
+    pub text_muted: Hsla,
+    pub dimmed: Hsla,
+    pub inverted: Hsla,
+    pub primary: Hsla,
+    pub success: Hsla,
+    pub warning: Hsla,
+    pub error: Hsla,
+    pub info: Hsla,
+    pub win: Hsla,
+    pub loss: Hsla,
+}
+
+impl Global for Palette {}
+
+impl Palette {
+    pub fn of(colors: &Map<String, Value>, dark: bool) -> Palette {
+        let c = |name: &str| {
+            colors
+                .get(name)
+                .and_then(Value::as_str)
+                .map(hex)
+                .unwrap_or_default()
+        };
+        Palette {
+            dark,
+            bg: c("--ui-bg"),
+            elevated: c("--ui-bg-elevated"),
+            accented: c("--ui-bg-accented"),
+            border: c("--ui-border"),
+            border_accented: c("--ui-border-accented"),
+            text: c("--ui-text"),
+            highlighted: c("--ui-text-highlighted"),
+            toned: c("--ui-text-toned"),
+            text_muted: c("--ui-text-muted"),
+            dimmed: c("--ui-text-dimmed"),
+            inverted: c("--ui-text-inverted"),
+            primary: c("--ui-primary"),
+            success: c("--ui-success"),
+            warning: c("--ui-warning"),
+            error: c("--ui-error"),
+            info: c("--ui-info"),
+            win: c("--ui-win"),
+            loss: c("--ui-loss"),
+        }
+    }
+
+    /// A hover `fill` a step stronger, for while it is pressed: a translucent tint half as
+    /// opaque again, a solid color with a little of the text color mixed in (darker on light
+    /// themes, lighter on dark ones).
+    pub fn pressed(&self, fill: Hsla) -> Hsla {
+        if fill.a < 1. {
+            fill.alpha((fill.a * 1.5).min(1.))
+        } else {
+            fill.blend(self.text.opacity(0.1))
+        }
+    }
+}
+
+/// A review judgment's colour, as Lichess draws it: inaccuracy, mistake or blunder.
+pub fn judgment_color(judgment: &str, dark: bool) -> Hsla {
+    let hex = match (judgment, dark) {
+        ("inaccuracy", false) => 0x3d9ad6,
+        ("inaccuracy", true) => 0x56b4e9,
+        ("mistake", false) => 0xd48a00,
+        ("mistake", true) => 0xe69f00,
+        (_, false) => 0xd14848,
+        (_, true) => 0xdf5353,
+    };
+    gpui_kit::rgb(hex).into()
+}
+
+/// `color-mix(in srgb, color share%, transparent)`.
+pub fn tint(color: Hsla, share: f32) -> Hsla {
+    color.opacity(share / 100.)
+}
+
+/// Whether the window should be dark: the setting, or the system's appearance.
+pub fn is_dark(appearance: Appearance, window: &Window) -> bool {
+    match appearance {
+        Appearance::Light => false,
+        Appearance::Dark => true,
+        Appearance::System => matches!(
+            window.appearance(),
+            WindowAppearance::Dark | WindowAppearance::VibrantDark
+        ),
+    }
+}
+
+/// The palette a theme has for a mode; a theme with one variant serves both.
+fn palette(theme: &AppTheme, dark: bool) -> Option<&ThemePalette> {
+    if dark {
+        theme.dark.as_ref().or(theme.light.as_ref())
+    } else {
+        theme.light.as_ref().or(theme.dark.as_ref())
+    }
+}
+
+/// Every KChess color for theme `id` in a mode; the default look when the theme is unknown.
+pub fn colors(id: &str, custom: &[AppTheme], dark: bool) -> Map<String, Value> {
+    if id != DEFAULT_THEME {
+        let presets: Vec<AppTheme> =
+            serde_json::from_value(theme::presets().clone()).unwrap_or_default();
+        // A custom theme replaces a preset with the same id.
+        let chosen = custom
+            .iter()
+            .rev()
+            .chain(presets.iter())
+            .find(|theme| theme.id == id);
+        if let Some(resolved) = chosen
+            .and_then(|theme| palette(theme, dark))
+            .and_then(|palette| theme::colors(&json!(palette), dark))
+        {
+            return resolved;
+        }
+    }
+    theme::default_colors(dark)
+}
+
+/// The themes Settings chose: the appearance, the theme for each mode, and the custom themes.
+pub struct ThemeChoice {
+    pub appearance: Appearance,
+    pub light: String,
+    pub dark: String,
+    pub custom: Vec<AppTheme>,
+}
+
+/// Paint the app with the chosen theme for the window's appearance.
+pub fn apply(window: &mut Window, cx: &mut App, choice: &ThemeChoice) {
+    let dark = is_dark(choice.appearance, window);
+    let chosen = if dark { &choice.dark } else { &choice.light };
+    let resolved = colors(chosen, &choice.custom, dark);
+    cx.set_global(Palette::of(&resolved, dark));
+    match kit_config(&resolved, dark) {
+        Ok(config) => {
+            Theme::global_mut(cx).apply_config(&Rc::new(config));
+            window.refresh();
+        }
+        Err(error) => crate::log(
+            cx,
+            kchess_contracts::Level::Error,
+            "theme",
+            &format!("GPUI Kit refused the theme: {error}"),
+        ),
+    }
+}
+
+/// What a dialog lays over the page, light and dark: the kit's own (5% and 20% black) left a
+/// dialog hard to tell from a board or list under it.
+pub const OVERLAY: [&str; 2] = ["#00000059", "#00000099"];
+
+/// GPUI Kit's theme for KChess's `resolved` colors: the kit's keys, the dialog overlay, controls
+/// rounded to `radii::SM` and dialogs to `radii::MD` (whole pixels, as the kit reads them).
+fn kit_config(resolved: &Map<String, Value>, dark: bool) -> serde_json::Result<ThemeConfig> {
+    let mut colors = Map::new();
+    for (key, name) in KEYS {
+        if let Some(value) = resolved.get(*name) {
+            colors.insert((*key).to_string(), value.clone());
+        }
+    }
+    colors.insert("overlay".into(), json!(OVERLAY[usize::from(dark)]));
+    serde_json::from_value(json!({
+        "name": "KChess",
+        "mode": if dark { "dark" } else { "light" },
+        "radius": f32::from(radii::SM) as usize,
+        "radius.lg": f32::from(radii::MD) as usize,
+        "shadow": false,
+        "colors": colors,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A theme GPUI Kit cannot read leaves its components in the kit's own colors and corners,
+    /// and its dialogs over a page they are hard to tell from.
+    #[test]
+    fn the_kit_reads_every_preset() {
+        let presets: Vec<AppTheme> = serde_json::from_value(theme::presets().clone()).unwrap();
+        let ids = presets.iter().map(|preset| preset.id.as_str());
+        for id in std::iter::once(DEFAULT_THEME).chain(ids) {
+            for dark in [false, true] {
+                let config = kit_config(&colors(id, &[], dark), dark)
+                    .unwrap_or_else(|error| panic!("{id}: {error}"));
+                assert_eq!(
+                    config.colors.overlay.as_deref(),
+                    Some(OVERLAY[usize::from(dark)]),
+                    "{id}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_default_look_is_used_for_an_unknown_theme() {
+        assert_eq!(colors("gone", &[], false), theme::default_colors(false));
+        assert_eq!(
+            colors(DEFAULT_THEME, &[], true),
+            theme::default_colors(true)
+        );
+    }
+
+    #[test]
+    fn a_custom_theme_replaces_the_preset_with_its_id() {
+        let custom: AppTheme = serde_json::from_value(json!({
+            "id": "nord", "name": "Mine", "light": { "bg": "#ffffff", "text": "#000000", "primary": "#123456" }
+        }))
+        .unwrap();
+        let resolved = colors("nord", &[custom], true);
+        // The only variant serves the dark mode too.
+        assert_eq!(resolved["--ui-primary"], "#123456");
+        let preset = colors("nord", &[], true);
+        assert_ne!(preset["--ui-primary"], "#123456");
+    }
+
+    #[test]
+    fn hex_reads_a_color_and_nothing_else() {
+        assert_eq!(hex("#3d9ad6"), Hsla::from(rgb(0x3d9ad6)));
+        assert_eq!(hex("not a color"), Hsla::from(Rgba::default()));
+    }
+
+    struct Blank;
+
+    impl gpui_kit::Render for Blank {
+        fn render(
+            &mut self,
+            _: &mut Window,
+            _: &mut gpui_kit::Context<Self>,
+        ) -> impl gpui_kit::IntoElement {
+            gpui_kit::div()
+        }
+    }
+
+    /// The theme Settings chose for the window's mode paints the app: KChess's palette and GPUI
+    /// Kit's theme both.
+    #[gpui_kit::test]
+    fn the_choice_for_the_windows_mode_is_painted(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(gpui_kit::init);
+        let window = cx.add_window(|_, _| Blank);
+        let paint = |appearance, cx: &mut gpui_kit::TestAppContext| {
+            let choice = ThemeChoice {
+                appearance,
+                light: "kchess".into(),
+                dark: "nord".into(),
+                custom: Vec::new(),
+            };
+            cx.update_window(window.into(), |_, window, cx| apply(window, cx, &choice))
+                .unwrap();
+            cx.read(|cx| (*cx.global::<Palette>(), Theme::global(cx).mode.is_dark()))
+        };
+        let (palette, kit_dark) = paint(Appearance::Dark, cx);
+        assert!(palette.dark && kit_dark);
+        assert_eq!(
+            palette.primary,
+            hex(colors("nord", &[], true)["--ui-primary"].as_str().unwrap())
+        );
+        // A test window is light, so following the system picks the light theme.
+        let (palette, kit_dark) = paint(Appearance::System, cx);
+        assert!(!palette.dark && !kit_dark);
+        assert_eq!(
+            palette.primary,
+            hex(colors("kchess", &[], false)["--ui-primary"].as_str().unwrap())
+        );
+    }
+
+    #[test]
+    fn every_key_names_a_kchess_color() {
+        for (_, name) in KEYS {
+            assert!(theme::NAMES.contains(name), "{name}");
+        }
+    }
+}

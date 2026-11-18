@@ -9,6 +9,10 @@ pub enum Role {
     /// The GPUI app: shipped, its views checked by its end-to-end suite rather than by coverage,
     /// its tests under `cargo test` (one binary whose tests each start GPUI).
     App,
+    /// A GPUI crate the app is built from (`crates/kchess-ui`): shipped inside the app, its views
+    /// checked by the app's end-to-end suite rather than by coverage, its own tests run with the
+    /// headless members'.
+    Ui,
     /// A program every package ships beside the app.
     Program,
     /// A headless library.
@@ -26,8 +30,9 @@ pub const APP: &str = "kchess-gpui";
 /// The app's sources, as cargo-mutants' file globs name them.
 pub const APP_FILES: &str = "apps/gpui/**";
 
-const ROLES: [(&str, Role); 6] = [
+const ROLES: [(&str, Role); 7] = [
     (APP, Role::App),
+    ("kchess-ui", Role::Ui),
     ("kchess-service", Role::Program),
     ("kchess-cli", Role::Program),
     ("kchess-voice", Role::Program),
@@ -53,17 +58,17 @@ pub fn shipped() -> impl Iterator<Item = &'static str> {
         .map(|(name, _)| *name)
 }
 
-/// The members outside the coverage totals: the app's views are checked by its end-to-end
-/// suite, and this tooling by running it. Their tests still run.
+/// The members outside the coverage totals: the app's views (its own and its UI crates') are
+/// checked by its end-to-end suite, and this tooling by running it. Their tests still run.
 pub fn uncovered() -> impl Iterator<Item = &'static str> {
     ROLES
         .iter()
-        .filter(|(_, role)| matches!(role, Role::App | Role::Tooling))
+        .filter(|(_, role)| matches!(role, Role::App | Role::Ui | Role::Tooling))
         .map(|(name, _)| *name)
 }
 
-/// Whether `name` is headless: neither the app, nor tooling, nor the hack. The hack never makes
-/// a headless member build the app's or xtask's dependencies.
+/// Whether `name` is headless: neither the app, nor its UI crates, nor tooling, nor the hack. The
+/// hack never makes a headless member build the app's or xtask's dependencies.
 pub fn headless(name: &str) -> bool {
     matches!(role(name), Role::Program | Role::Library)
 }
@@ -83,12 +88,13 @@ mod tests {
         assert_eq!(role("kchess-core"), Role::Library);
         assert!(headless("kchess-core") && headless("kchess-cli"));
         assert!(!headless(APP) && !headless("xtask") && !headless("kchess-hack"));
+        assert!(!headless("kchess-ui"));
     }
 
-    /// The app and this tooling are outside the coverage totals; the programs ship.
+    /// The app, its UI crates and this tooling are outside the coverage totals; the programs ship.
     #[test]
     fn the_app_and_tooling_are_uncovered() {
-        assert_eq!(uncovered().collect::<Vec<_>>(), [APP, "xtask"]);
+        assert_eq!(uncovered().collect::<Vec<_>>(), [APP, "kchess-ui", "xtask"]);
         assert_eq!(
             shipped().collect::<Vec<_>>(),
             [APP, "kchess-service", "kchess-cli", "kchess-voice"]

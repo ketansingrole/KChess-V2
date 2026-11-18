@@ -25,8 +25,11 @@ struct Rule {
     allowed: &'static [&'static str],
 }
 
-/// The frontends' sources, searched from the repository root.
-const FRONTENDS: [&str; 2] = ["apps/gpui/src", "apps/cli/src"];
+/// The app's sources: its own and its UI crates' (`members::Role::Ui`), from the repository root.
+const APP_SOURCES: [&str; 2] = ["apps/gpui/src", "crates/kchess-ui/src"];
+
+/// The frontends' sources, searched from the repository root: the app's and the CLI's.
+const FRONTENDS: [&str; 3] = [APP_SOURCES[0], APP_SOURCES[1], "apps/cli/src"];
 
 const RULES: [Rule; 2] = [
     Rule {
@@ -384,7 +387,9 @@ fn a_fenced_block_in_a_doc_comment_is_found() {
 /// The app's shipped sources, as (path from the repository root, text before its test module).
 fn app_sources() -> Vec<(String, String)> {
     let mut files = Vec::new();
-    sources_under(&root(), "apps/gpui/src", &mut files).expect("the app's sources");
+    for dir in APP_SOURCES {
+        sources_under(&root(), dir, &mut files).expect("the app's sources");
+    }
     files
         .into_iter()
         .filter(|(path, _)| !is_test_file(path))
