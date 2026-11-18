@@ -4295,6 +4295,7 @@ dependencies = [
  "gpui-kit",
  "jiff",
  "kchess-contracts",
+ "kchess-core",
  "kchess-domain",
  "kchess-hack",
  "kchess-host",
@@ -4302,6 +4303,7 @@ dependencies = [
  "kchess-ui",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

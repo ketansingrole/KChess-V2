@@ -18,3 +18,6 @@ pub mod settings;
 pub mod slow_calls;
 pub mod studies;
 pub mod timer;
+
+#[cfg(test)]
+mod tests;

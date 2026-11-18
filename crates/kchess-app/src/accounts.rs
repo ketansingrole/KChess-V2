@@ -708,7 +708,166 @@ fn hooks(cx: &App) -> AccountHooks {
 
 #[cfg(test)]
 mod tests {
-    use super::Accounts;
+    use super::*;
+
+    fn account(username: &str, connected: bool) -> kchess_contracts::types::Account {
+        kchess_contracts::types::Account {
+            username: username.into(),
+            connected,
+            last_synced_at: None,
+            synced_play_time: None,
+        }
+    }
+
+    /// Lichess actions use the account chosen for online play while it is connected, else the
+    /// first connected one; a player only followed never plays.
+    #[gpui_kit::test]
+    fn the_active_account_is_the_one_chosen_while_it_is_connected(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let all = [
+                account("first", true),
+                account("second", true),
+                account("followed", false),
+            ];
+            assert_eq!(super::active_account(&all, cx), Some("first".into()));
+            super::set_active_account("second", cx);
+            assert_eq!(super::active_account(&all, cx), Some("second".into()));
+            super::set_active_account("followed", cx);
+            assert_eq!(super::active_account(&all, cx), Some("first".into()));
+            assert_eq!(super::active_account(&all[2..], cx), None);
+        });
+    }
+
+    /// A window that shows the accounts, as the app's sidebar does: the window an account
+    /// action's answer is shown in.
+    struct Shown;
+
+    impl gpui_kit::Render for Shown {
+        fn render(
+            &mut self,
+            _: &mut Window,
+            cx: &mut gpui_kit::Context<Self>,
+        ) -> impl gpui_kit::IntoElement {
+            let busy = handle(cx).read(cx).busy;
+            use gpui_kit::ParentElement as _;
+            gpui_kit::div().child(if busy { "Busy" } else { "Ready" })
+        }
+    }
+
+    /// The accounts over a core of the test's own, holding `accounts`, in a window.
+    fn accounts_holding(
+        accounts: Vec<kchess_contracts::types::Account>,
+        cx: &mut gpui_kit::TestAppContext,
+    ) -> (crate::tests::TestCore, gpui_kit::AnyWindowHandle) {
+        cx.executor().allow_parking();
+        let core = cx.update(|cx| {
+            gpui_kit::init(cx);
+            let core = crate::tests::start_core(cx);
+            super::init(cx);
+            core
+        });
+        let data = cx.update(|cx| cx.global::<AppCore>().request(calls::LoadData {}));
+        let mut data = futures::executor::block_on(data).expect("the core's data");
+        data.accounts = accounts;
+        cx.run_until_parked();
+        cx.update(|cx| super::handle(cx).update(cx, |this, _| this.adopt(data)));
+        let window = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |_, cx| cx.new(|_| Shown))
+                .expect("a window")
+                .0
+        });
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .expect("the window");
+        (core, window)
+    }
+
+    /// Connecting and syncing show at once that they run, before the core answers; the account
+    /// that plays is the one the accounts hold.
+    #[gpui_kit::test]
+    fn actions_show_at_once_that_they_run(cx: &mut gpui_kit::TestAppContext) {
+        let (_core, window) = accounts_holding(vec![account("player", true)], cx);
+        cx.update_window(window, |_, window, cx| {
+            let accounts = super::handle(cx);
+            assert_eq!(accounts.read(cx).active(cx), Some("player".into()));
+            accounts.update(cx, |this, cx| this.sync(None, window, cx));
+            assert!(accounts.read(cx).syncing());
+            accounts.update(cx, |this, cx| this.connect(window, cx));
+            assert!(accounts.read(cx).busy);
+        })
+        .unwrap();
+    }
+
+    /// Following a player tells the page whether Lichess took it: without a Lichess login kept,
+    /// the core refuses, and the page hears so.
+    #[gpui_kit::test]
+    fn a_refused_relation_is_heard(cx: &mut gpui_kit::TestAppContext) {
+        use std::sync::atomic::{AtomicU8, Ordering};
+        static HEARD: AtomicU8 = AtomicU8::new(0);
+        let (_core, window) = accounts_holding(vec![account("player", true)], cx);
+        cx.update_window(window, |_, window, cx| {
+            super::handle(cx).update(cx, |this, cx| {
+                this.set_relation(
+                    "friend".into(),
+                    RelationAction::Follow,
+                    window,
+                    cx,
+                    |took, _, _| HEARD.store(if took { 2 } else { 1 }, Ordering::SeqCst),
+                );
+            });
+        })
+        .unwrap();
+        for _ in 0..500 {
+            cx.run_until_parked();
+            if HEARD.load(Ordering::SeqCst) != 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(HEARD.load(Ordering::SeqCst), 1, "refused");
+    }
+
+    /// After signing out the pages forget the account, told whether one is left, and start
+    /// afresh.
+    #[gpui_kit::test]
+    fn signing_out_starts_the_pages_afresh(cx: &mut gpui_kit::TestAppContext) {
+        use std::sync::atomic::{AtomicU8, Ordering};
+        static LEFT: AtomicU8 = AtomicU8::new(0);
+        static RESTARTED: AtomicU8 = AtomicU8::new(0);
+        let (_core, window) = accounts_holding(Vec::new(), cx);
+        cx.update(|cx| {
+            cx.set_global(super::AccountHooks {
+                connected: None,
+                signed_out: Some(|left, _| LEFT.store(if left { 2 } else { 1 }, Ordering::SeqCst)),
+                restart_pages: Some(|_, _| {
+                    RESTARTED.fetch_add(1, Ordering::SeqCst);
+                }),
+            })
+        });
+        let data = cx.update(|cx| cx.global::<AppCore>().request(calls::LoadData {}));
+        let mut data = futures::executor::block_on(data).expect("the core's data");
+        data.accounts = vec![account("still", true)];
+        // The answer arrives after the call, as the core's does.
+        let (answer, answered) = futures::channel::oneshot::channel();
+        cx.update_window(window, |_, window, cx| {
+            super::handle(cx).update(cx, |this, cx| {
+                let call = async move { answered.await.expect("the answer") };
+                this.after_sign_out(call, None, window, cx);
+            });
+        })
+        .unwrap();
+        let _ = answer.send(Ok(data));
+        for _ in 0..500 {
+            cx.run_until_parked();
+            if RESTARTED.load(Ordering::SeqCst) != 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(LEFT.load(Ordering::SeqCst), 2, "an account is left");
+        assert_eq!(RESTARTED.load(Ordering::SeqCst), 1);
+    }
 
     /// Until the app sets its hooks nothing else happens; then the one it set runs.
     #[gpui_kit::test]
