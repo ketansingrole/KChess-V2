@@ -3,6 +3,7 @@
 //! reads, runs the engine searches the game asks for, keeps the clocks moving and saves the
 //! unfinished game in the profile, to resume it.
 
+use crate::pages::PageView;
 use kchess_contracts::calls;
 use kchess_contracts::check::Moves;
 use kchess_contracts::types::EngineLevel;
@@ -780,25 +781,6 @@ impl ComputerPage {
         // A variant may need the other engine.
         self.check_engine(cx);
     }
-    /// The actions its buttons allow now.
-    pub(crate) fn actions(&self) -> Vec<Action> {
-        let mut actions = Vec::new();
-        if self.can_takeback() {
-            actions.push(Action::TakeBack);
-        }
-        if self.in_progress() {
-            actions.push(Action::Resign);
-        }
-        actions.extend([Action::NewGame, Action::SwitchSides, Action::Flip]);
-        if !self.moves().is_empty() {
-            actions.push(Action::CopyPgn);
-        }
-        if self.can_review() {
-            actions.push(Action::Review);
-        }
-        actions
-    }
-
     /// The finished game can be reviewed on the analysis board.
     fn can_review(&self) -> bool {
         self.game.result().is_some() && !self.moves().is_empty()
@@ -1571,7 +1553,7 @@ impl crate::pages::PageAction for Action {
     }
 }
 
-impl crate::pages::PageView for ComputerPage {
+impl PageView for ComputerPage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: crate::pages::Page::Computer,
         label: "Play with computer",
@@ -1592,7 +1574,21 @@ impl crate::pages::PageView for ComputerPage {
     }
 
     fn actions(&self, _: &App) -> Vec<Action> {
-        ComputerPage::actions(self)
+        let mut actions = Vec::new();
+        if self.can_takeback() {
+            actions.push(Action::TakeBack);
+        }
+        if self.in_progress() {
+            actions.push(Action::Resign);
+        }
+        actions.extend([Action::NewGame, Action::SwitchSides, Action::Flip]);
+        if !self.moves().is_empty() {
+            actions.push(Action::CopyPgn);
+        }
+        if self.can_review() {
+            actions.push(Action::Review);
+        }
+        actions
     }
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {

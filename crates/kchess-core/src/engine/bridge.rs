@@ -165,7 +165,7 @@ impl ReviewHost for ReviewBridge {
                 .await?
                 .core;
             Ok(ReviewSettings {
-                review_auto: settings.review_auto.as_str().to_string(),
+                review_auto: settings.review_auto,
                 review_on_battery: settings.review_on_battery,
                 engine_path: settings.engine_path,
             })

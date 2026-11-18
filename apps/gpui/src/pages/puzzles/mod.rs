@@ -2,6 +2,7 @@
 //! rated puzzles. The session's transitions are Rust (`game/puzzle.rs`); this page fetches what
 //! they ask for, plays the puzzle on the board and keeps the attempt log up to date.
 
+use crate::pages::PageView;
 use kchess_contracts::calls;
 use kchess_contracts::types::{AiKind, AiRequest};
 use std::time::Duration;
@@ -1778,33 +1779,6 @@ impl PuzzlesPage {
             .flatten()
     }
 
-    /// The actions the shown puzzle's buttons allow now.
-    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
-        if let Some(rush) = self.shown_rush(cx) {
-            return rush
-                .read(cx)
-                .actions(cx)
-                .into_iter()
-                .map(Action::Rush)
-                .collect();
-        }
-        let Some((board, train)) = self.shown_board(cx) else {
-            return Vec::new();
-        };
-        let mut actions = Vec::new();
-        if board.read(cx).playing() {
-            actions.extend([Action::Hint, Action::Solution]);
-        }
-        actions.push(Action::Flip);
-        if board.read(cx).status().is_over() {
-            actions.push(Action::Analyse);
-        }
-        if train {
-            actions.push(Action::Next);
-        }
-        actions
-    }
-
     /// Run an action as its button does, if it is still allowed.
     pub(crate) fn act(&mut self, action: Action, cx: &mut Context<Self>) {
         if !self.actions(cx).contains(&action) {
@@ -2106,7 +2080,7 @@ impl crate::pages::PageAction for Action {
     }
 }
 
-impl crate::pages::PageView for PuzzlesPage {
+impl PageView for PuzzlesPage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: crate::pages::Page::Puzzles,
         label: "Puzzles",
@@ -2127,7 +2101,29 @@ impl crate::pages::PageView for PuzzlesPage {
     }
 
     fn actions(&self, cx: &App) -> Vec<Action> {
-        PuzzlesPage::actions(self, cx)
+        if let Some(rush) = self.shown_rush(cx) {
+            return rush
+                .read(cx)
+                .actions(cx)
+                .into_iter()
+                .map(Action::Rush)
+                .collect();
+        }
+        let Some((board, train)) = self.shown_board(cx) else {
+            return Vec::new();
+        };
+        let mut actions = Vec::new();
+        if board.read(cx).playing() {
+            actions.extend([Action::Hint, Action::Solution]);
+        }
+        actions.push(Action::Flip);
+        if board.read(cx).status().is_over() {
+            actions.push(Action::Analyse);
+        }
+        if train {
+            actions.push(Action::Next);
+        }
+        actions
     }
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {

@@ -12,6 +12,7 @@ pub mod updates;
 mod voice;
 mod voice_history;
 
+use crate::pages::PageView;
 use kchess_domain::training::engine_levels;
 use std::path::Path;
 
@@ -1000,7 +1001,6 @@ fn option(
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
         .when(chosen, |option| {
-            // The border and its 1px outline.
             option
                 .border_2()
                 .border_color(palette.primary)
@@ -1390,7 +1390,6 @@ impl SettingsPage {
         let frontend = &settings.frontend;
         let levels = settings.core.engine_levels.clone();
         let ladder_ids: Vec<EngineLevel> = self.ladder.iter().map(|rung| rung.id).collect();
-        // As many columns as fit, each at least 192px, 12px by 24px apart.
         let (count, width) = columns(self.inner_width(window), px(192.), px(24.));
         let checkboxes =
             h_flex()
@@ -1688,7 +1687,7 @@ impl Render for SettingsPage {
     }
 }
 
-impl crate::pages::PageView for SettingsPage {
+impl PageView for SettingsPage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: crate::pages::Page::Settings,
         label: "Settings",

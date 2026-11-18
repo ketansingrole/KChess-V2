@@ -177,7 +177,7 @@ impl ScriptedHost {
 /// Settings that name the fake engine as the configured engine.
 pub fn settings(auto: &str, on_battery: bool) -> ReviewSettings {
     ReviewSettings {
-        review_auto: auto.to_string(),
+        review_auto: serde_json::from_value(auto.into()).expect("a review_auto value"),
         review_on_battery: on_battery,
         engine_path: super::fake_path(),
     }

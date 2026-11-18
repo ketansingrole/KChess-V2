@@ -4,6 +4,7 @@
 //! move by move, exported as PGN or deleted.
 
 use crate::loading::Epoch;
+use crate::pages::PageView;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -273,11 +274,6 @@ impl Focusable for HistoryPage {
 }
 
 impl HistoryPage {
-    /// Its search fields, on either tab, for Find (`shell::find_on_page`).
-    pub(crate) fn search_fields(&self) -> Vec<Entity<InputState>> {
-        vec![self.search_input.clone(), self.lichess.search_input.clone()]
-    }
-
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> HistoryPage {
         let played = cx.global::<PlayedHandle>().0.clone();
         let (lichess, mut subscriptions) = lichess::new_tab(window, cx);
@@ -687,32 +683,6 @@ impl HistoryPage {
         cx.notify();
     }
 
-    /// What the page's buttons can do now: the open game's, or the synced games'.
-    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
-        if self.open.is_some() {
-            return vec![Action::AllGames, Action::Export, Action::Analyse];
-        }
-        if self.source != Source::Lichess {
-            return Vec::new();
-        }
-        if let Some((game, _)) = &self.lichess.open {
-            let mut actions = vec![Action::AllGames];
-            if crate::game::pgn_analysable(game.pgn.as_deref().unwrap_or_default()) {
-                actions.push(Action::Review);
-            }
-            return actions;
-        }
-        let accounts = crate::accounts::handle(cx).read(cx);
-        let mut actions = Vec::new();
-        if !accounts.all().is_empty() && !accounts.busy {
-            actions.push(Action::Sync);
-        }
-        if accounts.game_count() > 0 && self.lichess_filtered() {
-            actions.push(Action::ClearFilters);
-        }
-        actions
-    }
-
     /// Run an action as its button does, if it is still allowed.
     pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         if !self.actions(cx).contains(&action) {
@@ -867,25 +837,6 @@ impl HistoryPage {
             ),
             cx,
         );
-    }
-
-    /// A swipe steps out of the open game before leaving the page, and forward opens the game it
-    /// closed again while that game is still listed and nothing else was opened.
-    pub fn can_step(&self, direction: crate::swipe::Direction, cx: &App) -> bool {
-        if direction < 0 {
-            return self.open.is_some() || self.lichess.open.is_some();
-        }
-        match &self.redo {
-            Some(Redo::Played(game)) => {
-                self.open.is_none() && self.games(cx).iter().any(|entry| entry.id == game.id)
-            }
-            Some(Redo::Lichess(game)) => {
-                self.source == Source::Lichess
-                    && self.lichess.open.is_none()
-                    && self.lichess.games.iter().any(|entry| entry.id == game.id)
-            }
-            None => false,
-        }
     }
 
     pub fn step(
@@ -1536,7 +1487,7 @@ impl crate::pages::PageAction for Action {
     }
 }
 
-impl crate::pages::PageView for HistoryPage {
+impl PageView for HistoryPage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: Page::History,
         label: "Game history",
@@ -1553,7 +1504,20 @@ impl crate::pages::PageView for HistoryPage {
     }
 
     fn can_step(&self, direction: crate::swipe::Direction, cx: &App) -> bool {
-        HistoryPage::can_step(self, direction, cx)
+        if direction < 0 {
+            return self.open.is_some() || self.lichess.open.is_some();
+        }
+        match &self.redo {
+            Some(Redo::Played(game)) => {
+                self.open.is_none() && self.games(cx).iter().any(|entry| entry.id == game.id)
+            }
+            Some(Redo::Lichess(game)) => {
+                self.source == Source::Lichess
+                    && self.lichess.open.is_none()
+                    && self.lichess.games.iter().any(|entry| entry.id == game.id)
+            }
+            None => false,
+        }
     }
 
     fn step(
@@ -1566,11 +1530,32 @@ impl crate::pages::PageView for HistoryPage {
     }
 
     fn search_fields(&self) -> Vec<Entity<InputState>> {
-        HistoryPage::search_fields(self)
+        vec![self.search_input.clone(), self.lichess.search_input.clone()]
     }
 
     fn actions(&self, cx: &App) -> Vec<Action> {
-        HistoryPage::actions(self, cx)
+        if self.open.is_some() {
+            return vec![Action::AllGames, Action::Export, Action::Analyse];
+        }
+        if self.source != Source::Lichess {
+            return Vec::new();
+        }
+        if let Some((game, _)) = &self.lichess.open {
+            let mut actions = vec![Action::AllGames];
+            if crate::game::pgn_analysable(game.pgn.as_deref().unwrap_or_default()) {
+                actions.push(Action::Review);
+            }
+            return actions;
+        }
+        let accounts = crate::accounts::handle(cx).read(cx);
+        let mut actions = Vec::new();
+        if !accounts.all().is_empty() && !accounts.busy {
+            actions.push(Action::Sync);
+        }
+        if accounts.game_count() > 0 && self.lichess_filtered() {
+            actions.push(Action::ClearFilters);
+        }
+        actions
     }
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {

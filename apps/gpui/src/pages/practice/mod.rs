@@ -214,45 +214,6 @@ impl PracticePage {
         self.endgames.as_ref()?.read(cx).shown_lesson(cx)
     }
 
-    /// What the trainer on screen can do now.
-    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
-        match Tab::stored(cx) {
-            Tab::Endgames => {
-                if let Some(lesson) = self.lesson(cx) {
-                    return lesson
-                        .read(cx)
-                        .actions()
-                        .into_iter()
-                        .map(Action::Lesson)
-                        .collect();
-                }
-                self.drills(cx)
-                    .map(|drills| drills.read(cx).actions())
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(Action::Drill)
-                    .collect()
-            }
-            Tab::Openings => self
-                .repertoire
-                .as_ref()
-                .map(|repertoire| repertoire.read(cx).actions(cx))
-                .unwrap_or_default()
-                .into_iter()
-                .map(Action::Repertoire)
-                .collect(),
-            Tab::Mistakes => self
-                .mistakes
-                .as_ref()
-                .map(|mistakes| mistakes.read(cx).actions())
-                .unwrap_or_default()
-                .into_iter()
-                .map(Action::Mistakes)
-                .collect(),
-            _ => Vec::new(),
-        }
-    }
-
     /// Run an action on the trainer on screen.
     pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         match action {
@@ -539,7 +500,41 @@ impl PageView for PracticePage {
     }
 
     fn actions(&self, cx: &App) -> Vec<Action> {
-        PracticePage::actions(self, cx)
+        match Tab::stored(cx) {
+            Tab::Endgames => {
+                if let Some(lesson) = self.lesson(cx) {
+                    return lesson
+                        .read(cx)
+                        .actions()
+                        .into_iter()
+                        .map(Action::Lesson)
+                        .collect();
+                }
+                self.drills(cx)
+                    .map(|drills| drills.read(cx).actions())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Action::Drill)
+                    .collect()
+            }
+            Tab::Openings => self
+                .repertoire
+                .as_ref()
+                .map(|repertoire| repertoire.read(cx).actions(cx))
+                .unwrap_or_default()
+                .into_iter()
+                .map(Action::Repertoire)
+                .collect(),
+            Tab::Mistakes => self
+                .mistakes
+                .as_ref()
+                .map(|mistakes| mistakes.read(cx).actions())
+                .unwrap_or_default()
+                .into_iter()
+                .map(Action::Mistakes)
+                .collect(),
+            _ => Vec::new(),
+        }
     }
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {

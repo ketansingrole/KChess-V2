@@ -2,6 +2,7 @@
 //! challenges and games in progress beside it, and the live game on the board with its offers,
 //! actions and chat. The game itself is `crate::online`'s, shared by the whole app.
 
+use crate::pages::PageView;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -888,7 +889,7 @@ fn shows_game(cx: &App) -> bool {
     ) && !crate::accounts::handle(cx).read(cx).connected().is_empty()
 }
 
-impl crate::pages::PageView for OnlinePage {
+impl PageView for OnlinePage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: Page::Online,
         label: "Play on Lichess",

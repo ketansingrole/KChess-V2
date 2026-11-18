@@ -49,24 +49,20 @@ const SAVE_EVERY: usize = 6;
 const RECHECK_MS: u64 = 30_000;
 /// Free the engine after this long with nothing to review.
 const IDLE: Duration = Duration::from_secs(60);
-/// Automatic reviews of games from this long ago (`reviewAuto: 'recent'`).
+/// Automatic reviews of games from this long ago (`ReviewAuto::Recent`).
 const RECENT_MS: i64 = 30 * 86_400_000;
 /// Principal variation moves kept per evaluation.
 const PV_LENGTH: usize = 10;
 
 /// The settings a review reads.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ReviewSettings {
-    #[serde(default)]
-    pub review_auto: String,
-    #[serde(default)]
+    pub review_auto: ReviewAuto,
     pub review_on_battery: bool,
-    #[serde(default)]
     pub engine_path: String,
 }
 
-use kchess_contracts::types::ReviewSource;
+use kchess_contracts::types::{ReviewAuto, ReviewSource};
 pub use kchess_contracts::types::{
     ReviewCurrent as ReviewProgress, ReviewEval, ReviewFailure, ReviewPause as Pause,
     ReviewRequest, ReviewStatus, ReviewUpdate, StoredReview,
@@ -661,7 +657,7 @@ async fn background_block(s: &Arc<Shared>) -> Result<Option<Pause>> {
         return Ok(Some(Pause::Off));
     };
     let settings = host.settings().await?;
-    if settings.review_auto == "off" {
+    if settings.review_auto == ReviewAuto::Off {
         return Ok(Some(Pause::Off));
     }
     if let Some(busy) = host.busy() {
@@ -691,7 +687,7 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
         if epoch != current_epoch(s) {
             return Ok(None);
         }
-        let since = if settings.review_auto == "recent" {
+        let since = if settings.review_auto == ReviewAuto::Recent {
             now_ms() - RECENT_MS
         } else {
             0

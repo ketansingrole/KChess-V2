@@ -3,6 +3,7 @@
 //! on a board to explore, with its moves, its Wikibooks description and
 //! the ways to train it. The names and the tree are the shared rules'.
 
+use crate::pages::PageView;
 use kchess_contracts::calls;
 use kchess_contracts::check::Moves;
 use kchess_contracts::types::{DescriptionBlock, OpeningDescription, PopularityMonth};
@@ -300,11 +301,6 @@ impl Focusable for OpeningsPage {
 }
 
 impl OpeningsPage {
-    /// Its search field, for Find (`shell::find_on_page`).
-    pub(crate) fn search_fields(&self) -> Vec<Entity<InputState>> {
-        vec![self.search.clone()]
-    }
-
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> OpeningsPage {
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search openings or ECO codes"));
@@ -560,26 +556,9 @@ impl OpeningsPage {
         }
     }
 
-    /// What the open line's buttons can do now; nothing while the browser is shown.
-    pub(crate) fn actions(&self) -> Vec<Action> {
-        let Some(line) = &self.line else {
-            return Vec::new();
-        };
-        let mut actions = Vec::new();
-        if !line_of(line).is_empty() {
-            actions.push(Action::Train);
-        }
-        actions.push(Action::Analyse);
-        if opening_at(line).is_some() {
-            actions.push(Action::Puzzles);
-        }
-        actions.extend([Action::Flip, Action::AllOpenings]);
-        actions
-    }
-
     /// Run an action as its button does, if it is still allowed.
     pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.actions().contains(&action) {
+        if !self.actions(cx).contains(&action) {
             return;
         }
         let line = self.line.clone().unwrap_or_default();
@@ -1328,7 +1307,7 @@ impl crate::pages::PageAction for Action {
     }
 }
 
-impl crate::pages::PageView for OpeningsPage {
+impl PageView for OpeningsPage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: Page::Openings,
         label: "Openings",
@@ -1350,11 +1329,23 @@ impl crate::pages::PageView for OpeningsPage {
     }
 
     fn search_fields(&self) -> Vec<Entity<InputState>> {
-        OpeningsPage::search_fields(self)
+        vec![self.search.clone()]
     }
 
     fn actions(&self, _: &App) -> Vec<Action> {
-        OpeningsPage::actions(self)
+        let Some(line) = &self.line else {
+            return Vec::new();
+        };
+        let mut actions = Vec::new();
+        if !line_of(line).is_empty() {
+            actions.push(Action::Train);
+        }
+        actions.push(Action::Analyse);
+        if opening_at(line).is_some() {
+            actions.push(Action::Puzzles);
+        }
+        actions.extend([Action::Flip, Action::AllOpenings]);
+        actions
     }
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {

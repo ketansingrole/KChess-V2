@@ -899,7 +899,6 @@ pub fn game_row(
             .truncate()
             .child(text)
     };
-    // 11px by 12px, 13px text.
     h_flex()
         .id(id)
         .test_support()

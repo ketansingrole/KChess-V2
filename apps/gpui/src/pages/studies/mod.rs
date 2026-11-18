@@ -2,6 +2,7 @@
 //! studies on the analysis board, start or import one, and rename, copy, drill, upload or delete
 //! them. Lichess's own studies are a tab of their own when an account is connected.
 
+use crate::pages::PageView;
 use kchess_contracts::calls;
 use kchess_contracts::check::{ChapterName, LichessId, PgnText, StudyId, Username};
 use kchess_contracts::types::{Reply, StudyExport, StudySyncRequest};
@@ -279,11 +280,6 @@ impl Focusable for StudiesPage {
 }
 
 impl StudiesPage {
-    /// Its search field, for Find (`shell::find_on_page`).
-    pub(crate) fn search_fields(&self) -> Vec<Entity<InputState>> {
-        vec![self.search.clone()]
-    }
-
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> StudiesPage {
         let search = cx
             .new(|cx| InputState::new(window, cx).placeholder("Search by name, players or event"));
@@ -1536,7 +1532,7 @@ impl crate::pages::PageAction for Action {
     }
 }
 
-impl crate::pages::PageView for StudiesPage {
+impl PageView for StudiesPage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: crate::pages::Page::Studies,
         label: "Studies",
@@ -1557,7 +1553,7 @@ impl crate::pages::PageView for StudiesPage {
     }
 
     fn search_fields(&self) -> Vec<Entity<InputState>> {
-        StudiesPage::search_fields(self)
+        vec![self.search.clone()]
     }
 
     fn actions(&self, _: &App) -> Vec<Action> {

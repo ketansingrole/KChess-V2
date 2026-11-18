@@ -4,6 +4,7 @@
 //! from Lichess, sync, clear and remove.
 
 use crate::loading::Epoch;
+use crate::pages::PageView;
 use kchess_contracts::calls;
 use kchess_contracts::check::{FriendList, PresenceUsers, Username};
 use kchess_contracts::types::{
@@ -356,22 +357,6 @@ impl FriendsPage {
         });
     }
 
-    /// What the header's buttons can do now.
-    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
-        let accounts = crate::accounts::handle(cx).read(cx);
-        let mut actions = Vec::new();
-        if !self.input.read(cx).value().trim().is_empty() && !accounts.busy {
-            actions.push(Action::Follow);
-        }
-        if !accounts.connected().is_empty() {
-            actions.push(Action::Import);
-        }
-        if !accounts.tracked().is_empty() && !accounts.syncing() {
-            actions.push(Action::Sync);
-        }
-        actions
-    }
-
     /// Run an action as its button does, if it is still allowed.
     pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         if !self.actions(cx).contains(&action) {
@@ -706,7 +691,6 @@ impl Render for FriendsPage {
         let header = h_flex()
             .flex_wrap()
             .gap(px(8.))
-            // 10rem to 22rem, with its user-plus icon.
             .child(
                 div().flex_1().min_w(px(160.)).max_w(px(352.)).child(
                     Input::new(&self.input)
@@ -796,7 +780,6 @@ impl Render for FriendsPage {
                                 .gap(px(12.))
                                 .px(px(12.))
                                 .py(px(8.))
-                                // 12px, medium, as written.
                                 .text_size(px(12.))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(palette.text_muted)
@@ -1220,7 +1203,7 @@ impl crate::pages::PageAction for Action {
     }
 }
 
-impl crate::pages::PageView for FriendsPage {
+impl PageView for FriendsPage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: crate::pages::Page::Friends,
         label: "Following",
@@ -1237,7 +1220,18 @@ impl crate::pages::PageView for FriendsPage {
     }
 
     fn actions(&self, cx: &App) -> Vec<Action> {
-        FriendsPage::actions(self, cx)
+        let accounts = crate::accounts::handle(cx).read(cx);
+        let mut actions = Vec::new();
+        if !self.input.read(cx).value().trim().is_empty() && !accounts.busy {
+            actions.push(Action::Follow);
+        }
+        if !accounts.connected().is_empty() {
+            actions.push(Action::Import);
+        }
+        if !accounts.tracked().is_empty() && !accounts.syncing() {
+            actions.push(Action::Sync);
+        }
+        actions
     }
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {

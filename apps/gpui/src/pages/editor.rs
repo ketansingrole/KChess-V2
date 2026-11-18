@@ -4,6 +4,7 @@
 //! and en passant, or type a FEN, in any variant KChess plays (a Crazyhouse FEN keeps its
 //! pockets, a Three-check one its checks). Then analyse the position or play it.
 
+use crate::pages::PageView;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
@@ -484,23 +485,9 @@ impl EditorPage {
         self.changed(cx);
     }
 
-    /// The actions its buttons allow now: a position that cannot be played is only edited.
-    pub(crate) fn actions(&self) -> Vec<Action> {
-        let mut actions = vec![
-            Action::StartPosition,
-            Action::ClearBoard,
-            Action::Flip,
-            Action::CopyFen,
-        ];
-        if self.problem().is_none() {
-            actions.extend([Action::Analyse, Action::PlayStockfish, Action::PlayFriend]);
-        }
-        actions
-    }
-
     /// Run an action as its button does, if it is still allowed.
     pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.actions().contains(&action) {
+        if !self.actions(cx).contains(&action) {
             return;
         }
         match action {
@@ -1143,7 +1130,7 @@ impl crate::pages::PageAction for Action {
     }
 }
 
-impl crate::pages::PageView for EditorPage {
+impl PageView for EditorPage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: crate::pages::Page::Editor,
         label: "Board editor",
@@ -1160,7 +1147,16 @@ impl crate::pages::PageView for EditorPage {
     }
 
     fn actions(&self, _: &App) -> Vec<Action> {
-        EditorPage::actions(self)
+        let mut actions = vec![
+            Action::StartPosition,
+            Action::ClearBoard,
+            Action::Flip,
+            Action::CopyFen,
+        ];
+        if self.problem().is_none() {
+            actions.extend([Action::Analyse, Action::PlayStockfish, Action::PlayFriend]);
+        }
+        actions
     }
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {

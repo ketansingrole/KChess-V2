@@ -46,7 +46,7 @@ async fn bundled_stockfish_reviews_a_game_with_castling() {
     let review_host = ScriptedHost::new(
         store,
         ReviewSettings {
-            review_auto: "off".into(),
+            review_auto: kchess_contracts::types::ReviewAuto::Off,
             review_on_battery: true,
             engine_path: String::new(),
         },
