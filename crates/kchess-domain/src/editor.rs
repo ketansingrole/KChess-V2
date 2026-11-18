@@ -4,28 +4,11 @@
 use serde::{Deserialize, Serialize};
 use shakmaty::Color;
 
-use crate::js;
-use crate::voice::FILES;
+use crate::squares::{FILES, file_offset, unit_number};
 
 /// A JavaScript array index: an integer within `0..len` (anything else reads as undefined).
 fn at_index(index: f64, len: usize) -> Option<usize> {
     (index.fract() == 0.0 && index >= 0.0 && (index as usize) < len).then_some(index as usize)
-}
-
-/// `Number(unit)` for one UTF-16 code unit of a square name (NaN when absent).
-pub(crate) fn unit_number(unit: Option<&u16>) -> f64 {
-    match unit {
-        None => f64::NAN,
-        Some(unit) => js::string_to_number(&String::from_utf16_lossy(&[*unit])),
-    }
-}
-
-/// A square name's first UTF-16 unit minus `a`'s (so `a` is 0); None when empty.
-pub(crate) fn file_offset(square: &str) -> Option<i64> {
-    square
-        .encode_utf16()
-        .next()
-        .map(|unit| i64::from(unit) - 97)
 }
 
 /// The piece letter on a square of a FEN board field (`e1` → `K`), or None.
@@ -50,18 +33,6 @@ fn piece_on(board: &str, square: &str) -> Option<char> {
         }
     }
     None
-}
-
-fn letter_for(role: &str) -> Option<char> {
-    Some(match role {
-        "king" => 'k',
-        "queen" => 'q',
-        "rook" => 'r',
-        "bishop" => 'b',
-        "knight" => 'n',
-        "pawn" => 'p',
-        _ => return None,
-    })
 }
 
 /// Each digit of a board row stands for that many empty squares.
@@ -112,7 +83,9 @@ pub fn with_piece(
     let letter = match piece {
         None => '.',
         Some((color, role)) => {
-            let letter = letter_for(role).ok_or("unknown piece role")?;
+            let letter = crate::material::from_name(role)
+                .ok_or("unknown piece role")?
+                .char();
             if color == "white" {
                 letter.to_ascii_uppercase()
             } else {

@@ -2,7 +2,10 @@
 //! online, your record against them, their rating history, their record in a speed, and their
 //! recent games — and follow, challenge, message or watch them.
 
+mod rating_speeds;
+
 use crate::loading::{Epoch, Turn};
+use crate::pages::PageView;
 use kchess_contracts::calls;
 use kchess_contracts::check::{MessageText, PresenceUsers, Username};
 use kchess_contracts::types::{
@@ -27,10 +30,10 @@ use crate::pages::history::lichess::{RowDetail, game_row};
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::player_search::{self, NameMatches, SUGGESTED, chip_row, name_chip};
 use crate::rating_history::{Retry, has_points};
-use crate::rating_speeds::RatingSpeeds;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Look};
+use rating_speeds::RatingSpeeds;
 
 const BOARD_PERF_KEY: &str = "kchess:leaderboard-perf";
 /// Which players the leaderboard shows: `all`, `titled` or one title.
@@ -179,11 +182,6 @@ impl Focusable for PlayersPage {
 }
 
 impl PlayersPage {
-    /// Its username field, for Find (`shell::find_on_page`).
-    pub(crate) fn search_fields(&self) -> Vec<Entity<InputState>> {
-        vec![self.input.clone()]
-    }
-
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> PlayersPage {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Lichess username"));
         let perf_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
@@ -768,37 +766,6 @@ impl PlayersPage {
             shakmaty::Color::Black => (game.opponent, game.account),
         };
         crate::pages::analysis::open_exported(&game.id, white, black, game.color, window, cx);
-    }
-
-    /// What the open player's buttons can do now.
-    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
-        let Some(username) = self.username() else {
-            return Vec::new();
-        };
-        let accounts = crate::accounts::handle(cx).read(cx);
-        let followed = accounts
-            .all()
-            .iter()
-            .any(|account| account.username.eq_ignore_ascii_case(&username));
-        let not_me = accounts
-            .active(cx)
-            .as_deref()
-            .is_none_or(|me| !me.eq_ignore_ascii_case(&username));
-        let mut actions = Vec::new();
-        if !followed && !accounts.busy {
-            actions.push(Action::Follow);
-        }
-        if !accounts.connected().is_empty() && not_me {
-            actions.extend([Action::Challenge, Action::Message]);
-        }
-        if self
-            .status
-            .as_ref()
-            .is_some_and(|status| status.playing_id.is_some())
-        {
-            actions.push(Action::Watch);
-        }
-        actions
     }
 
     /// Run an action as its button does, if it is still allowed.
@@ -1812,7 +1779,7 @@ impl crate::pages::PageAction for Action {
     }
 }
 
-impl crate::pages::PageView for PlayersPage {
+impl PageView for PlayersPage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: crate::pages::Page::Players,
         label: "Players",
@@ -1829,11 +1796,37 @@ impl crate::pages::PageView for PlayersPage {
     }
 
     fn search_fields(&self) -> Vec<Entity<InputState>> {
-        PlayersPage::search_fields(self)
+        vec![self.input.clone()]
     }
 
     fn actions(&self, cx: &App) -> Vec<Action> {
-        PlayersPage::actions(self, cx)
+        let Some(username) = self.username() else {
+            return Vec::new();
+        };
+        let accounts = crate::accounts::handle(cx).read(cx);
+        let followed = accounts
+            .all()
+            .iter()
+            .any(|account| account.username.eq_ignore_ascii_case(&username));
+        let not_me = accounts
+            .active(cx)
+            .as_deref()
+            .is_none_or(|me| !me.eq_ignore_ascii_case(&username));
+        let mut actions = Vec::new();
+        if !followed && !accounts.busy {
+            actions.push(Action::Follow);
+        }
+        if !accounts.connected().is_empty() && not_me {
+            actions.extend([Action::Challenge, Action::Message]);
+        }
+        if self
+            .status
+            .as_ref()
+            .is_some_and(|status| status.playing_id.is_some())
+        {
+            actions.push(Action::Watch);
+        }
+        actions
     }
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {

@@ -137,10 +137,9 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         })(),
         "playerColor" => value_arg::<Value>(args, 0, "puzzle").and_then(|puzzle| {
             let fen = js::string(puzzle.get("fen")).unwrap_or("");
-            to_value(match puzzle::player_color(fen) {
-                shakmaty::Color::White => "white",
-                shakmaty::Color::Black => "black",
-            })
+            to_value(kchess_domain::color::name(kchess_domain::rules::fen_turn(
+                fen,
+            )))
         }),
         // Endgame drills.
         "endgameDrills" => to_value(&data().endgame_drills),

@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use shakmaty::variant::VariantPosition;
-use shakmaty::{Color, Position as _, Role};
+use shakmaty::{Position as _, Role};
 
 use crate::variant::Variant;
 use crate::{js, position, rules};
@@ -341,15 +341,6 @@ pub fn opponent_reply(state: PuzzleState, uci: &str) -> PuzzleState {
             ..next
         },
         None => state,
-    }
-}
-
-/// The side the player solves for: the side to move in the puzzle's FEN.
-pub fn player_color(fen: &str) -> Color {
-    if fen.split(' ').nth(1) == Some("b") {
-        Color::Black
-    } else {
-        Color::White
     }
 }
 

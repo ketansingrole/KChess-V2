@@ -2,6 +2,7 @@
 //! challenges and games in progress beside it, and the live game on the board with its offers,
 //! actions and chat. The game itself is `crate::online`'s, shared by the whole app.
 
+use crate::pages::PageView;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -73,7 +74,7 @@ pub struct OnlinePage {
     chat_read: usize,
     chat_game: String,
     exporter: Entity<Exporter>,
-    previews: std::collections::HashMap<String, Entity<ChessBoard>>,
+    previews: crate::board::Previews,
     /// The game's panel beside the board, drawn as a cached view of its own
     /// (`render_game_panel`), so a sliding move redraws the page around the board alone.
     game_panel: Entity<crate::part::Part<OnlinePage>>,
@@ -206,7 +207,7 @@ impl OnlinePage {
             chat_read: 0,
             chat_game: String::new(),
             exporter: cx.new(|_| Exporter::default()),
-            previews: std::collections::HashMap::new(),
+            previews: Default::default(),
             game_panel: crate::part::Part::panel(
                 |this, window, cx| this.render_game_panel(window, cx),
                 cx,
@@ -888,7 +889,7 @@ fn shows_game(cx: &App) -> bool {
     ) && !crate::accounts::handle(cx).read(cx).connected().is_empty()
 }
 
-impl crate::pages::PageView for OnlinePage {
+impl PageView for OnlinePage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: Page::Online,
         label: "Play on Lichess",

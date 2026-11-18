@@ -68,8 +68,8 @@ The goal is to keep **exactly one core per profile** and let **any number of cli
 ### What stays in the apps
 
 - Windows, menus, the Dock, desktop notifications, the browser, the microphone permission prompt.
-- Host capabilities that need a window: `focus` and the battery state (both
-  `Capability::Focus`; the app reads the battery in `power.rs`). Opening the browser
+- Host capabilities that need a window: `focus` (`Capability::Focus`). The core reads the
+  battery itself (`kchess-core/src/power.rs`). Opening the browser
   (`Capability::Browser`) is the app's and the CLI's. See
   [Routing host requests](#routing-host-requests).
 

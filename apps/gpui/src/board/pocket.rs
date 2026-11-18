@@ -37,17 +37,6 @@ impl Render for PieceGhost {
     }
 }
 
-fn role_name(role: Role) -> &'static str {
-    match role {
-        Role::Pawn => "pawn",
-        Role::Knight => "knight",
-        Role::Bishop => "bishop",
-        Role::Rook => "rook",
-        Role::Queen => "queen",
-        Role::King => "king",
-    }
-}
-
 /// The pocket of `color` for the position on `board`; `None` outside Crazyhouse.
 pub fn pocket(board: &Entity<ChessBoard>, color: Color, cx: &App) -> Option<AnyElement> {
     let shown = board.read(cx);
@@ -79,7 +68,10 @@ pub fn pocket(board: &Entity<ChessBoard>, color: Color, cx: &App) -> Option<AnyE
         let image = SharedString::from(looks::piece_path(&set, Piece { color, role }));
         let can_drop = drops.contains(&role);
         let selected = picked == Some(role);
-        let label = format!("{side} {} in hand: {count}", role_name(role));
+        let label = format!(
+            "{side} {} in hand: {count}",
+            kchess_domain::material::name(role)
+        );
         let entity = board.downgrade();
         let ghost = image.clone();
         div()

@@ -20,13 +20,13 @@ use serde_json::Number;
 use shakmaty::Color;
 
 use super::HistoryPage;
+use super::replay::GameReplay;
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::played::GameOrigin;
 use crate::game::tree::TreeNode;
 use crate::pages::Page;
 use crate::pages::analysis::Opening;
-use crate::replay::GameReplay;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
@@ -872,13 +872,7 @@ pub fn game_row(
     if let Some(rating) = game.opponent_rating {
         sub.push_str(&format!(" · {rating}"));
     }
-    let speed = {
-        let mut chars = game.speed.chars();
-        chars
-            .next()
-            .map(|first| first.to_uppercase().chain(chars).collect::<String>())
-            .unwrap_or_default()
-    };
+    let speed = kchess_domain::perf::Speed::label_of(&game.speed).to_string();
     let diff = game.rating_diff.filter(|diff| *diff != 0);
     let accuracy = match &side {
         Some(side) => side
@@ -899,7 +893,6 @@ pub fn game_row(
             .truncate()
             .child(text)
     };
-    // 11px by 12px, 13px text.
     h_flex()
         .id(id)
         .test_support()

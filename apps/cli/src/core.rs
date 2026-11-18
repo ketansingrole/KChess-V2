@@ -125,7 +125,6 @@ fn answer(
             HostReply::done()
         }
         HostRequest::OpenExternal(_) => HostReply::Error(kchess_host::NOT_A_WEB_PAGE.into()),
-        HostRequest::OnBattery => HostReply::Value(Value::Bool(false)),
         request => HostReply::Error(format!(
             "The command line cannot answer {}.",
             request.kind()
@@ -162,7 +161,6 @@ pub fn absolute(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     /// A web page opens in the browser only when asked to, and nothing else opens at all.
     #[test]
@@ -183,10 +181,6 @@ mod tests {
             HostReply::Error("Only web addresses open in the browser.".into())
         );
         assert_eq!(opened.borrow().len(), 1);
-        assert_eq!(
-            answer(HostRequest::OnBattery, Browser::Open, open),
-            HostReply::Value(json!(false))
-        );
         assert_eq!(
             answer(HostRequest::Focus, Browser::Open, open),
             HostReply::Error("The command line cannot answer focus.".into())

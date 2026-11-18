@@ -3,6 +3,7 @@
 //! games' clocks, filtered by speed, period and rated or casual.
 
 use crate::loading::Epoch;
+use crate::pages::PageView;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
@@ -836,8 +837,7 @@ impl InsightsPage {
                     .by_speed
                     .iter()
                     .map(|entry| {
-                        let name = Speed::from_key(&entry.speed)
-                            .map_or(&*entry.speed, |speed| speed.label());
+                        let name = Speed::label_of(&entry.speed);
                         (name.to_string(), record(&entry.record))
                     })
                     .collect(),
@@ -933,7 +933,7 @@ impl InsightsPage {
     }
 }
 
-impl crate::pages::PageView for InsightsPage {
+impl PageView for InsightsPage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: Page::Insights,
         label: "Insights",

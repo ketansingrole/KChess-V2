@@ -206,15 +206,7 @@ fn schedule_text(summary: &repetition::Summary, now: f64) -> Option<String> {
 /// Whether `color` has a move to play at `node`: a line's last move leaves nothing to play,
 /// whoever is on move, and the next line follows.
 fn to_play(node: &TreeNode, color: Color) -> bool {
-    !node.children.is_empty() && turn_of(&node.fen) == color
-}
-
-fn turn_of(fen: &str) -> Color {
-    if fen.split(' ').nth(1) == Some("b") {
-        Color::Black
-    } else {
-        Color::White
-    }
+    !node.children.is_empty() && kchess_domain::rules::fen_turn(&node.fen) == color
 }
 
 /// The repertoire trainer's actions, as its buttons offer them.
@@ -560,7 +552,7 @@ impl Repertoire {
                         uci: found.uci,
                     })
                     .collect();
-                let yours = turn_of(&fen) == color;
+                let yours = kchess_domain::rules::fen_turn(&fen) == color;
                 let replies = openings::opening_replies(&counts, yours);
                 for uci in replies {
                     if let Some(child) = root.add_move(&path, &uci)
@@ -805,7 +797,7 @@ impl Repertoire {
         };
         let variant = kchess_domain::variant::Variant::Standard;
         let position = kchess_domain::rules::setup_start(variant, &node.fen);
-        if let Some(uci) = self.move_box.take(variant, position.as_ref(), window, cx) {
+        if let Some(uci) = self.move_box.take(position.as_ref(), window, cx) {
             self.play(&uci, cx);
         }
     }

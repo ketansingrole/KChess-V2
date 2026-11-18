@@ -47,7 +47,7 @@ impl OnBoard {
     }
 
     pub fn player_color(&self) -> shakmaty::Color {
-        puzzle::player_color(&self.puzzle.fen)
+        kchess_domain::rules::fen_turn(&self.puzzle.fen)
     }
 
     /// The last move's squares.

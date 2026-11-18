@@ -156,6 +156,10 @@ exclude_re = [
     'tooling/xtask/src/package/mac\.rs:.*: replace sign -> Result with ',
     'tooling/xtask/src/package/(mac|mas)\.rs:.*: replace package -> Result<Vec<PathBuf>> with ',
     'tooling/xtask/src/package/mod\.rs:.*: replace run -> Result with ',
+    # The power state read from the OS: no test can unplug the computer. What Linux's supplies
+    # decide is tested (`supplies_on_battery`); the battery's use of a reading is tested with a
+    # stand-in reader (`engine::bridge`).
+    'kchess-core/src/power\.rs:.*(replace (os::)?on_battery -> bool with |in (os::)?on_battery$)',
     # ── kchess-domain: mutants whose program behaves the same ──
     # `|` and `^` (or `+` and `-`, or `&` and `|`) agree on bitboards or numbers that share no bit:
     # a king's square and its rooks', the first and eighth ranks, queens and rooks, pawn pushes and
@@ -201,9 +205,9 @@ exclude_re = [
     'kchess-domain/src/puzzle\.rs:.*: replace > with >= in Sampler::(add_bytes|push)$',
     'kchess-domain/src/puzzle\.rs:.*: delete ! in Sampler::add_bytes$',
     # File and rank are whole numbers (or NaN), so their sum and difference share their parity.
-    'kchess-domain/src/voice\.rs:.*: replace \+ with - in square_color$',
+    'kchess-domain/src/training/board_vision\.rs:.*: replace \+ with - in square_color$',
     # Equal material adds no extra pieces either way.
-    'kchess-domain/src/voice\.rs:.*: replace > with >= in material_diff$',
+    'kchess-domain/src/material\.rs:.*: replace > with >= in diff$',
     # A wait of zero gives zero either way.
     'kchess-domain/src/online_game/events\.rs:.*: replace > with >= in Run<.*>::read_state$',
     # The calendar takes only years -9999 to 9999, far inside the limit, so the guard only saves

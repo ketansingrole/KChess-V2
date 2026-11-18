@@ -130,7 +130,7 @@ async fn a_crazyhouse_game_is_reviewed_with_its_drops() {
     let review_host = ScriptedHost::new(
         store,
         ReviewSettings {
-            review_auto: "off".into(),
+            review_auto: kchess_contracts::types::ReviewAuto::Off,
             review_on_battery: true,
             engine_path: String::new(),
         },

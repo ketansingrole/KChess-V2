@@ -140,27 +140,19 @@ pub fn player_line(
 /// The pieces one side has won over the other, as silhouettes in the text
 /// colour, and its lead in pawns, as Lichess shows them.
 pub fn material(fen: &str, white: bool, set: &str, palette: &Palette) -> Option<AnyElement> {
-    let diff = kchess_domain::voice::material_diff(fen);
+    let diff = kchess_domain::material::diff(fen);
     let roles = if white { diff.white } else { diff.black };
     let lead = diff.score as f64 * if white { 1. } else { -1. };
     if roles.is_empty() && lead <= 0. {
         return None;
     }
-    let mut groups: Vec<(String, usize)> = Vec::new();
+    let mut groups: Vec<(shakmaty::Role, usize)> = Vec::new();
     for role in roles {
         match groups.last_mut() {
             Some((last, count)) if *last == role => *count += 1,
-            _ => groups.push((role.to_string(), 1)),
+            _ => groups.push((role, 1)),
         }
     }
-    let letter = |role: &str| match role {
-        "king" => 'K',
-        "queen" => 'Q',
-        "rook" => 'R',
-        "bishop" => 'B',
-        "knight" => 'N',
-        _ => 'P',
-    };
     let set = crate::board::looks::piece_set(set).to_string();
     Some(
         h_flex()
@@ -170,7 +162,7 @@ pub fn material(fen: &str, white: bool, set: &str, palette: &Palette) -> Option<
             .font_weight(FontWeight::MEDIUM)
             .text_color(palette.toned)
             .children(groups.into_iter().map(|(role, count)| {
-                let path: SharedString = format!("pieces/{set}/b{}.svg", letter(&role)).into();
+                let path: SharedString = format!("pieces/{set}/b{}.svg", role.upper_char()).into();
                 h_flex().children((0..count).map(move |n| {
                     svg()
                         .path(path.clone())

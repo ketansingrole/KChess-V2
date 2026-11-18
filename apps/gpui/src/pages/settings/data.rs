@@ -247,7 +247,6 @@ impl SettingsPage {
                 .text_color(palette.text_muted)
                 .child(text)
         };
-        // A bordered tile, at least 200px.
         let tile = |label: &'static str, value: String, note: Option<String>| {
             v_flex()
                 .flex_1()

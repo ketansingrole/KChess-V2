@@ -3,6 +3,7 @@
 //! totals), and creating an arena.
 
 use crate::loading::Epoch;
+use crate::pages::PageView;
 use kchess_contracts::calls::{self, CoreCall};
 use kchess_contracts::check::{
     Bounded, OptionalAccount, TournamentId, TournamentPassword, Username,
@@ -512,23 +513,6 @@ impl TournamentsPage {
         );
     }
 
-    /// What the page's buttons can do now: the schedule's, or the open event's.
-    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
-        let Some(open) = &self.open else {
-            let mut actions = Vec::new();
-            if !self.loading.busy() {
-                actions.push(Action::Refresh);
-            }
-            actions.push(Action::Create);
-            return actions;
-        };
-        // Create arena stays in the header while an event is open.
-        let mut actions = vec![Action::Back];
-        actions.extend(self.event_actions(open.detail.as_ref(), cx));
-        actions.push(Action::Create);
-        actions
-    }
-
     /// The open event's own actions: join it, or go to your game and leave it.
     fn event_actions(&self, detail: Option<&TournamentDetail>, cx: &App) -> Vec<Action> {
         let Some(detail) = detail else {
@@ -765,7 +749,7 @@ impl crate::pages::PageAction for Action {
     }
 }
 
-impl crate::pages::PageView for TournamentsPage {
+impl PageView for TournamentsPage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: crate::pages::Page::Tournaments,
         label: "Tournaments",
@@ -793,7 +777,19 @@ impl crate::pages::PageView for TournamentsPage {
     }
 
     fn actions(&self, cx: &App) -> Vec<Action> {
-        TournamentsPage::actions(self, cx)
+        let Some(open) = &self.open else {
+            let mut actions = Vec::new();
+            if !self.loading.busy() {
+                actions.push(Action::Refresh);
+            }
+            actions.push(Action::Create);
+            return actions;
+        };
+        // Create arena stays in the header while an event is open.
+        let mut actions = vec![Action::Back];
+        actions.extend(self.event_actions(open.detail.as_ref(), cx));
+        actions.push(Action::Create);
+        actions
     }
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {

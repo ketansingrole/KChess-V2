@@ -6,6 +6,8 @@
 mod keyboard;
 pub mod looks;
 mod pocket;
+pub mod previews;
+pub use previews::Previews;
 
 pub use pocket::{PieceGhost, pocket};
 
@@ -1871,7 +1873,7 @@ pub fn page_has_keys(page: &FocusHandle, window: &Window, cx: &App) -> bool {
 /// What a screen reader says of the board: the last move and
 /// the side to move.
 fn describe(state: &BoardState) -> String {
-    let to_move = if state.fen.split_whitespace().nth(1) == Some("b") {
+    let to_move = if kchess_domain::rules::fen_turn(&state.fen).is_black() {
         "Black to move"
     } else {
         "White to move"
@@ -2461,11 +2463,7 @@ mod keyboard_tests {
 
     fn board(fen: &str, variant: Variant, orientation: Color) -> ChessBoard {
         let position = kchess_domain::rules::setup_start(variant, fen).expect("a position");
-        let turn = if fen.split_whitespace().nth(1) == Some("b") {
-            Color::Black
-        } else {
-            Color::White
-        };
+        let turn = kchess_domain::rules::fen_turn(fen);
         ChessBoard::new(BoardState::of(&position, orientation, Some(turn), None))
     }
 

@@ -91,7 +91,8 @@ impl Session<'_> {
     /// board; anything that is not a legal move there is passed on as typed for the rules to
     /// judge.
     fn typed_uci(&self, text: &str) -> String {
-        kchess_games::typed_uci(self.setup().variant, &self.fen(), text)
+        kchess_domain::rules::setup_start(self.setup().variant, &self.fen())
+            .and_then(|position| kchess_domain::position::typed_uci(&position, text))
             .unwrap_or_else(|| text.to_string())
     }
 
@@ -375,11 +376,7 @@ impl Session<'_> {
                 "undo" => game.takeback(now),
                 "resign" => {
                     let fen = self.fen();
-                    let turn = if fen.split_whitespace().nth(1) == Some("b") {
-                        kchess_domain::color::Color::Black
-                    } else {
-                        kchess_domain::color::Color::White
-                    };
+                    let turn = kchess_domain::rules::fen_turn(&fen);
                     let Game::Local(game) = &mut self.game else {
                         return Ok(false);
                     };

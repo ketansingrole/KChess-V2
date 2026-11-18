@@ -8,8 +8,6 @@ pub mod puzzle;
 
 use shakmaty::Color;
 
-use kchess_domain::variant::Variant;
-
 /// A random number in [0, 1); an error when the system has no randomness to give.
 pub fn random_unit() -> Result<f64, String> {
     let mut bytes = [0u8; 8];
@@ -36,19 +34,6 @@ pub fn now_ms() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0., |elapsed| elapsed.as_secs_f64() * 1000.)
-}
-
-/// A move typed as SAN ("Nf3", "O-O", "exd8=Q") or UCI ("g1f3") in the position `fen` of
-/// `variant`, as UCI when it is legal there.
-pub fn typed_uci(variant: Variant, fen: &str, text: &str) -> Option<String> {
-    let text = text.trim();
-    let position = kchess_domain::rules::setup_start(variant, fen)?;
-    let uci = text.to_lowercase();
-    if kchess_domain::rules::is_uci_text(&uci) {
-        kchess_domain::position::play_uci(&position, &uci).map(|_| uci)
-    } else {
-        kchess_domain::position::play_san(&position, text).map(|played| played.uci)
-    }
 }
 
 #[cfg(test)]
@@ -79,37 +64,6 @@ mod tests {
             .as_millis() as f64;
         let now = now_ms();
         assert!(now >= before && now < before + 60_000., "{now} vs {before}");
-    }
-
-    /// A typed move is read as UCI when it looks like one, and as SAN otherwise, in the
-    /// position given; anything illegal there is none.
-    #[test]
-    fn a_typed_move_is_read_as_san_or_uci() {
-        let start = kchess_domain::rules::INITIAL_FEN;
-        assert_eq!(
-            typed_uci(Variant::Standard, start, "Nf3").as_deref(),
-            Some("g1f3")
-        );
-        assert_eq!(
-            typed_uci(Variant::Standard, start, " g1f3 ").as_deref(),
-            Some("g1f3")
-        );
-        assert_eq!(
-            typed_uci(Variant::Standard, start, "G1F3").as_deref(),
-            Some("g1f3")
-        );
-        assert_eq!(typed_uci(Variant::Standard, start, "e2e5"), None);
-        assert_eq!(typed_uci(Variant::Standard, start, "Nf6"), None);
-        let castle = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
-        assert_eq!(
-            typed_uci(Variant::Standard, castle, "O-O").as_deref(),
-            Some("e1h1")
-        );
-        let zh = "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
-        assert_eq!(
-            typed_uci(Variant::Crazyhouse, zh, "P@e3").as_deref(),
-            Some("P@e3")
-        );
     }
 
     #[test]

@@ -13,7 +13,6 @@ use kchess_contracts::types::ProfileArea;
 use kchess_contracts::{Capability, CoreError, HostAsk, HostReply, HostRequest, Level};
 use kchess_core::TestSwitches;
 use kchess_service::{ConnectError, CoreHandle, Hello, Layout, Mode};
-use serde_json::Value;
 
 pub use kchess_contracts::CoreEvent;
 pub use kchess_service::ClientEvent;
@@ -387,7 +386,6 @@ fn answer_host(ask: HostAsk, cx: &mut App) {
             cx.activate(true);
             HostReply::done()
         }
-        HostRequest::OnBattery => HostReply::Value(Value::Bool(crate::power::on_battery())),
         request => HostReply::Error(format!("Unknown host capability {}", request.kind())),
     };
     let delivery = cx.global::<AppCore>().bridge.reply(ask.id, reply);

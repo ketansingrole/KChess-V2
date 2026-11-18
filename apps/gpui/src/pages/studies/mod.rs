@@ -2,6 +2,7 @@
 //! studies on the analysis board, start or import one, and rename, copy, drill, upload or delete
 //! them. Lichess's own studies are a tab of their own when an account is connected.
 
+use crate::pages::PageView;
 use kchess_contracts::calls;
 use kchess_contracts::check::{ChapterName, LichessId, PgnText, StudyId, Username};
 use kchess_contracts::types::{Reply, StudyExport, StudySyncRequest};
@@ -254,7 +255,7 @@ pub struct StudiesPage {
     /// The Lichess tab: the account's studies and what is being done with them.
     lichess: lichess::LichessTab,
     uploading: Option<String>,
-    previews: HashMap<String, Entity<ChessBoard>>,
+    previews: crate::board::Previews,
     /// The page's scrolling, and where the cards' grid lies in it: only the rows of cards in view
     /// (and a margin around it) are made, laid out and drawn. Fifty cards, the library's limit,
     /// were most of opening the page.
@@ -279,11 +280,6 @@ impl Focusable for StudiesPage {
 }
 
 impl StudiesPage {
-    /// Its search field, for Find (`shell::find_on_page`).
-    pub(crate) fn search_fields(&self) -> Vec<Entity<InputState>> {
-        vec![self.search.clone()]
-    }
-
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> StudiesPage {
         let search = cx
             .new(|cx| InputState::new(window, cx).placeholder("Search by name, players or event"));
@@ -330,7 +326,7 @@ impl StudiesPage {
             sort,
             lichess,
             uploading: None,
-            previews: HashMap::new(),
+            previews: Default::default(),
             scroll: ScrollHandle::new(),
             grid: Measured::default(),
             row_heights: Default::default(),
@@ -368,19 +364,8 @@ impl StudiesPage {
 
     /// A small board picturing a position, made once per position.
     fn preview(&mut self, fen: &str, cx: &mut Context<Self>) -> Entity<ChessBoard> {
-        self.previews
-            .entry(fen.to_string())
-            .or_insert_with(|| {
-                cx.new(|_| {
-                    ChessBoard::new(BoardState::preview(
-                        fen,
-                        kchess_domain::variant::Variant::Standard,
-                        Color::White,
-                        None,
-                    ))
-                })
-            })
-            .clone()
+        let state = || BoardState::preview(fen, Default::default(), Color::White, None);
+        self.previews.board(fen.to_string(), state, cx)
     }
 
     /* ── Opening and starting studies ─────────────────────────────────── */
@@ -903,7 +888,7 @@ impl StudiesPage {
             .iter()
             .filter_map(|study| self.summary(&study.pgn).map(|summary| summary.fen))
             .collect();
-        self.previews.retain(|fen, _| listed.contains(fen));
+        self.previews.retain(|fen| listed.contains(fen));
         let rows = studies.len().div_ceil(count);
         let heights = {
             let mut measured = self.row_heights.borrow_mut();
@@ -1536,7 +1521,7 @@ impl crate::pages::PageAction for Action {
     }
 }
 
-impl crate::pages::PageView for StudiesPage {
+impl PageView for StudiesPage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: crate::pages::Page::Studies,
         label: "Studies",
@@ -1557,7 +1542,7 @@ impl crate::pages::PageView for StudiesPage {
     }
 
     fn search_fields(&self) -> Vec<Entity<InputState>> {
-        StudiesPage::search_fields(self)
+        vec![self.search.clone()]
     }
 
     fn actions(&self, _: &App) -> Vec<Action> {

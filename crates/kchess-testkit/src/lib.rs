@@ -7,6 +7,8 @@
 //! and shares the parsing and the response heads (`Request::from_head`, `sized_head`,
 //! `chunked_head`, `chunk`).
 
+pub mod memory;
+
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::Arc;

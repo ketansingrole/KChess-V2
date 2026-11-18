@@ -1104,7 +1104,6 @@ impl Render for CommandPalette {
                 );
             (list, footer)
         });
-        // The shortcut hides below 560px.
         let shortcut = !open && window.viewport_size().width >= px(560.);
         let input = self.input.clone();
         let field = h_flex()

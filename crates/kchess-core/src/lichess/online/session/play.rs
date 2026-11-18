@@ -1,6 +1,8 @@
 //! The live online game: its stream, moves, chat, presence, actions, logout and close.
 
 use kchess_contracts::CoreEvent;
+use kchess_domain::online_game::server::ServerEvent;
+use kchess_domain::perf::Speed;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -94,18 +96,17 @@ impl OnlineSession {
 
     fn on_game_event(&self, game_id: &str, finished: &AtomicBool, event: Value) {
         // Lichess closes the game stream when the game ends; don't reconnect then.
-        let kind = event["type"].as_str().unwrap_or("").to_string();
-        if kind == "gameFull" {
-            let correspondence = event["speed"].as_str() == Some("correspondence");
-            let mut st = self.st();
-            // A replaced game's last event must not describe the game opened since.
-            if let Some(game) = st.live.as_mut().filter(|game| game.id == game_id) {
-                game.correspondence = correspondence;
+        let status = match ServerEvent::read(&event) {
+            ServerEvent::GameFull(full) => {
+                let correspondence = full.speed.as_deref() == Some(Speed::Correspondence.key());
+                let mut st = self.st();
+                // A replaced game's last event must not describe the game opened since.
+                if let Some(game) = st.live.as_mut().filter(|game| game.id == game_id) {
+                    game.correspondence = correspondence;
+                }
+                full.state.and_then(|state| state.status)
             }
-        }
-        let status = match kind.as_str() {
-            "gameFull" => event["state"]["status"].as_str(),
-            "gameState" => event["status"].as_str(),
+            ServerEvent::GameState(state) => state.status,
             _ => None,
         };
         let over = status.is_some_and(|status| {

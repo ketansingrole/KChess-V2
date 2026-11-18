@@ -65,8 +65,14 @@ pub struct GameRef {
 }
 
 impl GameRef {
+    /// A game as Lichess describes it in a `gameStart` or a list of games in progress
+    /// (`nowPlaying`).
+    pub fn read(game: &Value) -> GameRef {
+        GameRef::deserialize(game).unwrap_or_default()
+    }
+
     pub fn correspondence(&self) -> bool {
-        self.speed.as_deref() == Some("correspondence")
+        self.speed.as_deref() == Some(crate::perf::Speed::Correspondence.key())
     }
 
     /// Whether the Board API can play it; a game started on another device may not be.
@@ -291,6 +297,17 @@ mod tests {
         assert!(start(json!({ "gameId": "a" })).board_compatible());
         assert!(!start(json!({ "compat": { "board": false } })).board_compatible());
         assert!(start(json!({ "speed": "correspondence" })).correspondence());
+    }
+
+    /// A game of a list of games in progress reads as a game start names it; a game that is not
+    /// an object reads as one with nothing said, playable on the board and not correspondence.
+    #[test]
+    fn a_listed_game_reads_as_a_game_start() {
+        let game = GameRef::read(&json!({ "gameId": "a", "speed": "rapid", "compat": {} }));
+        assert_eq!(game.game_id.as_deref(), Some("a"));
+        assert!(game.board_compatible() && !game.correspondence());
+        assert!(GameRef::read(&json!({ "speed": "correspondence" })).correspondence());
+        assert_eq!(GameRef::read(&json!("a")), GameRef::default());
     }
 
     #[test]

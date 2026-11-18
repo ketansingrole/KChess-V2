@@ -8,7 +8,7 @@ lines marked `KChess patch`.
 
 GPUI's system notifications carry buttons, and a response names the button pressed, but nothing
 can be typed into one. KChess lets a correspondence game's "your move" notification take a move
-(`apps/gpui/src/move_reply.rs`). GPUI's types are left as they are, so that `gpui-pre`, the
+(`apps/gpui/src/notifications/move_reply.rs`). GPUI's types are left as they are, so that `gpui-pre`, the
 Linux backend and GPUI Kit stay unpatched; the patch keeps to a convention instead:
 
 - A `SystemNotificationAction` whose `id` starts with `input:` is a text box with its button.

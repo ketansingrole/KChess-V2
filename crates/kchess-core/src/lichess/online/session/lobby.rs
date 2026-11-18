@@ -1,6 +1,8 @@
 //! The online session's idle event stream.
 
 use kchess_contracts::CoreEvent;
+use kchess_domain::online_game::server::ServerEvent;
+use kchess_domain::records::online::EventKind;
 use std::sync::Arc;
 
 use kchess_contracts::types::{LobbyState, OnlinePhase};
@@ -109,33 +111,41 @@ impl OnlineSession {
             if cancel_for_emit.is_cancelled() {
                 return;
             }
-            let kind = event["type"].as_str().unwrap_or("").to_string();
-            if kind == "gameStart" {
-                this.challenge_became_game(event["game"]["gameId"].as_str().unwrap_or(""));
-            }
-            if crate::lichess::online::state::CHALLENGE_TYPES.contains(&kind.as_str()) {
+            if EventKind::of(&event).is_some_and(EventKind::is_challenge) {
                 this.on_challenge(&for_account, &event);
-            } else if kind == "gameStart"
-                && event["game"]["speed"].as_str() != Some("correspondence")
-                && crate::lichess::online::ongoing::board_playable(&event["game"])
-            {
-                let game_id = event["game"]["gameId"].as_str().unwrap_or("").to_string();
-                let this = this.clone();
-                let account = for_account.clone();
-                tokio::spawn(async move {
-                    let attached = crate::tasks::caught(this.attach(&account, &game_id))
-                        .await
-                        .unwrap_or_else(|_| Err(CoreError::new("The game could not be opened.")));
-                    if let Err(cause) = attached {
-                        this.log(
-                            Level::Warn,
-                            format!("Could not open game: {account} {game_id} {}", cause.message),
-                        );
-                        this.report(&cause, None);
+                return;
+            }
+            match ServerEvent::read(&event) {
+                ServerEvent::GameStart { game } => {
+                    let game = game.unwrap_or_default();
+                    let game_id = game.game_id.clone().unwrap_or_default();
+                    this.challenge_became_game(&game_id);
+                    if game.correspondence() || !game.board_compatible() {
+                        this.ongoing_changed();
+                        return;
                     }
-                });
-            } else if kind == "gameStart" || kind == "gameFinish" {
-                this.ongoing_changed();
+                    let this = this.clone();
+                    let account = for_account.clone();
+                    tokio::spawn(async move {
+                        let attached = crate::tasks::caught(this.attach(&account, &game_id))
+                            .await
+                            .unwrap_or_else(|_| {
+                                Err(CoreError::new("The game could not be opened."))
+                            });
+                        if let Err(cause) = attached {
+                            this.log(
+                                Level::Warn,
+                                format!(
+                                    "Could not open game: {account} {game_id} {}",
+                                    cause.message
+                                ),
+                            );
+                            this.report(&cause, None);
+                        }
+                    });
+                }
+                ServerEvent::GameFinish { .. } => this.ongoing_changed(),
+                _ => {}
             }
         });
         let request = Self::events_request(&auth);

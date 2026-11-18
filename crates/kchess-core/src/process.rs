@@ -41,7 +41,7 @@ pub(crate) fn spawn(command: &mut Command) -> std::io::Result<Child> {
 mod tests {
     use super::*;
 
-    /// CI regression (Linux, `core_wiring::a_lease_never_waits_on_an_unanswered_battery_request`):
+    /// CI regression (Linux, `core_wiring::the_computers_power_reaches_the_thread_budget`):
     /// "Could not start the engine: Text file busy" when a test's fresh engine copy was still
     /// held open for writing by a child another thread had just forked. The spawn waits it out.
     #[cfg(target_os = "linux")]

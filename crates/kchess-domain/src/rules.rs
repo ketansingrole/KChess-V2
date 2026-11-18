@@ -220,6 +220,15 @@ fn parse_remaining_checks(part: &str) -> Option<ByColor<RemainingChecks>> {
     })
 }
 
+/// The side to move in a FEN: Black for `b`, otherwise White.
+pub fn fen_turn(fen: &str) -> Color {
+    if fen.split_whitespace().nth(1) == Some("b") {
+        Color::Black
+    } else {
+        Color::White
+    }
+}
+
 /// Lenient about missing fields, strict about everything present.
 pub fn parse_fen(fen: &str) -> Option<Setup> {
     let mut parts = split_fen(fen).into_iter();

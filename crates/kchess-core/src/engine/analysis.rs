@@ -465,7 +465,7 @@ async fn analyse(
     let located = located?;
     lock(&session.progress).engine = located.key.clone();
     let target = shared.engine.open(&located)?.uci;
-    let white_to_move = request.fen.split(' ').nth(1).unwrap_or("w") == "w";
+    let white_to_move = kchess_domain::rules::fen_turn(&request.fen).is_white();
     shared
         .ctx
         .lease(Priority::Analysis, token, async {

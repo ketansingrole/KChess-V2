@@ -36,8 +36,8 @@ type Pending = Mutex<Requests>;
 struct Requests {
     waiting: HashMap<u64, Waiting>,
     /// Set by `close`, under the same lock, so no request is taken after it: a host request
-    /// started by work the closing core had spawned (a battery refresh first polled after close
-    /// on a loaded runner) would otherwise wait out `DEADLINE` for an answer no host will send.
+    /// started by work the closing core had spawned would otherwise wait out `DEADLINE` for an
+    /// answer no host will send.
     closed: bool,
 }
 
@@ -208,10 +208,6 @@ impl Capabilities {
     pub async fn focus(&self) -> Result<()> {
         self.request(HostRequest::Focus).await.map(|_| ())
     }
-
-    pub async fn on_battery(&self) -> Result<bool> {
-        Ok(self.request(HostRequest::OnBattery).await?.as_bool() == Some(true))
-    }
 }
 
 /// OS credential stores block (and may prompt): keep them off the core's worker threads.
@@ -253,7 +249,6 @@ mod tests {
                     HostRequest::SecretsDecrypt(sealed) => {
                         HostReply::Value(json!(format!("plain:{sealed}")))
                     }
-                    HostRequest::OnBattery => HostReply::Value(json!(true)),
                     HostRequest::SecretsAvailable => HostReply::Value(json!(false)),
                     HostRequest::OpenExternal(url) if url == "https://kchess.test/" => {
                         HostReply::Value(Value::Null)
@@ -271,7 +266,6 @@ mod tests {
         let caps = Arc::new(Capabilities::new(echo.clone()));
         *echo.0.lock().unwrap() = Some(Arc::clone(&caps));
         assert_eq!(caps.decrypt("abc").await.unwrap(), "plain:abc");
-        assert!(caps.on_battery().await.unwrap());
         assert_eq!(caps.focus().await.unwrap_err().message, "Not supported.");
         assert!(!caps.secrets_available().await.unwrap());
         caps.open_external("https://kchess.test/").await.unwrap();
@@ -356,7 +350,7 @@ mod tests {
         let host = TestHost::new();
         let caps = Capabilities::new(host.clone());
         caps.close();
-        let answer = tokio::time::timeout(Duration::from_secs(1), caps.on_battery())
+        let answer = tokio::time::timeout(Duration::from_secs(1), caps.focus())
             .await
             .expect("answered at once");
         assert_eq!(
@@ -365,34 +359,5 @@ mod tests {
         );
         assert!(host.events().is_empty(), "the host was asked");
         assert!(caps.pending.lock().unwrap().waiting.is_empty());
-    }
-
-    /// 2026-11-10, CI on Windows: a core's battery refresh, spawned by its first call, ran only
-    /// after the core had closed its capabilities. Its request then waited 30 s for an answer, so
-    /// 14 of 20 cores opened and closed in a row were still held, read as 972 B kept per cycle
-    /// (`tests/memory.rs`, `cores_opened_and_closed`). The refresh now ends with the core.
-    #[tokio::test]
-    async fn a_battery_refresh_that_starts_after_close_ends_at_once() {
-        let host: Arc<dyn Host> = TestHost::new();
-        let caps = Arc::new(Capabilities::new(Arc::clone(&host)));
-        let battery = crate::engine::bridge::Battery::new(host, Arc::clone(&caps));
-        let alive = || {
-            tokio::runtime::Handle::current()
-                .metrics()
-                .num_alive_tasks()
-        };
-        let before = alive();
-        // One thread: the refresh is not polled before the capabilities close.
-        battery.refresh();
-        assert_eq!(alive(), before + 1);
-        caps.close();
-        battery.close();
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while alive() > before {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("the refresh ended with the core");
     }
 }

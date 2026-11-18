@@ -3,10 +3,11 @@
 //! on a board to explore, with its moves, its Wikibooks description and
 //! the ways to train it. The names and the tree are the shared rules'.
 
+use crate::pages::PageView;
 use kchess_contracts::calls;
 use kchess_contracts::check::Moves;
 use kchess_contracts::types::{DescriptionBlock, OpeningDescription, PopularityMonth};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -271,7 +272,7 @@ pub struct OpeningsPage {
     /// A line was just opened from the list: its page takes the keys from the search field.
     focus_line: bool,
     expanded: HashSet<String>,
-    previews: HashMap<String, Entity<ChessBoard>>,
+    previews: crate::board::Previews,
     area: Measured,
     /// The opening shown, when one is: its moves from the starting position.
     line: Option<Vec<String>>,
@@ -300,11 +301,6 @@ impl Focusable for OpeningsPage {
 }
 
 impl OpeningsPage {
-    /// Its search field, for Find (`shell::find_on_page`).
-    pub(crate) fn search_fields(&self) -> Vec<Entity<InputState>> {
-        vec![self.search.clone()]
-    }
-
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> OpeningsPage {
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search openings or ECO codes"));
@@ -359,7 +355,7 @@ impl OpeningsPage {
             clear_search: false,
             focus_line: false,
             expanded: HashSet::new(),
-            previews: HashMap::new(),
+            previews: Default::default(),
             area: Measured::default(),
             line: None,
             board,
@@ -383,26 +379,15 @@ impl OpeningsPage {
     #[cfg(test)]
     pub(crate) fn kept_previews(&self) -> std::collections::BTreeMap<String, gpui_kit::EntityId> {
         self.previews
-            .iter()
+            .kept()
             .map(|(fen, board)| (fen.clone(), board.entity_id()))
             .collect()
     }
 
     /// A small board picturing a position, made once per position.
     fn preview(&mut self, fen: &str, cx: &mut Context<Self>) -> Entity<ChessBoard> {
-        self.previews
-            .entry(fen.to_string())
-            .or_insert_with(|| {
-                cx.new(|_| {
-                    ChessBoard::new(BoardState::preview(
-                        fen,
-                        kchess_domain::variant::Variant::Standard,
-                        Color::White,
-                        None,
-                    ))
-                })
-            })
-            .clone()
+        let state = || BoardState::preview(fen, Default::default(), Color::White, None);
+        self.previews.board(fen.to_string(), state, cx)
     }
 
     fn recent(cx: &App) -> Vec<OpeningChoice> {
@@ -553,33 +538,16 @@ impl OpeningsPage {
             .map_or_else(|| STANDARD_FEN.to_string(), |(_, _, fen)| fen.clone());
         let variant = kchess_domain::variant::Variant::Standard;
         let position = kchess_domain::rules::setup_start(variant, &fen);
-        if let Some(uci) = self.move_box.take(variant, position.as_ref(), window, cx) {
+        if let Some(uci) = self.move_box.take(position.as_ref(), window, cx) {
             let mut moves = line;
             moves.push(uci);
             self.show_line(Some(moves), cx);
         }
     }
 
-    /// What the open line's buttons can do now; nothing while the browser is shown.
-    pub(crate) fn actions(&self) -> Vec<Action> {
-        let Some(line) = &self.line else {
-            return Vec::new();
-        };
-        let mut actions = Vec::new();
-        if !line_of(line).is_empty() {
-            actions.push(Action::Train);
-        }
-        actions.push(Action::Analyse);
-        if opening_at(line).is_some() {
-            actions.push(Action::Puzzles);
-        }
-        actions.extend([Action::Flip, Action::AllOpenings]);
-        actions
-    }
-
     /// Run an action as its button does, if it is still allowed.
     pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.actions().contains(&action) {
+        if !self.actions(cx).contains(&action) {
             return;
         }
         let line = self.line.clone().unwrap_or_default();
@@ -853,7 +821,7 @@ impl OpeningsPage {
             .collect();
         // Pictures of openings that left Recent are let go; the popular ones are always shown.
         let catalog = self.catalog.clone();
-        self.previews.retain(|fen, _| {
+        self.previews.retain(|fen| {
             recent.iter().any(|item| &item.fen == fen)
                 || catalog.popular.iter().any(|item| &item.fen == fen)
         });
@@ -1328,7 +1296,7 @@ impl crate::pages::PageAction for Action {
     }
 }
 
-impl crate::pages::PageView for OpeningsPage {
+impl PageView for OpeningsPage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: Page::Openings,
         label: "Openings",
@@ -1350,11 +1318,23 @@ impl crate::pages::PageView for OpeningsPage {
     }
 
     fn search_fields(&self) -> Vec<Entity<InputState>> {
-        OpeningsPage::search_fields(self)
+        vec![self.search.clone()]
     }
 
     fn actions(&self, _: &App) -> Vec<Action> {
-        OpeningsPage::actions(self)
+        let Some(line) = &self.line else {
+            return Vec::new();
+        };
+        let mut actions = Vec::new();
+        if !line_of(line).is_empty() {
+            actions.push(Action::Train);
+        }
+        actions.push(Action::Analyse);
+        if opening_at(line).is_some() {
+            actions.push(Action::Puzzles);
+        }
+        actions.extend([Action::Flip, Action::AllOpenings]);
+        actions
     }
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {

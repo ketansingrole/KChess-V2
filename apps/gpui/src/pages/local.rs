@@ -2,6 +2,7 @@
 //! board, any variant, with or without a clock; or a chess clock for a real board. Both keep their
 //! place in Game history, and the board game resumes in either app.
 
+use crate::pages::PageView;
 use crate::shortcuts::{PageKey, page_key};
 use kchess_domain::training::clock::format_clock;
 use std::time::Instant;
@@ -512,8 +513,7 @@ impl LocalPage {
             return;
         }
         let position = view::position_at(self.setup(), &self.moves(), self.moves().len());
-        let variant = self.setup().variant;
-        match self.moves.take(variant, position.as_ref(), window, cx) {
+        match self.moves.take(position.as_ref(), window, cx) {
             Some(uci) => self.play(&uci, cx),
             None => cx.notify(),
         }
@@ -1702,35 +1702,6 @@ impl LocalPage {
 }
 
 impl LocalPage {
-    /// The actions its buttons allow now. The clock alone has none of the board's.
-    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
-        if self.mode(cx) == Mode::Clock {
-            return Vec::new();
-        }
-        let over = self.game.over();
-        let played = !self.moves().is_empty();
-        let mut actions = Vec::new();
-        if played && !self.timed_out() {
-            actions.push(Action::TakeBack);
-        }
-        if played && !over && self.game.timed() {
-            actions.push(if self.game.paused() {
-                Action::Resume
-            } else {
-                Action::Pause
-            });
-        }
-        if played && !over {
-            actions.extend([Action::Draw, Action::Resign]);
-        }
-        actions.extend([Action::NewGame, Action::Flip]);
-        if played {
-            actions.push(Action::CopyPgn);
-            actions.push(Action::Analyse);
-        }
-        actions
-    }
-
     /// Run an action as its button does, if it is still allowed.
     pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         if !self.actions(cx).contains(&action) {
@@ -2107,7 +2078,7 @@ impl crate::pages::PageAction for Action {
     }
 }
 
-impl crate::pages::PageView for LocalPage {
+impl PageView for LocalPage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: crate::pages::Page::Local,
         label: "Over the board",
@@ -2133,7 +2104,31 @@ impl crate::pages::PageView for LocalPage {
     }
 
     fn actions(&self, cx: &App) -> Vec<Action> {
-        LocalPage::actions(self, cx)
+        if self.mode(cx) == Mode::Clock {
+            return Vec::new();
+        }
+        let over = self.game.over();
+        let played = !self.moves().is_empty();
+        let mut actions = Vec::new();
+        if played && !self.timed_out() {
+            actions.push(Action::TakeBack);
+        }
+        if played && !over && self.game.timed() {
+            actions.push(if self.game.paused() {
+                Action::Resume
+            } else {
+                Action::Pause
+            });
+        }
+        if played && !over {
+            actions.extend([Action::Draw, Action::Resign]);
+        }
+        actions.extend([Action::NewGame, Action::Flip]);
+        if played {
+            actions.push(Action::CopyPgn);
+            actions.push(Action::Analyse);
+        }
+        actions
     }
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {

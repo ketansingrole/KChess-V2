@@ -23,7 +23,7 @@ use gpui_kit::*;
 use shakmaty::Color;
 
 use super::broadcast_engine::{BroadcastEngine, GRID_EVALUATIONS};
-use super::{Pending, WatchPage, label, origin_of, player_of, turn_of};
+use super::{Pending, WatchPage, label, origin_of, player_of};
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
@@ -142,7 +142,7 @@ pub struct Broadcasts {
     board: Entity<ChessBoard>,
     /// Stockfish on the board followed and the grid's estimates.
     pub(super) engine: BroadcastEngine,
-    previews: HashMap<String, Entity<ChessBoard>>,
+    previews: crate::board::Previews,
     _search: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -196,7 +196,7 @@ impl Broadcasts {
                     None,
                 ))
             }),
-            previews: HashMap::new(),
+            previews: Default::default(),
             engine: BroadcastEngine::new(window, cx),
             _search: None,
             _subscriptions: subscriptions,
@@ -244,7 +244,7 @@ impl Broadcasts {
                     Clocks {
                         white: game.white_clock,
                         black: game.black_clock,
-                        ticking: moving.then_some(turn_of(&game.fen)),
+                        ticking: moving.then_some(kchess_domain::rules::fen_turn(&game.fen)),
                         at: Instant::now(),
                     },
                 );
@@ -323,18 +323,15 @@ impl Broadcasts {
     }
 
     fn preview(&mut self, game: &BroadcastGame, cx: &mut App) -> Entity<ChessBoard> {
-        self.previews
-            .entry(game.id.clone())
-            .or_insert_with(|| {
-                let state = BoardState::preview(
-                    &game.fen,
-                    kchess_domain::variant::Variant::Standard,
-                    Color::White,
-                    game.last_move.as_deref(),
-                );
-                cx.new(|_| ChessBoard::new(state))
-            })
-            .clone()
+        let state = || {
+            BoardState::preview(
+                &game.fen,
+                Default::default(),
+                Color::White,
+                game.last_move.as_deref(),
+            )
+        };
+        self.previews.board(game.id.clone(), state, cx)
     }
 
     pub fn load(&mut self, cx: &mut Context<WatchPage>) {

@@ -183,17 +183,6 @@ pub struct LegalMove {
     pub san: String,
 }
 
-fn role_name(role: Role) -> &'static str {
-    match role {
-        Role::Pawn => "pawn",
-        Role::Knight => "knight",
-        Role::Bishop => "bishop",
-        Role::Rook => "rook",
-        Role::Queen => "queen",
-        Role::King => "king",
-    }
-}
-
 /// Every legal move from `dests`, with promotions to queen, rook, bishop and knight.
 pub fn legal_moves(pos: &VariantPosition) -> Vec<LegalMove> {
     let mut out = Vec::new();
@@ -226,8 +215,8 @@ pub fn legal_moves(pos: &VariantPosition) -> Vec<LegalMove> {
                 out.push(LegalMove {
                     from: from.to_string(),
                     to: to.to_string(),
-                    role: role_name(role),
-                    promotion: promotion.map(role_name),
+                    role: crate::material::name(role),
+                    promotion: promotion.map(crate::material::name),
                     san: rules::san_and_play(&mut after, m),
                 });
             }
@@ -292,6 +281,18 @@ pub fn same_move(pos: &VariantPosition, a: &str, b: &str) -> bool {
 pub fn play_san(pos: &VariantPosition, san: &str) -> Option<Played> {
     let m = rules::parse_san(pos, san)?;
     Some(played(pos, m))
+}
+
+/// A move typed as SAN ("Nf3", "O-O", "exd8=Q") or UCI ("g1f3"), as UCI when it is legal in
+/// `pos`. UCI comes back as typed, lowercased; SAN as its move's UCI.
+pub fn typed_uci(pos: &VariantPosition, text: &str) -> Option<String> {
+    let text = text.trim();
+    let uci = text.to_lowercase();
+    if rules::is_uci_text(&uci) {
+        play_uci(pos, &uci).map(|_| uci)
+    } else {
+        play_san(pos, text).map(|played| played.uci)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -592,6 +593,28 @@ pub fn pgn_mainline(text: &str, limit: usize) -> Option<Mainline> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A typed move is read as UCI when it looks like one, and as SAN otherwise, in the
+    /// position given; anything illegal there is none.
+    #[test]
+    fn a_typed_move_is_read_as_san_or_uci() {
+        let start_pos =
+            rules::setup_start(crate::variant::Variant::Standard, rules::INITIAL_FEN).unwrap();
+        assert_eq!(typed_uci(&start_pos, "Nf3").as_deref(), Some("g1f3"));
+        assert_eq!(typed_uci(&start_pos, " g1f3 ").as_deref(), Some("g1f3"));
+        assert_eq!(typed_uci(&start_pos, "G1F3").as_deref(), Some("g1f3"));
+        assert_eq!(typed_uci(&start_pos, "e2e5"), None);
+        assert_eq!(typed_uci(&start_pos, "Nf6"), None);
+        let castle_pos = rules::setup_start(
+            crate::variant::Variant::Standard,
+            "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+        )
+        .unwrap();
+        assert_eq!(typed_uci(&castle_pos, "O-O").as_deref(), Some("e1h1"));
+        let zh = "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
+        let zh_pos = rules::setup_start(crate::variant::Variant::Crazyhouse, zh).unwrap();
+        assert_eq!(typed_uci(&zh_pos, "P@e3").as_deref(), Some("P@e3"));
+    }
 
     const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 

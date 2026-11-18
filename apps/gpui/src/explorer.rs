@@ -10,7 +10,6 @@ use kchess_contracts::check::{Fen, GameId};
 use kchess_contracts::types::{
     ExplorerGame, ExplorerSpeed, LookupMove, LookupOptions, PositionLookup, PositionLookupKind,
 };
-use std::collections::HashMap;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -314,7 +313,7 @@ pub struct PositionExplorer {
     variant: Option<Variant>,
     lookup_task: Option<Task<()>>,
     follow_task: Option<Task<()>>,
-    previews: HashMap<String, Entity<ChessBoard>>,
+    previews: crate::board::Previews,
     area: Measured,
     _subscriptions: Vec<Subscription>,
 }
@@ -378,7 +377,7 @@ impl PositionExplorer {
             variant: None,
             lookup_task: None,
             follow_task: None,
-            previews: HashMap::new(),
+            previews: Default::default(),
             area: Measured::default(),
             _subscriptions: subscriptions,
         };
@@ -667,16 +666,12 @@ impl PositionExplorer {
     }
 
     fn preview(&mut self, fen: &str, uci: &str, cx: &mut Context<Self>) -> Entity<ChessBoard> {
-        let key = format!("{fen} {uci}");
-        self.previews
-            .entry(key)
-            .or_insert_with(|| {
-                let variant = self.variant.unwrap_or_default();
-                cx.new(|_| {
-                    ChessBoard::new(BoardState::preview(fen, variant, Color::White, Some(uci)))
-                })
-            })
-            .clone()
+        let variant = self.variant.unwrap_or_default();
+        self.previews.board(
+            format!("{fen} {uci}"),
+            || BoardState::preview(fen, variant, Color::White, Some(uci)),
+            cx,
+        )
     }
 
     fn heading(&self, result: &PositionLookup, prefs: &Prefs) -> String {
@@ -926,7 +921,7 @@ impl PositionExplorer {
                 .collect();
             // Boards of positions no longer shown are let go: each position stepped through
             // added a board per move, for as long as the page was open.
-            self.previews.retain(|key, _| shown.contains(key));
+            self.previews.retain(|key| shown.contains(key));
             let mut rows = Vec::new();
             let mut tiles = tiles.into_iter().peekable();
             while tiles.peek().is_some() {

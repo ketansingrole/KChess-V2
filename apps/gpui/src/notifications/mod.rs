@@ -2,6 +2,10 @@
 //! them: inside the window while KChess is in front (macOS shows no banner for the app in front),
 //! a system notification in the background. An alert about the board being looked at is dropped.
 
+mod move_reply;
+#[cfg(all(windows, not(test)))]
+mod windows_shortcuts;
+
 use gpui_kit::App;
 use kchess_contracts::types::{NotificationKind, Settings};
 
@@ -17,7 +21,7 @@ pub fn init(cx: &mut App) {
         identify(cx);
         // Not from a test run, which would change the shortcuts of whoever runs it.
         #[cfg(all(windows, not(test)))]
-        crate::windows_shortcuts::stamp(APP_ID);
+        windows_shortcuts::stamp(APP_ID);
     }
 }
 
@@ -196,7 +200,7 @@ fn answer_move(game: &str, action: Option<&str>, cx: &mut App) {
             cx,
         );
     };
-    match crate::move_reply::read(&listed, text) {
+    match move_reply::read(&listed, text) {
         Some(reply) => {
             let tag = format!("{CONFIRM_TAG}{game}");
             let (title, body) = (
@@ -204,7 +208,7 @@ fn answer_move(game: &str, action: Option<&str>, cx: &mut App) {
                 format!("Correspondence game · @{}", reply.account),
             );
             let play = button("play", &format!("Play {}", reply.san));
-            crate::move_reply::hold(&tag, reply, cx);
+            move_reply::hold(&tag, reply, cx);
             post_tagged(
                 tag,
                 &title,
@@ -230,10 +234,10 @@ fn answer_move(game: &str, action: Option<&str>, cx: &mut App) {
 fn confirm_move(tag: &str, game: &str, action: Option<&str>, cx: &mut App) {
     match action {
         Some("play") => {
-            let Some(reply) = crate::move_reply::take(tag, cx) else {
+            let Some(reply) = move_reply::take(tag, cx) else {
                 return;
             };
-            let sending = crate::move_reply::send(&reply, cx);
+            let sending = move_reply::send(&reply, cx);
             let tag = tag.to_string();
             cx.spawn(async move |cx| {
                 let answer = sending.await;
@@ -266,7 +270,7 @@ fn confirm_move(tag: &str, game: &str, action: Option<&str>, cx: &mut App) {
             .detach();
         }
         Some("cancel") => {
-            crate::move_reply::take(tag, cx);
+            move_reply::take(tag, cx);
             cx.dismiss_system_notification(tag);
         }
         _ => open_game(game, cx),

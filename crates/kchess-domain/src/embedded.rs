@@ -21,6 +21,7 @@ mod tests {
         );
         assert!(!crate::training::lessons::data().courses.is_empty());
         assert!(!crate::training::data::data().engine_ladder.is_empty());
+        assert!(!crate::puzzle::theme_groups().is_empty());
     }
 
     #[test]

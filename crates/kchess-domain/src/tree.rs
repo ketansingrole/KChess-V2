@@ -10,6 +10,7 @@ use shakmaty::variant::VariantPosition;
 
 use crate::js;
 use crate::pgn::{Game, PgnNode, make_pgn, parse_pgn};
+use crate::position::starting_position;
 use crate::rules;
 use crate::trainer::analysis_tree::{self, moves_of, path_of};
 use crate::variant::Variant;
@@ -48,14 +49,6 @@ impl Drop for TreeNode {
 const MAX_TEXT: usize = 2_000_000;
 const MAX_NODES: usize = 10_000;
 const MAX_DEPTH: usize = 1024;
-
-fn starting_position(game: &Game) -> Option<VariantPosition> {
-    let variant = rules::pgn_variant(game.header("Variant"))?;
-    match game.header("FEN").filter(|fen| !fen.is_empty()) {
-        Some(fen) => rules::setup_position(variant, rules::parse_fen(fen)?),
-        None => Some(rules::default_position(variant)),
-    }
-}
 
 /// The tree's root position: the start re-read under standard rules, falling back to
 /// the usual start. A variant's start is its own (a Crazyhouse pocket, Three-check's checks are in

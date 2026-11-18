@@ -27,8 +27,6 @@ pub enum HostRequest {
     OpenExternal(String),
     /// Bring the window to the front; answered with `null`.
     Focus,
-    /// Whether the computer runs on battery; answered with a boolean.
-    OnBattery,
     /// Whether the frontend can seal logins; answered with a boolean.
     SecretsAvailable,
     /// Seal this login; answered with the sealed text.
@@ -43,7 +41,6 @@ impl HostRequest {
         match self {
             HostRequest::OpenExternal(_) => "openExternal",
             HostRequest::Focus => "focus",
-            HostRequest::OnBattery => "onBattery",
             HostRequest::SecretsAvailable => "secrets.available",
             HostRequest::SecretsEncrypt(_) => "secrets.encrypt",
             HostRequest::SecretsDecrypt(_) => "secrets.decrypt",
@@ -54,7 +51,7 @@ impl HostRequest {
     pub fn needs(&self) -> Capability {
         match self {
             HostRequest::OpenExternal(_) => Capability::Browser,
-            HostRequest::Focus | HostRequest::OnBattery => Capability::Focus,
+            HostRequest::Focus => Capability::Focus,
             HostRequest::SecretsAvailable
             | HostRequest::SecretsEncrypt(_)
             | HostRequest::SecretsDecrypt(_) => Capability::Secrets,
@@ -66,9 +63,7 @@ impl HostRequest {
             HostRequest::OpenExternal(text)
             | HostRequest::SecretsEncrypt(text)
             | HostRequest::SecretsDecrypt(text) => Value::String(text.clone()),
-            HostRequest::Focus | HostRequest::OnBattery | HostRequest::SecretsAvailable => {
-                Value::Null
-            }
+            HostRequest::Focus | HostRequest::SecretsAvailable => Value::Null,
         }
     }
 
@@ -77,7 +72,6 @@ impl HostRequest {
         Some(match kind {
             "openExternal" => HostRequest::OpenExternal(text()?),
             "focus" => HostRequest::Focus,
-            "onBattery" => HostRequest::OnBattery,
             "secrets.available" => HostRequest::SecretsAvailable,
             "secrets.encrypt" => HostRequest::SecretsEncrypt(text()?),
             "secrets.decrypt" => HostRequest::SecretsDecrypt(text()?),
@@ -177,7 +171,6 @@ mod tests {
         for request in [
             HostRequest::OpenExternal("x".into()),
             HostRequest::Focus,
-            HostRequest::OnBattery,
             HostRequest::SecretsAvailable,
             HostRequest::SecretsEncrypt("plain".into()),
             HostRequest::SecretsDecrypt("sealed".into()),
@@ -225,6 +218,6 @@ mod tests {
             HostRequest::SecretsDecrypt(String::new()).needs(),
             Capability::Secrets
         );
-        assert_eq!(HostRequest::OnBattery.needs(), Capability::Focus);
+        assert_eq!(HostRequest::Focus.needs(), Capability::Focus);
     }
 }

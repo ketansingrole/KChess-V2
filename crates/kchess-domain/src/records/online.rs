@@ -9,18 +9,35 @@ use crate::{js, rules};
 const UNREADABLE: &str = "Lichess sent an unreadable game event. Reconnect to refresh the board.";
 const INVALID_MOVES: &str = "Lichess sent an invalid move list.";
 
-/// The event types the validator knows; other types are ignored by the caller.
-const TYPES: &[&str] = &[
-    "gameState",
-    "gameFull",
-    "gameStart",
-    "gameFinish",
-    "opponentGone",
-    "chatLine",
-    "challenge",
-    "challengeCanceled",
-    "challengeDeclined",
-];
+crate::union!(
+    /// The event types the validator knows; other types are ignored by the caller.
+    EventKind {
+        GameState = "gameState",
+        GameFull = "gameFull",
+        GameStart = "gameStart",
+        GameFinish = "gameFinish",
+        OpponentGone = "opponentGone",
+        ChatLine = "chatLine",
+        Challenge = "challenge",
+        ChallengeCanceled = "challengeCanceled",
+        ChallengeDeclined = "challengeDeclined",
+    }
+);
+
+impl EventKind {
+    /// The kind of a validated event; `None` for one without a known `type`.
+    pub fn of(event: &Value) -> Option<EventKind> {
+        event["type"].as_str().and_then(EventKind::from_key)
+    }
+
+    /// A challenge made, cancelled or declined: the challenge inbox reads it.
+    pub fn is_challenge(self) -> bool {
+        matches!(
+            self,
+            EventKind::Challenge | EventKind::ChallengeCanceled | EventKind::ChallengeDeclined
+        )
+    }
+}
 
 /// What a value must be.
 enum Check {
@@ -136,16 +153,17 @@ const CHAT_LINE: &[Field] = &[
 ];
 
 /// The entries an event of this type must have, by its `type`.
-fn entries_of_type(kind: &str) -> Option<&'static [Field]> {
-    Some(match kind {
-        "gameState" => STATE,
-        "gameFull" => FULL,
-        "gameStart" | "gameFinish" => GAME_EVENT,
-        "opponentGone" => OPPONENT_GONE,
-        "chatLine" => CHAT_LINE,
-        "challenge" | "challengeCanceled" | "challengeDeclined" => CHALLENGE,
-        _ => return None,
-    })
+fn entries_of_type(kind: EventKind) -> &'static [Field] {
+    match kind {
+        EventKind::GameState => STATE,
+        EventKind::GameFull => FULL,
+        EventKind::GameStart | EventKind::GameFinish => GAME_EVENT,
+        EventKind::OpponentGone => OPPONENT_GONE,
+        EventKind::ChatLine => CHAT_LINE,
+        EventKind::Challenge | EventKind::ChallengeCanceled | EventKind::ChallengeDeclined => {
+            CHALLENGE
+        }
+    }
 }
 
 /// An object, or an array with its indices as keys.
@@ -220,12 +238,13 @@ pub fn validate(raw: &Value) -> Result<Option<Value>, String> {
     let Some(kind) = map.get("type") else {
         return Ok(None);
     };
-    if !TYPES.contains(&js::to_string(Some(kind)).as_str()) {
+    if EventKind::from_key(&js::to_string(Some(kind))).is_none() {
         return Ok(None);
     }
     let fields = kind
         .as_str()
-        .and_then(entries_of_type)
+        .and_then(EventKind::from_key)
+        .map(entries_of_type)
         .ok_or_else(|| UNREADABLE.to_string())?;
     let event = object(raw, fields).ok_or_else(|| UNREADABLE.to_string())?;
     let moves = match kind.as_str() {
@@ -314,5 +333,28 @@ mod tests {
             "state": { "moves": "", "status": "started" },
         });
         assert_eq!(validate(&bad_speed).unwrap_err(), UNREADABLE);
+    }
+
+    #[test]
+    fn an_event_is_named_by_its_type_and_challenges_go_to_the_inbox() {
+        assert_eq!(
+            EventKind::of(&json!({ "type": "gameStart" })),
+            Some(EventKind::GameStart)
+        );
+        assert_eq!(EventKind::of(&json!({ "type": "nope" })), None);
+        assert_eq!(EventKind::of(&json!({})), None);
+        let inbox: Vec<EventKind> = EventKind::ALL
+            .iter()
+            .copied()
+            .filter(|kind| kind.is_challenge())
+            .collect();
+        assert_eq!(
+            inbox,
+            [
+                EventKind::Challenge,
+                EventKind::ChallengeCanceled,
+                EventKind::ChallengeDeclined
+            ]
+        );
     }
 }

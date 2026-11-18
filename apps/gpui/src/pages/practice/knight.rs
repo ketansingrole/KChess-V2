@@ -35,7 +35,7 @@ const LEVELS: [(&str, &str, u32, u32); 3] = [
     ("hard", "Hard · 4–6 jumps", 4, 6),
 ];
 
-use kchess_domain::voice::knight_moves;
+use kchess_domain::training::board_vision::knight_moves;
 
 /// A start, a goal and the shortest path between them, from random draws.
 fn knight_challenge(min: u32, max: u32) -> (String, String, u32) {
@@ -48,9 +48,11 @@ fn knight_challenge(min: u32, max: u32) -> (String, String, u32) {
             break;
         };
         draws.extend([first, second]);
-        if let Some(found) =
-            kchess_domain::voice::knight_challenge(f64::from(min), f64::from(max), &draws)
-        {
+        if let Some(found) = kchess_domain::training::board_vision::knight_challenge(
+            f64::from(min),
+            f64::from(max),
+            &draws,
+        ) {
             return (found.from, found.to, found.best.unwrap_or(0));
         }
     }
@@ -297,7 +299,7 @@ impl KnightPaths {
             running,
             cx,
         );
-        let fen = kchess_domain::voice::knight_fen(&self.knight);
+        let fen = kchess_domain::training::board_vision::knight_fen(&self.knight);
         let position = kchess_domain::rules::setup_start(
             kchess_domain::variant::Variant::Standard,
             crate::game::STANDARD_FEN,

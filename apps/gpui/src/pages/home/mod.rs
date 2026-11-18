@@ -2,6 +2,7 @@
 //! Lichess.
 //! It reads the unfinished computer game and the accounts again each time it is shown.
 
+use crate::pages::PageView;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -211,15 +212,6 @@ impl HomePage {
             return None;
         }
         self.with_recent(cx, |games| games.first().map(|game| game.id.clone()))
-    }
-
-    /// What Home's buttons can do now.
-    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
-        if self.reviewable(cx).is_some() {
-            vec![Action::Review]
-        } else {
-            Vec::new()
-        }
     }
 
     /// Run an action as its button does, if it is still allowed.
@@ -834,7 +826,7 @@ impl crate::pages::PageAction for Action {
     }
 }
 
-impl crate::pages::PageView for HomePage {
+impl PageView for HomePage {
     const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
         page: Page::Dashboard,
         label: "Home",
@@ -856,7 +848,11 @@ impl crate::pages::PageView for HomePage {
     }
 
     fn actions(&self, cx: &App) -> Vec<Action> {
-        HomePage::actions(self, cx)
+        if self.reviewable(cx).is_some() {
+            vec![Action::Review]
+        } else {
+            Vec::new()
+        }
     }
 
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {

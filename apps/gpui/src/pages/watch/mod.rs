@@ -158,15 +158,6 @@ fn origin_of(white: &WatchPlayer, black: &WatchPlayer) -> crate::game::played::G
     }
 }
 
-/// The side to move in a FEN.
-fn turn_of(fen: &str) -> Color {
-    if fen.split(' ').nth(1) == Some("b") {
-        Color::Black
-    } else {
-        Color::White
-    }
-}
-
 /// "GM Carlsen (2850)": a player's title, name and rating.
 fn player_label(title: Option<&str>, name: &str, rating: Option<f64>) -> String {
     let mut text = String::new();
@@ -231,11 +222,6 @@ impl Focusable for WatchPage {
 }
 
 impl WatchPage {
-    /// The broadcasts' search field, for Find (`shell::find_on_page`).
-    pub(crate) fn search_fields(&self) -> Vec<Entity<gpui_kit::component::input::InputState>> {
-        vec![self.broadcasts.query.clone()]
-    }
-
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> WatchPage {
         let events = cx.global::<AppCore>().events.clone();
         let online = cx.global::<OnlineHandle>().0.clone();
@@ -1226,7 +1212,7 @@ impl PageView for WatchPage {
     }
 
     fn search_fields(&self) -> Vec<Entity<gpui_kit::component::input::InputState>> {
-        WatchPage::search_fields(self)
+        vec![self.broadcasts.query.clone()]
     }
 
     fn actions(&self, cx: &App) -> Vec<Action> {
