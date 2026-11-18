@@ -30,16 +30,33 @@ What follows from it:
 - **An edit costs the same anywhere in the crate.** The incremental floor (expansion, resolution,
   collection, partitioning, saving the state) grows with the crate's size, not the edit's, so a
   one-word change in a page costs what touching the file costs.
-- **A crate costs its whole floor whenever a crate it depends on changes.** Cargo rebuilds every
-  dependent of a changed crate; incremental compilation reuses its work, but not that floor. So
-  moving the shared pieces out (`kchess-ui`) speeds up nothing by itself: an edit there still
-  rebuilds the whole app after it. The gain comes when the pages leave too, and the crate an edit
+- **A crate costs at least its whole floor whenever a crate it depends on changes.** Cargo
+  rebuilds every dependent of a changed crate; incremental compilation reuses some of its work,
+  but not that floor. So moving the shared pieces out (`kchess-ui`) speeds up nothing by itself:
+  an edit there still rebuilds the whole app after it (and, measured below, slower). The gain comes when the pages leave too, and the crate an edit
   in a page rebuilds after it, the app shell, is small.
 - **Changing a widely used type is the expensive edit** (26 s for a field of `Palette`): that is
   the from-scratch work of every function that names it. Split, the crates naming it type-check
   in parallel instead of one after another on one thread.
 
 Each step below measures the same edits again, so a step that buys nothing is seen.
+
+### After step 1 (`kchess-ui`)
+
+The same machine and edits, `cargo build`, the mean of two runs:
+
+| Edit | Before | After |
+| --- | --- | --- |
+| A string in a page's function | 9.2 s | 8.3 s |
+| A string in the theme (now `crates/kchess-ui/src/theme.rs`) | 9.3 s | 19.5 s |
+| Only a page's modified time | 9.2 s | 8.1 s |
+| A field added to `theme::Palette` | 26 s | 26.7 s |
+
+An edit to code that moved out became twice as slow: on top of building `kchess-ui`, the app
+redoes far more of its own work after a change in a crate it depends on than after the same
+change in itself. Shared code that is edited often costs more in its own crate until the crates
+depending on it are small, so the later steps have to shrink the app for any step to pay off,
+and a step should move code that rarely changes before code that often does.
 
 ## The order
 
