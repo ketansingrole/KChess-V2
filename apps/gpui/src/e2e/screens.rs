@@ -1052,7 +1052,7 @@ fn content(out: &Path, appearance: Appearance) {
     shoot(&mut cx, "history", 1);
     let line = moves.clone();
     cx.update_window(window, move |_, window, cx| {
-        crate::pages::analysis::open_line(line, window, cx)
+        kchess_board::analysis::open(kchess_board::analysis::Open::Line(line), window, cx)
     })
     .expect("the window");
     shoot(&mut cx, "analysis-moves", 1);
