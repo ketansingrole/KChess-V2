@@ -17,9 +17,9 @@ use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::assets::icon;
 use crate::game_image::{self, ImageOptions};
 use crate::settings::SettingsHandle;
+use kchess_ui::icon;
 
 /// Ask where to save `text` as `name`, then write it; the outcome, or `None` when cancelled.
 pub fn save_text(
