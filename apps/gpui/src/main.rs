@@ -13,7 +13,6 @@ mod assets;
 mod bench;
 mod board;
 mod core;
-mod dates;
 mod dock_icon;
 #[cfg(test)]
 mod e2e;
@@ -71,7 +70,7 @@ mod window_state;
 use gpui_kit::*;
 use kchess_contracts::Level;
 // The design system (`crates/kchess-ui`), under the names the app's modules use.
-use kchess_ui::{chart, motion};
+use kchess_ui::{chart, dates, motion};
 
 fn main() {
     let data_dir = match profile::data_dir() {

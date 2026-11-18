@@ -27,6 +27,10 @@ pub enum Role {
 /// The app's package.
 pub const APP: &str = "kchess-gpui";
 
+/// The app's sources from the repository root: its own and its UI crates' (`Role::Ui`), which
+/// the app's rules of look (`boundaries`) and its icons (`icons`) are read from.
+pub const APP_SOURCES: [&str; 2] = ["apps/gpui/src", "crates/kchess-ui/src"];
+
 /// The app's sources, as cargo-mutants' file globs name them.
 pub const APP_FILES: &str = "apps/gpui/**";
 

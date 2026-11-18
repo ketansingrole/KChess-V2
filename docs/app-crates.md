@@ -60,29 +60,46 @@ and a step should move code that rarely changes before code that often does.
 
 ## The order
 
+Moving code out of the app makes edits to it slower until the app is small (step 1 above): an
+edit in a crate the app depends on cost 19.5 s where the same edit in the app cost 9.3 s. So
+code leaves in the order it changes least, shrinking the app fastest for the least cost, and the
+code that changes most stays in the app longest, where an edit rebuilds one crate.
+
+How often each part changes, from the app's history since 2026-11-09 (31 commits, leaving out the
+3 that touch more than 40 files; lines changed over the part's size). That is nine days of history,
+so read it as a ranking, not a rate, and check it again before each step:
+
+| Changes most (stays in the app longest) | Changes least (moves first) |
+| --- | --- |
+| Settings (0.07), Online (0.07), `core` (0.16), `ai` (0.24), `position_engine` (0.32), `puzzle_board` (0.13), `quick_pick` (0.29), cards (0.11), the end-to-end tests | the generic widgets (0.01–0.03), the log and assets (0.03–0.04), `dates`, the board (0.02), `game` (0.01), practice (0.01), watch (0.01), history (0.01), puzzles (0.01), local, home and studies (0.00–0.01) |
+
 Each step is one pull request, each green on its own.
 
-1. **`crates/kchess-ui`, the design system** (this step). The theme and its colors, motion and the
-   line chart. What it needs from the app is passed in: where log lines go (`kchess_ui::Logger`,
-   set by the app at start) and which themes Settings chose (`theme::ThemeChoice`); the app's
-   `theme::apply` reads Settings and hands them over. It depends on GPUI Kit, `kchess-contracts`
-   and `kchess-domain`, never on the app or the core.
-2. **The generic widgets** into `kchess-ui`: `quick_pick`, `highlight`, badges, cards, pills, the
-   panel, status, dialogs, and the `assets::icon` they draw with (the icons stay embedded in the
-   app; `icon` only names a path). The ones that reach into the app take what they read as
-   arguments: badges' dates (`dates::local_format`), cards' search (`quick_pick`, moving with
-   them). The domain widgets (moves, players, setting rows) stay in the app until a board crate
-   exists.
-3. **The app's services as a crate** (`kchess-app`): the core handle (`core.rs`), settings, view
-   preferences (`prefs`), the log, dates, accounts and Lichess's live state, and navigation as a
-   trait or global that the shell implements, so a page opens another page without naming the
-   shell or that page.
+1. **`crates/kchess-ui`, the design system** (done, #254). The theme and its colors, motion and
+   the line chart. What it needs from the app is passed in: where log lines go
+   (`kchess_ui::Logger`, set by the app at start) and which themes Settings chose
+   (`theme::ThemeChoice`); the app's `theme::apply` reads Settings and hands them over. It depends
+   on GPUI Kit, `kchess-contracts` and `kchess-domain`, never on the app or the core.
+2. **The generic widgets that rarely change** into `kchess-ui`: badges, dialogs, the panel, pills,
+   status, the widgets' shared traits (`KeyboardFocus`, `Pressable`, `LiveRegion`), `dates` and
+   the `icon` they draw with (the icons stay embedded in the app; `icon` only names a path). Cards,
+   `highlight` and `quick_pick` change more and stay; so do the domain widgets (moves, players,
+   setting rows) until a board crate exists.
+3. **The app's services as a crate** (`kchess-app`), the part of them that rarely changes: view
+   preferences (`prefs`), settings, the log, accounts, sound, timers, and navigation as a trait or
+   global that the shell implements, so a page opens another page without naming the shell or
+   that page. `core.rs` and `online.rs` change often: the crate reaches them through a trait the
+   app implements until they settle.
 4. **The board** (`kchess-board`): the board, its looks, pockets and previews, `game`, notation,
-   sound, and the domain widgets left from step 2.
-5. **Feature crates**, the largest first: practice (9,000 lines), analysis (6,400), settings
-   (5,400), puzzles (4,900), watch (4,300), and the rest. Where a page names another
-   (`pages::analysis` from puzzles, watch and online), it opens it through step 3's navigation.
-6. **The app shell**: `apps/gpui` keeps `main`, the window, the menu, the updater, notifications
+   and the domain widgets left from step 2.
+5. **Feature crates for the pages that rarely change**, the largest first: practice (9,000 lines),
+   puzzles (4,900), watch (4,300), history (3,000), studies, local and home. Where a page names
+   another (`pages::analysis` from puzzles and watch), it opens it through step 3's navigation.
+6. **The rest, once the app is small enough that its crates pay off**: analysis, Settings, Online,
+   tournaments and the pieces they share (`position_engine`, `ai`, `puzzle_board`, cards and
+   `quick_pick`). Measure first: by then an edit in the app should cost well under the 9 s it
+   costs today, and a page that keeps changing may be cheaper left in it.
+7. **The app shell**: `apps/gpui` keeps `main`, the window, the menu, the updater, notifications
    and the end-to-end tests.
 
 ## What each new crate needs
