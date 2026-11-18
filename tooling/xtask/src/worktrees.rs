@@ -29,6 +29,10 @@ const LOW: u64 = 50_000_000_000;
 /// Below this much free space after that, a build is refused: one full build of the workspace
 /// writes about 15 GB.
 const TOO_LOW: u64 = 15_000_000_000;
+/// The variable that states the free space in bytes instead of asking the system, so a test of a
+/// sweep (`tests/commands.rs`) acts the same on any disk: with 15 GB or less free, the real
+/// measurement made every sweep refuse, whatever it swept.
+const FREE_SPACE_VAR: &str = "KCHESS_FREE_SPACE";
 
 /// A worktree of the repository, as `git worktree list --porcelain` lists it.
 #[derive(Debug, PartialEq)]
@@ -285,9 +289,21 @@ fn remove_all_but(folder: &Path, kept: &[PathBuf]) {
     }
 }
 
+/// The bytes free for this user on the disk holding `path`: as [`FREE_SPACE_VAR`] states it,
+/// else as the system says ([`measured_free_space`]).
+pub fn free_space(path: &Path) -> Option<u64> {
+    stated_free_space(std::env::var_os(FREE_SPACE_VAR)).or_else(|| measured_free_space(path))
+}
+
+/// The bytes free that [`FREE_SPACE_VAR`]'s `value` states: none when it is unset or not a whole
+/// number of bytes.
+fn stated_free_space(value: Option<std::ffi::OsString>) -> Option<u64> {
+    value?.to_str()?.trim().parse().ok()
+}
+
 /// The bytes free for this user on the disk holding `path`, when the system says: `df` on Unix,
 /// .NET's `DriveInfo` through PowerShell on Windows.
-pub fn free_space(path: &Path) -> Option<u64> {
+fn measured_free_space(path: &Path) -> Option<u64> {
     let mut command = if cfg!(windows) {
         let mut command = std::process::Command::new("powershell");
         command.args([
@@ -487,7 +503,19 @@ mod tests {
 
     #[test]
     fn this_disk_s_free_space_can_be_read() {
-        assert!(free_space(&crate::util::root()).is_some_and(|bytes| bytes > 0));
+        assert!(measured_free_space(&crate::util::root()).is_some_and(|bytes| bytes > 0));
+    }
+
+    #[test]
+    fn free_space_can_be_stated_in_bytes() {
+        let stated = |value: &str| stated_free_space(Some(value.into()));
+        assert_eq!(stated("20000000000"), Some(20_000_000_000));
+        assert_eq!(stated(" 7\n"), Some(7));
+        assert_eq!(stated("0"), Some(0));
+        assert_eq!(stated("lots"), None);
+        assert_eq!(stated("-1"), None);
+        assert_eq!(stated(""), None);
+        assert_eq!(stated_free_space(None), None);
     }
 
     /// A repository with one commit on `origin/main`, and a worktree beside it at `head`.

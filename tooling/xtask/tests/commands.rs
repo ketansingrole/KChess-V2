@@ -61,13 +61,19 @@ fn sweep_deletes_replaced_builds_and_on_macos_the_objects_no_program_uses() {
     let replaced = replaced_build(&target.path().join("debug"));
     let sweep = |dry_run: bool| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
-        command.arg("sweep").env("CARGO_TARGET_DIR", target.path());
+        // Space to spare, whatever this disk has: a sweep refuses a build on a full disk, and
+        // with little free it takes the other worktrees' build folders.
+        command
+            .arg("sweep")
+            .env("CARGO_TARGET_DIR", target.path())
+            .env("KCHESS_FREE_SPACE", "1000000000000");
         if dry_run {
             command.arg("--dry-run");
         }
         let out = command.output().expect("xtask runs");
-        assert!(out.status.success());
-        String::from_utf8_lossy(&out.stderr).into_owned()
+        let said = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "{said}");
+        said
     };
     let said = sweep(true);
     assert!(
