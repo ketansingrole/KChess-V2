@@ -64,22 +64,15 @@ kchess-delta.workspace = true
 tar = { version = "0.4", default-features = false }
 # Desktop notifications while KChess is in the background (already in Cargo.lock through GPUI).
 notify-rust = "4.18"
-# Voice input: the microphone (cpal, already in Cargo.lock through the board's rodio) and the PCM the core's
-# recognizer takes, as base64 (already in Cargo.lock through the core).
-cpal = "0.18"
-base64 = "0.23"
 kchess-hack = { version = "0.1", path = "../../crates/kchess-hack" }
 
 [lints]
 workspace = true
 
-# Microphone access status and the system's request for it: AVCaptureDevice, macOS 10.14 and
-# later.
+# The app's own Objective-C calls (strings, data and the bundle).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSData", "NSBundle"] }
-objc2-av-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "AVCaptureDevice", "AVMediaFormat"] }
-block2 = "0.6"
 # Swapping an update's bundle with the installed one in one step (`renamex_np` behind rustix's
 # safe `renameat_with`), and the benchmark's CPU time and peak memory (`getrusage` behind nix's
 # safe wrapper); both already in Cargo.lock.
@@ -105,6 +98,8 @@ windows = { version = "0.62", features = [
 embed-resource = "3"
 
 [dev-dependencies]
+# The updater tests' signed checksums, as base64 (already in Cargo.lock through the core).
+base64 = "0.23"
 # The slow calls a frame made, which the end-to-end tests fail on (`slow_calls::drawing`).
 kchess-app = { workspace = true, features = ["test-support"] }
 # The sounds played and the board images kept, which the end-to-end tests read.

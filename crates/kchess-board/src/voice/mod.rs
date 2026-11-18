@@ -617,9 +617,7 @@ pub fn init(cx: &mut App) {
     .detach();
     cx.set_global(VoiceHandle(voice));
     // Held for push to talk, Space is the voice's while a board has the keys.
-    cx.set_global(kchess_board::SpaceTalks(|cx| {
-        handle(cx).read(cx).can_talk()
-    }));
+    cx.set_global(crate::SpaceTalks(|cx| handle(cx).read(cx).can_talk()));
 }
 
 /// A phrase's place in the voice history, once saved (none when Settings keep no history).
@@ -749,17 +747,27 @@ pub fn amend(entry: Entry, update: VoiceUpdate, cx: &App) {
 #[cfg(test)]
 mod tests {
     use super::{ErrorKind, handle, heard_of, model, progress_of};
-    use crate::e2e::Harness;
     use kchess_contracts::CoreError;
     use serde_json::json;
+
+    /// Voice as the app starts it, over a core of the test's own.
+    fn started(cx: &mut gpui_kit::TestAppContext) -> kchess_app::tests::TestCore {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            let core = kchess_app::tests::start_core(cx);
+            kchess_app::settings::init_for_tests(cx);
+            super::init(cx);
+            core
+        })
+    }
 
     /// A build without the speech helper said "The offline voice model couldn’t load. Voice input
     /// isn’t available in this build.", cut off after "Voice input isn’t…", though no model failed.
     #[gpui_kit::test]
     fn a_failed_start_says_only_what_the_core_said(cx: &mut gpui_kit::TestAppContext) {
-        let mut app = Harness::start(cx);
+        let _core = started(cx);
         let message = "Voice input isn’t available in this build.";
-        let error = app.with_window(|_, cx| {
+        let error = cx.update(|cx| {
             let voice = handle(cx);
             voice.update(cx, |voice, cx| {
                 voice.owner = Some(1);
@@ -776,8 +784,8 @@ mod tests {
     /// "Preparing voice input…" for good.
     #[gpui_kit::test]
     fn a_reconnect_while_voice_opens_keeps_the_opening(cx: &mut gpui_kit::TestAppContext) {
-        let mut app = Harness::start(cx);
-        let (before, after) = app.with_window(|_, cx| {
+        let _core = started(cx);
+        let (before, after) = cx.update(|cx| {
             handle(cx).update(cx, |voice, cx| {
                 voice.owner = Some(1);
                 voice.state = super::State::Loading;

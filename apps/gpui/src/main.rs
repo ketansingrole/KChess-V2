@@ -21,7 +21,6 @@ mod gpui_patches;
 mod interface_zoom;
 mod links;
 mod menu;
-mod microphone;
 mod notifications;
 mod online;
 mod pages;
@@ -36,7 +35,6 @@ mod shortcuts;
 mod startup;
 mod theme;
 mod updates;
-mod voice;
 mod whats_new;
 mod window_state;
 // Only the app itself stamps the shortcuts: a test run would change its runner's.
@@ -52,7 +50,8 @@ use kchess_app::{
 };
 // The board and the games on it (`crates/kchess-board`).
 use kchess_board::{
-    ai, board, engine_view, game, game_image, notation, puzzle_db, rating_history, sound, widgets,
+    ai, board, engine_view, game, game_image, microphone, notation, puzzle_db, rating_history,
+    sound, voice, widgets,
 };
 // The pages as the shell drives them (`crates/kchess-nav`).
 use kchess_nav::{part, play_layout, swipe};

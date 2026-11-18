@@ -11,9 +11,9 @@ use kchess_domain::variant::Setup;
 
 use super::control::Control;
 use super::{Entry, Heard, VoiceEvent};
-use crate::assets::icon;
 use kchess_contracts::types::VoiceUpdate;
 use kchess_domain::voice::SpokenMove;
+use kchess_ui::icon;
 
 /// What a page made of a phrase it took as a command.
 pub struct Reply {
