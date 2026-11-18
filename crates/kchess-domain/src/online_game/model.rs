@@ -478,7 +478,8 @@ impl Model {
 
     /// A correspondence game: days per move, or a speed Lichess names so.
     pub fn correspondence(&self) -> bool {
-        self.online_speed == "correspondence" || self.online_days_per_turn.is_some()
+        self.online_speed == crate::perf::Speed::Correspondence.key()
+            || self.online_days_per_turn.is_some()
     }
 
     /// The challenge that starts a rematch of the last game, colours swapped.

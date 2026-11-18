@@ -52,6 +52,11 @@ impl Speed {
             Speed::Correspondence => "Correspondence",
         }
     }
+
+    /// The label of a speed Lichess names by `key`; a key KChess does not know reads as itself.
+    pub fn label_of(key: &str) -> &str {
+        Speed::from_key(key).map_or(key, |speed| speed.label())
+    }
 }
 
 /// A Lichess rating category.
@@ -146,6 +151,13 @@ mod tests {
             assert_eq!(Speed::from_key(speed.key()), Some(speed));
         }
         assert_eq!(Speed::from_key("chess960"), None);
+    }
+
+    #[test]
+    fn a_speed_key_reads_as_its_label() {
+        assert_eq!(Speed::label_of("ultraBullet"), "UltraBullet");
+        assert_eq!(Speed::label_of("blitz"), "Blitz");
+        assert_eq!(Speed::label_of("hyper"), "hyper");
     }
 
     /// A perf is labelled as its speed or its variant is.

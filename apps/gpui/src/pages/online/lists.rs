@@ -368,9 +368,9 @@ impl OnlinePage {
                 let mut sub = format!(
                     "{} · {} · you play {}",
                     if game.correspondence() {
-                        "Correspondence"
+                        kchess_domain::perf::Speed::Correspondence.label()
                     } else {
-                        &game.speed
+                        kchess_domain::perf::Speed::label_of(&game.speed)
                     },
                     if game.rated { "Rated" } else { "Casual" },
                     game.color.map_or("", kchess_domain::color::name)

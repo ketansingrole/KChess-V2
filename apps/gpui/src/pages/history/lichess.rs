@@ -872,13 +872,7 @@ pub fn game_row(
     if let Some(rating) = game.opponent_rating {
         sub.push_str(&format!(" · {rating}"));
     }
-    let speed = {
-        let mut chars = game.speed.chars();
-        chars
-            .next()
-            .map(|first| first.to_uppercase().chain(chars).collect::<String>())
-            .unwrap_or_default()
-    };
+    let speed = kchess_domain::perf::Speed::label_of(&game.speed).to_string();
     let diff = game.rating_diff.filter(|diff| *diff != 0);
     let accuracy = match &side {
         Some(side) => side

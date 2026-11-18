@@ -2337,7 +2337,7 @@ fn playable_by_default() -> bool {
 
 impl OngoingGame {
     pub fn correspondence(&self) -> bool {
-        self.speed == "correspondence"
+        self.speed == kchess_domain::perf::Speed::Correspondence.key()
     }
 }
 
