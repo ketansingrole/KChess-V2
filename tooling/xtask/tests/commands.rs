@@ -100,6 +100,29 @@ fn sweep_deletes_replaced_builds_and_on_macos_the_objects_no_program_uses() {
 }
 
 #[test]
+fn a_dry_run_sweep_says_when_the_stated_free_space_is_too_little_for_a_build() {
+    let target = tempfile::tempdir().unwrap();
+    let sweep = |free: &str| {
+        let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .args(["sweep", "--dry-run"])
+            .env("CARGO_TARGET_DIR", target.path())
+            .env("KCHESS_FREE_SPACE", free)
+            .output()
+            .expect("xtask runs");
+        let said = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "{said}");
+        said
+    };
+    let said = sweep("1000000000");
+    assert!(
+        said.contains("A build would be refused: Only 1.0 GB is free on this disk"),
+        "{said}"
+    );
+    let said = sweep("1000000000000");
+    assert!(!said.contains("would be refused"), "{said}");
+}
+
+#[test]
 fn an_unknown_command_fails_and_says_why() {
     let out = xtask(&["no-such-command"]);
     assert!(!out.status.success());
