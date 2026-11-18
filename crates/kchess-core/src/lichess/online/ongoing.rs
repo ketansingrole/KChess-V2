@@ -3,6 +3,7 @@ use serde_json::Value;
 use super::super::challenges::PlayerRef;
 use super::state::{OngoingGame, State};
 use kchess_contracts::error::CoreError;
+use kchess_domain::online_game::server::GameRef;
 
 /// `checking` of a resume: the account being checked, whether it lacked a login, and the failure
 /// to report if no account has a game.
@@ -61,38 +62,13 @@ pub(crate) fn ongoing_game(game: &Value, account: &str) -> OngoingGame {
         speed: game["speed"].as_str().unwrap_or("").to_string(),
         rated: game["rated"].as_bool().unwrap_or(false),
         tournament_id: game["tournamentId"].as_str().map(str::to_string),
-        playable: board_playable(game),
+        playable: GameRef::read(game).board_compatible(),
     }
-}
-
-/// Whether the Board API can play a game Lichess describes (`compat.board`). Lichess refuses it
-/// some games started on another device or app; an absent flag is taken as playable.
-pub(crate) fn board_playable(game: &Value) -> bool {
-    game["compat"]["board"] != Value::Bool(false)
-}
-
-/// Whether a game Lichess describes is a correspondence game: one that opens on the board only
-/// when asked for.
-pub(crate) fn correspondence(game: &Value) -> bool {
-    game["speed"].as_str() == Some("correspondence")
 }
 
 pub(crate) fn js_value_text(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
         other => other.to_string(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::correspondence;
-    use serde_json::json;
-
-    #[test]
-    fn only_a_correspondence_speed_is_correspondence() {
-        assert!(correspondence(&json!({ "speed": "correspondence" })));
-        assert!(!correspondence(&json!({ "speed": "rapid" })));
-        assert!(!correspondence(&json!({})));
     }
 }

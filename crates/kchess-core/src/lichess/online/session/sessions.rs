@@ -2,6 +2,7 @@
 
 use kchess_contracts::CoreEvent;
 use kchess_contracts::types::OnlinePhase;
+use kchess_domain::online_game::server::GameRef;
 use serde_json::Value;
 
 use crate::host::Level;
@@ -348,8 +349,8 @@ impl OnlineSession {
             let id = now_playing
                 .iter()
                 .find(|game| {
-                    !crate::lichess::online::ongoing::correspondence(game)
-                        && crate::lichess::online::ongoing::board_playable(game)
+                    let game = GameRef::read(game);
+                    !game.correspondence() && game.board_compatible()
                 })
                 .and_then(|game| game["gameId"].as_str())
                 .map(str::to_string);

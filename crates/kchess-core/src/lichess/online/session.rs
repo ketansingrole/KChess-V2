@@ -1,4 +1,5 @@
 use kchess_contracts::CoreEvent;
+use kchess_domain::online_game::server::ServerEvent;
 use kchess_domain::records::online::EventKind;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -480,15 +481,17 @@ impl OnlineSession {
             self.on_challenge(account, &event);
             return;
         }
-        if kind == Some(EventKind::GameStart) {
-            let game_id = event["game"]["gameId"].as_str().unwrap_or("").to_string();
+        let read = ServerEvent::read(&event);
+        if let ServerEvent::GameStart { game } = &read {
+            let game = game.clone().unwrap_or_default();
+            let game_id = game.game_id.clone().unwrap_or_default();
             self.challenge_became_game(&game_id);
             // A game the Board API cannot play stays where it was started; it is listed only.
-            if !super::ongoing::board_playable(&event["game"]) {
+            if !game.board_compatible() {
                 self.ongoing_changed();
                 return;
             }
-            let correspondence = super::ongoing::correspondence(&event["game"]);
+            let correspondence = game.correspondence();
             let started = self.st().started(&game_id, correspondence);
             match started {
                 super::state::Started::OnBoard => {}
@@ -504,9 +507,9 @@ impl OnlineSession {
             self.announce(&game_id, event);
             return;
         }
-        if kind == Some(EventKind::GameFinish) {
+        if let ServerEvent::GameFinish { game } = read {
             self.ongoing_changed();
-            let game_id = event["game"]["gameId"].as_str().unwrap_or("").to_string();
+            let game_id = game.and_then(|game| game.game_id).unwrap_or_default();
             {
                 let mut st = self.st();
                 if !st.concerns(&game_id) {
