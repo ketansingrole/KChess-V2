@@ -144,7 +144,7 @@ fn short_date(millis: f64) -> String {
 /// Home's buttons, as Quick Pick offers them; its Sync games is the app's own _Sync Lichess
 /// games_ there.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Action {
+pub enum Action {
     /// The last game, open in Game history.
     Review,
 }

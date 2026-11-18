@@ -1463,7 +1463,7 @@ mod tests {
 
 /// The Studies page's header actions.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Action {
+pub enum Action {
     New,
     Import,
 }

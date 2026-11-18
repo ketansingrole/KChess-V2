@@ -223,7 +223,7 @@ fn theme_name(key: &str, themes: &[Theme]) -> String {
 
 /// What the puzzle panel's buttons do, for Quick Pick to offer the same.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) enum Action {
+pub enum Action {
     Hint,
     Solution,
     Flip,

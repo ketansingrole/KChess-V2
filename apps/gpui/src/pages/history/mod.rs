@@ -220,7 +220,7 @@ enum Redo {
 
 /// The page's actions, as its buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Action {
+pub enum Action {
     AllGames,
     Export,
     Analyse,

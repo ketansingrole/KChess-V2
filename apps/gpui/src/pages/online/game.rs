@@ -36,7 +36,7 @@ fn action(name: OnlineAction) -> impl Fn(&ClickEvent, &mut Window, &mut App) + '
 
 /// What the live game's buttons do, for Quick Pick to offer the same.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) enum LiveAction {
+pub enum LiveAction {
     Berserk,
     Takeback,
     OfferDraw,

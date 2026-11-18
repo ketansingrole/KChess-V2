@@ -114,7 +114,7 @@ fn message_of(cause: &kchess_contracts::CoreError) -> SharedString {
 
 /// The open player's actions, as their buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Action {
+pub enum Action {
     Follow,
     Challenge,
     Message,

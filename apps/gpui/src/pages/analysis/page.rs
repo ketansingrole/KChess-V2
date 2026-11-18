@@ -9,7 +9,7 @@ use crate::pages::{ActionInfo, ActionRole, NavGroup, Page, PageAction, PageInfo,
 
 /// The board's own actions, as its menu and keys offer them, and the study bar's.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Action {
+pub enum Action {
     Flip,
     CopyFen,
     CopyPgn,

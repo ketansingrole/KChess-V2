@@ -82,7 +82,7 @@ use kchess_domain::variant::{Setup, Variant};
 
 /// What the panel's buttons do, for Quick Pick to offer the same.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) enum Action {
+pub enum Action {
     TakeBack,
     Pause,
     Resume,

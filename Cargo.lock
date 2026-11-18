@@ -4452,6 +4452,7 @@ dependencies = [
  "kchess-games",
  "kchess-hack",
  "kchess-host",
+ "kchess-nav",
  "kchess-service",
  "kchess-testkit",
  "kchess-ui",
@@ -4563,6 +4564,17 @@ dependencies = [
  "kchess-hack",
  "regex",
  "url",
+]
+
+[[package]]
+name = "kchess-nav"
+version = "2026.11.7"
+dependencies = [
+ "gpui-kit",
+ "kchess-app",
+ "kchess-board",
+ "kchess-hack",
+ "kchess-ui",
 ]
 
 [[package]]

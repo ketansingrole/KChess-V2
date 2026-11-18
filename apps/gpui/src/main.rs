@@ -31,8 +31,6 @@ mod notifications;
 mod online;
 mod pages;
 mod palette;
-mod part;
-mod play_layout;
 mod player_search;
 mod position_engine;
 mod profile;
@@ -46,7 +44,6 @@ mod shell;
 mod shortcuts;
 mod startup;
 mod studies;
-mod swipe;
 mod theme;
 mod updates;
 mod voice;
@@ -63,8 +60,11 @@ use kchess_ui::{chart, dates, motion};
 use kchess_app::{loading, log, played, prefs, quit, settings, slow_calls, timer};
 // The board and the games on it (`crates/kchess-board`).
 use kchess_board::{board, game, notation, sound};
+// The pages as the shell drives them (`crates/kchess-nav`).
+use kchess_nav::{part, play_layout, swipe};
 
 fn main() {
+    pages::register_pages();
     let data_dir = match profile::data_dir() {
         Ok(dir) => dir,
         Err(cause) => {
