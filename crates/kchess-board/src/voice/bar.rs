@@ -8,8 +8,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{ErrorKind, State};
-use crate::assets::icon;
 use crate::theme::{Palette, radii};
+use kchess_ui::icon;
 
 /// What a page puts in its bar.
 pub struct Bar {

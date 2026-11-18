@@ -87,6 +87,9 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
     let test = config.test.clone().map(Arc::new);
     let (bridge, mut receiver) = open(config, layout.mode(false)?)?;
     if let Some(test) = test {
+        if let Some(audio) = test.voice_audio.clone() {
+            cx.set_global(kchess_board::voice::capture::TestAudio(audio));
+        }
         cx.set_global(TestSwitchesGlobal(test));
     }
     let core = AppCore {

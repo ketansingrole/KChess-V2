@@ -19,5 +19,6 @@ pub mod slow_calls;
 pub mod studies;
 pub mod timer;
 
-#[cfg(test)]
-mod tests;
+/// A real core for the tests of the crates the app is built from (`test-support`).
+#[cfg(any(test, feature = "test-support"))]
+pub mod tests;

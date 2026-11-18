@@ -3,7 +3,8 @@
 //! Settings shows it (`notation`), move and game sounds (`sound`), the boards, pieces and sounds
 //! embedded (`assets`), the board pages' own widgets (`widgets`), the engine's evaluation as
 //! they show it (`engine_view`), pictures of a game (`game_image`), the puzzle database
-//! (`puzzle_db`), the ChatGPT explainer (`ai`) and a player's rating history (`rating_history`).
+//! (`puzzle_db`), the ChatGPT explainer (`ai`), a player's rating history (`rating_history`), and
+//! moves said aloud (`voice`) through the microphone (`microphone`).
 //! It depends on the design system (`kchess-ui`) and the app's services (`kchess-app`), never on
 //! the app: what it needs from it (whether voice owns Space) the app passes in.
 
@@ -14,15 +15,17 @@ pub mod board;
 pub mod engine_view;
 pub mod game;
 pub mod game_image;
+pub mod microphone;
 pub mod notation;
 pub mod puzzle_db;
 pub mod rating_history;
 pub mod sound;
+pub mod voice;
 pub mod widgets;
 
 use gpui_kit::{App, Global};
 // The design system and the app's services, under the names the app's modules use.
-use kchess_app::{core, log, played, quit, settings};
+use kchess_app::{core, log, played, quit, settings, slow_calls};
 use kchess_ui::keys::keys;
 use kchess_ui::{chart, dates, theme};
 

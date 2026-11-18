@@ -44,7 +44,7 @@ const MACOS_PRIVACY: &str =
 impl Host {
     /// What a test sees unless it pins another: not asked yet, with the system's privacy settings
     /// to open, which shows the most controls (`Allow microphone` beside `Privacy settings`).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub const TEST: Host = Host {
         access: Access::NotDetermined,
         from_terminal: false,
@@ -52,7 +52,10 @@ impl Host {
     };
 
     /// What this machine says.
-    #[cfg_attr(test, allow(dead_code, reason = "tests never read the machine"))]
+    #[cfg_attr(
+        any(test, feature = "test-support"),
+        allow(dead_code, reason = "tests never read the machine")
+    )]
     fn system() -> Host {
         Host {
             access: status(),
@@ -63,14 +66,14 @@ impl Host {
 }
 
 /// The microphone as a test pins it, whatever the machine running the test says.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub struct Pinned(pub Host);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl gpui_kit::Global for Pinned {}
 
 /// What the test pinned, `Host::TEST` unless it pinned another.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 fn pinned(cx: &App) -> Host {
     cx.try_global::<Pinned>()
         .map_or(Host::TEST, |pinned| pinned.0)
@@ -87,12 +90,12 @@ fn pinned(cx: &App) -> Host {
 #[track_caller]
 pub fn host(cx: &App) -> Host {
     crate::slow_calls::call("the system's microphone access (microphone::host)");
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     {
         HOST_READS.set(HOST_READS.get() + 1);
         pinned(cx)
     }
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-support")))]
     {
         let _ = cx;
         Host::system()
@@ -100,12 +103,12 @@ pub fn host(cx: &App) -> Host {
 }
 
 /// How many times this thread read `host`, so a test can check that drawing never asks the system.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn host_reads() -> usize {
     HOST_READS.get()
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     static HOST_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -113,9 +116,9 @@ thread_local! {
 /// The system's microphone privacy settings, where there are any to open (`Host::privacy_settings`),
 /// without asking the system anything: cheap enough to read while drawing.
 pub fn privacy_settings(cx: &App) -> Option<&'static str> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     return pinned(cx).privacy_settings;
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-support")))]
     {
         let _ = cx;
         privacy_settings_url()
@@ -125,9 +128,9 @@ pub fn privacy_settings(cx: &App) -> Option<&'static str> {
 /// Ask the system for access when it has not asked yet; `done` hears the status after, perhaps on
 /// another thread. A test's pinned answer stands: no system request opens.
 pub fn ask(cx: &App, done: impl FnOnce(Access) + Send + 'static) {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     return done(host(cx).access);
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-support")))]
     {
         let _ = cx;
         request(done)
@@ -168,7 +171,10 @@ fn status() -> Access {
 }
 
 /// Ask the system for access when it has not asked yet; `done` hears the status after.
-#[cfg_attr(test, allow(dead_code, reason = "tests never ask the machine"))]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    allow(dead_code, reason = "tests never ask the machine")
+)]
 fn request(done: impl FnOnce(Access) + Send + 'static) {
     #[cfg(target_os = "macos")]
     return mac::request(done);
@@ -226,5 +232,28 @@ mod mac {
         // SAFETY: audio is an accepted media type; the block owns everything it uses and may
         // run on any queue, as the handler is documented to.
         unsafe { AVCaptureDevice::requestAccessForMediaType_completionHandler(audio, &handler) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A test's pinned microphone is what the app hears: its privacy settings, and the answer to
+    /// asking for access, with no system request opened.
+    #[gpui_kit::test]
+    fn a_pinned_microphone_answers_for_the_system(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            assert_eq!(privacy_settings(cx), Some(MACOS_PRIVACY));
+            cx.set_global(Pinned(Host {
+                access: Access::Denied,
+                from_terminal: false,
+                privacy_settings: Some("settings:microphone"),
+            }));
+            assert_eq!(privacy_settings(cx), Some("settings:microphone"));
+        });
+        let (heard, hear) = std::sync::mpsc::channel();
+        cx.update(|cx| ask(cx, move |access| heard.send(access).expect("heard")));
+        assert!(hear.recv().expect("an answer") == Access::Denied);
     }
 }

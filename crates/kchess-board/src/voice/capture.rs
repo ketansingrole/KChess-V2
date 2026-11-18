@@ -48,9 +48,15 @@ impl CaptureError {
     }
 }
 
-/// The test file to play instead of the microphone (`TestSwitches::voice_audio`).
+/// A recording to play instead of the microphone, when the app was started with one (the core's
+/// `TestSwitches::voice_audio`, which the app sets here).
+pub struct TestAudio(pub PathBuf);
+
+impl gpui_kit::Global for TestAudio {}
+
 fn test_audio(cx: &gpui_kit::App) -> Option<PathBuf> {
-    crate::core::test_switches(cx)?.voice_audio.clone()
+    cx.try_global::<TestAudio>()
+        .map(|TestAudio(path)| path.clone())
 }
 
 /// Start capturing: chunks arrive on the returned receiver until the capture is dropped.
@@ -309,6 +315,16 @@ pub fn level(audio: &[f32]) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    /// A recording the app was started with plays instead of the microphone; none, none.
+    #[gpui_kit::test]
+    fn the_recording_the_app_set_plays(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            assert_eq!(super::test_audio(cx), None);
+            cx.set_global(super::TestAudio("voice.wav".into()));
+            assert_eq!(super::test_audio(cx), Some("voice.wav".into()));
+        });
+    }
+
     use super::{
         AtomicBool, CaptureError, Duration, Ordering, await_open, level, parse_wav, pcm_base64,
     };
