@@ -1,10 +1,14 @@
-//! Puzzles: the Train tab with its three modes: Lichess practice, the downloaded database, and
+//! The Puzzles page: the Train tab with its three modes: Lichess practice, the downloaded database, and
 //! rated puzzles. The session's transitions are Rust (`game/puzzle.rs`); this page fetches what
 //! they ask for, plays the puzzle on the board and keeps the attempt log up to date.
 
-use crate::pages::PageView;
+use kchess_nav::page::PageView;
+// The app's services, the design system and the board, under the names this page's modules use.
+use kchess_app::{accounts, core, loading, log, network, prefs, quit, settings, timer};
+use kchess_board::{ai, board, game, puzzle_board, puzzle_db, rating_history, sound, widgets};
 use kchess_contracts::calls;
 use kchess_contracts::types::{AiKind, AiRequest};
+use kchess_ui::{chart, dates, theme};
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
@@ -24,25 +28,25 @@ use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use serde_json::Value;
 use shakmaty::Color;
 
-use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::puzzle::{PuzzleSession, PuzzleStatus, Selection, Step, local_day};
 use crate::game::surface::TakesKeys as _;
-use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
 use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
 use crate::puzzle_db::PuzzleDbHandle;
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii, tint};
 use kchess_domain::trainer::puzzle_session::{Answer, Detail, Reply, Request, Resume};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
+use kchess_ui::icon;
 mod daily;
 mod history;
 mod rush;
-pub(crate) use rush::RushAction;
+pub use rush::RushAction;
 mod stats;
 
-use crate::pages::{PageTab, TabInfo};
 use crate::widgets::Pressable as _;
-use crate::widgets::{self, Choice, Pill, Tone};
+use crate::widgets::{Choice, Pill, Tone};
+use kchess_nav::page::{PageTab, TabInfo};
 
 /// Puzzles' tabs, in order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -833,7 +837,7 @@ impl PuzzlesPage {
 /// Train a theme on the Puzzles page, after the click that asked for it.
 fn train_theme(key: String, window: &mut Window, cx: &mut App) {
     window.defer(cx, move |window, cx| {
-        if let Some(page) = crate::shell::view::<PuzzlesPage>(cx) {
+        if let Some(page) = kchess_nav::shell::view::<PuzzlesPage>(cx) {
             page.update(cx, |page, cx| page.train_theme(&key, window, cx));
         }
     });
@@ -1134,7 +1138,7 @@ pub(crate) fn status_panel(
                 Button::new("puzzle-flip")
                     .ghost()
                     .icon(icon("arrow-up-down"))
-                    .tooltip(crate::menu::flip_label(cx))
+                    .tooltip(kchess_board::flip_label(cx))
                     .accessibility_label("Flip board")
                     .on_click({
                         let board = board_entity.downgrade();
@@ -1718,20 +1722,20 @@ impl PuzzlesPage {
 
     /// The puzzle board of the tab shown, while it shows a puzzle, and whether it is Train's.
     /// The Train tab's board.
-    #[cfg(test)]
-    pub(crate) fn board(&self) -> Entity<PuzzleBoard> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn board(&self) -> Entity<PuzzleBoard> {
         self.puzzle.clone()
     }
 
     /// The puzzle on the Train tab, told apart from the one before it.
-    #[cfg(test)]
-    pub(crate) fn puzzle_key(&self) -> u64 {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn puzzle_key(&self) -> u64 {
         self.session.puzzle_key()
     }
 
     /// The Train tab's board, while a finished puzzle is stepped back through: the position shown.
-    #[cfg(test)]
-    pub(crate) fn viewing(&self, cx: &App) -> Option<usize> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn viewing(&self, cx: &App) -> Option<usize> {
         self.puzzle.read(cx).viewing()
     }
 
@@ -1749,7 +1753,7 @@ impl PuzzlesPage {
     }
 
     /// A Storm, Streak or Rush run is going.
-    pub(crate) fn run_going(&self, cx: &App) -> bool {
+    pub fn run_going(&self, cx: &App) -> bool {
         self.rush
             .as_ref()
             .is_some_and(|rush| rush.read(cx).running())
@@ -1959,7 +1963,7 @@ impl Render for PuzzlesPage {
                 div()
                     .flex_none()
                     .px(side_padding(window))
-                    .pt(crate::play_layout::PAGE_TOP)
+                    .pt(kchess_nav::play_layout::PAGE_TOP)
                     .child(tab_row),
             )
             .child(div().flex_1().min_h_0().child(body))
@@ -1968,9 +1972,10 @@ impl Render for PuzzlesPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{PuzzleStatus, as_contract, coach_allowed, theme_groups, theme_name, themes};
+    use super::{PuzzleStatus, Tab, as_contract, coach_allowed, theme_groups, theme_name, themes};
     use crate::widgets::{self, format_bytes};
     use kchess_contracts::types::LocalLadderQuery;
+    use kchess_nav::page::{Page, PageTab as _};
 
     /// The session writes its numbers as floats (`1500.0`); read as JSON into the contract's
     /// integer fields they were refused, so a ladder never reached the core. The contract's own
@@ -2021,11 +2026,101 @@ mod tests {
         assert_eq!(theme_name("mateIn2", &list), "Mate in 2");
         assert_eq!(theme_name("someNewTheme", &list), "Some New Theme");
     }
+
+    /// A shell holding only the Puzzles page, which keeps the pages it was asked to open.
+    struct OnlyPuzzles {
+        page: gpui_kit::AnyView,
+        opened: std::cell::RefCell<Vec<kchess_nav::page::Page>>,
+    }
+
+    impl kchess_nav::shell::Shell for OnlyPuzzles {
+        fn open(&self, page: Page, _: &mut gpui_kit::Window, _: &mut gpui_kit::App) {
+            self.opened.borrow_mut().push(page);
+        }
+
+        fn current(&self, _: &gpui_kit::App) -> Option<Page> {
+            self.opened.borrow().last().copied()
+        }
+
+        fn view(&self, page: Page, _: &gpui_kit::App) -> Option<gpui_kit::AnyView> {
+            (page == Page::Puzzles).then(|| self.page.clone())
+        }
+
+        fn made(
+            &self,
+            page: Page,
+            _: &mut gpui_kit::Window,
+            cx: &mut gpui_kit::App,
+        ) -> Option<gpui_kit::AnyView> {
+            self.view(page, cx)
+        }
+
+        fn go(
+            &self,
+            _: kchess_nav::swipe::Direction,
+            _: &mut gpui_kit::Window,
+            _: &mut gpui_kit::App,
+        ) {
+        }
+    }
+
+    /// Another page opens Puzzles at what it asked for: a linked puzzle on Daily, an opening's
+    /// puzzles or a theme on Train.
+    #[gpui_kit::test]
+    fn other_pages_open_puzzles_at_what_they_asked(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = kchess_board::testing::Started::new(cx);
+        let shell = app.with_window(|window, cx| {
+            crate::puzzle_db::init(cx);
+            crate::accounts::init(cx);
+            let page = cx.new(|cx| super::PuzzlesPage::new(window, cx));
+            let shell = std::rc::Rc::new(OnlyPuzzles {
+                page: page.into(),
+                opened: Default::default(),
+            });
+            cx.set_global(kchess_nav::shell::Navigator(shell.clone()));
+            shell
+        });
+        let tab_and_angle = |app: &mut kchess_board::testing::Started| {
+            app.with_window(|_, cx| {
+                (
+                    Tab::stored(cx),
+                    crate::prefs::get::<String>(cx, super::ANGLE, String::new()),
+                )
+            })
+        };
+        app.with_window(|window, cx| {
+            Tab::Rush.store(cx);
+            super::open_puzzle("abcde".into(), window, cx);
+        });
+        assert_eq!(tab_and_angle(&mut app).0, Tab::Daily);
+        app.with_window(|window, cx| {
+            Tab::Rush.store(cx);
+            super::open_opening("Sicilian Defense", window, cx);
+        });
+        let opening = kchess_domain::training::openings::opening_key("Sicilian Defense");
+        assert_eq!(tab_and_angle(&mut app), (Tab::Train, opening));
+        app.with_window(|window, cx| {
+            Tab::Rush.store(cx);
+            super::train_theme("fork".into(), window, cx);
+        });
+        app.cx().run_until_parked();
+        assert_eq!(tab_and_angle(&mut app), (Tab::Train, "fork".to_string()));
+        assert_eq!(*shell.opened.borrow(), [Page::Puzzles, Page::Puzzles]);
+    }
+
+    /// The command palette offers each of the page's tabs.
+    #[gpui_kit::test]
+    fn each_tab_is_a_place_to_go(cx: &mut gpui_kit::TestAppContext) {
+        use kchess_nav::page::PageView as _;
+        let places = cx.read(|cx| super::PuzzlesPage::places(cx).len());
+        assert_eq!(places, Tab::ALL.len());
+    }
 }
 
-impl crate::pages::PageAction for Action {
-    fn info(&self) -> crate::pages::ActionInfo {
-        use crate::pages::ActionInfo;
+impl kchess_nav::page::PageAction for Action {
+    fn info(&self) -> kchess_nav::page::ActionInfo {
+        use kchess_nav::page::ActionInfo;
         let (id, label, glyph, keywords) = match self {
             Action::Hint => ("hint", "Hint", "lightbulb", "clue help"),
             Action::Solution => ("solution", "Solution", "eye", "show answer give up"),
@@ -2050,12 +2145,12 @@ impl crate::pages::PageAction for Action {
 }
 
 impl PageView for PuzzlesPage {
-    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
-        page: crate::pages::Page::Puzzles,
+    const INFO: kchess_nav::page::PageInfo = kchess_nav::page::PageInfo {
+        page: kchess_nav::page::Page::Puzzles,
         label: "Puzzles",
         short: "Puzzles",
         icon: "puzzle",
-        group: Some(crate::pages::NavGroup::Train),
+        group: Some(kchess_nav::page::NavGroup::Train),
         keywords: "",
     };
 
@@ -2102,8 +2197,8 @@ impl PageView for PuzzlesPage {
         });
     }
 
-    fn places(_: &App) -> Vec<crate::pages::PageCommand> {
-        crate::pages::tab_places::<Self, Tab>("puzzles", |_, _, _, cx| cx.notify())
+    fn places(_: &App) -> Vec<kchess_nav::page::PageCommand> {
+        kchess_nav::page::tab_places::<Self, Tab>("puzzles", |_, _, _, cx| cx.notify())
     }
 }
 
@@ -2119,7 +2214,7 @@ pub fn signed_out(accounts_left: bool, cx: &mut App) {
 }
 
 pub fn open_puzzle(id: String, window: &mut Window, cx: &mut App) {
-    crate::shell::show::<PuzzlesPage>(window, cx, move |puzzles, window, cx| {
+    kchess_nav::shell::show::<PuzzlesPage>(window, cx, move |puzzles, window, cx| {
         puzzles.open_puzzle(id, window, cx)
     });
 }
@@ -2129,10 +2224,10 @@ pub fn open_opening(name: &str, window: &mut Window, cx: &mut App) {
     let key = kchess_domain::training::openings::opening_key(name);
     PuzzlesPage::choose_opening(&key, name, cx);
     // A page made now starts with the opening; one made before is told.
-    if let Some(puzzles) = crate::shell::view::<PuzzlesPage>(cx) {
+    if let Some(puzzles) = kchess_nav::shell::view::<PuzzlesPage>(cx) {
         puzzles.update(cx, |puzzles, cx| puzzles.opening_chosen(window, cx));
     }
-    crate::shell::open(crate::pages::Page::Puzzles, window, cx);
+    kchess_nav::shell::open(kchess_nav::page::Page::Puzzles, window, cx);
 }
 
 /// Which reply a host call settles: a load, or Lichess's answer to a result.

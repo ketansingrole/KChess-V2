@@ -764,58 +764,7 @@ mod tests {
 
     use super::{PuzzleBoard, counts_as_solved};
 
-    /// The app as a puzzle board needs it: a core of the test's own, Settings, the theme and
-    /// voice, and a window to put the board in.
-    struct Started {
-        cx: gpui_kit::TestAppContext,
-        window: gpui_kit::AnyWindowHandle,
-        _core: kchess_app::tests::TestCore,
-    }
-
-    struct Blank;
-
-    impl gpui_kit::Render for Blank {
-        fn render(
-            &mut self,
-            _: &mut gpui_kit::Window,
-            _: &mut gpui_kit::Context<Self>,
-        ) -> impl gpui_kit::IntoElement {
-            gpui_kit::div()
-        }
-    }
-
-    impl Started {
-        fn new(cx: &mut gpui_kit::TestAppContext) -> Started {
-            let core = cx.update(|cx| {
-                gpui_kit::init(cx);
-                let core = kchess_app::tests::start_core(cx);
-                kchess_app::settings::init_for_tests(cx);
-                let colors = kchess_ui::theme::colors("kchess", &[], false);
-                cx.set_global(kchess_ui::theme::Palette::of(&colors, false));
-                crate::voice::init(cx);
-                core
-            });
-            let window = cx.update(|cx| {
-                gpui_kit::open_window(Default::default(), cx, |_, cx| cx.new(|_| Blank))
-                    .expect("a window")
-                    .0
-            });
-            Started {
-                cx: cx.clone(),
-                window,
-                _core: core,
-            }
-        }
-
-        fn with_window<R>(
-            &mut self,
-            work: impl FnOnce(&mut gpui_kit::Window, &mut gpui_kit::App) -> R,
-        ) -> R {
-            self.cx
-                .update_window(self.window, |_, window, cx| work(window, cx))
-                .expect("the window")
-        }
-    }
+    use crate::testing::Started;
 
     /// Show solution pressed while the opponent's reply was on its way played the solution's
     /// next move before that reply: it was the opponent's, so the solution stopped there. Only a
@@ -846,8 +795,10 @@ mod tests {
             board
         });
         for _ in 0..40 {
-            app.cx.executor().advance_clock(Duration::from_millis(100));
-            app.cx.run_until_parked();
+            app.cx()
+                .executor()
+                .advance_clock(Duration::from_millis(100));
+            app.cx().run_until_parked();
         }
         let index = app.with_window(|_, cx| board.read(cx).puzzle().map(|puzzle| puzzle.index()));
         assert_eq!(index, Some(3));

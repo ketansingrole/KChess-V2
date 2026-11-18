@@ -11,7 +11,6 @@ use gpui_kit::component::v_flex;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
-use serde_json::Value;
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -263,23 +262,7 @@ pub fn save_run<V: 'static>(
     .detach();
 }
 
-/// The best score of a variant in a summary.
-pub fn best(summary: Option<&RunSummary>, variant: &str) -> Option<f64> {
-    Some(summary?.best.get(variant)?.score)
-}
-
-/// A finished run of `kind` to save; `detail` is an object of numbers, words and flags.
-pub fn input(kind: RunKind, variant: impl Into<String>, score: f64, detail: Value) -> RunInput {
-    RunInput {
-        kind,
-        variant: variant.into(),
-        score,
-        detail: match detail {
-            Value::Object(detail) => detail,
-            _ => serde_json::Map::new(),
-        },
-    }
-}
+pub use kchess_app::runs::{best, input};
 
 /// A form field: its label above the control.
 pub fn field(

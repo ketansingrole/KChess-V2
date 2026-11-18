@@ -107,6 +107,9 @@ Each step is one pull request, each green on its own.
 5. **Feature crates for the pages that rarely change**, the largest first: practice (9,000 lines),
    puzzles (4,900), watch (4,300), history (3,000), studies, local and home. Where a page names
    another (`pages::analysis` from puzzles and watch), it opens it through step 3's navigation.
+   Puzzles came first (`crates/kchess-puzzles`): all it used from the app but timed runs'
+   scores (now `kchess_app::runs`, shared with practice) had already left. The app names it as
+   `pages::puzzles`, so its links and tests did not change.
 6. **The rest, once the app is small enough that its crates pay off**: analysis, Settings, Online,
    tournaments and the pieces they share (`position_engine`, `ai`, `puzzle_board`, cards and
    `quick_pick`). Measure first: by then an edit in the app should cost well under the 9 s it
@@ -132,6 +135,10 @@ Each step is one pull request, each green on its own.
   where the app's binary is not.
 - A place in the Mutants workflow's package list (`.github/workflows/mutants.yml`), with GPUI's
   system libraries installed for it there; CI's `mutants` job installs them for every UI crate.
+- Tests that need a core, Settings, the theme and a window start `kchess_board::testing::Started`
+  (`test-support`), not the app's end-to-end harness, which a crate cannot reach.
+- xtask's checks that name a file by its path (`boundaries.rs`) name its new one: a check that
+  cannot find its file fails, as the clocks' did when Puzzle Rush moved.
 - Its moved lines' mutants killed: a pull request's mutants run (`cargo xtask mutants`) tests a
   UI crate's changed lines with its own tests, not the app's, so the code it takes along needs
   tests of its own.

@@ -14,7 +14,7 @@ pub mod online;
 pub mod openings;
 pub mod players;
 pub mod practice;
-pub mod puzzles;
+pub use kchess_puzzles as puzzles;
 pub mod settings;
 pub mod studies;
 pub mod study_bar;
