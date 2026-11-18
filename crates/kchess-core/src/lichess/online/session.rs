@@ -1,4 +1,5 @@
 use kchess_contracts::CoreEvent;
+use kchess_domain::records::online::EventKind;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
@@ -474,12 +475,12 @@ impl OnlineSession {
         if cancel.is_cancelled() {
             return;
         }
-        let kind = event["type"].as_str().unwrap_or("").to_string();
-        if super::state::CHALLENGE_TYPES.contains(&kind.as_str()) {
+        let kind = EventKind::of(&event);
+        if kind.is_some_and(EventKind::is_challenge) {
             self.on_challenge(account, &event);
             return;
         }
-        if kind == "gameStart" {
+        if kind == Some(EventKind::GameStart) {
             let game_id = event["game"]["gameId"].as_str().unwrap_or("").to_string();
             self.challenge_became_game(&game_id);
             // A game the Board API cannot play stays where it was started; it is listed only.
@@ -503,7 +504,7 @@ impl OnlineSession {
             self.announce(&game_id, event);
             return;
         }
-        if kind == "gameFinish" {
+        if kind == Some(EventKind::GameFinish) {
             self.ongoing_changed();
             let game_id = event["game"]["gameId"].as_str().unwrap_or("").to_string();
             {

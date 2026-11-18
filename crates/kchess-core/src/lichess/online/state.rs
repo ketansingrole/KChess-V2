@@ -38,10 +38,6 @@ pub(crate) const LOST_STREAM: &str = "Lost connection to Lichess. Reconnect to r
 
 pub use kchess_contracts::types::Lane;
 
-/// `OnlineHooks` of the service: the session reports these to the host through `emit`.
-pub(crate) const CHALLENGE_TYPES: [&str; 3] =
-    ["challenge", "challengeCanceled", "challengeDeclined"];
-
 /// The session's mutable state. Never held across an await.
 pub(crate) struct State {
     pub(crate) controller: Option<Handle>,

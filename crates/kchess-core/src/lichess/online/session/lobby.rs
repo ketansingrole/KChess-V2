@@ -1,6 +1,7 @@
 //! The online session's idle event stream.
 
 use kchess_contracts::CoreEvent;
+use kchess_domain::records::online::EventKind;
 use std::sync::Arc;
 
 use kchess_contracts::types::{LobbyState, OnlinePhase};
@@ -109,13 +110,13 @@ impl OnlineSession {
             if cancel_for_emit.is_cancelled() {
                 return;
             }
-            let kind = event["type"].as_str().unwrap_or("").to_string();
-            if kind == "gameStart" {
+            let kind = EventKind::of(&event);
+            if kind == Some(EventKind::GameStart) {
                 this.challenge_became_game(event["game"]["gameId"].as_str().unwrap_or(""));
             }
-            if crate::lichess::online::state::CHALLENGE_TYPES.contains(&kind.as_str()) {
+            if kind.is_some_and(EventKind::is_challenge) {
                 this.on_challenge(&for_account, &event);
-            } else if kind == "gameStart"
+            } else if kind == Some(EventKind::GameStart)
                 && event["game"]["speed"].as_str() != Some("correspondence")
                 && crate::lichess::online::ongoing::board_playable(&event["game"])
             {
@@ -134,7 +135,7 @@ impl OnlineSession {
                         this.report(&cause, None);
                     }
                 });
-            } else if kind == "gameStart" || kind == "gameFinish" {
+            } else if matches!(kind, Some(EventKind::GameStart | EventKind::GameFinish)) {
                 this.ongoing_changed();
             }
         });
