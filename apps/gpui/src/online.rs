@@ -25,7 +25,6 @@ use kchess_domain::online_game::model::{
     Call, ChatEntry, Ctx, Effect, GamePhase, Model, Op, Outcome, Rematch, Reply, View,
 };
 use kchess_domain::online_game::server::ServerEvent;
-use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use kchess_domain::training::clock::{ClockState, SetData, format_clock};
 use kchess_domain::variant::{Setup, Variant};
 use serde_json::{Value, json};
@@ -1054,25 +1053,7 @@ pub fn handle(cx: &App) -> Entity<OnlineState> {
     cx.global::<OnlineHandle>().0.clone()
 }
 
-/// The account Lichess actions use: the one chosen for online play when it
-/// is connected, else the first connected one.
-pub fn active_account(accounts: &[kchess_contracts::types::Account], cx: &App) -> Option<String> {
-    let preferred = crate::prefs::get::<String>(cx, crate::accounts::ONLINE_ACCOUNT, String::new());
-    let listed: Vec<ListedAccount> = accounts
-        .iter()
-        .map(|account| ListedAccount {
-            username: Some(account.username.as_str()),
-            connected: account.connected,
-        })
-        .collect();
-    let index = connected_account_index(&listed, Some(&preferred))?;
-    listed[index].username.map(str::to_string)
-}
-
-/// Which connected account plays.
-pub fn set_active_account(account: &str, cx: &mut App) {
-    crate::prefs::set(cx, crate::accounts::ONLINE_ACCOUNT, account.to_string());
-}
+pub use crate::accounts::set_active_account;
 
 pub fn init(cx: &mut App) {
     let state = cx.new(|cx| {

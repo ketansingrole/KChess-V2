@@ -12,12 +12,10 @@ use kchess_contracts::check::{ChesscomUsername, FriendList, Username};
 use kchess_contracts::types::{
     Account, AppData, ChesscomAccount, ProfileArea, RelationAction, Reply, UsageReport,
 };
+use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use serde_json::json;
 
 use crate::core::{Answer, AppCore, Reads};
-
-mod menu;
-pub use menu::{MenuInputs, menu_button};
 
 /// The account chosen for online play.
 pub const ONLINE_ACCOUNT: &str = "kchess:online-account";
@@ -119,7 +117,7 @@ impl Accounts {
 
     /// The account that plays online.
     pub fn active(&self, cx: &App) -> Option<String> {
-        crate::online::active_account(self.all(), cx)
+        active_account(self.all(), cx)
     }
 
     /// The bytes downloaded for `username`.
@@ -234,7 +232,7 @@ impl Accounts {
             });
             // Once the accounts hold the new one: the online state reads them.
             if matches!(connected, Ok(true)) {
-                let _ = cx.update(|_, cx| crate::online::account_connected(cx));
+                let _ = cx.update(|_, cx| hooks(cx).connected.map(|connected| connected(cx)));
             }
         })
         .detach();
@@ -273,7 +271,7 @@ impl Accounts {
                         let message = if downloaded > 0. {
                             format!(
                                 "Lichess games synced · {} downloaded",
-                                crate::widgets::format_bytes(downloaded)
+                                kchess_ui::widgets::format_bytes(downloaded)
                             )
                         } else {
                             "Lichess games synced".into()
@@ -482,7 +480,7 @@ impl Accounts {
                             format!("Connect @{account} again to {action} players on Lichess"),
                         )
                         .title("Lichess needs a new permission");
-                        let reconnect = crate::widgets::action_notification(
+                        let reconnect = kchess_ui::widgets::action_notification(
                             note,
                             "relation-reconnect",
                             "Reconnect",
@@ -651,7 +649,9 @@ impl Accounts {
                     this.refresh(cx);
                     return;
                 }
-                crate::pages::puzzles::signed_out(!first.is_empty(), cx);
+                if let Some(signed_out) = hooks(cx).signed_out {
+                    signed_out(!first.is_empty(), cx);
+                }
                 crate::log::write(
                     Level::Info,
                     "accounts",
@@ -659,16 +659,238 @@ impl Accounts {
                 );
                 this.refresh(cx);
                 // After this update: the new pages read and refresh the accounts themselves.
-                window.defer(cx, crate::shell::restart_pages);
+                if let Some(restart) = hooks(cx).restart_pages {
+                    window.defer(cx, restart);
+                }
             });
         })
         .detach();
     }
 }
 
+/// The account Lichess actions use: the one chosen for online play when it
+/// is connected, else the first connected one.
+pub fn active_account(accounts: &[kchess_contracts::types::Account], cx: &App) -> Option<String> {
+    let preferred = crate::prefs::get::<String>(cx, ONLINE_ACCOUNT, String::new());
+    let listed: Vec<ListedAccount> = accounts
+        .iter()
+        .map(|account| ListedAccount {
+            username: Some(account.username.as_str()),
+            connected: account.connected,
+        })
+        .collect();
+    let index = connected_account_index(&listed, Some(&preferred))?;
+    listed[index].username.map(str::to_string)
+}
+
+/// Which connected account plays.
+pub fn set_active_account(account: &str, cx: &mut App) {
+    crate::prefs::set(cx, ONLINE_ACCOUNT, account.to_string());
+}
+
+/// What the app does when accounts change, which this crate cannot do itself: tell the online
+/// state an account connected, let the pages forget a signed-out account (the puzzles' chosen
+/// account), and start the pages afresh. Set by the app (`cx.set_global(AccountHooks { … })`);
+/// until then nothing else happens.
+#[derive(Clone, Copy, Default)]
+pub struct AccountHooks {
+    pub connected: Option<fn(&mut App)>,
+    /// Whether any account is left.
+    pub signed_out: Option<fn(bool, &mut App)>,
+    pub restart_pages: Option<fn(&mut Window, &mut App)>,
+}
+
+impl Global for AccountHooks {}
+
+fn hooks(cx: &App) -> AccountHooks {
+    cx.try_global::<AccountHooks>().copied().unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Accounts;
+    use super::*;
+
+    fn account(username: &str, connected: bool) -> kchess_contracts::types::Account {
+        kchess_contracts::types::Account {
+            username: username.into(),
+            connected,
+            last_synced_at: None,
+            synced_play_time: None,
+        }
+    }
+
+    /// Lichess actions use the account chosen for online play while it is connected, else the
+    /// first connected one; a player only followed never plays.
+    #[gpui_kit::test]
+    fn the_active_account_is_the_one_chosen_while_it_is_connected(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let all = [
+                account("first", true),
+                account("second", true),
+                account("followed", false),
+            ];
+            assert_eq!(super::active_account(&all, cx), Some("first".into()));
+            super::set_active_account("second", cx);
+            assert_eq!(super::active_account(&all, cx), Some("second".into()));
+            super::set_active_account("followed", cx);
+            assert_eq!(super::active_account(&all, cx), Some("first".into()));
+            assert_eq!(super::active_account(&all[2..], cx), None);
+        });
+    }
+
+    /// A window that shows the accounts, as the app's sidebar does: the window an account
+    /// action's answer is shown in.
+    struct Shown;
+
+    impl gpui_kit::Render for Shown {
+        fn render(
+            &mut self,
+            _: &mut Window,
+            cx: &mut gpui_kit::Context<Self>,
+        ) -> impl gpui_kit::IntoElement {
+            let busy = handle(cx).read(cx).busy;
+            use gpui_kit::ParentElement as _;
+            gpui_kit::div().child(if busy { "Busy" } else { "Ready" })
+        }
+    }
+
+    /// The accounts over a core of the test's own, holding `accounts`, in a window.
+    fn accounts_holding(
+        accounts: Vec<kchess_contracts::types::Account>,
+        cx: &mut gpui_kit::TestAppContext,
+    ) -> (crate::tests::TestCore, gpui_kit::AnyWindowHandle) {
+        cx.executor().allow_parking();
+        let core = cx.update(|cx| {
+            gpui_kit::init(cx);
+            let core = crate::tests::start_core(cx);
+            super::init(cx);
+            core
+        });
+        let data = cx.update(|cx| cx.global::<AppCore>().request(calls::LoadData {}));
+        let mut data = futures::executor::block_on(data).expect("the core's data");
+        data.accounts = accounts;
+        cx.run_until_parked();
+        cx.update(|cx| super::handle(cx).update(cx, |this, _| this.adopt(data)));
+        let window = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |_, cx| cx.new(|_| Shown))
+                .expect("a window")
+                .0
+        });
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .expect("the window");
+        (core, window)
+    }
+
+    /// Connecting and syncing show at once that they run, before the core answers; the account
+    /// that plays is the one the accounts hold.
+    #[gpui_kit::test]
+    fn actions_show_at_once_that_they_run(cx: &mut gpui_kit::TestAppContext) {
+        let (_core, window) = accounts_holding(vec![account("player", true)], cx);
+        cx.update_window(window, |_, window, cx| {
+            let accounts = super::handle(cx);
+            assert_eq!(accounts.read(cx).active(cx), Some("player".into()));
+            accounts.update(cx, |this, cx| this.sync(None, window, cx));
+            assert!(accounts.read(cx).syncing());
+            accounts.update(cx, |this, cx| this.connect(window, cx));
+            assert!(accounts.read(cx).busy);
+        })
+        .unwrap();
+    }
+
+    /// Following a player tells the page whether Lichess took it: without a Lichess login kept,
+    /// the core refuses, and the page hears so.
+    #[gpui_kit::test]
+    fn a_refused_relation_is_heard(cx: &mut gpui_kit::TestAppContext) {
+        use std::sync::atomic::{AtomicU8, Ordering};
+        static HEARD: AtomicU8 = AtomicU8::new(0);
+        let (_core, window) = accounts_holding(vec![account("player", true)], cx);
+        cx.update_window(window, |_, window, cx| {
+            super::handle(cx).update(cx, |this, cx| {
+                this.set_relation(
+                    "friend".into(),
+                    RelationAction::Follow,
+                    window,
+                    cx,
+                    |took, _, _| HEARD.store(if took { 2 } else { 1 }, Ordering::SeqCst),
+                );
+            });
+        })
+        .unwrap();
+        for _ in 0..500 {
+            cx.run_until_parked();
+            if HEARD.load(Ordering::SeqCst) != 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(HEARD.load(Ordering::SeqCst), 1, "refused");
+    }
+
+    /// After signing out the pages forget the account, told whether one is left, and start
+    /// afresh.
+    #[gpui_kit::test]
+    fn signing_out_starts_the_pages_afresh(cx: &mut gpui_kit::TestAppContext) {
+        use std::sync::atomic::{AtomicU8, Ordering};
+        static LEFT: AtomicU8 = AtomicU8::new(0);
+        static RESTARTED: AtomicU8 = AtomicU8::new(0);
+        let (_core, window) = accounts_holding(Vec::new(), cx);
+        cx.update(|cx| {
+            cx.set_global(super::AccountHooks {
+                connected: None,
+                signed_out: Some(|left, _| LEFT.store(if left { 2 } else { 1 }, Ordering::SeqCst)),
+                restart_pages: Some(|_, _| {
+                    RESTARTED.fetch_add(1, Ordering::SeqCst);
+                }),
+            })
+        });
+        let data = cx.update(|cx| cx.global::<AppCore>().request(calls::LoadData {}));
+        let mut data = futures::executor::block_on(data).expect("the core's data");
+        data.accounts = vec![account("still", true)];
+        // The answer arrives after the call, as the core's does.
+        let (answer, answered) = futures::channel::oneshot::channel();
+        cx.update_window(window, |_, window, cx| {
+            super::handle(cx).update(cx, |this, cx| {
+                let call = async move { answered.await.expect("the answer") };
+                this.after_sign_out(call, None, window, cx);
+            });
+        })
+        .unwrap();
+        let _ = answer.send(Ok(data));
+        for _ in 0..500 {
+            cx.run_until_parked();
+            if RESTARTED.load(Ordering::SeqCst) != 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(LEFT.load(Ordering::SeqCst), 2, "an account is left");
+        assert_eq!(RESTARTED.load(Ordering::SeqCst), 1);
+    }
+
+    /// Until the app sets its hooks nothing else happens; then the one it set runs.
+    #[gpui_kit::test]
+    fn the_hooks_the_app_set_run(cx: &mut gpui_kit::TestAppContext) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static LEFT: AtomicUsize = AtomicUsize::new(0);
+        fn signed_out(left: bool, _: &mut gpui_kit::App) {
+            LEFT.fetch_add(if left { 10 } else { 1 }, Ordering::SeqCst);
+        }
+        cx.update(|cx| {
+            let none = super::hooks(cx);
+            assert!(none.connected.is_none() && none.signed_out.is_none());
+            assert!(none.restart_pages.is_none());
+            cx.set_global(super::AccountHooks {
+                signed_out: Some(signed_out),
+                ..Default::default()
+            });
+            if let Some(hook) = super::hooks(cx).signed_out {
+                hook(true, cx);
+            }
+        });
+        assert_eq!(LEFT.load(Ordering::SeqCst), 10);
+    }
     use crate::core::{Answer, Reads};
     use kchess_contracts::types::{Account, AppData};
 

@@ -219,7 +219,7 @@ struct SidebarInputs {
     section: Option<Section>,
     back: Page,
     game_mark: Option<GameMark>,
-    account: crate::accounts::MenuInputs,
+    account: crate::account_menu::MenuInputs,
 }
 
 impl SidebarInputs {
@@ -234,7 +234,7 @@ impl SidebarInputs {
                 .map(|page| page.read(cx).section()),
             back: workspace.back,
             game_mark: game_mark(cx),
-            account: crate::accounts::MenuInputs::of(cx),
+            account: crate::account_menu::MenuInputs::of(cx),
         }
     }
 }
@@ -1059,14 +1059,14 @@ impl Workspace {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .child(crate::accounts::menu_button(true, cx)),
+                        .child(crate::account_menu::menu_button(true, cx)),
                 )
                 .child(settings)
                 .into_any_element()
         } else {
             v_flex()
                 .child(settings)
-                .child(crate::accounts::menu_button(false, cx))
+                .child(crate::account_menu::menu_button(false, cx))
                 .into_any_element()
         }
     }
