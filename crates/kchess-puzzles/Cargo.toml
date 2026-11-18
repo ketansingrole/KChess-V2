@@ -32,6 +32,8 @@ gpui-kit = { version = "=0.10.0", features = ["test-support"] }
 # (`kchess_board::testing::Started`).
 kchess-app = { workspace = true, features = ["test-support"] }
 kchess-board = { workspace = true, features = ["test-support"] }
+# A shell holding only this page (`kchess_nav::testing::OnlyPage`).
+kchess-nav = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

@@ -1975,7 +1975,7 @@ mod tests {
     use super::{PuzzleStatus, Tab, as_contract, coach_allowed, theme_groups, theme_name, themes};
     use crate::widgets::{self, format_bytes};
     use kchess_contracts::types::LocalLadderQuery;
-    use kchess_nav::page::{Page, PageTab as _};
+    use kchess_nav::page::PageTab as _;
 
     /// The session writes its numbers as floats (`1500.0`); read as JSON into the contract's
     /// integer fields they were refused, so a ladder never reached the core. The contract's own
@@ -2027,51 +2027,6 @@ mod tests {
         assert_eq!(theme_name("someNewTheme", &list), "Some New Theme");
     }
 
-    /// A shell holding only the Puzzles page, which keeps the pages it was asked to open.
-    struct OnlyPuzzles {
-        page: gpui_kit::AnyView,
-        opened: std::cell::RefCell<Vec<kchess_nav::page::Page>>,
-    }
-
-    impl kchess_nav::shell::Shell for OnlyPuzzles {
-        fn open(&self, page: Page, _: &mut gpui_kit::Window, _: &mut gpui_kit::App) {
-            self.opened.borrow_mut().push(page);
-        }
-
-        fn current(&self, _: &gpui_kit::App) -> Option<Page> {
-            self.opened.borrow().last().copied()
-        }
-
-        fn view(&self, page: Page, _: &gpui_kit::App) -> Option<gpui_kit::AnyView> {
-            (page == Page::Puzzles).then(|| self.page.clone())
-        }
-
-        fn made(
-            &self,
-            page: Page,
-            _: &mut gpui_kit::Window,
-            cx: &mut gpui_kit::App,
-        ) -> Option<gpui_kit::AnyView> {
-            self.view(page, cx)
-        }
-
-        fn go(
-            &self,
-            _: kchess_nav::swipe::Direction,
-            _: &mut gpui_kit::Window,
-            _: &mut gpui_kit::App,
-        ) {
-        }
-
-        fn choose_section(
-            &self,
-            _: kchess_nav::sections::Section,
-            _: Option<&'static str>,
-            _: &mut gpui_kit::App,
-        ) {
-        }
-    }
-
     /// Another page opens Puzzles at what it asked for: a linked puzzle on Daily, an opening's
     /// puzzles or a theme on Train.
     #[gpui_kit::test]
@@ -2082,10 +2037,7 @@ mod tests {
             crate::puzzle_db::init(cx);
             crate::accounts::init(cx);
             let page = cx.new(|cx| super::PuzzlesPage::new(window, cx));
-            let shell = std::rc::Rc::new(OnlyPuzzles {
-                page: page.into(),
-                opened: Default::default(),
-            });
+            let shell = std::rc::Rc::new(kchess_nav::testing::OnlyPage::of(page));
             cx.set_global(kchess_nav::shell::Navigator(shell.clone()));
             shell
         });
@@ -2114,7 +2066,7 @@ mod tests {
         });
         app.cx().run_until_parked();
         assert_eq!(tab_and_angle(&mut app), (Tab::Train, "fork".to_string()));
-        assert_eq!(*shell.opened.borrow(), [Page::Puzzles, Page::Puzzles]);
+        assert_eq!(*shell.opened.borrow(), ["Puzzles", "Puzzles"]);
     }
 
     /// The command palette offers each of the page's tabs.

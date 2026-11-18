@@ -8,15 +8,15 @@ use gpui_kit::*;
 use kchess_domain::variant::Setup;
 use shakmaty::{Color, Position as _};
 
-use crate::assets::icon;
 use crate::board::ChessBoard;
 use crate::game::surface::{self, Steps};
 use crate::game::view;
-use crate::menu::FlipBoard;
-use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::widgets::{self, Side};
+use kchess_board::FlipBoard;
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_ui::icon;
 
 pub struct GameReplay {
     setup: Setup,

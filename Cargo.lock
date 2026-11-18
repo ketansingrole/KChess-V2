@@ -4461,6 +4461,7 @@ dependencies = [
  "kchess-domain",
  "kchess-games",
  "kchess-hack",
+ "kchess-history",
  "kchess-host",
  "kchess-nav",
  "kchess-puzzles",
@@ -4564,6 +4565,22 @@ dependencies = [
  "zvariant",
  "zvariant_derive",
  "zvariant_utils",
+]
+
+[[package]]
+name = "kchess-history"
+version = "2026.11.7"
+dependencies = [
+ "gpui-kit",
+ "kchess-app",
+ "kchess-board",
+ "kchess-contracts",
+ "kchess-domain",
+ "kchess-hack",
+ "kchess-nav",
+ "kchess-ui",
+ "serde_json",
+ "shakmaty",
 ]
 
 [[package]]

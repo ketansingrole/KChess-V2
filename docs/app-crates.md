@@ -110,6 +110,8 @@ Each step is one pull request, each green on its own.
    Puzzles came first (`crates/kchess-puzzles`): all it used from the app but timed runs'
    scores (now `kchess_app::runs`, shared with practice) had already left. The app names it as
    `pages::puzzles`, so its links and tests did not change.
+   History followed (`crates/kchess-history`), once Settings' categories and opening Settings at
+   one had moved to `kchess_nav::sections` and `shell::open_settings`.
 6. **The rest, once the app is small enough that its crates pay off**: analysis, Settings, Online,
    tournaments and the pieces they share (`position_engine`, `ai`, `puzzle_board`, cards and
    `quick_pick`). Measure first: by then an edit in the app should cost well under the 9 s it
@@ -137,6 +139,8 @@ Each step is one pull request, each green on its own.
   system libraries installed for it there; CI's `mutants` job installs them for every UI crate.
 - Tests that need a core, Settings, the theme and a window start `kchess_board::testing::Started`
   (`test-support`), not the app's end-to-end harness, which a crate cannot reach.
+  A test of how other pages open a page sets `kchess_nav::testing::OnlyPage`, a shell holding only
+  that page.
 - xtask's checks that name a file by its path (`boundaries.rs`) name its new one: a check that
   cannot find its file fails, as the clocks' did when Puzzle Rush moved.
 - Its moved lines' mutants killed: a pull request's mutants run (`cargo xtask mutants`) tests a

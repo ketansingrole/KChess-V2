@@ -21,15 +21,15 @@ use shakmaty::Color;
 
 use super::HistoryPage;
 use super::replay::GameReplay;
-use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::played::GameOrigin;
 use crate::game::tree::TreeNode;
-use crate::pages::Page;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
 use kchess_board::analysis::Opening;
+use kchess_nav::page::Page;
+use kchess_ui::icon;
 
 const RESULTS: [(&str, &str); 4] = [
     ("all", "All"),
@@ -390,7 +390,7 @@ impl HistoryPage {
         }
     }
 
-    pub(crate) fn close_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn close_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.lichess.opening.invalidate();
         self.lichess.open = None;
         self.redo = None;
@@ -469,8 +469,8 @@ impl HistoryPage {
                 h_flex()
                     .flex_wrap()
                     .gap(px(8.))
-                    .px(crate::play_layout::side_padding(window))
-                    .pt(crate::play_layout::PAGE_TOP)
+                    .px(kchess_nav::play_layout::side_padding(window))
+                    .pt(kchess_nav::play_layout::PAGE_TOP)
                     .child(
                         Button::new("lichess-all-games")
                             .ghost()
@@ -592,7 +592,7 @@ impl HistoryPage {
                                 .icon(icon("user-plus"))
                                 .label("Follow a player")
                                 .on_click(|_, window, cx| {
-                                    crate::shell::open(Page::Friends, window, cx)
+                                    kchess_nav::shell::open(Page::Friends, window, cx)
                                 }),
                         )
                         .child(
@@ -600,8 +600,8 @@ impl HistoryPage {
                                 .outline()
                                 .label("Add Chess.com")
                                 .on_click(|_, window, cx| {
-                                    crate::shell::open_settings(
-                                        crate::pages::settings::Section::Accounts,
+                                    kchess_nav::shell::open_settings(
+                                        kchess_nav::sections::Section::Accounts,
                                         window,
                                         cx,
                                     )
@@ -612,7 +612,7 @@ impl HistoryPage {
                                 .outline()
                                 .label("Analyse a PGN")
                                 .on_click(|_, window, cx| {
-                                    crate::shell::open(Page::Analysis, window, cx)
+                                    kchess_nav::shell::open(Page::Analysis, window, cx)
                                 }),
                         ),
                 )

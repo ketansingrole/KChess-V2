@@ -29,25 +29,27 @@ pub const APP: &str = "kchess-gpui";
 
 /// The app's sources from the repository root: its own and its UI crates' (`Role::Ui`), which
 /// the app's rules of look (`boundaries`) and its icons (`icons`) are read from.
-pub const APP_SOURCES: [&str; 6] = [
+pub const APP_SOURCES: [&str; 7] = [
     "apps/gpui/src",
     "crates/kchess-ui/src",
     "crates/kchess-app/src",
     "crates/kchess-board/src",
     "crates/kchess-nav/src",
     "crates/kchess-puzzles/src",
+    "crates/kchess-history/src",
 ];
 
 /// The app's sources, as cargo-mutants' file globs name them.
 pub const APP_FILES: &str = "apps/gpui/**";
 
-const ROLES: [(&str, Role); 11] = [
+const ROLES: [(&str, Role); 12] = [
     (APP, Role::App),
     ("kchess-ui", Role::Ui),
     ("kchess-app", Role::Ui),
     ("kchess-board", Role::Ui),
     ("kchess-nav", Role::Ui),
     ("kchess-puzzles", Role::Ui),
+    ("kchess-history", Role::Ui),
     ("kchess-service", Role::Program),
     ("kchess-cli", Role::Program),
     ("kchess-voice", Role::Program),
@@ -105,6 +107,7 @@ mod tests {
         assert!(!headless(APP) && !headless("xtask") && !headless("kchess-hack"));
         assert!(!headless("kchess-ui") && !headless("kchess-app") && !headless("kchess-board"));
         assert!(!headless("kchess-nav") && !headless("kchess-puzzles"));
+        assert!(!headless("kchess-history"));
     }
 
     /// The app, its UI crates and this tooling are outside the coverage totals; the programs ship.
@@ -119,6 +122,7 @@ mod tests {
                 "kchess-board",
                 "kchess-nav",
                 "kchess-puzzles",
+                "kchess-history",
                 "xtask"
             ]
         );
