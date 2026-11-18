@@ -4414,6 +4414,7 @@ dependencies = [
  "kchess-host",
  "kchess-service",
  "kchess-testkit",
+ "kchess-ui",
  "nix",
  "notify-rust",
  "objc2 0.6.5",
@@ -4435,7 +4436,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "windows 0.62.2",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4551,6 +4551,20 @@ version = "2026.11.7"
 dependencies = [
  "kchess-hack",
  "serde_json",
+]
+
+[[package]]
+name = "kchess-ui"
+version = "2026.11.7"
+dependencies = [
+ "dirs 7.0.0",
+ "gpui-kit",
+ "kchess-contracts",
+ "kchess-domain",
+ "kchess-hack",
+ "objc2-app-kit 0.3.2",
+ "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -12,7 +12,6 @@ mod assets;
 #[cfg(feature = "bench")]
 mod bench;
 mod board;
-mod chart;
 mod core;
 mod dates;
 mod dock_icon;
@@ -31,7 +30,6 @@ mod loading;
 mod log;
 mod menu;
 mod microphone;
-mod motion;
 mod name_dialog;
 mod network;
 mod notation;
@@ -72,6 +70,8 @@ mod window_state;
 
 use gpui_kit::*;
 use kchess_contracts::Level;
+// The design system (`crates/kchess-ui`), under the names the app's modules use.
+use kchess_ui::{chart, motion};
 
 fn main() {
     let data_dir = match profile::data_dir() {
@@ -114,6 +114,7 @@ fn main() {
     });
     app.run(move |cx| {
         gpui_kit::init(cx);
+        cx.set_global(kchess_ui::Logger(log::write));
         motion::init(cx);
         menu::init(cx);
         notifications::init(cx);

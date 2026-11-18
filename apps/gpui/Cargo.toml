@@ -24,6 +24,8 @@ kchess-service.workspace = true
 kchess-domain.workspace = true
 kchess-games.workspace = true
 kchess-contracts.workspace = true
+# The design system: the theme, motion and the chart (`crates/kchess-ui`).
+kchess-ui.workspace = true
 # Pinned: a newer gpui-kit requires a newer gpui-pre than the patched copy in vendor/gpui-pre
 # (Cargo.toml [patch.crates-io]); rebase that patch before moving it.
 gpui-kit = "=0.10.0"
@@ -79,13 +81,10 @@ block2 = "0.6"
 # safe wrapper); both already in Cargo.lock.
 rustix = { version = "1", features = ["fs"] }
 nix = { version = "0.31", default-features = false, features = ["resource"] }
-# The Dock icon: NSApplication's icon image; and the system's
-# reduced-motion setting (NSWorkspace).
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSAccessibility", "NSWorkspace"] }
+# The Dock icon: NSApplication's icon image.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSAccessibility"] }
 
-# The system's reduced-motion setting (`SystemParametersInfoW`; already in Cargo.lock).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
 # KChess's AppUserModelID on its shortcuts (`windows_shortcuts.rs`); already in Cargo.lock.
 windows = { version = "0.62", features = [
     "Win32_Storage_EnhancedStorage",

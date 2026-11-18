@@ -1103,7 +1103,7 @@ fn theme_preview(theme: &str, custom: &[AppTheme], dark: bool, width: Pixels) ->
         colors
             .get(name)
             .and_then(|value| value.as_str())
-            .map(looks::hex)
+            .map(crate::theme::hex)
             .unwrap_or_default()
     };
     let width = picture_width(width);

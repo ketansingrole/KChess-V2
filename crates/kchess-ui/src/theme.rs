@@ -344,6 +344,7 @@ mod tests {
     /// Kit's theme both.
     #[gpui_kit::test]
     fn the_choice_for_the_windows_mode_is_painted(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
         cx.update(gpui_kit::init);
         let window = cx.add_window(|_, _| Blank);
         let paint = |appearance, cx: &mut gpui_kit::TestAppContext| {
@@ -368,7 +369,9 @@ mod tests {
         assert!(!palette.dark && !kit_dark);
         assert_eq!(
             palette.primary,
-            hex(colors("kchess", &[], false)["--ui-primary"].as_str().unwrap())
+            hex(colors("kchess", &[], false)["--ui-primary"]
+                .as_str()
+                .unwrap())
         );
     }
 
