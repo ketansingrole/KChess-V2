@@ -396,15 +396,18 @@ impl Render for LineChart {
 
 /// The runs of values without a gap, each value with its index.
 fn runs(values: &[Option<f32>]) -> Vec<Vec<(usize, f32)>> {
-    let mut runs = vec![Vec::new()];
+    let mut runs = Vec::new();
+    let mut run = Vec::new();
     for (index, value) in values.iter().enumerate() {
         match value {
-            Some(value) => runs.last_mut().unwrap().push((index, *value)),
-            None if !runs.last().unwrap().is_empty() => runs.push(Vec::new()),
+            Some(value) => run.push((index, *value)),
+            None if !run.is_empty() => runs.push(std::mem::take(&mut run)),
             None => {}
         }
     }
-    runs.retain(|run| !run.is_empty());
+    if !run.is_empty() {
+        runs.push(run);
+    }
     runs
 }
 

@@ -1300,9 +1300,9 @@ impl ChessBoard {
                     .text_size(px(11.))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(if square.is_light() {
-                        looks::hex(&look.coord_black)
+                        crate::theme::hex(&look.coord_black)
                     } else {
-                        looks::hex(&look.coord_white)
+                        crate::theme::hex(&look.coord_white)
                     })
                     .opacity(0.8)
                     .child(square.to_string())
@@ -1332,9 +1332,9 @@ impl ChessBoard {
             if !inside {
                 muted
             } else if square.is_light() {
-                looks::hex(&look.coord_black)
+                crate::theme::hex(&look.coord_black)
             } else {
-                looks::hex(&look.coord_white)
+                crate::theme::hex(&look.coord_white)
             }
         };
         let (edge_file, edge_rank) = match self.state.orientation {

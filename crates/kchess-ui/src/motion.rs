@@ -38,7 +38,8 @@ pub fn refresh(cx: &mut App) {
 
 fn apply(reduce: bool, cx: &mut App) {
     if reduce != cx.reduce_motion() {
-        crate::log::write(
+        crate::log(
+            cx,
             kchess_contracts::Level::Debug,
             "motion",
             &format!("Reduced motion {}", if reduce { "on" } else { "off" }),
@@ -143,6 +144,17 @@ mod tests {
             "[Other]\nAnimationDurationFactor=0\n[KDE]\nfoo=1\n"
         ));
         assert!(!kde_reduces(""));
+    }
+
+    #[gpui_kit::test]
+    fn the_system_setting_is_carried_into_gpui(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            cx.set_reduce_motion(false);
+            apply(true, cx);
+            assert!(cx.reduce_motion());
+            apply(false, cx);
+            assert!(!cx.reduce_motion());
+        });
     }
 
     #[gpui_kit::test]

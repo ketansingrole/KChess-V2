@@ -21,6 +21,8 @@ crates/
                          asset and install names, the signed checksums and update patches
   kchess-host/           What the core and frontends read alike of their process: the `KCHESS_*`
                          switches, the App Store sandbox, log redaction, links a browser may open
+  kchess-ui/             The app's design system over GPUI Kit: theme, motion, the line chart
+                         (`docs/app-crates.md`: splitting the app into crates)
   kchess-testkit/        The loopback HTTP/1.1 server the tests' and xtask's stand-ins answer through
   kchess-hack/           The workspace hack (`cargo hakari`): one feature set for every dependency
 tooling/xtask/           `cargo xtask`: checks, the pre-push hook, release versions, packaging

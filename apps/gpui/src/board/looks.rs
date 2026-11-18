@@ -6,8 +6,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, LazyLock};
 
 use gpui_kit::{
-    App, AppContext as _, AssetSource as _, DevicePixels, EntityId, Global, Hsla, RenderImage,
-    Rgba, SvgRenderer, SvgSize, rgb, size,
+    App, AppContext as _, AssetSource as _, DevicePixels, EntityId, Global, RenderImage,
+    SvgRenderer, SvgSize, size,
 };
 use serde::Deserialize;
 use shakmaty::{Color, Piece, Role};
@@ -87,13 +87,6 @@ pub fn piece_set(id: &str) -> &'static str {
         .iter()
         .find(|set| set.id == id)
         .map_or(LOOKS.default_piece_set.as_str(), |set| set.id.as_str())
-}
-
-/// `#rrggbb` as a color; transparent when it is not one.
-pub fn hex(text: &str) -> Hsla {
-    u32::from_str_radix(text.trim_start_matches('#'), 16)
-        .map(|value| rgb(value).into())
-        .unwrap_or_else(|_| Rgba::default().into())
 }
 
 /// The image of a piece in a set (`pieces/cburnett/wK.svg`).

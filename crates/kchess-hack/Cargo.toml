@@ -31,6 +31,7 @@ syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-trai
 aho-corasick = { version = "1" }
 arrayvec = { version = "0.7" }
 bytemuck = { version = "1", default-features = false, features = ["aarch64_simd", "derive", "extern_crate_alloc", "min_const_generics", "wasm_simd"] }
+byteorder = { version = "1" }
 crc32fast = { version = "1" }
 crossbeam-utils = { version = "0.8" }
 crypto-common = { version = "0.2", default-features = false, features = ["getrandom"] }

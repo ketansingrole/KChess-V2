@@ -3,6 +3,7 @@
 - [Lichess parity](lichess-parity.md)
 - [Feature ideas](todo.md): what to build next.
 - [Shared core](shared-core.md): one core per profile, any number of KChess windows.
+- [The app's crates](app-crates.md): splitting `apps/gpui` into crates, measured, and the plan.
 - [Releasing and app updates](releasing.md); [Snap Store](snap-store.md).
 - Features: [move classifications](features/move-classifications.md).
 - Benchmarks: [memory retention](benchmarks/2026-11-06-memory-retention.md), [GPUI vs Electron](benchmarks/2026-10-26-gpui-vs-electron.md), [performance audit](benchmarks/2026-10-20-performance-audit.md), [TypeScript vs Rust](benchmarks/2026-10-10-typescript-vs-rust.md), [end-to-end performance](benchmarks/2026-10-10-end-to-end-performance.md), [performance fixes](benchmarks/2026-10-10-performance-fixes.md), [root causes](benchmarks/2026-10-10-performance-root-causes.md), [migration context](benchmarks/migration-context.md), [architecture hotspots](benchmarks/architecture-hotspots.md), [insights hotspots](benchmarks/insights-hotspots.md), [network in-flight hotspot](benchmarks/network-inflight-hotspot.md), [renderer memory hotspots](benchmarks/renderer-memory-hotspots.md). Raw measurements in `benchmarks/raw/` are local-only and ignored by Git.
