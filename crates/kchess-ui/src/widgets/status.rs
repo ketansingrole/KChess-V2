@@ -13,12 +13,12 @@ pub fn spinner(size: Pixels) -> gpui_kit::component::spinner::Spinner {
 }
 
 /// Escape with no modifier, which takes a detail view (a game, an event, a line) back to its list.
-pub(crate) fn is_escape(event: &KeyDownEvent) -> bool {
+pub fn is_escape(event: &KeyDownEvent) -> bool {
     event.keystroke.key == "escape" && !event.keystroke.modifiers.modified()
 }
 
 /// A clock's last ten seconds, which alone show tenths ("0:09.4").
-pub(crate) fn low_time(text: &str) -> bool {
+pub fn low_time(text: &str) -> bool {
     text.starts_with("0:0") && text.contains('.')
 }
 /// The kind of a status banner.

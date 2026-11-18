@@ -1,7 +1,7 @@
-//! The icons the app names (`icon("name")` in apps/gpui/src, or a table's `"name"` that is in
-//! `ICONS`), as SVG files in
-//! `apps/gpui/assets/icons`: Microsoft's Fluent UI System Icons (MIT, `THIRD_PARTY_NOTICES.md`),
-//! each drawn for its own sizes on that size's pixel grid, and KChess's own drawings in
+//! The icons the app names (`icon("name")` in its sources, `members::APP_SOURCES`, or a table's
+//! `"name"` that is in `ICONS`), as SVG files in `apps/gpui/assets/icons`: Microsoft's Fluent UI
+//! System Icons (MIT, `THIRD_PARTY_NOTICES.md`), each drawn for its own sizes on that size's
+//! pixel grid, and KChess's own drawings in
 //! `tooling/xtask/icons` for what Fluent has no icon for (chess pieces, swords, variants), drawn
 //! the same way on the 16 px grid. The app keeps its names (`ICONS` maps each to its drawing).
 //!
@@ -247,7 +247,9 @@ pub fn listed(text: &str) -> BTreeSet<String> {
 
 fn wanted() -> BTreeSet<String> {
     let mut files = Vec::new();
-    sources(&root().join("apps/gpui/src"), &mut files);
+    for dir in crate::members::APP_SOURCES {
+        sources(&root().join(dir), &mut files);
+    }
     files
         .iter()
         .filter_map(|path| std::fs::read_to_string(path).ok())
@@ -428,6 +430,8 @@ mod tests {
         let wanted = wanted();
         assert!(wanted.contains("refresh-cw"), "{wanted:?}");
         assert!(wanted.contains("swatch-book"), "{wanted:?}");
+        // Named only by the spinner, in the UI crate (`kchess-ui`).
+        assert!(wanted.contains("loader-circle"), "{wanted:?}");
         assert!(!wanted.contains(""), "{wanted:?}");
     }
 

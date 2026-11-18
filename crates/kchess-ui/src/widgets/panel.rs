@@ -177,18 +177,3 @@ pub fn empty_state(
                 .child(description)
         }))
 }
-
-/// A piece colour, the same light or dark disc in either theme.
-pub fn side_dot(color: shakmaty::Color) -> Div {
-    div()
-        .size(px(9.))
-        .flex_none()
-        .rounded_full()
-        .border_1()
-        .border_color(rgb(0x6b6b6b))
-        .bg(rgb(if color == shakmaty::Color::White {
-            0xf4f4f2
-        } else {
-            0x1f1f1f
-        }))
-}

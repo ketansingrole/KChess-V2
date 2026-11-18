@@ -1,6 +1,6 @@
 [package]
 name = "kchess-ui"
-description = "KChess's design system over GPUI Kit: the theme and its colors, motion, the line chart."
+description = "KChess's design system over GPUI Kit: the theme and its colors, motion, the line chart, the generic widgets."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,6 +13,8 @@ kchess-domain.workspace = true
 # patched copy in vendor/gpui-pre.
 gpui-kit = "=0.10.0"
 serde_json.workspace = true
+# Dates and times in local time and UTC (`src/dates.rs`), as the app's.
+jiff = "1.0"
 kchess-hack = { version = "0.1", path = "../kchess-hack" }
 
 # KDE's animation setting, under the user's config folder (`motion.rs`).

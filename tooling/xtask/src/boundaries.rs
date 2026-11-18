@@ -13,6 +13,7 @@
 
 use std::path::Path;
 
+use crate::members::APP_SOURCES;
 use crate::util::{Result, root};
 
 /// What only some files of the frontends may name.
@@ -24,9 +25,6 @@ struct Rule {
     /// The files, from the repository root, that may name it.
     allowed: &'static [&'static str],
 }
-
-/// The app's sources: its own and its UI crates' (`members::Role::Ui`), from the repository root.
-const APP_SOURCES: [&str; 2] = ["apps/gpui/src", "crates/kchess-ui/src"];
 
 /// The frontends' sources, searched from the repository root: the app's and the CLI's.
 const FRONTENDS: [&str; 3] = [APP_SOURCES[0], APP_SOURCES[1], "apps/cli/src"];
@@ -406,7 +404,7 @@ fn still_loaders(files: &[(String, String)]) -> Vec<String> {
     files
         .iter()
         .filter(|(path, text)| {
-            let allowed = usize::from(path == "apps/gpui/src/widgets/status.rs");
+            let allowed = usize::from(path == "crates/kchess-ui/src/widgets/status.rs");
             text.matches("icon(\"loader-circle\")").count() > allowed
                 || text.contains("hint(\"Loading")
         })
@@ -493,7 +491,10 @@ fn every_loader_in_the_app_is_the_turning_spinner() {
 #[test]
 fn a_still_loader_is_found() {
     let files = [
-        file("apps/gpui/src/widgets/status.rs", "icon(\"loader-circle\")"),
+        file(
+            "crates/kchess-ui/src/widgets/status.rs",
+            "icon(\"loader-circle\")",
+        ),
         file("apps/gpui/src/a.rs", "hint(\"Loading games…\")"),
         file("apps/gpui/src/b.rs", "icon(\"loader-circle\")"),
         file("apps/gpui/src/c.rs", "widgets::loading(\"Loading games…\")"),

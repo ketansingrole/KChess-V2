@@ -1,12 +1,15 @@
 //! KChess's design system over GPUI Kit: what every page paints with and nothing app-specific.
-//! The theme and its colors (`theme`), the system's reduced motion (`motion`) and the line chart
-//! (`chart`). It never depends on the app: what it needs from it (where log lines go, which theme
+//! The theme and its colors (`theme`), the system's reduced motion (`motion`), the line chart
+//! (`chart`), the generic widgets (`widgets`) and dates as the app shows them (`dates`). It never depends on the app: what it needs from it (where log lines go, which theme
 //! Settings chose) the app passes in.
 
 pub mod chart;
+pub mod dates;
 pub mod motion;
 pub mod theme;
+pub mod widgets;
 
+use gpui_kit::component::Icon;
 use gpui_kit::{App, Global};
 use kchess_contracts::Level;
 
@@ -16,6 +19,13 @@ use kchess_contracts::Level;
 pub struct Logger(pub fn(Level, &str, &str));
 
 impl Global for Logger {}
+
+/// An icon by its name (`circle-dot`), drawn from the app's `icons/` assets. `cargo xtask icons`
+/// finds every `icon("…")` in the app's sources and this crate's, and every string literal that
+/// is a name in its `ICONS`, so a name kept in a table is written there as a literal.
+pub fn icon(name: &'static str) -> Icon {
+    Icon::empty().path(format!("icons/{name}.svg"))
+}
 
 /// Write `message` under `scope` to the app's log.
 pub(crate) fn log(cx: &App, level: Level, scope: &str, message: &str) {

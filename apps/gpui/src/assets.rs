@@ -3,7 +3,6 @@
 
 use std::borrow::Cow;
 
-use gpui_kit::component::Icon;
 use gpui_kit::{AssetSource, Result, SharedString};
 
 /// The icons the app names (`icon`), at each size they are drawn for (`name@16.svg`), written
@@ -13,12 +12,8 @@ use gpui_kit::{AssetSource, Result, SharedString};
 #[include = "icons/*.svg"]
 struct Icons;
 
-/// An icon by its name (`circle-dot`). `cargo xtask icons` finds every `icon("…")` in the
-/// sources, and every string literal that is a name in its `ICONS`, so a name kept in a table
-/// is written there as a literal.
-pub fn icon(name: &'static str) -> Icon {
-    Icon::empty().path(format!("icons/{name}.svg"))
-}
+/// An icon by its name (`kchess_ui::icon`), drawn from `Icons`.
+pub use kchess_ui::icon;
 
 /// The boards, pieces, sounds, app icon and startup logo.
 #[derive(rust_embed::RustEmbed)]
