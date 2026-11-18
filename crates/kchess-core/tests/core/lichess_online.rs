@@ -1725,6 +1725,55 @@ async fn hands_challenge_events_on_the_idle_stream_to_the_inbox_and_opens_accept
     online.close();
 }
 
+/// On the idle stream, a correspondence game or one the Board API cannot play only refreshes
+/// the games in progress: neither opens on the board. A finish refreshes them too.
+#[tokio::test]
+async fn the_idle_stream_opens_only_live_games_the_board_can_play() {
+    let streams: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
+        Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&streams);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/stream/event" => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            *slot.lock().unwrap() = Some(tx);
+            Reply::Stream(rx)
+        }
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.stay_connected("Alice");
+    fixture.requested("/api/stream/event", 1).await;
+    let sender = streams.lock().unwrap().clone().unwrap();
+    let changes = |host: &Recording| emitted(host, "online:ongoing-changed").len();
+    let listed_only = [
+        json!({ "gameId": "Corr1234", "speed": "correspondence", "compat": { "board": true } }),
+        json!({ "gameId": "Else1234", "speed": "rapid", "compat": { "board": false } }),
+        json!({ "gameId": "Both1234", "speed": "correspondence", "compat": { "board": false } }),
+    ];
+    for (index, game) in listed_only.iter().enumerate() {
+        let start = json!({ "type": "gameStart", "game": game });
+        sender.send(format!("{start}\n")).unwrap();
+        until("the games in progress change", || changes(&host) > index).await;
+    }
+    let finish = json!({ "type": "gameFinish", "game": { "gameId": "Corr1234" } });
+    sender.send(format!("{finish}\n")).unwrap();
+    until("the finish changes them", || {
+        changes(&host) > listed_only.len()
+    })
+    .await;
+    assert!(!online.playing());
+    let opened: Vec<String> = fixture
+        .requests()
+        .into_iter()
+        .map(|seen| seen.path().to_string())
+        .filter(|path| path.starts_with("/api/board/game/stream/"))
+        .collect();
+    assert!(opened.is_empty(), "{opened:?}");
+    online.close();
+}
+
 /// The start of the game a challenge asked for reaches the window once, however often the
 /// event stream repeats it.
 #[tokio::test]

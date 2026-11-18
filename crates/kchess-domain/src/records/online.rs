@@ -334,4 +334,27 @@ mod tests {
         });
         assert_eq!(validate(&bad_speed).unwrap_err(), UNREADABLE);
     }
+
+    #[test]
+    fn an_event_is_named_by_its_type_and_challenges_go_to_the_inbox() {
+        assert_eq!(
+            EventKind::of(&json!({ "type": "gameStart" })),
+            Some(EventKind::GameStart)
+        );
+        assert_eq!(EventKind::of(&json!({ "type": "nope" })), None);
+        assert_eq!(EventKind::of(&json!({})), None);
+        let inbox: Vec<EventKind> = EventKind::ALL
+            .iter()
+            .copied()
+            .filter(|kind| kind.is_challenge())
+            .collect();
+        assert_eq!(
+            inbox,
+            [
+                EventKind::Challenge,
+                EventKind::ChallengeCanceled,
+                EventKind::ChallengeDeclined
+            ]
+        );
+    }
 }
