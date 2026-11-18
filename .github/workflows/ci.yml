@@ -208,6 +208,19 @@ jobs:
       # The scripts' shell is checked by xtask (`every_workflow_step_parses_in_bash`).
       - run: actionlint -color -shellcheck= -pyflakes=
 
+  # Spelling in code, comments, documents and the app's text (`_typos.toml`), as Zed and GPUI Kit
+  # check theirs. It runs on documents-only changes too: they are most of what it reads.
+  typos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: typos
+      - run: typos
+
   # The app's unit and end-to-end tests (`src/e2e`, headless) on every platform; `headless` runs
   # the rest beside it on Windows, the workspace's lints included. On macOS this job runs them
   # itself, after the app's tests: GitHub runs short of macOS arm64 runners (2026-11-11: jobs
@@ -534,7 +547,7 @@ jobs:
   # cannot name the jobs themselves.
   ci-passed:
     if: always()
-    needs: [changes, check, deny, workflows, gpui, headless, mutants-plan, mutants, package, package-cache, windows-upgrade]
+    needs: [changes, check, deny, workflows, typos, gpui, headless, mutants-plan, mutants, package, package-cache, windows-upgrade]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or was skipped

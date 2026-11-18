@@ -12,12 +12,12 @@ name = "kchess-cli"
 path = "src/main.rs"
 
 [dependencies]
-kchess-core = { path = "../../crates/kchess-core" }
-kchess-host = { path = "../../crates/kchess-host" }
-kchess-contracts = { path = "../../crates/kchess-contracts" }
-kchess-domain = { path = "../../crates/kchess-domain" }
-kchess-games = { path = "../../crates/kchess-games" }
-kchess-service = { path = "../../crates/kchess-service" }
+kchess-core.workspace = true
+kchess-host.workspace = true
+kchess-contracts.workspace = true
+kchess-domain.workspace = true
+kchess-games.workspace = true
+kchess-service.workspace = true
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-std", "io-util", "signal", "fs"] }
 kchess-hack = { version = "0.1", path = "../../crates/kchess-hack" }

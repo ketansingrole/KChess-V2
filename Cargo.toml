@@ -55,8 +55,23 @@ uninlined_format_args = "warn"
 # at or under 25. Flat `match` dispatchers score low here where cyclomatic counts score them high,
 # so the limit catches tangled logic rather than wide APIs.
 cognitive_complexity = "warn"
+# Debugging leftovers never ship (Zed denies the same): none in the code on 2026-11-18.
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
 
 [workspace.dependencies]
+# The workspace's own crates, named once here so a member writes `kchess-core.workspace = true`
+# and a moved crate changes one line. `kchess-hack` stays per package: `cargo hakari` writes it.
+kchess-contracts = { path = "crates/kchess-contracts" }
+kchess-core = { path = "crates/kchess-core" }
+kchess-delta = { path = "crates/kchess-delta" }
+kchess-domain = { path = "crates/kchess-domain" }
+kchess-games = { path = "crates/kchess-games" }
+kchess-host = { path = "crates/kchess-host" }
+kchess-service = { path = "crates/kchess-service" }
+kchess-testkit = { path = "crates/kchess-testkit" }
+kchess-voice = { path = "crates/kchess-voice" }
 shakmaty = { version = "0.30", features = ["variant"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "unbounded_depth", "float_roundtrip"] }

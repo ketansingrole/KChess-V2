@@ -10,11 +10,11 @@ publish.workspace = true
 [dependencies]
 # What releases and installed apps agree on: versions, notes, asset and install names, the
 # checksums and their signature, and the update patches (`deltas`).
-kchess-delta = { path = "../../crates/kchess-delta" }
+kchess-delta.workspace = true
 # The benchmark Lichess stand-in's server (`fake_lichess.rs`).
-kchess-testkit = { path = "../../crates/kchess-testkit" }
+kchess-testkit.workspace = true
 # The libvosk file the speech helper loads (`voice`).
-kchess-voice = { path = "../../crates/kchess-voice" }
+kchess-voice.workspace = true
 serde_json = { workspace = true }
 sha2 = { version = "0.11", default-features = false }
 base64 = "0.23"

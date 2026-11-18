@@ -1,0 +1,40 @@
+# Spelling for `typos` (CI's `typos` job). Every word below was checked: none is a mistake.
+[files]
+extend-exclude = [
+    # Vendored GPUI keeps upstream's spelling.
+    "vendor/",
+    # Dated reviews are records; they are not corrected after the fact.
+    "docs/reviews/",
+    # Data: opening names, Unicode tables.
+    "crates/kchess-domain/data/",
+    "crates/kchess-domain/src/misc/unicode_tables.rs",
+    "Cargo.lock",
+    "*.svg",
+    "*.pgn",
+]
+
+[default.extend-words]
+# Product, library and API names: Canva, flate2, the scap crate, NSIS's CPY, `libgcc_s_seh`,
+# PNG, image's `from_numer_denom_ms`.
+Canva = "Canva"
+flate = "flate"
+scap = "scap"
+Cpy = "Cpy"
+seh = "seh"
+PN = "PN"
+numer = "numer"
+# Chess notation: knight and bishop moves (`Nd2`, `Ba4`), a rook's file (`Rhe1`), a pocket's pawns.
+Nd = "Nd"
+Ba = "Ba"
+Rhe = "Rhe"
+Pn = "Pn"
+# English: 64ths, look-alikes, possessives in test names.
+ths = "ths"
+alikes = "alikes"
+repositorys = "repositorys"
+librarys = "librarys"
+# Test data: a partial speech result, a near-miss secret, misspelled commands the CLI must catch.
+fo = "fo"
+abd = "abd"
+positon = "positon"
+anaylze = "anaylze"

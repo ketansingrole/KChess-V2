@@ -21,7 +21,7 @@ regex-syntax = "0.8"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 sha2 = { version = "0.11", default-features = false }
 # The core's argument check, which the corpus pins for the methods it recorded.
-kchess-contracts = { path = "../kchess-contracts" }
+kchess-contracts.workspace = true
 
 [lints]
 workspace = true

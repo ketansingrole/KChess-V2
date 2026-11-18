@@ -227,3 +227,7 @@ and in the App Store. Its readers play chess; they are not developers.
   tests expose a failure, preserve its replay seed/path and a focused reproducer.
 - Do not lower the coverage floors (`tooling/xtask/src/check.rs`) without a measurement that
   explains the drop.
+- CI's `typos` job checks spelling in code and documents. Fix a real typo; add a word to
+  `_typos.toml` only when it is a name, chess notation or deliberate test data, with its reason.
+- A member names another workspace crate as `kchess-core.workspace = true`; its path is in the
+  root `Cargo.toml` `[workspace.dependencies]`. A new crate adds its line there too.
