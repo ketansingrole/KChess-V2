@@ -315,6 +315,16 @@ pub fn level(audio: &[f32]) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    /// A recording the app was started with plays instead of the microphone; none, none.
+    #[gpui_kit::test]
+    fn the_recording_the_app_set_plays(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            assert_eq!(super::test_audio(cx), None);
+            cx.set_global(super::TestAudio("voice.wav".into()));
+            assert_eq!(super::test_audio(cx), Some("voice.wav".into()));
+        });
+    }
+
     use super::{
         AtomicBool, CaptureError, Duration, Ordering, await_open, level, parse_wav, pcm_base64,
     };

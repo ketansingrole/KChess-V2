@@ -234,3 +234,26 @@ mod mac {
         unsafe { AVCaptureDevice::requestAccessForMediaType_completionHandler(audio, &handler) };
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A test's pinned microphone is what the app hears: its privacy settings, and the answer to
+    /// asking for access, with no system request opened.
+    #[gpui_kit::test]
+    fn a_pinned_microphone_answers_for_the_system(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            assert_eq!(privacy_settings(cx), Some(MACOS_PRIVACY));
+            cx.set_global(Pinned(Host {
+                access: Access::Denied,
+                from_terminal: false,
+                privacy_settings: Some("settings:microphone"),
+            }));
+            assert_eq!(privacy_settings(cx), Some("settings:microphone"));
+        });
+        let (heard, hear) = std::sync::mpsc::channel();
+        cx.update(|cx| ask(cx, move |access| heard.send(access).expect("heard")));
+        assert!(hear.recv().expect("an answer") == Access::Denied);
+    }
+}
