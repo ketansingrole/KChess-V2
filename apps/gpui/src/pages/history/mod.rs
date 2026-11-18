@@ -762,7 +762,7 @@ impl HistoryPage {
     /// Clock sessions have no moves to save and are left out.
     fn export_shown(&mut self, cx: &mut Context<Self>) {
         let pgns: Vec<String> = self
-            .shown_games(cx)
+            .listed(cx)
             .into_iter()
             .filter(|game| game.source != HistoryKind::Clock)
             .filter_map(pgn)
@@ -801,17 +801,6 @@ impl HistoryPage {
             });
         })
         .detach();
-    }
-
-    /// The games the list shows across its pages: searched, then filtered by result.
-    fn shown_games<'a>(&self, cx: &'a App) -> Vec<&'a PlayedGame> {
-        self.games(cx)
-            .into_iter()
-            .filter(|game| {
-                self.filter == Filter::All
-                    || filter_of(&self.outcome_of(game, cx)) == Some(self.filter)
-            })
-            .collect()
     }
 
     /// Delete a game at once; its notice's Undo puts it back where it was.
