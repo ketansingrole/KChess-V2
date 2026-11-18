@@ -9,7 +9,7 @@ pub enum Role {
     /// The GPUI app: shipped, its views checked by its end-to-end suite rather than by coverage,
     /// its tests under `cargo test` (one binary whose tests each start GPUI).
     App,
-    /// A GPUI crate the app is built from (`crates/kchess-ui`, `crates/kchess-app`): shipped
+    /// A GPUI crate the app is built from (`crates/kchess-ui`, `-app`, `-board`): shipped
     /// inside the app, its views checked by the app's end-to-end suite rather than by coverage,
     /// its own tests run with the headless members'.
     Ui,
@@ -29,19 +29,21 @@ pub const APP: &str = "kchess-gpui";
 
 /// The app's sources from the repository root: its own and its UI crates' (`Role::Ui`), which
 /// the app's rules of look (`boundaries`) and its icons (`icons`) are read from.
-pub const APP_SOURCES: [&str; 3] = [
+pub const APP_SOURCES: [&str; 4] = [
     "apps/gpui/src",
     "crates/kchess-ui/src",
     "crates/kchess-app/src",
+    "crates/kchess-board/src",
 ];
 
 /// The app's sources, as cargo-mutants' file globs name them.
 pub const APP_FILES: &str = "apps/gpui/**";
 
-const ROLES: [(&str, Role); 8] = [
+const ROLES: [(&str, Role); 9] = [
     (APP, Role::App),
     ("kchess-ui", Role::Ui),
     ("kchess-app", Role::Ui),
+    ("kchess-board", Role::Ui),
     ("kchess-service", Role::Program),
     ("kchess-cli", Role::Program),
     ("kchess-voice", Role::Program),
@@ -97,7 +99,7 @@ mod tests {
         assert_eq!(role("kchess-core"), Role::Library);
         assert!(headless("kchess-core") && headless("kchess-cli"));
         assert!(!headless(APP) && !headless("xtask") && !headless("kchess-hack"));
-        assert!(!headless("kchess-ui") && !headless("kchess-app"));
+        assert!(!headless("kchess-ui") && !headless("kchess-app") && !headless("kchess-board"));
     }
 
     /// The app, its UI crates and this tooling are outside the coverage totals; the programs ship.
@@ -105,7 +107,7 @@ mod tests {
     fn the_app_and_tooling_are_uncovered() {
         assert_eq!(
             uncovered().collect::<Vec<_>>(),
-            [APP, "kchess-ui", "kchess-app", "xtask"]
+            [APP, "kchess-ui", "kchess-app", "kchess-board", "xtask"]
         );
         assert_eq!(
             shipped().collect::<Vec<_>>(),

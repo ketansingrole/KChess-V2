@@ -163,11 +163,7 @@ pub fn move_controls(
     cx: &App,
 ) -> impl IntoElement {
     let (label, tooltip, click): (SharedString, SharedString, _) = match turn {
-        TurnButton::Flip(click) => (
-            "Flip board".into(),
-            crate::menu::flip_label(cx).into(),
-            click,
-        ),
+        TurnButton::Flip(click) => ("Flip board".into(), crate::flip_label(cx).into(), click),
         TurnButton::Named(label, click) => (label.clone(), label, click),
     };
     let targets = [

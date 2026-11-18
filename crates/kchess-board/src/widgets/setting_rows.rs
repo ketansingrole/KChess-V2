@@ -41,7 +41,7 @@ pub fn labelled_switch(
 pub fn view_toggles(cx: &App) -> impl IntoElement {
     let frontend = crate::settings::frontend(cx);
     let (blindfold, zen) = (frontend.blindfold, frontend.zen_mode);
-    let zen_label: SharedString = match crate::menu::keys(&crate::menu::ToggleZen, cx) {
+    let zen_label: SharedString = match crate::keys(&crate::ToggleZen, cx) {
         Some(key) => format!("Zen mode ({key})").into(),
         None => "Zen mode".into(),
     };

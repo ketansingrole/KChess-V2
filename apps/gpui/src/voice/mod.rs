@@ -616,6 +616,10 @@ pub fn init(cx: &mut App) {
     })
     .detach();
     cx.set_global(VoiceHandle(voice));
+    // Held for push to talk, Space is the voice's while a board has the keys.
+    cx.set_global(kchess_board::SpaceTalks(|cx| {
+        handle(cx).read(cx).can_talk()
+    }));
 }
 
 /// A phrase's place in the voice history, once saved (none when Settings keep no history).

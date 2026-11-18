@@ -65,7 +65,7 @@ impl<K: Eq + Hash> Previews<K> {
     }
 
     /// The boards kept, by key.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn kept(&self) -> impl Iterator<Item = (&K, &Entity<ChessBoard>)> {
         self.boards.iter()
     }

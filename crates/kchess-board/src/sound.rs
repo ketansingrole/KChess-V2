@@ -126,16 +126,16 @@ pub fn play(sound: Sound, cx: &mut App) {
 }
 
 /// The clips asked for, in order, once a test sets it.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Default)]
 pub struct Played(pub Vec<Sound>);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Global for Played {}
 
 /// Play a clip at `gain` times the chosen volume (the trainers' quieter low-time beep).
 pub fn play_at(sound: Sound, gain: f64, cx: &mut App) {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if cx.has_global::<Played>() {
         cx.global_mut::<Played>().0.push(sound);
     }
@@ -152,6 +152,21 @@ pub fn play_at(sound: Sound, gain: f64, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A test that asks to hear the clips gets each one played, in order.
+    #[gpui_kit::test]
+    fn the_clips_played_are_kept_for_a_test(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            kchess_app::settings::init_for_tests(cx);
+            cx.set_global(Played::default());
+            play_at(Sound::Capture, 1., cx);
+            play_at(Sound::LowTime, 0.5, cx);
+            assert!(matches!(
+                cx.global::<Played>().0.as_slice(),
+                [Sound::Capture, Sound::LowTime]
+            ));
+        });
+    }
 
     #[test]
     fn every_clip_decodes() {

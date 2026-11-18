@@ -28,6 +28,8 @@ kchess-contracts.workspace = true
 kchess-ui.workspace = true
 # The app's services: the core as the app holds it, Settings, preferences, the log (`crates/kchess-app`).
 kchess-app.workspace = true
+# The board and the games on it (`crates/kchess-board`).
+kchess-board.workspace = true
 # Pinned: a newer gpui-kit requires a newer gpui-pre than the patched copy in vendor/gpui-pre
 # (Cargo.toml [patch.crates-io]); rebase that patch before moving it.
 gpui-kit = "=0.10.0"
@@ -40,10 +42,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "time", "fs", "io-util"]
 getrandom = "0.4"
 # Channels from the core's threads to the UI thread.
 futures = "0.3"
-# The boards, pieces and sounds, embedded (already in Cargo.lock through GPUI Kit).
+# The app's icons, embedded (already in Cargo.lock through GPUI Kit).
 rust-embed = "8"
-# Move and game sounds: the default output device (cpal) and the MP3 clips (Symphonia).
-rodio = { version = "0.23", default-features = false, features = ["playback", "mp3"] }
 # Dates and times in local time and UTC (`src/dates.rs`).
 jiff = "1.0"
 # The Downloads folder exports start in.
@@ -62,7 +62,7 @@ kchess-delta.workspace = true
 tar = { version = "0.4", default-features = false }
 # Desktop notifications while KChess is in the background (already in Cargo.lock through GPUI).
 notify-rust = "4.18"
-# Voice input: the microphone (cpal, already in Cargo.lock through rodio) and the PCM the core's
+# Voice input: the microphone (cpal, already in Cargo.lock through the board's rodio) and the PCM the core's
 # recognizer takes, as base64 (already in Cargo.lock through the core).
 cpal = "0.18"
 base64 = "0.23"
@@ -105,6 +105,8 @@ embed-resource = "3"
 [dev-dependencies]
 # The slow calls a frame made, which the end-to-end tests fail on (`slow_calls::drawing`).
 kchess-app = { workspace = true, features = ["test-support"] }
+# The sounds played and the board images kept, which the end-to-end tests read.
+kchess-board = { workspace = true, features = ["test-support"] }
 # Headless windows for the rendering regressions (`#[gpui_kit::test]`).
 gpui-kit = { version = "=0.10.0", features = ["test-support"] }
 # A fresh profile per end-to-end test (`src/e2e`).

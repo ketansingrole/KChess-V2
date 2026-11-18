@@ -1,5 +1,6 @@
-//! What the app draws and plays: the icons it names, GPUI Kit's component icons, and its
-//! boards, piece sets and sounds (`apps/gpui/assets`), embedded once.
+//! What the app draws and plays: the icons it names, GPUI Kit's component icons, its own icon and
+//! startup logo, and the board's boards, piece sets and sounds (`kchess_board::assets`), embedded
+//! once.
 
 use std::borrow::Cow;
 
@@ -15,25 +16,14 @@ struct Icons;
 /// An icon by its name (`kchess_ui::icon`), drawn from `Icons`.
 pub use kchess_ui::icon;
 
-/// The boards, pieces, sounds, app icon and startup logo.
+/// The app icon and startup logo.
 #[derive(rust_embed::RustEmbed)]
 #[folder = "assets"]
-#[include = "boards/*"]
-#[include = "pieces/**/*.svg"]
-#[include = "sounds/*.mp3"]
 #[include = "icon.png"]
 #[include = "icon-splash.png"]
-struct Shared;
+struct Own;
 
-/// A board image or piece, by its path (`boards/brown.png`).
-pub fn shared(path: &str) -> Option<Cow<'static, [u8]>> {
-    Shared::get(path).map(|file| file.data)
-}
-
-/// A sound clip by its file name in `sounds/`.
-pub fn sound(name: &str) -> Option<Cow<'static, [u8]>> {
-    Shared::get(&format!("sounds/{name}")).map(|file| file.data)
-}
+pub use kchess_board::assets::shared;
 
 pub struct Assets;
 
@@ -42,15 +32,19 @@ impl AssetSource for Assets {
         if let Some(file) = Icons::get(path) {
             return Ok(Some(file.data));
         }
-        if let Some(file) = Shared::get(path) {
+        if let Some(file) = Own::get(path) {
             return Ok(Some(file.data));
+        }
+        if let Some(bytes) = shared(path) {
+            return Ok(Some(bytes));
         }
         gpui_kit::assets::Assets.load(path)
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
         let mut names: Vec<SharedString> = Icons::iter()
-            .chain(Shared::iter())
+            .chain(Own::iter())
+            .chain(kchess_board::assets::paths())
             .filter(|name| name.starts_with(path))
             .map(|name| SharedString::from(name.to_string()))
             .collect();

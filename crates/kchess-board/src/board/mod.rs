@@ -1092,7 +1092,7 @@ impl ChessBoard {
         }
         let key = event.keystroke.key.as_str();
         // Held for push to talk, Space is the voice's.
-        if key == "space" && crate::voice::handle(cx).read(cx).can_talk() {
+        if key == "space" && crate::space_talks(cx) {
             return;
         }
         if self.keyboard(key, cx) {
@@ -2296,6 +2296,60 @@ mod drawing_tests {
     use super::{Drawn, drawing_brush, toggle_shape};
     use gpui_kit::Modifiers;
     use shakmaty::Square;
+
+    /// Space presses the board's square, unless the voice holds it for push to talk: then the
+    /// board leaves it alone.
+    #[gpui_kit::test]
+    fn space_is_the_boards_unless_the_voice_holds_it(cx: &mut gpui_kit::TestAppContext) {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            kchess_app::settings::init_for_tests(cx);
+            let colors = kchess_ui::theme::colors("kchess", &[], false);
+            cx.set_global(kchess_ui::theme::Palette::of(&colors, false));
+        });
+        let window = cx.add_window(|_, _| {
+            let mut state = super::BoardState::shown(
+                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                kchess_domain::variant::Variant::Standard,
+                shakmaty::Color::White,
+                None,
+            );
+            state.movable = Some(shakmaty::Color::White);
+            super::ChessBoard::new(state)
+        });
+        let selected = Rc::new(Cell::new(0));
+        let board = window.root(cx).unwrap();
+        let _subscription = cx.update(|cx| {
+            let selected = selected.clone();
+            cx.subscribe(&board, move |_, event, _| {
+                if matches!(event, super::BoardEvent::Select(_)) {
+                    selected.set(selected.get() + 1);
+                }
+            })
+        });
+        window
+            .update(cx, |board, window, cx| {
+                let focus = board.focus_handle(cx);
+                window.focus(&focus, cx);
+            })
+            .unwrap();
+        let press = |cx: &mut gpui_kit::TestAppContext| {
+            cx.run_until_parked();
+            cx.simulate_keystrokes(window.into(), "space");
+            cx.run_until_parked();
+        };
+        press(cx);
+        assert_eq!(selected.get(), 1, "the board takes Space");
+        cx.update(|cx| cx.set_global(crate::SpaceTalks(|_| true)));
+        press(cx);
+        assert_eq!(selected.get(), 1, "the voice holds Space");
+        cx.update(|cx| cx.set_global(crate::SpaceTalks(|_| false)));
+        press(cx);
+        assert_eq!(selected.get(), 2, "the voice let go of Space");
+    }
 
     #[test]
     fn modifiers_pick_chessgrounds_brushes() {
