@@ -11,3 +11,6 @@ pub mod swipe;
 
 // The app's names for the crates these modules use.
 use kchess_board::widgets;
+
+#[cfg(test)]
+mod tests;
