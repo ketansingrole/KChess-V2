@@ -41,7 +41,7 @@ What follows from it:
 
 Each step below measures the same edits again, so a step that buys nothing is seen.
 
-### After step 1 (`kchess-ui`)
+### After steps 1 and 2 (`kchess-ui`)
 
 The same machine and edits, `cargo build`, the mean of two runs:
 
@@ -52,16 +52,27 @@ The same machine and edits, `cargo build`, the mean of two runs:
 | Only a page's modified time | 9.2 s | 8.1 s |
 | A field added to `theme::Palette` | 26 s | 26.7 s |
 
-An edit to code that moved out became twice as slow: on top of building `kchess-ui`, the app
-redoes far more of its own work after a change in a crate it depends on than after the same
-change in itself. Shared code that is edited often costs more in its own crate until the crates
-depending on it are small, so the later steps have to shrink the app for any step to pay off,
-and a step should move code that rarely changes before code that often does.
+That one theme edit, twice as slow, is not every edit to moved code. After step 2 the app's
+rebuild after an edit in `kchess-ui` was measured for several edits (`cargo build -p kchess-gpui`
+after `kchess-ui` itself, which takes 1.4 s; the mean of two runs):
+
+| Edit in `kchess-ui` | The app's rebuild |
+| --- | --- |
+| The theme's error string (in `apply`'s `format!`), the same length | 10.2 s |
+| A comment near the top of `theme.rs`, a character longer | 10.6 s |
+| A doc comment before `Pressable` (`widgets/mod.rs`), a character shorter | 9.9 s |
+| A widget's label (`widgets/panel.rs`), four characters longer | 9.3 s |
+| The theme's error string, one or four characters longer | 22.6 s |
+
+Most edits in the crate cost the app what the same edit in the app costs. Only lengthening that
+one formatted string doubled it, and why is not known yet: it is not where the edit falls in the
+file, nor the items after it (none the app uses). So the cost of moving code is real but narrower
+than step 1's one edit suggested; measure it on the code a step moves.
 
 ## The order
 
-Moving code out of the app makes edits to it slower until the app is small (step 1 above): an
-edit in a crate the app depends on cost 19.5 s where the same edit in the app cost 9.3 s. So
+Moving code out of the app can make edits to it slower until the app is small (above): some
+edits in a crate the app depends on cost 22.6 s where the same edit in the app cost 9.3 s. So
 code leaves in the order it changes least, shrinking the app fastest for the least cost, and the
 code that changes most stays in the app longest, where an edit rebuilds one crate.
 
