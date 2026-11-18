@@ -28,7 +28,7 @@ jiff = "1.0"
 rust-embed = "8"
 # Pictures of a game (`src/game_image.rs`): the board and pieces drawn (resvg), encoded as PNG or
 # GIF (image); both already in Cargo.lock through GPUI.
-resvg = "0.49"
+resvg = "0.50"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
 # Move and game sounds: the default output device (cpal) and the MP3 clips (Symphonia).
 rodio = { version = "0.23", default-features = false, features = ["playback", "mp3"] }
