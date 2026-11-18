@@ -348,7 +348,7 @@ impl OnlineSession {
             let id = now_playing
                 .iter()
                 .find(|game| {
-                    game["speed"].as_str() != Some("correspondence")
+                    !crate::lichess::online::ongoing::correspondence(game)
                         && crate::lichess::online::ongoing::board_playable(game)
                 })
                 .and_then(|game| game["gameId"].as_str())

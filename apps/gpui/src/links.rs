@@ -50,7 +50,7 @@ pub fn classify(text: &str) -> Option<Link> {
     if let Some(name) = crate::game::profile_link(text) {
         return Some(Link::Profile(name));
     }
-    if let Some(id) = crate::pages::puzzles::puzzle_link(text) {
+    if let Some(id) = kchess_domain::links::training_link(text) {
         return Some(Link::Puzzle(id));
     }
     if let Some(link) = crate::game::game_link(text) {

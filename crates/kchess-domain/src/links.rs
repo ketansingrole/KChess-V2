@@ -95,13 +95,16 @@ pub fn broadcast_link(text: &str) -> Option<BroadcastLink> {
     }
 }
 
-/// The puzzle a lichess.org/training link names (five letters and digits). Theme pages share the
-/// shape (`training/fork`), so a frontend that knows the themes rules them out.
+/// The puzzle a lichess.org/training link names (five letters and digits); the daily puzzle's
+/// and the themes' pages share the shape (`training/short`) and name none.
 pub fn training_link(text: &str) -> Option<String> {
     let path = lichess_path(text)?.strip_prefix("training/")?;
     let id = path.split(['?', '#']).next().unwrap_or_default();
     let id = id.strip_suffix('/').unwrap_or(id);
-    (id.len() == 5 && id.bytes().all(|byte| byte.is_ascii_alphanumeric())).then(|| id.to_string())
+    (id.len() == 5
+        && id.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        && !crate::puzzle::is_training_page(id))
+    .then(|| id.to_string())
 }
 
 /// A Lichess tournament link: an arena's (`tournament/ID`) or a Swiss event's (`swiss/ID`), as
@@ -242,6 +245,13 @@ mod link_tests {
         );
         assert_eq!(training_link("https://lichess.org/training"), None);
         assert_eq!(training_link("https://lichess.org/training/mateIn2"), None);
+        assert_eq!(training_link("https://lichess.org/training/short"), None);
+        assert_eq!(training_link("https://lichess.org/training/daily"), None);
+        assert_eq!(
+            training_link("www.lichess.org/training/00008?x=1").as_deref(),
+            Some("00008")
+        );
+        assert_eq!(training_link("https://lichess.org/abcdefgh"), None);
         assert_eq!(training_link("FPFg0"), None);
     }
 

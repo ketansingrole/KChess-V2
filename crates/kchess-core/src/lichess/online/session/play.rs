@@ -97,7 +97,7 @@ impl OnlineSession {
         // Lichess closes the game stream when the game ends; don't reconnect then.
         let kind = EventKind::of(&event);
         if kind == Some(EventKind::GameFull) {
-            let correspondence = event["speed"].as_str() == Some("correspondence");
+            let correspondence = crate::lichess::online::ongoing::correspondence(&event);
             let mut st = self.st();
             // A replaced game's last event must not describe the game opened since.
             if let Some(game) = st.live.as_mut().filter(|game| game.id == game_id) {

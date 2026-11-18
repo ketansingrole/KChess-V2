@@ -134,21 +134,10 @@ fn mode_hint(mode: &str) -> &'static str {
     }
 }
 
-/// The puzzle themes (`apps/gpui/data/puzzle-themes.json`), as Lichess names them, under their groups.
-#[derive(serde::Deserialize)]
-struct ThemeGroup {
-    label: String,
-    themes: Vec<Theme>,
-}
+pub(crate) use kchess_domain::puzzle::Theme;
 
-#[derive(serde::Deserialize, Clone)]
-pub(crate) struct Theme {
-    key: String,
-    name: String,
-}
-
-fn theme_groups() -> Vec<ThemeGroup> {
-    serde_json::from_str(include_str!("../../../data/puzzle-themes.json")).unwrap_or_default()
+fn theme_groups() -> Vec<kchess_domain::puzzle::ThemeGroup> {
+    kchess_domain::puzzle::theme_groups().to_vec()
 }
 
 fn mix() -> Theme {
@@ -1700,16 +1689,6 @@ impl PuzzlesPage {
     }
 }
 
-/// The puzzle id a lichess.org/training link names (`lichess.org/training/FPFg0`); `None` for
-/// anything else, a theme's or the daily puzzle's page included.
-pub fn puzzle_link(text: &str) -> Option<String> {
-    let id = kchess_domain::links::training_link(text)?;
-    static KEYS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    let keys = KEYS.get_or_init(|| themes().into_iter().map(|theme| theme.key).collect());
-    let theme = |key: &str| key == "daily" || keys.iter().any(|known| known == key);
-    (!theme(&id)).then_some(id)
-}
-
 impl PuzzlesPage {
     /// The Daily tab's view, made when first shown.
     fn daily_view(
@@ -2028,29 +2007,6 @@ mod tests {
         assert_eq!(list[0].name, "Healthy mix");
         assert_eq!(theme_name("mateIn2", &list), "Mate in 2");
         assert_eq!(theme_name("someNewTheme", &list), "Some New Theme");
-    }
-}
-
-#[cfg(test)]
-mod link_tests {
-    use super::puzzle_link;
-
-    #[test]
-    fn a_training_link_names_its_puzzle() {
-        for (text, id) in [
-            ("https://lichess.org/training/FPFg0", Some("FPFg0")),
-            ("lichess.org/training/K69di/", Some("K69di")),
-            ("www.lichess.org/training/00008?x=1", Some("00008")),
-            // A theme's page, the daily puzzle's page and games are not puzzles.
-            ("https://lichess.org/training/short", None),
-            ("https://lichess.org/training/daily", None),
-            ("https://lichess.org/training/fork", None),
-            ("https://lichess.org/training/mateIn2", None),
-            ("https://lichess.org/abcdefgh", None),
-            ("FPFg0", None),
-        ] {
-            assert_eq!(puzzle_link(text).as_deref(), id, "{text}");
-        }
     }
 }
 

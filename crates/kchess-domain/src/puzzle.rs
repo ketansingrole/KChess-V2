@@ -1,9 +1,10 @@
 //! The puzzle database sampler: reads Lichess's puzzle
 //! CSV as decompressed bytes and keeps a random sample spread over every rating, theme and opening.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use crate::js;
 
@@ -17,6 +18,36 @@ const MAX_THEMES: usize = 256;
 const PER_OPENING: usize = 120;
 const MAX_OPENINGS: usize = 512;
 pub const OVERSIZED: &str = "Puzzle database contains an oversized CSV line.";
+
+/// A puzzle theme, as Lichess keys and names it.
+#[derive(Deserialize, Debug, Clone)]
+pub struct Theme {
+    pub key: String,
+    pub name: String,
+}
+
+/// The puzzle themes under a group's label.
+#[derive(Deserialize, Debug, Clone)]
+pub struct ThemeGroup {
+    pub label: String,
+    pub themes: Vec<Theme>,
+}
+
+/// Lichess's puzzle themes, in its groups (`data/puzzle-themes.json`).
+pub fn theme_groups() -> &'static [ThemeGroup] {
+    static GROUPS: OnceLock<Vec<ThemeGroup>> = OnceLock::new();
+    GROUPS.get_or_init(|| {
+        crate::embedded::parse("puzzle themes", include_str!("../data/puzzle-themes.json"))
+    })
+}
+
+/// A lichess.org/training page that is not one puzzle: the daily puzzle's or a theme's.
+pub fn is_training_page(key: &str) -> bool {
+    key == "daily"
+        || theme_groups()
+            .iter()
+            .any(|group| group.themes.iter().any(|theme| theme.key == key))
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct DbPuzzle {
