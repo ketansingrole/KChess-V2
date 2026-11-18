@@ -1,0 +1,22 @@
+[package]
+name = "kchess-nav"
+description = "KChess's pages as the shell drives them over GPUI: what a page declares, opening one from another, the board pages' layout."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+kchess-app.workspace = true
+kchess-board.workspace = true
+kchess-ui.workspace = true
+# Pinned with the app's (apps/gpui/Cargo.toml).
+gpui-kit = "=0.10.0"
+kchess-hack = { version = "0.1", path = "../kchess-hack" }
+
+[dev-dependencies]
+# Headless windows for the tests (`#[gpui_kit::test]`).
+gpui-kit = { version = "=0.10.0", features = ["test-support"] }
+
+[lints]
+workspace = true

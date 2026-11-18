@@ -58,7 +58,7 @@ type Deferred = Box<dyn FnOnce(&mut ComputerPage, &mut Window, &mut Context<Comp
 
 /// The game's actions Quick Pick offers on this page.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) enum Action {
+pub enum Action {
     TakeBack,
     Resign,
     NewGame,

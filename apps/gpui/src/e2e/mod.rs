@@ -106,6 +106,7 @@ impl Harness {
     /// Start the app after `prepare` has written to the fresh profile (settings, games).
     pub fn start_with(cx: &mut TestAppContext, prepare: impl FnOnce(&Path)) -> Harness {
         environment();
+        crate::pages::register_pages();
         let profile = tempfile::tempdir().expect("a temporary profile");
         prepare(profile.path());
         Self::boot(cx.clone(), profile, false)

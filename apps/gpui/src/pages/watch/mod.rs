@@ -1117,7 +1117,7 @@ pub(super) fn stop_watching(session: Option<u64>, cx: &mut App) {
 /// Watch's actions: the watched game's, as its panel's buttons offer them, and the other TV
 /// channels.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) enum Action {
+pub enum Action {
     Live(live::Action),
     /// A channel's key and name.
     Channel(String, String),

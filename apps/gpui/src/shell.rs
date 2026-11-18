@@ -13,15 +13,12 @@ use std::time::Duration;
 
 use crate::assets::icon;
 use crate::pages::settings::Section;
-use crate::pages::{ActionRole, NavGroup, Page, PageCommand, PageView, Pages};
+use crate::pages::{ActionRole, NavGroup, Page, PageCommand, Pages};
 use crate::part::Part;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
 
 mod settings_dialog;
-
-/// The window's height above the page.
-pub const TOPBAR_HEIGHT: Pixels = px(52.);
 
 const SIDEBAR_OPEN: &str = "kchess:sidebar-open";
 
@@ -291,6 +288,42 @@ struct Navigator(WeakEntity<Workspace>);
 
 impl Global for Navigator {}
 
+// How a page reaches the shell (`kchess_nav::shell`), answered by the workspace below.
+pub use kchess_nav::shell::{
+    TOPBAR_HEIGHT, current_page, go, keeping_keys_since, made, open, show, view,
+};
+
+/// The workspace as pages reach it (`kchess_nav::shell::Shell`).
+struct WorkspaceShell;
+
+impl kchess_nav::shell::Shell for WorkspaceShell {
+    fn open(&self, page: Page, window: &mut Window, cx: &mut App) {
+        if let Some(workspace) = workspace(cx) {
+            workspace.update(cx, |workspace, cx| workspace.choose(page, window, cx));
+        }
+    }
+
+    fn current(&self, cx: &App) -> Option<Page> {
+        Some(workspace(cx)?.read(cx).pages.current())
+    }
+
+    fn view(&self, page: Page, cx: &App) -> Option<AnyView> {
+        workspace(cx)?.read(cx).pages.view_for(page)
+    }
+
+    fn made(&self, page: Page, window: &mut Window, cx: &mut App) -> Option<AnyView> {
+        workspace(cx)?.update(cx, |workspace, cx| {
+            Some(workspace.pages.made_view(page, window, cx))
+        })
+    }
+
+    fn go(&self, direction: crate::swipe::Direction, window: &mut Window, cx: &mut App) {
+        if let Some(workspace) = workspace(cx) {
+            workspace.update(cx, |workspace, cx| workspace.go(direction, window, cx));
+        }
+    }
+}
+
 fn workspace(cx: &App) -> Option<Entity<Workspace>> {
     cx.try_global::<Navigator>()?.0.upgrade()
 }
@@ -299,70 +332,6 @@ fn workspace(cx: &App) -> Option<Entity<Workspace>> {
 #[cfg(test)]
 pub fn window_title_shown(cx: &App) -> Option<String> {
     Some(workspace(cx)?.read(cx).title.clone())
-}
-
-/// The page shown, once the window is open.
-pub fn current_page(cx: &App) -> Option<Page> {
-    Some(workspace(cx)?.read(cx).pages.current())
-}
-
-/// Open `page` as the sidebar would.
-pub fn open(page: Page, window: &mut Window, cx: &mut App) {
-    if let Some(workspace) = workspace(cx) {
-        workspace.update(cx, |workspace, cx| workspace.choose(page, window, cx));
-    }
-}
-
-/// Run `show`, which opens a page, for something asked when the keys were at `asked`, before an
-/// answer the person need not have waited for. When they have given the keys elsewhere since
-/// (Quick Pick opened again, a field clicked), the page opens behind and leaves the keys there:
-/// taking them closed Quick Pick under the person's search. A dialog `show` opens keeps them.
-pub fn keeping_keys_since(
-    asked: Option<FocusHandle>,
-    window: &mut Window,
-    cx: &mut App,
-    show: impl FnOnce(&mut Window, &mut App),
-) {
-    use gpui_kit::component::WindowExt as _;
-    let now = window.focused(cx);
-    show(window, cx);
-    if let Some(now) = now.filter(|now| asked.as_ref() != Some(now))
-        && !window.has_active_dialog(cx)
-    {
-        window.focus(&now, cx);
-    }
-}
-
-/// Open page `V` as the sidebar would, then `act` on it: how one page links into another.
-pub fn show<V: PageView>(
-    window: &mut Window,
-    cx: &mut App,
-    act: impl FnOnce(&mut V, &mut Window, &mut Context<V>),
-) {
-    open(V::INFO.page, window, cx);
-    if let Some(page) = view::<V>(cx) {
-        page.update(cx, |page, cx| act(page, window, cx));
-    }
-}
-
-/// Page `V`'s view, once it has been made.
-pub fn view<V: PageView>(cx: &App) -> Option<Entity<V>> {
-    workspace(cx)?.read(cx).pages.get::<V>()
-}
-
-/// Page `V`'s view, made now (without showing it) if it has not been.
-pub fn made<V: PageView>(window: &mut Window, cx: &mut App) -> Option<Entity<V>> {
-    workspace(cx)?.update(cx, |workspace, cx| {
-        Some(workspace.pages.get_made::<V>(window, cx))
-    })
-}
-
-/// Back (-1) or forward (1): out of the page's inner level, then through the pages visited, as
-/// a swipe goes.
-pub fn go(direction: crate::swipe::Direction, window: &mut Window, cx: &mut App) {
-    if let Some(workspace) = workspace(cx) {
-        workspace.update(cx, |workspace, cx| workspace.go(direction, window, cx));
-    }
 }
 
 pub fn sidebar_open(cx: &App) -> bool {
@@ -597,6 +566,9 @@ impl Workspace {
         crate::theme::apply(window, cx);
         crate::interface_zoom::apply(window, cx);
         cx.set_global(Navigator(cx.entity().downgrade()));
+        cx.set_global(kchess_nav::shell::Navigator(std::rc::Rc::new(
+            WorkspaceShell,
+        )));
         let settings = cx.global::<SettingsHandle>().0.clone();
         let subscriptions = vec![
             cx.observe(

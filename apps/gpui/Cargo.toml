@@ -30,6 +30,8 @@ kchess-ui.workspace = true
 kchess-app.workspace = true
 # The board and the games on it (`crates/kchess-board`).
 kchess-board.workspace = true
+# The pages as the shell drives them (`crates/kchess-nav`).
+kchess-nav.workspace = true
 # Pinned: a newer gpui-kit requires a newer gpui-pre than the patched copy in vendor/gpui-pre
 # (Cargo.toml [patch.crates-io]); rebase that patch before moving it.
 gpui-kit = "=0.10.0"

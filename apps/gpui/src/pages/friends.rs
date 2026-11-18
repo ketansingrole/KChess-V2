@@ -48,7 +48,7 @@ const TIMELINE_MORE: usize = 20;
 
 /// The header's actions, as its buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Action {
+pub enum Action {
     Follow,
     Import,
     Sync,

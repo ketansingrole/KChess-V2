@@ -254,7 +254,7 @@ fn catalog() -> Arc<Catalog> {
 
 /// An open line's actions, as its buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Action {
+pub enum Action {
     Train,
     Analyse,
     Puzzles,

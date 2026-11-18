@@ -1317,6 +1317,7 @@ mod tests {
                 "kchess-app".to_string(),
                 "kchess-board".to_string(),
                 APP.to_string(),
+                "kchess-nav".to_string(),
                 "kchess-ui".to_string()
             ])
         );
@@ -1348,11 +1349,24 @@ mod tests {
     fn the_uncovered_members_test_the_app_only_when_asked() {
         assert_eq!(
             uncovered(true),
-            [APP, "kchess-ui", "kchess-app", "kchess-board", "xtask"]
+            [
+                APP,
+                "kchess-ui",
+                "kchess-app",
+                "kchess-board",
+                "kchess-nav",
+                "xtask"
+            ]
         );
         assert_eq!(
             uncovered(false),
-            ["kchess-ui", "kchess-app", "kchess-board", "xtask"]
+            [
+                "kchess-ui",
+                "kchess-app",
+                "kchess-board",
+                "kchess-nav",
+                "xtask"
+            ]
         );
     }
 

@@ -117,7 +117,7 @@ fn standard_castling_pieces(key: &str) -> (Option<usize>, Option<usize>) {
 
 /// What the editor's buttons do, for Quick Pick to offer the same.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) enum Action {
+pub enum Action {
     StartPosition,
     ClearBoard,
     Flip,

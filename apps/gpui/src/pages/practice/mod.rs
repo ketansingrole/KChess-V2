@@ -115,7 +115,7 @@ impl PageTab for Tab {
 
 /// The actions of the trainer on screen, as its buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Action {
+pub enum Action {
     Drill(endgame_drills::DrillAction),
     Lesson(endgame_lesson::LessonAction),
     Repertoire(repertoire::RepertoireAction),
