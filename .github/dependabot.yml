@@ -22,6 +22,7 @@ updates:
       - { dependency-name: arrayvec, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: bitflags, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: bytemuck, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: byteorder, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: crc32fast, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: crossbeam-utils, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: crypto-common, update-types: [version-update:semver-major, version-update:semver-minor] }
