@@ -522,7 +522,7 @@ impl AnalysisPage {
             navigation: 0,
             study_bar,
             review: review::ReviewState::new(Vec::new()),
-            explainer: cx.new(|_| crate::ai::Explainer::new()),
+            explainer: cx.new(|_| crate::ai::Explainer::default()),
             practice: None,
             paused_for_review: false,
             notes: notes::Notes {

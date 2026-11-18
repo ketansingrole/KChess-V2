@@ -12,6 +12,7 @@ test-support = []
 
 [dependencies]
 kchess-contracts.workspace = true
+kchess-domain.workspace = true
 kchess-host.workspace = true
 # The shared core as a client holds it (`docs/shared-core.md`).
 kchess-service.workspace = true

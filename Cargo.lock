@@ -4295,6 +4295,7 @@ dependencies = [
  "gpui-kit",
  "jiff",
  "kchess-contracts",
+ "kchess-domain",
  "kchess-hack",
  "kchess-host",
  "kchess-service",
@@ -4310,6 +4311,7 @@ version = "2026.11.7"
 dependencies = [
  "futures",
  "gpui-kit",
+ "image",
  "jiff",
  "kchess-app",
  "kchess-contracts",
@@ -4317,6 +4319,7 @@ dependencies = [
  "kchess-games",
  "kchess-hack",
  "kchess-ui",
+ "resvg 0.49.0",
  "rodio",
  "rust-embed",
  "serde",

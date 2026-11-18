@@ -1,13 +1,16 @@
 //! KChess's design system over GPUI Kit: what every page paints with and nothing app-specific.
 //! The theme and its colors (`theme`), the system's reduced motion (`motion`), the line chart
 //! (`chart`), the generic widgets (`widgets`), dates as the app shows them (`dates`) and the keys
-//! bound to an action (`keys`). It never depends on the app: what it needs from it (where log
+//! bound to an action (`keys`),
+//! Quick Pick's search (`quick_pick`) and the dialog that asks for a name (`name_dialog`). It never depends on the app: what it needs from it (where log
 //! lines go, which theme Settings chose) the app passes in.
 
 pub mod chart;
 pub mod dates;
 pub mod keys;
 pub mod motion;
+pub mod name_dialog;
+pub mod quick_pick;
 pub mod theme;
 pub mod widgets;
 

@@ -16,7 +16,7 @@ pub struct Network {
 
 impl Network {
     /// Take the computer to be on a network or off it, whatever the machine says, from now on.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn pin(&mut self, online: bool) {
         self.online = online;
         self.pinned = true;

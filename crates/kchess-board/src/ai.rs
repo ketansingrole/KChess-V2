@@ -14,9 +14,9 @@ use kchess_contracts::types::{
 };
 use shakmaty::Color;
 
-use crate::assets::icon;
 use crate::core::AppCore;
 use crate::theme::{Palette, radii};
+use kchess_ui::icon;
 
 /// Where a person manages what apps may spend of their plan.
 pub const USAGE_SETTINGS: &str = "https://chatgpt.com/#settings";
@@ -173,6 +173,7 @@ enum Phase {
 
 /// One explanation at a time: what was asked and how it stands. A page keeps one and hands
 /// `explain_block` the request of what it shows, so moving on simply shows another request.
+#[derive(Default)]
 pub struct Explainer {
     request: Option<AiRequest>,
     phase: Option<Phase>,
@@ -180,14 +181,6 @@ pub struct Explainer {
 }
 
 impl Explainer {
-    pub fn new() -> Explainer {
-        Explainer {
-            request: None,
-            phase: None,
-            asked: 0,
-        }
-    }
-
     pub fn ask(&mut self, request: AiRequest, on_answer: Option<OnAnswer>, cx: &mut Context<Self>) {
         self.asked += 1;
         let asked = self.asked;

@@ -7,7 +7,6 @@
 
 mod accounts;
 mod activity;
-mod ai;
 mod assets;
 #[cfg(feature = "bench")]
 mod bench;
@@ -15,18 +14,14 @@ mod core;
 mod dock_icon;
 #[cfg(test)]
 mod e2e;
-mod engine_view;
 mod explorer;
 mod export;
-mod game_image;
 #[cfg(test)]
 mod gpui_patches;
 mod interface_zoom;
 mod links;
 mod menu;
 mod microphone;
-mod name_dialog;
-mod network;
 mod notifications;
 mod online;
 mod pages;
@@ -35,31 +30,29 @@ mod player_search;
 mod position_engine;
 mod profile;
 mod puzzle_board;
-mod puzzle_db;
-mod quick_pick;
-mod rating_history;
 mod remote_image;
-mod reviews;
 mod shell;
 mod shortcuts;
 mod startup;
-mod studies;
 mod theme;
 mod updates;
 mod voice;
 mod whats_new;
-mod widgets;
 mod window_state;
 // Only the app itself stamps the shortcuts: a test run would change its runner's.
 
 use gpui_kit::*;
 use kchess_contracts::Level;
 // The design system (`crates/kchess-ui`), under the names the app's modules use.
-use kchess_ui::{chart, dates, motion};
+use kchess_ui::{chart, dates, motion, name_dialog, quick_pick};
 // The app's services (`crates/kchess-app`), under the names the app's modules use.
-use kchess_app::{loading, log, played, prefs, quit, settings, slow_calls, timer};
+use kchess_app::{
+    loading, log, network, played, prefs, quit, reviews, settings, slow_calls, studies, timer,
+};
 // The board and the games on it (`crates/kchess-board`).
-use kchess_board::{board, game, notation, sound};
+use kchess_board::{
+    ai, board, engine_view, game, game_image, notation, puzzle_db, rating_history, sound, widgets,
+};
 // The pages as the shell drives them (`crates/kchess-nav`).
 use kchess_nav::{part, play_layout, swipe};
 

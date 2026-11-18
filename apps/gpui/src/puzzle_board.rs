@@ -154,7 +154,7 @@ impl PuzzleBoard {
             hinted: false,
             last_wrong: None,
             tried: Vec::new(),
-            explainer: cx.new(|_| crate::ai::Explainer::new()),
+            explainer: cx.new(|_| crate::ai::Explainer::default()),
             hint_used: false,
             nudged: false,
             feedback: Feedback::None,
