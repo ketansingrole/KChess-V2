@@ -8,7 +8,10 @@ use gpui_kit::{
     TestAppContext, Window, div,
 };
 
-use crate::page::{NavGroup, Page, PageInfo, PageView, Registered, register, set_registry};
+use crate::page::{
+    NavGroup, Page, PageCommand, PageInfo, PageTab, PageView, Registered, TabInfo, register,
+    set_registry, tab_places,
+};
 use crate::shell::{self, Navigator, Shell};
 use crate::swipe::Direction;
 
@@ -32,10 +35,40 @@ const ORDER: [Page; 17] = [
     Page::Settings,
 ];
 
-/// The page at `N` in the sidebar's order, counting what it was asked to do.
+gpui_kit::actions!(stand, [OpenLast]);
+
+/// A page's two tabs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Tab {
+    One,
+    Two,
+}
+
+impl PageTab for Tab {
+    const ALL: &'static [Self] = &[Tab::One, Tab::Two];
+    const KEY: &'static str = "stand:tab";
+
+    fn info(self) -> TabInfo {
+        let key = match self {
+            Tab::One => "one",
+            Tab::Two => "two",
+        };
+        TabInfo {
+            key,
+            label: key,
+            title: key,
+            icon: "circle",
+            keywords: "",
+        }
+    }
+}
+
+/// The page at `N` in the sidebar's order, counting what it was asked to do. The first has tabs
+/// Quick Pick goes to; the last is opened by an app-wide action.
 struct Stand<const N: usize> {
     focus: FocusHandle,
     acted: usize,
+    tab: Option<Tab>,
 }
 
 impl<const N: usize> Render for Stand<N> {
@@ -65,7 +98,20 @@ impl<const N: usize> PageView for Stand<N> {
         Stand {
             focus: cx.focus_handle(),
             acted: 0,
+            tab: None,
         }
+    }
+
+    fn places(_: &App) -> Vec<PageCommand> {
+        if N == 0 {
+            tab_places::<Self, Tab>("stand", |page, tab, _, _| page.tab = Some(tab))
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn opened_by() -> Option<Box<dyn gpui_kit::Action>> {
+        (N == 16).then(|| Box::new(OpenLast) as Box<dyn gpui_kit::Action>)
     }
 }
 
@@ -91,13 +137,36 @@ static REGISTRY: [Registered; 17] = [
 
 /// A page is described by the registry the app set, at its own place.
 #[gpui_kit::test]
-fn a_page_is_what_the_registry_says(_: &mut TestAppContext) {
+fn a_page_is_what_the_registry_says(cx: &mut TestAppContext) {
     set_registry(&REGISTRY);
     assert_eq!(Page::Analysis.info().page, Page::Analysis);
     assert_eq!(REGISTRY[6].page(), Page::Analysis);
     assert_eq!(Page::all().count(), 17);
     assert_eq!(Page::named("Watch"), Some(Page::Watch));
-    assert!(crate::page::opened_by(Page::Settings).is_none());
+    assert!(crate::page::opened_by(Page::Players).is_none());
+    assert!(
+        crate::page::opened_by(Page::Settings).is_some_and(|action| action.partial_eq(&OpenLast))
+    );
+    let places: Vec<_> = cx.read(|cx| {
+        crate::page::places(cx)
+            .into_iter()
+            .map(|place| place.info.id)
+            .collect()
+    });
+    assert_eq!(places, ["stand:one", "stand:two"]);
+}
+
+/// A tab chosen is kept, and drawn as one pill each.
+#[gpui_kit::test]
+fn a_tab_chosen_is_kept(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        assert_eq!(Tab::stored(cx), Tab::One);
+        Tab::Two.store(cx);
+        assert_eq!(Tab::stored(cx), Tab::Two);
+    });
+    let labels: Vec<_> = Tab::pills().into_iter().map(|pill| pill.label).collect();
+    assert_eq!(labels, ["one", "two"]);
+    assert_eq!(Tab::Two.index(), 1);
 }
 
 /// A shell that keeps what it was asked, over the app's made pages.
@@ -173,9 +242,42 @@ fn a_page_reaches_others_through_the_shell(cx: &mut TestAppContext) {
         shell::show::<Stand<12>>(window, cx, |page, _, _| page.acted += 1);
         assert_eq!(shell::current_page(cx), Some(Page::Watch));
         shell::go(-1, window, cx);
+        // The page shown has the keys until they go elsewhere.
+        let pages = kept.pages.borrow();
+        let pages = pages.as_ref().expect("the pages");
+        assert!(pages.page_focused(window, cx));
+        window.blur(cx);
+        assert!(!pages.page_focused(window, cx));
     })
     .unwrap();
     let shown = cx.read(|cx| shell::view::<Stand<12>>(cx).map(|page| page.read(cx).acted));
     assert_eq!(shown, Some(1));
     assert_eq!(*kept.asked.borrow(), ["open Watch", "go -1"]);
+}
+
+/// A page opened for something asked takes the keys, unless the person gave them elsewhere since
+/// they asked: then they stay there.
+#[gpui_kit::test]
+fn keys_given_elsewhere_since_stay_there(cx: &mut TestAppContext) {
+    // A window as the app opens it: the kit's state says whether a dialog has the keys.
+    let window = cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_kit::open_window(Default::default(), cx, |_, cx| cx.new(|_| Blank))
+            .expect("a window")
+            .0
+    });
+    cx.update_window(window, |_, window, cx| {
+        let (asked, elsewhere, page) = (cx.focus_handle(), cx.focus_handle(), cx.focus_handle());
+        window.focus(&asked, cx);
+        shell::keeping_keys_since(Some(asked.clone()), window, cx, |window, cx| {
+            window.focus(&page, cx)
+        });
+        assert!(page.is_focused(window), "still where they were asked");
+        window.focus(&elsewhere, cx);
+        shell::keeping_keys_since(Some(asked), window, cx, |window, cx| {
+            window.focus(&page, cx)
+        });
+        assert!(elsewhere.is_focused(window), "given elsewhere since");
+    })
+    .unwrap();
 }
