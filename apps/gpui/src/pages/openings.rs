@@ -553,7 +553,7 @@ impl OpeningsPage {
             .map_or_else(|| STANDARD_FEN.to_string(), |(_, _, fen)| fen.clone());
         let variant = kchess_domain::variant::Variant::Standard;
         let position = kchess_domain::rules::setup_start(variant, &fen);
-        if let Some(uci) = self.move_box.take(variant, position.as_ref(), window, cx) {
+        if let Some(uci) = self.move_box.take(position.as_ref(), window, cx) {
             let mut moves = line;
             moves.push(uci);
             self.show_line(Some(moves), cx);

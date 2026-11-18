@@ -5,7 +5,7 @@ use serde_json::Number;
 
 use super::connection::{Lane, OnlineConnection, OnlinePhase};
 use super::model::{
-    ChatEntry, ChatRoom, ClockConfig, Effect, FinishedGame, GamePhase, Offer, Run, Setup, turn_of,
+    ChatEntry, ChatRoom, ClockConfig, Effect, FinishedGame, GamePhase, Offer, Run, Setup,
 };
 use super::server::{ChatLine, GameFull, GameRef, GameState, OpponentGone, Player, ServerEvent};
 use crate::color::{self, Color};
@@ -306,7 +306,7 @@ impl Run<'_> {
             let san = replayed.played.last().cloned();
             self.effect(Effect::Moved { san: san.clone() });
             // A move by the other colour than ours is the opponent's.
-            if turn_of(&replayed.setup.fen) == self.m.online_color {
+            if crate::rules::fen_turn(&replayed.setup.fen) == self.m.online_color {
                 let body = match &san {
                     Some(san) => format!("{san}. Your move."),
                     None => "Your move.".to_string(),

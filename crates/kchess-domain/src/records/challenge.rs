@@ -422,6 +422,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn marks_what_kchess_cannot_play() {
+        let house = read_challenge_event(
+            "Alice",
+            &challenge(json!({ "variant": { "key": "crazyhouse", "name": "Crazyhouse" } })),
+            0,
+        )
+        .unwrap()
+        .info;
+        assert!(
+            house.playable,
+            "Crazyhouse is played on the board's pockets"
+        );
+        let unknown = read_challenge_event(
+            "Alice",
+            &challenge(json!({ "variant": { "key": "bughouse", "name": "Bughouse" } })),
+            0,
+        )
+        .unwrap()
+        .info;
+        assert!(!unknown.playable);
+        assert!(unknown.problem.unwrap().contains("Bughouse"));
+        let mut bullet = challenge(json!({}));
+        bullet["compat"] = json!({ "board": false });
+        assert!(
+            !read_challenge_event("Alice", &bullet, 0)
+                .unwrap()
+                .info
+                .playable
+        );
+    }
+
     fn event_of(overrides: Value) -> Option<ChallengeEvent> {
         read_challenge_event("Alice", &challenge(overrides), 0)
     }

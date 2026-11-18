@@ -206,7 +206,7 @@ impl EndgameDrills {
     fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let variant = kchess_domain::variant::Variant::Standard;
         let position = kchess_domain::rules::setup_start(variant, &self.status().fen);
-        if let Some(uci) = self.move_box.take(variant, position.as_ref(), window, cx) {
+        if let Some(uci) = self.move_box.take(position.as_ref(), window, cx) {
             self.on_move(&uci, cx);
         }
     }

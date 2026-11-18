@@ -2,6 +2,7 @@
 //! client clock, engine levels, UCI `info` lines and Guess the move's scoring. Their constants
 //! are data (`crates/kchess-domain/data/`).
 
+pub mod board_vision;
 pub mod clock;
 pub mod data;
 pub mod endgames;

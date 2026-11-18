@@ -469,8 +469,7 @@ impl ComputerPage {
             return;
         }
         let position = self.position_at(self.ply());
-        let variant = self.setup_variant();
-        match self.moves.take(variant, position.as_ref(), window, cx) {
+        match self.moves.take(position.as_ref(), window, cx) {
             Some(uci) => self.play(&uci, cx),
             None => cx.notify(),
         }
@@ -1622,7 +1621,7 @@ pub fn play_level(level: &str, color: &'static str, window: &mut Window, cx: &mu
 /// Play Stockfish (Fairy-Stockfish in another variant) from a setup's position, as the side to
 /// move. A position that cannot be played only opens the page.
 pub fn play_from(setup: Setup, window: &mut Window, cx: &mut App) {
-    let color = crate::links::side_to_move(&setup.fen);
+    let color = kchess_domain::rules::fen_turn(&setup.fen);
     if !playable(&setup) {
         crate::shell::open(crate::pages::Page::Computer, window, cx);
         return;

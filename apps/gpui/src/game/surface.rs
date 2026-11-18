@@ -162,11 +162,10 @@ impl MoveBox {
         self.input.read(cx).value().trim().to_string()
     }
 
-    /// The move typed, as UCI, when it is legal in `position` of `variant`: the box is emptied.
-    /// Otherwise it says what it takes. `None` too when nothing is typed.
+    /// The move typed, as UCI, when it is legal in `position`: the box is emptied. Otherwise it
+    /// says what it takes. `None` too when nothing is typed.
     pub fn take(
         &mut self,
-        variant: kchess_domain::variant::Variant,
         position: Option<&VariantPosition>,
         window: &mut Window,
         cx: &mut App,
@@ -175,9 +174,7 @@ impl MoveBox {
         if text.is_empty() {
             return None;
         }
-        let uci = position.and_then(|position| {
-            kchess_games::typed_uci(variant, &kchess_domain::rules::make_fen(position), &text)
-        });
+        let uci = position.and_then(|position| kchess_domain::position::typed_uci(position, &text));
         match &uci {
             Some(_) => {
                 self.message = None;

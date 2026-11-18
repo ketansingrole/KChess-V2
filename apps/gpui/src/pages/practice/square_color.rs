@@ -24,7 +24,7 @@ use crate::widgets::Pressable as _;
 const FLASH: Duration = Duration::from_millis(300);
 const COLOR_GRAMMAR: [&str; 3] = ["light", "dark", "[unk]"];
 
-use kchess_domain::voice::square_color;
+use kchess_domain::training::board_vision::square_color;
 
 pub struct SquareColors {
     run: DrillRun,

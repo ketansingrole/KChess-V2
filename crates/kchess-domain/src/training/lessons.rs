@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use shakmaty::{Chess, Color, Move, Position, Role, Square, variant::VariantPosition};
 use std::sync::OnceLock;
 
+use crate::material;
 use crate::rules;
 
 const LESSONS_JSON: &str = include_str!("../../data/lessons.json");
@@ -171,24 +172,6 @@ fn uci_of(m: &Move) -> String {
     rules::make_uci(m)
 }
 
-fn value(role: Role) -> i32 {
-    match role {
-        Role::Pawn => 1,
-        Role::Knight | Role::Bishop => 3,
-        Role::Rook => 5,
-        Role::Queen => 9,
-        Role::King => 0,
-    }
-}
-
-fn material(pos: &Chess, color: Color) -> i32 {
-    let board = pos.board();
-    Role::ALL
-        .iter()
-        .map(|&role| value(role) * (board.by_color(color) & board.by_role(role)).count() as i32)
-        .sum()
-}
-
 /// Only a king left for `color`, against a queen or rook of the other side.
 fn bare_king_against_major(pos: &Chess, color: Color) -> bool {
     let board = pos.board();
@@ -302,9 +285,10 @@ struct Replay {
 fn replay<S: AsRef<str>>(fen: &str, moves: &[S]) -> Result<Replay, String> {
     let start = chess(fen)?;
     let player = start.turn();
-    let balance = |pos: &Chess| material(pos, player) - material(pos, !player);
+    let balance =
+        |pos: &Chess| material::of(pos.board(), player) - material::of(pos.board(), !player);
     let initial_balance = balance(&start);
-    let initial_ours = material(&start, player);
+    let initial_ours = material::of(&start.board(), player);
     let mut pos = start.clone();
     let mut seen = rules::Repetitions::starting_at(&fen_of(&pos));
     let mut out = Replay {
@@ -330,7 +314,7 @@ fn replay<S: AsRef<str>>(fen: &str, moves: &[S]) -> Result<Replay, String> {
         // Judged after your moves, so a capture you take straight back is no loss. Promotions
         // add material, so only a drop below the start counts.
         if mover == player {
-            out.lost_material |= material(&pos, player) < initial_ours;
+            out.lost_material |= material::of(&pos.board(), player) < initial_ours;
             out.swing = out.swing.max(initial_balance - balance(&pos));
         }
     }
@@ -850,18 +834,6 @@ mod tests {
     }
     fn mate_in_one_position() -> &'static str {
         "7k/6pp/p7/8/8/8/8/1R2K3 w - - 0 1"
-    }
-
-    #[test]
-    fn pieces_are_worth_their_usual_points() {
-        let points: Vec<i32> = Role::ALL.iter().map(|&r| value(r)).collect();
-        assert_eq!(points.iter().sum::<i32>(), 1 + 3 + 3 + 5 + 9);
-        assert_eq!(value(Role::Pawn), 1);
-        assert_eq!(value(Role::Queen), 9);
-        assert_eq!(value(Role::King), 0);
-        let start = chess("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        assert_eq!(material(&start, Color::White), 39);
-        assert_eq!(material(&start, Color::Black), 39);
     }
 
     #[test]

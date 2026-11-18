@@ -397,9 +397,8 @@ impl GuessMoves {
         let Some(game) = &self.game else {
             return;
         };
-        let variant = game.setup.variant;
         let position = view::position_at(&game.setup, &game.moves, self.ply);
-        if let Some(uci) = self.move_box.take(variant, position.as_ref(), window, cx) {
+        if let Some(uci) = self.move_box.take(position.as_ref(), window, cx) {
             self.guess(uci, cx);
         }
     }

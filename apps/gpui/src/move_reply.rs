@@ -72,7 +72,7 @@ pub fn read(game: &OngoingGame, text: &str) -> Option<Reply> {
     let fen = position(game)?;
     let variant = kchess_domain::variant::Variant::from_key(&game.variant)?;
     let start = kchess_domain::rules::setup_start(variant, &fen)?;
-    let uci = kchess_games::typed_uci(variant, &fen, text.trim())?;
+    let uci = kchess_domain::position::typed_uci(&start, text)?;
     let played = kchess_domain::position::play_uci(&start, &uci)?;
     Some(Reply {
         account: game.account.clone(),

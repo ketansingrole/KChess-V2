@@ -57,7 +57,9 @@ pub fn random_square(previous: Option<&str>, allowed: Option<&[String]>) -> Stri
             return "e4".into();
         };
         draws.push(draw);
-        if let Some(square) = kchess_domain::voice::random_square(previous, &draws, allowed) {
+        if let Some(square) =
+            kchess_domain::training::board_vision::random_square(previous, &draws, allowed)
+        {
             return square;
         }
         if draws.len() > 64 {

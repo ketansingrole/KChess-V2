@@ -16,7 +16,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         "GAME_GRAMMAR" => grammar(Grammar::Game),
         "EDITOR_GRAMMAR" => grammar(Grammar::Editor),
         "ANALYSIS_GRAMMAR" => grammar(Grammar::Analysis),
-        "ALL_SQUARES" => Ok(json!(voice::all_squares())),
+        "ALL_SQUARES" => Ok(json!(kchess_domain::squares::all_squares())),
         "spokenCommand" => text(args, 0).map(|t| json!(voice::game_command(t))),
         "spokenChoice" => text(args, 0).map(|t| json!(voice::spoken_choice(t))),
         "spokenSquare" => text(args, 0).map(|t| json!(voice::spoken_square(t))),
@@ -35,19 +35,32 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         }),
         "setupFen" => setup_fen(args),
         "randomSquare" => random_square(args),
-        "squareColor" => text(args, 0).map(|s| json!(voice::square_color(s))),
-        "knightMoves" => text(args, 0).map(|s| json!(voice::knight_moves(s))),
-        "knightDistance" => text(args, 0)
-            .and_then(|from| text(args, 1).map(|to| json!(voice::knight_distance(from, to)))),
+        "squareColor" => {
+            text(args, 0).map(|s| json!(kchess_domain::training::board_vision::square_color(s)))
+        }
+        "knightMoves" => {
+            text(args, 0).map(|s| json!(kchess_domain::training::board_vision::knight_moves(s)))
+        }
+        "knightDistance" => text(args, 0).and_then(|from| {
+            text(args, 1).map(|to| {
+                json!(kchess_domain::training::board_vision::knight_distance(
+                    from, to
+                ))
+            })
+        }),
         "knightChallenge" => (|| {
-            Ok(json!(voice::knight_challenge(
-                number(args, 0)?,
-                number(args, 1)?,
-                &numbers(args, 2)?,
-            )))
+            Ok(json!(
+                kchess_domain::training::board_vision::knight_challenge(
+                    number(args, 0)?,
+                    number(args, 1)?,
+                    &numbers(args, 2)?,
+                )
+            ))
         })(),
-        "knightFen" => text(args, 0).map(|s| json!(voice::knight_fen(s))),
-        "materialDiff" => text(args, 0).map(|fen| json!(voice::material_diff(fen))),
+        "knightFen" => {
+            text(args, 0).map(|s| json!(kchess_domain::training::board_vision::knight_fen(s)))
+        }
+        "materialDiff" => text(args, 0).map(|fen| json!(kchess_domain::material::diff(fen))),
         _ => return None,
     };
     Some(result)
@@ -161,7 +174,7 @@ fn random_square(args: &[Value]) -> Out {
     let allowed: Option<Vec<String>> = match args.get(2) {
         None | Some(Value::Null) => None,
         Some(Value::Array(items)) => {
-            let valid = voice::all_squares();
+            let valid = kchess_domain::squares::all_squares();
             let mut list = Vec::new();
             for item in items {
                 match item.as_str() {
@@ -175,7 +188,7 @@ fn random_square(args: &[Value]) -> Out {
         }
         Some(_) => return Err("argument 2 must be a list of squares".into()),
     };
-    Ok(json!(voice::random_square(
+    Ok(json!(kchess_domain::training::board_vision::random_square(
         previous,
         &numbers(args, 1)?,
         allowed.as_deref(),

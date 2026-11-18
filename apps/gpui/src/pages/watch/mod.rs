@@ -158,15 +158,6 @@ fn origin_of(white: &WatchPlayer, black: &WatchPlayer) -> crate::game::played::G
     }
 }
 
-/// The side to move in a FEN.
-fn turn_of(fen: &str) -> Color {
-    if fen.split(' ').nth(1) == Some("b") {
-        Color::Black
-    } else {
-        Color::White
-    }
-}
-
 /// "GM Carlsen (2850)": a player's title, name and rating.
 fn player_label(title: Option<&str>, name: &str, rating: Option<f64>) -> String {
     let mut text = String::new();

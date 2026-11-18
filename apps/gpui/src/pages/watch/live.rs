@@ -18,7 +18,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use shakmaty::Color;
 
-use super::{WatchPage, label, live_badge, origin_of, player_of, turn_of};
+use super::{WatchPage, label, live_badge, origin_of, player_of};
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
@@ -259,7 +259,7 @@ impl Live {
             && !frame.finished
             && frame.last_move.is_some()
         {
-            let clock = if turn_of(&frame.fen) == Color::Black {
+            let clock = if kchess_domain::rules::fen_turn(&frame.fen) == Color::Black {
                 &mut frame.black_clock
             } else {
                 &mut frame.white_clock
@@ -374,7 +374,7 @@ impl Live {
         }?;
         let running = connected
             && !frame.finished
-            && turn_of(&frame.fen) == color
+            && kchess_domain::rules::fen_turn(&frame.fen) == color
             && frame.last_move.is_some();
         let elapsed = if running {
             self.frame_at.elapsed().as_secs_f64()
@@ -770,7 +770,7 @@ impl WatchPage {
         let orientation = self.live.orientation();
         let fen = frame.fen.clone();
         let crazyhouse = frame.variant == "crazyhouse";
-        let turn = turn_of(&frame.fen);
+        let turn = kchess_domain::rules::fen_turn(&frame.fen);
         let finished = frame.finished;
         let mut pockets = [
             crate::board::pocket(&self.live.board, Color::White, cx),

@@ -430,13 +430,7 @@ impl AnalysisPage {
             .collect();
         let sides = items
             .iter()
-            .map(|item| {
-                if item.fen.split(' ').nth(1) == Some("b") {
-                    "black"
-                } else {
-                    "white"
-                }
-            })
+            .map(|item| kchess_domain::color::name(kchess_domain::rules::fen_turn(&item.fen)))
             .collect();
         (items.len(), sides)
     }
@@ -588,7 +582,7 @@ impl AnalysisPage {
                 tried.push((path, fen, uci.to_string()));
             }
         }
-        self.orientation = kchess_domain::training::puzzle::player_color(&puzzle.fen);
+        self.orientation = kchess_domain::rules::fen_turn(&puzzle.fen);
         self.review.origin = None;
         self.go_to_ply(0, cx);
         self.request_review(cx);

@@ -114,17 +114,6 @@ fn standard_castling_pieces(key: &str) -> (Option<usize>, Option<usize>) {
     )
 }
 
-fn role_name(role: Role) -> &'static str {
-    match role {
-        Role::King => "king",
-        Role::Queen => "queen",
-        Role::Rook => "rook",
-        Role::Bishop => "bishop",
-        Role::Knight => "knight",
-        Role::Pawn => "pawn",
-    }
-}
-
 /// What the editor's buttons do, for Quick Pick to offer the same.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum Action {
@@ -721,7 +710,7 @@ impl EditorPage {
                 } else {
                     "Black"
                 },
-                role_name(role)
+                kchess_domain::material::name(role)
             );
             div()
                 .id(SharedString::from(format!("spare-{color:?}-{role:?}")))

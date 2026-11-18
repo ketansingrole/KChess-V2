@@ -23,7 +23,7 @@ use gpui_kit::*;
 use shakmaty::Color;
 
 use super::broadcast_engine::{BroadcastEngine, GRID_EVALUATIONS};
-use super::{Pending, WatchPage, label, origin_of, player_of, turn_of};
+use super::{Pending, WatchPage, label, origin_of, player_of};
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
@@ -244,7 +244,7 @@ impl Broadcasts {
                     Clocks {
                         white: game.white_clock,
                         black: game.black_clock,
-                        ticking: moving.then_some(turn_of(&game.fen)),
+                        ticking: moving.then_some(kchess_domain::rules::fen_turn(&game.fen)),
                         at: Instant::now(),
                     },
                 );

@@ -7,8 +7,9 @@
 use serde::Serialize;
 use shakmaty::attacks;
 use shakmaty::variant::VariantPosition;
-use shakmaty::{Bitboard, Color, Move, Piece, Position, Role, Square};
+use shakmaty::{Bitboard, Color, Move, Position, Role, Square};
 
+use crate::material::{self, name as role_name, value};
 use crate::rules;
 
 /// The plies of a line read: long enough for a combination, short of the engine's far horizon,
@@ -84,42 +85,9 @@ pub struct Mates {
     pub after: Option<i32>,
 }
 
-fn value(role: Role) -> i32 {
-    match role {
-        Role::Pawn => 1,
-        Role::Knight | Role::Bishop => 3,
-        Role::Rook => 5,
-        Role::Queen => 9,
-        Role::King => 0,
-    }
-}
-
-fn role_name(role: Role) -> &'static str {
-    match role {
-        Role::Pawn => "pawn",
-        Role::Knight => "knight",
-        Role::Bishop => "bishop",
-        Role::Rook => "rook",
-        Role::Queen => "queen",
-        Role::King => "king",
-    }
-}
-
-/// `color`'s material, in pawns.
-fn material(pos: &VariantPosition, color: Color) -> i32 {
-    let board = pos.board();
-    Role::ALL
-        .iter()
-        .map(|&role| {
-            let piece = Piece { color, role };
-            value(role) * board.by_piece(piece).count() as i32
-        })
-        .sum()
-}
-
 /// `color`'s lead in material.
 fn lead(pos: &VariantPosition, color: Color) -> i32 {
-    material(pos, color) - material(pos, color.other())
+    material::of(pos.board(), color) - material::of(pos.board(), color.other())
 }
 
 /// A piece of `color` on `square`, as `Qe4`.

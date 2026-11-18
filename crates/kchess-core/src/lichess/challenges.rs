@@ -194,7 +194,6 @@ mod tests {
     use super::*;
 
     use crate::test_host::TestHost;
-    use serde_json::Number;
     use std::sync::atomic::{AtomicI64, Ordering};
 
     fn challenge(overrides: Value) -> Value {
@@ -213,79 +212,6 @@ mod tests {
             challenge[key] = value;
         }
         json!({ "type": "challenge", "challenge": challenge, "compat": { "board": true } })
-    }
-
-    #[test]
-    fn reads_incoming_and_outgoing_challenges_from_either_accounts_point_of_view() {
-        let incoming = read_challenge_event("Alice", &challenge(json!({})), 1000).unwrap();
-        assert_eq!(
-            incoming.info.direction,
-            kchess_contracts::types::ChallengeDirection::In
-        );
-        assert_eq!(incoming.info.opponent.name, "Bob");
-        assert_eq!(incoming.info.opponent.rating, Some(Number::from(1700)));
-        assert_eq!(
-            incoming.info.time_control,
-            TimeControl::Clock {
-                limit: Number::from(600),
-                increment: Number::from(5)
-            }
-        );
-        assert!(incoming.info.playable);
-        assert_eq!(
-            read_challenge_event("Bob", &challenge(json!({})), 1000)
-                .unwrap()
-                .info
-                .direction,
-            kchess_contracts::types::ChallengeDirection::Out
-        );
-        assert!(read_challenge_event("Alice", &json!({ "type": "gameStart" }), 0).is_none());
-    }
-
-    #[test]
-    fn marks_what_kchess_cannot_play() {
-        let house = read_challenge_event(
-            "Alice",
-            &challenge(json!({ "variant": { "key": "crazyhouse", "name": "Crazyhouse" } })),
-            0,
-        )
-        .unwrap()
-        .info;
-        assert!(
-            house.playable,
-            "Crazyhouse is played on the board's pockets"
-        );
-        let unknown = read_challenge_event(
-            "Alice",
-            &challenge(json!({ "variant": { "key": "bughouse", "name": "Bughouse" } })),
-            0,
-        )
-        .unwrap()
-        .info;
-        assert!(!unknown.playable);
-        assert!(unknown.problem.unwrap().contains("Bughouse"));
-        let mut bullet = challenge(json!({}));
-        bullet["compat"] = json!({ "board": false });
-        assert!(
-            !read_challenge_event("Alice", &bullet, 0)
-                .unwrap()
-                .info
-                .playable
-        );
-    }
-
-    #[test]
-    fn rejects_malformed_events_and_oversized_names() {
-        assert!(read_challenge_event("Alice", &challenge(json!({ "id": "../../x" })), 0).is_none());
-        let long = "x".repeat(200);
-        assert!(
-            read_challenge_event(
-                "Alice",
-                &challenge(json!({ "challenger": { "id": "b", "name": long } })),
-                0
-            )
-            .is_none()
-        );
     }
 
     #[test]

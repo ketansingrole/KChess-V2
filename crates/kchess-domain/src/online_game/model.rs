@@ -458,16 +458,16 @@ impl Model {
         // `replayed()` without its SAN and FEN: only the side to move is wanted.
         let setup = &self.online_setup;
         match crate::replay::replay_setup_turn(setup.variant, &setup.fen, &self.online_moves) {
-            None => turn_of(&Setup::standard().fen),
+            None => crate::rules::fen_turn(&Setup::standard().fen),
             // Without a move the position is the setup as given.
-            Some((0, _)) => turn_of(&setup.fen),
+            Some((0, _)) => crate::rules::fen_turn(&setup.fen),
             Some((_, turn)) => turn,
         }
     }
 
     /// Moves this side has made so far.
     pub fn own_moves(&self) -> usize {
-        let white_first = self.online_setup.fen.split(' ').nth(1) != Some("b");
+        let white_first = crate::rules::fen_turn(&self.online_setup.fen).is_white();
         let mine = usize::from(self.online_color == Color::Black);
         self.online_moves
             .iter()
@@ -534,14 +534,5 @@ impl Model {
             shown_game: String::new(),
             generation: 0.0,
         }
-    }
-}
-
-/// The side to move in a FEN: Black for `b`, otherwise White.
-pub fn turn_of(fen: &str) -> Color {
-    if fen.split(' ').nth(1) == Some("b") {
-        Color::Black
-    } else {
-        Color::White
     }
 }

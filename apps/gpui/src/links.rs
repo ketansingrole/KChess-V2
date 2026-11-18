@@ -185,7 +185,7 @@ impl Link {
                 },
             )],
             Link::Position(fen) => {
-                let orientation = side_to_move(&fen);
+                let orientation = kchess_domain::rules::fen_turn(&fen);
                 let (analysed, edited) = (fen.clone(), fen);
                 vec![
                     command(
@@ -215,14 +215,6 @@ impl Link {
                 ]
             }
         }
-    }
-}
-
-pub(crate) fn side_to_move(fen: &str) -> shakmaty::Color {
-    if fen.split(' ').nth(1) == Some("b") {
-        shakmaty::Color::Black
-    } else {
-        shakmaty::Color::White
     }
 }
 

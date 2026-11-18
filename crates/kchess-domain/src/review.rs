@@ -741,13 +741,7 @@ fn sound_sacrifice(pos: &VariantPosition, m: Move, before: &Eval, after: &Eval) 
         p.board()
             .iter()
             .map(|(_, piece)| {
-                let value = match piece.role {
-                    Role::Pawn => 1,
-                    Role::Knight | Role::Bishop => 3,
-                    Role::Rook => 5,
-                    Role::Queen => 9,
-                    Role::King => 0,
-                };
+                let value = crate::material::value(piece.role);
                 if piece.color == pos.turn() {
                     value
                 } else {

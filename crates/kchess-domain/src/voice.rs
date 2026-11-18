@@ -1,4 +1,4 @@
-//! Spoken commands and moves, coordinates, knight paths and material.
+//! Spoken commands and moves.
 //!
 //! JavaScript semantics are mirrored deliberately: `toLowerCase`, `\s` splitting, `trim`,
 //! `Number(…)` coercion and `String(…)` formatting (see `crate::js`). No regex crate: each
@@ -7,14 +7,12 @@
 use serde::Serialize;
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Color, Position};
-use std::collections::HashSet;
 use std::sync::OnceLock;
 
-use crate::editor::{file_offset, unit_number};
 use crate::js;
 use crate::position::{self, LegalMove};
+use crate::squares::FILES;
 
-pub(crate) const FILES: [char; 8] = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const RANK_WORDS: [&str; 8] = [
     "one", "two", "three", "four", "five", "six", "seven", "eight",
 ];
@@ -113,14 +111,6 @@ pub fn grammar(grammar: Grammar) -> &'static [String] {
         Grammar::Puzzle => (5, puzzle_grammar),
     };
     LISTS[index].get_or_init(build)
-}
-
-/// Every square, file by file: a1, a2, … h8.
-pub fn all_squares() -> Vec<String> {
-    FILES
-        .iter()
-        .flat_map(|file| (1..=8).map(move |rank| format!("{file}{rank}")))
-        .collect()
 }
 
 fn coordinate_grammar() -> Vec<String> {
@@ -660,248 +650,6 @@ pub fn spoken_move(text: &str, pos: &VariantPosition) -> SpokenMove {
     }
 }
 
-/* ── Coordinates ── */
-
-/// The index into the 64 squares of a draw in [0, 1), as `Math.floor(random() * 64)`.
-fn square_index(draw: f64) -> Option<usize> {
-    let index = (draw * 64.0).floor();
-    (0.0..64.0).contains(&index).then_some(index as usize)
-}
-
-/// The first draw whose square is not `previous`; none when the draws run out. With `allowed`, draws pick among those squares only (in the given order); a
-/// single allowed square is returned even when it is `previous`, since there is no other.
-pub fn random_square(
-    previous: Option<&str>,
-    draws: &[f64],
-    allowed: Option<&[String]>,
-) -> Option<String> {
-    let squares = match allowed {
-        Some(allowed) if !allowed.is_empty() => allowed.to_vec(),
-        _ => all_squares(),
-    };
-    if squares.len() == 1 {
-        return squares.into_iter().next();
-    }
-    for draw in draws {
-        let index = (draw * squares.len() as f64).floor();
-        if !(0.0..squares.len() as f64).contains(&index) {
-            continue;
-        }
-        let square = &squares[index as usize];
-        if Some(square.as_str()) != previous {
-            return Some(square.clone());
-        }
-    }
-    None
-}
-
-/// Whether a square is light or dark.
-pub fn square_color(square: &str) -> &'static str {
-    let (file, rank) = knight_index(square);
-    if (file + rank) % 2.0 == 0.0 {
-        "dark"
-    } else {
-        "light"
-    }
-}
-
-/* ── Knight paths ── */
-
-const JUMPS: [(f64, f64); 8] = [
-    (1.0, 2.0),
-    (2.0, 1.0),
-    (2.0, -1.0),
-    (1.0, -2.0),
-    (-1.0, -2.0),
-    (-2.0, -1.0),
-    (-2.0, 1.0),
-    (-1.0, 2.0),
-];
-
-/// The file and rank offsets of a square (NaN for anything not a square).
-fn knight_index(square: &str) -> (f64, f64) {
-    let units: Vec<u16> = square.encode_utf16().collect();
-    let file = file_offset(square).map_or(f64::NAN, |f| f as f64);
-    (file, unit_number(units.get(1)) - 1.0)
-}
-
-/// The squares a knight on `square` reaches in one jump.
-pub fn knight_moves(square: &str) -> Vec<String> {
-    let (file, rank) = knight_index(square);
-    JUMPS
-        .iter()
-        .filter_map(|(df, dr)| {
-            let f = file + df;
-            let r = rank + dr;
-            ((0.0..8.0).contains(&f) && (0.0..8.0).contains(&r))
-                .then(|| format!("{}{}", FILES[f as usize], r as usize + 1))
-        })
-        .collect()
-}
-
-/// Fewest jumps from `from` to `to`; None when no path exists.
-pub fn knight_distance(from: &str, to: &str) -> Option<u32> {
-    if from == to {
-        return Some(0);
-    }
-    let mut seen: HashSet<String> = HashSet::from([from.to_string()]);
-    let mut frontier = vec![from.to_string()];
-    let mut steps = 1;
-    while !frontier.is_empty() {
-        let mut next = Vec::new();
-        for square in &frontier {
-            for target in knight_moves(square) {
-                if target == to {
-                    return Some(steps);
-                }
-                if seen.insert(target.clone()) {
-                    next.push(target);
-                }
-            }
-        }
-        frontier = next;
-        steps += 1;
-    }
-    None
-}
-
-/// A knight's journey: from one square to another, `best` jumps apart (none when unreachable).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct KnightChallenge {
-    pub from: String,
-    pub to: String,
-    pub best: Option<u32>,
-}
-
-/// The first pair of draws whose squares are `min`–`max` jumps apart; none when the draws run
-/// out.
-pub fn knight_challenge(min: f64, max: f64, draws: &[f64]) -> Option<KnightChallenge> {
-    let squares = all_squares();
-    for pair in draws.as_chunks::<2>().0 {
-        let (Some(a), Some(b)) = (square_index(pair[0]), square_index(pair[1])) else {
-            continue;
-        };
-        let (from, to) = (&squares[a], &squares[b]);
-        let best = knight_distance(from, to);
-        let best_value = best.map_or(f64::INFINITY, f64::from);
-        if best_value >= min && best_value <= max {
-            return Some(KnightChallenge {
-                from: from.clone(),
-                to: to.clone(),
-                best,
-            });
-        }
-    }
-    None
-}
-
-/// A number's text; zero and NaN print as nothing.
-fn js_or_empty(n: f64) -> String {
-    if n == 0.0 || n.is_nan() {
-        String::new()
-    } else {
-        js::number_to_string(n)
-    }
-}
-
-/// A board with one white knight, as a FEN (the board only draws it).
-pub fn knight_fen(square: &str) -> String {
-    let (file, rank) = knight_index(square);
-    let rows: Vec<String> = (0..8)
-        .map(|r| {
-            let row = 7 - r;
-            if f64::from(row) == rank {
-                format!("{}N{}", js_or_empty(file), js_or_empty(7.0 - file))
-            } else {
-                "8".into()
-            }
-        })
-        .collect();
-    format!("{} w - - 0 1", rows.join("/"))
-}
-
-/* ── Material ── */
-
-fn balance_of(white: &[u32; 6], black: &[u32; 6]) -> i64 {
-    let value = [1, 3, 3, 5, 9, 0];
-    (0..6)
-        .map(|i| (i64::from(white[i]) - i64::from(black[i])) * value[i])
-        .sum()
-}
-
-/// One pass over the placement: pieces per side, indexed pawn, knight, bishop, rook, queen, king.
-fn material_counts(fen: &str) -> ([u32; 6], [u32; 6]) {
-    let placement = fen.split(' ').next().unwrap_or("");
-    let mut white = [0u32; 6];
-    let mut black = [0u32; 6];
-    for byte in placement.bytes() {
-        let (counts, piece) = if byte.is_ascii_uppercase() {
-            (&mut white, byte.to_ascii_lowercase())
-        } else {
-            (&mut black, byte)
-        };
-        let index = match piece {
-            b'p' => 0,
-            b'n' => 1,
-            b'b' => 2,
-            b'r' => 3,
-            b'q' => 4,
-            b'k' => 5,
-            _ => continue,
-        };
-        counts[index] += 1;
-    }
-    (white, black)
-}
-
-/// Roles from most to least valuable, as Lichess lists a material difference.
-const MATERIAL_ROLES: [(char, &str); 6] = [
-    ('k', "king"),
-    ('q', "queen"),
-    ('r', "rook"),
-    ('b', "bishop"),
-    ('n', "knight"),
-    ('p', "pawn"),
-];
-
-/// Lichess's material difference: the pieces each side has beyond the other's, most valuable
-/// first, and `score`, the balance in pawns (positive when White is ahead).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct MaterialDiff {
-    pub white: Vec<&'static str>,
-    pub black: Vec<&'static str>,
-    pub score: i64,
-}
-
-pub fn material_diff(fen: &str) -> MaterialDiff {
-    let (white_counts, black_counts) = material_counts(fen);
-    let mut white = Vec::new();
-    let mut black = Vec::new();
-    for (letter, role) in MATERIAL_ROLES {
-        let index = match letter {
-            'k' => 5,
-            'q' => 4,
-            'r' => 3,
-            'b' => 2,
-            'n' => 1,
-            _ => 0,
-        };
-        let ours = white_counts[index];
-        let theirs = black_counts[index];
-        let (side, extra) = if ours > theirs {
-            (&mut white, ours - theirs)
-        } else {
-            (&mut black, theirs - ours)
-        };
-        side.extend(std::iter::repeat_n(role, extra as usize));
-    }
-    MaterialDiff {
-        white,
-        black,
-        score: balance_of(&white_counts, &black_counts),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{Grammar, grammar};
@@ -1073,22 +821,5 @@ mod tests {
         let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         assert_eq!(say("b one a c three", start), super::SpokenMove::Invalid);
         assert_eq!(ucis("b one c three", start), ["b1c3"]);
-    }
-
-    #[test]
-    fn a_random_square_falls_back_to_the_board_when_none_are_allowed() {
-        use super::random_square;
-        assert_eq!(random_square(None, &[0.5], Some(&[])), Some("e1".into()));
-        let only = ["c3".to_string(), "d4".to_string()];
-        assert_eq!(random_square(None, &[0.9], Some(&only)), Some("d4".into()));
-    }
-
-    #[test]
-    fn squares_alternate_dark_and_light() {
-        use super::square_color;
-        assert_eq!(square_color("a1"), "dark");
-        assert_eq!(square_color("b1"), "light");
-        assert_eq!(square_color("a2"), "light");
-        assert_eq!(square_color("h8"), "dark");
     }
 }

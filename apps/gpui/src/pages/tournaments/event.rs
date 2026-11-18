@@ -559,11 +559,7 @@ fn player(featured: &TournamentFeatured, color: Color) -> &TournamentPlayer {
 pub(super) fn featured_running(featured: &TournamentFeatured) -> Option<Color> {
     featured.last_move.as_ref()?;
     featured.clocks.as_ref()?;
-    Some(if featured.fen.split(' ').nth(1) == Some("b") {
-        Color::Black
-    } else {
-        Color::White
-    })
+    Some(kchess_domain::rules::fen_turn(&featured.fen))
 }
 
 /// One side's clock in the top game, `elapsed` seconds after Lichess reported it, and whether it

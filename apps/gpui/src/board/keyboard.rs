@@ -50,17 +50,6 @@ pub(super) fn start(orientation: Color, last_move: Option<(Square, Square)>) -> 
     }
 }
 
-fn role_name(role: Role) -> &'static str {
-    match role {
-        Role::Pawn => "pawn",
-        Role::Knight => "knight",
-        Role::Bishop => "bishop",
-        Role::Rook => "rook",
-        Role::Queen => "queen",
-        Role::King => "king",
-    }
-}
-
 /// A square's name for a screen reader: the square and what stands on it, which blindfold play
 /// keeps to itself, and whether the piece picked can go there.
 pub(super) fn square_name(
@@ -79,7 +68,7 @@ pub(super) fn square_name(
                 } else {
                     "black "
                 });
-                name.push_str(role_name(piece.role));
+                name.push_str(kchess_domain::material::name(piece.role));
             }
             None => name.push_str("empty"),
         }
