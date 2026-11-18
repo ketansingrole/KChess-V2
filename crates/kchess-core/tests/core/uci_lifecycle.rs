@@ -13,12 +13,15 @@ use std::time::Duration;
 use kchess_contracts::error::CoreError;
 #[cfg(unix)]
 use kchess_core::engine::uci::EngineHub;
-use kchess_core::engine::uci::{UciController, search_cancelled};
+use kchess_core::engine::uci::{DEFAULT_DEADLINE, UciController, search_cancelled};
 #[cfg(unix)]
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-const HANDSHAKE: Duration = Duration::from_secs(2);
+/// The handshake deadline for an engine that answers: the core's own (`DEFAULT_DEADLINE`). None of
+/// these tests is about the deadline, which counts the process's start too: a loaded Windows runner
+/// took over 2 s to start the fake engine (CI 2026-11-18), past the 2 s these tests once used.
+const HANDSHAKE: Duration = DEFAULT_DEADLINE;
 
 async fn cancel_after(token: &CancellationToken, delay: Duration) {
     tokio::time::sleep(delay).await;

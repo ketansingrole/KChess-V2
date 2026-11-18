@@ -5,10 +5,13 @@ use crate::support;
 
 use std::time::Duration;
 
-use kchess_core::engine::uci::UciController;
+use kchess_core::engine::uci::{DEFAULT_DEADLINE, UciController};
 use tempfile::TempDir;
 
-const HANDSHAKE: Duration = Duration::from_secs(2);
+/// The handshake deadline for an engine that answers: the core's own (`DEFAULT_DEADLINE`). None of
+/// these tests is about the deadline, which counts the process's start too: a loaded Windows runner
+/// took over 2 s to start the fake engine (CI 2026-11-18), past the 2 s these tests once used.
+const HANDSHAKE: Duration = DEFAULT_DEADLINE;
 
 fn setoptions(lines: &[String]) -> Vec<String> {
     lines
