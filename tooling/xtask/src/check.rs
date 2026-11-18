@@ -1313,7 +1313,11 @@ mod tests {
         )];
         assert_eq!(
             select(&scopes, &packages),
-            Selection::Packages(vec![APP.to_string(), "kchess-ui".to_string()])
+            Selection::Packages(vec![
+                "kchess-app".to_string(),
+                APP.to_string(),
+                "kchess-ui".to_string()
+            ])
         );
     }
 
@@ -1341,8 +1345,8 @@ mod tests {
     /// The members outside coverage run their tests on their own, the app's only when asked.
     #[test]
     fn the_uncovered_members_test_the_app_only_when_asked() {
-        assert_eq!(uncovered(true), [APP, "kchess-ui", "xtask"]);
-        assert_eq!(uncovered(false), ["kchess-ui", "xtask"]);
+        assert_eq!(uncovered(true), [APP, "kchess-ui", "kchess-app", "xtask"]);
+        assert_eq!(uncovered(false), ["kchess-ui", "kchess-app", "xtask"]);
     }
 
     #[test]

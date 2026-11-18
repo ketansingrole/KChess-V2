@@ -57,7 +57,7 @@ impl EngineMove {
         cx: &mut Context<V>,
     ) {
         let engine = view.engine();
-        let mine = engine.generation.next();
+        let mine = engine.generation.start();
         engine.running = true;
         // This search replaces any before it: whether one is thinking, and an earlier failure,
         // are its own. A quiet search after a busy one left `thinking` on for good.

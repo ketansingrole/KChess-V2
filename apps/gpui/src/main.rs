@@ -25,8 +25,6 @@ mod game_image;
 mod gpui_patches;
 mod interface_zoom;
 mod links;
-mod loading;
-mod log;
 mod menu;
 mod microphone;
 mod name_dialog;
@@ -41,25 +39,20 @@ mod play_layout;
 mod played;
 mod player_search;
 mod position_engine;
-mod prefs;
 mod profile;
 mod puzzle_board;
 mod puzzle_db;
 mod quick_pick;
-mod quit;
 mod rating_history;
 mod remote_image;
 mod reviews;
-mod settings;
 mod shell;
 mod shortcuts;
-mod slow_calls;
 mod sound;
 mod startup;
 mod studies;
 mod swipe;
 mod theme;
-mod timer;
 mod updates;
 mod voice;
 mod whats_new;
@@ -71,6 +64,8 @@ use gpui_kit::*;
 use kchess_contracts::Level;
 // The design system (`crates/kchess-ui`), under the names the app's modules use.
 use kchess_ui::{chart, dates, motion};
+// The app's services (`crates/kchess-app`), under the names the app's modules use.
+use kchess_app::{loading, log, prefs, quit, settings, slow_calls, timer};
 
 fn main() {
     let data_dir = match profile::data_dir() {

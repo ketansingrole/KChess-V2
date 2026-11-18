@@ -1,0 +1,38 @@
+[package]
+name = "kchess-app"
+description = "KChess's app services over GPUI: the core as the app holds it, Settings, view preferences, the log, quitting."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# What the app's end-to-end tests check with: the slow calls a frame made (`slow_calls::drawing`).
+test-support = []
+
+[dependencies]
+kchess-contracts.workspace = true
+kchess-host.workspace = true
+# The shared core as a client holds it (`docs/shared-core.md`).
+kchess-service.workspace = true
+# Dates as the app shows them (`kchess_ui::dates`), for the log.
+kchess-ui.workspace = true
+# Pinned with the app's (apps/gpui/Cargo.toml).
+gpui-kit = "=0.10.0"
+serde.workspace = true
+serde_json.workspace = true
+# The core's runtime: its calls are Tokio tasks.
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+# Channels from the core's threads to the UI thread.
+futures = "0.3"
+jiff = "1.0"
+# This launch's id in the log.
+getrandom = "0.4"
+kchess-hack = { version = "0.1", path = "../kchess-hack" }
+
+[dev-dependencies]
+# Headless app contexts for the tests (`#[gpui_kit::test]`).
+gpui-kit = { version = "=0.10.0", features = ["test-support"] }
+
+[lints]
+workspace = true

@@ -79,7 +79,7 @@ pub fn write(level: Level, scope: &str, message: &str) {
     if let Some(log) = LOG.get()
         && let Ok(mut log) = log.lock()
     {
-        let time = crate::dates::rfc3339_millis(jiff::Timestamp::now());
+        let time = kchess_ui::dates::rfc3339_millis(jiff::Timestamp::now());
         let line = redact(&format!(
             "{time} {} [{scope}] {message}\n",
             level.name().to_uppercase()

@@ -65,7 +65,7 @@ impl NameMatches {
         matches: fn(&mut V) -> &mut NameMatches,
         cx: &mut Context<V>,
     ) {
-        let epoch = self.epoch.next();
+        let epoch = self.epoch.start();
         let term = typed.trim().to_string();
         if term.chars().count() < 3
             || !crate::game::is_username(&term)

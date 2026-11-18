@@ -4287,6 +4287,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "kchess-app"
+version = "2026.11.7"
+dependencies = [
+ "futures",
+ "getrandom 0.4.3",
+ "gpui-kit",
+ "jiff",
+ "kchess-contracts",
+ "kchess-hack",
+ "kchess-host",
+ "kchess-service",
+ "kchess-ui",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "kchess-cli"
 version = "2026.11.7"
 dependencies = [
@@ -4405,6 +4423,7 @@ dependencies = [
  "gpui-pre-apple",
  "image",
  "jiff",
+ "kchess-app",
  "kchess-contracts",
  "kchess-core",
  "kchess-delta",

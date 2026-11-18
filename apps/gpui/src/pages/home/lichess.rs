@@ -135,7 +135,7 @@ impl LichessActivity {
             self.recent.clear();
             self.loaded = false;
         }
-        let epoch = self.epoch.next();
+        let epoch = self.epoch.start();
         let core = cx.global::<AppCore>().clone();
         let overview = core.request(calls::GameLibraryOverview {});
         let recent = core.request(calls::GamePage {

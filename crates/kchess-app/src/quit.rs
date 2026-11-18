@@ -329,12 +329,11 @@ mod tests {
     /// with the choice kept: a later quit installed over work it could not save.
     #[gpui_kit::test]
     fn quitting_without_the_saves_is_chosen_again_for_each_quit(cx: &mut gpui_kit::TestAppContext) {
-        let mut app = crate::e2e::Harness::start(cx);
-        app.with_window(|_, cx| {
+        cx.update(|cx| {
             cx.default_global::<super::Quitting>().discarded = true;
             super::prepare_quit(cx, "Quit without saving", |_| {}, |_| {});
         });
-        let discarded = app.with_window(|_, cx| cx.default_global::<super::Quitting>().discarded);
+        let discarded = cx.update(|cx| cx.default_global::<super::Quitting>().discarded);
         assert!(!discarded);
     }
 

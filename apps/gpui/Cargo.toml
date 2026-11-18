@@ -26,6 +26,8 @@ kchess-games.workspace = true
 kchess-contracts.workspace = true
 # The design system: the theme, motion and the chart (`crates/kchess-ui`).
 kchess-ui.workspace = true
+# The app's services: the core as the app holds it, Settings, preferences, the log (`crates/kchess-app`).
+kchess-app.workspace = true
 # Pinned: a newer gpui-kit requires a newer gpui-pre than the patched copy in vendor/gpui-pre
 # (Cargo.toml [patch.crates-io]); rebase that patch before moving it.
 gpui-kit = "=0.10.0"
@@ -101,6 +103,8 @@ windows = { version = "0.62", features = [
 embed-resource = "3"
 
 [dev-dependencies]
+# The slow calls a frame made, which the end-to-end tests fail on (`slow_calls::drawing`).
+kchess-app = { workspace = true, features = ["test-support"] }
 # Headless windows for the rendering regressions (`#[gpui_kit::test]`).
 gpui-kit = { version = "=0.10.0", features = ["test-support"] }
 # A fresh profile per end-to-end test (`src/e2e`).

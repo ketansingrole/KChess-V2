@@ -278,7 +278,7 @@ impl PuzzleHistory {
         if !force && self.loaded == who {
             return;
         }
-        let epoch = self.epoch.next();
+        let epoch = self.epoch.start();
         self.loading = true;
         self.error = None;
         self.reconnect = false;

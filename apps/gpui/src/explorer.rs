@@ -545,7 +545,7 @@ impl PositionExplorer {
             cx.notify();
             return;
         }
-        let request = self.epoch.next();
+        let request = self.epoch.start();
         let prefs = self.shown_prefs(cx);
         let call = cx.global::<AppCore>().request(calls::PositionLookup {
             kind: prefs.kind,

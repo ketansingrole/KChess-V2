@@ -291,7 +291,7 @@ impl PlayersPage {
 
     /// The leaderboard of the chosen category, while no player is open.
     fn load_board(&mut self, cx: &mut Context<Self>) {
-        let epoch = self.board_epoch.next();
+        let epoch = self.board_epoch.start();
         self.board = None;
         self.board_error = None;
         cx.notify();
@@ -597,7 +597,7 @@ impl PlayersPage {
 
     /// The online account's record against the player and how it stands with them on Lichess.
     fn load_account_extras(&mut self, username: &str, cx: &mut Context<Self>) {
-        let account_epoch = self.account_epoch.next();
+        let account_epoch = self.account_epoch.start();
         self.record = None;
         self.relation = None;
         self.extras_failed.retain(|failed| *failed != "your record");
@@ -651,7 +651,7 @@ impl PlayersPage {
         let Some(username) = self.username() else {
             return;
         };
-        let stats_epoch = self.stats_epoch.next();
+        let stats_epoch = self.stats_epoch.start();
         self.stats = None;
         self.stats_error = None;
         cx.notify();

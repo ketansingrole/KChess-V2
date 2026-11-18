@@ -88,7 +88,7 @@ impl GameFinder {
             cx.notify();
             return;
         }
-        let epoch = self.epoch.next();
+        let epoch = self.epoch.start();
         self.names.clear();
         self.player = Some(name.clone());
         self.games = None;
