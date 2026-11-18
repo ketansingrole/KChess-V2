@@ -495,11 +495,12 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # The crates.io dependencies of every package but the app, built as cargo-mutants builds
-      # them. In copies of the repository (its default) every shard compiled them all, and again
-      # for its second build folder (2026-11-10: 224 crates, 288 s before the first kchess-core
-      # mutant); copying `target` along still rebuilt 133, since the copies' new modification times
-      # read as stale. So mutants build in place, from this. Saved by main, read by pull requests.
+      # The crates.io dependencies of every package but the app (its UI crates' GPUI too), built as
+      # cargo-mutants builds them. In copies of the repository (its default) every shard compiled
+      # them all, and again for its second build folder (2026-11-10: 224 crates, 288 s before the
+      # first kchess-core mutant); copying `target` along still rebuilt 133, since the copies' new
+      # modification times read as stale. So mutants build in place, from this. Saved by main,
+      # read by pull requests.
       - if: github.event_name == 'pull_request' || env.WARM == 'true'
         id: deps
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
@@ -511,6 +512,10 @@ jobs:
         uses: ./.github/actions/install-tools
         with:
           tools: cargo-nextest,cargo-mutants
+      # The UI crates (`kchess-ui`) build GPUI, and their mutants are tested here as every member's
+      # but the app's are.
+      - if: github.event_name == 'pull_request' || (env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true')
+        uses: ./.github/actions/install-gpui-libs
       - if: env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true'
         name: Build the mutants' dependencies
         env:

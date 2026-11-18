@@ -80,6 +80,8 @@ Each step is one pull request, each green on its own.
   named selects, corners, clocks) and the core's boundaries hold there too.
 - No `unwrap` or `expect` outside tests: a library is linted for them (`cargo xtask check`),
   where the app's binary is not.
+- A place in the Mutants workflow's package list (`.github/workflows/mutants.yml`), with GPUI's
+  system libraries installed for it there; CI's `mutants` job installs them for every UI crate.
 - Its moved lines' mutants killed: a pull request's mutants run (`cargo xtask mutants`) tests a
   UI crate's changed lines with its own tests, not the app's, so the code it takes along needs
   tests of its own.

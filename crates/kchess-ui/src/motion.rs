@@ -147,6 +147,17 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn the_system_setting_is_carried_into_gpui(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            cx.set_reduce_motion(false);
+            apply(true, cx);
+            assert!(cx.reduce_motion());
+            apply(false, cx);
+            assert!(!cx.reduce_motion());
+        });
+    }
+
+    #[gpui_kit::test]
     fn the_harness_keeps_its_own_setting(cx: &mut gpui_kit::TestAppContext) {
         cx.update(|cx| {
             cx.set_reduce_motion(true);
