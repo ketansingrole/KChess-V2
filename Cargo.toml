@@ -59,9 +59,6 @@ cognitive_complexity = "warn"
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
-# Google's guide: no glob imports, so a reader sees where a name comes from. `clippy.toml` allows
-# GPUI Kit's root (its prelude), and the lint leaves `use super::*` in test modules alone.
-wildcard_imports = "warn"
 
 [workspace.dependencies]
 # The workspace's own crates, named once here so a member writes `kchess-core.workspace = true`

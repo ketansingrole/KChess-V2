@@ -3,7 +3,7 @@
 
 use std::cell::RefCell;
 
-use super::constants::{MAX_MOVES, EngineLevel, SessionKind, TournamentSystem};
+use super::constants::*;
 use super::value::{J, own_entries};
 use crate::js;
 use crate::keyed::Keyed;

@@ -6,7 +6,7 @@ use kchess_domain::misc::patterns;
 use kchess_domain::misc::value::J;
 use kchess_domain::{js, replay};
 
-use super::{Validate, Refusal, decode, matches, max_items, other_variant, max_chars, fen, engine_position, move_list, USERNAME, ensure, move_list_messages, Fen, Moves, analysis_position};
+use super::*;
 use crate::types::ReviewRequest;
 
 const HISTORY: &str = "Invalid game position or move history.";

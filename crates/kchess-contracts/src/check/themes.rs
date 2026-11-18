@@ -6,7 +6,7 @@ use kchess_domain::js;
 use kchess_domain::misc::patterns;
 use kchess_domain::misc::value::J;
 
-use super::{Refusal, matches, Validate, decode, min_chars, max_chars, ensure};
+use super::*;
 use crate::types::{AppTheme, ThemePalette};
 
 const HEX: &str = "Colors must be hex, like #1a2b3c.";
