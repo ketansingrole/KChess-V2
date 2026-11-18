@@ -288,7 +288,7 @@ fn replay<S: AsRef<str>>(fen: &str, moves: &[S]) -> Result<Replay, String> {
     let balance =
         |pos: &Chess| material::of(pos.board(), player) - material::of(pos.board(), !player);
     let initial_balance = balance(&start);
-    let initial_ours = material::of(&start.board(), player);
+    let initial_ours = material::of(start.board(), player);
     let mut pos = start.clone();
     let mut seen = rules::Repetitions::starting_at(&fen_of(&pos));
     let mut out = Replay {
@@ -314,7 +314,7 @@ fn replay<S: AsRef<str>>(fen: &str, moves: &[S]) -> Result<Replay, String> {
         // Judged after your moves, so a capture you take straight back is no loss. Promotions
         // add material, so only a drop below the start counts.
         if mover == player {
-            out.lost_material |= material::of(&pos.board(), player) < initial_ours;
+            out.lost_material |= material::of(pos.board(), player) < initial_ours;
             out.swing = out.swing.max(initial_balance - balance(&pos));
         }
     }
