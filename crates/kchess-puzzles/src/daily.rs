@@ -11,12 +11,12 @@ use kchess_contracts::calls;
 use kchess_contracts::types::Puzzle;
 
 use super::{Theme, status_panel};
-use crate::assets::icon;
 use crate::core::AppCore;
-use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::puzzle_board::PuzzleBoard;
 use crate::theme::{Palette, radii};
 use crate::widgets;
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_ui::icon;
 
 /// The page's way out when the daily puzzle cannot be fetched.
 pub enum DailyEvent {

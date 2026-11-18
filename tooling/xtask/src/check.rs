@@ -1318,6 +1318,7 @@ mod tests {
                 "kchess-board".to_string(),
                 APP.to_string(),
                 "kchess-nav".to_string(),
+                "kchess-puzzles".to_string(),
                 "kchess-ui".to_string()
             ])
         );
@@ -1355,6 +1356,7 @@ mod tests {
                 "kchess-app",
                 "kchess-board",
                 "kchess-nav",
+                "kchess-puzzles",
                 "xtask"
             ]
         );
@@ -1365,6 +1367,7 @@ mod tests {
                 "kchess-app",
                 "kchess-board",
                 "kchess-nav",
+                "kchess-puzzles",
                 "xtask"
             ]
         );

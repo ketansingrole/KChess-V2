@@ -15,11 +15,11 @@ use kchess_contracts::types::{
 };
 
 use super::{Theme, theme_name};
-use crate::assets::icon;
 use crate::chart::{ChartPoint, LineChart};
 use crate::core::AppCore;
 use crate::theme::Palette;
 use crate::widgets::{self, Choice};
+use kchess_ui::icon;
 
 const DAYS: &str = "kchess:puzzle-dashboard-days";
 const PERIODS: [(u32, &str); 4] = [
@@ -480,9 +480,9 @@ impl Render for PuzzleStats {
                 .child(
                     v_flex()
                         .gap(px(16.))
-                        .px(crate::play_layout::side_padding(window))
+                        .px(kchess_nav::play_layout::side_padding(window))
                         .pt(px(20.))
-                        .pb(crate::play_layout::PAGE_BOTTOM)
+                        .pb(kchess_nav::play_layout::PAGE_BOTTOM)
                         .child(content),
                 )
         };

@@ -27,12 +27,13 @@ struct Rule {
 }
 
 /// The frontends' sources, searched from the repository root: the app's and the CLI's.
-const FRONTENDS: [&str; 6] = [
+const FRONTENDS: [&str; 7] = [
     APP_SOURCES[0],
     APP_SOURCES[1],
     APP_SOURCES[2],
     APP_SOURCES[3],
     APP_SOURCES[4],
+    APP_SOURCES[5],
     "apps/cli/src",
 ];
 
@@ -471,11 +472,15 @@ fn proportional_timers(files: &[(String, String)]) -> Vec<String> {
             .find(|(path, _)| path == wanted)
             .map_or("", |(_, text)| text.as_str())
     };
-    let mut found: Vec<String> = ["puzzles/rush.rs", "practice/run.rs", "local.rs"]
-        .iter()
-        .map(|page| format!("apps/gpui/src/pages/{page}"))
-        .filter(|path| !text_of(path).contains("widgets::timer("))
-        .collect();
+    let mut found: Vec<String> = [
+        "crates/kchess-puzzles/src/rush.rs",
+        "apps/gpui/src/pages/practice/run.rs",
+        "apps/gpui/src/pages/local.rs",
+    ]
+    .iter()
+    .filter(|path| !text_of(path).contains("widgets::timer("))
+    .map(|path| path.to_string())
+    .collect();
     let updates = "apps/gpui/src/pages/settings/updates.rs";
     let text = text_of(updates);
     let button = text
@@ -556,10 +561,7 @@ fn ticking_times_in_the_app_hold_still() {
 #[test]
 fn a_clock_without_tabular_figures_is_found() {
     let files = [
-        file(
-            "apps/gpui/src/pages/puzzles/rush.rs",
-            "widgets::timer(text)",
-        ),
+        file("crates/kchess-puzzles/src/rush.rs", "widgets::timer(text)"),
         file("apps/gpui/src/pages/practice/run.rs", "div().child(text)"),
         file("apps/gpui/src/pages/local.rs", "widgets::timer(text)"),
         file(

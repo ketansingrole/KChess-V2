@@ -17,13 +17,13 @@ use kchess_domain::training::rush::{RushConfig, RushState, combo_progress, forma
 use serde_json::{Value, json};
 
 use super::stats::PuzzleStats;
-use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::puzzle::PuzzleStatus;
-use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::puzzle_board::{PuzzleBoard, PuzzleBoardEvent};
 use crate::theme::{Palette, radii, tint};
 use crate::widgets::{self, KeyboardFocus as _, Tone};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_ui::icon;
 
 /// The opponent replies faster in a run.
 const REPLY: Duration = Duration::from_millis(250);
@@ -55,7 +55,7 @@ fn no_run() -> RushState {
 
 /// What a run's buttons do, as Quick Pick offers them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum RushAction {
+pub enum RushAction {
     Start,
     Skip,
     End,
@@ -176,7 +176,7 @@ impl PuzzleRush {
     /// The best score of a kind of run, kept here.
     fn best_of(&self, key: &str) -> Option<f64> {
         let config = self.configs.get(key)?;
-        crate::pages::practice::run::best(self.summaries.get(&config.mode), &config.variant)
+        kchess_app::runs::best(self.summaries.get(&config.mode), &config.variant)
     }
 
     fn stop_timers(&mut self) {
@@ -288,7 +288,7 @@ impl PuzzleRush {
     }
 
     /// A timed or survival run is going: a restart ends it.
-    pub(crate) fn running(&self) -> bool {
+    pub fn running(&self) -> bool {
         self.stage == Stage::Running
     }
 
@@ -405,7 +405,7 @@ impl PuzzleRush {
             return;
         };
         let state = &self.state;
-        let run = crate::pages::practice::run::input(
+        let run = kchess_app::runs::input(
             kind,
             config.variant.clone(),
             state.score,
@@ -628,9 +628,9 @@ impl PuzzleRush {
                     h_flex().items_start()
                 }
                 .gap(px(20.))
-                .px(crate::play_layout::side_padding(window))
+                .px(kchess_nav::play_layout::side_padding(window))
                 .pt(px(20.))
-                .pb(crate::play_layout::PAGE_BOTTOM)
+                .pb(kchess_nav::play_layout::PAGE_BOTTOM)
                 .child(play)
                 .child(div().flex_1().min_w(px(300.)).child(storm)),
             )
@@ -960,7 +960,7 @@ mod tests {
     #[gpui_kit::test]
     fn an_earlier_runs_failed_save_stays_out_of_the_next(cx: &mut gpui_kit::TestAppContext) {
         use gpui_kit::AppContext as _;
-        let mut app = crate::e2e::Harness::start(cx);
+        let mut app = kchess_board::testing::Started::new(cx);
         let (late, current) = app.with_window(|window, cx| {
             let stats = cx.new(|cx| super::super::stats::PuzzleStats::new(Vec::new(), window, cx));
             let rush = cx.new(|cx| super::PuzzleRush::new(stats, window, cx));
@@ -975,6 +975,37 @@ mod tests {
         });
         assert_eq!(late, None);
         assert_eq!(current.as_deref(), Some("The disk is full"));
+    }
+
+    /// A run's best score is its mode's, for its variant; a run ended early is over and saved.
+    #[gpui_kit::test]
+    fn a_runs_best_is_its_modes_and_an_ended_run_is_over(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = kchess_board::testing::Started::new(cx);
+        let (best, unknown, stage) = app.with_window(|window, cx| {
+            let stats = cx.new(|cx| super::super::stats::PuzzleStats::new(Vec::new(), window, cx));
+            let rush = cx.new(|cx| super::PuzzleRush::new(stats, window, cx));
+            rush.update(cx, |rush, cx| {
+                let config = &rush.configs["storm"];
+                let summary = serde_json::json!({
+                    "kind": config.mode,
+                    "best": { config.variant.as_str(): { "score": 9.0, "playedAt": 0 } },
+                    "recent": [],
+                    "total": 1,
+                });
+                let mode = config.mode.clone();
+                rush.summaries
+                    .insert(mode, serde_json::from_value(summary).expect("a summary"));
+                rush.stage = super::Stage::Running;
+                rush.end_run(cx);
+                (
+                    rush.best_of("storm"),
+                    rush.best_of("nothing"),
+                    rush.stage == super::Stage::Over,
+                )
+            })
+        });
+        assert_eq!((best, unknown, stage), (Some(9.0), None, true));
     }
 
     #[test]

@@ -24,6 +24,8 @@ pub mod puzzle_board;
 pub mod puzzle_db;
 pub mod rating_history;
 pub mod sound;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 pub mod voice;
 pub mod widgets;
 

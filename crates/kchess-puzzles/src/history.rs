@@ -16,11 +16,11 @@ use kchess_contracts::types::{
 };
 
 use super::{Theme, theme_name};
-use crate::assets::icon;
 use crate::core::AppCore;
-use crate::play_layout::Measured;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice, Look, Pill};
+use kchess_nav::play_layout::Measured;
+use kchess_ui::icon;
 
 const FILTER: &str = "kchess:puzzle-history-filter";
 /// Whether the list shows only the puzzles not solved, to try again.
@@ -647,9 +647,9 @@ impl Render for PuzzleHistory {
             .child(
                 v_flex()
                     .gap(px(16.))
-                    .px(crate::play_layout::side_padding(window))
+                    .px(kchess_nav::play_layout::side_padding(window))
                     .pt(px(20.))
-                    .pb(crate::play_layout::PAGE_BOTTOM)
+                    .pb(kchess_nav::play_layout::PAGE_BOTTOM)
                     .children(self.summary(&palette))
                     .child(
                         widgets::card(&palette)
@@ -666,14 +666,14 @@ impl Render for PuzzleHistory {
 #[cfg(test)]
 mod tests {
     use super::{PuzzleHistory, compact, rows_of};
-    use crate::e2e::Harness;
     use gpui_kit::AppContext as _;
+    use kchess_board::testing::Started;
 
     /// Signing out while an account's puzzle activity loaded kept the request current: its
     /// answer then filled the page with that account's attempts, under no account.
     #[gpui_kit::test]
     fn activity_for_an_account_that_is_gone_does_not_land(cx: &mut gpui_kit::TestAppContext) {
-        let mut app = Harness::start(cx);
+        let mut app = Started::new(cx);
         let (loading, stale) = app.with_window(|window, cx| {
             let page = cx.new(|cx| PuzzleHistory::new(Vec::new(), window, cx));
             page.update(cx, |page, cx| {
