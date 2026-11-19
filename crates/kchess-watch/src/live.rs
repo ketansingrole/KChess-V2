@@ -19,17 +19,17 @@ use gpui_kit::*;
 use shakmaty::Color;
 
 use super::{WatchPage, label, live_badge, origin_of, player_of};
-use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::played::GameOrigin;
 use crate::game::view;
-use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, panel_style};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 use kchess_board::analysis::Opening;
+use kchess_nav::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, panel_style};
+use kchess_ui::icon;
 
 /// Whether KChess plays the variant of a game Lichess sends (standard chess when it names none).
 fn plays_variant(frame: &WatchFrame) -> bool {
@@ -446,7 +446,7 @@ impl Live {
                         .gap(px(8.))
                         .text_size(px(12.))
                         .child(
-                            crate::pages::players::player_link(
+                            kchess_board::player_search::player_link(
                                 ("watch-past-player", index * 2 + slot),
                                 player_of(&entry.white, &entry.black, side).name.clone(),
                                 palette.primary,
@@ -592,13 +592,13 @@ impl WatchPage {
                     h_flex()
                         .gap(px(4.))
                         .font_weight(FontWeight::MEDIUM)
-                        .child(crate::pages::players::player_link(
+                        .child(kchess_board::player_search::player_link(
                             "watch-h2h-white",
                             white,
                             palette.primary,
                         ))
                         .child("–")
-                        .child(crate::pages::players::player_link(
+                        .child(kchess_board::player_search::player_link(
                             "watch-h2h-black",
                             black,
                             palette.primary,
@@ -804,7 +804,7 @@ impl WatchPage {
                         .cursor_pointer()
                         .pressable_link()
                         .on_click(move |_, window, cx| {
-                            crate::pages::players::open_player(&link, window, cx)
+                            kchess_board::player_search::open_player(&link, window, cx)
                         })
                         .child(shown)
                         .into_any_element()
@@ -983,7 +983,7 @@ impl WatchPage {
 
 /// What the watched game's buttons do, for Quick Pick to offer the same.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) enum Action {
+pub enum Action {
     Flip,
     /// Back from a broadcast's board to the round's boards.
     AllBoards,
@@ -1018,6 +1018,24 @@ mod tests {
             frame[key] = value.clone();
         }
         serde_json::from_value(frame).expect("a frame")
+    }
+
+    /// A channel's earlier games show under it, and nothing shows with none.
+    #[gpui_kit::test]
+    fn a_channels_earlier_games_show_under_it(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = kchess_board::testing::Started::new(cx);
+        let shown = app.with_window(|_, cx| {
+            let palette = *cx.global::<crate::theme::Palette>();
+            let mut live = super::Live::new(cx);
+            live.frame = Some(frame(json!({ "previous": [] })));
+            let none = live.past_games(cx, &palette).is_none();
+            live.frame = Some(frame(json!({ "previous": [{
+                "gameId": "p1", "white": { "name": "A" }, "black": { "name": "B" },
+                "fen": "8/8/8/8/8/8/8/8 w - - 0 1", "orientation": "white",
+            }] })));
+            (none, live.past_games(cx, &palette).is_some())
+        });
+        assert_eq!(shown, (true, true));
     }
 
     fn past(fields: serde_json::Value) -> TvPastGame {

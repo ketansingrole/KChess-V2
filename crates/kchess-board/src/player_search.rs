@@ -1,6 +1,7 @@
 //! Finding a Lichess player by name, wherever a page asks for one (Players, the guess trainer's
 //! game finder): the players whose names start with what is typed, the players looked up lately,
-//! and the chips that offer them.
+//! and the chips that offer them. Also a name that opens the player's profile (`player_link`),
+//! which the Players page answers (`OpenPlayer`).
 
 use gpui_kit::*;
 use kchess_contracts::calls;
@@ -11,6 +12,38 @@ use crate::core::AppCore;
 use crate::loading::Epoch;
 use crate::theme::{Palette, radii};
 use crate::widgets::{KeyboardFocus as _, Pressable as _};
+
+/// How a name opens its player: the Players page's `open_player`, which the app sets as it starts
+/// (`cx.set_global(OpenPlayer(..))`); until then a name opens nothing.
+#[derive(Clone, Copy)]
+pub struct OpenPlayer(pub fn(&str, &mut Window, &mut App));
+
+impl Global for OpenPlayer {}
+
+/// Open `username`'s profile on the Players page.
+pub fn open_player(username: &str, window: &mut Window, cx: &mut App) {
+    if let Some(OpenPlayer(open)) = cx.try_global::<OpenPlayer>().copied() {
+        open(username, window, cx);
+    }
+}
+
+/// A name that opens the player's profile; `ring` outlines it under the keyboard.
+pub fn player_link(id: impl Into<ElementId>, name: String, ring: Hsla) -> Stateful<Div> {
+    div()
+        .id(id)
+        .role(Role::Link)
+        .keyboard_focus(ring)
+        .aria_label(name.clone())
+        .truncate()
+        .cursor_pointer()
+        .pressable_link()
+        .child(name.clone())
+        .on_click(move |_, window, cx| {
+            // A name inside a clickable row opens the player, not the row.
+            cx.stop_propagation();
+            open_player(&name, window, cx)
+        })
+}
 
 /// The players looked up lately, newest first, shared by every name search.
 const RECENT_KEY: &str = "kchess:players-recent";
@@ -214,4 +247,25 @@ pub fn match_chips(
             .into_any_element()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    thread_local! {
+        static OPENED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// A name opens its player through the Players page the app set, and nothing before it is set.
+    #[gpui_kit::test]
+    fn a_name_opens_its_player_through_the_page_the_app_set(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = crate::testing::Started::new(cx);
+        app.with_window(|window, cx| {
+            super::open_player("before", window, cx);
+            cx.set_global(super::OpenPlayer(|name, _, _| {
+                OPENED.with(|opened| opened.borrow_mut().push(name.to_string()))
+            }));
+            super::open_player("alice", window, cx);
+        });
+        assert_eq!(OPENED.with(|opened| opened.take()), ["alice"]);
+    }
 }

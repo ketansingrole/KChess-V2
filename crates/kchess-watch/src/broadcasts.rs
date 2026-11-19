@@ -24,17 +24,17 @@ use shakmaty::Color;
 
 use super::broadcast_engine::{BroadcastEngine, GRID_EVALUATIONS};
 use super::{Pending, WatchPage, label, origin_of, player_of};
-use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::tree::format_eval;
 use crate::game::view;
-use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Side, Tone};
 use kchess_board::analysis::Opening;
+use kchess_nav::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN};
+use kchess_ui::icon;
 
 /// Typing pauses this long before a search is sent.
 const SEARCH_DELAY: Duration = Duration::from_millis(350);
@@ -397,7 +397,7 @@ impl WatchPage {
     }
 
     /// The broadcast round being followed, for the tests.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn broadcast_round(&self) -> String {
         self.broadcasts.round.clone()
     }
@@ -553,7 +553,7 @@ impl WatchPage {
 
     /// A swipe steps out of a broadcast's board, then its tournament, before leaving the page;
     /// forward returns to what it left while that is still there.
-    pub fn can_step(&self, direction: crate::swipe::Direction) -> bool {
+    pub fn can_step(&self, direction: kchess_nav::swipe::Direction) -> bool {
         if self.tab != super::Tab::Broadcasts {
             return false;
         }
@@ -574,7 +574,7 @@ impl WatchPage {
 
     pub fn step(
         &mut self,
-        direction: crate::swipe::Direction,
+        direction: kchess_nav::swipe::Direction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

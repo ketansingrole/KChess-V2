@@ -24,7 +24,6 @@ mod notifications;
 mod pages;
 mod palette;
 mod profile;
-mod remote_image;
 mod shell;
 mod shortcuts;
 mod startup;
@@ -124,6 +123,8 @@ fn start_models(library: &kchess_contracts::types::Library, cx: &mut App) {
         signed_out: Some(pages::puzzles::signed_out),
         restart_pages: Some(shell::restart_pages),
     });
+    // A player's name opens their profile on the Players page.
+    cx.set_global(player_search::OpenPlayer(pages::players::open_player));
     // What the live game asks of the app: notifications and the Online page.
     cx.set_global(online::Hooks {
         notify: |kind, title, body, cx| {

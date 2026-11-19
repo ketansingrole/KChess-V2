@@ -38,6 +38,10 @@ cpal = "0.18"
 # The Downloads folder exports start in (`src/export.rs`).
 dirs = "7"
 base64 = "0.23"
+# Pictures Lichess serves (`src/remote_image.rs`): the one request a frontend makes of its own
+# but the updater's, on a runtime of its own; both already in Cargo.lock through the core.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "http2", "gzip"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "fs", "io-util"] }
 kchess-hack = { version = "0.1", path = "../kchess-hack" }
 
 # Microphone access status and the system's request for it: AVCaptureDevice, macOS 10.14 and
