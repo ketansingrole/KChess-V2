@@ -110,6 +110,35 @@ needed only Practice. Watch came last of the pages that rarely change
 player's name opened their profile there (`player_search::player_link`, answered by the Players
 page through `OpenPlayer`).
 
+### After Practice, Studies and Watch
+
+2026-11-19, a different container from the measurements above (4 cores, about 1.4 times
+slower), so both columns were measured on it, the same edits with the same script, each the mean
+of four runs. Before: four pages out (08a0807). After: seven out, the live Lichess game and
+`position_engine` in `kchess-board` (#273–#276). The app is 55,100 lines (14,700 of them its
+end-to-end tests).
+
+| Edit | Four pages out | Seven pages out |
+| --- | --- | --- |
+| A string in a page still in the app (`pages/insights.rs`) | 8.6 s | 8.3 s |
+| Only that page's modified time | 8.4 s | 8.0 s |
+| A string in a page that moved (`kchess-history`) | 10.4 s | 11.7 s |
+| A string in the theme (`kchess-ui`) | 14.9 s | 17.4 s |
+| A field added to `theme::Palette` | 37.6 s | 40.5 s |
+
+What follows from it:
+
+- **The app's own edits hardly moved** (8.3 s from 8.6 s): what is left in it is mostly the pages
+  that change most, and its floor no longer falls much with each page that leaves.
+- **Edits under more crates got slower**: History now has dependents of its own (Practice, and
+  Studies through it), so an edit there rebuilds them too, 1.3 s more; the theme and `Palette`
+  rebuild every page crate, 2.5 s and 2.9 s more.
+
+So the split stops here: every page that rarely changes is out, and moving the ones that change
+most (analysis, Settings, Online, Tournaments, Players, Openings, the Computer page, the editor,
+Friends, Insights) would make their own frequent edits slower for an app floor that no longer
+falls.
+
 ## The order
 
 Moving code out of the app can make edits to it slower until the app is small (above): some
