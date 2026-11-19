@@ -6,7 +6,7 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::types::{ChallengeInfo, ChallengeTimeControl, DeclineReason, OnlinePhase};
+use kchess_contracts::types::{ChallengeInfo, DeclineReason, OnlinePhase};
 use serde_json::Number;
 
 use super::OnlinePage;
@@ -31,23 +31,7 @@ const DECLINE: [(DeclineReason, &str); 9] = [
     (DeclineReason::Variant, "Not this variant"),
 ];
 
-/// "5+3", "3 days per move", "No clock".
-pub fn describe_control(control: &ChallengeTimeControl) -> String {
-    match control {
-        ChallengeTimeControl::Clock { limit, increment } => crate::widgets::time_control(
-            limit.as_f64().unwrap_or_default() / 60.,
-            increment.as_f64().unwrap_or_default(),
-        ),
-        ChallengeTimeControl::Correspondence { days } => {
-            let days = days.as_f64().unwrap_or_default();
-            format!(
-                "{days} {} per move",
-                if days == 1. { "day" } else { "days" }
-            )
-        }
-        ChallengeTimeControl::Unlimited => "No clock".into(),
-    }
-}
+pub use crate::online::describe_control;
 
 /// A player's rating as it reads: "1800", not "1800.0".
 fn rating(rating: &Option<Number>) -> Option<f64> {
@@ -496,9 +480,9 @@ impl OnlinePage {
 
 #[cfg(test)]
 mod tests {
-    use super::{color_text, describe_control, time_left};
-    use kchess_contracts::types::{ChallengeInfo, ChallengeTimeControl};
-    use serde_json::{Number, json};
+    use super::{color_text, time_left};
+    use kchess_contracts::types::ChallengeInfo;
+    use serde_json::json;
 
     fn challenge(color: &str, direction: &str) -> ChallengeInfo {
         serde_json::from_value(json!({
@@ -508,27 +492,6 @@ mod tests {
             "receivedAt": 0,
         }))
         .expect("a challenge")
-    }
-
-    fn clock(limit: u64, increment: u64) -> ChallengeTimeControl {
-        ChallengeTimeControl::Clock {
-            limit: Number::from(limit),
-            increment: Number::from(increment),
-        }
-    }
-
-    #[test]
-    fn controls_read_like_lichess() {
-        assert_eq!(describe_control(&clock(300, 3)), "5+3");
-        assert_eq!(describe_control(&clock(90, 0)), "1.5+0");
-        let days = ChallengeTimeControl::Correspondence {
-            days: Number::from(1),
-        };
-        assert_eq!(describe_control(&days), "1 day per move");
-        assert_eq!(
-            describe_control(&ChallengeTimeControl::Unlimited),
-            "No clock"
-        );
     }
 
     #[test]

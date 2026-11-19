@@ -21,10 +21,8 @@ mod interface_zoom;
 mod links;
 mod menu;
 mod notifications;
-mod online;
 mod pages;
 mod palette;
-mod position_engine;
 mod profile;
 mod remote_image;
 mod shell;
@@ -47,8 +45,8 @@ use kchess_app::{
 };
 // The board and the games on it (`crates/kchess-board`).
 use kchess_board::{
-    ai, board, engine_view, export, game, microphone, notation, player_search, puzzle_board,
-    puzzle_db, rating_history, sound, voice, widgets,
+    ai, board, engine_view, export, game, microphone, notation, online, player_search,
+    position_engine, puzzle_board, puzzle_db, rating_history, sound, voice, widgets,
 };
 // The pages as the shell drives them (`crates/kchess-nav`).
 use kchess_nav::{part, play_layout, swipe};
@@ -125,6 +123,20 @@ fn start_models(library: &kchess_contracts::types::Library, cx: &mut App) {
         connected: Some(online::account_connected),
         signed_out: Some(pages::puzzles::signed_out),
         restart_pages: Some(shell::restart_pages),
+    });
+    // What the live game asks of the app: notifications and the Online page.
+    cx.set_global(online::Hooks {
+        notify: |kind, title, body, cx| {
+            notifications::desktop(kind, title, body, cx);
+        },
+        your_move: |game, cx| {
+            notifications::your_move(game, cx);
+        },
+        challenge: |id, title, body, cx| {
+            notifications::challenge(id, title, body, cx);
+        },
+        connection_lost: pages::online::game::connection_lost,
+        show_game: |window, cx| shell::open(pages::Page::Online, window, cx),
     });
     accounts::init(cx);
     ai::init(cx);
