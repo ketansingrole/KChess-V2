@@ -21,12 +21,7 @@ pub fn workspace_binary(package: &str, name: &str) -> PathBuf {
     let (target, profile) = target_of(&exe, |folder| folder.join("CACHEDIR.TAG").is_file())
         .unwrap_or_else(|| panic!("{} is in no Cargo target folder", exe.display()));
     let mut build = Command::new(env!("CARGO"));
-    build.args(["build", "-q", "--locked", "-p", package, "--bin", name]);
-    build.args(["--message-format", "json-render-diagnostics"]);
-    build.arg("--target-dir").arg(&target);
-    if profile == "release" {
-        build.arg("--release");
-    }
+    build.args(build_args(package, name, &target, &profile));
     for (key, _) in std::env::vars_os() {
         if key.to_str().is_some_and(is_cargo_test_var) {
             build.env_remove(key);
@@ -36,6 +31,31 @@ pub fn workspace_binary(package: &str, name: &str) -> PathBuf {
     assert!(output.status.success(), "{name} builds");
     executable(&String::from_utf8_lossy(&output.stdout), name)
         .unwrap_or_else(|| panic!("cargo named no program {name}"))
+}
+
+/// What `cargo` is given to build the program `name` of `package` into `target`, in `profile`'s
+/// folder: the dev profile's (`debug`) unless it is `release`.
+pub fn build_args(
+    package: &str,
+    name: &str,
+    target: &Path,
+    profile: &str,
+) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> =
+        ["build", "-q", "--locked", "-p", package, "--bin", name]
+            .into_iter()
+            .chain([
+                "--message-format",
+                "json-render-diagnostics",
+                "--target-dir",
+            ])
+            .map(Into::into)
+            .collect();
+    args.push(target.into());
+    if profile == "release" {
+        args.push("--release".into());
+    }
+    args
 }
 
 /// The target folder holding `exe` (the nearest folder above it that `is_target` accepts) and the
@@ -105,6 +125,44 @@ mod tests {
         assert_eq!(target_of(new, |_| false), None);
         // Only a folder above the program: a program is never its own target folder.
         assert_eq!(target_of(Path::new("/w/target"), marked), None);
+    }
+
+    #[test]
+    fn the_build_is_of_the_one_program_into_the_tests_target_folder_and_profile() {
+        let args = |profile: &str| -> Vec<String> {
+            build_args(
+                "kchess-core",
+                "kchess-fake-uci",
+                Path::new("/w/target"),
+                profile,
+            )
+            .into_iter()
+            .map(|arg| arg.into_string().unwrap())
+            .collect()
+        };
+        let debug = [
+            "build",
+            "-q",
+            "--locked",
+            "-p",
+            "kchess-core",
+            "--bin",
+            "kchess-fake-uci",
+            "--message-format",
+            "json-render-diagnostics",
+            "--target-dir",
+            "/w/target",
+        ];
+        assert_eq!(args("debug"), debug);
+        assert_eq!(args("release")[..debug.len()], debug);
+        assert_eq!(args("release")[debug.len()..], ["--release"]);
+    }
+
+    /// A program that does not build fails the test there: nothing is run in its place.
+    #[test]
+    #[should_panic(expected = "no-such-program builds")]
+    fn a_program_that_does_not_build_fails_the_test() {
+        workspace_binary("kchess-testkit", "no-such-program");
     }
 
     #[test]

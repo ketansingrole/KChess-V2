@@ -704,6 +704,13 @@ pub(crate) mod tests {
         let odd = profile.join("build/odd/0000000000000003/fingerprint");
         std::fs::create_dir_all(&odd).unwrap();
         std::fs::write(odd.join("lib-odd.json"), "{").unwrap();
+        // Nor one that holds no unit yet, nor one holding a replaced unit beside one it cannot
+        // read.
+        std::fs::create_dir_all(profile.join("build/old/00000000000000fe/fingerprint")).unwrap();
+        let half = ("old", "00000000000000fd", "lib-old");
+        write_nested_unit(profile, half, 3, 1, &["libold-00000000000000fd.rlib"], 1);
+        let half = profile.join("build/old/00000000000000fd/fingerprint");
+        std::fs::write(half.join("test-lib-old.json"), "{").unwrap();
         let planned = plan(profile, None);
         assert_eq!(relative(profile, &planned), ["build/old/0000000000000001"]);
         assert_eq!(planned.units, 1);
@@ -714,6 +721,8 @@ pub(crate) mod tests {
         assert!(profile.join("build/old/0000000000000002").exists());
         assert!(profile.join("build/old/00000000000000ff").exists());
         assert!(profile.join("build/odd/0000000000000003").exists());
+        assert!(profile.join("build/old/00000000000000fe").exists());
+        assert!(profile.join("build/old/00000000000000fd").exists());
         assert_eq!(plan(profile, None), Plan::default(), "nothing more to go");
     }
 
