@@ -167,15 +167,30 @@ mod tests {
     fn a_run_builds_once() {
         let profile = tempfile::tempdir().unwrap();
         let builds = Cell::new(0);
-        let first = built(profile.path(), "tool", "run 1", making(profile.path(), "1", &builds));
+        let first = built(
+            profile.path(),
+            "tool",
+            "run 1",
+            making(profile.path(), "1", &builds),
+        );
         assert_eq!(std::fs::read_to_string(first.path()).unwrap(), "1");
         drop(first);
-        let again = built(profile.path(), "tool", "run 1", making(profile.path(), "2", &builds));
+        let again = built(
+            profile.path(),
+            "tool",
+            "run 1",
+            making(profile.path(), "2", &builds),
+        );
         assert_eq!(builds.get(), 1, "the run built it already");
         assert_eq!(std::fs::read_to_string(again.path()).unwrap(), "1");
         drop(again);
         // The next run builds it again: a change since is never missed.
-        let next = built(profile.path(), "tool", "run 2", making(profile.path(), "3", &builds));
+        let next = built(
+            profile.path(),
+            "tool",
+            "run 2",
+            making(profile.path(), "3", &builds),
+        );
         assert_eq!(builds.get(), 2);
         assert_eq!(std::fs::read_to_string(next.path()).unwrap(), "3");
     }
@@ -184,10 +199,20 @@ mod tests {
     fn a_binary_gone_since_is_built_again() {
         let profile = tempfile::tempdir().unwrap();
         let builds = Cell::new(0);
-        let first = built(profile.path(), "tool", "run", making(profile.path(), "1", &builds));
+        let first = built(
+            profile.path(),
+            "tool",
+            "run",
+            making(profile.path(), "1", &builds),
+        );
         std::fs::remove_file(first.path()).unwrap();
         drop(first);
-        let again = built(profile.path(), "tool", "run", making(profile.path(), "2", &builds));
+        let again = built(
+            profile.path(),
+            "tool",
+            "run",
+            making(profile.path(), "2", &builds),
+        );
         assert_eq!(builds.get(), 2);
         assert!(again.path().exists());
     }
@@ -197,7 +222,12 @@ mod tests {
     fn the_lock_is_held_until_the_binary_is_dropped() {
         let profile = tempfile::tempdir().unwrap();
         let builds = Cell::new(0);
-        let held = built(profile.path(), "tool", "run", making(profile.path(), "1", &builds));
+        let held = built(
+            profile.path(),
+            "tool",
+            "run",
+            making(profile.path(), "1", &builds),
+        );
         let lock = File::open(profile.path().join(".kchess-test-builds.lock")).unwrap();
         assert!(matches!(
             lock.try_lock(),
@@ -211,7 +241,12 @@ mod tests {
     fn a_copy_is_whole_and_written_only_when_it_differs() {
         let profile = tempfile::tempdir().unwrap();
         let builds = Cell::new(0);
-        let binary = built(profile.path(), "tool", "run", making(profile.path(), "1", &builds));
+        let binary = built(
+            profile.path(),
+            "tool",
+            "run",
+            making(profile.path(), "1", &builds),
+        );
         let dest = profile.path().join("copy");
         binary.copy_to(&dest);
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), "1");
@@ -284,7 +319,10 @@ mod tests {
             .map(|(key, _)| key)
             .collect();
         // Cargo sets this for every test it runs.
-        assert!(removed.contains(&OsStr::new("CARGO_MANIFEST_DIR")), "{removed:?}");
+        assert!(
+            removed.contains(&OsStr::new("CARGO_MANIFEST_DIR")),
+            "{removed:?}"
+        );
         for key in removed {
             assert!(is_cargo_test_var(key.to_str().unwrap()), "{key:?}");
         }
@@ -305,7 +343,13 @@ mod tests {
         ] {
             assert!(is_cargo_test_var(key), "{key}");
         }
-        for key in ["CARGO", "CARGO_HOME", "CARGO_TARGET_DIR", "PATH", "RUSTFLAGS"] {
+        for key in [
+            "CARGO",
+            "CARGO_HOME",
+            "CARGO_TARGET_DIR",
+            "PATH",
+            "RUSTFLAGS",
+        ] {
             assert!(!is_cargo_test_var(key), "{key}");
         }
     }
