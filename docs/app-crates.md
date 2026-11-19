@@ -69,6 +69,37 @@ one formatted string doubled it, and why is not known yet: it is not where the e
 file, nor the items after it (none the app uses). So the cost of moving code is real but narrower
 than step 1's one edit suggested; measure it on the code a step moves.
 
+### After step 5 (four pages out)
+
+2026-11-19, the same machine, with `kchess-app`, `kchess-board`, `kchess-nav` and the Puzzles,
+History, Home and Over the board crates out of the app. The app is 72,500 lines (14,500 of them
+its end-to-end tests), from 105,000. `cargo build -p kchess-gpui`, the mean of four runs (each
+edit made and undone twice):
+
+| Edit | Before the split | Now |
+| --- | --- | --- |
+| A string in a page still in the app (`pages/insights.rs`) | 9.2 s | 5.9 s |
+| Only that page's modified time | 9.2 s | 5.7 s |
+| A string in a page that moved (`kchess-history`) | 9.2 s | 7.5 s |
+| A string in the theme (`kchess-ui`) | 9.3 s | 11.0 s |
+| A field added to `theme::Palette` | 26 s | 27.6 s |
+
+What follows from it:
+
+- **The app's floor fell with its size**: a third of the code out, a third off every edit in it
+  (5.9 s from 9.2 s).
+- **A page in a crate of its own costs about 1.6 s more an edit than one in the app**: its own
+  crate's floor before the app's (7.5 s against 5.9 s). Still faster than any edit before the
+  split, but slower than leaving the page in the smaller app.
+- **An edit under every crate is no faster**: the theme or `Palette` rebuilds `kchess-ui`,
+  `kchess-app`, `kchess-board` and `kchess-nav` one after another before the pages, which are
+  the only crates that build side by side.
+
+So code that changes often is cheaper left in the app: moving it would make its own edits 1.6 s
+slower to make every other edit in the app a little faster. Practice, Watch and Studies, which
+rarely change, can only leave with what changes most (Online, `position_engine`, openings,
+Players), so step 6 stops here until those settle.
+
 ## The order
 
 Moving code out of the app can make edits to it slower until the app is small (above): some
@@ -115,7 +146,8 @@ Each step is one pull request, each green on its own.
    (`crates/kchess-home`), which needed only History; then Over the board (`crates/kchess-local`),
    once a page's keys (`PageKey`), the New action and whether a setup is playable had left the
    app.
-6. **The rest, once the app is small enough that its crates pay off**: analysis, Settings, Online,
+6. **The rest, once the app is small enough that its crates pay off** (measured after step 5,
+   above: not yet, for the code that changes most): analysis, Settings, Online,
    tournaments and the pieces they share (`position_engine`, `ai`, `puzzle_board`, cards and
    `quick_pick`). Measure first: by then an edit in the app should cost well under the 9 s it
    costs today, and a page that keeps changing may be cheaper left in it.
