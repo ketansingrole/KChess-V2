@@ -10,6 +10,7 @@
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
 
+pub mod build;
 pub mod memory;
 
 use std::io::{BufRead, BufReader, Write};

@@ -4359,6 +4359,7 @@ dependencies = [
  "kchess-hack",
  "kchess-host",
  "kchess-service",
+ "kchess-testkit",
  "serde_json",
  "tempfile",
  "tokio",

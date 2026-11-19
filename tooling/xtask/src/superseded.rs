@@ -1,12 +1,13 @@
 //! Deletes what a build folder keeps of compiled units that no current build uses: those a newer
 //! build replaced, and those left behind by a change nothing will replace them after.
 //!
-//! Cargo names every unit it compiles `<package>-<hash>`. The hash covers the package's version,
-//! its features, its dependencies' hashes, the profile and the compiler, and Cargo never deletes
-//! one: its fingerprint (`.fingerprint/<package>-<hash>`), its outputs (`deps/…-<hash>…`,
-//! `build/<package>-<hash>`) and rustc's incremental cache for it (`incremental/<crate>-<id>`,
-//! up to 1 GB each) stay after a release bump, a lockfile change or a new compiler has given the
-//! unit a new hash. By 2026-11-10 the main checkout's `target/debug` held 104 incremental caches
+//! Cargo names every unit it compiles by its package and a hash. The hash covers the package's
+//! version, its features, its dependencies' hashes, the profile and the compiler, and Cargo never
+//! deletes one: the unit's folder (`build/<package>/<hash>`, its fingerprint and outputs, since
+//! Cargo 1.100; before, `.fingerprint/<package>-<hash>`, `deps/…-<hash>…` and
+//! `build/<package>-<hash>`, which 1.100 leaves where they are) and rustc's incremental cache for
+//! it (`incremental/<crate>-<id>`, up to 1 GB each) stay after a release bump, a lockfile change
+//! or a new compiler has given the unit a new hash. By 2026-11-10 the main checkout's `target/debug` held 104 incremental caches
 //! of `kchess_service` and 74 of `kchess_core`: 76 GB of incremental caches, 31 GB of `deps`.
 //!
 //! Age alone says nothing about whether a unit is needed again: Cargo stamps a unit when it
@@ -365,9 +366,21 @@ pub fn cache_superseded(
         && starters.all(|(index, _)| !live.contains(&index))
 }
 
-/// Everything a profile folder (`target/debug`) keeps of units no current build uses, given its
-/// workspace's `targets` (`None`: no target counts as removed).
-pub fn plan(profile: &Path, targets: Option<&Targets>) -> Plan {
+/// Where one unit's files are: its fingerprint folder and the names of its outputs, which tell a
+/// check from a build, under `folder` (`<package>-<hash>`); and everything that goes with it.
+#[derive(Debug)]
+struct Found {
+    folder: String,
+    fingerprint: PathBuf,
+    outputs: Vec<String>,
+    paths: Vec<PathBuf>,
+}
+
+/// The units of the layout Cargo used before 1.100: fingerprints in `.fingerprint/<package>-<hash>`,
+/// outputs in `deps` (and `examples`) by their hash, a build script's in `build/<package>-<hash>`.
+/// Cargo 1.100 leaves them where they are and builds elsewhere, so a newer build of each replaces
+/// it as any other.
+fn flat(profile: &Path) -> Vec<Found> {
     // Examples are built into their own folder: without their outputs, an example's check and
     // its build would look the same, and the newer would replace the other.
     let files: Vec<(PathBuf, String)> = ["deps", "examples"]
@@ -379,27 +392,91 @@ pub fn plan(profile: &Path, targets: Option<&Targets>) -> Plan {
                 .map(move |name| (folder.clone(), name))
         })
         .collect();
-    let mut outputs: HashMap<&str, Vec<&str>> = HashMap::new();
-    for (_, file) in &files {
-        if let Some(hash) = hash_of(file) {
-            outputs.entry(hash).or_default().push(file);
+    let mut by_hash: HashMap<&str, Vec<&(PathBuf, String)>> = HashMap::new();
+    for file in &files {
+        if let Some(hash) = hash_of(&file.1) {
+            by_hash.entry(hash).or_default().push(file);
         }
     }
+    names(&profile.join(".fingerprint"))
+        .into_iter()
+        .map(|folder| {
+            let hash = folder.rsplit('-').next().unwrap_or_default();
+            let mine = by_hash.get(hash).map(Vec::as_slice).unwrap_or_default();
+            let fingerprint = profile.join(".fingerprint").join(&folder);
+            let mut paths = vec![fingerprint.clone()];
+            let build = profile.join("build").join(&folder);
+            if build.exists() {
+                paths.push(build);
+            }
+            paths.extend(mine.iter().map(|(at, name)| at.join(name)));
+            Found {
+                outputs: mine.iter().map(|(_, name)| name.clone()).collect(),
+                fingerprint,
+                paths,
+                folder,
+            }
+        })
+        .collect()
+}
+
+/// The units of Cargo 1.100's layout: each in a folder of its own, `build/<package>/<hash>`, with
+/// its fingerprint in `fingerprint` and its outputs in `out`; a build script's run has `run`
+/// beside them, and its `out` is the script's own (`OUT_DIR`), no output of Cargo's.
+fn nested(profile: &Path) -> Vec<Found> {
+    let build = profile.join("build");
+    names(&build)
+        .into_iter()
+        .flat_map(|package| {
+            let folder = build.join(&package);
+            names(&folder).into_iter().filter_map(move |hash| {
+                let unit = folder.join(&hash);
+                let fingerprint = unit.join("fingerprint");
+                if !fingerprint.is_dir() {
+                    return None;
+                }
+                let outputs = if unit.join("run").is_dir() {
+                    Vec::new()
+                } else {
+                    names(&unit.join("out"))
+                };
+                Some(Found {
+                    folder: format!("{package}-{hash}"),
+                    fingerprint,
+                    outputs,
+                    paths: vec![unit],
+                })
+            })
+        })
+        .collect()
+}
+
+/// Everything a profile folder (`target/debug`) keeps of units no current build uses, in either
+/// of Cargo's layouts, given its workspace's `targets` (`None`: no target counts as removed).
+pub fn plan(profile: &Path, targets: Option<&Targets>) -> Plan {
+    let found: Vec<Found> = flat(profile).into_iter().chain(nested(profile)).collect();
     let mut units = Vec::new();
+    // The units each place holds, by their index in `units`.
+    let mut held: Vec<Vec<usize>> = vec![Vec::new(); found.len()];
     let mut unreadable = HashSet::new();
-    for folder in names(&profile.join(".fingerprint")) {
-        let path = profile.join(".fingerprint").join(&folder);
-        let invoked = crate::util::modified(&path.join("invoked.timestamp"));
-        let hash = folder.rsplit('-').next().unwrap_or_default();
-        let mode = mode(outputs.get(hash).map(Vec::as_slice).unwrap_or_default());
-        for json in names(&path).iter().filter(|name| name.ends_with(".json")) {
+    for (index, place) in found.iter().enumerate() {
+        let invoked = crate::util::modified(&place.fingerprint.join("invoked.timestamp"));
+        let outputs: Vec<&str> = place.outputs.iter().map(String::as_str).collect();
+        let mode = mode(&outputs);
+        let stems = names(&place.fingerprint);
+        for json in stems.iter().filter(|name| name.ends_with(".json")) {
             let stem = json.trim_end_matches(".json");
-            let read = std::fs::read_to_string(path.join(json)).ok();
-            let own = std::fs::read_to_string(path.join(stem)).ok();
-            match read.and_then(|text| unit(&folder, stem, &text, own.as_deref(), mode, invoked)) {
-                Some(unit) => units.push(unit),
+            let read = std::fs::read_to_string(place.fingerprint.join(json)).ok();
+            let own = std::fs::read_to_string(place.fingerprint.join(stem)).ok();
+            match read
+                .and_then(|text| unit(&place.folder, stem, &text, own.as_deref(), mode, invoked))
+            {
+                Some(unit) => {
+                    held[index].push(units.len());
+                    units.push(unit);
+                }
                 None => {
-                    unreadable.insert(folder.clone());
+                    unreadable.insert(index);
                 }
             }
         }
@@ -407,17 +484,10 @@ pub fn plan(profile: &Path, targets: Option<&Targets>) -> Plan {
     let live = current(&units, |unit| {
         targets.is_some_and(|targets| removed(unit, targets))
     });
-    let stale: HashSet<&str> = units
-        .iter()
-        .map(|unit| unit.folder.as_str())
-        .filter(|folder| !unreadable.contains(*folder))
-        .filter(|folder| {
-            units
-                .iter()
-                .enumerate()
-                .filter(|(_, unit)| unit.folder == *folder)
-                .all(|(index, _)| !live.contains(&index))
-        })
+    // A place goes when it holds units, can read them all, and none is current.
+    let stale: Vec<usize> = (0..found.len())
+        .filter(|index| !unreadable.contains(index) && !held[*index].is_empty())
+        .filter(|index| held[*index].iter().all(|unit| !live.contains(unit)))
         .collect();
     let mut plan = Plan {
         units: stale.len(),
@@ -441,21 +511,10 @@ pub fn plan(profile: &Path, targets: Option<&Targets>) -> Plan {
             add(path);
         }
     }
-    let stale_hashes: HashSet<&str> = stale
-        .iter()
-        .filter_map(|folder| folder.rsplit('-').next())
-        .collect();
-    for (folder, file) in &files {
-        if hash_of(file).is_some_and(|hash| stale_hashes.contains(hash)) {
-            add(folder.join(file));
+    for index in stale {
+        for path in &found[index].paths {
+            add(path.clone());
         }
-    }
-    for folder in &stale {
-        let build = profile.join("build").join(folder);
-        if build.exists() {
-            add(build);
-        }
-        add(profile.join(".fingerprint").join(folder));
     }
     plan
 }
@@ -568,6 +627,170 @@ pub(crate) mod tests {
         let rlib = std::fs::File::create(deps.join("libold-0000000000000001.rlib")).unwrap();
         rlib.set_len(size).unwrap();
         std::fs::write(deps.join("libold-0000000000000002.rlib"), b"new").unwrap();
+    }
+
+    /// Writes a unit as Cargo 1.100 does, in `build/<package>/<hash>` with its fingerprint and
+    /// the `outputs` Cargo wrote to `out`, each `size` bytes; with `run`, as a build script's run.
+    pub(crate) fn write_nested_unit(
+        profile: &Path,
+        unit: (&str, &str, &str),
+        own: u64,
+        invoked: u64,
+        outputs: &[&str],
+        size: u64,
+    ) {
+        let (package, hash, stem) = unit;
+        let folder = profile.join("build").join(package).join(hash);
+        let fingerprint = folder.join("fingerprint");
+        std::fs::create_dir_all(&fingerprint).unwrap();
+        std::fs::write(
+            fingerprint.join(format!("{stem}.json")),
+            "{\"features\":\"[]\",\"deps\":[]}",
+        )
+        .unwrap();
+        let hex: String = own
+            .to_le_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        std::fs::write(fingerprint.join(stem), hex).unwrap();
+        let stamp = std::fs::File::create(fingerprint.join("invoked.timestamp")).unwrap();
+        stamp.set_modified(at(invoked).unwrap()).unwrap();
+        std::fs::write(fingerprint.join(format!("output-{stem}")), b"").unwrap();
+        std::fs::create_dir_all(folder.join("out")).unwrap();
+        if stem.starts_with("run-build-script-") {
+            std::fs::create_dir_all(folder.join("run")).unwrap();
+        }
+        for output in outputs {
+            let file = std::fs::File::create(folder.join("out").join(output)).unwrap();
+            file.set_len(size).unwrap();
+        }
+    }
+
+    /// One library built twice as Cargo 1.100 builds, the older one's `.rlib` `size` bytes: the
+    /// older build's folder is the one a sweep deletes.
+    pub(crate) fn replaced_nested_build(profile: &Path, size: u64) {
+        let old = ("old", "0000000000000001", "lib-old");
+        write_nested_unit(profile, old, 1, 0, &["libold-0000000000000001.rlib"], size);
+        let new = ("old", "0000000000000002", "lib-old");
+        write_nested_unit(profile, new, 2, 10, &["libold-0000000000000002.rlib"], 3);
+    }
+
+    /// The paths of `plan` under `profile`, sorted, with one separator on every platform.
+    fn relative(profile: &Path, plan: &Plan) -> Vec<String> {
+        let mut paths: Vec<String> = plan
+            .paths
+            .iter()
+            .map(|path| {
+                let relative = path.strip_prefix(profile).unwrap();
+                let parts: Vec<_> = relative.iter().map(|part| part.to_string_lossy()).collect();
+                parts.join("/")
+            })
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    /// Cargo 1.100 builds each unit in a folder of its own (2026-11-20): a replaced build goes
+    /// with its folder, whatever is in it.
+    #[test]
+    fn a_unit_in_a_folder_of_its_own_goes_with_its_folder() {
+        let profile = tempfile::tempdir().unwrap();
+        let profile = profile.path();
+        replaced_nested_build(profile, 1000);
+        // A folder that is no unit's (no fingerprint) and a unit Cargo is still writing (its
+        // fingerprint not yet readable) are kept.
+        std::fs::create_dir_all(profile.join("build/old/00000000000000ff/out")).unwrap();
+        let odd = profile.join("build/odd/0000000000000003/fingerprint");
+        std::fs::create_dir_all(&odd).unwrap();
+        std::fs::write(odd.join("lib-odd.json"), "{").unwrap();
+        let planned = plan(profile, None);
+        assert_eq!(relative(profile, &planned), ["build/old/0000000000000001"]);
+        assert_eq!(planned.units, 1);
+        let json = "{\"features\":\"[]\",\"deps\":[]}".len() as u64;
+        // The rlib, the fingerprint's json and 16 digits; the stamp and output list are empty.
+        assert_eq!(planned.bytes, 1000 + json + 16);
+        assert_eq!(delete(&planned), planned.bytes);
+        assert!(profile.join("build/old/0000000000000002").exists());
+        assert!(profile.join("build/old/00000000000000ff").exists());
+        assert!(profile.join("build/odd/0000000000000003").exists());
+        assert_eq!(plan(profile, None), Plan::default(), "nothing more to go");
+    }
+
+    /// What a build script's run writes to its `out` is the script's: its runs stay one thing
+    /// whatever they wrote, so the newer replaces the older.
+    #[test]
+    fn a_build_scripts_runs_are_one_thing_whatever_they_wrote() {
+        let profile = tempfile::tempdir().unwrap();
+        let profile = profile.path();
+        let run = "run-build-script-build-script-build";
+        write_nested_unit(
+            profile,
+            ("ring", "0000000000000001", run),
+            1,
+            0,
+            &["x.o"],
+            1,
+        );
+        write_nested_unit(
+            profile,
+            ("ring", "0000000000000002", run),
+            2,
+            10,
+            &["a.rmeta"],
+            1,
+        );
+        write_nested_unit(profile, ("ring", "0000000000000003", run), 3, 20, &[], 1);
+        assert_eq!(
+            relative(profile, &plan(profile, None)),
+            ["build/ring/0000000000000001", "build/ring/0000000000000002"]
+        );
+        // Not the outputs of a unit that is no run: a check and a build of one library are two.
+        let lib = |hash| ("core", hash, "lib-core");
+        write_nested_unit(
+            profile,
+            lib("0000000000000004"),
+            4,
+            0,
+            &["libcore-4.rlib"],
+            1,
+        );
+        write_nested_unit(
+            profile,
+            lib("0000000000000005"),
+            5,
+            10,
+            &["libcore-5.rmeta"],
+            1,
+        );
+        assert_eq!(plan(profile, None).units, 2, "only the runs");
+    }
+
+    /// The units Cargo built before 1.100 stay in its old layout, which 1.100 never reads again:
+    /// each goes once 1.100 has built the same thing, and only then.
+    #[test]
+    fn a_build_of_the_layout_before_goes_once_the_same_thing_is_built_again() {
+        let profile = tempfile::tempdir().unwrap();
+        let profile = profile.path();
+        let json = "{\"features\":\"[]\",\"deps\":[]}";
+        std::fs::create_dir_all(profile.join("deps")).unwrap();
+        write_unit(profile, "core-0000000000000001", "lib-core", json, 1, 0);
+        std::fs::write(profile.join("deps/libcore-0000000000000001.rlib"), b"12").unwrap();
+        write_unit(profile, "tool-0000000000000002", "bin-tool", json, 2, 0);
+        std::fs::write(profile.join("deps/tool-0000000000000002"), b"1").unwrap();
+        // A build script's output folder of the old layout beside the new layout's packages.
+        std::fs::create_dir_all(profile.join("build/core-0000000000000001/out")).unwrap();
+        assert_eq!(plan(profile, None), Plan::default(), "nothing built since");
+        let again = ("core", "00000000000000aa", "lib-core");
+        write_nested_unit(profile, again, 9, 50, &["libcore-00000000000000aa.rlib"], 1);
+        assert_eq!(
+            relative(profile, &plan(profile, None)),
+            [
+                ".fingerprint/core-0000000000000001",
+                "build/core-0000000000000001",
+                "deps/libcore-0000000000000001.rlib",
+            ]
+        );
     }
 
     #[test]

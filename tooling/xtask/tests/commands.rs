@@ -47,6 +47,38 @@ fn replaced_build(profile: &std::path::Path) -> std::path::PathBuf {
     old
 }
 
+/// The same as Cargo 1.100 builds it: no `deps`, each build in a folder of its own beside its
+/// fingerprint, and the profile folder known by Cargo's lock (2026-11-20). The older build's folder
+/// and an object in the newer's that no program uses, 1.5 MB each.
+fn replaced_nested_build(profile: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    std::fs::create_dir_all(profile).unwrap();
+    std::fs::write(profile.join(".cargo-lock"), b"").unwrap();
+    let mut units = Vec::new();
+    for (hash, own, seconds) in [
+        ("0000000000000003", "0300000000000000", 0),
+        ("0000000000000004", "0400000000000000", 10),
+    ] {
+        let unit = profile.join("build/old").join(hash);
+        let fingerprint = unit.join("fingerprint");
+        std::fs::create_dir_all(&fingerprint).unwrap();
+        std::fs::create_dir_all(unit.join("out")).unwrap();
+        std::fs::write(fingerprint.join("lib-old.json"), "{\"deps\":[]}").unwrap();
+        std::fs::write(fingerprint.join("lib-old"), own).unwrap();
+        let stamp = std::fs::File::create(fingerprint.join("invoked.timestamp")).unwrap();
+        stamp
+            .set_modified(
+                std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_794_000_000 + seconds),
+            )
+            .unwrap();
+        let rlib = unit.join(format!("out/libold-{hash}.rlib"));
+        std::fs::write(&rlib, vec![0; 1_500_000]).unwrap();
+        units.push(unit);
+    }
+    let object = units[1].join("out/old-0000000000000004.a1.x7.rcgu.o");
+    std::fs::write(&object, vec![0; 1_500_000]).unwrap();
+    (units[0].clone(), object)
+}
+
 #[test]
 fn sweep_deletes_replaced_builds_and_on_macos_the_objects_no_program_uses() {
     let target = tempfile::tempdir().unwrap();
@@ -59,6 +91,8 @@ fn sweep_deletes_replaced_builds_and_on_macos_the_objects_no_program_uses() {
         object
     });
     let replaced = replaced_build(&target.path().join("debug"));
+    let (nested, nested_object) = replaced_nested_build(&target.path().join("release"));
+    let objects = [objects[0].clone(), objects[1].clone(), nested_object];
     let sweep = |dry_run: bool| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
         // Space to spare, whatever this disk has: a sweep refuses a build on a full disk, and
@@ -77,20 +111,21 @@ fn sweep_deletes_replaced_builds_and_on_macos_the_objects_no_program_uses() {
     };
     let said = sweep(true);
     assert!(
-        said.contains("Would delete 1 build no current build uses (0.0 GB)."),
+        said.contains("Would delete 2 builds no current build uses (0.0 GB)."),
         "{said}"
     );
-    assert!(replaced.exists() && objects.iter().all(|object| object.exists()));
+    assert!(replaced.exists() && nested.exists());
+    assert!(objects.iter().all(|object| object.exists()));
     let said = sweep(false);
-    assert!(!replaced.exists());
+    assert!(!replaced.exists() && !nested.exists());
     assert!(
-        said.contains("Deleted 1 build no current build uses (0.0 GB)."),
+        said.contains("Deleted 2 builds no current build uses (0.0 GB)."),
         "{said}"
     );
     if cfg!(target_os = "macos") {
         assert!(objects.iter().all(|object| !object.exists()));
         assert!(
-            said.contains("Deleted 2 object files no program uses (3 MB)."),
+            said.contains("Deleted 3 object files no program uses (4 MB)."),
             "{said}"
         );
     } else {
