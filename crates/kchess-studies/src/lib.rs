@@ -1,11 +1,16 @@
-//! Studies: the study library on this computer. Browse, search and open saved
+//! The Studies page: the study library on this computer. Browse, search and open saved
 //! studies on the analysis board, start or import one, and rename, copy, drill, upload or delete
 //! them. Lichess's own studies are a tab of their own when an account is connected.
 
-use crate::pages::PageView;
+// The app's services, the design system and the board, under the names this page's modules use.
+use kchess_app::{accounts, core, log, prefs, studies, timer};
+use kchess_board::{board, export, game, widgets};
+use kchess_ui::{name_dialog, theme};
+
 use kchess_contracts::calls;
 use kchess_contracts::check::{ChapterName, LichessId, PgnText, StudyId, Username};
 use kchess_contracts::types::{Reply, StudyExport, StudySyncRequest};
+use kchess_nav::page::PageView;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -25,19 +30,19 @@ use kchess_domain::records::studies::StudySummary;
 use serde_json::{Value, json};
 use shakmaty::Color;
 
-use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::tree::TreeNode;
 use crate::name_dialog::NameDialog;
-use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::studies::{MAX_CHAPTERS, MAX_STUDIES, StudyHandle, StudyLibrary, document_pgn};
 use crate::theme::Palette;
 use crate::widgets::time_ago;
 use kchess_games::now_ms;
+use kchess_nav::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
+use kchess_ui::icon;
 mod lichess;
 
-use crate::widgets::{self, Pill};
+use crate::widgets::Pill;
 
 const TAB: &str = "kchess:studies-tab";
 const SORT: &str = "kchess:studies-sort";
@@ -86,7 +91,7 @@ impl RowHeights {
 }
 
 /// A row of cards' height before any is laid out: the square picture and the text under it.
-pub(crate) fn estimated_row(card_width: Pixels) -> Pixels {
+pub fn estimated_row(card_width: Pixels) -> Pixels {
     card_width + px(150.)
 }
 
@@ -382,7 +387,7 @@ impl StudiesPage {
 
     /// Practice → Repertoire on this study.
     fn drill(id: String, window: &mut Window, cx: &mut App) {
-        crate::pages::practice::repertoire::train_study(id, window, cx);
+        kchess_practice::repertoire::train_study(id, window, cx);
     }
 
     /// Send a command and show its answer; a failure is a notification.
@@ -668,7 +673,7 @@ impl StudiesPage {
 
     /// The import dialog holding `pgn` already, as a file of several games dropped on the window
     /// offers it.
-    pub(crate) fn open_import_with(pgn: Option<String>, window: &mut Window, cx: &mut App) {
+    pub fn open_import_with(pgn: Option<String>, window: &mut Window, cx: &mut App) {
         let import = cx.new(|cx| ImportStudy::new(window, cx));
         if let Some(pgn) = pgn {
             import.update(cx, |import, cx| {
@@ -702,7 +707,7 @@ impl StudiesPage {
                     .primary()
                     .icon(icon("plus"))
                     .label("New study")
-                    .tooltip_with_action("New study", &crate::menu::New, None)
+                    .tooltip_with_action("New study", &kchess_nav::page::New, None)
                     .on_click(|_, window, cx| Self::create(window, cx)),
             )
     }
@@ -778,7 +783,7 @@ impl StudiesPage {
                             .icon(icon("cloud-upload"))
                             .disabled(busy)
                             .on_click(move |_, window, cx| {
-                                if let Some(page) = crate::shell::view::<StudiesPage>(cx) {
+                                if let Some(page) = kchess_nav::shell::view::<StudiesPage>(cx) {
                                     let id = upload.clone();
                                     page.update(cx, |page, cx| page.upload(id, true, window, cx));
                                 }
@@ -800,8 +805,8 @@ impl StudiesPage {
     }
 
     /// The rows' heights as measured (`ZERO` for a row not yet made), and the grid's height.
-    #[cfg(test)]
-    pub(crate) fn grid_layout(&self) -> (Vec<Pixels>, Pixels) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn grid_layout(&self) -> (Vec<Pixels>, Pixels) {
         (
             self.row_heights.borrow().heights.clone(),
             self.grid.bounds().size.height,
@@ -810,14 +815,14 @@ impl StudiesPage {
 
     /// Scroll the page as only the page itself would, with no new frame asked for (a scroll by
     /// the wheel asks for one).
-    #[cfg(test)]
-    pub(crate) fn scroll_to_top(&self) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn scroll_to_top(&self) {
         self.scroll.set_offset(point(px(0.), px(0.)));
     }
 
     /// The PGNs whose summaries are kept, in order.
-    #[cfg(test)]
-    pub(crate) fn kept_summaries(&self) -> Vec<String> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn kept_summaries(&self) -> Vec<String> {
         let mut kept: Vec<String> = self.summaries.borrow().keys().cloned().collect();
         kept.sort();
         kept
@@ -1336,6 +1341,28 @@ mod tests {
     use super::{
         import_chapters, import_name, natural_cmp, resolved_heights, rows_in_view, view_span,
     };
+
+    /// Other pages open Studies at its Lichess tab, and a study's Drill opens Practice on it;
+    /// each asks the shell to open its page.
+    #[gpui_kit::test]
+    fn studies_open_and_hand_a_study_to_practice(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = kchess_board::testing::Started::new(cx);
+        let shell = app.with_window(|window, cx| {
+            crate::studies::init(&Default::default(), cx);
+            let page = cx.new(|cx| super::StudiesPage::new(window, cx));
+            let shell = std::rc::Rc::new(kchess_nav::testing::OnlyPage::of(page));
+            cx.set_global(kchess_nav::shell::Navigator(shell.clone()));
+            shell
+        });
+        let tab = app.with_window(|window, cx| {
+            super::open_lichess(window, cx);
+            crate::prefs::get::<String>(cx, super::TAB, String::new())
+        });
+        assert_eq!(tab, "lichess");
+        app.with_window(|window, cx| super::StudiesPage::drill("s1".into(), window, cx));
+        assert_eq!(*shell.opened.borrow(), ["Studies", "Practice"]);
+    }
     use gpui_kit::{Bounds, point, px, size};
     use std::cmp::Ordering;
 
@@ -1468,9 +1495,9 @@ pub enum Action {
     Import,
 }
 
-impl crate::pages::PageAction for Action {
-    fn info(&self) -> crate::pages::ActionInfo {
-        use crate::pages::{ActionInfo, ActionRole};
+impl kchess_nav::page::PageAction for Action {
+    fn info(&self) -> kchess_nav::page::ActionInfo {
+        use kchess_nav::page::{ActionInfo, ActionRole};
         match self {
             Action::New => ActionInfo::new("studies:new", "New study", "plus", "create chapter")
                 .role(ActionRole::New),
@@ -1485,12 +1512,12 @@ impl crate::pages::PageAction for Action {
 }
 
 impl PageView for StudiesPage {
-    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
-        page: crate::pages::Page::Studies,
+    const INFO: kchess_nav::page::PageInfo = kchess_nav::page::PageInfo {
+        page: kchess_nav::page::Page::Studies,
         label: "Studies",
         short: "Studies",
         icon: "library-big",
-        group: Some(crate::pages::NavGroup::Review),
+        group: Some(kchess_nav::page::NavGroup::Review),
         keywords: "pgn chapters notes",
     };
 
@@ -1522,7 +1549,7 @@ impl PageView for StudiesPage {
 
 /// Studies at its Lichess tab: the connected account's own studies.
 pub fn open_lichess(window: &mut Window, cx: &mut App) {
-    crate::shell::show::<StudiesPage>(window, cx, |studies, window, cx| {
+    kchess_nav::shell::show::<StudiesPage>(window, cx, |studies, window, cx| {
         studies.show_lichess(window, cx)
     });
 }

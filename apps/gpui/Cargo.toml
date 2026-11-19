@@ -42,6 +42,8 @@ kchess-home.workspace = true
 kchess-local.workspace = true
 # The Practice page (`crates/kchess-practice`).
 kchess-practice.workspace = true
+# The Studies page (`crates/kchess-studies`).
+kchess-studies.workspace = true
 # Pinned: a newer gpui-kit requires a newer gpui-pre than the patched copy in vendor/gpui-pre
 # (Cargo.toml [patch.crates-io]); rebase that patch before moving it.
 gpui-kit = "=0.10.0"
@@ -124,6 +126,8 @@ kchess-home = { workspace = true, features = ["test-support"] }
 kchess-local = { workspace = true, features = ["test-support"] }
 # The Practice page's trainers, which the end-to-end tests read.
 kchess-practice = { workspace = true, features = ["test-support"] }
+# The Studies page's grid and summaries, which the end-to-end tests read.
+kchess-studies = { workspace = true, features = ["test-support"] }
 # Headless windows for the rendering regressions (`#[gpui_kit::test]`).
 gpui-kit = { version = "=0.10.0", features = ["test-support"] }
 # A fresh profile per end-to-end test (`src/e2e`).
