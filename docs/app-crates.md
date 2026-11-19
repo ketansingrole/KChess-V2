@@ -100,6 +100,12 @@ slower to make every other edit in the app a little faster. Practice, Watch and 
 rarely change, can only leave with what changes most (Online, `position_engine`, openings,
 Players), so step 6 stops here until those settle.
 
+Practice left after all (`crates/kchess-practice`), on request: the live Lichess game (`online`)
+and `position_engine` moved to `kchess-board`, beside the analysis board, so they joined no new
+crate to the chain; what the live game asks of the app (its notifications, the Online page) the
+app passes in as `online::Hooks`. Opening a game file moved to `kchess_board::export`, the
+opening a page drills (`OpeningChoice`) to `kchess_board::game`.
+
 ## The order
 
 Moving code out of the app can make edits to it slower until the app is small (above): some

@@ -18,14 +18,14 @@ use super::endgame_drills::move_squares;
 use super::endgames::{Chapter, Course, Step, TrainerEvent, finished};
 use super::engine_move::{EngineMove, HasEngine};
 use super::run::{self, TrainingItem};
-use crate::assets::icon;
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard, Circle};
 use crate::core::AppCore;
-use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Tone};
 use kchess_domain::training::endgames::san_from;
+use kchess_nav::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_ui::icon;
 
 /// The chapters' column beside the board, and the page width below which it goes under it.
 const CHAPTERS_WIDTH: Pixels = px(250.);
@@ -118,7 +118,7 @@ fn warn(cause: &str) {
 
 /// A lesson's actions, as its buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum LessonAction {
+pub enum LessonAction {
     Back,
     Hint,
     TakeBack,
@@ -269,7 +269,7 @@ impl EndgameLesson {
     }
 
     /// What the lesson's buttons can do now.
-    pub(crate) fn actions(&self) -> Vec<LessonAction> {
+    pub fn actions(&self) -> Vec<LessonAction> {
         let thinking = self.engine.thinking;
         let mut actions = vec![LessonAction::Back];
         if self.playable() {
@@ -731,7 +731,7 @@ impl EndgameLesson {
                         Button::new("lesson-flip")
                             .outline()
                             .icon(icon("arrow-up-down"))
-                            .tooltip(crate::menu::flip_label(cx))
+                            .tooltip(kchess_board::flip_label(cx))
                             .accessibility_label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     )

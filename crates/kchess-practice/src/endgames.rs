@@ -12,13 +12,13 @@ use kchess_contracts::types::{RunKind, RunSummary};
 
 use super::endgame_drills::EndgameDrills;
 use super::endgame_lesson::EndgameLesson;
-use crate::assets::icon;
 use crate::core::AppCore;
-use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::theme::{Palette, radii, tint};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
+use kchess_nav::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
+use kchess_ui::icon;
 
 const VIEW: &str = "kchess:endgame-view";
 const COURSES: &str = "courses";

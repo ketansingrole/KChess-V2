@@ -13,13 +13,13 @@ use kchess_contracts::Level;
 use kchess_contracts::check::LibraryId;
 use kchess_contracts::types::{Drill, MistakeGame, ProfileArea, Puzzle, ReviewSide};
 
-use crate::assets::icon;
 use crate::core::AppCore;
-use crate::pages::Page;
-use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
 use crate::puzzle_board::{PuzzleBoard, PuzzleBoardEvent};
 use crate::theme::{Palette, judgment_color};
 use crate::widgets;
+use kchess_nav::page::Page;
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
+use kchess_ui::icon;
 
 /// Answered right this many times in a row, a position is next due in four days or more: learned
 /// rather than still learning.
@@ -81,7 +81,7 @@ fn judgment_counts(items: &[&Drill]) -> Vec<(&'static str, String)> {
 
 /// The mistakes trainer's actions, as its buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum MistakeAction {
+pub enum MistakeAction {
     Flip,
     Hint,
     Solution,
@@ -228,13 +228,13 @@ impl Mistakes {
     }
 
     /// The board the drills are played on.
-    #[cfg(test)]
-    pub(crate) fn board(&self) -> &Entity<PuzzleBoard> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn board(&self) -> &Entity<PuzzleBoard> {
         &self.puzzle
     }
 
-    #[cfg(test)]
-    pub(crate) fn seed(&mut self, items: Vec<serde_json::Value>, cx: &mut Context<Self>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn seed(&mut self, items: Vec<serde_json::Value>, cx: &mut Context<Self>) {
         // A drill as the core lists it, with what a test leaves out filled in.
         self.items = items
             .into_iter()
@@ -251,7 +251,7 @@ impl Mistakes {
     }
 
     /// What the trainer's buttons can do now: the drill's, or the overview's.
-    pub(crate) fn actions(&self) -> Vec<MistakeAction> {
+    pub fn actions(&self) -> Vec<MistakeAction> {
         let due = !self.due().is_empty();
         let mut actions = Vec::new();
         if self.current.is_some() {
@@ -572,7 +572,7 @@ impl Mistakes {
                                     .icon(icon("chart-pie"))
                                     .label("Insights")
                                     .on_click(|_, window, cx| {
-                                        crate::shell::open(Page::Insights, window, cx)
+                                        kchess_nav::shell::open(Page::Insights, window, cx)
                                     }),
                             )
                         }),
@@ -650,7 +650,7 @@ impl Mistakes {
                             .icon(icon("history"))
                             .label("Review a game")
                             .on_click(|_, window, cx| {
-                                crate::shell::open(Page::History, window, cx)
+                                kchess_nav::shell::open(Page::History, window, cx)
                             }),
                     ),
                 )
@@ -699,8 +699,8 @@ impl Mistakes {
                 v_flex()
                     .gap(px(14.))
                     .px(side_padding(window))
-                    .pt(crate::play_layout::PAGE_TOP)
-                    .pb(crate::play_layout::PAGE_BOTTOM)
+                    .pt(kchess_nav::play_layout::PAGE_TOP)
+                    .pb(kchess_nav::play_layout::PAGE_BOTTOM)
                     .child(overview)
                     .children(self.render_games(cx, palette)),
             )
@@ -728,7 +728,7 @@ mod tests {
     #[gpui_kit::test]
     fn a_load_that_works_clears_an_earlier_failure(cx: &mut gpui_kit::TestAppContext) {
         use gpui_kit::AppContext as _;
-        let mut app = crate::e2e::Harness::start(cx);
+        let mut app = kchess_board::testing::Started::new(cx);
         let page = app.with_window(|window, cx| {
             let page = cx.new(|cx| super::Mistakes::new(window, cx));
             page.update(cx, |page, cx| {

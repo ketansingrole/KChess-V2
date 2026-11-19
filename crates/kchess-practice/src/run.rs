@@ -12,11 +12,11 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 
-use crate::assets::icon;
 use crate::core::AppCore;
 use crate::theme::{Palette, radii, tint};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill};
+use kchess_ui::icon;
 
 /// Run lengths in seconds; 0 is untimed practice.
 pub const LENGTHS: [(u32, &str); 5] = [
@@ -170,7 +170,7 @@ impl DrillRun {
     }
 
     /// Whether the clock is ticking.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn ticking(&self) -> bool {
         self.ticker.is_some()
     }

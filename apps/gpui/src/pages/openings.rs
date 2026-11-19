@@ -19,7 +19,6 @@ use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_domain::training::openings::{OpeningNode, opening_tree};
 use kchess_domain::variant::Variant;
-use serde::{Deserialize, Serialize};
 use shakmaty::{Color, Position as _};
 
 use crate::assets::icon;
@@ -72,12 +71,8 @@ const GROUPS: [(&str, &str, &[&str]); 4] = [
     ("other", "Other", &[]),
 ];
 
-/// An opening chosen to drill or opened lately (`OpeningChoice`).
-#[derive(Clone, Serialize, Deserialize)]
-pub struct OpeningChoice {
-    pub name: String,
-    pub moves: Vec<String>,
-}
+// An opening chosen to drill or opened lately, as Practice keeps it too (`kchess_board::game`).
+pub use crate::game::OpeningChoice;
 
 /// An opening as a card shows it: its name and code, its position and its moves.
 #[derive(Clone)]

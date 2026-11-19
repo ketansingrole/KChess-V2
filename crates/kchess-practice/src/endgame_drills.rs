@@ -14,12 +14,12 @@ use shakmaty::Color;
 use super::endgames::{Drill, TrainerEvent, drills, finished};
 use super::engine_move::{EngineMove, HasEngine};
 use super::run::{self, TrainingItem};
-use crate::assets::icon;
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
-use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
 use crate::widgets::{self, Tone};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_ui::icon;
 
 const GROUPS: [&str; 3] = ["Basic mates", "Pawn endings", "Rook endings"];
 
@@ -36,7 +36,7 @@ pub fn move_squares(fen: &str, uci: &str) -> Option<(shakmaty::Square, shakmaty:
 
 /// A drill's actions, as its buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum DrillAction {
+pub enum DrillAction {
     Hint,
     TakeBack,
     Flip,
@@ -232,7 +232,7 @@ impl EndgameDrills {
     }
 
     /// What the drill's buttons can do now.
-    pub(crate) fn actions(&self) -> Vec<DrillAction> {
+    pub fn actions(&self) -> Vec<DrillAction> {
         let thinking = self.engine.thinking;
         let mut actions = Vec::new();
         if self.your_turn() && !thinking {
@@ -486,7 +486,7 @@ impl Render for EndgameDrills {
                         Button::new("drill-flip")
                             .outline()
                             .icon(icon("arrow-up-down"))
-                            .tooltip(crate::menu::flip_label(cx))
+                            .tooltip(kchess_board::flip_label(cx))
                             .accessibility_label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     )

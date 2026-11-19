@@ -30,19 +30,19 @@ use serde_json::{Map, Value, json};
 use shakmaty::Color;
 
 use super::run;
-use crate::assets::icon;
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::STANDARD_FEN;
 use crate::game::tree::{TreeNode, child_path, comment_text};
-use crate::pages::Page;
-use crate::pages::openings::OpeningChoice;
-use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::studies::StudyHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice, Pill, Tone};
+use kchess_board::game::OpeningChoice;
 use kchess_games::random_unit;
+use kchess_nav::page::Page;
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_ui::icon;
 
 const STUDY: &str = "kchess:repertoire-study";
 const OPENING_CHOICE: &str = "kchess:repertoire-opening";
@@ -211,7 +211,7 @@ fn to_play(node: &TreeNode, color: Color) -> bool {
 
 /// The repertoire trainer's actions, as its buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum RepertoireAction {
+pub enum RepertoireAction {
     ShowMove,
     Restart,
     Review,
@@ -358,8 +358,8 @@ impl Repertoire {
     }
 
     /// How many repertoires have missed moves.
-    #[cfg(test)]
-    pub(crate) fn missed_repertoires(&self) -> usize {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn missed_repertoires(&self) -> usize {
         self.misses.len()
     }
 
@@ -818,7 +818,7 @@ impl Repertoire {
     }
 
     /// What the trainer's buttons can do now; nothing before there is a study or opening.
-    pub(crate) fn actions(&self, cx: &App) -> Vec<RepertoireAction> {
+    pub fn actions(&self, cx: &App) -> Vec<RepertoireAction> {
         if self.studies.is_empty() && Self::opening(cx).is_none() {
             return Vec::new();
         }
@@ -1136,13 +1136,13 @@ impl Repertoire {
                 Button::new("browse-openings")
                     .primary()
                     .label("Browse openings")
-                    .on_click(|_, window, cx| crate::shell::open(Page::Openings, window, cx)),
+                    .on_click(|_, window, cx| kchess_nav::shell::open(Page::Openings, window, cx)),
             )
             .child(
                 Button::new("open-studies")
                     .outline()
                     .label("Open studies")
-                    .on_click(|_, window, cx| crate::shell::open(Page::Studies, window, cx)),
+                    .on_click(|_, window, cx| kchess_nav::shell::open(Page::Studies, window, cx)),
             )
     }
 
@@ -1172,7 +1172,7 @@ impl Render for Repertoire {
         if self.studies.is_empty() && opening.is_none() {
             return div()
                 .size_full()
-                .px(crate::play_layout::side_padding(window))
+                .px(kchess_nav::play_layout::side_padding(window))
                 .pt(px(20.))
                 .child(widgets::card(&palette).child(Self::empty(
                     "Nothing to drill yet",
@@ -1453,14 +1453,14 @@ impl Render for Repertoire {
 }
 
 /// Practice → Repertoire on a study.
-pub(crate) fn train_study(id: String, window: &mut Window, cx: &mut App) {
+pub fn train_study(id: String, window: &mut Window, cx: &mut App) {
     crate::prefs::set(cx, STUDY, id);
     super::open_tab(super::Tab::Openings, window, cx);
 }
 
 /// Practice → Repertoire on an opening.
-pub(crate) fn train_opening(
-    choice: &crate::pages::openings::OpeningChoice,
+pub fn train_opening(
+    choice: &kchess_board::game::OpeningChoice,
     window: &mut Window,
     cx: &mut App,
 ) {

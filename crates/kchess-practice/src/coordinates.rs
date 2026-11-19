@@ -14,16 +14,16 @@ use serde_json::{Value, json};
 use shakmaty::{Color, Square};
 
 use super::run::{self, Drill, DrillRun, Stage, Tally};
-use crate::assets::icon;
 use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
 use crate::game::STANDARD_FEN;
-use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets::{self, Pill, Tone};
 use kchess_games::random_unit;
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_ui::icon;
 
 const FILES: [&str; 8] = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const RANKS: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
@@ -271,8 +271,8 @@ impl Coordinates {
     }
 
     /// The timers the drill keeps: its clock and the flash of the last answer.
-    #[cfg(test)]
-    pub(crate) fn timer_count(&self) -> usize {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn timer_count(&self) -> usize {
         usize::from(self.run.ticking()) + usize::from(self.flash_timer.is_some())
     }
 

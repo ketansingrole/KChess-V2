@@ -12,12 +12,12 @@ use kchess_contracts::types::LichessGame;
 use shakmaty::Color;
 
 use super::classics::{CLASSICS, winner};
-use crate::assets::icon;
 use crate::core::AppCore;
-use crate::pages::history::lichess::{RowDetail, game_row};
 use crate::player_search::{self, NameMatches};
 use crate::theme::Palette;
 use crate::widgets;
+use kchess_history::lichess::{RowDetail, game_row};
+use kchess_ui::icon;
 
 /// A game picked to guess through, as the side to guess.
 pub enum Found {
