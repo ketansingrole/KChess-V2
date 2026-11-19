@@ -3,7 +3,8 @@
 # `cargo test -p kchess-service` resolve tokio, serde and getrandom with different features, so
 # each compiled the core and its tests again under a new hash, and target/ kept every copy.
 # `cargo xtask check` refuses an outdated hack; after a dependency change run
-# `cargo hakari generate` (and `cargo hakari manage-deps` for a new workspace package).
+# `cargo hakari generate` (and `cargo hakari manage-deps` for a new workspace package, whose
+# library or program root then needs `use kchess_hack as _;`, or Cargo warns the hack is unused).
 hakari-package = "kchess-hack"
 dep-format-version = "4"
 resolver = "2"

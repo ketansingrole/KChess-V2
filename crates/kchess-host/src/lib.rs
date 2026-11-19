@@ -1,6 +1,9 @@
 //! What the core and its frontends read alike of the process they run in. Frontends name this
 //! crate rather than `kchess-core` for it (tooling/xtask/src/boundaries.rs).
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 pub mod env;
 mod redact;
 

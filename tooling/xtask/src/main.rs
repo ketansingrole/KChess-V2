@@ -1,5 +1,8 @@
 //! `cargo xtask <command>`: KChess's own tooling, in Rust like the rest of the repository.
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 mod app;
 mod app_icon;
 mod app_mutants;

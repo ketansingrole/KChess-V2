@@ -1,5 +1,8 @@
 //! The KChess headless core's services. Hosts drive it through `Core`.
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 pub use kchess_contracts::USER_AGENT;
 
 pub mod ai;

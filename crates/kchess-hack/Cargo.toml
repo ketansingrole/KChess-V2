@@ -23,6 +23,12 @@ slab = { version = "0.4" }
 [target.'cfg(all())'.build-dependencies]
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 
+# Its own code uses none of its dependencies: each is here only for the features it selects, the
+# case Cargo's `unused_dependencies` lint names as a false positive. Not the workspace's lints:
+# they are for code, and this package has none.
+[lints.cargo]
+unused_dependencies = "allow"
+
 # The parts of the file between the BEGIN HAKARI SECTION and END HAKARI SECTION comments
 # are managed by hakari.
 

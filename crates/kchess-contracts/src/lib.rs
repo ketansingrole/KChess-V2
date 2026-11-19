@@ -2,6 +2,9 @@
 //! its methods (`core_api`, with their typed `calls`), its events (`events`), and the errors and
 //! log levels that cross between them (`error`).
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 mod api;
 pub mod check;
 pub mod core_api;

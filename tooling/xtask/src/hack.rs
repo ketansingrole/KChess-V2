@@ -107,7 +107,41 @@ pub fn check() -> Result {
     )?;
     let metadata =
         serde_json::from_str(&metadata).map_err(|cause| format!("cargo metadata: {cause}"))?;
+    let source = |path: &str| std::fs::read_to_string(path).unwrap_or_default();
+    if let unnamed @ [_, ..] = unnamed(&metadata, source).as_slice() {
+        return Err(format!("{} {NAMED_HELP}", unnamed.join(", ")));
+    }
     unkept(&hack_only(&metadata), &kept(&read(DEPENDABOT)?))
+}
+
+/// How a package's code names the hack. Its code uses nothing of the hack, so without this line
+/// Cargo's `unused_dependencies` lint (Rust 1.100) warns about the dependency every time it
+/// compiles the package.
+const NAMED: &str = "use kchess_hack as _;";
+const NAMED_HELP: &str = "depend on the hack (`cargo hakari manage-deps`) without naming it: add \
+                          `use kchess_hack as _;` to the root of its library or program.";
+
+/// The packages that depend on the hack but name it in none of their libraries' or programs'
+/// roots (`src_path` in `cargo metadata --no-deps`), read by `read`.
+fn unnamed(metadata: &serde_json::Value, read: impl Fn(&str) -> String) -> Vec<String> {
+    let packages = metadata["packages"].as_array().into_iter().flatten();
+    packages
+        .filter(|package| {
+            let mut dependencies = package["dependencies"].as_array().into_iter().flatten();
+            dependencies.any(|dependency| dependency["name"] == "kchess-hack")
+        })
+        .filter(|package| {
+            let targets = package["targets"].as_array().into_iter().flatten();
+            !targets
+                .filter(|target| {
+                    let mut kinds = target["kind"].as_array().into_iter().flatten();
+                    kinds.any(|kind| kind == "lib" || kind == "bin")
+                })
+                .filter_map(|target| target["src_path"].as_str())
+                .any(|root| read(root).lines().any(|line| line.trim() == NAMED))
+        })
+        .filter_map(|package| package["name"].as_str().map(str::to_string))
+        .collect()
 }
 
 /// The packages only the hack depends on, from `cargo metadata --no-deps`: no other manifest
@@ -232,6 +266,39 @@ mod tests {
         ]});
         assert_eq!(hack_only(&metadata), set(&["zbus"]));
         assert_eq!(hack_only(&serde_json::json!({})), set(&[]));
+    }
+
+    /// Rust 1.100's `unused_dependencies` lint warned about the hack in every package that
+    /// compiled (2026-11-20): only a library's or program's root naming it counts as using it.
+    #[test]
+    fn a_package_depending_on_the_hack_names_it_in_a_library_or_program() {
+        let package = |name: &str, dependency: &str, targets: &[(&str, &str)]| {
+            let targets: Vec<_> = targets
+                .iter()
+                .map(|(kind, path)| serde_json::json!({ "kind": [kind], "src_path": path }))
+                .collect();
+            serde_json::json!({
+                "name": name, "dependencies": [{ "name": dependency }], "targets": targets,
+            })
+        };
+        let metadata = serde_json::json!({ "packages": [
+            package("named-lib", "kchess-hack", &[("lib", "/named"), ("bin", "/bare")]),
+            package("named-bin", "kchess-hack", &[("lib", "/bare"), ("bin", "/named")]),
+            package("in-a-test", "kchess-hack", &[("lib", "/bare"), ("test", "/named")]),
+            package("in-a-comment", "kchess-hack", &[("lib", "/commented")]),
+            package("unnamed", "kchess-hack", &[("bin", "/bare")]),
+            package("no-hack", "serde", &[("lib", "/bare")]),
+        ]});
+        let read = |path: &str| match path {
+            "/named" => format!("//! Docs.\n\n    {NAMED}\nmod x;\n"),
+            "/commented" => format!("// {NAMED}\n"),
+            _ => "mod x;\n".to_string(),
+        };
+        assert_eq!(
+            unnamed(&metadata, read),
+            ["in-a-test", "in-a-comment", "unnamed"]
+        );
+        assert!(unnamed(&serde_json::json!({}), read).is_empty());
     }
 
     #[test]
