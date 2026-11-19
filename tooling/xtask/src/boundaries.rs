@@ -27,7 +27,7 @@ struct Rule {
 }
 
 /// The frontends' sources, searched from the repository root: the app's and the CLI's.
-const FRONTENDS: [&str; 9] = [
+const FRONTENDS: [&str; 10] = [
     APP_SOURCES[0],
     APP_SOURCES[1],
     APP_SOURCES[2],
@@ -36,6 +36,7 @@ const FRONTENDS: [&str; 9] = [
     APP_SOURCES[5],
     APP_SOURCES[6],
     APP_SOURCES[7],
+    APP_SOURCES[8],
     "apps/cli/src",
 ];
 
@@ -535,7 +536,7 @@ fn proportional_timers(files: &[(String, String)]) -> Vec<String> {
     let mut found: Vec<String> = [
         "crates/kchess-puzzles/src/rush.rs",
         "apps/gpui/src/pages/practice/run.rs",
-        "apps/gpui/src/pages/local.rs",
+        "crates/kchess-local/src/lib.rs",
     ]
     .iter()
     .filter(|path| !text_of(path).contains("widgets::timer("))
@@ -623,7 +624,7 @@ fn a_clock_without_tabular_figures_is_found() {
     let files = [
         file("crates/kchess-puzzles/src/rush.rs", "widgets::timer(text)"),
         file("apps/gpui/src/pages/practice/run.rs", "div().child(text)"),
-        file("apps/gpui/src/pages/local.rs", "widgets::timer(text)"),
+        file("crates/kchess-local/src/lib.rs", "widgets::timer(text)"),
         file(
             "apps/gpui/src/pages/settings/updates.rs",
             "fn title_bar_button() {\n    label(percent)\n}\n",

@@ -6,21 +6,7 @@ use gpui_kit::*;
 
 use crate::theme::Palette;
 
-/// A key a page takes while no text field has the keys: the key names it matches, how the
-/// shortcuts list shows them, and what it does there.
-pub(crate) struct PageKey<A> {
-    pub action: A,
-    pub keys: &'static [&'static str],
-    pub shown: &'static str,
-    pub does: &'static str,
-}
-
-/// The action of `key` among a page's `keys`.
-pub(crate) fn page_key<A: Copy>(keys: &[PageKey<A>], key: &str) -> Option<A> {
-    keys.iter()
-        .find(|entry| entry.keys.contains(&key))
-        .map(|entry| entry.action)
-}
+pub(crate) use kchess_nav::page::{PageKey, page_key};
 
 /// A page's keys as the list's rows.
 fn rows<A>(keys: &[PageKey<A>]) -> impl Iterator<Item = (&'static str, String)> + '_ {

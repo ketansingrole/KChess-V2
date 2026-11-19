@@ -1598,16 +1598,6 @@ impl PageView for ComputerPage {
     }
 }
 
-/// Whether a game can start from `setup`: a standard position the engine takes (not one with
-/// too many pieces), or a legal one in its variant.
-pub(crate) fn playable(setup: &Setup) -> bool {
-    if setup.variant.standard_rules() {
-        crate::game::position_problem(&setup.fen).is_none()
-    } else {
-        setup.position().is_some()
-    }
-}
-
 /// Play Stockfish at a level and side, from Quick Pick.
 pub fn play_level(level: &str, color: &'static str, window: &mut Window, cx: &mut App) {
     let level = level.to_string();
@@ -1620,7 +1610,7 @@ pub fn play_level(level: &str, color: &'static str, window: &mut Window, cx: &mu
 /// move. A position that cannot be played only opens the page.
 pub fn play_from(setup: Setup, window: &mut Window, cx: &mut App) {
     let color = kchess_domain::rules::fen_turn(&setup.fen);
-    if !playable(&setup) {
+    if !crate::game::playable(&setup) {
         crate::shell::open(crate::pages::Page::Computer, window, cx);
         return;
     }

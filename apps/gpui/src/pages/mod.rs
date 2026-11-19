@@ -9,7 +9,7 @@ pub mod friends;
 pub use kchess_history as history;
 pub use kchess_home as home;
 pub mod insights;
-pub mod local;
+pub use kchess_local as local;
 pub mod online;
 pub mod openings;
 pub mod players;

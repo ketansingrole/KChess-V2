@@ -112,7 +112,9 @@ Each step is one pull request, each green on its own.
    `pages::puzzles`, so its links and tests did not change.
    History followed (`crates/kchess-history`), once Settings' categories and opening Settings at
    one had moved to `kchess_nav::sections` and `shell::open_settings`; then Home
-   (`crates/kchess-home`), which needed only History.
+   (`crates/kchess-home`), which needed only History; then Over the board (`crates/kchess-local`),
+   once a page's keys (`PageKey`), the New action and whether a setup is playable had left the
+   app.
 6. **The rest, once the app is small enough that its crates pay off**: analysis, Settings, Online,
    tournaments and the pieces they share (`position_engine`, `ai`, `puzzle_board`, cards and
    `quick_pick`). Measure first: by then an edit in the app should cost well under the 9 s it

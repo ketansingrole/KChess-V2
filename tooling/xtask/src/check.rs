@@ -1319,6 +1319,7 @@ mod tests {
                 APP.to_string(),
                 "kchess-history".to_string(),
                 "kchess-home".to_string(),
+                "kchess-local".to_string(),
                 "kchess-nav".to_string(),
                 "kchess-puzzles".to_string(),
                 "kchess-ui".to_string()
@@ -1361,6 +1362,7 @@ mod tests {
                 "kchess-puzzles",
                 "kchess-history",
                 "kchess-home",
+                "kchess-local",
                 "xtask"
             ]
         );
@@ -1374,6 +1376,7 @@ mod tests {
                 "kchess-puzzles",
                 "kchess-history",
                 "kchess-home",
+                "kchess-local",
                 "xtask"
             ]
         );
