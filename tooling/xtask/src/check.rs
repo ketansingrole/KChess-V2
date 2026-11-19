@@ -1323,6 +1323,7 @@ mod tests {
                 "kchess-nav".to_string(),
                 "kchess-practice".to_string(),
                 "kchess-puzzles".to_string(),
+                "kchess-studies".to_string(),
                 "kchess-ui".to_string()
             ])
         );
@@ -1365,6 +1366,7 @@ mod tests {
                 "kchess-home",
                 "kchess-local",
                 "kchess-practice",
+                "kchess-studies",
                 "xtask"
             ]
         );
@@ -1380,6 +1382,7 @@ mod tests {
                 "kchess-home",
                 "kchess-local",
                 "kchess-practice",
+                "kchess-studies",
                 "xtask"
             ]
         );

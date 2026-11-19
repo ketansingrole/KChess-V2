@@ -104,7 +104,8 @@ Practice left after all (`crates/kchess-practice`), on request: the live Lichess
 and `position_engine` moved to `kchess-board`, beside the analysis board, so they joined no new
 crate to the chain; what the live game asks of the app (its notifications, the Online page) the
 app passes in as `online::Hooks`. Opening a game file moved to `kchess_board::export`, the
-opening a page drills (`OpeningChoice`) to `kchess_board::game`.
+opening a page drills (`OpeningChoice`) to `kchess_board::game`. Studies followed (`crates/kchess-studies`), which
+needed only Practice.
 
 ## The order
 

@@ -4469,6 +4469,7 @@ dependencies = [
  "kchess-practice",
  "kchess-puzzles",
  "kchess-service",
+ "kchess-studies",
  "kchess-testkit",
  "kchess-ui",
  "nix",
@@ -4697,6 +4698,24 @@ dependencies = [
  "tempfile",
  "tokio",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "kchess-studies"
+version = "2026.11.7"
+dependencies = [
+ "gpui-kit",
+ "kchess-app",
+ "kchess-board",
+ "kchess-contracts",
+ "kchess-domain",
+ "kchess-games",
+ "kchess-hack",
+ "kchess-nav",
+ "kchess-practice",
+ "kchess-ui",
+ "serde_json",
+ "shakmaty",
 ]
 
 [[package]]

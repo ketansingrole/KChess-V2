@@ -16,7 +16,7 @@ pub mod players;
 pub use kchess_practice as practice;
 pub use kchess_puzzles as puzzles;
 pub mod settings;
-pub mod studies;
+pub use kchess_studies as studies;
 pub mod study_bar;
 pub mod tournaments;
 pub mod watch;

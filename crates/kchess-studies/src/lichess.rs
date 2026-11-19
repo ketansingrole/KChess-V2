@@ -15,13 +15,13 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{CARD_GAP, CARD_MIN, StudiesPage, summary};
-use crate::assets::icon;
 use crate::core::AppCore;
 use crate::studies::StudyHandle;
 use crate::theme::Palette;
 use crate::widgets::time_ago;
 use crate::widgets::{self, Choice};
 use kchess_games::now_ms;
+use kchess_ui::icon;
 
 /// A list fetched this recently is shown without asking again; a failure waits this long.
 const FRESH_FOR: f64 = 5. * 60_000.;
