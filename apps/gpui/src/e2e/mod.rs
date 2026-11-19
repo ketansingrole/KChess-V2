@@ -24,6 +24,7 @@ mod online;
 mod openings;
 mod palette;
 mod perf;
+mod position_engine;
 mod practice;
 mod puzzles;
 mod review;

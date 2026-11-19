@@ -19,7 +19,9 @@ pub mod game;
 pub mod game_image;
 pub mod microphone;
 pub mod notation;
+pub mod online;
 pub mod player_search;
+pub mod position_engine;
 pub mod puzzle_board;
 pub mod puzzle_db;
 pub mod rating_history;
@@ -32,7 +34,7 @@ pub mod widgets;
 use gpui_kit::{App, Global};
 // The design system and the app's services, under the names the app's modules use.
 use kchess_app::{
-    accounts, core, loading, log, network, played, prefs, quit, settings, slow_calls,
+    accounts, core, loading, log, network, played, prefs, quit, settings, slow_calls, timer,
 };
 use kchess_ui::keys::keys;
 use kchess_ui::{chart, dates, theme};
