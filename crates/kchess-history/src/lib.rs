@@ -1,10 +1,11 @@
-//! Game history: the games played against the
+//! The History page: the games played against the
 //! computer and over the board, filtered by result and searched by opponent or opening, twenty to a
 //! page, each opened to go through
 //! move by move, exported as PGN or deleted.
 
 use crate::loading::Epoch;
-use crate::pages::PageView;
+use kchess_nav::page::PageView;
+// The app's services, the design system and the board, under the names this page's modules use.
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -13,25 +14,27 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_app::{accounts, core, loading, network, played, reviews, settings};
+use kchess_board::{board, export, game, notation, widgets};
 use kchess_contracts::calls;
 use kchess_contracts::check::Username;
 use kchess_contracts::types::{HistoryKind, LichessGame, PlayedGame, Reply};
 use kchess_domain::variant::Variant;
+use kchess_ui::{dates, quick_pick, theme};
 use serde_json::json;
 use shakmaty::Color;
 
-use crate::assets::icon;
-use crate::pages::Page;
-use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::{PlayedGames, PlayedHandle};
-use crate::quick_pick;
+use kchess_nav::page::Page;
+use kchess_nav::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
+use kchess_ui::icon;
 use replay::GameReplay;
 
-pub(crate) mod lichess;
+pub mod lichess;
 mod replay;
 use crate::theme::Palette;
 use crate::widgets::Pressable as _;
-use crate::widgets::{self, KeyboardFocus as _, Look, Pill};
+use crate::widgets::{KeyboardFocus as _, Look, Pill};
 use kchess_board::analysis::Opening;
 
 const PAGE_SIZE: usize = 20;
@@ -72,7 +75,7 @@ fn filter_of(outcome: &str) -> Option<Filter> {
 }
 
 /// Whether openings are named (Settings → Gameplay → _Show opening names_).
-pub(crate) fn opening_names_shown(cx: &App) -> bool {
+pub fn opening_names_shown(cx: &App) -> bool {
     cx.global::<crate::settings::SettingsHandle>()
         .0
         .read(cx)
@@ -83,7 +86,7 @@ pub(crate) fn opening_names_shown(cx: &App) -> bool {
 
 /// A played game's opening, with its ECO code ("C20 King's Pawn Game"); none for a variant or a
 /// line no opening names.
-pub(crate) fn opening_name(game: &PlayedGame) -> Option<String> {
+pub fn opening_name(game: &PlayedGame) -> Option<String> {
     if game.setup.variant != Variant::Standard {
         return None;
     }
@@ -116,10 +119,10 @@ fn badge_of(outcome: &str) -> (&'static str, Look, Option<Color>) {
 }
 
 /// The width of a column of result badges: "In progress", the longest, fits.
-pub(crate) const BADGE_WIDTH: Pixels = px(96.);
+pub const BADGE_WIDTH: Pixels = px(96.);
 
 /// A game's result as a badge, at least `width` wide: never narrower than its label.
-pub(crate) fn badge(outcome: &str, width: Option<Pixels>, palette: &Palette) -> impl IntoElement {
+pub fn badge(outcome: &str, width: Option<Pixels>, palette: &Palette) -> impl IntoElement {
     let (label, look, side) = badge_of(outcome);
     widgets::badge(label, look, palette)
         .when_some(width, |badge, width| badge.min_w(width))
@@ -128,7 +131,7 @@ pub(crate) fn badge(outcome: &str, width: Option<Pixels>, palette: &Palette) -> 
 }
 
 /// Full moves, a lone white move counting as one.
-pub(crate) fn move_count(plies: usize) -> String {
+pub fn move_count(plies: usize) -> String {
     let moves = plies.div_ceil(2);
     format!("{moves} {}", if moves == 1 { "move" } else { "moves" })
 }
@@ -156,7 +159,7 @@ fn time_label(control: &str) -> String {
 }
 
 /// Who the game was against: the engine for computer games, both names at the board.
-pub(crate) fn opponent(game: &PlayedGame) -> String {
+pub fn opponent(game: &PlayedGame) -> String {
     match game.player_side() {
         Some(Color::White) => game.black.as_str().to_string(),
         Some(Color::Black) => game.white.as_str().to_string(),
@@ -443,22 +446,22 @@ impl HistoryPage {
     }
 
     /// Open the first game on the Lichess list's page, as its row does.
-    #[cfg(test)]
-    pub(crate) fn open_first_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_first_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(game) = self.lichess.games.first().cloned() {
             self.open_lichess(game, window, cx);
         }
     }
 
     /// The first game on the Lichess list's page.
-    #[cfg(test)]
-    pub(crate) fn first_lichess(&self) -> Option<LichessGame> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn first_lichess(&self) -> Option<LichessGame> {
         self.lichess.games.first().cloned()
     }
 
     /// The Lichess game open, and the ids its list's page shows.
-    #[cfg(test)]
-    pub(crate) fn lichess_open(&self) -> (Option<String>, Vec<String>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn lichess_open(&self) -> (Option<String>, Vec<String>) {
         let id = |game: &LichessGame| game.id.clone();
         (
             self.lichess.open.as_ref().map(|(game, _)| id(game)),
@@ -467,8 +470,8 @@ impl HistoryPage {
     }
 
     /// The Lichess tab once loaded: its total and the openings of the games listed.
-    #[cfg(test)]
-    pub(crate) fn lichess_listed(&self) -> Option<(usize, Vec<String>)> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn lichess_listed(&self) -> Option<(usize, Vec<String>)> {
         let tab = &self.lichess;
         (!tab.loading).then(|| {
             let openings = tab
@@ -482,13 +485,8 @@ impl HistoryPage {
 
     /// The Lichess tab searched for `text`, as typed in its field (the screenshots, which are
     /// taken on macOS).
-    #[cfg(all(test, target_os = "macos"))]
-    pub(crate) fn search_lichess(
-        &mut self,
-        text: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    #[cfg(all(any(test, feature = "test-support"), target_os = "macos"))]
+    pub fn search_lichess(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.choose_source(Source::Lichess, cx);
         self.lichess.search_input.update(cx, |input, cx| {
             input.set_value(text.to_string(), window, cx)
@@ -832,7 +830,7 @@ impl HistoryPage {
 
     pub fn step(
         &mut self,
-        direction: crate::swipe::Direction,
+        direction: kchess_nav::swipe::Direction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -992,7 +990,7 @@ impl HistoryPage {
                 Button::new("history-play")
                     .primary()
                     .label(label)
-                    .on_click(move |_, window, cx| crate::shell::open(page, window, cx)),
+                    .on_click(move |_, window, cx| kchess_nav::shell::open(page, window, cx)),
                 palette,
             )
             .into_any_element();
@@ -1443,9 +1441,9 @@ impl Render for HistoryPage {
     }
 }
 
-impl crate::pages::PageAction for Action {
-    fn info(&self) -> crate::pages::ActionInfo {
-        use crate::pages::ActionInfo;
+impl kchess_nav::page::PageAction for Action {
+    fn info(&self) -> kchess_nav::page::ActionInfo {
+        use kchess_nav::page::ActionInfo;
         match self {
             Action::AllGames => {
                 ActionInfo::new("history:all", "All games", "arrow-left", "back list")
@@ -1479,12 +1477,12 @@ impl crate::pages::PageAction for Action {
 }
 
 impl PageView for HistoryPage {
-    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+    const INFO: kchess_nav::page::PageInfo = kchess_nav::page::PageInfo {
         page: Page::History,
         label: "Game history",
         short: "Game history",
         icon: "history",
-        group: Some(crate::pages::NavGroup::Review),
+        group: Some(kchess_nav::page::NavGroup::Review),
         keywords: "past games archive",
     };
 
@@ -1494,7 +1492,7 @@ impl PageView for HistoryPage {
         HistoryPage::new(window, cx)
     }
 
-    fn can_step(&self, direction: crate::swipe::Direction, cx: &App) -> bool {
+    fn can_step(&self, direction: kchess_nav::swipe::Direction, cx: &App) -> bool {
         if direction < 0 {
             return self.open.is_some() || self.lichess.open.is_some();
         }
@@ -1513,7 +1511,7 @@ impl PageView for HistoryPage {
 
     fn step(
         &mut self,
-        direction: crate::swipe::Direction,
+        direction: kchess_nav::swipe::Direction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1553,9 +1551,9 @@ impl PageView for HistoryPage {
         this.update(cx, |page, cx| page.act(action, window, cx));
     }
 
-    fn places(_: &App) -> Vec<crate::pages::PageCommand> {
-        vec![crate::pages::PageCommand {
-            info: crate::pages::ActionInfo::new(
+    fn places(_: &App) -> Vec<kchess_nav::page::PageCommand> {
+        vec![kchess_nav::page::PageCommand {
+            info: kchess_nav::page::ActionInfo::new(
                 "history:lichess",
                 "Lichess games",
                 "history",
@@ -1570,19 +1568,19 @@ impl PageView for HistoryPage {
 /// Game history's Lichess tab showing one account's games.
 pub fn open_account(account: &str, window: &mut Window, cx: &mut App) {
     let account = account.to_string();
-    crate::shell::show::<HistoryPage>(window, cx, move |history, window, cx| {
+    kchess_nav::shell::show::<HistoryPage>(window, cx, move |history, window, cx| {
         history.show_lichess_account(account, window, cx)
     });
 }
 
 /// Game history's Lichess tab.
 pub fn open_lichess(window: &mut Window, cx: &mut App) {
-    crate::shell::show::<HistoryPage>(window, cx, |history, _, cx| history.show_lichess(cx));
+    kchess_nav::shell::show::<HistoryPage>(window, cx, |history, _, cx| history.show_lichess(cx));
 }
 
 /// Open a synced Lichess game in Game history.
 pub fn open_lichess_game(game: LichessGame, window: &mut Window, cx: &mut App) {
-    crate::shell::show::<HistoryPage>(window, cx, move |history, window, cx| {
+    kchess_nav::shell::show::<HistoryPage>(window, cx, move |history, window, cx| {
         history.show_lichess_game(game, window, cx)
     });
 }
@@ -1590,7 +1588,7 @@ pub fn open_lichess_game(game: LichessGame, window: &mut Window, cx: &mut App) {
 /// Open a played game in Game history (Home's recent games).
 pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
     let id = id.to_string();
-    crate::shell::show::<HistoryPage>(window, cx, move |history, window, cx| {
+    kchess_nav::shell::show::<HistoryPage>(window, cx, move |history, window, cx| {
         history.show_game(&id, window, cx)
     });
 }
@@ -1599,6 +1597,67 @@ pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
 mod tests {
     use super::{PlayedGame, move_count, time_label};
     use serde_json::json;
+
+    /// Another page opens History at what it asked for: the Lichess tab, an account's games or
+    /// one Lichess game there, or a game played here; each asks the shell to open History. The
+    /// command palette offers the Lichess tab.
+    #[gpui_kit::test]
+    fn other_pages_open_history_at_what_they_asked(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        use kchess_nav::page::PageView as _;
+        let played = played_game("computer", "1-0");
+        let mut app = kchess_board::testing::Started::new(cx);
+        let (page, shell) = app.with_window(|window, cx| {
+            crate::accounts::init(cx);
+            let library = kchess_contracts::types::Library {
+                games: vec![played],
+                ..Default::default()
+            };
+            crate::played::init(&library, cx);
+            let page = cx.new(|cx| super::HistoryPage::new(window, cx));
+            let shell = std::rc::Rc::new(kchess_nav::testing::OnlyPage::of(page.clone()));
+            cx.set_global(kchess_nav::shell::Navigator(shell.clone()));
+            (page, shell)
+        });
+        let source = |app: &mut kchess_board::testing::Started| {
+            app.with_window(|_, cx| page.read(cx).source)
+        };
+        app.with_window(super::open_lichess);
+        assert_eq!(source(&mut app), super::Source::Lichess);
+        app.with_window(|window, cx| super::open_game("g", window, cx));
+        assert_eq!(source(&mut app), super::Source::Computer);
+        app.with_window(|window, cx| super::open_account("alice", window, cx));
+        let account = app.with_window(|_, cx| page.read(cx).lichess.account.clone());
+        assert_eq!(
+            (source(&mut app), account.as_str()),
+            (super::Source::Lichess, "alice")
+        );
+        let game = serde_json::from_value(json!({
+            "id": "lichess1", "account": "alice", "opponent": "bob", "color": "white",
+            "createdAt": 0, "lastMoveAt": 0, "rated": true, "speed": "blitz", "perf": "blitz",
+            "status": "mate", "moves": "e4 e5",
+        }))
+        .expect("a Lichess game");
+        // The game opens once its moves are read, in a task of the page's window; here it is
+        // asked for.
+        let before = app.with_window(|_, cx| page.read(cx).lichess.opening.current());
+        app.with_window(|window, cx| super::open_lichess_game(game, window, cx));
+        let asked = app.with_window(|_, cx| !page.read(cx).lichess.opening.is_current(before));
+        assert_eq!((source(&mut app), asked), (super::Source::Lichess, true));
+        assert_eq!(*shell.opened.borrow(), ["History"; 4]);
+        let places = app.with_window(|_, cx| super::HistoryPage::places(cx).len());
+        assert_eq!(places, 1);
+    }
+
+    fn played_game(source: &str, result: &str) -> PlayedGame {
+        serde_json::from_value(json!({
+            "id": "g", "source": source, "white": "You", "black": "Stockfish", "result": result,
+            "finished": true, "reason": "-", "startedAt": 1, "updatedAt": 2,
+            "timeControl": "-", "moves": ["e2e4", "e7e5"],
+            "setup": { "variant": "standard", "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
+        }))
+        .expect("a played game")
+    }
 
     /// Each kind of saved game ends for its player, or by colour at the board.
     #[test]

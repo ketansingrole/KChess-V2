@@ -34,6 +34,8 @@ kchess-board.workspace = true
 kchess-nav.workspace = true
 # The Puzzles page (`crates/kchess-puzzles`).
 kchess-puzzles.workspace = true
+# The History page (`crates/kchess-history`).
+kchess-history.workspace = true
 # Pinned: a newer gpui-kit requires a newer gpui-pre than the patched copy in vendor/gpui-pre
 # (Cargo.toml [patch.crates-io]); rebase that patch before moving it.
 gpui-kit = "=0.10.0"
@@ -108,6 +110,8 @@ kchess-app = { workspace = true, features = ["test-support"] }
 kchess-board = { workspace = true, features = ["test-support"] }
 # The Puzzles page's board and puzzle, which the end-to-end tests read.
 kchess-puzzles = { workspace = true, features = ["test-support"] }
+# The History page's Lichess list, which the end-to-end tests read.
+kchess-history = { workspace = true, features = ["test-support"] }
 # Headless windows for the rendering regressions (`#[gpui_kit::test]`).
 gpui-kit = { version = "=0.10.0", features = ["test-support"] }
 # A fresh profile per end-to-end test (`src/e2e`).

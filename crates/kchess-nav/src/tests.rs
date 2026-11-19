@@ -299,3 +299,35 @@ fn keys_given_elsewhere_since_stay_there(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// The pages' test shell holds its one page: it finds only that page, keeps what it was asked to
+/// open, and Settings' categories chosen.
+#[gpui_kit::test]
+fn the_test_shell_holds_only_its_page(cx: &mut TestAppContext) {
+    set_registry(&REGISTRY);
+    let window = cx.add_window(|_, _| Blank);
+    let only = cx
+        .update_window(window.into(), |_, window, cx| {
+            let page = cx.new(|cx| Stand::<12>::create(window, cx));
+            let only = Rc::new(crate::testing::OnlyPage::of(page.clone()));
+            cx.set_global(Navigator(only.clone()));
+            assert_eq!(shell::current_page(cx), Some(Page::Watch));
+            assert_eq!(
+                shell::view::<Stand<12>>(cx).map(|view| view.entity_id()),
+                Some(page.entity_id())
+            );
+            assert_eq!(
+                shell::made::<Stand<12>>(window, cx).map(|view| view.entity_id()),
+                Some(page.entity_id())
+            );
+            assert!(shell::view::<Stand<6>>(cx).is_none());
+            shell::open(Page::Puzzles, window, cx);
+            shell::open_settings(Section::Accounts, window, cx);
+            only
+        })
+        .unwrap();
+    assert_eq!(
+        *only.opened.borrow(),
+        ["Puzzles", "Settings", "Settings:Accounts"]
+    );
+}
