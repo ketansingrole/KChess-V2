@@ -414,7 +414,9 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
             .update(|cx| crate::shell::view::<InsightsPage>(cx))
             .expect("the Insights page")
     };
-    app.wait_for("the first report", |_, cx| page_loaded(cx));
+    // The report read once the account's first sync ended: one read while it ran is read again
+    // at its end, and the variants shown below went with it (Windows, Stress, 2026-11-19).
+    app.wait_for("the report after the sync", |_, cx| page_settled(cx));
     assert!(app.with_window(|window, _| window.try_find_by_label("Variant").is_none()));
     assert!(app.with_window(|window, _| window.try_find_by_label("Speed").is_some()));
 
@@ -438,8 +440,8 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
         Some(kchess_domain::variant::Variant::Chess960)
     );
 
-    fn page_loaded(cx: &gpui_kit::App) -> bool {
-        crate::shell::view::<InsightsPage>(cx).is_some_and(|page| page.read(cx).loaded())
+    fn page_settled(cx: &gpui_kit::App) -> bool {
+        crate::shell::view::<InsightsPage>(cx).is_some_and(|page| page.read(cx).settled())
     }
 }
 
@@ -474,6 +476,9 @@ fn insights_read_again_when_a_sync_ends(cx: &mut gpui_kit::TestAppContext) {
         Some(0.),
         "no games while the sync runs"
     );
+    // Loaded, but not settled: the sync's end replaces this report, and with it anything a test
+    // showed in it (`insights_choose_a_variant_only_when_one_was_played`, Windows, 2026-11-19).
+    assert!(!app.cx.update(|cx| insights.read(cx).settled()));
 
     // The accounts change while the sync still runs: nothing new to report.
     let asked = app.cx.update(|cx| insights.read(cx).requests());
@@ -489,6 +494,7 @@ fn insights_read_again_when_a_sync_ends(cx: &mut gpui_kit::TestAppContext) {
             .report_total()
             .is_some_and(|total| total > 0.)
     });
+    assert!(app.cx.update(|cx| insights.read(cx).settled()));
 }
 
 /// Insights show time use only for games with clocks: the results short of time, the clock

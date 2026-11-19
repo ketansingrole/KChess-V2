@@ -324,61 +324,6 @@ fn a_generic_call_answers_the_sign_in_page() {
     assert!(page.contains("/oauth"), "{page}");
 }
 
-/// A binary of another workspace package, built first: Cargo does nothing when it is fresh, and
-/// a binary left over from before a change (a service of another protocol) is never run.
-#[cfg(unix)]
-fn workspace_binary(package: &str, name: &str) -> std::path::PathBuf {
-    let target = std::env::current_exe()
-        .ok()
-        .and_then(|exe| Some(exe.parent()?.parent()?.to_path_buf()))
-        .expect("the test executable is in target/<profile>/deps");
-    let mut build = Command::new(env!("CARGO"));
-    build.args(["build", "-q", "--locked", "-p", package, "--bin", name]);
-    for key in cargo_test_vars() {
-        build.env_remove(key);
-    }
-    // Into the target folder this test runs from, which `cargo llvm-cov` moves with a flag that
-    // a nested build does not inherit.
-    build
-        .arg("--target-dir")
-        .arg(target.parent().expect("the target folder"));
-    if target.file_name().is_some_and(|name| name == "release") {
-        build.arg("--release");
-    }
-    assert!(
-        build.status().expect("cargo runs").success(),
-        "{name} builds"
-    );
-    target.join(name)
-}
-
-/// The variables Cargo sets for this test's own package (`CARGO_MANIFEST_DIR`, `OUT_DIR`, `CARGO_PKG_*`…),
-/// left out of a nested build: build scripts that watch one (ring's) would rebuild for it, and
-/// the next outer build rebuild them back (2026-11-10: about 7 s for every test that built).
-#[cfg(unix)]
-fn cargo_test_vars() -> Vec<std::ffi::OsString> {
-    std::env::vars_os()
-        .map(|(key, _)| key)
-        .filter(|key| key.to_str().is_some_and(is_cargo_test_var))
-        .collect()
-}
-
-#[cfg(unix)]
-fn is_cargo_test_var(key: &str) -> bool {
-    key.starts_with("CARGO_PKG_")
-        || key.starts_with("CARGO_BIN_EXE_")
-        || matches!(
-            key,
-            "CARGO_MANIFEST_DIR"
-                | "CARGO_MANIFEST_PATH"
-                | "CARGO_CRATE_NAME"
-                | "CARGO_PRIMARY_PACKAGE"
-                | "CARGO_TARGET_TMPDIR"
-                | "CARGO_BIN_NAME"
-                | "OUT_DIR"
-        )
-}
-
 /// What `child` printed once it finished, which it must within `limit`: a command that never
 /// ends is stopped and fails its test there, rather than hang it.
 #[cfg(unix)]
@@ -407,8 +352,8 @@ fn scripted_engine() -> std::path::PathBuf {
 /// The scripted engine in `mode` (`search`, `quick`, `review`), chosen by its copy's name.
 #[cfg(unix)]
 fn scripted_engine_in(mode: &str) -> std::path::PathBuf {
-    let fake = workspace_binary("kchess-core", "kchess-fake-uci");
-    let target = fake.parent().expect("target folder").to_path_buf();
+    let fake = kchess_testkit::build::workspace_binary("kchess-core", "kchess-fake-uci");
+    let target = fake.path().parent().expect("target folder").to_path_buf();
     // A copy of this call's own, so tests running at once never share a half-written file.
     // One folder per call: the tests of this binary run at once, in one process.
     static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -416,7 +361,7 @@ fn scripted_engine_in(mode: &str) -> std::path::PathBuf {
     let folder = target.join(format!("cli-engine-{mode}-{}-{call}", std::process::id()));
     std::fs::create_dir_all(&folder).expect("engine folder");
     let copy = folder.join(format!("engine-{mode}"));
-    std::fs::copy(&fake, &copy).expect("copy the scripted engine");
+    fake.copy_to(&copy);
     copy
 }
 
@@ -462,7 +407,9 @@ fn analyze_streams_until_interrupted() {
 #[cfg(unix)]
 #[test]
 fn the_cli_shares_the_profiles_core_unless_embedded() {
-    let service = workspace_binary("kchess-service", "kchess-service");
+    let service = kchess_testkit::build::workspace_binary("kchess-service", "kchess-service")
+        .path()
+        .to_path_buf();
     let runtime = tempfile::tempdir().expect("runtime");
     let run = |profile: &std::path::Path, embedded: bool| {
         let mut command = kchess_cli();
