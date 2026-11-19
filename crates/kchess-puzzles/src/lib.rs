@@ -2035,7 +2035,6 @@ mod tests {
         let mut app = kchess_board::testing::Started::new(cx);
         let shell = app.with_window(|window, cx| {
             crate::puzzle_db::init(cx);
-            crate::accounts::init(cx);
             let page = cx.new(|cx| super::PuzzlesPage::new(window, cx));
             let shell = std::rc::Rc::new(kchess_nav::testing::OnlyPage::of(page));
             cx.set_global(kchess_nav::shell::Navigator(shell.clone()));

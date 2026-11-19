@@ -21,7 +21,7 @@ on:
         default: kchess-domain
         type: choice
         # Every workspace member but the workspace hack (xtask's `workflows` tests hold it to that).
-        options: [kchess-domain, kchess-core, kchess-gpui, kchess-service, kchess-cli, kchess-games, kchess-contracts, kchess-delta, kchess-host, kchess-testkit, kchess-ui, kchess-app, kchess-board, kchess-nav, kchess-puzzles, kchess-history, kchess-voice, xtask]
+        options: [kchess-domain, kchess-core, kchess-gpui, kchess-service, kchess-cli, kchess-games, kchess-contracts, kchess-delta, kchess-host, kchess-testkit, kchess-ui, kchess-app, kchess-board, kchess-nav, kchess-puzzles, kchess-history, kchess-home, kchess-voice, xtask]
 
 permissions:
   contents: read
@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - if: inputs.package == 'kchess-gpui' || inputs.package == 'kchess-ui' || inputs.package == 'kchess-app' || inputs.package == 'kchess-board' || inputs.package == 'kchess-nav' || inputs.package == 'kchess-puzzles' || inputs.package == 'kchess-history'
+      - if: inputs.package == 'kchess-gpui' || inputs.package == 'kchess-ui' || inputs.package == 'kchess-app' || inputs.package == 'kchess-board' || inputs.package == 'kchess-nav' || inputs.package == 'kchess-puzzles' || inputs.package == 'kchess-history' || inputs.package == 'kchess-home'
         uses: ./.github/actions/install-gpui-libs
       # CI's caches, read only: this workflow saves none of its own.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2

@@ -3,9 +3,12 @@
 //! page, each opened to go through
 //! move by move, exported as PGN or deleted.
 
-use crate::loading::Epoch;
-use kchess_nav::page::PageView;
 // The app's services, the design system and the board, under the names this page's modules use.
+use kchess_app::{accounts, core, loading, network, played, reviews, settings};
+use kchess_board::{board, export, game, notation, widgets};
+use kchess_ui::{dates, quick_pick, theme};
+
+use crate::loading::Epoch;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -14,13 +17,11 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_app::{accounts, core, loading, network, played, reviews, settings};
-use kchess_board::{board, export, game, notation, widgets};
 use kchess_contracts::calls;
 use kchess_contracts::check::Username;
 use kchess_contracts::types::{HistoryKind, LichessGame, PlayedGame, Reply};
 use kchess_domain::variant::Variant;
-use kchess_ui::{dates, quick_pick, theme};
+use kchess_nav::page::PageView;
 use serde_json::json;
 use shakmaty::Color;
 
@@ -1608,7 +1609,6 @@ mod tests {
         let played = played_game("computer", "1-0");
         let mut app = kchess_board::testing::Started::new(cx);
         let (page, shell) = app.with_window(|window, cx| {
-            crate::accounts::init(cx);
             let library = kchess_contracts::types::Library {
                 games: vec![played],
                 ..Default::default()

@@ -7,7 +7,7 @@ pub mod computer_options;
 pub mod editor;
 pub mod friends;
 pub use kchess_history as history;
-pub mod home;
+pub use kchess_home as home;
 pub mod insights;
 pub mod local;
 pub mod online;

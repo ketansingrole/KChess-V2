@@ -17,13 +17,13 @@ use kchess_contracts::types::{
     RatingSeries, UserPerf,
 };
 
-use crate::assets::icon;
 use crate::core::AppCore;
-use crate::pages::history::lichess::{RowDetail, game_row};
 use crate::rating_history::RatingHistory;
 use crate::theme::{Palette, radii};
 use crate::widgets;
 use crate::widgets::Pressable as _;
+use kchess_history::lichess::{RowDetail, game_row};
+use kchess_ui::icon;
 
 /// Synced games shown.
 const RECENT: u64 = 6;
@@ -332,8 +332,8 @@ impl LichessActivity {
     }
 
     /// The heading, the name shown and the games counted.
-    #[cfg(test)]
-    pub(crate) fn summary(&self) -> (&'static str, String, f64) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn summary(&self) -> (&'static str, String, f64) {
         (
             self.source.heading(),
             format!("@{}", self.handle()),
@@ -525,14 +525,10 @@ impl Render for LichessActivity {
                                         .child(icon("arrow-right").size(px(14.))),
                                 )
                                 .on_click(move |_, window, cx| match &all_source {
-                                    Source::Lichess => {
-                                        crate::pages::history::open_lichess(window, cx)
+                                    Source::Lichess => kchess_history::open_lichess(window, cx),
+                                    Source::Chesscom(_) => {
+                                        kchess_history::open_account(&all_account, window, cx)
                                     }
-                                    Source::Chesscom(_) => crate::pages::history::open_account(
-                                        &all_account,
-                                        window,
-                                        cx,
-                                    ),
                                 }),
                         )
                     }),
@@ -568,7 +564,7 @@ impl Render for LichessActivity {
                             None,
                             RowDetail::Brief,
                             move |window, cx| {
-                                crate::pages::history::open_lichess_game(chosen.clone(), window, cx)
+                                kchess_history::open_lichess_game(chosen.clone(), window, cx)
                             },
                             &palette,
                         )
@@ -652,13 +648,13 @@ mod tests {
         assert_eq!(unknown, ["blitz", "rapid"]);
     }
 
-    use crate::e2e::Harness;
     use gpui_kit::AppContext as _;
+    use kchess_board::testing::Started;
 
     /// The empty state waits for the saved games: it does not flash before them.
     #[gpui_kit::test]
     fn no_synced_games_shows_only_once_they_are_read(cx: &mut gpui_kit::TestAppContext) {
-        let mut app = Harness::start(cx);
+        let mut app = Started::new(cx);
         let activity = app.with_window(|window, cx| {
             let activity = cx.new(|cx| LichessActivity::new(window, cx));
             activity.update(cx, |activity, cx| activity.load("nobody", cx));
