@@ -1,8 +1,12 @@
-//! Home: where to start, the position you left, the recent games played here, and connecting
+//! The Home page: where to start, the position you left, the recent games played here, and connecting
 //! Lichess.
 //! It reads the unfinished computer game and the accounts again each time it is shown.
 
-use crate::pages::PageView;
+// The app's services, the design system and the board, under the names this page's modules use.
+use kchess_app::{accounts, core, loading, log, network, played, settings};
+use kchess_board::{board, game, rating_history, widgets};
+use kchess_ui::{dates, theme};
+
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -11,23 +15,23 @@ use kchess_contracts::Variant;
 use kchess_contracts::calls;
 use kchess_contracts::types::{ComputerSession, HistoryKind, PlayedGame, SessionDocument};
 use kchess_domain::variant::Setup;
+use kchess_nav::page::PageView;
 use shakmaty::{Color, Position as _};
 
-use crate::assets::icon;
 use crate::board::ChessBoard;
 use crate::core::AppCore;
 use crate::game::view;
-use crate::pages::Page;
-use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::PlayedHandle;
 use crate::theme::{Palette, radii};
-use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
 use kchess_domain::games::Host;
 use kchess_domain::games::computer::ComputerGame;
+use kchess_nav::page::Page;
+use kchess_nav::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
+use kchess_ui::icon;
 
-mod lichess;
+pub mod lichess;
 
 /// A game's variant by name, when it is not standard chess.
 fn variant_of(game: &PlayedGame) -> Option<String> {
@@ -222,15 +226,15 @@ impl HomePage {
         match action {
             Action::Review => {
                 if let Some(id) = self.reviewable(cx) {
-                    crate::pages::history::open_game(&id, window, cx);
+                    kchess_history::open_game(&id, window, cx);
                 }
             }
         }
     }
 
     /// The activity card shown, if any.
-    #[cfg(test)]
-    pub(crate) fn activity(&self) -> Option<Entity<lichess::LichessActivity>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn activity(&self) -> Option<Entity<lichess::LichessActivity>> {
         self.activity.as_ref().map(|(_, view)| view.clone())
     }
 
@@ -324,7 +328,7 @@ fn tile(
         .text_color(palette.highlighted)
         .cursor_pointer()
         .pressable_tile(palette)
-        .on_click(move |_, window, cx| crate::shell::open(page, window, cx))
+        .on_click(move |_, window, cx| kchess_nav::shell::open(page, window, cx))
         .child(
             div()
                 .flex_none()
@@ -454,7 +458,7 @@ impl Render for HomePage {
                     .as_ref()
                     .is_none_or(|(seen, _)| *seen != key)
                 {
-                    let name = crate::pages::history::opening_name(game);
+                    let name = kchess_history::opening_name(game);
                     self.last_opening = Some((key, name));
                 }
                 // A variant game is named by its variant, as its row is; a standard one by its
@@ -463,21 +467,17 @@ impl Render for HomePage {
                     self.last_opening
                         .as_ref()
                         .and_then(|(_, name)| name.clone())
-                        .filter(|_| crate::pages::history::opening_names_shown(cx))
+                        .filter(|_| kchess_history::opening_names_shown(cx))
                 });
                 (
-                    Some((crate::pages::history::opponent(game), None)),
+                    Some((kchess_history::opponent(game), None)),
                     Some(
                         v_flex()
                             .gap(px(6.))
                             .child(
                                 h_flex()
                                     .gap(px(8.))
-                                    .child(crate::pages::history::badge(
-                                        game.outcome(),
-                                        None,
-                                        &palette,
-                                    ))
+                                    .child(kchess_history::badge(game.outcome(), None, &palette))
                                     .child(short_date(game.started_at)),
                             )
                             .children(opening.map(|opening| {
@@ -515,8 +515,8 @@ impl Render for HomePage {
             .cursor_pointer()
             .pressable_fade(0.92)
             .on_click(move |_, window, cx| match &board_game {
-                Some(id) => crate::pages::history::open_game(id, window, cx),
-                None => crate::shell::open(Page::Computer, window, cx),
+                Some(id) => kchess_history::open_game(id, window, cx),
+                None => kchess_nav::shell::open(Page::Computer, window, cx),
             })
             .children(board);
         let primary = Button::new(if unfinished {
@@ -531,12 +531,12 @@ impl Render for HomePage {
         } else {
             "Play the computer"
         })
-        .on_click(|_, window, cx| crate::shell::open(Page::Computer, window, cx));
+        .on_click(|_, window, cx| kchess_nav::shell::open(Page::Computer, window, cx));
         let review = opens.map(|id| {
             Button::new("home-review")
                 .outline()
                 .label("Review")
-                .on_click(move |_, window, cx| crate::pages::history::open_game(&id, window, cx))
+                .on_click(move |_, window, cx| kchess_history::open_game(&id, window, cx))
         });
         let has_about = title.is_some();
         let about = v_flex()
@@ -631,7 +631,7 @@ impl Render for HomePage {
                                     .child(icon("arrow-right").size(px(14.))),
                             )
                             .on_click(|_, window, cx| {
-                                crate::shell::open(Page::History, window, cx)
+                                kchess_nav::shell::open(Page::History, window, cx)
                             }),
                     ),
             )
@@ -657,16 +657,16 @@ impl Render for HomePage {
                             .cursor_pointer()
                             .pressable(&palette)
                             .on_click(move |_, window, cx| {
-                                crate::pages::history::open_game(&id, window, cx)
+                                kchess_history::open_game(&id, window, cx)
                             })
                             .child(
                                 div()
                                     .id(("home-game-outcome", index))
                                     .test_support()
                                     .flex_none()
-                                    .child(crate::pages::history::badge(
+                                    .child(kchess_history::badge(
                                         game.outcome(),
-                                        Some(crate::pages::history::BADGE_WIDTH),
+                                        Some(kchess_history::BADGE_WIDTH),
                                         &palette,
                                     )),
                             )
@@ -676,7 +676,7 @@ impl Render for HomePage {
                                     .min_w_0()
                                     .truncate()
                                     .font_weight(FontWeight::MEDIUM)
-                                    .child(crate::pages::history::opponent(&game)),
+                                    .child(kchess_history::opponent(&game)),
                             )
                             .child(
                                 div()
@@ -684,8 +684,7 @@ impl Render for HomePage {
                                     .text_right()
                                     .text_color(palette.text_muted)
                                     .child({
-                                        let count =
-                                            crate::pages::history::move_count(game.moves.len());
+                                        let count = kchess_history::move_count(game.moves.len());
                                         match variant_of(&game) {
                                             Some(variant) => format!("{variant} · {count}"),
                                             None => count,
@@ -813,10 +812,10 @@ impl Render for HomePage {
     }
 }
 
-impl crate::pages::PageAction for Action {
-    fn info(&self) -> crate::pages::ActionInfo {
+impl kchess_nav::page::PageAction for Action {
+    fn info(&self) -> kchess_nav::page::ActionInfo {
         match self {
-            Action::Review => crate::pages::ActionInfo::new(
+            Action::Review => kchess_nav::page::ActionInfo::new(
                 "home:review",
                 "Review last game",
                 "microscope",
@@ -827,12 +826,12 @@ impl crate::pages::PageAction for Action {
 }
 
 impl PageView for HomePage {
-    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+    const INFO: kchess_nav::page::PageInfo = kchess_nav::page::PageInfo {
         page: Page::Dashboard,
         label: "Home",
         short: "Home",
         icon: "house",
-        group: Some(crate::pages::NavGroup::Home),
+        group: Some(kchess_nav::page::NavGroup::Home),
         keywords: "start overview",
     };
 
@@ -867,6 +866,33 @@ mod tests {
     use gpui_kit::px;
 
     use super::{TILE, arrangement};
+
+    /// Review opens the last game played in History.
+    #[gpui_kit::test]
+    fn review_opens_the_last_game_in_history(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let game = serde_json::from_value(json!({
+            "id": "g", "source": "computer", "white": "You", "black": "Stockfish",
+            "result": "1-0", "finished": true, "reason": "-", "startedAt": 1, "updatedAt": 2,
+            "timeControl": "-", "moves": ["e2e4", "e7e5"],
+            "setup": { "variant": "standard", "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
+        }))
+        .expect("a played game");
+        let mut app = kchess_board::testing::Started::new(cx);
+        let shell = app.with_window(|window, cx| {
+            let library = kchess_contracts::types::Library {
+                games: vec![game],
+                ..Default::default()
+            };
+            crate::played::init(&library, cx);
+            let page = cx.new(super::HomePage::new);
+            let shell = std::rc::Rc::new(kchess_nav::testing::OnlyPage::of(page.clone()));
+            cx.set_global(kchess_nav::shell::Navigator(shell.clone()));
+            page.update(cx, |page, cx| page.act(super::Action::Review, window, cx));
+            shell
+        });
+        assert_eq!(*shell.opened.borrow(), ["History"]);
+    }
 
     /// A 1000px window with the sidebar open leaves Home about 680px: the tiles once shared
     /// what was left beside the board and were cut short ("Analysis bo…").

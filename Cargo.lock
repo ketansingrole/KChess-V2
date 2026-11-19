@@ -4462,6 +4462,7 @@ dependencies = [
  "kchess-games",
  "kchess-hack",
  "kchess-history",
+ "kchess-home",
  "kchess-host",
  "kchess-nav",
  "kchess-puzzles",
@@ -4577,6 +4578,23 @@ dependencies = [
  "kchess-contracts",
  "kchess-domain",
  "kchess-hack",
+ "kchess-nav",
+ "kchess-ui",
+ "serde_json",
+ "shakmaty",
+]
+
+[[package]]
+name = "kchess-home"
+version = "2026.11.7"
+dependencies = [
+ "gpui-kit",
+ "kchess-app",
+ "kchess-board",
+ "kchess-contracts",
+ "kchess-domain",
+ "kchess-hack",
+ "kchess-history",
  "kchess-nav",
  "kchess-ui",
  "serde_json",
