@@ -407,6 +407,64 @@ fn app_sources() -> Vec<(String, String)> {
         .collect()
 }
 
+/// Each item of a UI crate the app is built from compiled only for that crate's own tests, as
+/// `path:line`: the app's tests build the crate without `cfg(test)`, so such an item is missing
+/// from them. A test module is the only test-only item; anything the app's tests use sits behind
+/// the crate's `test-support` feature as well. History's `search_lichess`, test-only on macOS,
+/// failed only the macOS build (2026-11-19), and a `cfg(test)` check once went quiet unseen.
+fn test_only_items(files: &[(String, String)]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (path, text) in files {
+        if path.starts_with("apps/") {
+            continue;
+        }
+        let lines: Vec<&str> = text.lines().collect();
+        for (index, line) in lines.iter().enumerate() {
+            let line = line.trim();
+            let test_only = line.starts_with("#[cfg(")
+                && line.contains("test")
+                && !line.contains("feature = \"test-support\"");
+            let item = lines[index + 1..]
+                .iter()
+                .map(|next| next.trim())
+                .find(|next| !next.starts_with("#["));
+            let module =
+                item.is_some_and(|item| item.starts_with("mod ") || item.starts_with("pub mod "));
+            if test_only && !module {
+                found.push(format!("{path}:{}", index + 1));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn the_app_crates_compile_for_the_apps_tests_as_for_their_own() {
+    let mut files = Vec::new();
+    for dir in &APP_SOURCES[1..] {
+        sources_under(&root(), dir, &mut files).expect("the app's crates' sources");
+    }
+    let found = test_only_items(&files);
+    assert!(
+        found.is_empty(),
+        "test-only items outside test-support: {found:?}"
+    );
+}
+
+#[test]
+fn a_test_only_item_is_found_but_not_a_test_module() {
+    let files = [
+        file(
+            "crates/kchess-ui/src/a.rs",
+            "#[cfg(test)]\nmod tests {}\n#[cfg(all(test, target_os = \"macos\"))]\n\
+             #[allow(unused)]\npub fn shown() {}\n#[cfg(any(test, feature = \"test-support\"))]\n\
+             pub fn kept() {}\n",
+        ),
+        file("apps/gpui/src/a.rs", "#[cfg(test)]\nfn helper() {}\n"),
+    ];
+    assert_eq!(test_only_items(&files), ["crates/kchess-ui/src/a.rs:3"]);
+}
+
 /// Each file with a still loader: the loader icon outside `spinner`, or a "Loading…" written as
 /// a plain hint, which has no spinner (`loading` has one).
 fn still_loaders(files: &[(String, String)]) -> Vec<String> {

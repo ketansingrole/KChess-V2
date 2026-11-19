@@ -485,13 +485,8 @@ impl HistoryPage {
 
     /// The Lichess tab searched for `text`, as typed in its field (the screenshots, which are
     /// taken on macOS).
-    #[cfg(all(test, target_os = "macos"))]
-    pub(crate) fn search_lichess(
-        &mut self,
-        text: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    #[cfg(all(any(test, feature = "test-support"), target_os = "macos"))]
+    pub fn search_lichess(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.choose_source(Source::Lichess, cx);
         self.lichess.search_input.update(cx, |input, cx| {
             input.set_value(text.to_string(), window, cx)

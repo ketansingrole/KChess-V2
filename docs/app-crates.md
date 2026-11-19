@@ -132,7 +132,9 @@ Each step is one pull request, each green on its own.
 - No `#[cfg(test)]` outside its test modules: the app's tests build the crate without it, so code
   that only exists for them (`slow_calls`' record of a frame's slow calls) sits behind a
   `test-support` feature the app's `[dev-dependencies]` turns on, with a test in the app that it
-  is on. The check went quiet without it, and nothing failed.
+  is on. The check went quiet without it, and nothing failed. xtask's `boundaries` test now refuses
+  any other test-only item in these crates, `cfg(all(test, target_os = "macos"))` too: one
+  failed only the macOS build.
 - No `unwrap` or `expect` outside tests: a library is linted for them (`cargo xtask check`),
   where the app's binary is not.
 - A place in the Mutants workflow's package list (`.github/workflows/mutants.yml`), with GPUI's
