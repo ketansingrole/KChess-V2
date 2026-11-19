@@ -106,6 +106,14 @@ pub fn position_problem(fen: &str) -> Option<&'static str> {
     kchess_domain::position::fen_problem(fen).map(kchess_domain::position::FenProblem::message)
 }
 
+/// An opening chosen to drill or opened lately: its name and moves, kept by the Openings page and
+/// Practice's repertoire.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct OpeningChoice {
+    pub name: String,
+    pub moves: Vec<String>,
+}
+
 /// Whether a game can start from `setup`: a standard position the engine takes (not one with
 /// too many pieces), or a legal one in its variant.
 pub fn playable(setup: &Setup) -> bool {

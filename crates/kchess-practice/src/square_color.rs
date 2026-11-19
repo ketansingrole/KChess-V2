@@ -12,14 +12,14 @@ use serde_json::json;
 
 use super::coordinates::random_square;
 use super::run::{self, Drill, DrillRun, Stage, Tally};
-use crate::assets::icon;
-use crate::play_layout::{PAGE_BOTTOM, PANEL_MAX, side_padding};
 use crate::theme::{Palette, radii, tint};
 use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
+use kchess_nav::play_layout::{PAGE_BOTTOM, PANEL_MAX, side_padding};
+use kchess_ui::icon;
 
 const FLASH: Duration = Duration::from_millis(300);
 const COLOR_GRAMMAR: [&str; 3] = ["light", "dark", "[unk]"];
@@ -161,8 +161,8 @@ impl SquareColors {
     }
 
     /// The timers the drill keeps: its clock and the flash of the last answer.
-    #[cfg(test)]
-    pub(crate) fn timer_count(&self) -> usize {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn timer_count(&self) -> usize {
         usize::from(self.run.ticking()) + usize::from(self.flash_timer.is_some())
     }
 

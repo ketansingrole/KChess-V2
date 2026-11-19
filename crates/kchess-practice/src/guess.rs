@@ -20,17 +20,17 @@ use shakmaty::{Color, Position as _};
 
 use super::guess_find::{Found, GameFinder};
 use super::run;
-use crate::assets::icon;
 use crate::board::{Arrow, BoardEvent, ChessBoard};
 use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::game::tree::TreeNode;
 use crate::game::view;
 use crate::online::OnlineHandle;
-use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
 use crate::position_engine::{EngineLook, PositionEngine};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::widgets::{self, Pill, Tone};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
+use kchess_ui::icon;
 
 const SIDE: &str = "kchess:guess-side";
 /// The other side's move follows a guess after this long.
@@ -334,16 +334,16 @@ impl GuessMoves {
     }
 
     /// Whether the core has said if the engine is installed; `forget` makes it unsaid again.
-    #[cfg(test)]
-    pub(crate) fn engine_status_known(&mut self, forget: bool) -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn engine_status_known(&mut self, forget: bool) -> bool {
         if forget {
             self.engine_ready = None;
         }
         self.engine_ready.is_some()
     }
 
-    #[cfg(test)]
-    pub(crate) fn answer_engine_status(&mut self, ready: bool, cx: &mut Context<Self>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn answer_engine_status(&mut self, ready: bool, cx: &mut Context<Self>) {
         self.engine_known(ready, cx);
     }
 
@@ -734,7 +734,7 @@ impl GuessMoves {
     }
 
     fn choose_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        crate::links::choose_game_file(window, cx, |this, text, window, cx| match text {
+        kchess_board::export::choose_game_file(window, cx, |this, text, window, cx| match text {
             Some(text) => {
                 this.pgn
                     .update(cx, |field, cx| field.set_value(text.clone(), window, cx));
@@ -853,8 +853,8 @@ impl GuessMoves {
             .child(
                 v_flex()
                     .px(side_padding(window))
-                    .pt(crate::play_layout::PAGE_TOP)
-                    .pb(crate::play_layout::PAGE_BOTTOM)
+                    .pt(kchess_nav::play_layout::PAGE_TOP)
+                    .pb(kchess_nav::play_layout::PAGE_BOTTOM)
                     .gap(px(16.))
                     .child(self.finder.clone())
                     .child(card),
@@ -1108,14 +1108,35 @@ impl Render for GuessMoves {
 }
 
 /// A PGN's moves and start as guessing would play them through, or why it cannot be guessed.
-#[cfg(test)]
-pub(super) fn loaded(pgn: &str) -> Result<(Vec<String>, Setup), &'static str> {
+#[cfg(any(test, feature = "test-support"))]
+pub fn loaded(pgn: &str) -> Result<(Vec<String>, Setup), &'static str> {
     Game::from_pgn(pgn).map(|game| (game.moves, game.setup))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{EngineLine, Game, eval_of};
+
+    /// A game file chosen in the dialog is read into the PGN field.
+    #[gpui_kit::test]
+    fn a_game_file_chosen_fills_the_field(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let folder = tempfile::tempdir().expect("a folder");
+        let path = folder.path().join("game.pgn");
+        std::fs::write(&path, "1. e4 e5 *").expect("a game file");
+        let mut app = kchess_board::testing::Started::new(cx);
+        let guess = app.with_window(|window, cx| {
+            let guess = cx.new(|cx| super::GuessMoves::new(window, cx));
+            guess.update(cx, |guess, cx| guess.choose_file(window, cx));
+            guess
+        });
+        assert!(app.cx().did_prompt_for_paths());
+        app.cx()
+            .simulate_path_prompt_response(|_| Some(vec![path.clone()]));
+        app.cx().run_until_parked();
+        let field = app.with_window(|_, cx| guess.read(cx).pgn.read(cx).value().to_string());
+        assert_eq!(field, "1. e4 e5 *");
+    }
     use kchess_domain::training::guess::Eval;
     use shakmaty::Color;
 

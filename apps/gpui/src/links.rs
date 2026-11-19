@@ -241,8 +241,8 @@ pub fn open_pasted(window: &mut Window, cx: &mut App) {
     }
 }
 
-/// The largest file a drop reads: the import's own limit for a PGN.
-const DROPPED_MAX: u64 = 2 * 1024 * 1024;
+// Reading a game file, here and from the pages that open one (`kchess_board::export`).
+pub use crate::export::{choose_game_file, read_game_file};
 
 /// A PGN or FEN file dropped on the window, from any page: one game or a position opens on the
 /// analysis board, as if pasted into its import; several games are offered as a study, in the
@@ -273,79 +273,9 @@ pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
     });
 }
 
-/// Ask for a game file, then hand `read` its text (`read_game_file`), or `None` when it cannot be
-/// read as one. Nothing happens when the dialog is cancelled.
-pub fn choose_game_file<V: 'static>(
-    window: &mut Window,
-    cx: &mut Context<V>,
-    read: impl FnOnce(&mut V, Option<String>, &mut Window, &mut Context<V>) + 'static,
-) {
-    let chosen = cx.prompt_for_paths(PathPromptOptions {
-        files: true,
-        directories: false,
-        multiple: false,
-        prompt: Some("Open".into()),
-    });
-    cx.spawn_in(window, async move |this, cx| {
-        let Ok(Ok(Some(paths))) = chosen.await else {
-            return;
-        };
-        let Some(path) = paths.first() else {
-            return;
-        };
-        let text = read_game_file(path);
-        let _ = this.update_in(cx, |this, window, cx| read(this, text, window, cx));
-    })
-    .detach();
-}
-
-/// A PGN or FEN file's text (`.pgn`, `.fen` or `.txt`, up to 2 MB), or `None`.
-pub fn read_game_file(path: &std::path::Path) -> Option<String> {
-    let readable = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            ["pgn", "fen", "txt"].contains(&extension.to_ascii_lowercase().as_str())
-        });
-    if !readable {
-        return None;
-    }
-    // The opened file itself must be a regular file (a symlink to `/dev/zero` or a FIFO named
-    // `.pgn` reports a length of 0), and the read stops past the limit whatever it reported.
-    use std::io::Read as _;
-    let file = std::fs::File::open(path).ok()?;
-    let meta = file.metadata().ok()?;
-    if !meta.is_file() || meta.len() > DROPPED_MAX {
-        return None;
-    }
-    let mut text = String::new();
-    file.take(DROPPED_MAX + 1).read_to_string(&mut text).ok()?;
-    (text.len() as u64 <= DROPPED_MAX).then_some(text)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{DROPPED_MAX, Link, classify, read_game_file};
-
-    #[test]
-    fn a_game_file_under_the_limit_reads() {
-        let folder = tempfile::tempdir().unwrap();
-        let path = folder.path().join("game.pgn");
-        std::fs::write(&path, "1. e4 e5 *").unwrap();
-        assert_eq!(read_game_file(&path).as_deref(), Some("1. e4 e5 *"));
-        std::fs::write(&path, vec![b'a'; DROPPED_MAX as usize + 1]).unwrap();
-        assert_eq!(read_game_file(&path), None);
-    }
-
-    /// A `.pgn` symlink to `/dev/zero` reported a length of 0 and was read until memory ran out.
-    #[cfg(unix)]
-    #[test]
-    fn a_device_behind_a_game_name_is_refused() {
-        let folder = tempfile::tempdir().unwrap();
-        let path = folder.path().join("game.pgn");
-        std::os::unix::fs::symlink("/dev/zero", &path).unwrap();
-        assert_eq!(read_game_file(&path), None);
-    }
+    use super::{Link, classify};
 
     /// Each kind of text is read as what it is, a study's link before a game's.
     #[test]

@@ -438,9 +438,65 @@ pub fn export_menu(
         )
 }
 
+/// The largest game file read (opened or dropped): the import's own limit for a PGN.
+pub const DROPPED_MAX: u64 = 2 * 1024 * 1024;
+
+/// Ask for a game file, then hand `read` its text (`read_game_file`), or `None` when it cannot be
+/// read as one. Nothing happens when the dialog is cancelled.
+pub fn choose_game_file<V: 'static>(
+    window: &mut Window,
+    cx: &mut Context<V>,
+    read: impl FnOnce(&mut V, Option<String>, &mut Window, &mut Context<V>) + 'static,
+) {
+    let chosen = cx.prompt_for_paths(PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: Some("Open".into()),
+    });
+    cx.spawn_in(window, async move |this, cx| {
+        let Ok(Ok(Some(paths))) = chosen.await else {
+            return;
+        };
+        let Some(path) = paths.first() else {
+            return;
+        };
+        let text = read_game_file(path);
+        let _ = this.update_in(cx, |this, window, cx| read(this, text, window, cx));
+    })
+    .detach();
+}
+
+/// A PGN or FEN file's text (`.pgn`, `.fen` or `.txt`, up to 2 MB), or `None`.
+pub fn read_game_file(path: &std::path::Path) -> Option<String> {
+    let readable = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["pgn", "fen", "txt"].contains(&extension.to_ascii_lowercase().as_str())
+        });
+    if !readable {
+        return None;
+    }
+    // The opened file itself must be a regular file (a symlink to `/dev/zero` or a FIFO named
+    // `.pgn` reports a length of 0), and the read stops past the limit whatever it reported.
+    use std::io::Read as _;
+    let file = std::fs::File::open(path).ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > DROPPED_MAX {
+        return None;
+    }
+    let mut text = String::new();
+    file.take(DROPPED_MAX + 1).read_to_string(&mut text).ok()?;
+    (text.len() as u64 <= DROPPED_MAX).then_some(text)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{PlayedGame, game_file_name, game_pgn, shown_fen, with_extension};
+    use super::{
+        DROPPED_MAX, PlayedGame, game_file_name, game_pgn, read_game_file, shown_fen,
+        with_extension,
+    };
     use kchess_domain::variant::{Setup, Variant};
     use shakmaty::Color;
     use std::ffi::OsStr;
@@ -523,5 +579,35 @@ mod tests {
         let name = game_file_name("You", "Stockfish (Club Player)/x");
         assert!(name.starts_with("You vs Stockfish (Club Player)x "));
         assert!(!name.contains('/'));
+    }
+
+    #[test]
+    fn a_game_file_of_2_mb_is_the_largest_read() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("game.pgn");
+        std::fs::write(&path, vec![b' '; 2 * 1024 * 1024]).unwrap();
+        assert!(read_game_file(&path).is_some());
+        std::fs::write(&path, vec![b' '; 2 * 1024 * 1024 + 1]).unwrap();
+        assert_eq!(read_game_file(&path), None);
+    }
+
+    #[test]
+    fn a_game_file_under_the_limit_reads() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("game.pgn");
+        std::fs::write(&path, "1. e4 e5 *").unwrap();
+        assert_eq!(read_game_file(&path).as_deref(), Some("1. e4 e5 *"));
+        std::fs::write(&path, vec![b'a'; DROPPED_MAX as usize + 1]).unwrap();
+        assert_eq!(read_game_file(&path), None);
+    }
+
+    /// A `.pgn` symlink to `/dev/zero` reported a length of 0 and was read until memory ran out.
+    #[cfg(unix)]
+    #[test]
+    fn a_device_behind_a_game_name_is_refused() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("game.pgn");
+        std::os::unix::fs::symlink("/dev/zero", &path).unwrap();
+        assert_eq!(read_game_file(&path), None);
     }
 }

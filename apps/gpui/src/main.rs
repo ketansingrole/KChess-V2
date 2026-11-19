@@ -46,7 +46,7 @@ use kchess_app::{
 // The board and the games on it (`crates/kchess-board`).
 use kchess_board::{
     ai, board, engine_view, export, game, microphone, notation, online, player_search,
-    position_engine, puzzle_board, puzzle_db, rating_history, sound, voice, widgets,
+    position_engine, puzzle_db, rating_history, sound, voice, widgets,
 };
 // The pages as the shell drives them (`crates/kchess-nav`).
 use kchess_nav::{part, play_layout, swipe};

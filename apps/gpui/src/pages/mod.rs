@@ -13,7 +13,7 @@ pub use kchess_local as local;
 pub mod online;
 pub mod openings;
 pub mod players;
-pub mod practice;
+pub use kchess_practice as practice;
 pub use kchess_puzzles as puzzles;
 pub mod settings;
 pub mod studies;

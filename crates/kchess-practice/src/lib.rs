@@ -1,31 +1,38 @@
-//! Practice: the board-vision drills and the trainers, one tab at a time,
+//! The Practice page: the board-vision drills and the trainers, one tab at a time,
 //! each made the first time it is shown and kept.
 
+// The app's services, the design system and the board, under the names this page's modules use.
+use kchess_app::{core, loading, log, network, prefs, reviews, settings, studies, timer};
+use kchess_board::{
+    board, game, notation, online, player_search, position_engine, puzzle_board, sound, voice,
+    widgets,
+};
+use kchess_ui::theme;
+
 mod classics;
-pub(crate) mod coordinates;
-pub(crate) mod endgame_drills;
-pub(crate) mod endgame_lesson;
+pub mod coordinates;
+pub mod endgame_drills;
+pub mod endgame_lesson;
 mod endgames;
 mod engine_move;
-pub(crate) mod guess;
+pub mod guess;
 mod guess_find;
 mod knight;
-pub(crate) mod mistakes;
-pub(crate) mod repertoire;
-pub(crate) mod run;
+pub mod mistakes;
+pub mod repertoire;
+pub mod run;
 mod square_color;
 
 use gpui_kit::component::v_flex;
 use gpui_kit::*;
 
 use crate::game::surface::TakesKeys as _;
-use crate::pages::{
+use crate::theme::Palette;
+use gpui_kit::prelude::FluentBuilder as _;
+use kchess_nav::page::{
     ActionInfo, NavGroup, Page, PageAction, PageCommand, PageInfo, PageTab, PageView, TabInfo,
 };
-use crate::play_layout::{PAGE_TOP, side_padding};
-use crate::theme::Palette;
-use crate::widgets;
-use gpui_kit::prelude::FluentBuilder as _;
+use kchess_nav::play_layout::{PAGE_TOP, side_padding};
 
 /// Practice's tabs, in order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -164,28 +171,28 @@ impl PracticePage {
         self.endgames.as_ref()?.read(cx).shown_drills(cx)
     }
 
-    #[cfg(test)]
-    pub(crate) fn coordinates(&self) -> Option<Entity<coordinates::Coordinates>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn coordinates(&self) -> Option<Entity<coordinates::Coordinates>> {
         self.coordinates.clone()
     }
 
-    #[cfg(test)]
-    pub(crate) fn colors(&self) -> Option<Entity<square_color::SquareColors>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn colors(&self) -> Option<Entity<square_color::SquareColors>> {
         self.colors.clone()
     }
 
-    #[cfg(test)]
-    pub(crate) fn mistakes(&self) -> Option<Entity<mistakes::Mistakes>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn mistakes(&self) -> Option<Entity<mistakes::Mistakes>> {
         self.mistakes.clone()
     }
 
-    #[cfg(test)]
-    pub(crate) fn repertoire(&self) -> Option<Entity<repertoire::Repertoire>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn repertoire(&self) -> Option<Entity<repertoire::Repertoire>> {
         self.repertoire.clone()
     }
 
-    #[cfg(test)]
-    pub(crate) fn guess(&self) -> Option<Entity<guess::GuessMoves>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn guess(&self) -> Option<Entity<guess::GuessMoves>> {
         self.guess.clone()
     }
 
@@ -542,13 +549,13 @@ impl PageView for PracticePage {
     }
 
     fn places(_: &App) -> Vec<PageCommand> {
-        crate::pages::tab_places::<Self, Tab>("practice", PracticePage::show_tab)
+        kchess_nav::page::tab_places::<Self, Tab>("practice", PracticePage::show_tab)
     }
 }
 
 /// Practice at `tab`.
 pub fn open_tab(tab: Tab, window: &mut Window, cx: &mut App) {
-    crate::shell::show::<PracticePage>(window, cx, move |practice, window, cx| {
+    kchess_nav::shell::show::<PracticePage>(window, cx, move |practice, window, cx| {
         practice.show_tab(tab, window, cx)
     });
 }
@@ -556,7 +563,40 @@ pub fn open_tab(tab: Tab, window: &mut Window, cx: &mut App) {
 /// Guess the move through a game's PGN as `side`, on Practice.
 pub fn guess_moves(pgn: &str, side: Option<shakmaty::Color>, window: &mut Window, cx: &mut App) {
     let pgn = pgn.to_string();
-    crate::shell::show::<PracticePage>(window, cx, move |practice, window, cx| {
+    kchess_nav::shell::show::<PracticePage>(window, cx, move |practice, window, cx| {
         practice.guess_moves(&pgn, side, window, cx)
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PracticePage, Tab};
+    use kchess_nav::page::{PageTab as _, PageView as _};
+
+    /// Other pages open Practice at a tab, or at Guess the move with a game; each asks the shell
+    /// to open Practice. The command palette offers each tab.
+    #[gpui_kit::test]
+    fn other_pages_open_practice_at_what_they_asked(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = kchess_board::testing::Started::new(cx);
+        let (page, shell) = app.with_window(|_, cx| {
+            let page = cx.new(PracticePage::new);
+            let shell = std::rc::Rc::new(kchess_nav::testing::OnlyPage::of(page.clone()));
+            cx.set_global(kchess_nav::shell::Navigator(shell.clone()));
+            (page, shell)
+        });
+        let tab = app.with_window(|window, cx| {
+            super::open_tab(Tab::Knight, window, cx);
+            Tab::stored(cx)
+        });
+        assert_eq!(tab, Tab::Knight);
+        let (tab, guessing) = app.with_window(|window, cx| {
+            super::guess_moves("1. e4 e5 *", None, window, cx);
+            (Tab::stored(cx), page.read(cx).guess().is_some())
+        });
+        assert_eq!((tab, guessing), (Tab::Guess, true));
+        assert_eq!(*shell.opened.borrow(), ["Practice", "Practice"]);
+        let places = app.with_window(|_, cx| PracticePage::places(cx).len());
+        assert_eq!(places, Tab::ALL.len());
+    }
 }

@@ -13,15 +13,15 @@ use serde_json::json;
 use shakmaty::{Color, Square};
 
 use super::run::{self, Drill, DrillRun, Stage};
-use crate::assets::icon;
 use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
-use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets::{self, Tone};
 use kchess_games::random_unit;
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_ui::icon;
 
 const DEFAULT_SECONDS: u32 = 60;
 const LENGTH: &str = "kchess:knight-length";

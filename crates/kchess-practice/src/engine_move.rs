@@ -148,7 +148,7 @@ mod tests {
     /// was left to turn `thinking` off: the page waited on the engine for good.
     #[gpui_kit::test]
     fn a_quiet_search_after_a_busy_one_is_not_thinking(cx: &mut gpui_kit::TestAppContext) {
-        let mut app = crate::e2e::Harness::start(cx);
+        let mut app = kchess_board::testing::Started::new(cx);
         let (thinking, error) = app.with_window(|_, cx| {
             let page = cx.new(|_| Page::default());
             page.update(cx, |page, cx| {

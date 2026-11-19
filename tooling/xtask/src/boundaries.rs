@@ -27,7 +27,7 @@ struct Rule {
 }
 
 /// The frontends' sources, searched from the repository root: the app's and the CLI's.
-const FRONTENDS: [&str; 10] = [
+const FRONTENDS: [&str; 11] = [
     APP_SOURCES[0],
     APP_SOURCES[1],
     APP_SOURCES[2],
@@ -37,6 +37,7 @@ const FRONTENDS: [&str; 10] = [
     APP_SOURCES[6],
     APP_SOURCES[7],
     APP_SOURCES[8],
+    APP_SOURCES[9],
     "apps/cli/src",
 ];
 
@@ -535,7 +536,7 @@ fn proportional_timers(files: &[(String, String)]) -> Vec<String> {
     };
     let mut found: Vec<String> = [
         "crates/kchess-puzzles/src/rush.rs",
-        "apps/gpui/src/pages/practice/run.rs",
+        "crates/kchess-practice/src/run.rs",
         "crates/kchess-local/src/lib.rs",
     ]
     .iter()
@@ -623,7 +624,7 @@ fn ticking_times_in_the_app_hold_still() {
 fn a_clock_without_tabular_figures_is_found() {
     let files = [
         file("crates/kchess-puzzles/src/rush.rs", "widgets::timer(text)"),
-        file("apps/gpui/src/pages/practice/run.rs", "div().child(text)"),
+        file("crates/kchess-practice/src/run.rs", "div().child(text)"),
         file("crates/kchess-local/src/lib.rs", "widgets::timer(text)"),
         file(
             "apps/gpui/src/pages/settings/updates.rs",
@@ -633,7 +634,7 @@ fn a_clock_without_tabular_figures_is_found() {
     assert_eq!(
         proportional_timers(&files),
         [
-            "apps/gpui/src/pages/practice/run.rs",
+            "crates/kchess-practice/src/run.rs",
             "apps/gpui/src/pages/settings/updates.rs"
         ]
     );
