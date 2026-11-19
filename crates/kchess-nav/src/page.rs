@@ -639,3 +639,27 @@ impl PageHandle {
         self.0.new_here(window, cx);
     }
 }
+
+/// A key a page takes while no text field has the keys: the key names it matches, how the
+/// shortcuts list shows them, and what it does there.
+pub struct PageKey<A> {
+    pub action: A,
+    pub keys: &'static [&'static str],
+    pub shown: &'static str,
+    pub does: &'static str,
+}
+
+/// The action of `key` among a page's `keys`.
+pub fn page_key<A: Copy>(keys: &[PageKey<A>], key: &str) -> Option<A> {
+    keys.iter()
+        .find(|entry| entry.keys.contains(&key))
+        .map(|entry| entry.action)
+}
+
+gpui_kit::actions!(
+    kchess,
+    [
+        /// A new game on the page shown (⌘N): a page's `ActionRole::New` action.
+        New
+    ]
+);

@@ -26,10 +26,12 @@ gpui_kit::actions!(
         ShowShortcuts,
         ShowWhatsNew,
         ToggleSidebar,
-        Find,
-        New
+        Find
     ]
 );
+
+// A new game on the page shown, which pages name too (`kchess_nav::page::New`).
+pub use kchess_nav::page::New;
 
 // The board's actions, its own (`kchess-board`), and the keys bound to an action
 // (`kchess_ui::keys`).

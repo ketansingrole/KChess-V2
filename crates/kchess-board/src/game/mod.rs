@@ -106,6 +106,16 @@ pub fn position_problem(fen: &str) -> Option<&'static str> {
     kchess_domain::position::fen_problem(fen).map(kchess_domain::position::FenProblem::message)
 }
 
+/// Whether a game can start from `setup`: a standard position the engine takes (not one with
+/// too many pieces), or a legal one in its variant.
+pub fn playable(setup: &Setup) -> bool {
+    if setup.variant.standard_rules() {
+        position_problem(&setup.fen).is_none()
+    } else {
+        setup.position().is_some()
+    }
+}
+
 /// Why a typed FEN cannot start a new game of `variant`: what is wrong with a standard position,
 /// or that another variant's rules refuse it.
 pub fn setup_problem(variant: Variant, fen: &str) -> Option<&'static str> {
@@ -280,6 +290,24 @@ pub fn setup_label(setup: &Setup) -> Option<&'static str> {
 #[cfg(test)]
 mod variant_tests {
     use kchess_domain::variant::{Setup, Variant};
+
+    /// A game starts from a standard position the engine takes, or a legal one in its variant.
+    #[test]
+    fn a_game_starts_from_a_position_its_rules_take() {
+        let playable = |variant: Variant, fen: &str| {
+            super::playable(&Setup {
+                variant,
+                fen: fen.into(),
+            })
+        };
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        // Ten queens are a legal position, but more pieces than the engine takes.
+        let queens = "QQQQQQQQ/QQ6/8/8/8/8/8/K6k w - - 0 1";
+        assert!(playable(Variant::Standard, start));
+        assert!(!playable(Variant::Standard, queens));
+        assert!(playable(Variant::Crazyhouse, start));
+        assert!(!playable(Variant::Crazyhouse, "not a position"));
+    }
 
     /// The game pages name a variant, or a standard game's other start, and not the usual game.
     #[test]

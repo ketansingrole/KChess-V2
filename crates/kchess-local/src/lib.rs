@@ -1,21 +1,26 @@
-//! Over the board: two people at one
+//! The Over the board page: two people at one
 //! board, any variant, with or without a clock; or a chess clock for a real board. Both keep their
 //! place in Game history, and the board game resumes in either app.
 
-use crate::pages::PageView;
-use crate::shortcuts::{PageKey, page_key};
+// The app's services, the design system and the board, under the names this page's modules use.
+use kchess_app::{log, played, prefs, quit, settings, timer};
+use kchess_board::{board, export, game, notation, sound, voice, widgets};
+use kchess_ui::{dates, theme};
+
 use kchess_domain::training::clock::format_clock;
+use kchess_nav::page::PageView;
+use kchess_nav::page::{PageKey, page_key};
 use std::time::Instant;
 
 /// What the chess clock's keys do.
 #[derive(Clone, Copy)]
-pub(crate) enum ClockKey {
+pub enum ClockKey {
     Press,
     Pause,
 }
 
 /// The chess clock's keys, which the shortcuts list shows.
-pub(crate) const CLOCK_KEYS: &[PageKey<ClockKey>] = &[
+pub const CLOCK_KEYS: &[PageKey<ClockKey>] = &[
     PageKey {
         action: ClockKey::Press,
         keys: &["space"],
@@ -48,7 +53,6 @@ use kchess_domain::games::otb_clock::{Config, OtbClock, Side};
 use serde_json::{Value, json};
 use shakmaty::Color;
 
-use crate::assets::icon;
 use crate::board::{BoardEvent, ChessBoard};
 use crate::export::Exporter;
 use crate::game::history::HistoryPlace;
@@ -56,13 +60,14 @@ use crate::game::played::PlayedGame;
 use crate::game::session::{Resumes, SessionSaver};
 use crate::game::surface::{self, Faces, MoveBox, Steps};
 use crate::game::{chess960, view};
-use crate::part::Part;
-use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout, panel_style};
 use crate::played::PlayedHandle;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
-use crate::widgets::{self, KeyboardFocus as _, Side as PieceSide, Tone};
+use crate::widgets::{KeyboardFocus as _, Side as PieceSide, Tone};
 use kchess_domain::games::local::{self, LocalGame};
+use kchess_nav::part::Part;
+use kchess_nav::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout, panel_style};
+use kchess_ui::icon;
 
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -358,8 +363,8 @@ impl LocalPage {
     }
 
     /// The turned faces' pictures as drawn now, by player.
-    #[cfg(test)]
-    pub(crate) fn turned_faces(&self) -> Vec<std::sync::Arc<RenderImage>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn turned_faces(&self) -> Vec<std::sync::Arc<RenderImage>> {
         let mut faces: Vec<_> = self.turned.iter().collect();
         faces.sort_by_key(|(index, _)| **index);
         faces
@@ -369,8 +374,8 @@ impl LocalPage {
     }
 
     /// The saved game has been read.
-    #[cfg(test)]
-    pub(crate) fn resumed(&self) -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn resumed(&self) -> bool {
         self.saver.loaded()
     }
 
@@ -433,7 +438,7 @@ impl LocalPage {
         self.saver.loaded() && !self.game.over() && self.at_live()
     }
 
-    pub(crate) fn play(&mut self, uci: &str, cx: &mut Context<Self>) {
+    pub fn play(&mut self, uci: &str, cx: &mut Context<Self>) {
         if !self.interactive() {
             return self.after_change(cx);
         }
@@ -727,7 +732,7 @@ impl LocalPage {
 
     /// Start a game, asking first when one on the board is still being played: once the saved
     /// game is read, so that it is the one asked about.
-    pub(crate) fn replace_game(
+    pub fn replace_game(
         &mut self,
         setup: Setup,
         clock: Value,
@@ -1046,12 +1051,14 @@ impl LocalPage {
                 let key = format!("{lines:?}{color}{rotation}");
                 let image = match self.turned.get(&index) {
                     Some((shown, image)) if *shown == key => Some(image.clone()),
-                    _ => crate::game_image::rotated_text_image(
-                        &lines.map(|(text, size, bold, opacity)| crate::game_image::TextLine {
-                            text,
-                            size,
-                            bold,
-                            opacity,
+                    _ => kchess_board::game_image::rotated_text_image(
+                        &lines.map(|(text, size, bold, opacity)| {
+                            kchess_board::game_image::TextLine {
+                                text,
+                                size,
+                                bold,
+                                opacity,
+                            }
                         }),
                         &color,
                         rotation,
@@ -1638,7 +1645,7 @@ impl LocalPage {
                             .when(narrow, |button| button.min_w(relative(0.45)))
                             .icon(icon("plus"))
                             .label("New game")
-                            .tooltip_with_action("New game", &crate::menu::New, None)
+                            .tooltip_with_action("New game", &kchess_nav::page::New, None)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.open_new_game(window, cx)),
                             ),
@@ -2060,9 +2067,9 @@ fn clock_face(millis: f64) -> String {
     format_clock(millis)
 }
 
-impl crate::pages::PageAction for Action {
-    fn info(&self) -> crate::pages::ActionInfo {
-        use crate::pages::{ActionInfo, ActionRole};
+impl kchess_nav::page::PageAction for Action {
+    fn info(&self) -> kchess_nav::page::ActionInfo {
+        use kchess_nav::page::{ActionInfo, ActionRole};
         match self {
             Action::TakeBack => ActionInfo::new("local:takeback", "Take back", "undo-2", "undo"),
             Action::Pause => ActionInfo::new("local:pause", "Pause", "pause", "clock stop"),
@@ -2084,12 +2091,12 @@ impl crate::pages::PageAction for Action {
 }
 
 impl PageView for LocalPage {
-    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
-        page: crate::pages::Page::Local,
+    const INFO: kchess_nav::page::PageInfo = kchess_nav::page::PageInfo {
+        page: kchess_nav::page::Page::Local,
         label: "Over the board",
         short: "Over the board",
         icon: "swords",
-        group: Some(crate::pages::NavGroup::Play),
+        group: Some(kchess_nav::page::NavGroup::Play),
         keywords: "otb friend two players pass and play clock",
     };
 
@@ -2144,11 +2151,11 @@ impl PageView for LocalPage {
 /// A game over the board from a setup's position. A position that cannot be played only opens
 /// the page.
 pub fn play_from(setup: Setup, window: &mut Window, cx: &mut App) {
-    if !crate::pages::computer::playable(&setup) {
-        crate::shell::open(crate::pages::Page::Local, window, cx);
+    if !crate::game::playable(&setup) {
+        kchess_nav::shell::open(kchess_nav::page::Page::Local, window, cx);
         return;
     }
-    crate::shell::show::<LocalPage>(window, cx, move |page, window, cx| {
+    kchess_nav::shell::show::<LocalPage>(window, cx, move |page, window, cx| {
         page.start_from(setup, window, cx)
     });
 }

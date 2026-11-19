@@ -331,3 +331,26 @@ fn the_test_shell_holds_only_its_page(cx: &mut TestAppContext) {
         ["Puzzles", "Settings", "Settings:Accounts"]
     );
 }
+
+/// A key a page takes runs its action, under any of its names.
+#[test]
+fn a_page_key_runs_its_action_by_any_of_its_names() {
+    use crate::page::{PageKey, page_key};
+    let keys = [
+        PageKey {
+            action: 1,
+            keys: &["space", "enter"],
+            shown: "Space",
+            does: "Start",
+        },
+        PageKey {
+            action: 2,
+            keys: &["p"],
+            shown: "P",
+            does: "Pause",
+        },
+    ];
+    assert_eq!(page_key(&keys, "enter"), Some(1));
+    assert_eq!(page_key(&keys, "p"), Some(2));
+    assert_eq!(page_key(&keys, "q"), None);
+}
