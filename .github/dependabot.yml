@@ -58,6 +58,7 @@ updates:
       - { dependency-name: simd-adler32, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: slab, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: smallvec, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: socket2, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: stable_deref_trait, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: subtle, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: syn, update-types: [version-update:semver-major, version-update:semver-minor] }

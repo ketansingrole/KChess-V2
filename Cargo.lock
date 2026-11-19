@@ -4560,6 +4560,7 @@ dependencies = [
  "simd-adler32",
  "slab",
  "smallvec",
+ "socket2",
  "stable_deref_trait",
  "subtle",
  "syn 2.0.119",
