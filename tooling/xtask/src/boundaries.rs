@@ -27,7 +27,7 @@ struct Rule {
 }
 
 /// The frontends' sources, searched from the repository root: the app's and the CLI's.
-const FRONTENDS: [&str; 12] = [
+const FRONTENDS: [&str; 13] = [
     APP_SOURCES[0],
     APP_SOURCES[1],
     APP_SOURCES[2],
@@ -39,6 +39,7 @@ const FRONTENDS: [&str; 12] = [
     APP_SOURCES[8],
     APP_SOURCES[9],
     APP_SOURCES[10],
+    APP_SOURCES[11],
     "apps/cli/src",
 ];
 
@@ -64,7 +65,7 @@ const RULES: [Rule; 2] = [
             "apps/gpui/src/updates.rs",
             // Pictures Lichess serves (broadcast covers), from its image hosts only, drawn by the
             // app straight from the bytes. No login is sent.
-            "apps/gpui/src/remote_image.rs",
+            "crates/kchess-board/src/remote_image.rs",
         ],
     },
 ];

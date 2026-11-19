@@ -1324,7 +1324,8 @@ mod tests {
                 "kchess-practice".to_string(),
                 "kchess-puzzles".to_string(),
                 "kchess-studies".to_string(),
-                "kchess-ui".to_string()
+                "kchess-ui".to_string(),
+                "kchess-watch".to_string()
             ])
         );
     }
@@ -1367,6 +1368,7 @@ mod tests {
                 "kchess-local",
                 "kchess-practice",
                 "kchess-studies",
+                "kchess-watch",
                 "xtask"
             ]
         );
@@ -1383,6 +1385,7 @@ mod tests {
                 "kchess-local",
                 "kchess-practice",
                 "kchess-studies",
+                "kchess-watch",
                 "xtask"
             ]
         );

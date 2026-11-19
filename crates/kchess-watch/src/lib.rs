@@ -1,6 +1,13 @@
-//! Watch: Lichess TV by channel, the games followed
+//! The Watch page: Lichess TV by channel, the games followed
 //! players are playing, and tournament broadcasts. One feed streams at a time, and only while the
 //! page is shown: leaving it stops the stream.
+
+// The app's services, the design system and the board, under the names this page's modules use.
+use kchess_app::{accounts, core, loading, log, prefs, settings, timer};
+use kchess_board::{
+    board, engine_view, game, notation, online, position_engine, remote_image, widgets,
+};
+use kchess_ui::{dates, theme};
 
 use crate::loading::Epoch;
 use kchess_contracts::ErrorKind;
@@ -15,27 +22,27 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use shakmaty::Color;
 
-use crate::assets::icon;
 use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::game::surface::{Faces, Steps};
 use crate::online::OnlineHandle;
-use crate::pages::{
-    ActionInfo, NavGroup, Page, PageAction, PageCommand, PageInfo, PageTab, PageView, TabInfo,
-};
-use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
-use crate::widgets::{self, KeyboardFocus as _, Look};
+use crate::widgets::{KeyboardFocus as _, Look};
+use kchess_nav::page::{
+    ActionInfo, NavGroup, Page, PageAction, PageCommand, PageInfo, PageTab, PageView, TabInfo,
+};
+use kchess_nav::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
+use kchess_ui::icon;
 
 mod broadcast_engine;
 mod broadcasts;
-pub(crate) mod live;
+pub mod live;
 
 use broadcasts::Broadcasts;
 use live::Live;
 
 pub(crate) const TAB_KEY: &str = "kchess:watch-tab";
-pub(crate) const CHANNEL_KEY: &str = "kchess:watch-channel";
+pub const CHANNEL_KEY: &str = "kchess:watch-channel";
 /// Clocks are looked at this often while something is being watched: slower than
 /// `timer::TICK`, as a broadcast's tick redraws every board of the round.
 const TICK: Duration = Duration::from_millis(500);
@@ -198,11 +205,11 @@ pub struct WatchPage {
     presence_error: Option<SharedString>,
     /// The live game's panel beside the board, drawn as a cached view of its own
     /// (`render_live_panel`), so a sliding move redraws the page around the board alone.
-    live_panel: Entity<crate::part::Part<WatchPage>>,
+    live_panel: Entity<kchess_nav::part::Part<WatchPage>>,
     /// The channels or players beside the live game, drawn as a cached view of its own.
-    live_list: Entity<crate::part::Part<WatchPage>>,
+    live_list: Entity<kchess_nav::part::Part<WatchPage>>,
     /// White's and Black's clock faces (`render_live_face`): a tick redraws only these.
-    live_faces: [Entity<crate::part::Part<WatchPage>>; 2],
+    live_faces: [Entity<kchess_nav::part::Part<WatchPage>>; 2],
     /// What the clock faces showed at the last tick, and whether each had a clock.
     live_faces_shown: Faces<[Option<(String, bool)>; 2]>,
     live_clocks: Faces<[bool; 2]>,
@@ -276,17 +283,23 @@ impl WatchPage {
             broadcasts: Broadcasts::new(window, cx),
             presence: std::collections::HashMap::new(),
             presence_error: None,
-            live_panel: crate::part::Part::panel(
+            live_panel: kchess_nav::part::Part::panel(
                 |this, window, cx| this.render_live_panel(window, cx),
                 cx,
             ),
-            live_list: crate::part::Part::new(
+            live_list: kchess_nav::part::Part::new(
                 |this, window, cx| this.render_live_list(window, cx),
                 cx,
             ),
             live_faces: [
-                crate::part::Part::new(|this, _, cx| this.render_live_face(Color::White, cx), cx),
-                crate::part::Part::new(|this, _, cx| this.render_live_face(Color::Black, cx), cx),
+                kchess_nav::part::Part::new(
+                    |this, _, cx| this.render_live_face(Color::White, cx),
+                    cx,
+                ),
+                kchess_nav::part::Part::new(
+                    |this, _, cx| this.render_live_face(Color::Black, cx),
+                    cx,
+                ),
             ],
             live_faces_shown: Faces::default(),
             live_clocks: Faces::default(),
@@ -658,8 +671,8 @@ impl WatchPage {
 
     /// The channel list as Lichess would answer it, for the end-to-end tests: the fake Lichess
     /// leaves the list unanswered, which TV's unreachable state needs, and every test shares it.
-    #[cfg(test)]
-    pub(crate) fn show_channels(&mut self, channels: Vec<TvChannel>, cx: &mut Context<Self>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn show_channels(&mut self, channels: Vec<TvChannel>, cx: &mut Context<Self>) {
         self.channels = channels;
         cx.notify();
     }
@@ -860,7 +873,7 @@ impl WatchPage {
                                     .flex_1()
                                     .min_w_0()
                                     .child(
-                                        crate::pages::players::player_link(
+                                        kchess_board::player_search::player_link(
                                             ("watch-friend", index),
                                             name,
                                             palette.primary,
@@ -1095,7 +1108,7 @@ fn live_badge(palette: &Palette) -> Div {
 /// Settles once the core has answered a feed's request.
 type FeedStarted = futures::future::Shared<futures::future::BoxFuture<'static, ()>>;
 
-pub(super) fn stop_watching(session: Option<u64>, cx: &mut App) {
+pub(crate) fn stop_watching(session: Option<u64>, cx: &mut App) {
     let Some(session) = session else {
         return;
     };
@@ -1198,13 +1211,13 @@ impl PageView for WatchPage {
         this.update(cx, |watch, cx| watch.hidden(cx));
     }
 
-    fn can_step(&self, direction: crate::swipe::Direction, _cx: &App) -> bool {
+    fn can_step(&self, direction: kchess_nav::swipe::Direction, _cx: &App) -> bool {
         WatchPage::can_step(self, direction)
     }
 
     fn step(
         &mut self,
-        direction: crate::swipe::Direction,
+        direction: kchess_nav::swipe::Direction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1235,13 +1248,13 @@ impl PageView for WatchPage {
     }
 
     fn places(_: &App) -> Vec<PageCommand> {
-        crate::pages::tab_places::<Self, Tab>("watch", WatchPage::show_tab)
+        kchess_nav::page::tab_places::<Self, Tab>("watch", WatchPage::show_tab)
     }
 }
 
 /// Watch a Lichess TV channel.
 pub fn open_channel(channel: String, window: &mut Window, cx: &mut App) {
-    crate::shell::show::<WatchPage>(window, cx, move |watch, window, cx| {
+    kchess_nav::shell::show::<WatchPage>(window, cx, move |watch, window, cx| {
         watch.open_channel(channel, window, cx)
     });
 }
@@ -1249,12 +1262,52 @@ pub fn open_channel(channel: String, window: &mut Window, cx: &mut App) {
 /// Watch a game being played on Lichess.
 pub fn watch_game(id: &str, window: &mut Window, cx: &mut App) {
     let id = id.to_string();
-    crate::shell::show::<WatchPage>(window, cx, move |watch, _, cx| watch.watch_game(&id, cx));
+    kchess_nav::shell::show::<WatchPage>(window, cx, move |watch, _, cx| watch.watch_game(&id, cx));
 }
 
 /// Open a Lichess broadcast link on Watch → Broadcasts.
 pub fn open_broadcast(link: crate::game::BroadcastLink, window: &mut Window, cx: &mut App) {
-    crate::shell::show::<WatchPage>(window, cx, move |watch, window, cx| {
+    kchess_nav::shell::show::<WatchPage>(window, cx, move |watch, window, cx| {
         watch.open_broadcast(link, window, cx)
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CHANNEL_KEY, Tab, WatchPage};
+    use kchess_nav::page::{PageTab as _, PageView as _};
+
+    /// Other pages open Watch at what they asked for: a TV channel, a game being played (on
+    /// Following) and a broadcast (on Broadcasts); each asks the shell to open Watch. The command
+    /// palette offers each tab.
+    #[gpui_kit::test]
+    fn other_pages_open_watch_at_what_they_asked(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = kchess_board::testing::Started::new(cx);
+        let (page, shell) = app.with_window(|window, cx| {
+            let page = cx.new(|cx| WatchPage::new(window, cx));
+            let shell = std::rc::Rc::new(kchess_nav::testing::OnlyPage::of(page.clone()));
+            cx.set_global(kchess_nav::shell::Navigator(shell.clone()));
+            (page, shell)
+        });
+        let channel = app.with_window(|window, cx| {
+            super::open_channel("blitz".into(), window, cx);
+            crate::prefs::get::<String>(cx, CHANNEL_KEY, String::new())
+        });
+        assert_eq!(channel, "blitz");
+        let tab = app.with_window(|window, cx| {
+            super::watch_game("g1", window, cx);
+            page.read(cx).tab
+        });
+        assert_eq!(tab, Tab::Friends);
+        let tab = app.with_window(|window, cx| {
+            let link = crate::game::BroadcastLink::Tour("abcdEFGH".into());
+            super::open_broadcast(link, window, cx);
+            page.read(cx).tab
+        });
+        assert_eq!(tab, Tab::Broadcasts);
+        assert_eq!(*shell.opened.borrow(), ["Watch"; 3]);
+        let places = app.with_window(|_, cx| WatchPage::places(cx).len());
+        assert_eq!(places, Tab::ALL.len());
+    }
 }

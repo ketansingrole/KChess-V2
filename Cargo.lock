@@ -4327,6 +4327,7 @@ dependencies = [
  "kchess-ui",
  "objc2 0.6.5",
  "objc2-av-foundation",
+ "reqwest",
  "resvg 0.49.0",
  "rodio",
  "rust-embed",
@@ -4334,6 +4335,7 @@ dependencies = [
  "serde_json",
  "shakmaty",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -4472,6 +4474,7 @@ dependencies = [
  "kchess-studies",
  "kchess-testkit",
  "kchess-ui",
+ "kchess-watch",
  "nix",
  "notify-rust",
  "objc2 0.6.5",
@@ -4749,6 +4752,24 @@ dependencies = [
  "libloading 0.9.0",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "kchess-watch"
+version = "2026.11.7"
+dependencies = [
+ "futures",
+ "gpui-kit",
+ "kchess-app",
+ "kchess-board",
+ "kchess-contracts",
+ "kchess-domain",
+ "kchess-games",
+ "kchess-hack",
+ "kchess-nav",
+ "kchess-ui",
+ "serde_json",
+ "shakmaty",
 ]
 
 [[package]]

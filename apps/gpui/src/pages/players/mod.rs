@@ -31,8 +31,7 @@ use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::player_search::{self, NameMatches, SUGGESTED, chip_row, name_chip};
 use crate::rating_history::{Retry, has_points};
 use crate::theme::{Palette, radii};
-use crate::widgets::Pressable as _;
-use crate::widgets::{self, Choice, KeyboardFocus as _, Look};
+use crate::widgets::{self, Choice, Look};
 use rating_speeds::RatingSpeeds;
 
 const BOARD_PERF_KEY: &str = "kchess:leaderboard-perf";
@@ -1529,23 +1528,8 @@ fn title_choices(board: &[LeaderboardEntry], chosen: &str) -> Vec<Choice> {
     choices
 }
 
-/// A name that opens the player's profile; `ring` outlines it under the keyboard.
-pub fn player_link(id: impl Into<ElementId>, name: String, ring: Hsla) -> Stateful<Div> {
-    div()
-        .id(id)
-        .role(Role::Link)
-        .keyboard_focus(ring)
-        .aria_label(name.clone())
-        .truncate()
-        .cursor_pointer()
-        .pressable_link()
-        .child(name.clone())
-        .on_click(move |_, window, cx| {
-            // A name inside a clickable row opens the player, not the row.
-            cx.stop_propagation();
-            crate::pages::players::open_player(&name, window, cx)
-        })
-}
+// A name that opens the player's profile, on any page (`kchess_board::player_search`).
+pub use crate::player_search::player_link;
 
 impl Render for PlayersPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

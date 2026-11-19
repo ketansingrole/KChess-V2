@@ -19,7 +19,6 @@ use shakmaty::{Color, Position as _, Square};
 
 use super::WatchPage;
 use super::broadcasts::{Broadcasts, setup_of};
-use crate::assets::icon;
 use crate::board::Arrow;
 use crate::core::AppCore;
 use crate::game::tree::{analysis_context, format_eval};
@@ -28,6 +27,7 @@ use crate::online::OnlineHandle;
 use crate::position_engine::{EngineLook, PositionEngine};
 use crate::theme::Palette;
 use crate::widgets::Choice;
+use kchess_ui::icon;
 
 const ENGINE_ON: &str = "kchess:broadcast-engine";
 const LINES: &str = "kchess:broadcast-engine-lines";

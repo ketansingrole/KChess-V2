@@ -19,7 +19,7 @@ pub mod settings;
 pub use kchess_studies as studies;
 pub mod study_bar;
 pub mod tournaments;
-pub mod watch;
+pub use kchess_watch as watch;
 
 pub use kchess_nav::page::*;
 

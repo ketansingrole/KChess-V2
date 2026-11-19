@@ -105,7 +105,10 @@ and `position_engine` moved to `kchess-board`, beside the analysis board, so the
 crate to the chain; what the live game asks of the app (its notifications, the Online page) the
 app passes in as `online::Hooks`. Opening a game file moved to `kchess_board::export`, the
 opening a page drills (`OpeningChoice`) to `kchess_board::game`. Studies followed (`crates/kchess-studies`), which
-needed only Practice.
+needed only Practice. Watch came last of the pages that rarely change
+(`crates/kchess-watch`), once Lichess's pictures (`remote_image`) had moved to `kchess-board` and a
+player's name opened their profile there (`player_search::player_link`, answered by the Players
+page through `OpenPlayer`).
 
 ## The order
 
