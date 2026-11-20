@@ -20,6 +20,17 @@ pub fn start_core(cx: &mut App) -> TestCore {
 
 /// `start_core`, with Lichess (its API and its puzzle database) at `origin`: a local stand-in.
 pub fn start_core_with_lichess(cx: &mut App, origin: Option<String>) -> TestCore {
+    open(cx, origin, false)
+}
+
+/// `start_core_with_lichess`, whose events reach the app's views as in the app (`CoreEvents`),
+/// such as the core's engine-help lock once its startup check ends. They arrive from the core's
+/// threads, so only a test that waits in real time (`allow_parking`) takes them.
+pub fn start_core_delivering(cx: &mut App, origin: Option<String>) -> TestCore {
+    open(cx, origin, true)
+}
+
+fn open(cx: &mut App, origin: Option<String>, deliver: bool) -> TestCore {
     let profile = tempfile::tempdir().expect("a profile");
     let runtime = kchess_service::core_runtime().expect("the core's runtime");
     let mut config = kchess_core::Config::new(profile.path().to_path_buf());
@@ -38,13 +49,23 @@ pub fn start_core_with_lichess(cx: &mut App, origin: Option<String>) -> TestCore
         log: Arc::new(|_, _, _| {}),
         answer: None,
     };
-    let (handle, _events) = runtime
+    let (handle, mut events) = runtime
         .block_on(CoreHandle::open(options))
         .expect("the core");
     let core = AppCore {
         bridge: Arc::new(CoreBridge::new(runtime, handle)),
         events: cx.new(|_| CoreEvents),
     };
-    cx.set_global(core);
+    cx.set_global(core.clone());
+    if !deliver {
+        return TestCore { _profile: profile };
+    }
+    // The test core names no host capability, so it asks the host nothing to answer.
+    cx.spawn(async move |cx| {
+        while let Some(event) = events.recv().await {
+            core.events.update(cx, |_, cx| cx.emit(event));
+        }
+    })
+    .detach();
     TestCore { _profile: profile }
 }

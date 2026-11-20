@@ -32,7 +32,7 @@ impl Started {
         cx.executor().allow_parking();
         let core = cx.update(|cx| {
             gpui_kit::init(cx);
-            let core = kchess_app::tests::start_core_with_lichess(cx, origin);
+            let core = kchess_app::tests::start_core_delivering(cx, origin);
             kchess_app::settings::init_for_tests(cx);
             kchess_app::accounts::init(cx);
             crate::online::init(cx);

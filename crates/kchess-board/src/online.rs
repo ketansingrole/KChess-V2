@@ -1605,16 +1605,11 @@ mod tests {
     const ANSWER: std::time::Duration = std::time::Duration::from_secs(5);
 
     /// The board's online state once its startup check has ended (no account: nothing to find)
-    /// and it holds the core's lock as of then. The harness hands the board none of the core's
-    /// events, so the lock is read again: the read at startup came before the check.
+    /// and the core, reporting its lock, lends engine help.
     fn settled(app: &mut Started) -> gpui_kit::Entity<super::OnlineState> {
         let online = app.with_window(|_, cx| super::handle(cx));
         app.wait_for("the startup check to end", |_, cx| {
-            online.read(cx).phase == super::Phase::Idle
-        });
-        app.with_window(|_, cx| online.update(cx, |state, cx| state.read_assistance(cx)));
-        app.wait_within(ANSWER, "the core to lend help", |_, cx| {
-            online.read(cx).assistance == kchess_contracts::types::Assistance::Allowed
+            online.read(cx).assistance_allowed()
         });
         online
     }
@@ -1669,8 +1664,6 @@ mod tests {
         let seen = app.with_window(|_, cx| {
             online.update(cx, |state, _| {
                 let mut seen = Vec::new();
-                // The board's own report from its check, which no answer replaced here.
-                state.model.online_connection = None;
                 for phase in all {
                     for assistance in lent {
                         state.phase = phase;
