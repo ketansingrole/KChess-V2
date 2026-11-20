@@ -27,6 +27,7 @@ jobs:
   # CI's Windows package, made here rather than twice.
   build:
     runs-on: windows-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       # The drop-caches action.
@@ -88,6 +89,7 @@ jobs:
     name: Upgrade (${{ matrix.mode }})
     needs: build
     runs-on: windows-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

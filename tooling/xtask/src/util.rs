@@ -1,7 +1,11 @@
 //! Running commands and reading the repository.
 
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use kchess_delta::REPOSITORY;
 
@@ -70,21 +74,100 @@ pub fn run_redacted(program: &str, args: &[&str], secrets: &[&str]) -> Result {
     run_shown(Command::new(program).args(args), secrets)
 }
 
+/// How long a command may print nothing before it is taken for hung and stopped: longer than the
+/// quietest step xtask runs (a release link with LTO), far shorter than the hours a stuck one
+/// cost. `KCHESS_QUIET_MINUTES` sets another limit for a step known to be slower.
+const QUIET: Duration = Duration::from_secs(20 * 60);
+
+fn quiet_limit() -> Duration {
+    std::env::var("KCHESS_QUIET_MINUTES")
+        .ok()
+        .and_then(|minutes| minutes.parse::<u64>().ok())
+        .map_or(QUIET, |minutes| Duration::from_secs(minutes * 60))
+}
+
 fn run_shown(command: &mut Command, secrets: &[&str]) -> Result {
+    run_watched(command, secrets, quiet_limit())
+}
+
+/// Runs `command` like `run_shown`, its output passed through as it comes, and stops it once it
+/// has printed nothing for `quiet`: a tool that hangs without a word (a download from a server
+/// that stopped sending, a process waiting on another) fails with its name instead of holding
+/// the run for hours.
+fn run_watched(command: &mut Command, secrets: &[&str], quiet: Duration) -> Result {
     let mut shown = format!("{command:?}");
     for secret in secrets.iter().filter(|secret| !secret.is_empty()) {
         shown = shown.replace(secret, "<redacted>");
     }
-    let status = command
-        .current_dir(root())
-        .stdin(std::process::Stdio::null())
-        .status()
-        .map_err(|cause| format!("Could not run {shown}: {cause}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("{shown} failed ({status})."))
+    // Piped, cargo and its tools would print without colour; keep it when this terminal shows it.
+    if std::io::stderr().is_terminal() && std::env::var_os("CARGO_TERM_COLOR").is_none() {
+        command.env("CARGO_TERM_COLOR", "always");
     }
+    let mut child = command
+        .current_dir(root())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|cause| format!("Could not run {shown}: {cause}"))?;
+    let started = Instant::now();
+    let last = Arc::new(AtomicU64::new(0));
+    if let Some(out) = child.stdout.take() {
+        pass_through(out, std::io::stdout(), started, Arc::clone(&last));
+    }
+    if let Some(err) = child.stderr.take() {
+        pass_through(err, std::io::stderr(), started, Arc::clone(&last));
+    }
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|cause| format!("Could not wait for {shown}: {cause}"))?
+        {
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(format!("{shown} failed ({status})."))
+            };
+        }
+        let silent = started
+            .elapsed()
+            .saturating_sub(Duration::from_millis(last.load(Ordering::Relaxed)));
+        if silent >= quiet {
+            // Only the command itself: what it started, it is left to stop as its parent goes.
+            child.kill().ok();
+            child.wait().ok();
+            return Err(format!(
+                "{shown} printed nothing for {} s and was stopped as hung.",
+                silent.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100).min(quiet));
+    }
+}
+
+/// Copies `from` to `to` as it arrives, noting in `last` when (since `started`) it last did.
+fn pass_through(
+    mut from: impl Read + Send + 'static,
+    mut to: impl Write + Send + 'static,
+    started: Instant,
+    last: Arc<AtomicU64>,
+) {
+    std::thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        while let Ok(read) = from.read(&mut buffer) {
+            if read == 0 {
+                break;
+            }
+            last.store(started.elapsed().as_millis() as u64, Ordering::Relaxed);
+            if to
+                .write_all(&buffer[..read])
+                .and_then(|()| to.flush())
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
 }
 
 /// Runs `program` and answers its standard output.
@@ -243,7 +326,32 @@ pub fn download(url: &str, path: &Path) -> Result {
         std::fs::create_dir_all(parent).map_err(|cause| cause.to_string())?;
     }
     let target = path.to_string_lossy().to_string();
-    run("curl", &["-fsSL", "--retry", "3", "-o", &target, url])
+    run_with(Command::new("curl").args(curl_args(url, &target, 60)))
+}
+
+/// curl's arguments for `download`: it gives up on a server that does not answer in 30 s or
+/// sends under 1 KB/s for `stall_seconds`, which a slow but working connection never does, rather
+/// than wait on it for ever. Each try is retried up to three times.
+fn curl_args(url: &str, target: &str, stall_seconds: u32) -> Vec<String> {
+    [
+        "-fsSL",
+        "--retry",
+        "3",
+        "--connect-timeout",
+        "30",
+        "--speed-limit",
+        "1024",
+    ]
+    .iter()
+    .map(|arg| arg.to_string())
+    .chain([
+        "--speed-time".to_string(),
+        stall_seconds.to_string(),
+        "-o".to_string(),
+        target.to_string(),
+        url.to_string(),
+    ])
+    .collect()
 }
 
 /// Makes `path` hold the file pinned by `sha256`: a cached copy that matches is kept, anything
@@ -299,6 +407,58 @@ pub fn sources_under(repo: &Path, dir: &str, into: &mut Vec<(String, String)>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_that_goes_quiet_is_stopped_as_hung() {
+        let started = Instant::now();
+        let failure = run_watched(
+            Command::new("sh").args(["-c", "echo working; sleep 30"]),
+            &[],
+            Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert!(failure.contains("printed nothing for 1 s"), "{failure}");
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_that_keeps_printing_runs_past_the_quiet_limit() {
+        run_watched(
+            Command::new("sh").args(["-c", "for i in 1 2 3 4 5 6; do echo $i; sleep 0.3; done"]),
+            &[],
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        let failure =
+            run_watched(Command::new("sh").args(["-c", "exit 4"]), &[], QUIET).unwrap_err();
+        assert!(failure.contains("exit status: 4"), "{failure}");
+    }
+
+    #[test]
+    fn a_download_from_a_server_that_sends_nothing_gives_up() {
+        // Accepted by the system and never answered: curl's request waits on a silent server.
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/stockfish.tar", silent.local_addr().unwrap());
+        let target = scratch("silent-download");
+        let args = curl_args(&url, &target.to_string_lossy(), 1);
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let started = Instant::now();
+        let failure = run_watched(Command::new("curl").args(&args), &[], QUIET).unwrap_err();
+        assert!(failure.contains("failed"), "{failure}");
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--speed-time", "1"]));
+        assert_eq!(curl_args("u", "t", 60)[7..9], ["--speed-time", "60"]);
+    }
 
     #[cfg(unix)]
     #[test]

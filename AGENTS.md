@@ -244,6 +244,10 @@ before, `// gpui-lints: allow(<lint>) <reason>`.
   is still growing; when it has stopped, find out why and fix that, then start it again. Commands
   that `cargo xtask` starts already get no input (`tooling/xtask/src/util.rs`), so a tool that
   asks a question fails instead of waiting.
+- Every hang has a deadline. A command `cargo xtask` runs is stopped once it prints nothing for 20
+  minutes (`KCHESS_QUIET_MINUTES` for a step known to be quieter), its downloads give up on a
+  server that stops sending, and each CI job has a `timeout-minutes` about twice its slowest
+  green run. A new step or job comes with its limit.
 - The development shell is zsh on macOS. Quote globs and `grep --include` patterns (an unmatched
   glob is an error in zsh), and do not call `timeout`, which macOS lacks: use the tool's own
   timeout or run the command in the background.
