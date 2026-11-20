@@ -3,6 +3,7 @@
 //! thread so the app can wait for it while it quits. A write the core refuses shows what the
 //! profile keeps again, and is tried again before the app quits.
 
+use crate::log::ResultExt as _;
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
@@ -266,7 +267,7 @@ impl PlayedGames {
             }) else {
                 return;
             };
-            if let Ok(library) = library.await {
+            if let Some(library) = library.await.warn_on_err() {
                 let games = library.games;
                 let _ = this.update(cx, |this, cx| match this.reads.answer(read) {
                     Answer::Show => {

@@ -5,6 +5,7 @@
 
 use crate::loading::Loading;
 use crate::pages::PageView;
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{FriendList, PresenceUsers, Username};
 use kchess_contracts::types::{
@@ -213,11 +214,12 @@ impl FriendsPage {
         cx.spawn(async move |this, cx| {
             let mut fresh = HashSet::new();
             for name in &names {
-                if let Ok(saved) = core
+                if let Some(saved) = core
                     .request(calls::CachedProfile {
                         username: Username(name.clone()),
                     })
                     .await
+                    .warn_on_err()
                     && let Some(profile) = saved.profile
                 {
                     let recent = saved
@@ -238,11 +240,12 @@ impl FriendsPage {
                 .cloned()
                 .collect();
             for chunk in stale.chunks(PROFILES_CHUNK) {
-                if let Ok(users) = core
+                if let Some(users) = core
                     .request(calls::Profiles {
                         usernames: FriendList(chunk.to_vec()),
                     })
                     .await
+                    .warn_on_err()
                 {
                     let _ = this.update(cx, |this, cx| {
                         for user in users.into_iter().filter(|user| !user.username.is_empty()) {

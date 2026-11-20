@@ -93,7 +93,7 @@ impl SettingsPage {
         cx.spawn(async move |this, cx| {
             let status = status.await;
             let _ = this.update(cx, |this, cx| {
-                this.engine = status.ok();
+                this.engine = status.warn_on_err();
                 cx.notify();
             });
         })
@@ -120,7 +120,7 @@ impl SettingsPage {
                 })
                 .ok();
             let Some(status) = status else { return };
-            let status: Option<EngineStatus> = status.await.ok();
+            let status: Option<EngineStatus> = status.await.warn_on_err();
             let _ = this.update_in(cx, |this, window, cx| {
                 let ready = status.as_ref().is_some_and(|status| status.ready);
                 this.engine = status;

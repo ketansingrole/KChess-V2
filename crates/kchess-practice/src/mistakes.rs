@@ -2,6 +2,7 @@
 //! solved again on a schedule the core keeps (a right answer doubles the wait, a wrong one brings
 //! it back in ten minutes), and the games they come from.
 
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use std::time::Duration;
 
@@ -203,7 +204,7 @@ impl Mistakes {
                         &format!("Loading the games failed: {}", cause.message),
                     ),
                 }
-                if let Ok(data) = data {
+                if let Some(data) = data.warn_on_err() {
                     this.has_accounts = !data.accounts.is_empty();
                 }
                 cx.notify();

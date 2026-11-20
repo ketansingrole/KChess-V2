@@ -544,6 +544,7 @@ impl WatchPage {
             let _ = this.update(cx, |this, cx| {
                 if !this.epoch.is_current(epoch) {
                     // The page moved on while the core started it: that watch ends now.
+                    // gpui-lints: allow(dropped_failure) a superseded start's failure is nobody's
                     if let Ok(session) = answer {
                         stop_watching(Some(session), cx);
                     }

@@ -2,6 +2,7 @@
 //! (`desktopSettings`). Views read `AppSettings` and save through it;
 //! saves wait for a pause in editing and are written one at a time.
 
+use crate::log::ResultExt as _;
 use std::time::Duration;
 
 use futures::StreamExt as _;
@@ -98,7 +99,8 @@ pub fn init(settings: Settings, cx: &mut App) {
     let bridge = std::sync::Arc::clone(&cx.global::<AppCore>().bridge);
     let report = bridge
         .request_now(CustomThemes {})
-        .unwrap_or_else(|_| CustomThemeReport {
+        .warn_on_err()
+        .unwrap_or_else(|| CustomThemeReport {
             themes: Vec::new(),
             dir: String::new(),
             problems: Vec::new(),

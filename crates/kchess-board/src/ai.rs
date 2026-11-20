@@ -7,6 +7,7 @@ use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::{Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::AiModelName;
 use kchess_contracts::types::{
@@ -67,7 +68,9 @@ impl Ai {
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let read = cx.global::<AppCore>().request(calls::AiStatus {});
         cx.spawn(async move |this, cx| {
-            let Ok(status) = read.await else { return };
+            let Some(status) = read.await.warn_on_err() else {
+                return;
+            };
             let _ = this.update(cx, |this, cx| this.adopt(status, cx));
         })
         .detach();
@@ -76,7 +79,9 @@ impl Ai {
     fn load_models(&mut self, cx: &mut Context<Self>) {
         let read = cx.global::<AppCore>().request(calls::AiModels {});
         cx.spawn(async move |this, cx| {
-            let Ok(answer) = read.await else { return };
+            let Some(answer) = read.await.warn_on_err() else {
+                return;
+            };
             let models = match answer {
                 AiModelList::Listed { models } => models,
                 AiModelList::Refused { .. } => Vec::new(),
@@ -125,7 +130,9 @@ impl Ai {
     pub fn disconnect(&mut self, cx: &mut Context<Self>) {
         let done = cx.global::<AppCore>().request(calls::AiDisconnect {});
         cx.spawn(async move |this, cx| {
-            let Ok(status) = done.await else { return };
+            let Some(status) = done.await.warn_on_err() else {
+                return;
+            };
             let _ = this.update(cx, |this, cx| this.adopt(status, cx));
         })
         .detach();
@@ -138,7 +145,9 @@ impl Ai {
             effort,
         });
         cx.spawn(async move |this, cx| {
-            let Ok(status) = saved.await else { return };
+            let Some(status) = saved.await.warn_on_err() else {
+                return;
+            };
             let _ = this.update(cx, |this, cx| {
                 this.status = status;
                 cx.notify();

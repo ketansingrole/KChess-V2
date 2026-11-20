@@ -10,6 +10,7 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{GameAccount, GameId, GameIds};
 use kchess_contracts::types::{
@@ -247,7 +248,7 @@ impl HistoryPage {
             } else {
                 core.request(calls::ReviewSummaries { ids: GameIds(ids) })
                     .await
-                    .ok()
+                    .warn_on_err()
             };
             this.update(cx, |this, cx| {
                 let tab = &mut this.lichess;
@@ -344,7 +345,7 @@ impl HistoryPage {
         };
         cx.spawn_in(window, async move |this, cx| {
             let pgn = match read {
-                Some(read) => read.await.ok().flatten(),
+                Some(read) => read.await.warn_on_err().flatten(),
                 None => game.pgn.clone(),
             };
             let _ = this.update_in(cx, |this, window, cx| {

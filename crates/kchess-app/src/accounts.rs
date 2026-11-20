@@ -3,6 +3,7 @@
 //! account downloaded and keeps; and the Chess.com players whose games are synced. Pages read it; the sidebar's account menu and Settings → My
 //! accounts act on it.
 
+use crate::log::ResultExt as _;
 use futures::FutureExt as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, SharedString, Window};
@@ -167,13 +168,13 @@ impl Accounts {
                     Answer::Again => return this.refresh(cx),
                     Answer::Superseded => return,
                 }
-                if let Ok(data) = data {
+                if let Some(data) = data.warn_on_err() {
                     this.data = Some(data);
                 }
-                if let Ok(usage) = usage {
+                if let Some(usage) = usage.warn_on_err() {
                     this.usage = usage;
                 }
-                if let Ok(chesscom) = chesscom {
+                if let Some(chesscom) = chesscom.warn_on_err() {
                     this.chesscom = chesscom;
                 }
                 cx.notify();
@@ -261,7 +262,7 @@ impl Accounts {
             let usage = core.request(calls::Usage {}).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.syncs -= 1;
-                if let Ok(usage) = usage {
+                if let Some(usage) = usage.warn_on_err() {
                     this.usage = usage;
                 }
                 match result {
@@ -307,11 +308,11 @@ impl Accounts {
             let usage = core.request(calls::Usage {}).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.syncs -= 1;
-                if let Ok(usage) = usage {
+                if let Some(usage) = usage.warn_on_err() {
                     this.usage = usage;
                 }
                 let before = this.chesscom().len();
-                if let Ok(players) = players {
+                if let Some(players) = players.warn_on_err() {
                     this.chesscom = players;
                 }
                 let added = this.chesscom().len() > before;
@@ -345,7 +346,7 @@ impl Accounts {
             let usage = core.request(calls::Usage {}).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.syncs -= 1;
-                if let Ok(usage) = usage {
+                if let Some(usage) = usage.warn_on_err() {
                     this.usage = usage;
                 }
                 match result {
