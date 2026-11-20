@@ -312,6 +312,14 @@ fn no_move_is_taken_before_the_saved_game_is_restored(cx: &mut gpui_kit::TestApp
     app.click_square("e2", true);
     app.click_square("e4", true);
     assert_eq!(app.moves(), Vec::<String>::new());
+    // The read answers, as a real one does: quitting waits for it to save what came before.
+    app.with_window(|window, cx| {
+        let page =
+            crate::shell::view::<crate::pages::computer::ComputerPage>(cx).expect("the page");
+        page.update(cx, |page, cx| {
+            crate::game::session::SessionSaver::answer(page, window, cx)
+        });
+    });
 }
 
 /// Once the game is over, Quick Pick reviews it on the analysis board, as the banner's button does.

@@ -376,6 +376,36 @@ fn the_analysis_with_its_comments_is_kept_when_the_app_restarts(cx: &mut gpui_ki
     assert_eq!(selected(&mut app, "e2e4 e7e5"), Some(true));
 }
 
+/// 2026-11-20: moves put on the board while its saved session was still being read were lost
+/// when the app quit before the read answered, as the quit saved nothing until it had (four
+/// restart tests failed so with the read slowed). The quit now saves once the read is in.
+#[gpui_kit::test]
+fn moves_from_before_the_read_are_saved_when_the_app_quits_first(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use crate::game::session::{Resumes, SessionSaver};
+    let mut app = analysis(cx);
+    let board = app.with_window(|window, cx| {
+        crate::pages::analysis::board(window, cx).expect("the analysis board")
+    });
+    app.wait_for("the board's saved session to be read", |_, cx| {
+        board.update(cx, |page, _| page.saver().loaded())
+    });
+    // As on a slow profile: the read has not answered yet.
+    app.cx
+        .update(|cx| board.update(cx, |page, _| page.saver().forget()));
+    import(&mut app, "1. e4 e5 2. Nf3 *");
+    app.find("tree-e2e4 e7e5 g1f3");
+
+    let mut app = app.restart_while_quitting(|app| {
+        app.with_window(|window, cx| {
+            board.update(cx, |page, cx| SessionSaver::answer(page, window, cx))
+        })
+    });
+    app.open("Analysis board");
+    app.find("tree-e2e4 e7e5 g1f3");
+}
+
 #[gpui_kit::test]
 fn moves_are_deleted_from_here_and_a_new_analysis_starts_empty(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
@@ -775,6 +805,9 @@ fn the_position_can_be_played_over_the_board(cx: &mut gpui_kit::TestAppContext) 
     wait_for_fen(&mut app, "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
     app.click("play-friend");
     app.find("local-new");
+    // 2026-11-20, Windows CI: the move was typed before the page had read its saved game, while
+    // the move box takes nothing, so it was lost. The position starts once that read is in.
+    super::local::wait_resumed(&mut app);
     app.click_label("Enter a chess move in SAN or UCI");
     app.type_text("Kd2");
     app.press("enter");
@@ -1179,7 +1212,11 @@ fn a_dropped_file_that_is_no_game_is_refused(cx: &mut gpui_kit::TestAppContext) 
     let mut app = analysis(cx);
     let fen = "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1";
     let _file = drop_file(&mut app, "ending.fen", fen);
-    assert_eq!(shown_fen(&mut app), fen);
+    // A dropped file waits for the board's saved session to be read.
+    app.wait_for("the dropped position", |_, cx| {
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .is_some_and(|page| page.read(cx).shown_fen() == fen)
+    });
     let _file = drop_file(&mut app, "notes.txt", "not a game");
     app.find("import-error");
     app.click("import-cancel");
