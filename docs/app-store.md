@@ -16,7 +16,7 @@ downloads. It is the same app run in the App Sandbox, built by `cargo xtask pack
 - **Bundled Stockfish only.** The store forbids downloading programs, and the sandbox cannot keep
   a chosen executable across launches, so the engine settings offer the bundled Stockfish alone.
 - **No command line.** `kchess-cli` runs outside the sandbox and cannot reach the sandboxed core.
-- **Core socket** in the container's own temporary folder (`kchess-service` `discovery.rs`).
+- **Core socket** in the container's own temporary folder (`kchess-client` `discovery.rs`).
 
 Try the sandbox locally: `cargo xtask package --mas` without the signing variables signs the app
 ad hoc in the sandbox and leaves it in `apps/gpui/dist/mas/KChess.app`.

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-games", "crates/kchess-contracts", "crates/kchess-hack", "crates/kchess-voice", "crates/kchess-service", "crates/kchess-delta", "crates/kchess-host", "crates/kchess-testkit", "crates/kchess-ui", "crates/kchess-app", "crates/kchess-board", "crates/kchess-nav", "crates/kchess-puzzles", "crates/kchess-history", "crates/kchess-home", "crates/kchess-local", "crates/kchess-practice", "crates/kchess-studies", "crates/kchess-watch", "apps/gpui", "apps/cli", "tooling/xtask"]
+members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-games", "crates/kchess-contracts", "crates/kchess-hack", "crates/kchess-voice", "crates/kchess-client", "crates/kchess-service", "crates/kchess-delta", "crates/kchess-host", "crates/kchess-testkit", "crates/kchess-ui", "crates/kchess-app", "crates/kchess-board", "crates/kchess-nav", "crates/kchess-puzzles", "crates/kchess-history", "crates/kchess-home", "crates/kchess-local", "crates/kchess-practice", "crates/kchess-studies", "crates/kchess-watch", "apps/gpui", "apps/cli", "tooling/xtask"]
 # cargo-fuzz targets build on their own nightly (fuzz/rust-toolchain.toml); vendored crates keep
 # their own manifests and lints.
 exclude = ["fuzz", "vendor/gpui-pre", "vendor/gpui-pre-apple", "vendor/gpui-pre-macos", "vendor/gpui-pre-windows"]
@@ -69,6 +69,7 @@ kchess-delta = { path = "crates/kchess-delta" }
 kchess-domain = { path = "crates/kchess-domain" }
 kchess-games = { path = "crates/kchess-games" }
 kchess-host = { path = "crates/kchess-host" }
+kchess-client = { path = "crates/kchess-client" }
 kchess-service = { path = "crates/kchess-service" }
 kchess-testkit = { path = "crates/kchess-testkit" }
 kchess-ui = { path = "crates/kchess-ui" }

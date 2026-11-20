@@ -94,6 +94,7 @@ fn options(profile: &Path, reconnect: bool, log: Log) -> Options {
         mode: Mode::Service {
             binary: profile.join("no-such-service"),
         },
+        embed: kchess_service::embed(),
         reconnect,
         log,
         answer: None,

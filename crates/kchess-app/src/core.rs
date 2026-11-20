@@ -1,4 +1,4 @@
-//! The core as the GPUI app holds it (`kchess_service::CoreHandle`): the profile's shared core
+//! The core as the GPUI app holds it (`kchess_client::CoreHandle`): the profile's shared core
 //! service (`docs/shared-core.md`), which every KChess window uses, or a core embedded in the app.
 //! Either runs on a Tokio runtime; the UI awaits its answers through channels, and its events
 //! reach views through `CoreEvents`, an entity they subscribe to. The app opens it and answers
@@ -8,13 +8,13 @@ use crate::log::ResultExt as _;
 use std::sync::Arc;
 
 use gpui_kit::{App, Entity, EventEmitter, Global, Subscription};
+use kchess_client::CoreHandle;
 use kchess_contracts::calls::CoreCall;
 use kchess_contracts::types::ProfileArea;
 use kchess_contracts::{CoreError, HostReply};
-use kchess_service::CoreHandle;
 
+pub use kchess_client::ClientEvent;
 pub use kchess_contracts::CoreEvent;
-pub use kchess_service::ClientEvent;
 
 /// What views subscribe to for core events, and for `ClientEvent::Reconnected`.
 pub struct CoreEvents;

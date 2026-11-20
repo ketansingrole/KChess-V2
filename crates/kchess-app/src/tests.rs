@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use gpui_kit::{App, AppContext as _};
-use kchess_service::{CoreHandle, Hello, Mode, Options};
+use kchess_client::{CoreHandle, Hello, Mode, Options};
 
 use crate::core::{AppCore, CoreBridge, CoreEvents};
 
@@ -32,7 +32,7 @@ pub fn start_core_delivering(cx: &mut App, origin: Option<String>) -> TestCore {
 
 fn open(cx: &mut App, origin: Option<String>, deliver: bool) -> TestCore {
     let profile = tempfile::tempdir().expect("a profile");
-    let runtime = kchess_service::core_runtime().expect("the core's runtime");
+    let runtime = kchess_client::core_runtime().expect("the core's runtime");
     let mut config = kchess_core::Config::new(profile.path().to_path_buf());
     config.test = origin.map(|origin| kchess_core::TestSwitches {
         lichess_origin: Some(origin),
@@ -45,6 +45,7 @@ fn open(cx: &mut App, origin: Option<String>, deliver: bool) -> TestCore {
             capabilities: Vec::new(),
         },
         mode: Mode::Embedded,
+        embed: kchess_service::embed(),
         reconnect: false,
         log: Arc::new(|_, _, _| {}),
         answer: None,

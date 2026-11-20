@@ -2,22 +2,65 @@
 //! started when none runs, or a core embedded in the frontend's process. Either way a frontend
 //! calls it by `CoreApi` method or typed call, hears its events on one channel, and answers its
 //! host requests in one place: as events, or through the `answer` it opened the core with.
+//!
+//! An embedded core is the host's to make (`Options::embed`, `kchess_service::embed`): the handle
+//! knows it only as an `EmbeddedCore`, so the crates a frontend is built from never build the core.
 
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use kchess_contracts::calls::CoreCall;
 use kchess_contracts::{CoreError, CoreEvent, HostReply, HostRequest, Level};
-use kchess_core::connection::{APP, ClientInfo};
-use kchess_core::{Config, Core, Host};
+use kchess_host::config::Config;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::client::{Client, ClientEvent, ConnectError, Hello, Start, connect_or_start};
 
 const STOPPED: &str = "The KChess core stopped.";
+
+/// The connection an embedded core gives its one frontend (`kchess_core::connection::APP`):
+/// the `origin` of that frontend's writes.
+pub const EMBEDDED_CONNECTION: u64 = 0;
+
+/// A future an embedded core answers with.
+pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+
+/// A core in this process, as the handle uses it.
+pub trait EmbeddedCore: Send + Sync + 'static {
+    /// A `CoreApi` method by name.
+    fn call(
+        self: Arc<Self>,
+        method: String,
+        args: Vec<Value>,
+    ) -> BoxFuture<Result<Value, CoreError>>;
+    /// The answer to the host request `id`.
+    fn host_reply(&self, id: u64, reply: HostReply) -> Result<(), CoreError>;
+    /// Whether the frontend's window is focused.
+    fn focus(&self, focused: bool);
+    /// The frontend has no window open: what it started stops.
+    fn suspend(&self);
+    /// Cancels the core's work and releases the profile.
+    fn close(self: Arc<Self>) -> BoxFuture<()>;
+}
+
+/// What an embedded core opens with.
+pub struct Embedding {
+    pub config: Config,
+    pub hello: Hello,
+    /// Where its events go.
+    pub events: mpsc::UnboundedSender<ClientEvent>,
+    /// Where it logs.
+    pub log: Log,
+}
+
+/// Opens a core in this process, or says why it could not: the host's (`kchess_service::embed`).
+pub type Embed =
+    Arc<dyn Fn(Embedding) -> Result<Arc<dyn EmbeddedCore>, String> + Send + Sync + 'static>;
 /// The first wait before starting a stopped core again, doubled up to `RESTART_LIMIT`.
 const RESTART_FIRST: Duration = Duration::from_millis(200);
 const RESTART_LIMIT: Duration = Duration::from_secs(5);
@@ -54,6 +97,8 @@ pub struct Options {
     pub config: Config,
     pub hello: Hello,
     pub mode: Mode,
+    /// How to open the core in this process, when `mode` says it runs there.
+    pub embed: Embed,
     /// When the shared core stops, start it again and carry on with a new connection, reported
     /// as `ClientEvent::Reconnected`; otherwise `ClientEvent::Closed` ends the events.
     pub reconnect: bool,
@@ -64,33 +109,16 @@ pub struct Options {
     pub answer: Option<Answer>,
 }
 
-/// The core's host in an embedded core: its events go to the frontend's channel.
-struct Forward {
-    events: mpsc::UnboundedSender<ClientEvent>,
-    log: Log,
-}
-
-impl Host for Forward {
-    fn log(&self, level: Level, scope: &str, message: &str) {
-        (self.log)(level, scope, message);
-    }
-
-    fn emit(&self, event: CoreEvent) {
-        // The frontend has gone when the receiver is dropped; late events have nowhere to go.
-        let _ = self.events.send(ClientEvent::Event(event));
-    }
-}
-
 #[derive(Clone)]
 enum Backend {
-    Embedded(Arc<Core>),
+    Embedded(Arc<dyn EmbeddedCore>),
     /// The connection, replaced when the core restarts; `None` once closed.
     Service(Arc<Mutex<Option<Client>>>),
 }
 
 /// What the event pump keeps of the handle, without keeping it open.
 enum WeakBackend {
-    Embedded(Weak<Core>),
+    Embedded(Weak<dyn EmbeddedCore>),
     Service(Weak<Mutex<Option<Client>>>),
 }
 
@@ -113,6 +141,7 @@ impl CoreHandle {
             config,
             hello,
             mode,
+            embed,
             reconnect,
             log,
             answer,
@@ -122,18 +151,13 @@ impl CoreHandle {
         match mode {
             Mode::Embedded => {
                 let (sender, incoming) = mpsc::unbounded_channel();
-                let host = Arc::new(Forward {
+                let core = embed(Embedding {
+                    config,
+                    hello,
                     events: sender,
                     log,
-                });
-                let core = Core::open(config, host)
-                    .map_err(|cause| ConnectError::Failed(cause.message))?;
-                core.embedded_by(ClientInfo {
-                    kind: hello.kind,
-                    release: crate::protocol::release(),
-                    capabilities: hello.capabilities,
-                });
-                let core = Arc::new(core);
+                })
+                .map_err(ConnectError::Failed)?;
                 let weak = WeakBackend::Embedded(Arc::downgrade(&core));
                 tokio::spawn(pump(weak, incoming, events, answer));
                 let handle = CoreHandle {
@@ -175,7 +199,8 @@ impl CoreHandle {
     /// This frontend's connection on the core: the `origin` of its own writes in
     /// `profile:changed`.
     pub fn connection(&self) -> u64 {
-        self.client().map_or(APP, |client| client.connection())
+        self.client()
+            .map_or(EMBEDDED_CONNECTION, |client| client.connection())
     }
 
     /// A `CoreApi` method by name.
@@ -191,7 +216,7 @@ impl CoreHandle {
         };
         async move {
             match (core, client) {
-                (Some(core), _) => core.call(&method, args).await,
+                (Some(core), _) => core.call(method, args).await,
                 (None, Some(client)) => client.call(&method, args).await,
                 (None, None) => Err(CoreError::new(STOPPED)),
             }
@@ -223,7 +248,7 @@ impl CoreHandle {
         self.focused
             .store(if focused { 2 } else { 1 }, Ordering::SeqCst);
         match &self.backend {
-            Backend::Embedded(core) => core.focus(APP, focused),
+            Backend::Embedded(core) => core.focus(focused),
             Backend::Service(_) => {
                 if let Some(client) = self.client() {
                     client.focus(focused);
@@ -236,7 +261,7 @@ impl CoreHandle {
     /// stops, and every other client's work carries on.
     pub fn suspend(&self) {
         match &self.backend {
-            Backend::Embedded(core) => core.suspend_connection(APP),
+            Backend::Embedded(core) => core.suspend(),
             Backend::Service(_) => {
                 if let Some(client) = self.client() {
                     client.suspend();
@@ -250,7 +275,7 @@ impl CoreHandle {
     /// has used it for a while. Later calls fail.
     pub async fn close(&self) {
         match &self.backend {
-            Backend::Embedded(core) => core.close().await,
+            Backend::Embedded(core) => Arc::clone(core).close().await,
             Backend::Service(slot) => drop(lock(slot).take()),
         }
     }
@@ -398,148 +423,6 @@ async fn service_pump(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kchess_core::connection::Capability;
-
-    fn quiet() -> Log {
-        Arc::new(|_, _, _| {})
-    }
-
-    fn embedded(profile: &std::path::Path, answer: Option<Answer>) -> Options {
-        embedded_as(
-            profile,
-            answer,
-            vec![Capability::Browser, Capability::Focus],
-        )
-    }
-
-    fn embedded_as(
-        profile: &std::path::Path,
-        answer: Option<Answer>,
-        capabilities: Vec<Capability>,
-    ) -> Options {
-        Options {
-            config: Config::new(profile.to_path_buf()),
-            hello: Hello {
-                kind: "test".into(),
-                capabilities,
-            },
-            mode: Mode::Embedded,
-            reconnect: false,
-            log: quiet(),
-            answer,
-        }
-    }
-
-    /// A frontend that answers where requests arrive is never handed one, and its answer
-    /// reaches the core.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn host_requests_are_answered_where_they_arrive() {
-        let profile = tempfile::tempdir().expect("profile");
-        let asked: Arc<Mutex<Vec<HostRequest>>> = Arc::default();
-        let answer: Answer = {
-            let asked = Arc::clone(&asked);
-            Arc::new(move |request| {
-                lock(&asked).push(request);
-                HostReply::Value(json!(true))
-            })
-        };
-        let (core, mut events) = CoreHandle::open(embedded(profile.path(), Some(answer)))
-            .await
-            .expect("opens");
-        let Backend::Embedded(inner) = &core.backend else {
-            panic!("embedded");
-        };
-        let answer = inner
-            .capabilities()
-            .request(HostRequest::Focus)
-            .await
-            .expect("answered");
-        assert_eq!(answer, json!(true));
-        assert_eq!(lock(&asked).clone(), [HostRequest::Focus]);
-        while let Ok(event) = events.try_recv() {
-            assert!(
-                !matches!(event, ClientEvent::Event(CoreEvent::HostRequest(_))),
-                "{event:?}"
-            );
-        }
-        core.close().await;
-    }
-
-    /// An embedded core's log lines reach the frontend's log.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn an_embedded_core_logs_through_its_frontend() {
-        let profile = tempfile::tempdir().expect("profile");
-        let lines: Arc<Mutex<Vec<String>>> = Arc::default();
-        let mut options = embedded(profile.path(), None);
-        options.log = {
-            let lines = Arc::clone(&lines);
-            Arc::new(move |_, scope, message| lock(&lines).push(format!("{scope}: {message}")))
-        };
-        let (core, _events) = CoreHandle::open(options).await.expect("opens");
-        let refused = core.call("library", vec![json!("extra")]).await;
-        assert!(refused.is_err());
-        let lines = lock(&lines).clone();
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.starts_with("core: Invalid method arguments: library")),
-            "{lines:?}"
-        );
-        core.close().await;
-    }
-
-    /// Without an answer, a host request is an event, and `reply` answers it.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn host_requests_are_events_without_an_answer() {
-        let profile = tempfile::tempdir().expect("profile");
-        let (core, mut events) = CoreHandle::open(embedded(profile.path(), None))
-            .await
-            .expect("opens");
-        let Backend::Embedded(inner) = &core.backend else {
-            panic!("embedded");
-        };
-        let capabilities = inner.capabilities();
-        let mut asking =
-            tokio::spawn(async move { capabilities.request(HostRequest::Focus).await });
-        let answer = loop {
-            tokio::select! {
-                asked = &mut asking => break asked.expect("asked").expect("answered"),
-                Some(event) = events.recv() => {
-                    if let ClientEvent::Event(CoreEvent::HostRequest(ask)) = event {
-                        assert_eq!(ask.request, HostRequest::Focus);
-                        core.reply(ask.id, HostReply::Value(json!(true)))
-                            .await
-                            .expect("replied");
-                    }
-                }
-            }
-        };
-        assert_eq!(answer, json!(true));
-        core.close().await;
-        let refused = core.call("library", Vec::new()).await;
-        assert!(refused.is_err(), "a closed core answers nothing");
-    }
-
-    /// 2026-11-11: an embedded core sent every host request to its frontend, whatever the
-    /// frontend declared, so an embedded command line was asked to focus a window it does not
-    /// have. It hears only what it said it can answer, as the shared core's clients do.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn an_embedded_core_asks_only_what_its_frontend_can_answer() {
-        let profile = tempfile::tempdir().expect("profile");
-        let options = embedded_as(profile.path(), None, vec![Capability::Browser]);
-        let (core, _events) = CoreHandle::open(options).await.expect("opens");
-        let Backend::Embedded(inner) = &core.backend else {
-            panic!("embedded");
-        };
-        let connections = inner.connections();
-        let info = connections.info(APP).expect("the frontend");
-        assert_eq!(info.kind, "test");
-        assert_eq!(info.capabilities, [Capability::Browser]);
-        assert_eq!(connections.route(Capability::Focus, Some(APP)), None);
-        assert_eq!(connections.alert_owner(), None);
-        assert_eq!(connections.route(Capability::Browser, Some(APP)), Some(APP));
-        core.close().await;
-    }
 
     /// 2026-11-11: the app built its own runtime on the default 2 MiB worker stack, so its
     /// embedded core ran on less than the command line's and the service's. Every frontend's core

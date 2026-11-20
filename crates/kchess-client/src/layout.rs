@@ -9,8 +9,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use kchess_core::{Config, TestSwitches};
 use kchess_delta::installed;
+use kchess_host::config::{Config, TestSwitches};
 
 use crate::handle::Mode;
 

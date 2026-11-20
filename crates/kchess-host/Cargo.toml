@@ -1,6 +1,6 @@
 [package]
 name = "kchess-host"
-description = "What the core and its frontends read alike of the process they run in: the KCHESS_* switches and development overrides, the App Store sandbox, log redaction and which links open in a browser."
+description = "What the core and its frontends read alike of the process they run in: the KCHESS_* switches and development overrides, the App Store sandbox, log redaction, which links open in a browser, and the core's configuration."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -117,7 +117,9 @@ libc = { version = "0.2", features = ["extra_traits"] }
 nix = { version = "0.31", default-features = false, features = ["fs", "resource"] }
 percent-encoding = { version = "2" }
 rustix = { version = "1", features = ["event", "fs", "net", "pipe", "process", "time"] }
+tokio-util = { version = "0.7", features = ["codec", "io", "rt"] }
 tracing = { version = "0.1" }
+zeroize = { version = "1", features = ["derive"] }
 
 [target.aarch64-apple-darwin.build-dependencies]
 bitflags = { version = "2", default-features = false, features = ["std"] }
@@ -143,6 +145,7 @@ smallvec = { version = "1", default-features = false, features = ["write"] }
 socket2 = { version = "0.6", default-features = false, features = ["all"] }
 subtle = { version = "2" }
 syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", default-features = false, features = ["visit-mut"] }
+tokio-util = { version = "0.7", features = ["codec", "io", "rt"] }
 tracing = { version = "0.1", features = ["log"] }
 uuid = { version = "1", default-features = false, features = ["v5"] }
 zbus = { version = "5" }
@@ -168,9 +171,11 @@ zvariant_utils = { version = "4", features = ["gvariant"] }
 bitflags = { version = "2", default-features = false, features = ["std"] }
 futures-channel = { version = "0.3", features = ["sink"] }
 percent-encoding = { version = "2" }
+tokio-util = { version = "0.7", features = ["codec", "io", "rt"] }
 tracing = { version = "0.1" }
 uuid = { version = "1", default-features = false, features = ["v5"] }
 windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+zeroize = { version = "1", features = ["derive"] }
 
 [target.x86_64-pc-windows-msvc.build-dependencies]
 windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

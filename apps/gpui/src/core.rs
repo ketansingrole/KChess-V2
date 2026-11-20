@@ -69,6 +69,7 @@ fn open(
             capabilities: vec![Capability::Browser, Capability::Focus],
         },
         mode,
+        embed: kchess_service::embed(),
         reconnect: true,
         log: Arc::new(crate::log::write),
         answer: None,

@@ -6,12 +6,14 @@ does not open the database or spawn an engine itself. The crates are mapped in `
 
 ## Reaching the core
 
-`kchess_service::CoreHandle::open(Options { config, hello, mode, reconnect, log, answer })`
-(`crates/kchess-service/src/handle.rs`) opens the profile's core and returns the receiver its
+`kchess_client::CoreHandle::open(Options { config, hello, mode, embed, reconnect, log, answer })`
+(`crates/kchess-client/src/handle.rs`) opens the profile's core and returns the receiver its
 events arrive on. With `Mode::Service` it joins the profile's core service, starting it from the
 binary shipped beside the frontend when none runs (`docs/shared-core.md`); with `Mode::Embedded`
-the core runs in the frontend's own process, as `kchess-cli --embedded` does. Only one core may
-hold a profile at a time (`profile.lock`).
+the core runs in the frontend's own process, as `kchess-cli --embedded` does, opened by `embed`
+(`kchess_service::embed`, which only the programs that host the core name). The crates the app is
+built from depend on `kchess-client` alone, so they never build the core (xtask's `boundaries`
+test). Only one core may hold a profile at a time (`profile.lock`).
 
 A frontend calls the core with typed calls: `CoreHandle::request(call)` takes one of
 `kchess_contracts::calls` and answers in its shape. A call by method name is plumbing (the CLI's
