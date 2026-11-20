@@ -1881,8 +1881,8 @@ pub fn page_has_keys(page: &FocusHandle, window: &Window, cx: &App) -> bool {
                 .is_some_and(|context| context.contains(keyboard::CONTEXT)))
 }
 
-/// What a screen reader says of the board: the last move, the side to move, and a hint or
-/// solution shown on it.
+/// What a screen reader says of the board: the last move (its piece, and a check), the side to
+/// move, and a hint or solution shown on it.
 fn describe(state: &BoardState) -> String {
     let to_move = if kchess_domain::rules::fen_turn(&state.fen).is_black() {
         "Black to move"
@@ -1890,8 +1890,22 @@ fn describe(state: &BoardState) -> String {
         "White to move"
     };
     let mut parts = Vec::new();
+    // The move as a player sees it: the piece that went (kept to itself in blindfold play, as the
+    // squares keep theirs) and the check it gives, not only two squares.
     if let Some((from, to)) = state.last_move {
-        parts.push(format!("Last move {from}–{to}"));
+        let piece = (!state.blindfold)
+            .then(|| board_of(&state.fen).piece_at(to))
+            .flatten()
+            .map(|piece| format!("{} ", kchess_domain::material::name(piece.role)))
+            .unwrap_or_default();
+        let check = match (state.check, &state.badge) {
+            (Some(king), Some(badge)) if badge.square == king && badge.glyph == "#" => {
+                ", checkmate"
+            }
+            (Some(_), _) => ", check",
+            (None, _) => "",
+        };
+        parts.push(format!("Last move {piece}{from}–{to}{check}"));
     }
     parts.push(to_move.to_string());
     // What the board shows the player to play, which is otherwise only seen: a hint's piece, and
@@ -2491,7 +2505,43 @@ mod description_tests {
             Color::White,
             Some("e2e4"),
         );
-        assert_eq!(describe(&after), "Last move e2–e4 · Black to move");
+        assert_eq!(describe(&after), "Last move pawn e2–e4 · Black to move");
+    }
+
+    /// The last move says its piece and the check it gives, as the board shows them; blindfold
+    /// play keeps the piece to itself.
+    #[test]
+    fn the_last_move_says_its_piece_and_a_check() {
+        let shown = |fen: &str, last: &str| {
+            BoardState::shown(
+                fen,
+                kchess_domain::variant::Variant::Standard,
+                Color::White,
+                Some(last),
+            )
+        };
+        let check = shown(
+            "rnbqkbnr/ppp2ppp/3p4/1B2p3/4P3/8/PPPP1PPP/RNBQK1NR b KQkq - 1 3",
+            "f1b5",
+        );
+        assert_eq!(
+            describe(&check),
+            "Last move bishop f1–b5, check · Black to move"
+        );
+        let mate = shown(
+            "r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4",
+            "h5f7",
+        );
+        assert_eq!(
+            describe(&mate),
+            "Last move queen h5–f7, checkmate · Black to move"
+        );
+        let mut blindfold = mate;
+        blindfold.blindfold = true;
+        assert_eq!(
+            describe(&blindfold),
+            "Last move h5–f7, checkmate · Black to move"
+        );
     }
 
     /// A hint or a solution shown on the board is said too, not only drawn; the engine's lines

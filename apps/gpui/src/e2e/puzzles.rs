@@ -204,8 +204,8 @@ fn quick_pick_shows_the_solution(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
-/// A hint and a solution are said to a screen reader, not only drawn: the board's description
-/// names the piece to move, then the move.
+/// The board says to a screen reader what it shows: the last move with its piece, then a hint
+/// and a solution, not only drawn.
 #[gpui_kit::test]
 fn a_hint_and_a_solution_are_said_not_only_drawn(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
@@ -228,10 +228,10 @@ fn a_hint_and_a_solution_are_said_not_only_drawn(cx: &mut gpui_kit::TestAppConte
             .unwrap_or_default()
             .to_string()
     };
-    assert!(
-        !description(&mut app).contains("Hint"),
-        "{}",
-        description(&mut app)
+    // Black's knight came out to f6: the piece is said with its move.
+    assert_eq!(
+        description(&mut app),
+        "Last move knight g8–f6 · White to move"
     );
     app.click("puzzle-hint");
     // The queen on h5 mates on f7.
