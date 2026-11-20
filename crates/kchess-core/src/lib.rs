@@ -21,6 +21,7 @@ pub mod host;
 pub mod ids;
 pub mod lichess;
 pub mod loopback;
+pub mod memory;
 mod panics;
 pub mod power;
 mod process;

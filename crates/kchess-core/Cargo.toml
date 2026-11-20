@@ -62,9 +62,10 @@ kchess-hack = { version = "0.1", path = "../kchess-hack" }
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs", "process"] }
 
-# The power state (`power.rs`); already in Cargo.lock through the service's pipe security.
+# The power state (`power.rs`) and the memory installed (`memory.rs`); already in Cargo.lock
+# through the service's pipe security.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_Power"] }
+windows-sys = { version = "0.61", features = ["Win32_System_Power", "Win32_System_SystemInformation"] }
 
 [features]
 # Set by `cargo xtask package` for every shipped build: the development overrides (test switch,

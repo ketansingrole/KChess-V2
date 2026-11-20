@@ -20,6 +20,11 @@
 //!   a blunder at move 6 (Black's `Nf6`).
 //! - `stall`: a deep search (depth 18 and up) reports one scored line and then waits for `stop`;
 //!   shallower searches answer at once.
+//! - `deaf`: `stall`, but a deep search never hears `stop`: only closing the engine ends it.
+//! - `crash`: `search`, but the engine exits when asked for a deep search (depth 18 and up).
+//! - `weak`: `search` on a computer too slow to search deep on part of its threads: a deep
+//!   search (depth 18 and up) with fewer than four `Threads` ends at depth 12, as one that ran
+//!   out of its `movetime` does.
 //! - `quick`: `search`, but `go movetime M` waits at most `QUICK_MOVETIME_MS`: for tests that need
 //!   the computer's move, not its clock (a level's move takes a second or more).
 //!
@@ -52,6 +57,8 @@ enum Kind {
 struct Search {
     position: String,
     multipv: usize,
+    /// The `Threads` option, when it was set.
+    threads: usize,
     stop: Option<Arc<AtomicBool>>,
 }
 
@@ -89,8 +96,30 @@ fn info(mode: &str, position: &str, depth: u32, rank: usize) {
     ));
 }
 
-fn run_search(mode: String, position: String, multipv: usize, stop: Arc<AtomicBool>, kind: Kind) {
-    let stalls = mode == "stall";
+/// Whether `line` asks for a search to depth 18 or deeper.
+fn deep_search(line: &str) -> bool {
+    line.strip_prefix("go depth ")
+        .and_then(|rest| rest.split_whitespace().next()?.parse::<u32>().ok())
+        .is_some_and(|depth| depth >= 18)
+}
+
+/// The depth a `weak` engine reaches when asked for `depth` with `threads` threads.
+fn weak_depth(depth: u32, threads: usize) -> u32 {
+    if depth >= 18 && threads < 4 {
+        12
+    } else {
+        depth
+    }
+}
+
+fn run_search(
+    mode: String,
+    position: String,
+    (multipv, threads): (usize, usize),
+    stop: Arc<AtomicBool>,
+    kind: Kind,
+) {
+    let stalls = mode == "stall" || mode == "deaf";
     let best = scripted(&mode, &position)
         .1
         .split_whitespace()
@@ -111,9 +140,14 @@ fn run_search(mode: String, position: String, multipv: usize, stop: Arc<AtomicBo
         Kind::Depth { depth } => {
             // A stall holds only the deep searches (depth 18 and up), so a quick pass finishes.
             let stall_here = stalls && depth >= 18;
-            info(&mode, &position, if stall_here { 1 } else { depth }, 1);
+            let reached = if mode == "weak" {
+                weak_depth(depth, threads)
+            } else {
+                depth
+            };
+            info(&mode, &position, if stall_here { 1 } else { reached }, 1);
             if stall_here {
-                while !stop.load(Ordering::SeqCst) {
+                while mode == "deaf" || !stop.load(Ordering::SeqCst) {
                     thread::sleep(Duration::from_millis(5));
                 }
             }
@@ -166,6 +200,14 @@ fn search_command(mode: &str, line: &str, state: &Mutex<Search>) {
                 .unwrap_or(1);
             lock(state).multipv = value;
         }
+        _ if line.starts_with("setoption name Threads value ") => {
+            let value = line
+                .rsplit(' ')
+                .next()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1);
+            lock(state).threads = value;
+        }
         _ if line.starts_with("go ") => {
             let words: Vec<&str> = line.split_whitespace().collect();
             let number = |name: &str| {
@@ -188,13 +230,16 @@ fn search_command(mode: &str, line: &str, state: &Mutex<Search>) {
                 ))
             };
             let stop = Arc::new(AtomicBool::new(false));
-            let (position, multipv) = {
+            let (position, options) = {
                 let mut search = lock(state);
                 search.stop = Some(Arc::clone(&stop));
-                (search.position.clone(), search.multipv.max(1))
+                (
+                    search.position.clone(),
+                    (search.multipv.max(1), search.threads.max(1)),
+                )
             };
             let mode = mode.to_string();
-            thread::spawn(move || run_search(mode, position, multipv, stop, kind));
+            thread::spawn(move || run_search(mode, position, options, stop, kind));
         }
         _ => {}
     }
@@ -232,7 +277,10 @@ fn main() {
         let exe = std::env::current_exe().ok()?;
         started_as_copy.then(|| exe.with_extension("log").display().to_string())
     });
-    let searching = matches!(mode.as_str(), "search" | "review" | "stall");
+    let searching = matches!(
+        mode.as_str(),
+        "search" | "review" | "stall" | "deaf" | "crash" | "weak"
+    );
     let state = Mutex::new(Search::default());
 
     #[cfg(unix)]
@@ -279,6 +327,9 @@ fn main() {
                 .exec();
             panic!("the fake engine could not run again: {again}");
         }
+        if mode == "crash" && deep_search(&line) {
+            break;
+        }
         if searching {
             if slow && line.starts_with("go ") {
                 std::thread::sleep(std::time::Duration::from_millis(20));
@@ -315,5 +366,26 @@ mod tests {
         assert_eq!(capped(1_000, false), 1_000);
         assert_eq!(capped(1_000, true), QUICK_MOVETIME_MS);
         assert_eq!(capped(5, true), 5);
+    }
+
+    #[test]
+    fn a_deep_search_is_one_to_depth_18_or_more() {
+        assert!(deep_search("go depth 18 movetime 5000"));
+        assert!(deep_search("go depth 26"));
+        assert!(!deep_search("go depth 10 movetime 400"));
+        assert!(!deep_search("go depth 17"));
+        assert!(!deep_search("go movetime 5000"));
+        assert!(!deep_search("go infinite"));
+        assert!(!deep_search("stop"));
+    }
+
+    #[test]
+    fn a_weak_engine_searches_deep_only_with_four_threads() {
+        assert_eq!(weak_depth(18, 1), 12);
+        assert_eq!(weak_depth(18, 3), 12);
+        assert_eq!(weak_depth(18, 4), 18);
+        assert_eq!(weak_depth(20, 2), 12);
+        assert_eq!(weak_depth(17, 1), 17);
+        assert_eq!(weak_depth(10, 1), 10);
     }
 }

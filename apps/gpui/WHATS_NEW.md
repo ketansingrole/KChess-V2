@@ -10,6 +10,7 @@ refuses to release with nothing there.
 
 - **Zen mode on more boards**: Z and the Zen button now hide the sidebar in your Lichess games and the practice trainers too, not just against the computer or over the board. Guess the move is now found from Search.
 - **Brilliant moves**: game reviews run on your computer now mark your brilliant moves too.
+- **Faster game reviews**: when you open a game to review it, the review finishes in about half the time on a computer with four or more cores.
 - **Say “next” in puzzles**: with voice on, voice keeps listening once you finish a puzzle or a mistake drill, and saying “next” takes you to the next one.
 - **See a line before you play it**: hover over a move in the engine lines, the Explorer's move list or a ChatGPT explanation to see the position it leads to.
 - **Find a setting in one go**: search for a setting at the top of the window and it opens Settings right at that row, lit up. Searching History, Studies and Openings now highlights the words that matched.

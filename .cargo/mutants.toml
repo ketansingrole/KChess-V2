@@ -170,6 +170,11 @@ exclude_re = [
     'tooling/xtask/src/package/mac\.rs:.*: replace sign -> Result with ',
     'tooling/xtask/src/package/(mac|mas)\.rs:.*: replace package -> Result<Vec<PathBuf>> with ',
     'tooling/xtask/src/package/mod\.rs:.*: replace run -> Result with ',
+    # The memory read from the OS: each system's reading is compiled only on that system, so a
+    # mutant of another system's changes nothing where it runs. The one compiled is tested through
+    # `physical` (`the_memory_is_read_on_every_system_kchess_ships_for`, which fails for none, 0
+    # and 1), and what Linux's file says is `meminfo_total`'s test.
+    'kchess-core/src/memory\.rs:.*(replace os::physical -> Option<u64> with |in os::physical$)',
     # The power state read from the OS: no test can unplug the computer. What Linux's supplies
     # decide is tested (`supplies_on_battery`); the battery's use of a reading is tested with a
     # stand-in reader (`engine::bridge`).

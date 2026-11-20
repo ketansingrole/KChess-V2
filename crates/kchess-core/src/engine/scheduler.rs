@@ -34,9 +34,15 @@ impl<F: Fn() -> bool + Send + Sync> Power for F {
     }
 }
 
+/// One review engine per this much of the computer's memory: an engine takes about 160 MiB
+/// while it searches, so the engines of a review stay under a tenth of the memory.
+const ENGINE_MEMORY: u64 = 2 << 30;
+
 /// Shared by every clone of a `Scheduler` and by the leases it hands out.
 struct Shared {
     budget: usize,
+    /// The computer's memory in bytes, when it is known.
+    memory: Option<u64>,
     power: Box<dyn Power>,
     state: Mutex<State>,
     next_id: AtomicU64,
@@ -66,6 +72,16 @@ pub fn default_budget(cpus: usize) -> usize {
     cpus.saturating_sub(1).clamp(1, 4)
 }
 
+/// How many engines review a game at once on `threads` search threads: one for each, but no
+/// more than one per `ENGINE_MEMORY` of `memory`, and at least one. A computer whose memory is
+/// not known gets one for each thread.
+pub fn engines_within(threads: usize, memory: Option<u64>) -> usize {
+    let room = memory.map_or(threads, |bytes| {
+        usize::try_from(bytes / ENGINE_MEMORY).unwrap_or(threads)
+    });
+    threads.min(room).max(1)
+}
+
 #[derive(Clone)]
 pub struct Scheduler {
     shared: Arc<Shared>,
@@ -75,13 +91,24 @@ impl Scheduler {
     /// `power` is consulted on every `search_threads` call.
     pub fn new(power: impl Power + 'static) -> Scheduler {
         let cpus = std::thread::available_parallelism().map_or(1, |count| count.get());
-        Scheduler::with_budget(default_budget(cpus), power)
+        Scheduler::with_memory(default_budget(cpus), crate::memory::physical(), power)
     }
 
+    /// A budget on a computer whose memory is not known.
     pub fn with_budget(budget: usize, power: impl Power + 'static) -> Scheduler {
+        Scheduler::with_memory(budget, None, power)
+    }
+
+    /// A budget on a computer with `memory` bytes of memory.
+    pub fn with_memory(
+        budget: usize,
+        memory: Option<u64>,
+        power: impl Power + 'static,
+    ) -> Scheduler {
         Scheduler {
             shared: Arc::new(Shared {
                 budget: budget.max(1),
+                memory,
                 power: Box::new(power),
                 state: Mutex::new(State::default()),
                 next_id: AtomicU64::new(1),
@@ -101,6 +128,12 @@ impl Scheduler {
         } else {
             self.shared.budget
         }
+    }
+
+    /// How many engines review a game someone asked for at once: the search threads' worth,
+    /// within what the memory has room for (`engines_within`).
+    pub fn review_engines(&self) -> usize {
+        engines_within(self.search_threads(), self.shared.memory)
     }
 
     /// Waits for the lease. A higher priority cancels the active lease's `token` at once, which
@@ -260,6 +293,32 @@ mod tests {
         assert_eq!(Scheduler::with_budget(4, || true).search_threads(), 2);
         assert_eq!(Scheduler::with_budget(1, || true).search_threads(), 1);
         assert_eq!(Scheduler::with_budget(4, || false).search_threads(), 4);
+    }
+
+    #[test]
+    fn a_review_gets_an_engine_per_thread_that_the_memory_has_room_for() {
+        const GIB: u64 = 1 << 30;
+        assert_eq!(engines_within(4, None), 4);
+        assert_eq!(engines_within(4, Some(64 * GIB)), 4);
+        assert_eq!(engines_within(4, Some(8 * GIB)), 4);
+        assert_eq!(engines_within(4, Some(6 * GIB)), 3);
+        assert_eq!(engines_within(4, Some(4 * GIB)), 2);
+        assert_eq!(engines_within(4, Some(4 * GIB - 1)), 1);
+        assert_eq!(engines_within(4, Some(GIB)), 1);
+        assert_eq!(engines_within(2, Some(64 * GIB)), 2);
+        assert_eq!(engines_within(1, None), 1);
+    }
+
+    #[test]
+    fn a_scheduler_counts_review_engines_by_its_threads_and_memory() {
+        const GIB: u64 = 1 << 30;
+        let engines = |memory, battery: bool| {
+            Scheduler::with_memory(4, memory, move || battery).review_engines()
+        };
+        assert_eq!(engines(None, false), 4);
+        assert_eq!(engines(Some(6 * GIB), false), 3);
+        assert_eq!(engines(Some(64 * GIB), true), 2);
+        assert_eq!(Scheduler::with_budget(3, || false).review_engines(), 3);
     }
 
     /// Only a higher priority stops the active lease; an equal one waits its turn.

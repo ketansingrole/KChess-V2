@@ -77,6 +77,18 @@ fn key_of(fen: &str, list: &[&str]) -> String {
     kchess_domain::records::review::review_key(fen, list, None)
 }
 
+/// Waits until the deep pass has a search in the engine: a test that stops a stalled search
+/// must not act between the passes, when there is none to stop.
+async fn deep_search_running(rig: &Rig) {
+    wait_until(WAIT, "the deep pass to search", || {
+        received(&rig.log)
+            .iter()
+            .any(|line| line.starts_with("go depth 18"))
+            .then_some(())
+    })
+    .await;
+}
+
 fn updates_of(rig: &Rig) -> Vec<StoredReview> {
     rig.host
         .updates
@@ -536,6 +548,7 @@ async fn discarding_an_account_while_its_review_runs_stores_nothing_more() {
             .find(|review| !review.complete && review.evals.iter().all(Option::is_some))
     })
     .await;
+    deep_search_running(&rig).await;
     rig.reviews.discard_account_reviews(&["tester".to_string()]);
     wait_until(WAIT, "the discarded review to end", || {
         (rig.host.last_status()?.current.is_none()).then_some(())
@@ -569,6 +582,7 @@ async fn cancelling_keeps_the_finished_quick_pass_and_is_not_complete() {
             .find(|review| !review.complete && review.evals.iter().all(Option::is_some))
     })
     .await;
+    deep_search_running(&rig).await;
     rig.reviews.cancel_review(&key);
     wait_until(WAIT, "the cancelled review to end", || {
         (rig.host.last_status()?.current.is_none()).then_some(())
@@ -756,6 +770,7 @@ async fn a_computer_move_takes_the_engine_from_a_running_review() {
             .find(|review| !review.complete && review.evals.iter().all(Option::is_some))
     })
     .await;
+    deep_search_running(&rig).await;
     let search_log = log_path("preempt-search");
     let search = Search::new(context(
         &rig.recording,
@@ -1044,8 +1059,9 @@ async fn a_save_admitted_after_its_account_is_discarded_writes_nothing() {
         .await
         .expect("hold the store");
     release_settings.send(()).expect("release the settings");
+    // The mate at the end is known from the start: a second position finished is one searched.
     wait_until(WAIT, "the first position's save", || {
-        (rig.host.last_status()?.current?.done == 1).then_some(())
+        (rig.host.last_status()?.current?.done >= 2).then_some(())
     })
     .await;
     rig.reviews.discard_account_reviews(&["tester".to_string()]);
@@ -1056,5 +1072,365 @@ async fn a_save_admitted_after_its_account_is_discarded_writes_nothing() {
     .await;
     assert!(updates_of(&rig).is_empty(), "nothing reached a window");
     assert!(rig.store.review(&key_of(START, &SCHOLARS)).is_none());
+    rig.reviews.stop_reviews().await;
+}
+
+/// A Ruy Lopez of twenty moves with no game end: twenty-one positions to search, five runs.
+const LONG: [&str; 20] = [
+    "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5a4", "g8f6", "d2d3", "d7d6", "c2c3", "f8e7",
+    "b1d2", "b7b5", "a4c2", "c8b7", "d2f1", "c6b8", "f1g3", "b8d7",
+];
+
+/// How many lines the review's engines received that satisfy `wanted`.
+fn count_received(rig: &Rig, wanted: impl Fn(&str) -> bool) -> usize {
+    received(&rig.log)
+        .iter()
+        .filter(|line| wanted(line))
+        .count()
+}
+
+/// How many engines have closed.
+fn engines_stopped(rig: &Rig) -> usize {
+    rig.recording
+        .logs()
+        .iter()
+        .filter(|line| line.contains("Engine stopped"))
+        .count()
+}
+
+/// The positions finished in each status that named a review, without repeats that follow one
+/// another.
+fn progress_of(rig: &Rig) -> Vec<usize> {
+    let mut done: Vec<usize> = rig
+        .host
+        .statuses
+        .lock()
+        .expect("statuses")
+        .iter()
+        .filter_map(|status| Some(status.current.as_ref()?.done))
+        .collect();
+    done.dedup();
+    done
+}
+
+/// A review someone asked for searches on an engine for each thread, a thread each: on four
+/// threads one engine searched 2.6 times the positions' worth of four engines of one thread.
+#[tokio::test]
+async fn a_review_asked_for_searches_on_an_engine_for_each_thread() {
+    let rig = rig("review", "engines", false, "off", true);
+    rig.reviews
+        .request_review(request(&LONG))
+        .await
+        .expect("the request");
+    let full = wait_until(WAIT, "the complete review", || {
+        rig.host.complete_updates().into_iter().next()
+    })
+    .await;
+    assert!(
+        full.evals
+            .iter()
+            .flatten()
+            .all(|eval| eval.depth == Some(18.0))
+    );
+    assert_eq!(full.evals.iter().flatten().count(), LONG.len() + 1);
+    assert!(full.engine.is_some(), "the review names its engine");
+    assert_eq!(
+        count_received(&rig, |line| line == "uci"),
+        4,
+        "four engines"
+    );
+    // Each engine hears of the new game once, not again for the deep pass.
+    assert_eq!(count_received(&rig, |line| line == "ucinewgame"), 4);
+    let threads: Vec<String> = received(&rig.log)
+        .into_iter()
+        .filter(|line| line.starts_with("setoption name Threads"))
+        .collect();
+    assert_eq!(threads, vec!["setoption name Threads value 1"; 4]);
+    // They share the hash one engine had.
+    assert_eq!(
+        count_received(&rig, |line| line == "setoption name Hash value 16"),
+        4
+    );
+    let progress = progress_of(&rig);
+    assert_eq!(progress.first(), Some(&0), "nothing is known at the start");
+    assert_eq!(progress.iter().max(), Some(&(LONG.len() + 1)));
+    // With nothing left to review, only the first engine stays open.
+    wait_until(WAIT, "the other engines to close", || {
+        (engines_stopped(&rig) == 3).then_some(())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(engines_stopped(&rig), 3, "the first engine is kept");
+    rig.reviews.stop_reviews().await;
+}
+
+/// The quick pass goes from the first move, as it shows; the deep one from the last, where an
+/// engine has just searched the position its next one leads to. The status counts every
+/// position finished, and the deep pass is saved every few positions.
+#[tokio::test]
+async fn one_engine_searches_the_deep_pass_from_the_last_position_and_saves_as_it_goes() {
+    let rig = rig_on(
+        scheduler(1, false),
+        "review",
+        "order-of-search",
+        "off",
+        true,
+    );
+    rig.reviews
+        .request_review(request(&SCHOLARS))
+        .await
+        .expect("the request");
+    wait_until(WAIT, "the complete review", || {
+        rig.host.complete_updates().into_iter().next()
+    })
+    .await;
+    // The moves played before each position searched: the mate at the end needs no search.
+    let searched: Vec<usize> = received(&rig.log)
+        .iter()
+        .filter_map(|line| line.strip_prefix("position fen "))
+        .map(|position| {
+            position
+                .split_once(" moves ")
+                .map_or(0, |(_, moves)| moves.split_whitespace().count())
+        })
+        .collect();
+    assert_eq!(searched, vec![0, 1, 2, 3, 4, 5, 6, 6, 5, 4, 3, 2, 1, 0]);
+    assert_eq!(count_received(&rig, |line| line == "uci"), 1, "one engine");
+    assert!(received(&rig.log).contains(&"setoption name Hash value 64".to_string()));
+    // Each pass starts from the mate, which is known, and counts up to all eight positions.
+    assert_eq!(
+        progress_of(&rig),
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8]
+    );
+    let updates = updates_of(&rig);
+    let deep = |review: &StoredReview| {
+        review
+            .evals
+            .iter()
+            .flatten()
+            .filter(|eval| eval.depth == Some(18.0))
+            .count()
+    };
+    // The quick pass is saved at every position: the mate and one more each time.
+    let quick: Vec<usize> = updates
+        .iter()
+        .filter(|review| deep(review) == 0)
+        .map(|review| review.evals.iter().flatten().count())
+        .collect();
+    assert_eq!(quick, vec![2, 3, 4, 5, 6, 7, 8]);
+    // The deep pass is saved after six positions, and then complete.
+    let saved: Vec<(usize, bool)> = updates
+        .iter()
+        .filter(|review| deep(review) > 0)
+        .map(|review| (deep(review), review.complete))
+        .collect();
+    assert_eq!(saved, vec![(6, false), (7, true)]);
+    rig.reviews.stop_reviews().await;
+}
+
+/// On a computer where an engine with part of the threads runs out of time before the depth,
+/// the pass goes again on one engine with every thread, as a review ran before it had several:
+/// no review is left shallower than it was.
+#[tokio::test]
+async fn a_computer_too_slow_for_several_engines_reviews_on_one_with_every_thread() {
+    let rig = rig("weak", "too-slow", false, "off", true);
+    rig.reviews
+        .request_review(request(&LONG))
+        .await
+        .expect("the request");
+    let full = wait_until(WAIT, "the complete review", || {
+        rig.host.complete_updates().into_iter().next()
+    })
+    .await;
+    assert_eq!(full.evals.iter().flatten().count(), LONG.len() + 1);
+    assert!(
+        full.evals
+            .iter()
+            .flatten()
+            .all(|eval| eval.depth == Some(18.0)),
+        "every position reached the depth"
+    );
+    assert!(received(&rig.log).contains(&"setoption name Threads value 4".to_string()));
+    // The engines it no longer searches on closed when it went on with one.
+    assert_eq!(engines_stopped(&rig), 3);
+    rig.reviews.stop_reviews().await;
+}
+
+/// A lone engine has no other way to search: what it reaches in its time is kept, each position
+/// searched once.
+#[tokio::test]
+async fn a_lone_engine_that_runs_out_of_time_keeps_what_it_reached() {
+    let rig = rig_on(scheduler(1, false), "weak", "lone-slow", "off", true);
+    rig.reviews
+        .request_review(request(&SCHOLARS))
+        .await
+        .expect("the request");
+    let full = wait_until(WAIT, "the complete review", || {
+        rig.host.complete_updates().into_iter().next()
+    })
+    .await;
+    let (_, searched) = full.evals.split_last().expect("positions");
+    assert!(
+        searched
+            .iter()
+            .flatten()
+            .all(|eval| eval.depth == Some(12.0))
+    );
+    assert_eq!(
+        count_received(&rig, |line| line.starts_with("go depth 18")),
+        SCHOLARS.len()
+    );
+    rig.reviews.stop_reviews().await;
+}
+
+/// Someone opens a game its automatic review is working on: it gets the passes of a review
+/// asked for from then on, the quick one first, on as many engines.
+#[tokio::test]
+async fn a_game_asked_for_during_its_automatic_review_gets_the_quick_pass_and_more_engines() {
+    let rig = rig("slow-review", "promoted", false, "all", true);
+    rig.store.add_game(GameRow {
+        id: "long1".into(),
+        account: "tester".into(),
+        moves: "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 d3 d6 c3 Be7 Nbd2 b5 Bc2 Bb7 Nf1 Nb8 Ng3 Nbd7".into(),
+        pgn: None,
+        perf: "blitz".into(),
+        created_at: now_ms(),
+    });
+    rig.reviews.reviews_changed();
+    wait_until(WAIT, "the automatic review to search", || {
+        (count_received(&rig, |line| line.starts_with("go depth 18")) > 0).then_some(())
+    })
+    .await;
+    assert_eq!(count_received(&rig, |line| line == "uci"), 1, "one engine");
+    assert_eq!(
+        count_received(&rig, |line| line.starts_with("go depth 10")),
+        0,
+        "an automatic review has no quick pass"
+    );
+    rig.reviews
+        .request_review(ReviewRequest {
+            game_id: Some("long1".into()),
+            account: Some("tester".into()),
+            ..request(&LONG)
+        })
+        .await
+        .expect("the request");
+    let full = wait_until(WAIT, "the complete review", || {
+        rig.host.complete_updates().into_iter().next()
+    })
+    .await;
+    assert_eq!(full.game_id.as_deref(), Some("long1"));
+    assert!(
+        count_received(&rig, |line| line.starts_with("go depth 10")) > 0,
+        "the quick pass of a review asked for"
+    );
+    // As many as it has runs left to search: several, however far the automatic review got.
+    assert!(
+        count_received(&rig, |line| line == "uci") > 1,
+        "more engines"
+    );
+    rig.reviews.stop_reviews().await;
+}
+
+/// An engine that fails in the middle of a review fails the review, which says so and keeps
+/// what was done: it is not taken for a review that gave way, to be tried again and again.
+#[tokio::test]
+async fn an_engine_that_fails_mid_review_fails_the_review_and_keeps_the_quick_pass() {
+    let rig = rig("crash", "crashed", false, "off", true);
+    rig.reviews
+        .request_review(request(&SCHOLARS))
+        .await
+        .expect("the request");
+    let key = key_of(START, &SCHOLARS);
+    let failed = wait_until(WAIT, "the failed review", || rig.host.last_status()?.failed).await;
+    assert_eq!(failed.key, key);
+    wait_until(WAIT, "the review to end", || {
+        (rig.host.last_status()?.current.is_none()).then_some(())
+    })
+    .await;
+    assert_eq!(
+        rig.reviews.review_status().waiting,
+        0,
+        "it is not queued again"
+    );
+    let stored = rig.store.review(&key).expect("the quick pass is kept");
+    assert!(!stored.complete);
+    let (_, scored) = stored.evals.split_last().expect("positions");
+    assert!(scored.iter().flatten().all(|eval| eval.depth == Some(10.0)));
+    assert_eq!(scored.iter().flatten().count(), SCHOLARS.len());
+    rig.reviews.stop_reviews().await;
+}
+
+/// The computer's move takes the engine budget from a review whose engines do not answer
+/// `stop`: they are given up on, and the review has given way, not failed.
+#[tokio::test]
+async fn a_review_whose_engines_do_not_stop_for_the_computer_has_not_failed() {
+    let shared = scheduler(4, false);
+    let rig = rig_on(Arc::clone(&shared), "deaf", "deaf", "off", true);
+    rig.reviews
+        .request_review(request(&SCHOLARS))
+        .await
+        .expect("the request");
+    wait_until(WAIT, "the deep pass", || {
+        (count_received(&rig, |line| line.starts_with("go depth 18")) > 0).then_some(())
+    })
+    .await;
+    let search = Search::new(context(
+        &rig.recording,
+        Arc::clone(&shared),
+        "search",
+        &log_path("deaf-search"),
+    ));
+    let mv = tokio::time::timeout(
+        Duration::from_secs(20),
+        search.best_move(json!([]), "max", &fake_path(), json!({ "movetime": 50 })),
+    )
+    .await
+    .expect("the computer is not kept waiting")
+    .expect("a move");
+    assert_eq!(mv, "e2e4");
+    assert!(rig.recording.logged("Stockfish did not stop"));
+    assert_eq!(rig.reviews.review_status().failed, None);
+    assert!(rig.host.complete_updates().is_empty());
+    rig.reviews.stop_reviews().await;
+}
+
+/// An automatic review that must give way (here: automatic reviews are switched off while one
+/// runs) keeps what it has done and waits, saying why; it is not queued as a review asked for.
+#[tokio::test]
+async fn an_automatic_review_that_gives_way_keeps_its_work_and_waits() {
+    let rig = rig("slow-review", "gives-way", false, "all", true);
+    rig.store.add_game(GameRow {
+        id: "long2".into(),
+        account: "tester".into(),
+        moves: "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 d3 d6 c3 Be7 Nbd2 b5 Bc2 Bb7 Nf1 Nb8 Ng3 Nbd7".into(),
+        pgn: None,
+        perf: "blitz".into(),
+        created_at: now_ms(),
+    });
+    rig.reviews.reviews_changed();
+    wait_until(WAIT, "the automatic review to search", || {
+        (count_received(&rig, |line| line.starts_with("go depth 18")) > 0).then_some(())
+    })
+    .await;
+    *rig.host.settings.lock().expect("settings") = settings("off", true);
+    wait_until(WAIT, "the review to wait", || {
+        let status = rig.reviews.review_status();
+        (status.current.is_none() && status.paused == Some(Pause::Off)).then_some(())
+    })
+    .await;
+    let stored = rig
+        .store
+        .review(&key_of(START, &LONG))
+        .expect("what was done is kept");
+    assert!(!stored.complete);
+    assert!(
+        stored
+            .evals
+            .iter()
+            .flatten()
+            .any(|eval| eval.depth == Some(18.0))
+    );
+    assert!(rig.host.complete_updates().is_empty());
     rig.reviews.stop_reviews().await;
 }

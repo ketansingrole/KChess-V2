@@ -1,16 +1,18 @@
-//! Game review: Stockfish scores every position of a game, one
-//! after another, in its own process (the analysis board and the computer opponent keep theirs).
-//! Reviews someone asks for run at once, first a quick pass so labels show within seconds and
-//! then a deeper one that refines them. Automatic reviews of synced games run one at a time on a
-//! single thread, and only while nothing else needs the computer: no online game, no engine in
-//! use, and (unless allowed) not on battery. A Lichess game is first looked up on Lichess, in
-//! case it was already analysed there.
+//! Game review: Stockfish scores every position of a game in processes of its own (the analysis
+//! board and the computer opponent keep theirs). Reviews someone asks for run at once, first a
+//! quick pass so labels show within seconds and then a deeper one that refines them, on several
+//! engines at a time: searching one position to a set depth, four threads do 2.6 times the work
+//! of one, so each thread gets an engine and a part of the game instead
+//! (`docs/benchmarks/2026-11-20-review-engines.md`). Automatic reviews of synced games run one at
+//! a time on a single thread, and only while nothing else needs the computer: no online game, no
+//! engine in use, and (unless allowed) not on battery. A Lichess game is first looked up on
+//! Lichess, in case it was already analysed there.
 //!
 //! Reviews are stored through `ReviewStore` and the host is reached through `ReviewHost`. Battery
 //! state comes from the engine scheduler.
 
-use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
@@ -53,6 +55,14 @@ const IDLE: Duration = Duration::from_secs(60);
 const RECENT_MS: i64 = 30 * 86_400_000;
 /// Principal variation moves kept per evaluation.
 const PV_LENGTH: usize = 10;
+/// Positions an engine takes at a time. They follow one another in the game, so what the engine
+/// learned of one helps with the next; few enough that an engine on a slower core keeps the
+/// others waiting for no more than one run. Over an 80-move game on four engines, runs of 5
+/// search 7% more than four equal parts do, and runs of 3 21% more.
+const RUN: usize = 5;
+/// The hash (MiB) the engines of a review share, each given at least `MIN_HASH`.
+const HASH: usize = 64;
+const MIN_HASH: usize = 16;
 
 /// The settings a review reads.
 #[derive(Debug, Clone, PartialEq)]
@@ -244,7 +254,9 @@ struct State {
 
 struct Shared {
     ctx: EngineContext,
-    engine: Arc<EngineSlot>,
+    /// The review's engines, made as a review first needs them. The first is kept between
+    /// reviews; the others only while a review someone asked for uses them.
+    engines: Mutex<Vec<Arc<EngineSlot>>>,
     storage: ReviewStore,
     state: Mutex<State>,
     /// `true` while no pump runs; `stop_reviews` waits for it (`drain`).
@@ -277,7 +289,7 @@ impl Reviews {
         let (idle_tx, _) = watch::channel(true);
         Reviews {
             shared: Arc::new(Shared {
-                engine: EngineSlot::new(ctx.clone(), IDLE),
+                engines: Mutex::new(Vec::new()),
                 ctx,
                 storage,
                 state: Mutex::new(State::default()),
@@ -474,7 +486,7 @@ impl Reviews {
         }
         let mut idle = s.idle_tx.subscribe();
         let _ = idle.wait_for(|idle| *idle).await;
-        s.engine.close();
+        close_engines(s, 0);
         let mut state = lock(&s.state);
         state.skipped.clear();
         state.progress = None;
@@ -639,12 +651,36 @@ fn schedule_recheck(s: &Arc<Shared>, ms: u64) {
     replace_timer(&mut lock(&s.state).recheck, timer);
 }
 
-/// Under the state lock: stops the search and closes the engine.
+/// Under the state lock: stops the searches and closes the engines.
 fn close_engine_locked(s: &Shared, state: &State) {
     if let Some((_, token)) = &state.search {
         token.cancel();
     }
-    s.engine.close();
+    close_engines(s, 0);
+}
+
+/// The review's first `count` engines, made as they are first needed.
+fn engines(s: &Shared, count: usize) -> Vec<Arc<EngineSlot>> {
+    let mut engines = lock(&s.engines);
+    let wanted = count.max(engines.len());
+    engines.resize_with(wanted, || EngineSlot::new(s.ctx.clone(), IDLE));
+    engines.iter().take(count).cloned().collect()
+}
+
+/// Closes the review's engines past the first `keep`: each takes about 160 MiB, so one that
+/// has no part in the work at hand is not left open.
+fn close_engines(s: &Shared, keep: usize) {
+    for spare in lock(&s.engines).iter().skip(keep) {
+        spare.close();
+    }
+}
+
+/// Nothing is left to review: only the first engine stays, until it has been idle long enough.
+fn rest(s: &Shared) {
+    close_engines(s, 1);
+    if let Some(first) = lock(&s.engines).first() {
+        first.release();
+    }
 }
 
 fn close_engine(s: &Shared) {
@@ -849,7 +885,7 @@ async fn pump(s: Arc<Shared>) {
         kick(&s);
     }
     if arm_idle {
-        s.engine.release();
+        rest(&s);
     }
 }
 
@@ -988,7 +1024,7 @@ async fn run(s: &Arc<Shared>, job: Arc<Job>) {
             .search
             .as_ref()
             .is_some_and(|(_, token)| token.is_cancelled())
-            && s.engine.healthy();
+            && lock(&s.engines).iter().all(|engine| engine.healthy());
         let interrupted = job.cancelled.load(Ordering::SeqCst) || cause.aborted || search_aborted;
         if interrupted {
             host_log(
@@ -1091,56 +1127,46 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
     if !job.variant.is_empty() {
         review.variant = Some(job.variant.clone());
     }
-    let target = open_engine(s, &settings.engine_path, &job.variant).await?;
-    if review.engine.as_deref() != Some(target.key.as_str()) {
-        review.engine = Some(target.key.clone());
+    // The first engine names the engine the review is of.
+    let first = open_engine(&engines(s, 1)[0], &settings.engine_path, &job.variant).await?;
+    if review.engine.as_deref() != Some(first.key.as_str()) {
+        review.engine = Some(first.key.clone());
         review.complete = false;
         review.evals = vec![None; total];
     }
-    target.uci.write("ucinewgame")?;
-    let passes: Vec<(u32, u64)> = if job.background.load(Ordering::SeqCst) {
-        vec![(FULL_DEPTH, FULL_MS)]
-    } else {
-        vec![(QUICK_DEPTH, QUICK_MS), (FULL_DEPTH, FULL_MS)]
-    };
-    for (depth, ms) in passes {
-        let mut since_save = 0usize;
-        for index in 0..total {
-            let known = review.evals[index].clone();
-            if let Some(end) = job.positions[index].end {
-                review.evals[index] = Some(end_eval(end, job.positions[index].turn));
-            } else if !has_score(known.as_ref())
-                || known.as_ref().and_then(|known| known.depth).unwrap_or(0.0) < f64::from(depth)
-            {
-                if should_yield(s, job).await? {
-                    publish(s, job, review.clone()).await?;
-                    if !job.cancelled.load(Ordering::SeqCst)
-                        && !job.background.load(Ordering::SeqCst)
-                    {
-                        lock(&s.state).asked.push(Arc::clone(job));
-                    }
-                    return Ok(());
-                }
-                let score = search(s, &target, job, index, depth, ms).await?;
-                if has_score(Some(&score)) {
-                    review.evals[index] = Some(score);
-                }
-                since_save += 1;
+    first.uci.write("ucinewgame")?;
+    // How many of the review's engines have been told of the new game.
+    let mut fresh = 1;
+    loop {
+        let passes: &[(u32, u64)] = if job.background.load(Ordering::SeqCst) {
+            &[(FULL_DEPTH, FULL_MS)]
+        } else {
+            &[(QUICK_DEPTH, QUICK_MS), (FULL_DEPTH, FULL_MS)]
+        };
+        let mut ended = Ended::Done;
+        for &(depth, ms) in passes {
+            let pass = Pass {
+                engine_path: &settings.engine_path,
+                depth,
+                ms,
+            };
+            ended = run_pass(s, job, review, &pass, &mut fresh).await?;
+            if ended != Ended::Done {
+                break;
             }
-            lock(&s.state).progress = Some(ReviewProgress {
-                key: job.key.clone(),
-                game_id: job.game_id.clone(),
-                // Positions finished so far: every position counts, searched or already known.
-                done: index + 1,
-                total,
-                background: job.background.load(Ordering::SeqCst),
-            });
-            send_status(s);
-            // The quick pass shows as it goes; the deep one replaces it a few positions at a time.
-            if depth == QUICK_DEPTH || since_save >= SAVE_EVERY {
+        }
+        match ended {
+            // Someone asked for the game an automatic review was on: the passes of a review
+            // asked for, from the first, on as many engines.
+            Ended::Promoted => {}
+            Ended::Yielded => {
                 publish(s, job, review.clone()).await?;
-                since_save = 0;
+                if !job.cancelled.load(Ordering::SeqCst) && !job.background.load(Ordering::SeqCst) {
+                    lock(&s.state).asked.push(Arc::clone(job));
+                }
+                return Ok(());
             }
+            Ended::Done | Ended::Short => break,
         }
     }
     review.complete = review
@@ -1156,25 +1182,177 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
     Ok(())
 }
 
-/// The review engine for `configured`, started or reused. A variant game (`variant`, a Lichess
-/// key) gets the bundled Fairy-Stockfish.
-async fn open_engine(s: &Arc<Shared>, configured: &str, variant: &str) -> Result<OpenEngine> {
-    s.engine.keep();
-    let located = s.engine.locate(configured, !variant.is_empty()).await?;
-    let engine = s.engine.open(&located)?;
-    engine.uci.ready().await?;
-    Ok(engine)
-}
-
-/// One position's score at `depth` within `ms` (`search`). Cancelling it reaches the engine.
-async fn search(
-    s: &Arc<Shared>,
-    target: &OpenEngine,
-    job: &Arc<Job>,
-    index: usize,
+/// One pass over a game: every position scored to `depth`, each search given `ms`.
+struct Pass<'a> {
+    engine_path: &'a str,
     depth: u32,
     ms: u64,
-) -> Result<ReviewEval> {
+}
+
+/// How a pass over a game ended.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Ended {
+    /// Every position was searched.
+    Done,
+    /// The review gives way (`should_yield`); it carries on later.
+    Yielded,
+    /// Someone asked for the game an automatic review was working on.
+    Promoted,
+    /// One of several engines ran out of time before the depth: a thread of this computer is
+    /// too slow for an engine of its own.
+    Short,
+}
+
+/// How a pass shares the computer among its engines.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Share {
+    engines: usize,
+    /// Search threads of each engine.
+    threads: usize,
+    /// Hash of each engine, in MiB.
+    hash: usize,
+}
+
+/// The share of a pass with `runs` runs to search, on a computer that gives a review `threads`
+/// search threads and has room for `room` engines. An automatic review keeps to one engine on
+/// one thread. One asked for gets an engine per run, as many as there is room for; they divide
+/// the threads and the hash, so a lone engine searches with every thread, as it did before a
+/// review had several.
+fn share(background: bool, threads: usize, room: usize, runs: usize) -> Share {
+    if background {
+        return Share {
+            engines: 1,
+            threads: 1,
+            hash: HASH,
+        };
+    }
+    let engines = room.min(runs).max(1);
+    Share {
+        engines,
+        threads: (threads / engines).max(1),
+        hash: (HASH / engines).max(MIN_HASH),
+    }
+}
+
+/// Whether the position has a score searched to `depth` or deeper.
+fn scored_to(eval: Option<&ReviewEval>, depth: u32) -> bool {
+    has_score(eval) && eval.and_then(|eval| eval.depth).unwrap_or(0.0) >= f64::from(depth)
+}
+
+/// What the engines of a round share: the runs of positions not yet taken, the review they fill
+/// in, and how the round ends.
+struct Board<'a> {
+    runs: Mutex<VecDeque<Vec<usize>>>,
+    review: Mutex<&'a mut StoredReview>,
+    /// Positions finished: those that needed no search, and those searched since.
+    done: AtomicUsize,
+    /// Positions searched since the review was last saved. Held while it is saved, so the saves
+    /// follow one another and none stores less than the one before.
+    unsaved: tokio::sync::Mutex<usize>,
+    /// Set by the engine that ends the round early; the others stop after their position.
+    ended: Mutex<Option<Ended>>,
+    /// The round began as an automatic review's.
+    background: bool,
+}
+
+impl Board<'_> {
+    /// Ends the round, unless another engine has.
+    fn end(&self, ended: Ended) {
+        lock(&self.ended).get_or_insert(ended);
+    }
+
+    /// A position is searched: the status counts it, and the review is saved, at every position
+    /// of the quick pass (it shows as it goes) and every few of the deep one.
+    async fn searched(&self, s: &Shared, job: &Job, depth: u32) -> Result<()> {
+        {
+            // Counted under the state's lock, so the status never counts back.
+            let mut state = lock(&s.state);
+            let done = self.done.fetch_add(1, Ordering::SeqCst) + 1;
+            state.progress = Some(progress(job, done));
+        }
+        send_status(s);
+        let mut unsaved = self.unsaved.lock().await;
+        *unsaved += 1;
+        if depth == QUICK_DEPTH || *unsaved >= SAVE_EVERY {
+            *unsaved = 0;
+            let review = StoredReview::clone(&lock(&self.review));
+            publish(s, job, review).await?;
+        }
+        Ok(())
+    }
+}
+
+/// The status of a review with `done` of its positions finished: every position counts,
+/// searched or already known.
+fn progress(job: &Job, done: usize) -> ReviewProgress {
+    ReviewProgress {
+        key: job.key.clone(),
+        game_id: job.game_id.clone(),
+        done,
+        total: job.positions.len(),
+        background: job.background.load(Ordering::SeqCst),
+    }
+}
+
+/// One pass: on as many engines as the computer has room for, and where one of several runs out
+/// of time before the depth, again on a single engine with every thread, as before a review had
+/// several, for the positions still short of it.
+async fn run_pass(
+    s: &Arc<Shared>,
+    job: &Arc<Job>,
+    review: &mut StoredReview,
+    pass: &Pass<'_>,
+    fresh: &mut usize,
+) -> Result<Ended> {
+    let room = s.ctx.scheduler.review_engines();
+    let ended = round(s, job, review, pass, room, fresh).await?;
+    if ended != Ended::Short {
+        return Ok(ended);
+    }
+    round(s, job, review, pass, 1, fresh).await
+}
+
+/// One round of a pass: the positions not yet scored to its depth, dealt in runs to at most
+/// `room` engines at a time, under one lease of the engine budget. Cancelling the round's
+/// search reaches every engine. `fresh` counts the engines told of the new game.
+async fn round(
+    s: &Arc<Shared>,
+    job: &Arc<Job>,
+    review: &mut StoredReview,
+    pass: &Pass<'_>,
+    room: usize,
+    fresh: &mut usize,
+) -> Result<Ended> {
+    let mut todo = Vec::new();
+    for (index, position) in job.positions.iter().enumerate() {
+        if let Some(end) = position.end {
+            review.evals[index] = Some(end_eval(end, position.turn));
+        } else if !scored_to(review.evals[index].as_ref(), pass.depth) {
+            todo.push(index);
+        }
+    }
+    let known = job.positions.len() - todo.len();
+    lock(&s.state).progress = Some(progress(job, known));
+    send_status(s);
+    if todo.is_empty() {
+        return Ok(Ended::Done);
+    }
+    // The quick pass shows the game from its first move. The deep one works from the last: an
+    // engine has then just searched the position its next one leads to (9% less to search).
+    if pass.depth != QUICK_DEPTH {
+        todo.reverse();
+    }
+    let background = job.background.load(Ordering::SeqCst);
+    let threads = s.ctx.scheduler.search_threads();
+    let share = share(background, threads, room, todo.len().div_ceil(RUN));
+    let board = Board {
+        runs: Mutex::new(todo.chunks(RUN).map(<[usize]>::to_vec).collect()),
+        review: Mutex::new(review),
+        done: AtomicUsize::new(known),
+        unsaved: tokio::sync::Mutex::new(0),
+        ended: Mutex::new(None),
+        background,
+    };
     let token = CancellationToken::new();
     let ticket = {
         let mut state = lock(&s.state);
@@ -1183,7 +1361,32 @@ async fn search(
         state.search = Some((ticket, token.clone()));
         ticket
     };
-    let outcome = search_once(s, target, job, index, depth, ms, &token).await;
+    let outcome = s
+        .ctx
+        .lease(Priority::Review, &token, async {
+            // Engines past the first start once the budget is the review's, and those a round
+            // on fewer leaves out close.
+            let mut opened = Vec::with_capacity(share.engines);
+            for (index, slot) in engines(s, share.engines).iter().enumerate() {
+                let engine = open_engine(slot, pass.engine_path, &job.variant).await?;
+                if index >= *fresh {
+                    engine.uci.write("ucinewgame")?;
+                }
+                opened.push(engine);
+            }
+            *fresh = (*fresh).max(share.engines);
+            close_engines(s, share.engines);
+            // Every engine's search ends before the round does: a search left behind would
+            // answer the next one on its engine.
+            let searches = opened
+                .iter()
+                .map(|engine| work(s, job, engine, &board, pass, share, &token));
+            futures_util::future::join_all(searches)
+                .await
+                .into_iter()
+                .collect::<Result<()>>()
+        })
+        .await;
     {
         let mut state = lock(&s.state);
         if state
@@ -1196,84 +1399,127 @@ async fn search(
     }
     match outcome {
         Err(_) if token.is_cancelled() => Err(search_cancelled()),
-        other => other,
+        Err(cause) => Err(cause),
+        Ok(()) => Ok(lock(&board.ended).unwrap_or(Ended::Done)),
     }
 }
 
-async fn search_once(
+/// One engine's part of a round: run after run of positions, until none is left or the round
+/// ends.
+async fn work(
     s: &Arc<Shared>,
-    target: &OpenEngine,
     job: &Arc<Job>,
+    engine: &OpenEngine,
+    board: &Board<'_>,
+    pass: &Pass<'_>,
+    share: Share,
+    token: &CancellationToken,
+) -> Result<()> {
+    loop {
+        let Some(run) = lock(&board.runs).pop_front() else {
+            return Ok(());
+        };
+        for index in run {
+            if lock(&board.ended).is_some() {
+                return Ok(());
+            }
+            if should_yield(s, job).await? {
+                board.end(Ended::Yielded);
+                return Ok(());
+            }
+            if board.background && !job.background.load(Ordering::SeqCst) {
+                board.end(Ended::Promoted);
+                return Ok(());
+            }
+            let score = search(engine, job, index, pass, share, token).await?;
+            let short = share.engines > 1 && !scored_to(Some(&score), pass.depth);
+            if has_score(Some(&score)) {
+                lock(&board.review).evals[index] = Some(score);
+            }
+            board.searched(s, job, pass.depth).await?;
+            if short {
+                board.end(Ended::Short);
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// The review engine in `slot` for `configured`, started or reused. A variant game (`variant`,
+/// a Lichess key) gets the bundled Fairy-Stockfish.
+async fn open_engine(
+    slot: &Arc<EngineSlot>,
+    configured: &str,
+    variant: &str,
+) -> Result<OpenEngine> {
+    slot.keep();
+    let located = slot.locate(configured, !variant.is_empty()).await?;
+    let engine = slot.open(&located)?;
+    engine.uci.ready().await?;
+    Ok(engine)
+}
+
+/// One position's score at the pass's depth within its time, on one of the round's engines
+/// with its share of the threads and the hash. Cancelling `token` reaches the engine.
+async fn search(
+    target: &OpenEngine,
+    job: &Job,
     index: usize,
-    depth: u32,
-    ms: u64,
+    pass: &Pass<'_>,
+    share: Share,
     token: &CancellationToken,
 ) -> Result<ReviewEval> {
     let score = Arc::new(Mutex::new(ReviewEval::default()));
-    s.ctx
-        .lease(Priority::Review, token, async {
-            let host = host_of(s);
-            if job.cancelled.load(Ordering::SeqCst)
-                || host
-                    .as_ref()
-                    .is_none_or(|host| host.busy() == Some(Pause::Online))
-            {
-                return Err(search_cancelled());
-            }
-            // Threads follows the job: 1 in the background, the budget once someone asks for it
-            // (a promoted job speeds up mid-review). `ensure_options` sends it only when it
-            // changes, so there is no round-trip per position. The rules are as for analysis
-            // (`job::rules_option`): a standard-mode engine never answers `go` after a
-            // king-takes-rook castling.
-            let threads = if job.background.load(Ordering::SeqCst) {
-                1
-            } else {
-                s.ctx.scheduler.search_threads()
-            };
-            let threads_text = threads.to_string();
-            // A variant game tells Fairy-Stockfish its variant instead.
-            let rules = job::rules_option(fairy_variant(&job.variant));
-            target
-                .uci
-                .ensure_options(&[("Threads", threads_text.as_str()), ("Hash", "64"), rules])
-                .await?;
-            if token.is_cancelled() {
-                return Err(signal_aborted());
-            }
-            target
-                .uci
-                .write(&format!("position fen {}{}", job.fen, job.prefixes[index]))?;
-            let white = job.positions[index].turn == "white";
-            let sink = Arc::clone(&score);
-            target
-                .uci
-                .search(
-                    &format!("go depth {depth} movetime {ms}"),
-                    move |line: &str| {
-                        let Some(parsed) = parse_info(line, white) else {
-                            return;
-                        };
-                        if parsed.line.rank != 1.0 {
-                            return;
-                        }
-                        let line = parsed.line;
-                        let mut best = lock(&sink);
-                        *best = ReviewEval {
-                            cp: if line.mate.is_some() { None } else { line.cp },
-                            mate: line.mate,
-                            best: line.pv.first().cloned(),
-                            pv: Some(line.pv.iter().take(PV_LENGTH).cloned().collect()),
-                            depth: Some(line.depth),
-                        };
-                    },
-                    Some(Duration::from_millis(ms + 10_000)),
-                    Some(token),
-                )
-                .await?;
-            let result = lock(&score).clone();
-            Ok(result)
-        })
-        .await
+    let (threads, hash) = (share.threads.to_string(), share.hash.to_string());
+    // `ensure_options` sends an option only when it changes, so there is no round-trip per
+    // position. The rules are as for analysis (`job::rules_option`): a standard-mode engine
+    // never answers `go` after a king-takes-rook castling. A variant game tells
+    // Fairy-Stockfish its variant instead.
+    let rules = job::rules_option(fairy_variant(&job.variant));
+    target
+        .uci
+        .ensure_options(&[
+            ("Threads", threads.as_str()),
+            ("Hash", hash.as_str()),
+            rules,
+        ])
+        .await?;
+    if token.is_cancelled() {
+        return Err(signal_aborted());
+    }
+    target
+        .uci
+        .write(&format!("position fen {}{}", job.fen, job.prefixes[index]))?;
+    let white = job.positions[index].turn == "white";
+    let sink = Arc::clone(&score);
+    let (depth, ms) = (pass.depth, pass.ms);
+    target
+        .uci
+        .search(
+            &format!("go depth {depth} movetime {ms}"),
+            move |line: &str| {
+                let Some(parsed) = parse_info(line, white) else {
+                    return;
+                };
+                if parsed.line.rank != 1.0 {
+                    return;
+                }
+                let line = parsed.line;
+                let mut best = lock(&sink);
+                *best = ReviewEval {
+                    cp: if line.mate.is_some() { None } else { line.cp },
+                    mate: line.mate,
+                    best: line.pv.first().cloned(),
+                    pv: Some(line.pv.iter().take(PV_LENGTH).cloned().collect()),
+                    depth: Some(line.depth),
+                };
+            },
+            Some(Duration::from_millis(ms + 10_000)),
+            Some(token),
+        )
+        .await?;
+    let result = lock(&score).clone();
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -1310,6 +1556,49 @@ mod tests {
                 "{present} {running} {asked}"
             );
         }
+    }
+
+    /// A review asked for gets an engine for each run it has room for, sharing the threads and
+    /// the hash; an automatic one keeps to one engine on one thread.
+    #[test]
+    fn a_pass_shares_the_threads_and_the_hash_among_its_engines() {
+        let of = |engines, threads, hash| Share {
+            engines,
+            threads,
+            hash,
+        };
+        assert_eq!(share(false, 4, 4, 16), of(4, 1, 16));
+        assert_eq!(share(false, 4, 3, 16), of(3, 1, 21));
+        assert_eq!(share(false, 4, 2, 16), of(2, 2, 32));
+        assert_eq!(share(false, 4, 1, 16), of(1, 4, 64));
+        // No more engines than runs to give them, and one even with nothing to search.
+        assert_eq!(share(false, 4, 4, 2), of(2, 2, 32));
+        assert_eq!(share(false, 4, 4, 1), of(1, 4, 64));
+        assert_eq!(share(false, 4, 4, 0), of(1, 4, 64));
+        assert_eq!(share(false, 2, 2, 9), of(2, 1, 32));
+        // An engine never gets less than a thread, whatever room is claimed.
+        assert_eq!(share(false, 2, 4, 9), of(4, 1, 16));
+        assert_eq!(share(true, 4, 4, 16), of(1, 1, 64));
+    }
+
+    #[test]
+    fn a_position_is_scored_to_a_depth_by_a_score_searched_that_deep() {
+        let at = |depth| ReviewEval {
+            cp: Some(12.0),
+            depth,
+            ..ReviewEval::default()
+        };
+        assert!(scored_to(Some(&at(Some(18.0))), 18));
+        assert!(scored_to(Some(&at(Some(18.0))), 10));
+        assert!(!scored_to(Some(&at(Some(10.0))), 18));
+        assert!(!scored_to(Some(&at(None)), 10));
+        assert!(!scored_to(None, 10));
+        // A depth with no score is a search that reported nothing to keep.
+        let unscored = ReviewEval {
+            depth: Some(18.0),
+            ..ReviewEval::default()
+        };
+        assert!(!scored_to(Some(&unscored), 18));
     }
 
     /// A game's end needs no engine: a draw is level, a mate is mate.
