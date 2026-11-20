@@ -4339,7 +4339,6 @@ dependencies = [
  "kchess-ui",
  "objc2 0.6.5",
  "objc2-av-foundation",
- "reqwest",
  "resvg 0.50.0",
  "rodio",
  "rust-embed",
@@ -4347,7 +4346,6 @@ dependencies = [
  "serde_json",
  "shakmaty",
  "tempfile",
- "tokio",
 ]
 
 [[package]]
@@ -4788,8 +4786,10 @@ dependencies = [
  "kchess-hack",
  "kchess-nav",
  "kchess-ui",
+ "reqwest",
  "serde_json",
  "shakmaty",
+ "tokio",
 ]
 
 [[package]]
