@@ -63,14 +63,25 @@ impl Started {
     /// Wait, in real time, until `ready` holds; `what` names it on failure. The core answers on
     /// its own threads, so the test looks again every 5 ms for up to 30 s, as the app's
     /// end-to-end harness does.
-    pub fn wait_for(&mut self, what: &str, mut ready: impl FnMut(&mut Window, &mut App) -> bool) {
-        const TIMEOUT: Duration = Duration::from_secs(30);
+    pub fn wait_for(&mut self, what: &str, ready: impl FnMut(&mut Window, &mut App) -> bool) {
+        self.wait_within(Duration::from_secs(30), what, ready);
+    }
+
+    /// `wait_for`, failing after `limit`: for an answer the core gives at once, so that a test
+    /// whose answer never comes fails promptly instead of running into the runner's timeout
+    /// (which reads as a hang, not a failure, to `cargo mutants`).
+    pub fn wait_within(
+        &mut self,
+        limit: Duration,
+        what: &str,
+        mut ready: impl FnMut(&mut Window, &mut App) -> bool,
+    ) {
         const POLL: Duration = Duration::from_millis(5);
         let started = Instant::now();
         while !self.with_window(&mut ready) {
             assert!(
-                started.elapsed() < TIMEOUT,
-                "timed out after {TIMEOUT:?} waiting for {what}"
+                started.elapsed() < limit,
+                "timed out after {limit:?} waiting for {what}"
             );
             std::thread::sleep(POLL);
             self.cx.executor().advance_clock(POLL);

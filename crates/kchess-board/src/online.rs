@@ -1600,6 +1600,10 @@ mod tests {
         });
     }
 
+    /// How long the core may take to answer a status read, which it answers at once: a read
+    /// that never lands fails the test well inside the runner's timeout.
+    const ANSWER: std::time::Duration = std::time::Duration::from_secs(5);
+
     /// The board's online state once its startup check has ended (no account: nothing to find)
     /// and it holds the core's lock as of then. The harness hands the board none of the core's
     /// events, so the lock is read again: the read at startup came before the check.
@@ -1609,7 +1613,7 @@ mod tests {
             online.read(cx).phase == super::Phase::Idle
         });
         app.with_window(|_, cx| online.update(cx, |state, cx| state.read_assistance(cx)));
-        app.wait_for("the core to lend help", |_, cx| {
+        app.wait_within(ANSWER, "the core to lend help", |_, cx| {
             online.read(cx).assistance == kchess_contracts::types::Assistance::Allowed
         });
         online
@@ -1724,7 +1728,7 @@ mod tests {
         assert_eq!((after, taken), (before + 1, Assistance::LiveGame));
         // The core still lends help (nothing changed there): reading it corrects the state.
         app.with_window(|_, cx| online.update(cx, |state, cx| state.read_assistance(cx)));
-        app.wait_for("the core's answer", |_, cx| {
+        app.wait_within(ANSWER, "the core's answer", |_, cx| {
             online.read(cx).assistance == Assistance::Allowed
         });
     }
