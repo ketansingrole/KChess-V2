@@ -254,7 +254,8 @@ mod tests {
         );
     }
 
-    /// A panic reaches the log with its thread, place, message and backtrace.
+    /// A panic reaches the log with its thread, place, message and a backtrace that names its
+    /// functions.
     #[test]
     fn a_panic_is_logged_with_where_it_happened_and_its_backtrace() {
         logged();
@@ -272,10 +273,17 @@ mod tests {
             file!()
         );
         let start = log.find(&at).unwrap_or_else(|| panic!("{at} not in {log}"));
-        // Its frames, not their names: Linux builds are linked with every symbol stripped
-        // (`.cargo/config.toml`), so there each frame reads `<unknown>`.
+        // Its frames by name, on Linux too: Linux builds were once linked with every symbol
+        // stripped (`.cargo/config.toml`), and each frame read `<unknown>`.
         let after = &log[start..];
         assert!(after.contains("\n   0: "), "a backtrace follows: {after}");
+        // `describe` on macOS (from the line tables), `kchess_app::crashes::describe` on Linux.
+        let named = |frame: &str| {
+            frame
+                .split_once(": ")
+                .is_some_and(|(_, name)| name.ends_with("describe"))
+        };
+        assert!(after.lines().any(named), "its frames are named: {after}");
     }
 
     /// macOS keeps its crash reports in the user's `Library/Logs/DiagnosticReports`; elsewhere

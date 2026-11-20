@@ -4,8 +4,8 @@ xtask = "run -q -p xtask --"
 
 # Every target, joined with its own flags below: Rust's v0 symbol names, as Zed builds with, so a
 # backtrace names a closure by the function it is in and a generic by its types (`{closure#0}` in
-# `Board::render`, not a hash). The shipped builds drop local symbols, so it is the development and
-# test builds' backtraces it reads better.
+# `Board::render`, not a hash). macOS's shipped builds drop local symbols, so there it is the
+# development and test builds' backtraces it reads better; Linux keeps them in every build.
 [target.'cfg(all())']
 rustflags = ["-C", "symbol-mangling-version=v0"]
 

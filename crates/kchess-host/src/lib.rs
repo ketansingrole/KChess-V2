@@ -103,18 +103,4 @@ mod tests {
         );
         env::reset(name);
     }
-
-    /// A backtrace names the functions it passes through, as a panic's log shows it: the
-    /// development and test builds keep their symbol table on every platform. Linux builds once
-    /// linked with `--strip-all` (`.cargo/config.toml`), and every frame read `<unknown>`.
-    #[test]
-    fn a_backtrace_names_its_functions() {
-        let trace = captured_here().to_string();
-        assert!(trace.contains("captured_here"), "{trace}");
-    }
-
-    #[inline(never)]
-    fn captured_here() -> std::backtrace::Backtrace {
-        std::backtrace::Backtrace::force_capture()
-    }
 }
