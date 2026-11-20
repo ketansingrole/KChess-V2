@@ -11,6 +11,9 @@
 //! - `update_in_render`: `entity.update(cx, …)` in `render` changes state while drawing it.
 //! - `blocking_in_render`: the disk, a process or a sleep in `render` stops every window.
 //! - `reentrant_update`: `x.update(cx, |…| x.update(…))` borrows the entity twice: GPUI panics.
+//! - `unlogged_failure`: a failure's message reaches the page (`Err(cause) => this.error =
+//!   Some(cause.message)`) but not the log, so a reported failure leaves no trace in the
+//!   diagnostics. Show it through `Loading` or `loading::failure`, which log it too.
 //!
 //! A line that must stay says why on the line before: `// gpui-lints: allow(<lint>) <reason>`.
 
@@ -164,6 +167,131 @@ impl<'ast> Visit<'ast> for Lints {
             }
         }
         visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_arm(&mut self, arm: &'ast syn::Arm) {
+        self.unlogged(&arm.pat, |read| read.visit_expr(&arm.body));
+        visit::visit_arm(self, arm);
+    }
+
+    fn visit_expr_if(&mut self, branch: &'ast syn::ExprIf) {
+        if let syn::Expr::Let(binding) = &*branch.cond {
+            self.unlogged(&binding.pat, |read| read.visit_block(&branch.then_branch));
+        }
+        visit::visit_expr_if(self, branch);
+    }
+}
+
+impl Lints {
+    /// A failure bound by `pattern` (`Err(cause)`) whose message `body` reads without logging it.
+    fn unlogged(&mut self, pattern: &syn::Pat, body: impl FnOnce(&mut FailureUse<'_>)) {
+        let mut bound = Vec::new();
+        failures(pattern, &mut bound);
+        if bound.is_empty() {
+            return;
+        }
+        let mut read = FailureUse {
+            bound: &bound,
+            message: None,
+            logged: false,
+        };
+        body(&mut read);
+        if let (Some(span), false) = (read.message, read.logged) {
+            self.report(
+                span,
+                "unlogged_failure",
+                "a failure's message is shown but not logged: show it through `Loading` \
+                 (`load`, `settle`, `failed`) or `loading::failure(area, &cause)`, which log it",
+            );
+        }
+    }
+}
+
+/// The names `Err(…)` binds anywhere in `pattern`.
+fn failures(pattern: &syn::Pat, bound: &mut Vec<String>) {
+    match pattern {
+        syn::Pat::TupleStruct(tuple) => {
+            let is_err = tuple
+                .path
+                .segments
+                .last()
+                .is_some_and(|last| last.ident == "Err");
+            for inner in &tuple.elems {
+                match inner {
+                    syn::Pat::Ident(ident) if is_err => bound.push(ident.ident.to_string()),
+                    other => failures(other, bound),
+                }
+            }
+        }
+        syn::Pat::Tuple(tuple) => tuple.elems.iter().for_each(|inner| failures(inner, bound)),
+        syn::Pat::Or(or) => or.cases.iter().for_each(|inner| failures(inner, bound)),
+        syn::Pat::Reference(reference) => failures(&reference.pat, bound),
+        syn::Pat::Paren(paren) => failures(&paren.pat, bound),
+        _ => {}
+    }
+}
+
+/// Calls that log a failure: the log itself and the views' wrappers of it (`log`, `log_warn`),
+/// `Loading`'s and `loading::failure`.
+const LOGGING_CALLS: [&str; 8] = [
+    "write",
+    "log",
+    "log_warn",
+    "failed",
+    "settle",
+    "failure",
+    "log_err",
+    "warn_on_err",
+];
+
+/// Where a failure's `.message` is read, and whether the same arm logs.
+struct FailureUse<'a> {
+    bound: &'a [String],
+    message: Option<Span>,
+    logged: bool,
+}
+
+impl<'ast> Visit<'ast> for FailureUse<'_> {
+    fn visit_expr_field(&mut self, field: &'ast syn::ExprField) {
+        if let (syn::Expr::Path(base), syn::Member::Named(member)) = (&*field.base, &field.member)
+            && member == "message"
+            && base
+                .path
+                .get_ident()
+                .is_some_and(|ident| self.bound.iter().any(|name| ident == name))
+        {
+            self.message.get_or_insert(member.span());
+        }
+        visit::visit_expr_field(self, field);
+    }
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = &*call.func
+            && path
+                .path
+                .segments
+                .last()
+                .is_some_and(|last| LOGGING_CALLS.iter().any(|name| last.ident == name))
+        {
+            self.logged = true;
+        }
+        visit::visit_expr_call(self, call);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        if LOGGING_CALLS.iter().any(|name| call.method == name) {
+            self.logged = true;
+        }
+        visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        // `format!("…{}", cause.message)` reads it as an expression list.
+        if let Ok(args) = mac.parse_body_with(
+            syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
+        ) {
+            args.iter().for_each(|arg| self.visit_expr(arg));
+        }
     }
 }
 
@@ -470,6 +598,82 @@ fn sync(board: &Entity<Board>, cx: &mut App) {
 }
 "#;
         assert_eq!(lints_of(text), [("reentrant_update", 4)]);
+    }
+
+    #[test]
+    fn a_failure_shown_but_not_logged_is_found() {
+        let text = r#"
+fn answered(this: &mut Page, answer: Result<Report, CoreError>, cx: &mut App) {
+    match answer {
+        Ok(report) => this.report = Some(report),
+        Err(cause) => this.error = Some(cause.message.into()),
+    }
+    match answer {
+        (Err(cause), _) | (_, Err(cause)) => {
+            window.push_notification(Notification::error(cause.message), cx)
+        }
+        _ => {}
+    }
+    if let Err(failed) = answer {
+        this.error = Some(format!("Could not open it: {}", failed.message));
+    }
+    match answer {
+        Ok(Reply::Done(found)) => this.found = found,
+        Err(other) => this.other = Some(cause.message),
+    }
+    match &answer {
+        &Err(ref cause) => this.error = Some(cause.message.clone()),
+        _ => {}
+    }
+    match answer {
+        (Err(cause)) => this.error = Some(cause.message),
+        _ => {}
+    }
+}
+"#;
+        assert_eq!(
+            lints_of(text),
+            [
+                ("unlogged_failure", 5),
+                ("unlogged_failure", 9),
+                ("unlogged_failure", 14),
+                ("unlogged_failure", 21),
+                ("unlogged_failure", 25)
+            ],
+            "only the failures bound in each arm count, behind a reference or parentheses too: \
+             `other` is not `cause`"
+        );
+    }
+
+    #[test]
+    fn a_failure_shown_and_logged_is_left_alone() {
+        let text = r#"
+fn answered(this: &mut Page, answer: Result<Report, CoreError>, cx: &mut App) {
+    match answer {
+        Err(cause) => this.error = Some(loading::failure("page", &cause).into()),
+        _ => {}
+    }
+    match answer {
+        Err(cause) => {
+            crate::log::write(Level::Warn, "page", &cause.message);
+            this.error = Some(cause.message);
+        }
+        _ => {}
+    }
+    match answer {
+        Err(cause) => this.loading.failed("page", &cause),
+        _ => {}
+    }
+    if let Err(cause) = answer {
+        log(&format!("staying connected failed: {}", cause.message));
+    }
+    match answer {
+        Err(_) => this.failed = true,
+        Ok(_) => {}
+    }
+}
+"#;
+        assert_eq!(lints_of(text), []);
     }
 
     #[test]

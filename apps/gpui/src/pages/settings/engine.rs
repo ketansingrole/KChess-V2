@@ -189,7 +189,7 @@ impl SettingsPage {
                     Ok(result) => result,
                     Err(cause) => {
                         window.push_notification(
-                            Notification::error(cause.message)
+                            Notification::error(kchess_app::loading::failure("engine", &cause))
                                 .title("Could not download Stockfish"),
                             cx,
                         );
@@ -263,7 +263,8 @@ impl SettingsPage {
                 this.engine_busy = false;
                 if let Err(cause) = result {
                     window.push_notification(
-                        Notification::error(cause.message).title("Could not delete Stockfish"),
+                        Notification::error(kchess_app::loading::failure("engine", &cause))
+                            .title("Could not delete Stockfish"),
                         cx,
                     );
                     cx.notify();

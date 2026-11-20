@@ -39,5 +39,9 @@ kchess-board = { workspace = true, features = ["test-support"] }
 # A shell holding only this page (`kchess_nav::testing::OnlyPage`).
 kchess-nav = { workspace = true, features = ["test-support"] }
 
+# A stand-in Lichess (`kchess_testkit::Server`).
+kchess-testkit.workspace = true
+serde_json.workspace = true
+
 [lints]
 workspace = true

@@ -380,7 +380,11 @@ impl Voice {
                         this.ready = true;
                         this.open_microphone(cx);
                     }
-                    Some(Err(cause)) => this.fail(cause.message, ErrorKind::Model, cx),
+                    Some(Err(cause)) => this.fail(
+                        kchess_app::loading::failure("voice", &cause),
+                        ErrorKind::Model,
+                        cx,
+                    ),
                     None => this.fail(
                         "The voice model couldn’t download. Connect to the internet and try again."
                             .into(),
@@ -541,7 +545,13 @@ impl Voice {
         }
         let heard = match answer {
             Ok(heard) => heard.unwrap_or_default(),
-            Err(cause) => return self.fail(cause.message, ErrorKind::Model, cx),
+            Err(cause) => {
+                return self.fail(
+                    kchess_app::loading::failure("voice", &cause),
+                    ErrorKind::Model,
+                    cx,
+                );
+            }
         };
         if let Some(result) = &heard.result {
             self.partial.clear();
@@ -844,5 +854,26 @@ mod tests {
         .unwrap();
         assert!(noise.text.is_empty() && noise.unclear);
         assert!(heard_of(&utterance(json!({ "text": " ", "words": [] }))).is_none());
+    }
+
+    /// Turning voice on starts preparing it at once: loading, with its first message, until the
+    /// model and microphone are ready.
+    #[gpui_kit::test]
+    fn turning_voice_on_starts_preparing_it(cx: &mut gpui_kit::TestAppContext) {
+        // The core answers on its own threads.
+        cx.executor().allow_parking();
+        let _core = started(cx);
+        let (loading, preparing) = cx.update(|cx| {
+            handle(cx).update(cx, |voice, cx| {
+                let owner = voice.new_owner();
+                voice.enable(owner, Vec::new(), true, false, cx);
+                (
+                    matches!(voice.state, super::State::Loading),
+                    voice.preparing.clone(),
+                )
+            })
+        });
+        assert!(loading);
+        assert_eq!(preparing, "Preparing voice input…");
     }
 }

@@ -2,7 +2,7 @@
 //! on this computer (with partial credit) and the ones Lichess recorded (only the result), in one
 //! list, each to try again or study on the analysis board; with today's and all-time totals.
 
-use crate::loading::Epoch;
+use crate::loading::Loading;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -194,15 +194,14 @@ pub struct PuzzleHistory {
     /// `puzzleActivity`: what Lichess recorded for the account.
     activity: Vec<PuzzleActivityEntry>,
     pub(crate) account: String,
-    loading: bool,
-    error: Option<String>,
+    /// `puzzleActivity`'s load.
+    loading: Loading,
     reconnect: bool,
     loaded: String,
     themes: Vec<Theme>,
     filter: Entity<SelectState<Vec<Choice>>>,
     /// The list's card, to fit the rows' columns to it.
     area: Measured,
-    epoch: Epoch,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -236,14 +235,12 @@ impl PuzzleHistory {
             progress: PuzzleProgress::default(),
             activity: Vec::new(),
             account: String::new(),
-            loading: false,
-            error: None,
+            loading: Loading::default(),
             reconnect: false,
             loaded: String::new(),
             themes,
             filter,
             area: Measured::default(),
-            epoch: Epoch::default(),
             _subscriptions: subscriptions,
         }
     }
@@ -270,43 +267,33 @@ impl PuzzleHistory {
         let who = self.account.clone();
         if who.is_empty() {
             // Activity still on its way for the previous account must not land once there is none.
-            self.epoch.invalidate();
-            self.loading = false;
-            self.error = None;
+            self.loading.stop();
             self.reconnect = false;
             return;
         }
         if !force && self.loaded == who {
             return;
         }
-        let epoch = self.epoch.start();
-        self.loading = true;
-        self.error = None;
         self.reconnect = false;
-        cx.notify();
         let activity = cx.global::<AppCore>().request(calls::PuzzleActivity {
             account: Username(who.clone()),
             max: ActivityMax(100),
         });
-        cx.spawn(async move |this, cx| {
-            let result = activity.await;
-            let _ = this.update(cx, |this, cx| {
-                if !this.epoch.is_current(epoch) {
-                    return;
+        self.loading.load(
+            cx,
+            "puzzles",
+            |this: &mut Self| &mut this.loading,
+            activity,
+            |this, answer, _| match answer {
+                Ok(Reply::NeedsReconnect) => this.reconnect = true,
+                Ok(Reply::Done(activity)) => {
+                    this.activity = activity;
+                    this.loaded = who;
                 }
-                this.loading = false;
-                match result {
-                    Ok(Reply::NeedsReconnect) => this.reconnect = true,
-                    Ok(Reply::Done(activity)) => {
-                        this.activity = activity;
-                        this.loaded = who;
-                    }
-                    Err(cause) => this.error = Some(cause.message),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+                Err(_) => {}
+            },
+        );
+        cx.notify();
     }
 
     fn summary(&self, palette: &Palette) -> Option<Div> {
@@ -450,12 +437,12 @@ impl Render for PuzzleHistory {
                         .icon(icon("refresh-cw"))
                         .label("Refresh")
                         .tooltip("Load the latest puzzle history from Lichess")
-                        .loading(self.loading)
+                        .loading(self.loading.busy())
                         .on_click(cx.listener(|this, _, _, cx| this.load_activity(true, cx))),
                 )
             });
         let now = jiff::ZonedDateTime::now();
-        let body: AnyElement = if self.loading && rows.is_empty() {
+        let body: AnyElement = if shows_loading(self.loading.busy(), rows.is_empty()) {
             crate::widgets::loading("Loading from Lichess…", &palette).into_any_element()
         } else if any && rows.is_empty() && unsolved_only && shown_count > 0 {
             div()
@@ -632,14 +619,18 @@ impl Render for PuzzleHistory {
                     .into_any_element(),
             )
         } else {
-            self.error.clone().filter(|_| has_account).map(|error| {
-                div()
-                    .mb(px(8.))
-                    .text_size(px(13.))
-                    .text_color(palette.error)
-                    .child(error)
-                    .into_any_element()
-            })
+            self.loading
+                .error()
+                .cloned()
+                .filter(|_| has_account)
+                .map(|error| {
+                    div()
+                        .mb(px(8.))
+                        .text_size(px(13.))
+                        .text_color(palette.error)
+                        .child(error)
+                        .into_any_element()
+                })
         };
         div()
             .id("puzzle-history")
@@ -665,9 +656,15 @@ impl Render for PuzzleHistory {
     }
 }
 
+/// The loading line stands in for the rows only while a load runs and there is nothing to show;
+/// a refresh over rows already shown keeps them.
+fn shows_loading(busy: bool, no_rows: bool) -> bool {
+    busy && no_rows
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{PuzzleHistory, compact, rows_of};
+    use super::{PuzzleHistory, compact, rows_of, shows_loading};
     use gpui_kit::AppContext as _;
     use kchess_board::testing::Started;
 
@@ -680,12 +677,22 @@ mod tests {
             let page = cx.new(|cx| PuzzleHistory::new(Vec::new(), window, cx));
             page.update(cx, |page, cx| {
                 page.shown("Alice".into(), cx);
-                let asked = page.epoch.current();
+                let asked = page.loading.current();
                 page.shown(String::new(), cx);
-                (page.loading, page.epoch.is_current(asked))
+                (page.loading.busy(), page.loading.is_current(asked))
             })
         });
         assert!(!loading && !stale);
+    }
+
+    /// The loading line shows only while loading with no rows; rows already shown stay through a
+    /// refresh, and an idle empty page shows its own empty state.
+    #[test]
+    fn loading_replaces_only_an_empty_list_while_busy() {
+        assert!(shows_loading(true, true));
+        assert!(!shows_loading(true, false));
+        assert!(!shows_loading(false, true));
+        assert!(!shows_loading(false, false));
     }
 
     /// The columns need about 900 px: a 1024-wide window's card (about 700) once squeezed the

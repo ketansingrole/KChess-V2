@@ -48,3 +48,22 @@ pub fn start_core_with_lichess(cx: &mut App, origin: Option<String>) -> TestCore
     cx.set_global(core);
     TestCore { _profile: profile }
 }
+
+/// The process's log, started the first time in a folder of the tests' own: what has been
+/// written to it so far. The log starts once a process, so a test counts the lines of its own
+/// area that came after it began.
+pub fn logged() -> String {
+    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let dir = DIR.get_or_init(|| tempfile::tempdir().expect("a temporary folder"));
+    crate::log::init(dir.path());
+    crate::log::read().join("")
+}
+
+/// How many lines of the log are `area`'s (`[area] `).
+pub fn logged_in(area: &str) -> usize {
+    let marker = format!("[{area}] ");
+    logged()
+        .lines()
+        .filter(|line| line.contains(&marker))
+        .count()
+}

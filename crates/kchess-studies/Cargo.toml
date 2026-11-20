@@ -34,6 +34,8 @@ kchess-app = { workspace = true, features = ["test-support"] }
 kchess-board = { workspace = true, features = ["test-support"] }
 # A shell holding only this page (`kchess_nav::testing::OnlyPage`).
 kchess-nav = { workspace = true, features = ["test-support"] }
+# A stand-in Lichess, so no test reaches the real one.
+kchess-testkit.workspace = true
 
 [lints]
 workspace = true

@@ -208,7 +208,7 @@ impl Accounts {
                 let result = match result {
                     Ok(result) => result,
                     Err(cause) => {
-                        say(window, cx, cause.message);
+                        say(window, cx, crate::loading::failure("accounts", &cause));
                         return false;
                     }
                 };
@@ -278,7 +278,7 @@ impl Accounts {
                         };
                         say(window, cx, message);
                     }
-                    Err(cause) => say(window, cx, cause.message),
+                    Err(cause) => say(window, cx, crate::loading::failure("accounts", &cause)),
                 }
                 cx.notify();
             });
@@ -316,7 +316,7 @@ impl Accounts {
                 }
                 let added = this.chesscom().len() > before;
                 if let Err(cause) = result {
-                    say(window, cx, cause.message);
+                    say(window, cx, crate::loading::failure("accounts", &cause));
                 }
                 // The game count (`loadData`) changed with the games synced.
                 this.refresh(cx);
@@ -353,7 +353,7 @@ impl Accounts {
                         this.chesscom = players;
                         say(window, cx, "Chess.com games synced");
                     }
-                    Err(cause) => say(window, cx, cause.message),
+                    Err(cause) => say(window, cx, crate::loading::failure("accounts", &cause)),
                 }
                 this.refresh(cx);
                 cx.notify();
@@ -383,7 +383,7 @@ impl Accounts {
                         this.refresh(cx);
                         say(window, cx, format!("{username} removed. Their Chess.com games were deleted from this device."));
                     }
-                    Err(cause) => say(window, cx, cause.message),
+                    Err(cause) => say(window, cx, crate::loading::failure("accounts", &cause)),
                 }
                 cx.notify();
             });
@@ -434,7 +434,7 @@ impl Accounts {
                         this.sync(username, window, cx);
                     }
                     Err(cause) => {
-                        say(window, cx, cause.message);
+                        say(window, cx, crate::loading::failure("accounts", &cause));
                         window.defer(cx, move |window, cx| done(false, window, cx));
                     }
                 }
@@ -525,7 +525,7 @@ impl Accounts {
                             format!("Cleared @{username}'s synced data. You still follow them; sync to download again."),
                         );
                     }
-                    Err(cause) => say(window, cx, cause.message),
+                    Err(cause) => say(window, cx, crate::loading::failure("accounts", &cause)),
                 }
                 cx.notify();
             });
@@ -558,7 +558,7 @@ impl Accounts {
                             ),
                         );
                     }
-                    Err(cause) => say(window, cx, cause.message),
+                    Err(cause) => say(window, cx, crate::loading::failure("accounts", &cause)),
                 }
                 cx.notify();
             });
@@ -636,7 +636,7 @@ impl Accounts {
                 let data = match result {
                     Ok(data) => data,
                     Err(cause) => {
-                        say(window, cx, cause.message);
+                        say(window, cx, crate::loading::failure("accounts", &cause));
                         cx.notify();
                         return;
                     }
@@ -826,6 +826,62 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert_eq!(HEARD.load(Ordering::SeqCst), 1, "refused");
+    }
+
+    /// Run the app's and the core's work until `area` has logged more than `before` lines: the
+    /// core answers on a runtime of its own, so this waits in real time, at most five seconds.
+    fn wait_for_log(cx: &mut gpui_kit::TestAppContext, area: &str, before: usize) {
+        for _ in 0..500 {
+            cx.run_until_parked();
+            if crate::tests::logged_in(area) > before {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!(
+            "nothing more was logged under [{area}]:\n{}",
+            crate::tests::logged()
+        );
+    }
+
+    /// Every action on a player says when the core refuses it, in the window and in the log:
+    /// a refusal shown but not logged left Export diagnostics with nothing to go on.
+    #[gpui_kit::test]
+    fn a_refused_action_on_a_player_is_shown_and_logged(cx: &mut gpui_kit::TestAppContext) {
+        let (_core, window) = accounts_holding(vec![account("player", true)], cx);
+        // A name no Lichess or Chess.com account can have: the core refuses it before asking.
+        let invalid = || "no such name!".to_string();
+        type Action = fn(String, &mut Accounts, &mut Window, &mut gpui_kit::Context<Accounts>);
+        let actions: [(&str, Action); 6] = [
+            ("follow", |name, this, window, cx| {
+                this.follow(name, window, cx, |_, _, _| {})
+            }),
+            ("add a Chess.com player", |name, this, window, cx| {
+                this.add_chesscom(name, window, cx, |_, _, _| {})
+            }),
+            ("sync a Chess.com player", |name, this, window, cx| {
+                this.sync_chesscom(Some(name), window, cx)
+            }),
+            ("remove a Chess.com player", |name, this, window, cx| {
+                this.remove_chesscom(name, window, cx)
+            }),
+            ("clear a player's data", |name, this, window, cx| {
+                this.clear_data(name, window, cx)
+            }),
+            ("import players", |name, this, window, cx| {
+                this.import(vec![name], window, cx)
+            }),
+        ];
+        for (what, action) in actions {
+            let before = crate::tests::logged_in("accounts");
+            cx.update_window(window, |_, window, cx| {
+                super::handle(cx).update(cx, |this, cx| action(invalid(), this, window, cx));
+            })
+            .unwrap();
+            wait_for_log(cx, "accounts", before);
+            let busy = cx.update(|cx| super::handle(cx).read(cx).working());
+            assert!(!busy, "{what}: the refusal ends the work");
+        }
     }
 
     /// After signing out the pages forget the account, told whether one is left, and start

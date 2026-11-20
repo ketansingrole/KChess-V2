@@ -118,7 +118,7 @@ impl GameFinder {
                     }
                     Err(cause) => {
                         this.player = None;
-                        this.error = Some(cause.message.into());
+                        this.error = Some(kchess_app::loading::failure("guess", &cause).into());
                     }
                 }
                 cx.notify();
@@ -157,7 +157,9 @@ impl GameFinder {
                 this.opening = None;
                 match answer {
                     Ok(pgn) => cx.emit(Found::Game { pgn, side }),
-                    Err(cause) => this.error = Some(cause.message.into()),
+                    Err(cause) => {
+                        this.error = Some(kchess_app::loading::failure("guess", &cause).into())
+                    }
                 }
                 cx.notify();
             });
@@ -322,5 +324,80 @@ impl Render for GameFinder {
             .gap(px(16.))
             .child(self.player_card(cx, &palette))
             .child(self.classics_card(cx, &palette))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GameFinder;
+    use gpui_kit::AppContext as _;
+    use kchess_contracts::types::LichessGame;
+
+    fn lichess_game() -> LichessGame {
+        serde_json::from_value(serde_json::json!({
+            "id": "g", "account": "alice", "createdAt": 0, "lastMoveAt": 0, "rated": true,
+            "speed": "blitz", "perf": "blitz", "status": "mate", "color": "white",
+            "opponent": "bob", "moves": "",
+        }))
+        .expect("a Lichess game")
+    }
+
+    fn started(
+        cx: &mut gpui_kit::TestAppContext,
+    ) -> (
+        kchess_board::testing::Started,
+        kchess_testkit::Server,
+        gpui_kit::Entity<GameFinder>,
+    ) {
+        // Lichess, refusing everything.
+        let server = kchess_testkit::Server::start(|_, out| {
+            kchess_testkit::respond(out, 500, "text/plain", b"")
+        })
+        .expect("a stand-in Lichess");
+        let mut app =
+            kchess_board::testing::Started::with_lichess(cx, Some(server.base().to_string()));
+        let finder = app.with_window(|window, cx| cx.new(|cx| GameFinder::new(window, cx)));
+        (app, server, finder)
+    }
+
+    /// A player's games that Lichess will not send are logged and shown as the failure, and the
+    /// player is forgotten.
+    #[gpui_kit::test]
+    fn refused_games_of_a_player_are_logged_and_shown(cx: &mut gpui_kit::TestAppContext) {
+        let (mut app, _server, finder) = started(cx);
+        let before = kchess_app::tests::logged_in("guess");
+        app.with_window(|_, cx| {
+            finder.update(cx, |finder, cx| {
+                finder.show_games(Some("alice".into()), cx);
+                assert_eq!(finder.player.as_deref(), Some("alice"), "asked for");
+            })
+        });
+        app.wait_for("the failure logged", |_, _| {
+            kchess_app::tests::logged_in("guess") > before
+        });
+        app.wait_for("the failure shown", |_, cx| finder.read(cx).error.is_some());
+        let player = app.with_window(|_, cx| finder.read(cx).player.clone());
+        assert_eq!(player, None);
+    }
+
+    /// A game Lichess will not export is logged and shown as the failure, and the row stops
+    /// loading.
+    #[gpui_kit::test]
+    fn a_refused_game_is_logged_and_shown(cx: &mut gpui_kit::TestAppContext) {
+        let (mut app, _server, finder) = started(cx);
+        let before = kchess_app::tests::logged_in("guess");
+        app.with_window(|_, cx| {
+            finder.update(cx, |finder, cx| {
+                finder.games = Some(vec![lichess_game()]);
+                finder.open_game(0, cx);
+                assert_eq!(finder.opening, Some(0), "asked for");
+            })
+        });
+        app.wait_for("the failure logged", |_, _| {
+            kchess_app::tests::logged_in("guess") > before
+        });
+        app.wait_for("the failure shown", |_, cx| finder.read(cx).error.is_some());
+        let opening = app.with_window(|_, cx| finder.read(cx).opening);
+        assert_eq!(opening, None);
     }
 }

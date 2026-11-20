@@ -4,7 +4,7 @@
 
 mod rating_speeds;
 
-use crate::loading::{Epoch, Turn};
+use crate::loading::{Epoch, Loading, Turn};
 use crate::pages::PageView;
 use kchess_contracts::calls;
 use kchess_contracts::check::{MessageText, PresenceUsers, Username};
@@ -107,10 +107,6 @@ fn local_date(millis: f64) -> String {
         .unwrap_or_else(|| "?".into())
 }
 
-fn message_of(cause: &kchess_contracts::CoreError) -> SharedString {
-    cause.message.clone().into()
-}
-
 /// The open player's actions, as their buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -135,7 +131,8 @@ pub struct PlayersPage {
     perf: String,
     perf_select: Entity<SelectState<Vec<Choice>>>,
     stats: Option<PerfStats>,
-    stats_error: Option<SharedString>,
+    /// `stats`' load, in the chosen speed.
+    stats_loading: Loading,
     /// `Crosstable` between the active account and the player.
     record: Option<Crosstable>,
     /// What could not be read beside the profile, so "none" is not implied.
@@ -155,21 +152,19 @@ pub struct PlayersPage {
     account_epoch: Epoch,
     /// The leaderboard shown while no player is open.
     board: Option<Vec<LeaderboardEntry>>,
-    board_error: Option<SharedString>,
+    /// `board`'s load.
+    board_loading: Loading,
     board_perf: String,
     board_select: Entity<SelectState<Vec<Choice>>>,
-    board_epoch: Epoch,
     board_title: String,
     title_select: Entity<SelectState<Vec<Choice>>>,
-    /// The `board_epoch` whose titles `title_select` offers.
+    /// The `board_loading` request whose titles `title_select` offers.
     title_choices_for: Option<Turn>,
     /// `PlayerSuggestion`s for what is typed.
     names: NameMatches,
-    error: Option<SharedString>,
-    loading: bool,
-    /// Each lookup; answers to an older one are dropped.
-    epoch: Epoch,
-    stats_epoch: Epoch,
+    /// Each lookup of a player: the profile, and the requests that follow from it, which count
+    /// only while it is the latest.
+    profile_loading: Loading,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -204,7 +199,7 @@ impl PlayersPage {
                     InputEvent::PressEnter { .. } => this.lookup(None, window, cx),
                     InputEvent::Change => {
                         // A message about what was typed before goes with it.
-                        this.error = None;
+                        this.profile_loading.clear_error();
                         this.search_names(cx)
                     }
                     _ => {}
@@ -253,7 +248,7 @@ impl PlayersPage {
             perf: "blitz".into(),
             perf_select,
             stats: None,
-            stats_error: None,
+            stats_loading: Loading::default(),
             record: None,
             extras_failed: Vec::new(),
             games: None,
@@ -265,18 +260,14 @@ impl PlayersPage {
             extras_account: None,
             account_epoch: Epoch::default(),
             board: None,
-            board_error: None,
+            board_loading: Loading::default(),
             board_perf,
             board_select,
-            board_epoch: Epoch::default(),
             board_title,
             title_select,
             title_choices_for: None,
             names: NameMatches::default(),
-            error: None,
-            loading: false,
-            epoch: Epoch::default(),
-            stats_epoch: Epoch::default(),
+            profile_loading: Loading::default(),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
@@ -290,27 +281,18 @@ impl PlayersPage {
 
     /// The leaderboard of the chosen category, while no player is open.
     fn load_board(&mut self, cx: &mut Context<Self>) {
-        let epoch = self.board_epoch.start();
         self.board = None;
-        self.board_error = None;
-        cx.notify();
         let board = cx.global::<AppCore>().request(calls::Leaderboard {
             perf: perf_type(&self.board_perf),
         });
-        cx.spawn(async move |this, cx| {
-            let answer = board.await;
-            let _ = this.update(cx, |this, cx| {
-                if !this.board_epoch.is_current(epoch) {
-                    return;
-                }
-                match answer {
-                    Ok(entries) => this.board = Some(entries),
-                    Err(cause) => this.board_error = Some(message_of(&cause)),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+        self.board_loading.load(
+            cx,
+            "players",
+            |this: &mut Self| &mut this.board_loading,
+            board,
+            |this, answer, _| this.board = answer.ok(),
+        );
+        cx.notify();
     }
 
     /// Show only the leaderboard's players with `filter` (`all`, `titled` or one title).
@@ -329,10 +311,10 @@ impl PlayersPage {
         let Some(board) = &self.board else {
             return;
         };
-        if self.title_choices_for == Some(self.board_epoch.current()) {
+        if self.title_choices_for == Some(self.board_loading.current()) {
             return;
         }
-        self.title_choices_for = Some(self.board_epoch.current());
+        self.title_choices_for = Some(self.board_loading.current());
         let items = title_choices(board, &self.board_title);
         let chosen = SharedString::from(self.board_title.clone());
         self.title_select.update(cx, |select, cx| {
@@ -375,23 +357,17 @@ impl PlayersPage {
         if !crate::game::is_username(&name) {
             // This search replaces one still on its way: its answer would show that profile
             // under this error and put its name back in the box over what was typed.
-            self.epoch.invalidate();
-            self.loading = false;
-            self.error = Some(if name.is_empty() {
-                "Enter a Lichess username".into()
+            self.profile_loading.refuse(if name.is_empty() {
+                "Enter a Lichess username"
             } else {
-                "Lichess usernames are 2–30 letters, digits, - or _".into()
+                "Lichess usernames are 2–30 letters, digits, - or _"
             });
             cx.notify();
             return;
         }
-        self.epoch.invalidate();
-        self.stats_epoch.invalidate();
-        let epoch = self.epoch.current();
-        self.loading = true;
-        self.error = None;
+        let turn = self.profile_loading.start();
+        self.stats_loading.stop();
         self.stats = None;
-        self.stats_error = None;
         self.record = None;
         self.status = None;
         self.extras_failed.clear();
@@ -412,25 +388,17 @@ impl PlayersPage {
         });
         cx.spawn_in(window, async move |this, cx| {
             let found = profile.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                if !this.epoch.is_current(epoch) {
+            this.update_in(cx, |this, window, cx| {
+                if !this.profile_loading.settle(turn, "players", &found) {
                     return;
                 }
-                this.loading = false;
                 match found {
                     Ok(found) => this.found(found, window, cx),
-                    Err(cause) => {
-                        crate::log::write(
-                            kchess_contracts::Level::Warn,
-                            "players",
-                            &format!("Profile lookup failed: {}", cause.message),
-                        );
-                        this.profile = None;
-                        this.error = Some(message_of(&cause));
-                    }
+                    Err(_) => this.profile = None,
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -464,14 +432,14 @@ impl PlayersPage {
 
     /// What the player did lately on Lichess.
     fn load_days(&mut self, username: &str, cx: &mut Context<Self>) {
-        let epoch = self.epoch.current();
+        let epoch = self.profile_loading.current();
         let days = cx.global::<AppCore>().request(calls::Activity {
             username: Username(username.to_string()),
         });
         cx.spawn(async move |this, cx| {
             let answer = days.await;
             let _ = this.update(cx, |this, cx| {
-                if !this.epoch.is_current(epoch) {
+                if !this.profile_loading.is_current(epoch) {
                     return;
                 }
                 match answer {
@@ -554,7 +522,7 @@ impl PlayersPage {
 
     /// Your record against them, and whether they are online.
     fn load_extras(&mut self, username: &str, cx: &mut Context<Self>) {
-        let epoch = self.epoch.current();
+        let epoch = self.profile_loading.current();
         let core = cx.global::<AppCore>().clone();
         self.load_account_extras(username, cx);
         let presence = core.request(calls::Presence {
@@ -564,7 +532,7 @@ impl PlayersPage {
         cx.spawn(async move |this, cx| {
             let answer = presence.await;
             let _ = this.update(cx, |this, cx| {
-                if !this.epoch.is_current(epoch) {
+                if !this.profile_loading.is_current(epoch) {
                     return;
                 }
                 match answer {
@@ -650,28 +618,19 @@ impl PlayersPage {
         let Some(username) = self.username() else {
             return;
         };
-        let stats_epoch = self.stats_epoch.start();
         self.stats = None;
-        self.stats_error = None;
-        cx.notify();
         let stats = cx.global::<AppCore>().request(calls::PlayerPerf {
             username: Username(username),
             perf: perf_type(&self.perf),
         });
-        cx.spawn(async move |this, cx| {
-            let answer = stats.await;
-            let _ = this.update(cx, |this, cx| {
-                if !this.stats_epoch.is_current(stats_epoch) {
-                    return;
-                }
-                match answer {
-                    Ok(stats) => this.stats = Some(stats),
-                    Err(cause) => this.stats_error = Some(message_of(&cause)),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+        self.stats_loading.load(
+            cx,
+            "players",
+            |this: &mut Self| &mut this.stats_loading,
+            stats,
+            |this, answer, _| this.stats = answer.ok(),
+        );
+        cx.notify();
     }
 
     /// Lichess's rating history (or one rebuilt from their recent
@@ -680,7 +639,7 @@ impl PlayersPage {
         let Some(username) = self.username() else {
             return;
         };
-        let epoch = self.epoch.current();
+        let epoch = self.profile_loading.current();
         self.games = None;
         self.games_error = false;
         let core = cx.global::<AppCore>().clone();
@@ -691,7 +650,7 @@ impl PlayersPage {
         cx.spawn(async move |this, cx| {
             let answer = games.await;
             let _ = this.update(cx, |this, cx| {
-                if !this.epoch.is_current(epoch) {
+                if !this.profile_loading.is_current(epoch) {
                     return;
                 }
                 match answer {
@@ -721,7 +680,7 @@ impl PlayersPage {
                 ))
             };
             let _ = this.update(cx, |this, cx| {
-                if !this.epoch.is_current(epoch) {
+                if !this.profile_loading.is_current(epoch) {
                     return;
                 }
                 let withheld = this.withheld(cx);
@@ -899,14 +858,14 @@ impl PlayersPage {
                         Button::new("players-lookup")
                             .primary()
                             .label("Look up")
-                            .loading(self.loading)
+                            .loading(self.profile_loading.busy())
                             .disabled(!online || !typed)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.lookup(None, window, cx)),
                             ),
                     ),
             )
-            .children(self.error.clone().map(|error| {
+            .children(self.profile_loading.error().cloned().map(|error| {
                 h_flex()
                     .id("players-error")
                     .test_support()
@@ -1183,7 +1142,7 @@ impl PlayersPage {
                     ),
                 ),
         );
-        if let Some(error) = &self.stats_error {
+        if let Some(error) = self.stats_loading.error() {
             return card.child(widgets::retry_line(
                 "players-stats-retry",
                 error.clone(),
@@ -1325,7 +1284,7 @@ impl PlayersPage {
                         ),
                 ),
         );
-        if let Some(error) = &self.board_error {
+        if let Some(error) = self.board_loading.error() {
             return card.child(widgets::retry_line(
                 "players-board-retry",
                 error.clone(),
@@ -1602,8 +1561,7 @@ pub struct MessageDialog {
     account: String,
     username: String,
     text: Entity<TextareaState>,
-    busy: bool,
-    error: Option<SharedString>,
+    sending: Loading,
     /// The account was connected before messaging was asked for, and must connect again.
     reconnect: bool,
     _subscriptions: Vec<Subscription>,
@@ -1626,8 +1584,7 @@ impl MessageDialog {
             account,
             username,
             text,
-            busy: false,
-            error: None,
+            sending: Loading::default(),
             reconnect: false,
             _subscriptions: subscriptions,
         }
@@ -1635,11 +1592,10 @@ impl MessageDialog {
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.text.read(cx).value().trim().to_string();
-        if text.is_empty() || self.busy {
+        if text.is_empty() || self.sending.busy() {
             return;
         }
-        self.busy = true;
-        self.error = None;
+        let turn = self.sending.start();
         // Each try says for itself whether the account must reconnect (as creating a
         // tournament does): an earlier banner stayed over a later, different failure.
         self.reconnect = false;
@@ -1651,18 +1607,21 @@ impl MessageDialog {
         });
         cx.spawn_in(window, async move |this, cx| {
             let answer = send.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.busy = false;
+            this.update_in(cx, |this, window, cx| {
+                if !this.sending.settle(turn, "players", &answer) {
+                    return;
+                }
                 match answer {
                     Ok(Reply::NeedsReconnect) => this.reconnect = true,
                     Ok(Reply::Done(_)) => {
                         window.close_dialog(cx);
                         window.push_notification(format!("Message sent to {}", this.username), cx);
                     }
-                    Err(cause) => this.error = Some(message_of(&cause)),
+                    Err(_) => {}
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -1706,7 +1665,7 @@ impl Render for MessageDialog {
                 )
             })
             .child(Textarea::new(&self.text).aria_label("Message"))
-            .children(self.error.clone().map(|error| {
+            .children(self.sending.error().cloned().map(|error| {
                 div()
                     .text_size(px(13.))
                     .text_color(palette.error)
@@ -1727,7 +1686,7 @@ impl Render for MessageDialog {
                             .primary()
                             .icon(icon("send"))
                             .label("Send")
-                            .loading(self.busy)
+                            .loading(self.sending.busy())
                             .disabled(empty)
                             .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
                     ),
@@ -1855,9 +1814,12 @@ mod tests {
             let page = cx.new(|cx| super::PlayersPage::new(window, cx));
             page.update(cx, |page, cx| {
                 page.lookup(Some("Alice".into()), window, cx);
-                let asked = page.epoch.current();
+                let asked = page.profile_loading.current();
                 page.lookup(Some("a".into()), window, cx);
-                (page.loading, page.epoch.is_current(asked))
+                (
+                    page.profile_loading.busy(),
+                    page.profile_loading.is_current(asked),
+                )
             })
         });
         assert!(!loading && !stale);

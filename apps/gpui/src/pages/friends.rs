@@ -3,7 +3,7 @@
 //! connected accounts have fared against them, and their synced games — with follow, import
 //! from Lichess, sync, clear and remove.
 
-use crate::loading::Epoch;
+use crate::loading::Loading;
 use crate::pages::PageView;
 use kchess_contracts::calls;
 use kchess_contracts::check::{FriendList, PresenceUsers, Username};
@@ -74,8 +74,7 @@ pub struct FriendsPage {
     importer: Option<Entity<ImportDialog>>,
     /// What the players on the list did lately (`TimelineEntry`s), once read.
     timeline: Option<Vec<TimelineEntry>>,
-    timeline_error: Option<SharedString>,
-    timeline_epoch: Epoch,
+    timeline_loading: Loading,
     /// How many of its lines the timeline shows.
     timeline_shown: usize,
     focus: FocusHandle,
@@ -139,8 +138,7 @@ impl FriendsPage {
             followed: 0,
             importer: None,
             timeline: None,
-            timeline_error: None,
-            timeline_epoch: Epoch::default(),
+            timeline_loading: Loading::default(),
             timeline_shown: TIMELINE_FIRST,
             focus: cx.focus_handle(),
             _poll: poll,
@@ -165,27 +163,23 @@ impl FriendsPage {
 
     /// What the players on the list did lately, from their Lichess activity.
     fn load_timeline(&mut self, cx: &mut Context<Self>) {
-        let epoch = self.timeline_epoch.start();
-        self.timeline_error = None;
         if Self::friends(cx).is_empty() || !crate::network::online(cx) {
+            self.timeline_loading.stop();
             self.timeline = None;
             return;
         }
         let timeline = cx.global::<AppCore>().request(calls::Timeline {});
-        cx.spawn(async move |this, cx| {
-            let answer = timeline.await;
-            let _ = this.update(cx, |this, cx| {
-                if !this.timeline_epoch.is_current(epoch) {
-                    return;
+        self.timeline_loading.load(
+            cx,
+            "friends",
+            |this: &mut Self| &mut this.timeline_loading,
+            timeline,
+            |this, answer, _| {
+                if let Ok(entries) = answer {
+                    this.timeline = Some(entries);
                 }
-                match answer {
-                    Ok(entries) => this.timeline = Some(entries),
-                    Err(cause) => this.timeline_error = Some(cause.message.into()),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+            },
+        );
     }
 
     fn load_versus(&mut self, cx: &mut Context<Self>) {
@@ -834,7 +828,7 @@ impl FriendsPage {
         let card = widgets::card(palette)
             .gap(px(8.))
             .child(widgets::heading("Timeline", palette));
-        Some(match (&self.timeline_error, &self.timeline) {
+        Some(match (self.timeline_loading.error(), &self.timeline) {
             (Some(error), _) => {
                 let page = cx.entity().downgrade();
                 card.child(widgets::retry_line(
@@ -879,8 +873,7 @@ impl FriendsPage {
 /// The players the connected accounts follow on Lichess, to add.
 pub struct ImportDialog {
     report: Option<FollowingReport>,
-    loading: bool,
-    error: Option<String>,
+    loading: Loading,
     selected: HashSet<String>,
     show_removed: bool,
     filter: Entity<InputState>,
@@ -897,8 +890,7 @@ impl ImportDialog {
         })];
         let mut dialog = ImportDialog {
             report: None,
-            loading: false,
-            error: None,
+            loading: Loading::default(),
             selected: HashSet::new(),
             show_removed: false,
             filter,
@@ -910,22 +902,19 @@ impl ImportDialog {
 
     /// Ask Lichess afresh each time.
     fn load(&mut self, cx: &mut Context<Self>) {
-        self.loading = true;
-        self.error = None;
-        cx.notify();
         let following = cx.global::<AppCore>().request(calls::Following {});
-        cx.spawn(async move |this, cx| {
-            let result = following.await;
-            let _ = this.update(cx, |this, cx| {
-                this.loading = false;
-                match result {
-                    Ok(report) => this.report = Some(report),
-                    Err(cause) => this.error = Some(cause.message),
+        self.loading.load(
+            cx,
+            "friends",
+            |this: &mut Self| &mut this.loading,
+            following,
+            |this, answer, _| {
+                if let Ok(report) = answer {
+                    this.report = Some(report);
                 }
-                cx.notify();
-            });
-        })
-        .detach();
+            },
+        );
+        cx.notify();
     }
 
     fn candidates(&self, cx: &App) -> Vec<FollowedUser> {
@@ -967,7 +956,7 @@ impl Render for ImportDialog {
             .unwrap_or_default();
         let count = self.selected.len();
         let body: AnyElement =
-            if self.loading {
+            if self.loading.busy() {
                 h_flex()
                     .gap(px(8.))
                     .text_color(palette.text_muted)
@@ -1141,7 +1130,7 @@ impl Render for ImportDialog {
                         problem.account, problem.message
                     ))
             }))
-            .children(self.error.clone().map(|error| {
+            .children(self.loading.error().map(|error| {
                 div()
                     .text_size(px(13.))
                     .text_color(palette.error)

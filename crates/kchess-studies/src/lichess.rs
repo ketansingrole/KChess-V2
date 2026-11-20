@@ -133,7 +133,7 @@ impl StudiesPage {
                         entry.fetched_at = now_ms();
                         entry.needs_reconnect = false;
                     }
-                    Err(cause) => entry.error = cause.message,
+                    Err(cause) => entry.error = kchess_app::loading::failure("studies", &cause),
                 }
                 cx.notify();
             });
@@ -226,7 +226,8 @@ impl StudiesPage {
                     }
                     Ok(Reply::Done(chapters)) => chapters,
                     Err(cause) => {
-                        let _ = cx.update(|window, cx| fail(cause.message, window, cx));
+                        let message = kchess_app::loading::failure("studies", &cause);
+                        let _ = cx.update(|window, cx| fail(message, window, cx));
                         return;
                     }
                 };
@@ -411,7 +412,8 @@ impl StudiesPage {
                         this.load_lichess(true, cx);
                     }
                     Err(cause) => window.push_notification(
-                        Notification::error(cause.message).title("Could not send to Lichess"),
+                        Notification::error(kchess_app::loading::failure("studies", &cause))
+                            .title("Could not send to Lichess"),
                         cx,
                     ),
                 }
@@ -584,5 +586,139 @@ impl StudiesPage {
             .child(v_flex().gap(CARD_GAP).children(rows))
             .child(send)
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::StudiesPage;
+    use gpui_kit::AppContext as _;
+    use kchess_contracts::types::LichessStudy;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// The app with Lichess answering nothing and an account that holds no sign-in, so the core
+    /// asks for it to be connected again; a Studies page of its own.
+    fn started(
+        cx: &mut gpui_kit::TestAppContext,
+    ) -> (
+        kchess_board::testing::Started,
+        kchess_testkit::Server,
+        gpui_kit::Entity<StudiesPage>,
+    ) {
+        let server = kchess_testkit::Server::start(|_, out| {
+            kchess_testkit::respond(out, 500, "text/plain", b"")
+        })
+        .expect("a stand-in Lichess");
+        let mut app =
+            kchess_board::testing::Started::with_lichess(cx, Some(server.base().to_string()));
+        let page = app.with_window(|window, cx| {
+            crate::studies::init(&Default::default(), cx);
+            cx.new(|cx| StudiesPage::new(window, cx))
+        });
+        app.with_window(|_, cx| page.update(cx, |page, _| page.lichess.account = "alice".into()));
+        (app, server, page)
+    }
+
+    /// Loading an account's cloud studies marks the account loading, and the core's answer ends
+    /// it; an account with no sign-in is asked to connect again.
+    #[gpui_kit::test]
+    fn an_accounts_studies_load_and_ask_to_reconnect(cx: &mut gpui_kit::TestAppContext) {
+        let (mut app, _server, page) = started(cx);
+        app.with_window(|_, cx| {
+            page.update(cx, |page, cx| {
+                page.load_lichess(true, cx);
+                assert!(
+                    page.entry().is_some_and(|entry| entry.loading),
+                    "asked, not yet answered"
+                );
+            })
+        });
+        app.wait_for("the answer", |_, cx| {
+            page.read(cx)
+                .entry()
+                .is_some_and(|entry| !entry.loading && entry.needs_reconnect)
+        });
+    }
+
+    /// Keeping a cloud study offline fetches its chapters and tells `fail` why when the account
+    /// must connect again.
+    #[gpui_kit::test]
+    fn keeping_a_study_offline_fails_for_an_account_that_must_reconnect(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let (mut app, _server, _page) = started(cx);
+        let failed = Rc::new(RefCell::new(None::<String>));
+        app.with_window(|window, cx| {
+            let failed = failed.clone();
+            StudiesPage::keep_offline(
+                "alice".into(),
+                LichessStudy {
+                    id: "abcd1234".into(),
+                    name: "Study".into(),
+                    updated_at: 0,
+                },
+                window,
+                cx,
+                |_, _, _, _| panic!("nothing to keep"),
+                move |note, _, _| *failed.borrow_mut() = Some(note),
+            );
+        });
+        app.wait_for("the failure told", |_, _| failed.borrow().is_some());
+        let note = failed.borrow().clone().expect("a note");
+        assert!(note.contains("connect @alice again"), "{note}");
+    }
+
+    /// What the analysis board shows, for a page that sends it to Lichess.
+    struct Showing;
+
+    impl kchess_board::analysis::AnalysisBoard for Showing {
+        fn open(
+            &self,
+            _: kchess_board::analysis::Open,
+            _: &mut gpui_kit::Window,
+            _: &mut gpui_kit::App,
+        ) {
+        }
+
+        fn shown(
+            &self,
+            _: &mut gpui_kit::Window,
+            _: &mut gpui_kit::App,
+        ) -> Option<kchess_board::analysis::Shown> {
+            Some(kchess_board::analysis::Shown {
+                study_id: String::new(),
+                pgn: "1. e4 e5 *".into(),
+                event: String::new(),
+            })
+        }
+
+        fn save_study(
+            &self,
+            _: &mut gpui_kit::Window,
+            _: &mut gpui_kit::App,
+        ) -> Option<kchess_board::analysis::Saving> {
+            None
+        }
+    }
+
+    /// Sending the analysis board to Lichess marks the tab busy until the core answers, and an
+    /// account that must connect again is told so.
+    #[gpui_kit::test]
+    fn sending_to_lichess_waits_for_the_answer_and_says_when_to_reconnect(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let (mut app, _server, page) = started(cx);
+        app.with_window(|window, cx| {
+            cx.set_global(kchess_board::analysis::Analysis(Rc::new(Showing)));
+            page.update(cx, |page, cx| {
+                page.send(window, cx);
+                assert!(page.lichess.busy, "asked, not yet answered");
+            })
+        });
+        app.wait_for("the answer", |_, cx| {
+            let tab = &page.read(cx).lichess;
+            !tab.busy && tab.message.contains("connect @alice again")
+        });
     }
 }

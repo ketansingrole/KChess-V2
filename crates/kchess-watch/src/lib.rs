@@ -462,7 +462,9 @@ impl WatchPage {
                     Ok(found) => {
                         this.open_tour_at(found.tour_id, Some(round), game, window, cx);
                     }
-                    Err(cause) => this.error = Some(cause.message.into()),
+                    Err(cause) => {
+                        this.error = Some(kchess_app::loading::failure("watch", &cause).into())
+                    }
                 }
                 cx.notify();
             });
@@ -497,7 +499,10 @@ impl WatchPage {
                         this.channels_error = None;
                         this.channels = channels
                     }
-                    Err(cause) => this.channels_error = Some(cause.message.into()),
+                    Err(cause) => {
+                        this.channels_error =
+                            Some(kchess_app::loading::failure("watch", &cause).into())
+                    }
                 }
                 cx.notify();
             });
@@ -552,7 +557,7 @@ impl WatchPage {
                     Err(cause) => {
                         this.pending = None;
                         this.early.clear();
-                        this.error = Some(cause.message.into());
+                        this.error = Some(kchess_app::loading::failure("watch", &cause).into());
                         this.target = None;
                     }
                 }
@@ -665,7 +670,10 @@ impl WatchPage {
                                 this.presence.insert(name.to_lowercase(), entry);
                             }
                         }
-                        Err(cause) => this.presence_error = Some(cause.message.into()),
+                        Err(cause) => {
+                            this.presence_error =
+                                Some(kchess_app::loading::failure("watch", &cause).into())
+                        }
                     }
                     cx.notify();
                 });
@@ -1314,5 +1322,145 @@ mod tests {
         assert_eq!(*shell.opened.borrow(), ["Watch"; 3]);
         let places = app.with_window(|_, cx| WatchPage::places(cx).len());
         assert_eq!(places, Tab::ALL.len());
+    }
+
+    /// A stand-in Lichess: broadcasts answer (a search finds one tournament with one round); the
+    /// listing and everything else fail.
+    fn lichess() -> kchess_testkit::Server {
+        kchess_testkit::Server::start(|request, out| match request.path() {
+            "/api/broadcast/search" => kchess_testkit::json(
+                out,
+                200,
+                &serde_json::json!({ "currentPageResults": [
+                    { "tour": { "id": "tourid01", "name": "Open" }, "round": null }
+                ] }),
+            ),
+            "/api/broadcast/tourid01" => kchess_testkit::json(
+                out,
+                200,
+                &serde_json::json!({
+                    "tour": { "id": "tourid01", "name": "Open" },
+                    "rounds": [{ "id": "roundid1", "name": "Round 1", "finished": true }],
+                    "defaultRoundId": "roundid1"
+                }),
+            ),
+            _ => kchess_testkit::respond(out, 500, "text/plain", b""),
+        })
+        .expect("a stand-in Lichess")
+    }
+
+    /// When the core cannot list TV's channels, the TV tab shows why and the failure is logged.
+    #[gpui_kit::test]
+    fn channels_that_fail_to_load_show_and_log_why(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let server = lichess();
+        let mut app =
+            kchess_board::testing::Started::with_lichess(cx, Some(server.base().to_string()));
+        let page = app.with_window(|window, cx| cx.new(|cx| WatchPage::new(window, cx)));
+        let before = kchess_app::tests::logged_in("watch");
+        app.with_window(|_, cx| page.update(cx, |page, cx| page.load_channels(cx)));
+        app.wait_for("the failure logged", |_, _| {
+            kchess_app::tests::logged_in("watch") > before
+        });
+        app.wait_for("the failure shown", |_, cx| {
+            page.read(cx).channels_error.is_some()
+        });
+    }
+
+    /// Watching a game or channel points the page at it and waits for the feed.
+    #[gpui_kit::test]
+    fn watching_a_game_points_the_page_at_it(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let server = lichess();
+        let mut app =
+            kchess_board::testing::Started::with_lichess(cx, Some(server.base().to_string()));
+        let page = app.with_window(|window, cx| cx.new(|cx| WatchPage::new(window, cx)));
+        let (target, pending) = app.with_window(|_, cx| {
+            page.update(cx, |page, cx| {
+                page.watch(super::Target::Game("g1".into()), cx);
+                (
+                    matches!(&page.target, Some(super::Target::Game(id)) if id == "g1"),
+                    page.pending == Some(super::Pending::Watch),
+                )
+            })
+        });
+        assert!(target && pending);
+    }
+
+    /// A followed player's presence that cannot be read shows why and is logged.
+    #[gpui_kit::test]
+    fn presence_that_fails_to_load_shows_and_logs_why(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let server = lichess();
+        let mut app =
+            kchess_board::testing::Started::with_lichess(cx, Some(server.base().to_string()));
+        app.wait_for("the accounts read", |_, cx| {
+            crate::accounts::handle(cx).read(cx).data.is_some()
+        });
+        app.with_window(|_, cx| {
+            let settings = kchess_contracts::defaults::default_settings()
+                .expect("the default settings")
+                .core;
+            crate::accounts::handle(cx).update(cx, |accounts, _| {
+                accounts.data = Some(kchess_contracts::types::AppData {
+                    settings,
+                    accounts: vec![kchess_contracts::types::Account {
+                        username: "bob".into(),
+                        connected: false,
+                        last_synced_at: None,
+                        synced_play_time: None,
+                    }],
+                    game_count: 0,
+                });
+            });
+        });
+        let page = app.with_window(|window, cx| cx.new(|cx| WatchPage::new(window, cx)));
+        let before = kchess_app::tests::logged_in("watch");
+        app.with_window(|_, cx| page.update(cx, |page, cx| page.refresh_presence(cx)));
+        app.wait_for("the failure logged", |_, _| {
+            kchess_app::tests::logged_in("watch") > before
+        });
+        app.wait_for("the failure shown", |_, cx| {
+            page.read(cx).presence_error.is_some()
+        });
+    }
+
+    /// The broadcasts list that fails to load shows and logs why; a search's answer shows its
+    /// results; a tournament opens at its default round.
+    #[gpui_kit::test]
+    fn broadcasts_load_search_and_open(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let server = lichess();
+        let mut app =
+            kchess_board::testing::Started::with_lichess(cx, Some(server.base().to_string()));
+        let page = app.with_window(|window, cx| cx.new(|cx| WatchPage::new(window, cx)));
+        let before = kchess_app::tests::logged_in("watch");
+        app.with_window(|_, cx| page.update(cx, |page, cx| page.broadcasts.load(cx)));
+        app.wait_for("the failure logged", |_, _| {
+            kchess_app::tests::logged_in("watch") > before
+        });
+        app.wait_for("the failure shown", |_, cx| {
+            page.read(cx).broadcasts.loading.error().is_some()
+        });
+
+        app.with_window(|window, cx| {
+            let query = page.read(cx).broadcasts.query.clone();
+            query.update(cx, |query, cx| query.set_value("open", window, cx));
+            page.update(cx, |page, cx| page.search(cx));
+        });
+        app.wait_for("the results shown", |_, cx| {
+            page.read(cx).broadcasts.results.len() == 1
+        });
+
+        app.with_window(|window, cx| {
+            page.update(cx, |page, cx| {
+                page.open_tour_at("tourid01".into(), None, String::new(), window, cx)
+            })
+        });
+        app.wait_for("the round opened", |_, cx| {
+            page.read(cx).broadcast_round() == "roundid1"
+        });
+        let tour = app.with_window(|_, cx| page.read(cx).broadcasts.tour.is_some());
+        assert!(tour);
     }
 }

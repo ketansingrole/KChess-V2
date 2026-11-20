@@ -202,7 +202,10 @@ fn open_exported_at(
     let pgn = async move {
         match export.await {
             Ok(pgn) => Ok(pgn),
-            Err(cause) => Err(format!("Could not open the game: {}", cause.message)),
+            Err(cause) => Err(format!(
+                "Could not open the game: {}",
+                kchess_app::loading::failure("analysis", &cause)
+            )),
         }
     };
     open_fetched(pgn, opening, window, cx);
@@ -220,7 +223,10 @@ pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App)
             let pgn = match fetch.await {
                 Ok(found) => Some(found.pgn),
                 Err(cause) => {
-                    let message = format!("Could not open the study: {}", cause.message);
+                    let message = format!(
+                        "Could not open the study: {}",
+                        kchess_app::loading::failure("analysis", &cause)
+                    );
                     let _ = cx.update(|window, cx| window.push_notification(message, cx));
                     return;
                 }

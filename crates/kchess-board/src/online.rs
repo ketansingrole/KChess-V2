@@ -4,7 +4,7 @@
 //! Engine help stays off while a game is live or being looked for, and
 //! until the core has said whether one was left running.
 
-use crate::loading::Epoch;
+use crate::loading::{Epoch, Loading};
 use kchess_contracts::calls;
 use kchess_contracts::check::OptionalAccount;
 use std::sync::OnceLock;
@@ -164,9 +164,8 @@ pub struct OnlineState {
     pub lobby: Option<LobbyState>,
     pub ongoing: Vec<OngoingGame>,
     pub ongoing_loaded: bool,
-    pub ongoing_error: Option<String>,
-    /// Each games-in-progress request; an answer to an earlier one is dropped.
-    ongoing_request: u64,
+    /// The games-in-progress request: an answer to an earlier one is dropped.
+    pub ongoing_loading: Loading,
     /// The kind of failure that ended the game's connection, until it recovers.
     pub failure: Option<ErrorKind>,
     /// The game connection's state that ended it for good, kept until the game connects again.
@@ -503,7 +502,10 @@ impl OnlineState {
             this.update(cx, |this, cx| {
                 let (reply, cause) = match answer {
                     Ok(reply) => (reply, None),
-                    Err(error) => (Reply::Failed, Some(error.message)),
+                    Err(error) => (
+                        Reply::Failed,
+                        Some(kchess_app::loading::failure("online-game", &error)),
+                    ),
                 };
                 let settled = this.transition(
                     |model, ctx| model.settle(&pending, reply, ctx),
@@ -590,7 +592,7 @@ impl OnlineState {
         let options: OnlineOptions = match typed(&wanted) {
             Ok(options) => options,
             Err(refused) => {
-                notice(cx, refused.message);
+                notice(cx, kchess_app::loading::failure("online-game", &refused));
                 return;
             }
         };
@@ -697,7 +699,7 @@ impl OnlineState {
         cx.spawn(async move |_, cx| match call.await {
             Ok(_) => true,
             Err(cause) => {
-                cx.update(|cx| notice(cx, cause.message));
+                cx.update(|cx| notice(cx, kchess_app::loading::failure("online-game", &cause)));
                 false
             }
         })
@@ -815,40 +817,31 @@ impl OnlineState {
     pub fn refresh_ongoing(&mut self, cx: &mut Context<Self>) {
         // A newer request either way: an answer still on its way (a poll overtaken by a change,
         // or from before signing out) must not bring back older games, or their notifications.
-        self.ongoing_request += 1;
-        let request = self.ongoing_request;
         if crate::accounts::handle(cx).read(cx).connected().is_empty() {
+            self.ongoing_loading.stop();
             self.ongoing.clear();
-            self.ongoing_error = None;
             cx.notify();
             return;
         }
+        let turn = self.ongoing_loading.start();
         let call = cx.global::<AppCore>().request(calls::OngoingGames {});
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
-                if request != this.ongoing_request {
+                if !this.ongoing_loading.settle(turn, "online-game", &answer) {
                     return;
                 }
-                match answer {
-                    Ok(games) => {
-                        for game in &games {
-                            let id = game.game_id.clone();
-                            let mine = game.is_my_turn;
-                            let before = this.turns.get(&id).copied();
-                            if game.correspondence()
-                                && mine
-                                && before == Some(false)
-                                && id != this.id()
-                            {
-                                (hooks(cx).your_move)(game, cx);
-                            }
-                            this.turns.insert(id, mine);
+                if let Ok(games) = answer {
+                    for game in &games {
+                        let id = game.game_id.clone();
+                        let mine = game.is_my_turn;
+                        let before = this.turns.get(&id).copied();
+                        if is_your_move_now(game, before, this.id()) {
+                            (hooks(cx).your_move)(game, cx);
                         }
-                        this.ongoing = games;
-                        this.ongoing_error = None;
+                        this.turns.insert(id, mine);
                     }
-                    Err(cause) => this.ongoing_error = Some(cause.message),
+                    this.ongoing = games;
                 }
                 this.ongoing_loaded = true;
                 cx.notify();
@@ -926,7 +919,7 @@ impl OnlineState {
                 match answer {
                     Ok(_) => true,
                     Err(cause) => {
-                        notice(cx, cause.message);
+                        notice(cx, kchess_app::loading::failure("online-game", &cause));
                         false
                     }
                 }
@@ -1119,8 +1112,7 @@ pub fn init(cx: &mut App) {
             lobby: None,
             ongoing: Vec::new(),
             ongoing_loaded: false,
-            ongoing_error: None,
-            ongoing_request: 0,
+            ongoing_loading: Loading::default(),
             failure: None,
             failed_state: None,
             lost: None,
@@ -1261,6 +1253,12 @@ fn typed<T: Validate>(value: &Value) -> Result<T, CoreError> {
     T::validate(value.into()).map_err(CoreError::new)
 }
 
+/// Whether a correspondence game just became the player's move: it was the opponent's when last
+/// seen, and it is not the game being played in the window now.
+fn is_your_move_now(game: &OngoingGame, before: Option<bool>, playing: &str) -> bool {
+    game.correspondence() && game.is_my_turn && before == Some(false) && game.game_id != playing
+}
+
 /// What the rules read of a call's answer.
 fn reply<T: 'static>(
     call: impl Future<Output = Result<T, CoreError>> + 'static,
@@ -1356,7 +1354,7 @@ mod tests {
         let mut app = Started::new(cx);
         app.with_window(|_, cx| cx.set_global(keeping()));
         let online = app.with_window(|_, cx| super::handle(cx));
-        let challenge = serde_json::from_value(json!({
+        let challenge = serde_json::from_value(serde_json::json!({
             "id": "c1", "account": "me", "direction": "in", "opponent": { "name": "Bob" },
             "variant": "standard", "variantName": "Standard", "rated": false, "speed": "blitz",
             "timeControl": { "type": "unlimited" }, "color": "random", "playable": true,
@@ -1378,7 +1376,7 @@ mod tests {
         });
         app.cx().run_until_parked();
         let session = app.with_window(|_, cx| online.read(cx).state_epoch());
-        let lost = serde_json::from_value(json!({
+        let lost = serde_json::from_value(serde_json::json!({
             "session": session, "account": "me", "gameId": "g1", "lane": "game",
             "phase": "disconnected",
         }))
@@ -1451,17 +1449,113 @@ mod tests {
         let mut app = Started::new(cx);
         let (stale, error) = app.with_window(|_, cx| {
             super::handle(cx).update(cx, |online, cx| {
-                online.ongoing_error = Some("Lichess did not answer".into());
-                let asked = online.ongoing_request;
+                online.ongoing_loading.show_error("Lichess did not answer");
+                let asked = online.ongoing_loading.current();
                 // No account is connected in a fresh profile.
                 online.refresh_ongoing(cx);
                 (
-                    online.ongoing_request == asked,
-                    online.ongoing_error.clone(),
+                    online.ongoing_loading.is_current(asked),
+                    online.ongoing_loading.error().cloned(),
                 )
             })
         });
         assert!(!stale);
         assert_eq!(error, None);
+    }
+
+    fn ongoing(id: &str, speed: &str, my_turn: bool) -> kchess_contracts::types::OngoingGame {
+        serde_json::from_value(serde_json::json!({
+            "gameId": id,
+            "account": "alice",
+            "opponent": { "name": "bob" },
+            "fen": "8/8/8/8/8/8/8/8 w - - 0 1",
+            "isMyTurn": my_turn,
+            "variant": "standard",
+            "speed": speed,
+            "rated": false,
+        }))
+        .expect("an ongoing game")
+    }
+
+    /// A correspondence game announces the player's move only when it just turned to them, in a
+    /// game not being played in the window: each other case stays quiet.
+    #[test]
+    fn only_a_correspondence_game_that_just_turned_to_you_is_your_move() {
+        let game = ongoing("abc", "correspondence", true);
+        assert!(super::is_your_move_now(&game, Some(false), "other"));
+        // Not correspondence.
+        assert!(!super::is_your_move_now(
+            &ongoing("abc", "blitz", true),
+            Some(false),
+            "other"
+        ));
+        // Still the opponent's turn.
+        assert!(!super::is_your_move_now(
+            &ongoing("abc", "correspondence", false),
+            Some(false),
+            "other"
+        ));
+        // Already the player's move when last seen, or never seen.
+        assert!(!super::is_your_move_now(&game, Some(true), "other"));
+        assert!(!super::is_your_move_now(&game, None, "other"));
+        // The game open in the window needs no announcement.
+        assert!(!super::is_your_move_now(&game, Some(false), "abc"));
+    }
+
+    /// Asking for the games in progress with an account connected marks the list as read once the
+    /// current request's answer lands, failed or not.
+    #[gpui_kit::test]
+    fn the_current_answer_for_games_in_progress_lands(cx: &mut gpui_kit::TestAppContext) {
+        let server = kchess_testkit::Server::start(|_, out| {
+            kchess_testkit::respond(out, 500, "text/plain", b"")
+        })
+        .expect("a stand-in Lichess");
+        let mut app = Started::with_lichess(cx, Some(server.base().to_string()));
+        app.wait_for("the accounts read", |_, cx| {
+            crate::accounts::handle(cx).read(cx).data.is_some()
+        });
+        app.with_window(|_, cx| {
+            let settings = kchess_contracts::defaults::default_settings()
+                .expect("the default settings")
+                .core;
+            crate::accounts::handle(cx).update(cx, |accounts, cx| {
+                accounts.data = Some(kchess_contracts::types::AppData {
+                    settings,
+                    accounts: vec![kchess_contracts::types::Account {
+                        username: "alice".into(),
+                        connected: true,
+                        last_synced_at: None,
+                        synced_play_time: None,
+                    }],
+                    game_count: 0,
+                });
+                cx.notify();
+            });
+            super::handle(cx).update(cx, |online, cx| {
+                assert!(!online.ongoing_loaded);
+                online.refresh_ongoing(cx);
+            });
+        });
+        app.wait_for("the answer to land", |_, cx| {
+            super::handle(cx).read(cx).ongoing_loaded
+        });
+    }
+
+    /// Starting a game asks the core at once: the state is busy until its answer comes.
+    #[gpui_kit::test]
+    fn starting_a_game_is_busy_until_the_core_answers(cx: &mut gpui_kit::TestAppContext) {
+        let server = kchess_testkit::Server::start(|_, out| {
+            kchess_testkit::respond(out, 500, "text/plain", b"")
+        })
+        .expect("a stand-in Lichess");
+        let mut app = Started::with_lichess(cx, Some(server.base().to_string()));
+        let busy = app.with_window(|_, cx| {
+            super::handle(cx).update(cx, |online, cx| {
+                online.start(None, cx);
+                online.busy
+            })
+        });
+        assert!(busy);
+        app.wait_for("the start to end", |_, cx| !super::handle(cx).read(cx).busy);
     }
 }

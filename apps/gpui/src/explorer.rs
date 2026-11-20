@@ -609,7 +609,8 @@ impl PositionExplorer {
                     Ok(pgn) => pgn,
                     Err(cause) => {
                         window.push_notification(
-                            Notification::error(cause.message).title("Could not open the game"),
+                            Notification::error(kchess_app::loading::failure("explorer", &cause))
+                                .title("Could not open the game"),
                             cx,
                         );
                         return;
@@ -657,7 +658,8 @@ impl PositionExplorer {
             let _ = cx.update(|window, cx| match outcome {
                 Ok(pgn) => crate::pages::practice::guess_moves(&pgn, Some(side), window, cx),
                 Err(cause) => window.push_notification(
-                    Notification::error(cause.message).title("Could not open the game"),
+                    Notification::error(kchess_app::loading::failure("explorer", &cause))
+                        .title("Could not open the game"),
                     cx,
                 ),
             });

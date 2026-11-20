@@ -149,7 +149,7 @@ and in the App Store. Its readers play chess; they are not developers.
 ## Writing GPUI views
 
 The app is GPUI (`gpui_kit::*` re-exports it). The mistakes below compile and then fail at run
-time. `cargo xtask lints` finds the first three, from the syntax (`tooling/xtask/src/gpui_lints.rs`;
+time. `cargo xtask lints` finds the first three and a failure shown but not logged, from the syntax (`tooling/xtask/src/gpui_lints.rs`;
 `check-fast` runs it when an app source changed): a line that must stay says why on the line
 before, `// gpui-lints: allow(<lint>) <reason>`.
 
@@ -167,7 +167,10 @@ before, `// gpui-lints: allow(<lint>) <reason>`.
 - A spawned closure holds `WeakEntity` (`cx.spawn(async move |this, cx| …)`): the view may close
   before it resumes, so its `update` returns `Err`, which is expected and is the one result that may
   go unread (`.ok()`). Every other failure is returned or logged: `kchess_app::log::ResultExt`
-  (`.log_err()`, `.warn_on_err()`) logs it with its file and line, never `let _ =`.
+  (`.log_err()`, `.warn_on_err()`) logs it with its file and line, never `let _ =`. A page loads
+  from the core through `kchess_app::loading::Loading` (`load`, or `start` and `settle`): the
+  latest request's answer alone counts, and a failure it shows is logged too; a failure shown
+  outside one goes through `loading::failure`.
 - Strings that never change are `SharedString::new_static("…")` or `&'static str`, not
   `"…".into()` or `format!` in `render`.
 - Tests drive time with GPUI's executor (`cx.background_executor().timer(…)`, `run_until_parked`),

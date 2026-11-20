@@ -220,7 +220,7 @@ impl PuzzleRush {
                         return;
                     }
                     Err(cause) => {
-                        this.error = Some(cause.message);
+                        this.error = Some(kchess_app::loading::failure("puzzle-rush", &cause));
                         this.stage = Stage::Menu;
                         cx.notify();
                         return;
@@ -977,6 +977,26 @@ mod tests {
         });
         assert_eq!(late, None);
         assert_eq!(current.as_deref(), Some("The disk is full"));
+    }
+
+    /// Starting a run asks the core for a ladder; when the database cannot give one the menu
+    /// stays and shows why, instead of the start doing nothing.
+    #[gpui_kit::test]
+    fn a_start_without_a_ladder_shows_why(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = kchess_board::testing::Started::new(cx);
+        let rush = app.with_window(|window, cx| {
+            let stats = cx.new(|cx| super::super::stats::PuzzleStats::new(Vec::new(), window, cx));
+            let rush = cx.new(|cx| super::PuzzleRush::new(stats, window, cx));
+            rush.update(cx, |rush, cx| rush.start(cx));
+            rush
+        });
+        app.wait_for("the failure shown", |_, cx| rush.read(cx).error.is_some());
+        let (stage, running) = app.with_window(|_, cx| {
+            let rush = rush.read(cx);
+            (rush.stage == super::Stage::Menu, rush.running())
+        });
+        assert!(stage && !running);
     }
 
     /// A run's best score is its mode's, for its variant; a run ended early is over and saved.

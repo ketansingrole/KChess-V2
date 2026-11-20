@@ -174,7 +174,10 @@ impl AnalysisPage {
         let pgn = async move {
             match export.await {
                 Ok(pgn) => Ok(Some(pgn)),
-                Err(cause) => Err(format!("Could not fetch that game: {}", cause.message)),
+                Err(cause) => Err(format!(
+                    "Could not fetch that game: {}",
+                    kchess_app::loading::failure("analysis", &cause)
+                )),
             }
         };
         let opening = Opening {
@@ -202,7 +205,10 @@ impl AnalysisPage {
         let pgn = async move {
             match fetch.await {
                 Ok(found) => Ok(Some(found.pgn)),
-                Err(cause) => Err(format!("Could not fetch that study: {}", cause.message)),
+                Err(cause) => Err(format!(
+                    "Could not fetch that study: {}",
+                    kchess_app::loading::failure("analysis", &cause)
+                )),
             }
         };
         self.import_fetched(pgn, Opening::default(), window, cx);

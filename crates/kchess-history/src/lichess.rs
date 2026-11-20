@@ -2,7 +2,7 @@
 //! filtered by account, result and rating and searched by opponent or opening; each with its review's accuracy; opened to go through
 //! move by move or to review on the analysis board.
 
-use crate::loading::Epoch;
+use crate::loading::{Epoch, Loading};
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -55,10 +55,9 @@ pub struct LichessTab {
     pub page_size: usize,
     pub games: Vec<LichessGame>,
     pub total: usize,
-    pub loading: bool,
-    pub error: Option<String>,
+    /// `gamePage`'s load: answers to an earlier page or filter are dropped.
+    pub loading: Loading,
     pub summaries: Keyed<ReviewSummary>,
-    epoch: Epoch,
     pub account_select: Entity<SelectState<Vec<Choice>>>,
     pub rated_select: Entity<SelectState<Vec<Choice>>>,
     pub size_select: Entity<SelectState<Vec<Choice>>>,
@@ -198,10 +197,8 @@ pub fn new_tab(
             page_size: 20,
             games: Vec::new(),
             total: 0,
-            loading: false,
-            error: None,
+            loading: Loading::default(),
             summaries: Keyed::default(),
-            epoch: Epoch::default(),
             account_select,
             rated_select,
             size_select,
@@ -213,13 +210,18 @@ pub fn new_tab(
     )
 }
 
+impl LichessTab {
+    /// The first games are still on their way: the tab shows Loading, not an empty list.
+    fn loading_first_page(&self) -> bool {
+        self.loading.busy() && self.games.is_empty()
+    }
+}
+
 impl HistoryPage {
     /// `gamePage`: the page of games the filters ask for, and their reviews.
     pub(super) fn load_lichess(&mut self, cx: &mut Context<Self>) {
         let tab = &mut self.lichess;
-        let epoch = tab.epoch.start();
-        tab.loading = true;
-        tab.error = None;
+        let turn = tab.loading.start();
         // Filters left at "all" are left out.
         let query = GamePageQuery {
             account: (tab.account != "all").then(|| tab.account.clone()),
@@ -247,30 +249,27 @@ impl HistoryPage {
                     .await
                     .ok()
             };
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let tab = &mut this.lichess;
-                if !tab.epoch.is_current(epoch) {
+                if !tab.loading.settle(turn, "history", &page) {
                     return;
                 }
-                tab.loading = false;
-                match page {
-                    Ok(page) => {
-                        tab.total = usize::try_from(page.total).unwrap_or_default();
-                        tab.games = page.games;
-                        let pages = tab.total.div_ceil(tab.page_size).max(1);
-                        if tab.page >= pages {
-                            tab.page = pages - 1;
-                            this.load_lichess(cx);
-                            return;
-                        }
+                if let Ok(page) = page {
+                    tab.total = usize::try_from(page.total).unwrap_or_default();
+                    tab.games = page.games;
+                    let pages = tab.total.div_ceil(tab.page_size).max(1);
+                    if tab.page >= pages {
+                        tab.page = pages - 1;
+                        this.load_lichess(cx);
+                        return;
                     }
-                    Err(cause) => tab.error = Some(cause.message),
                 }
                 if let Some(summaries) = summaries {
                     tab.summaries = summaries;
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -693,12 +692,12 @@ impl HistoryPage {
             })
             .child(div().flex_1())
             .child(sync);
-        let body = if tab.loading && tab.games.is_empty() {
+        let body = if tab.loading_first_page() {
             div()
                 .p(px(24.))
                 .child(widgets::loading("Loading games…", palette))
                 .into_any_element()
-        } else if let Some(error) = &tab.error {
+        } else if let Some(error) = tab.loading.error() {
             div()
                 .p(px(24.))
                 .text_color(palette.error)
@@ -1060,6 +1059,8 @@ pub(super) fn open_review(game: LichessGame, ply: usize, window: &mut Window, cx
 #[cfg(test)]
 mod tests {
     use super::{line_of, result_of};
+    use crate::HistoryPage;
+    use gpui_kit::AppContext as _;
     use kchess_contracts::types::LichessGame;
     use kchess_domain::variant::Variant;
     use serde_json::json;
@@ -1096,5 +1097,136 @@ mod tests {
             line_of("[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 3. P@e3 *").unwrap();
         assert_eq!(setup.variant, Variant::Crazyhouse);
         assert_eq!(moves.last().map(String::as_str), Some("P@e3"));
+    }
+    fn lichess_game(opening: &str) -> LichessGame {
+        serde_json::from_value(json!({
+            "id": "g", "account": "a", "createdAt": 0, "lastMoveAt": 0, "rated": true,
+            "speed": "blitz", "perf": "blitz", "status": "mate", "color": "white",
+            "opponent": "b", "moves": "", "opening": opening,
+        }))
+        .expect("a Lichess game")
+    }
+
+    fn history_page(app: &mut kchess_board::testing::Started) -> gpui_kit::Entity<HistoryPage> {
+        app.with_window(|window, cx| {
+            crate::played::init(&kchess_contracts::types::Library::default(), cx);
+            cx.new(|cx| HistoryPage::new(window, cx))
+        })
+    }
+
+    /// The tab shows Loading only while the first games are on their way: not once any are
+    /// listed, and not when nothing is asked.
+    #[gpui_kit::test]
+    fn the_tab_loads_only_until_its_first_games(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = kchess_board::testing::Started::new(cx);
+        let page = history_page(&mut app);
+        app.with_window(|_, cx| {
+            page.update(cx, |page, _| {
+                let tab = &mut page.lichess;
+                tab.loading.stop();
+                assert!(!tab.loading_first_page(), "idle and empty");
+                tab.games.push(lichess_game("Najdorf"));
+                assert!(!tab.loading_first_page(), "idle with games");
+                tab.loading.start();
+                assert!(!tab.loading_first_page(), "busy with games");
+                tab.games.clear();
+                assert!(tab.loading_first_page(), "busy and empty");
+            })
+        });
+    }
+
+    /// Once loaded, the tab lists its total and each game's opening; while loading it lists
+    /// nothing.
+    #[gpui_kit::test]
+    fn a_loaded_tab_lists_its_total_and_openings(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = kchess_board::testing::Started::new(cx);
+        let page = history_page(&mut app);
+        app.with_window(|_, cx| {
+            page.update(cx, |page, _| {
+                page.lichess.loading.stop();
+                page.lichess.total = 7;
+                page.lichess.games = vec![lichess_game("Najdorf"), lichess_game("Caro-Kann")];
+                assert_eq!(
+                    page.lichess_listed(),
+                    Some((7, vec!["Najdorf".to_string(), "Caro-Kann".to_string()]))
+                );
+                page.lichess.loading.start();
+                assert_eq!(page.lichess_listed(), None);
+            })
+        });
+    }
+
+    /// Asking for the Lichess tab's games sets it loading, and the answer ends the loading and
+    /// redraws the page.
+    #[gpui_kit::test]
+    fn the_lichess_tab_loads_its_games_and_redraws(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = kchess_board::testing::Started::new(cx);
+        let page = history_page(&mut app);
+        app.wait_for("the first load", |_, cx| {
+            !page.read(cx).lichess.loading.busy()
+        });
+        let redraws = std::rc::Rc::new(std::cell::Cell::new(0));
+        let _watch = app.with_window(|_, cx| {
+            let redraws = redraws.clone();
+            cx.observe(&page, move |page, cx| {
+                // Asking redraws too: only an answer, which ends the loading, counts.
+                if !page.read(cx).lichess.loading.busy() {
+                    redraws.set(redraws.get() + 1);
+                }
+            })
+        });
+        app.with_window(|_, cx| {
+            page.update(cx, |page, cx| {
+                page.load_lichess(cx);
+                assert!(page.lichess.loading.busy(), "asked, not yet answered");
+            })
+        });
+        app.wait_for("the games", |_, cx| !page.read(cx).lichess.loading.busy());
+        assert!(redraws.get() > 0, "the answer redraws the page");
+    }
+
+    /// Bookmarks of an account the core holds no sign-in for ask to connect it again, once the
+    /// tab, loading until then, has the answer.
+    #[gpui_kit::test]
+    fn bookmarks_without_a_sign_in_ask_to_reconnect(cx: &mut gpui_kit::TestAppContext) {
+        let server = kchess_testkit::Server::start(|_, out| {
+            kchess_testkit::respond(out, 500, "text/plain", b"")
+        })
+        .expect("a stand-in Lichess");
+        let mut app =
+            kchess_board::testing::Started::with_lichess(cx, Some(server.base().to_string()));
+        app.wait_for("the accounts read", |_, cx| {
+            crate::accounts::handle(cx).read(cx).data.is_some()
+        });
+        app.with_window(|_, cx| {
+            let settings = kchess_contracts::defaults::default_settings()
+                .expect("the default settings")
+                .core;
+            crate::accounts::handle(cx).update(cx, |accounts, cx| {
+                accounts.data = Some(kchess_contracts::types::AppData {
+                    settings,
+                    accounts: vec![kchess_contracts::types::Account {
+                        username: "alice".into(),
+                        connected: true,
+                        last_synced_at: None,
+                        synced_play_time: None,
+                    }],
+                    game_count: 0,
+                });
+                cx.notify();
+            });
+        });
+        let page = history_page(&mut app);
+        app.with_window(|_, cx| {
+            page.update(cx, |page, cx| {
+                page.choose_source(crate::Source::Bookmarks, cx);
+                assert!(page.bookmarks_loading.busy(), "asked, not yet answered");
+            })
+        });
+        app.wait_for("the reconnect asked", |_, cx| {
+            page.read(cx).bookmarks_reconnect
+        });
+        let idle = app.with_window(|_, cx| !page.read(cx).bookmarks_loading.busy());
+        assert!(idle);
     }
 }

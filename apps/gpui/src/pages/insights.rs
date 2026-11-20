@@ -2,7 +2,7 @@
 //! speed, opponent, length, clock, day, time of day, ending and opening, with time use from the
 //! games' clocks, filtered by speed, period and rated or casual.
 
-use crate::loading::Epoch;
+use crate::loading::Loading;
 use crate::pages::PageView;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -218,9 +218,7 @@ pub struct InsightsPage {
     /// frame, where there is a window.
     variant_keys: Vec<String>,
     report: Option<InsightsReport>,
-    error: Option<SharedString>,
-    loading: bool,
-    epoch: Epoch,
+    loading: Loading,
     /// A game sync ran when the accounts last changed: its end brings new games.
     syncing: bool,
     focus: FocusHandle,
@@ -292,9 +290,7 @@ impl InsightsPage {
             variant,
             variant_keys: vec!["standard".into()],
             report: None,
-            error: None,
-            loading: false,
-            epoch: Epoch::default(),
+            loading: Loading::default(),
             syncing: accounts.read(cx).syncing(),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -374,38 +370,28 @@ impl InsightsPage {
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
-        // A new epoch either way: a report still on its way for the previous account must not
-        // land once there is none.
-        self.epoch.invalidate();
         if self.account.is_empty() {
+            // A report still on its way for the previous account must not land once there is none.
+            self.loading.stop();
             self.report = None;
-            self.loading = false;
-            self.error = None;
             cx.notify();
             return;
         }
-        let epoch = self.epoch.current();
-        self.loading = true;
-        self.error = None;
-        cx.notify();
         let call = cx.global::<AppCore>().request(calls::Insights {
             query: self.query(cx),
         });
-        cx.spawn(async move |this, cx| {
-            let answer = call.await;
-            let _ = this.update(cx, |this, cx| {
-                if !this.epoch.is_current(epoch) {
-                    return;
+        self.loading.load(
+            cx,
+            "insights",
+            |this: &mut Self| &mut this.loading,
+            call,
+            |this, answer, _| {
+                if let Ok(report) = answer {
+                    this.report = Some(report);
                 }
-                this.loading = false;
-                match answer {
-                    Ok(report) => this.report = Some(report),
-                    Err(cause) => this.error = Some(cause.message.into()),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+            },
+        );
+        cx.notify();
     }
 
     /// Standard, the variants the report names and the one chosen, refilled into the select when
@@ -441,7 +427,7 @@ impl InsightsPage {
     /// A report has come in and none is loading.
     #[cfg(test)]
     pub(crate) fn loaded(&self) -> bool {
-        self.report.is_some() && !self.loading
+        self.report.is_some() && !self.loading.busy()
     }
 
     /// A report is in and nothing will replace it on its own: none is loading, and no sync is
@@ -454,13 +440,13 @@ impl InsightsPage {
     /// How many reports the page has asked for.
     #[cfg(test)]
     pub(crate) fn requests(&self) -> crate::loading::Turn {
-        self.epoch.current()
+        self.loading.current()
     }
 
     /// Why the last report failed, if it did.
     #[cfg(test)]
     pub(crate) fn error(&self) -> Option<&str> {
-        self.error.as_deref()
+        self.loading.error().map(|error| error.as_ref())
     }
 
     /// How many games the last report counted.
@@ -723,7 +709,7 @@ impl Render for InsightsPage {
                 div().children(
                     report
                         .as_ref()
-                        .filter(|_| total > 0. && self.error.is_none())
+                        .filter(|_| total > 0. && self.loading.error().is_none())
                         .map(|report| headline(report, &palette)),
                 ),
             )
@@ -763,7 +749,7 @@ impl Render for InsightsPage {
                     ),
                 )
                 .into_any_element()
-        } else if let Some(error) = self.error.clone() {
+        } else if let Some(error) = self.loading.error().cloned() {
             widgets::card(&palette)
                 .gap(px(12.))
                 .child(
@@ -779,7 +765,7 @@ impl Render for InsightsPage {
                     ),
                 )
                 .into_any_element()
-        } else if self.loading && report.is_none() {
+        } else if self.loading.busy() && report.is_none() {
             widgets::loading("Loading insights…", &palette).into_any_element()
         } else if report.is_some() && total <= 0. {
             widgets::card(&palette)
@@ -985,10 +971,10 @@ mod tests {
             page.update(cx, |page, cx| {
                 page.account = "Alice".into();
                 page.load(cx);
-                let asked = page.epoch.current();
+                let asked = page.loading.current();
                 page.account.clear();
                 page.load(cx);
-                (page.loading, page.epoch.is_current(asked))
+                (page.loading.busy(), page.loading.is_current(asked))
             })
         });
         assert!(!loading && !stale);
