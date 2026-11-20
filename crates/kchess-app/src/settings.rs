@@ -58,7 +58,6 @@ pub struct SettingsHandle(pub Entity<AppSettings>);
 
 impl Global for SettingsHandle {}
 
-/// What a fresh profile stores (the contract defaults).
 /// Settings at their defaults with no core behind them, for the tests of the crates the app is
 /// built from (`test-support`): their saves go nowhere.
 #[cfg(any(test, feature = "test-support"))]
@@ -83,6 +82,9 @@ pub fn init_for_tests(cx: &mut App) -> Entity<AppSettings> {
     entity
 }
 
+/// What a fresh profile stores (the contract defaults): only tests start from them, since the
+/// app starts from what its startup read (`init`).
+#[cfg(any(test, feature = "test-support"))]
 fn defaults() -> Settings {
     match kchess_contracts::defaults::default_settings() {
         Ok(settings) => settings,
