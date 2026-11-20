@@ -318,13 +318,6 @@ impl AnalysisEngine {
         }
     }
 
-    /// Validates the request, supersedes the analysis
-    /// running, and starts this one on its own task. Returns the request's id.
-    pub fn start_analysis(&self, raw: Value, configured: &str, send: AnalysisSink) -> Result<u64> {
-        let request = check::<AnalysisRequest>(J::from(&raw)).map_err(CoreError::new)?;
-        Ok(self.start_pending(self.reserve(request)?, configured.to_string(), send))
-    }
-
     /// Admitted before the first await; stopping the service cancels pending settings reads
     /// too.
     async fn start_reserved(
