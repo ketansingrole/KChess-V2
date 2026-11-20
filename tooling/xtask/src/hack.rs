@@ -8,7 +8,7 @@
 //! every copy (2026-11-10, one check-fast then `cargo test -p kchess-core`: 19 more units and
 //! incremental caches, 2.0 GB, 65 s).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::util::{Result, available, output, root, run, say};
 
@@ -97,6 +97,34 @@ pub fn check() -> Result {
             extra.join(", "),
             if extra.len() == 1 { "it" } else { "them" }
         ));
+    }
+    for platform in &platforms {
+        let features = |selection: &[&str]| -> Result<BTreeMap<String, BTreeSet<String>>> {
+            let mut args = vec!["tree", "--locked"];
+            args.extend(selection);
+            args.extend([
+                "-e",
+                "normal,build,dev,no-proc-macro",
+                "--target",
+                platform,
+                "--prefix",
+                "none",
+                "-f",
+                "{p} [{f}]",
+            ]);
+            Ok(feature_sets(&output("cargo", &args)?))
+        };
+        let app = features(&["-p", crate::members::APP])?;
+        let rest = features(&["--workspace", "--exclude", crate::members::APP])?;
+        if let differing @ [_, ..] = differing(&app, &rest).as_slice() {
+            return Err(format!(
+                "On {platform} the app builds {} with other features than the rest of the \
+                 workspace, so each build rebuilds it and every crate above it, GPUI's too: \
+                 enable only what the workspace's other packages do (see \
+                 `hack::one_feature_set_for_the_app_and_the_rest`).",
+                differing.join("; ")
+            ));
+        }
     }
     let metadata = metadata()?;
     let source = |path: &str| std::fs::read_to_string(path).unwrap_or_default();
@@ -288,12 +316,85 @@ fn outside(hack: &BTreeSet<String>, headless: &BTreeSet<String>) -> Vec<String> 
     hack.difference(headless).cloned().collect()
 }
 
+/// Each package of a `cargo tree -f '{p} [{f}]'` with the features it is built with.
+fn feature_sets(tree: &str) -> BTreeMap<String, BTreeSet<String>> {
+    let mut sets = BTreeMap::<String, BTreeSet<String>>::new();
+    for line in tree.lines() {
+        let Some((package, rest)) = line.split_once(" [") else {
+            continue;
+        };
+        let Some((features, _)) = rest.split_once(']') else {
+            continue;
+        };
+        // `name vX.Y.Z (path)`: the name and version are the package.
+        let package = package.split(" (").next().unwrap_or(package).trim();
+        sets.entry(package.to_string()).or_default().extend(
+            features
+                .split(',')
+                .filter(|feature| !feature.is_empty())
+                .map(str::to_string),
+        );
+    }
+    sets
+}
+
+/// The packages from outside the workspace that both builds compile, each with the features only
+/// one of them gives it. The hack leaves the app's dependencies out, so nothing else holds their
+/// features alike.
+fn differing(
+    app: &BTreeMap<String, BTreeSet<String>>,
+    rest: &BTreeMap<String, BTreeSet<String>>,
+) -> Vec<String> {
+    let workspace = |package: &str| package.starts_with("kchess-") || package.starts_with("xtask ");
+    app.iter()
+        .filter(|(package, _)| !workspace(package))
+        .filter_map(|(package, features)| {
+            let other = rest.get(package)?;
+            (features != other).then(|| {
+                let only = |a: &BTreeSet<String>, b: &BTreeSet<String>| {
+                    a.difference(b).cloned().collect::<Vec<_>>().join(", ")
+                };
+                format!(
+                    "{package} (the app only: [{}]; the rest only: [{}])",
+                    only(features, other),
+                    only(other, features)
+                )
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn set(names: &[&str]) -> BTreeSet<String> {
         names.iter().map(|name| name.to_string()).collect()
+    }
+
+    /// 2026-11-21: the app enabled `Win32_Storage_EnhancedStorage` of the `windows` crate for one
+    /// constant, which GPUI's Windows crate did not. So the rest of the workspace built `windows`
+    /// without it, and with it every GPUI crate above `windows` again: CI's Windows headless job,
+    /// restoring the app job's build, recompiled GPUI's chain in most of the 8 minutes its test
+    /// build took. `check` compares the two builds' features on every platform.
+    #[test]
+    fn one_feature_set_for_the_app_and_the_rest() {
+        let app = feature_sets(
+            "windows v0.62.2 [Win32_Foundation,Win32_Storage_EnhancedStorage]\n\
+             kchess-ui v2026.11.7 (/repo/crates/kchess-ui) [test-support]\n\
+             tokio v1.54.1 [rt]\n",
+        );
+        let rest = feature_sets(
+            "windows v0.62.2 [Win32_Foundation]\n\
+             kchess-ui v2026.11.7 (/repo/crates/kchess-ui) []\n\
+             tokio v1.54.1 [rt]\n\
+             yaml-rust2 v0.13.0 [default]\n",
+        );
+        assert_eq!(
+            differing(&app, &rest),
+            ["windows v0.62.2 (the app only: [Win32_Storage_EnhancedStorage]; the rest only: [])"]
+        );
+        assert!(differing(&rest, &rest).is_empty());
     }
 
     #[test]

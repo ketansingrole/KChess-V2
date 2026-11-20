@@ -97,8 +97,10 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 
 [target.'cfg(windows)'.dependencies]
 # KChess's AppUserModelID on its shortcuts (`windows_shortcuts.rs`); already in Cargo.lock.
+# Only features GPUI's own Windows crate enables: one more gives the app's build a `windows` crate
+# of its own, and GPUI above it (`hack::one_feature_set_for_the_app_and_the_rest`).
 windows = { version = "0.62", features = [
-    "Win32_Storage_EnhancedStorage",
+    "Win32_Foundation",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Variant",

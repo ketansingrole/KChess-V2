@@ -12,13 +12,23 @@
 
 use std::path::PathBuf;
 
-use windows::Win32::Storage::EnhancedStorage::PKEY_AppUserModel_ID;
+use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::UI::Shell::PropertiesSystem::{
     GPS_READWRITE, IPropertyStore, SHGetPropertyStoreFromParsingName,
 };
-use windows::core::{BSTR, HSTRING};
+use windows::core::{BSTR, GUID, HSTRING};
+
+/// The shell's AppUserModelID property, as windows-rs's `Win32_Storage_EnhancedStorage` feature
+/// declares it. Declared here, as GPUI's jump list declares its `PKEY_TITLE`: that feature is the
+/// one the app enabled beyond GPUI's, so the workspace's other packages built the `windows` crate
+/// without it and rebuilt GPUI over it, and CI's Windows headless job rebuilt GPUI after
+/// restoring the app job's build (`hack::one_feature_set_for_the_app_and_the_rest`).
+const PKEY_APP_USER_MODEL_ID: PROPERTYKEY = PROPERTYKEY {
+    fmtid: GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3),
+    pid: 5,
+};
 
 /// The shortcuts the installer makes, and the taskbar's copy of one pinned from them.
 fn shortcuts() -> Vec<PathBuf> {
@@ -62,15 +72,15 @@ fn stamp_one(path: &std::path::Path, id: &str) -> windows::core::Result<()> {
     let store: IPropertyStore = unsafe {
         SHGetPropertyStoreFromParsingName(&HSTRING::from(path.as_os_str()), None, GPS_READWRITE)
     }?;
-    // SAFETY: `PKEY_AppUserModel_ID` is a static key.
-    let current = unsafe { store.GetValue(&PKEY_AppUserModel_ID) }?;
+    // SAFETY: `PKEY_APP_USER_MODEL_ID` is a static key.
+    let current = unsafe { store.GetValue(&PKEY_APP_USER_MODEL_ID) }?;
     if BSTR::try_from(&current).is_ok_and(|value| value == id) {
         return Ok(());
     }
     let value = PROPVARIANT::from(id);
     // SAFETY: the key and value outlive the calls.
     unsafe {
-        store.SetValue(&PKEY_AppUserModel_ID, &value)?;
+        store.SetValue(&PKEY_APP_USER_MODEL_ID, &value)?;
         store.Commit()
     }
 }
