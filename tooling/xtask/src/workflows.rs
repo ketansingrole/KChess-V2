@@ -214,29 +214,20 @@ jobs:
     }
 }
 
-/// The `rust-cache` steps of `yaml` that may save a cache from a pull request: those with no
-/// `save-if`, or one that does not name main (`false` saves nothing). By their path from the root.
-fn caches_saved_from_any_branch(yaml: &yaml_rust2::Yaml, path: &str) -> Vec<String> {
+/// The `rust-cache` steps of `yaml`, by their path from the root.
+fn rust_caches<'a>(yaml: &'a yaml_rust2::Yaml, path: &str) -> Vec<(String, &'a yaml_rust2::Yaml)> {
     use yaml_rust2::Yaml;
     match yaml {
         Yaml::Hash(map) => {
-            let uses = yaml["uses"].as_str().unwrap_or_default();
             let mut found = Vec::new();
-            if uses.starts_with("Swatinem/rust-cache@") {
-                let save_if = &yaml["with"]["save-if"];
-                let only_main = match save_if {
-                    Yaml::Boolean(save) => !save,
-                    Yaml::String(condition) => {
-                        condition == "false" || condition.contains("refs/heads/main")
-                    }
-                    _ => false,
-                };
-                if !only_main {
-                    found.push(path.to_string());
-                }
+            if yaml["uses"]
+                .as_str()
+                .is_some_and(|uses| uses.starts_with("Swatinem/rust-cache@"))
+            {
+                found.push((path.to_string(), yaml));
             }
             found.extend(map.iter().flat_map(|(key, value)| {
-                caches_saved_from_any_branch(
+                rust_caches(
                     value,
                     &format!("{path}.{}", key.as_str().unwrap_or_default()),
                 )
@@ -246,12 +237,46 @@ fn caches_saved_from_any_branch(yaml: &yaml_rust2::Yaml, path: &str) -> Vec<Stri
         Yaml::Array(items) => items
             .iter()
             .enumerate()
-            .flat_map(|(index, item)| {
-                caches_saved_from_any_branch(item, &format!("{path}[{index}]"))
-            })
+            .flat_map(|(index, item)| rust_caches(item, &format!("{path}[{index}]")))
             .collect(),
         _ => Vec::new(),
     }
+}
+
+/// The `rust-cache` steps of `yaml` that may save a cache from a pull request: those with no
+/// `save-if`, or one that does not name main (`false` saves nothing). By their path from the root.
+fn caches_saved_from_any_branch(yaml: &yaml_rust2::Yaml, path: &str) -> Vec<String> {
+    use yaml_rust2::Yaml;
+    rust_caches(yaml, path)
+        .into_iter()
+        .filter(|(_, step)| !match &step["with"]["save-if"] {
+            Yaml::Boolean(save) => !save,
+            Yaml::String(condition) => {
+                condition == "false" || condition.contains("refs/heads/main")
+            }
+            _ => false,
+        })
+        .map(|(path, _)| path)
+        .collect()
+}
+
+/// The `rust-cache` steps of `yaml` whose key depends on the runner rather than on the build:
+/// those that keep rust-cache's environment hash, which takes every toolchain the runner image
+/// installed besides the pinned one, and those whose `key` a `shared-key` makes rust-cache ignore.
+fn caches_keyed_by_the_runner(yaml: &yaml_rust2::Yaml, path: &str) -> Vec<String> {
+    use yaml_rust2::Yaml;
+    rust_caches(yaml, path)
+        .into_iter()
+        .filter(|(_, step)| {
+            let with = &step["with"];
+            let hashes_the_runner =
+                !matches!(&with["add-rust-environment-hash-key"], Yaml::Boolean(false))
+                    && with["add-rust-environment-hash-key"].as_str() != Some("false");
+            let ignored_key = !with["shared-key"].is_badvalue() && !with["key"].is_badvalue();
+            hashes_the_runner || ignored_key
+        })
+        .map(|(path, _)| path)
+        .collect()
 }
 
 /// The repository's caches share 10 GB, and main's alone take about 9 (2026-11-20). The Fuzz
@@ -292,6 +317,55 @@ fn only_main_saves_a_rust_cache() {
         assert!(
             any.is_empty(),
             "{} saves a Rust cache from any branch at {any:?}",
+            path.display()
+        );
+    }
+}
+
+/// 2026-11-20: rust-cache's environment hash takes every toolchain `rustup toolchain list` shows,
+/// and GitHub's runner images came with and without a Rust 1.99.1 of their own beside the pinned
+/// 1.100.0. Each gave its own key, so a run on the other image restored nothing and compiled every
+/// crate: 11 of 15 jobs in five pull requests. The pinned toolchain is in the manifests' hash.
+#[test]
+fn rust_caches_are_keyed_by_the_build_alone() {
+    let parse = |text: &str| {
+        yaml_rust2::YamlLoader::load_from_str(text)
+            .unwrap()
+            .remove(0)
+    };
+    let steps = parse(
+        "jobs:
+  a:
+    steps:
+      - uses: Swatinem/rust-cache@abc
+        with:
+          shared-key: check
+      - uses: Swatinem/rust-cache@abc
+        with:
+          shared-key: check
+          add-rust-environment-hash-key: false
+      - uses: Swatinem/rust-cache@abc
+        with:
+          shared-key: check
+          key: linux
+          add-rust-environment-hash-key: false
+      - uses: Swatinem/rust-cache@abc
+        with:
+          key: linux
+          add-rust-environment-hash-key: 'false'
+",
+    );
+    assert_eq!(
+        caches_keyed_by_the_runner(&steps, ""),
+        [".jobs.a.steps[0]", ".jobs.a.steps[2]"]
+    );
+    for path in workflow_files() {
+        let workflow = parse(&std::fs::read_to_string(&path).unwrap());
+        let keyed = caches_keyed_by_the_runner(&workflow, "");
+        assert!(
+            keyed.is_empty(),
+            "{} keys a Rust cache by its runner at {keyed:?}: set \
+             `add-rust-environment-hash-key: false`, and drop `key` beside `shared-key`",
             path.display()
         );
     }

@@ -48,6 +48,7 @@ jobs:
         with:
           workspaces: fuzz
           shared-key: fuzz
+          add-rust-environment-hash-key: false
           save-if: ${{ github.ref == 'refs/heads/main' && matrix.target == 'pgn' }}
       # cargo-fuzz builds for the target it was itself built for unless told: install-action's
       # cargo-fuzz is a static musl binary, so every target was built for musl, which the address

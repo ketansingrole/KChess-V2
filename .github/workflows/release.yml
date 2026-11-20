@@ -67,7 +67,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: package
-          key: ${{ runner.os }}-${{ runner.arch }}
+          add-rust-environment-hash-key: false
           save-if: false
       # The packager signs with codesign directly, so the certificate goes into a keychain of this
       # job's own, and the identity is named by its hash.
