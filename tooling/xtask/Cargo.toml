@@ -18,7 +18,7 @@ kchess-voice.workspace = true
 serde_json = { workspace = true }
 # The app's sources as syntax, for the GPUI lints (`gpui_lints.rs`), with each span's line; the
 # versions and features the workspace already builds.
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 sha2 = { version = "0.11", default-features = false }
