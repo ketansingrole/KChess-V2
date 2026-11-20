@@ -2,6 +2,9 @@
 //! board, any variant, with or without a clock; or a chess clock for a real board. Both keep their
 //! place in Game history, and the board game resumes in either app.
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 // The app's services, the design system and the board, under the names this page's modules use.
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;

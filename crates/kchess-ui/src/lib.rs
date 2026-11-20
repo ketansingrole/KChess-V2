@@ -5,6 +5,9 @@
 //! Quick Pick's search (`quick_pick`) and the dialog that asks for a name (`name_dialog`). It never depends on the app: what it needs from it (where log
 //! lines go, which theme Settings chose) the app passes in.
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
 

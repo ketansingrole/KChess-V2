@@ -2,6 +2,9 @@
 //! the randomness and the clock the rules leave to the host, the Game history writes, a puzzle on
 //! the board and broadcast rounds. The GPUI app and the CLI share them.
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
 

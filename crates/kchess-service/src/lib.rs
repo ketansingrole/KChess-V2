@@ -10,6 +10,9 @@
 //! - `layout`: the profile and the programs a frontend configures the core with;
 //! - `runtime`: the per-release copy the service runs from.
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
 

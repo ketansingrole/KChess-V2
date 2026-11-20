@@ -45,48 +45,41 @@ fn clippy_workspace() -> Result {
     )
 }
 
+/// The format and one clippy run. `unwrap` and `expect` outside tests are denied by each library's
+/// and shipped program's own root (`every_crate_root_denies_unwrap_outside_tests`), not by clippy
+/// runs of their own: from 2026-11-13 to 11-20 two such runs here (`--lib`, then the shipped
+/// programs' `--bins`) found what `check-fast` never ran, and two pull requests went red in CI on
+/// an `expect()`; with their own flags they also made each run re-check every member.
 fn lints() -> Result {
     format()?;
-    clippy_workspace()?;
-    run(
-        "cargo",
-        &[
-            "clippy",
-            "--workspace",
-            "--lib",
-            "--locked",
-            "--",
-            "-D",
-            "clippy::unwrap_used",
-            "-D",
-            "clippy::expect_used",
-        ],
-    )?;
-    run("cargo", &shipped_bins_args())
+    clippy_workspace()
 }
 
-/// The shipped binaries whose code must not unwrap or expect outside tests: every shipped
-/// program's crate but the app's.
-fn shipped_bins() -> impl Iterator<Item = &'static str> {
-    members::shipped().filter(|package| *package != APP)
-}
+/// The attribute every library's root and every shipped program's but the app's holds. What
+/// other crates' tests build (`test-support`) allows `unwrap` item by item: a crate-wide exception
+/// would be off in every workspace run, which builds the tests' features too.
+#[cfg(test)]
+const DENY_UNWRAP: &str = "#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]";
 
-/// One clippy run over every shipped binary, its `unwrap`/`expect` denied as the libraries' are.
-fn shipped_bins_args() -> Vec<&'static str> {
-    let mut args = vec!["clippy"];
-    for bin in shipped_bins() {
-        args.extend(["-p", bin]);
+/// The crate roots that must deny `unwrap` and `expect` outside tests, from `cargo metadata`:
+/// every member's library, and the programs of every shipped crate but the app (`shipped`). From
+/// the repository root.
+#[cfg(test)]
+fn unwrap_free_roots(metadata: &serde_json::Value, repo: &Path) -> Vec<String> {
+    let shipped: Vec<&str> = members::shipped().filter(|name| *name != APP).collect();
+    let mut roots = Vec::new();
+    for package in metadata["packages"].as_array().into_iter().flatten() {
+        let name = package["name"].as_str().unwrap_or_default();
+        for target in package["targets"].as_array().into_iter().flatten() {
+            let kind = target["kind"][0].as_str().unwrap_or_default();
+            if kind == "lib" || (kind == "bin" && shipped.contains(&name)) {
+                let path = Path::new(target["src_path"].as_str().unwrap_or_default());
+                let relative = path.strip_prefix(repo).unwrap_or(path);
+                roots.push(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
     }
-    args.extend([
-        "--bins",
-        "--locked",
-        "--",
-        "-D",
-        "clippy::unwrap_used",
-        "-D",
-        "clippy::expect_used",
-    ]);
-    args
+    roots
 }
 
 /// Whether cargo-nextest is installed (CI installs it). It runs every test in its own process and
@@ -1340,18 +1333,50 @@ mod tests {
         assert!(!with_app_tests(&["--without-app-tests".to_string()]));
     }
 
-    /// One clippy run denies `unwrap` in every shipped program but the app's.
+    /// Every library and shipped program but the app denies `unwrap` and `expect` outside its
+    /// tests in its own root, so the one clippy run `check-fast` and `check` share enforces it.
     #[test]
-    fn the_shipped_programs_but_the_app_are_linted_for_unwrap() {
-        let args = shipped_bins_args();
-        let packages: Vec<&str> = args
-            .windows(2)
-            .filter(|pair| pair[0] == "-p")
-            .map(|pair| pair[1])
+    fn every_crate_root_denies_unwrap_outside_tests() {
+        let text = output(
+            "cargo",
+            &["metadata", "--no-deps", "--format-version", "1", "--locked"],
+        )
+        .unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let roots = unwrap_free_roots(&metadata, &root());
+        for expected in [
+            "crates/kchess-core/src/lib.rs",
+            "crates/kchess-board/src/lib.rs",
+            "crates/kchess-service/src/bin/kchess-service.rs",
+            "apps/cli/src/main.rs",
+            "crates/kchess-voice/src/main.rs",
+        ] {
+            assert!(
+                roots.iter().any(|path| path == expected),
+                "{expected}: {roots:?}"
+            );
+        }
+        // The app's program, xtask's and the core's test helpers may unwrap.
+        for allowed in [
+            "apps/gpui/src/main.rs",
+            "tooling/xtask/src/main.rs",
+            "crates/kchess-core/tests/support/fake_uci.rs",
+        ] {
+            assert!(!roots.iter().any(|path| path == allowed), "{allowed}");
+        }
+        let missing: Vec<&String> = roots
+            .iter()
+            .filter(|path| {
+                !std::fs::read_to_string(root().join(path))
+                    .unwrap()
+                    .lines()
+                    .any(|line| line == DENY_UNWRAP)
+            })
             .collect();
-        assert_eq!(packages, ["kchess-service", "kchess-cli", "kchess-voice"]);
-        assert_eq!(args[0], "clippy");
-        assert!(args.ends_with(&["-D", "clippy::unwrap_used", "-D", "clippy::expect_used"]));
+        assert!(
+            missing.is_empty(),
+            "{missing:?} lack one of {DENY_UNWRAP:?}"
+        );
     }
 
     /// The members outside coverage run their tests on their own, the app's only when asked.

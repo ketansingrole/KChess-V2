@@ -2,6 +2,9 @@
 //! rated puzzles. The session's transitions are Rust (`game/puzzle.rs`); this page fetches what
 //! they ask for, plays the puzzle on the board and keeps the attempt log up to date.
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
 

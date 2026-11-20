@@ -234,6 +234,7 @@ impl Mistakes {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    #[allow(clippy::expect_used)] // Test code, which other crates' tests build too.
     pub fn seed(&mut self, items: Vec<serde_json::Value>, cx: &mut Context<Self>) {
         // A drill as the core lists it, with what a test leaves out filled in.
         self.items = items

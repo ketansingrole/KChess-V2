@@ -5,6 +5,9 @@
 //! (`loading`), timers (`timer`) and the watch on calls that block the UI thread (`slow_calls`).
 //! It never depends on the app, and never names the core's own crate: the app opens the core and
 //! hands it over.
+
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
 
@@ -25,4 +28,6 @@ pub mod timer;
 
 /// A real core for the tests of the crates the app is built from (`test-support`).
 #[cfg(any(test, feature = "test-support"))]
+// Test code, which other crates' tests build too.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 pub mod tests;

@@ -7,6 +7,9 @@
 //! and shares the parsing and the response heads (`Request::from_head`, `sized_head`,
 //! `chunked_head`, `chunk`).
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
 

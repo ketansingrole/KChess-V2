@@ -4,6 +4,9 @@
 //! `kchess_service::connect_or_start`; it stops on its own once no app has used it for the idle
 //! period.
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 use std::path::PathBuf;
 use std::time::Duration;
 

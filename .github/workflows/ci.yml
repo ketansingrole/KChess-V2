@@ -145,8 +145,10 @@ jobs:
           echo "packaging=$packaging" >> "$GITHUB_OUTPUT"
 
   # `cargo xtask check`: format, lints, notices, release metadata and the tests under the coverage
-  # gate, as the pre-push hook runs them, but the app's tests, which `gpui` runs on Linux beside it
-  # (2026-11-09: 6 of check's 12 minutes). This is also the app's lints on Linux.
+  # gate, as the pre-push hook runs them, but the app's and its UI crates' tests, which `gpui` runs
+  # on Linux beside it (2026-11-09: 6 of check's 12 minutes; 2026-11-19, once the UI crates left the
+  # app: building GPUI uninstrumented again for theirs took 2 min 45 s with a warm cache and 7 min
+  # 38 s without). This is also the app's lints on Linux.
   check:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -287,6 +289,14 @@ jobs:
       - run: cargo test -p kchess-gpui --locked
         env:
           RUST_TEST_THREADS: ${{ runner.os == 'Windows' && 4 || 8 }}
+      # The UI crates' tests on Linux, on the GPUI build above: `check` leaves them here
+      # (`--without-app-tests`). `headless` runs them on Windows and the step below on macOS.
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/install-tools
+        with:
+          tools: cargo-nextest
+      - if: runner.os == 'Linux'
+        run: cargo xtask ui-tests
       # What `headless` runs on Windows, here for macOS: one runner fewer per run.
       - if: runner.os == 'macOS'
         uses: ./.github/actions/headless-tests
@@ -529,7 +539,7 @@ jobs:
         with:
           shared-key: mutants
           key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: ${{ env.WARM == 'true' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && env.WARM == 'true' }}
       - if: needs.changes.outputs.pr == 'true' || (env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true')
         uses: ./.github/actions/install-tools
         with:
