@@ -4,8 +4,10 @@
 //! Nothing here reads Cargo's build folder layout. Cargo 1.100 moved test programs from
 //! `target/<profile>/deps` to `target/<profile>/build/<package>/<hash>/out` (2026-11-20), and the
 //! tests that went two folders up from their own program built the engine into
-//! `target/debug/build/kchess-cli` and looked for it where it never was. So the target folder is
-//! the one Cargo marks (`CACHEDIR.TAG`), and the program's path is what Cargo's JSON messages say.
+//! `target/debug/build/kchess-cli` and looked for it where it never was. So the profile folder is
+//! the one holding Cargo's lock, which every build takes there (`CACHEDIR.TAG` marks only a target
+//! folder Cargo made itself: cargo-mutants' copies have none), the target folder the one above
+//! it, and the program's path is what Cargo's JSON messages say.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -18,8 +20,9 @@ use std::process::{Command, Stdio};
 /// not inherit.
 pub fn workspace_binary(package: &str, name: &str) -> PathBuf {
     let exe = std::env::current_exe().expect("the test's own program");
-    let (target, profile) = target_of(&exe, |folder| folder.join("CACHEDIR.TAG").is_file())
-        .unwrap_or_else(|| panic!("{} is in no Cargo target folder", exe.display()));
+    let locked = |folder: &Path| LOCKS.iter().any(|lock| folder.join(lock).is_file());
+    let (target, profile) = target_of(&exe, locked)
+        .unwrap_or_else(|| panic!("{} is in no Cargo profile folder", exe.display()));
     let mut build = Command::new(env!("CARGO"));
     build.args(build_args(package, name, &target, &profile));
     for (key, _) in std::env::vars_os() {
@@ -58,15 +61,16 @@ pub fn build_args(
     args
 }
 
-/// The target folder holding `exe` (the nearest folder above it that `is_target` accepts) and the
-/// profile folder's name under it, the first one on the way down to `exe`.
-pub fn target_of(exe: &Path, is_target: impl Fn(&Path) -> bool) -> Option<(PathBuf, String)> {
-    let target = exe.ancestors().skip(1).find(|folder| is_target(folder))?;
-    let mut below = exe.strip_prefix(target).ok()?.components();
-    let profile = below.next()?.as_os_str().to_str()?.to_string();
-    // A program right in the target folder is in no profile.
-    below.next()?;
-    Some((target.to_path_buf(), profile))
+/// The lock files Cargo keeps in a profile folder (`target/debug`): `.cargo-lock` in every
+/// version, the other two since 1.100.
+pub const LOCKS: [&str; 3] = [".cargo-lock", ".cargo-build-lock", ".cargo-artifact-lock"];
+
+/// The target folder holding `exe` and the name of its profile folder: the nearest folder above
+/// `exe` that `is_profile` accepts, and the folder above that.
+pub fn target_of(exe: &Path, is_profile: impl Fn(&Path) -> bool) -> Option<(PathBuf, String)> {
+    let profile = exe.ancestors().skip(1).find(|folder| is_profile(folder))?;
+    let name = profile.file_name()?.to_str()?.to_string();
+    Some((profile.parent()?.to_path_buf(), name))
 }
 
 /// The program `name` Cargo built, from its JSON messages (`--message-format json`): the
@@ -108,23 +112,47 @@ mod tests {
     use super::*;
 
     /// The layout of Cargo 1.100 and the one before it give the same target and profile.
+    /// The layout of Cargo 1.100 and the one before it give the same target and profile, in a
+    /// target folder with no `CACHEDIR.TAG` too (cargo-mutants' copies, 2026-11-20).
     #[test]
-    fn the_target_folder_is_the_marked_one_and_the_profile_the_folder_under_it() {
-        let marked = |folder: &Path| folder == Path::new("/w/target");
+    fn the_profile_folder_is_the_locked_one_and_the_target_folder_above_it() {
+        let locked = |folder: &Path| {
+            [Path::new("/w/target/debug"), Path::new("/w/target/release")].contains(&folder)
+        };
         let new = Path::new("/w/target/debug/build/kchess-cli/64f4467b/out/cli-64f4467b");
         let old = Path::new("/w/target/release/deps/cli-64f4467b");
         let expected = |profile: &str| Some((PathBuf::from("/w/target"), profile.to_string()));
-        assert_eq!(target_of(new, marked), expected("debug"));
-        assert_eq!(target_of(old, marked), expected("release"));
-        // The nearest marked folder: `cargo llvm-cov`'s target folder inside the usual one.
-        let inner = |folder: &Path| folder.ends_with("target") || folder.ends_with("cov-target");
-        let cov = Path::new("/w/target/cov-target/debug/build/x/1/out/x-1");
-        let cov_target = Some((PathBuf::from("/w/target/cov-target"), "debug".to_string()));
-        assert_eq!(target_of(cov, inner), cov_target);
-        assert_eq!(target_of(Path::new("/w/target/cli"), marked), None);
+        assert_eq!(target_of(new, locked), expected("debug"));
+        assert_eq!(target_of(old, locked), expected("release"));
+        // The nearest: `cargo llvm-cov`'s target folder inside the usual one.
+        let cov_locked = |folder: &Path| folder.ends_with("debug");
+        let cov = Path::new("/w/target/debug/cov-target/debug/build/x/1/out/x-1");
+        let cov_target = Some((
+            PathBuf::from("/w/target/debug/cov-target"),
+            "debug".to_string(),
+        ));
+        assert_eq!(target_of(cov, cov_locked), cov_target);
         assert_eq!(target_of(new, |_| false), None);
-        // Only a folder above the program: a program is never its own target folder.
-        assert_eq!(target_of(Path::new("/w/target"), marked), None);
+        // Only a folder above the program: a program is never its own profile folder.
+        assert_eq!(target_of(Path::new("/w/target/debug"), locked), None);
+        // A profile folder with no folder above it has no target folder.
+        assert_eq!(
+            target_of(Path::new("/x"), |folder| folder == Path::new("/")),
+            None
+        );
+        assert_eq!(
+            LOCKS,
+            [".cargo-lock", ".cargo-build-lock", ".cargo-artifact-lock"]
+        );
+    }
+
+    /// Where a test of this package runs from, its profile folder holds one of Cargo's locks.
+    #[test]
+    fn this_tests_own_profile_folder_holds_a_lock() {
+        let exe = std::env::current_exe().unwrap();
+        let locked = |folder: &Path| LOCKS.iter().any(|lock| folder.join(lock).is_file());
+        let (target, profile) = target_of(&exe, locked).expect("a locked profile folder");
+        assert!(exe.starts_with(target.join(profile)));
     }
 
     #[test]

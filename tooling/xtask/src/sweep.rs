@@ -245,7 +245,7 @@ fn sweep(profile: &Path, dry_run: bool) -> (usize, u64) {
 }
 
 /// The lock files Cargo keeps in a profile folder.
-pub(crate) const LOCKS: [&str; 3] = [".cargo-build-lock", ".cargo-artifact-lock", ".cargo-lock"];
+pub(crate) use kchess_testkit::build::LOCKS;
 
 /// Cargo's locks on a profile folder, held while no build is running there; `None` while one is
 /// (or when they cannot be opened), so its objects are left alone.
