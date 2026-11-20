@@ -2,6 +2,7 @@
 //! Stockfish is in use (the bundled one, the one KChess downloaded, or a file chosen), downloading
 //! and deleting it, and the background game review.
 
+use crate::log::ResultExt as _;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::notification::Notification;
@@ -158,7 +159,7 @@ impl SettingsPage {
                 })
                 .ok();
             if let Some(trusted) = trusted {
-                let _ = trusted.await;
+                trusted.await.log_err();
             }
             let _ = this.update_in(cx, |this, window, cx| {
                 this.set_engine_path(path, true, window, cx)

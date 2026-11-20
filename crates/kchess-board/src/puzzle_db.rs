@@ -7,6 +7,7 @@ use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 
 use crate::core::{AppCore, ClientEvent, CoreEvent};
@@ -107,7 +108,7 @@ impl PuzzleDb {
         let cancel = cx.global::<AppCore>().request(calls::PuzzleDbCancel {});
         cx.background_executor()
             .spawn(async move {
-                let _ = cancel.await;
+                cancel.await.warn_on_err();
             })
             .detach();
     }

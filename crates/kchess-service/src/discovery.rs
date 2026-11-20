@@ -197,12 +197,14 @@ pub fn runtime_dir() -> Option<PathBuf> {
     let base = kchess_host::env::var_os("HOME")
         .map(|home| PathBuf::from(home).join("Library/Application Support/KChess Runtime"));
     #[cfg(windows)]
-    let base =
-        kchess_host::env::var_os("LOCALAPPDATA").map(|local| PathBuf::from(local).join("KChess Runtime"));
+    let base = kchess_host::env::var_os("LOCALAPPDATA")
+        .map(|local| PathBuf::from(local).join("KChess Runtime"));
     #[cfg(all(unix, not(target_os = "macos")))]
     let base = kchess_host::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
-        .or_else(|| kchess_host::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+        .or_else(|| {
+            kchess_host::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
+        })
         .map(|data| data.join("kchess-runtime"));
     base.map(|base| base.join("core"))
 }

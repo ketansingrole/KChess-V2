@@ -18,6 +18,7 @@ use kchess_contracts::Level;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use crate::log::{IoResultExt as _, ResultExt as _};
 use crate::settings::{SettingsChanged, SettingsHandle};
 
 mod patch;
@@ -644,7 +645,7 @@ fn prune_kept(root: &Path, stale: impl Fn(Option<Version>) -> bool) {
             .open(path.join(".lock"))
             .is_ok_and(|lock| lock.try_lock().is_err());
         if !busy {
-            let _ = std::fs::remove_dir_all(&path);
+            std::fs::remove_dir_all(&path).ok_if_missing().warn_on_err();
         }
     }
 }
@@ -729,7 +730,9 @@ async fn download_signed(
         let _ = progress.unbounded_send((size, size));
         return Ok(file_path);
     }
-    let _ = std::fs::remove_file(&file_path);
+    std::fs::remove_file(&file_path)
+        .ok_if_missing()
+        .warn_on_err();
     let part_path = folder.join(format!("{}.part", asset.name));
     let mut part = Part::open(&part_path, asset.size).map_err(fail)?;
     let carried = part.received;
@@ -750,7 +753,9 @@ async fn download_signed(
     let digest = digest?;
     drop(part);
     if digest != expected {
-        let _ = std::fs::remove_file(&part_path);
+        std::fs::remove_file(&part_path)
+            .ok_if_missing()
+            .warn_on_err();
         return Err("The downloaded update did not match its checksum".into());
     }
     std::fs::rename(&part_path, &file_path).map_err(fail)?;
@@ -765,7 +770,9 @@ async fn download_signed(
 )]
 fn unpack(archive: &Path, folder: &Path) -> Result<PathBuf, String> {
     let unpacked = folder.join("app");
-    let _ = std::fs::remove_dir_all(&unpacked);
+    std::fs::remove_dir_all(&unpacked)
+        .ok_if_missing()
+        .warn_on_err();
     std::fs::create_dir_all(&unpacked).map_err(|cause| cause.to_string())?;
     let status = Command::new("ditto")
         .args(["-x", "-k"])
@@ -1133,16 +1140,22 @@ fn replace_by(
 ) -> Result<(), String> {
     let incoming = incoming(installed);
     let fail = |cause: std::io::Error| format!("The update could not be installed ({cause})");
-    let _ = std::fs::remove_dir_all(&incoming);
+    std::fs::remove_dir_all(&incoming)
+        .ok_if_missing()
+        .warn_on_err();
     if std::fs::rename(staged, &incoming).is_err() {
         copy_tree(staged, &incoming).map_err(|cause| {
-            let _ = std::fs::remove_dir_all(&incoming);
+            std::fs::remove_dir_all(&incoming)
+                .ok_if_missing()
+                .warn_on_err();
             fail(cause)
         })?;
     }
     let exchanged = exchange(&incoming, installed);
     // `incoming` now holds the old bundle, or (not exchanged) the new one: neither is needed.
-    let _ = std::fs::remove_dir_all(&incoming);
+    std::fs::remove_dir_all(&incoming)
+        .ok_if_missing()
+        .warn_on_err();
     exchanged.map_err(|cause| {
         format!("KChess could not replace itself ({cause}). Install the update by hand.")
     })
@@ -1172,7 +1185,9 @@ fn swap_file(staged: &Path, installed: &Path) -> Result<(), String> {
             .map_err(fail)?;
     }
     std::fs::rename(&incoming, installed).map_err(|cause| {
-        let _ = std::fs::remove_file(&incoming);
+        std::fs::remove_file(&incoming)
+            .ok_if_missing()
+            .warn_on_err();
         fail(cause)
     })
 }
@@ -1363,12 +1378,14 @@ fn clear_stopped(root: &Path) {
                 continue;
             };
             if lock.try_lock().is_ok() {
-                let _ = std::fs::remove_dir_all(root.join(folder));
+                std::fs::remove_dir_all(root.join(folder))
+                    .ok_if_missing()
+                    .warn_on_err();
                 drop(lock);
-                let _ = std::fs::remove_file(&path);
+                std::fs::remove_file(&path).ok_if_missing().warn_on_err();
             }
         } else if !root.join(format!("{name}.lock")).exists() {
-            let _ = std::fs::remove_dir_all(&path);
+            std::fs::remove_dir_all(&path).ok_if_missing().warn_on_err();
         }
     }
 }
@@ -1388,14 +1405,20 @@ fn tidy(install: Option<&Install>, root: Option<&Path>) {
             package: Package::MacZip,
             path,
         }) => {
-            let _ = std::fs::remove_dir_all(aside(path));
-            let _ = std::fs::remove_dir_all(incoming(path));
+            std::fs::remove_dir_all(aside(path))
+                .ok_if_missing()
+                .warn_on_err();
+            std::fs::remove_dir_all(incoming(path))
+                .ok_if_missing()
+                .warn_on_err();
         }
         Some(Install {
             package: Package::AppImage,
             path,
         }) => {
-            let _ = std::fs::remove_file(incoming(path));
+            std::fs::remove_file(incoming(path))
+                .ok_if_missing()
+                .warn_on_err();
         }
         Some(Install {
             package: Package::Deb,
@@ -1405,7 +1428,9 @@ fn tidy(install: Option<&Install>, root: Option<&Path>) {
             if let Some(root) = root {
                 let held = InstallLock::path(root, path);
                 for left in ["deb", "outcome.log", "outcome.new"] {
-                    let _ = std::fs::remove_file(held.with_extension(left));
+                    std::fs::remove_file(held.with_extension(left))
+                        .ok_if_missing()
+                        .warn_on_err();
                 }
             }
         }
@@ -1466,7 +1491,7 @@ fn deb_helper(
         .stderr(Stdio::null())
         .spawn();
     helper.map_err(|cause| {
-        let _ = std::fs::remove_file(&package);
+        std::fs::remove_file(&package).ok_if_missing().warn_on_err();
         format!("The update could not be installed ({cause}).")
     })
 }
@@ -1504,7 +1529,7 @@ fn last_install_error(install: Option<&Install>, root: Option<&Path>) -> Option<
     }
     let outcome = held.with_extension(OUTCOME);
     let recorded = std::fs::read_to_string(&outcome).ok()?;
-    let _ = std::fs::remove_file(&outcome);
+    std::fs::remove_file(&outcome).ok_if_missing().warn_on_err();
     let (status, said) = recorded.split_once('\n').unwrap_or((&recorded, ""));
     match status.trim() {
         "0" => {

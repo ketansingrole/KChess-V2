@@ -85,7 +85,10 @@ mod tests {
         unset("PATH");
         assert_eq!(var_os("PATH"), None);
         reset("PATH");
-        #[expect(clippy::disallowed_methods, reason = "compared with the environment itself")]
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "compared with the environment itself"
+        )]
         let environment = std::env::var_os("PATH");
         assert_eq!(var_os("PATH"), environment);
         reset(name);

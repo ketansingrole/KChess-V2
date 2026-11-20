@@ -78,6 +78,11 @@ whose CI did not run and pass every job, and every push to `main` runs CI to the
   (`Host::log`, `Level::Debug/Info/Warn/Error`, with a scope such as `engine` or `lichess`):
   debug for expected or benign outcomes (cancel teardown, cache miss), warn for recoverable ones
   (cache write, reconnect, throttle), error for failures needing attention.
+- In the app's crates a failure nobody returns goes through `kchess_app::log::ResultExt`:
+  `.log_err()` (error) or `.warn_on_err()` (warning) logs it with the file and line that dropped
+  it, and `.ok_if_missing()` first when removing what may already be gone. `let _ =` is left for
+  what cannot fail in a way worth knowing: a closed view's `update`, a send to a receiver that
+  has gone.
 - Never log tokens, passwords, request bodies or PGNs; the diagnostics export redacts Bearer
   tokens, `lip_`/`lio_` keys, OAuth codes and emails. Cancellations log at debug.
 

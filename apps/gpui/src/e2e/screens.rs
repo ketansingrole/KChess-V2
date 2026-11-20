@@ -24,7 +24,8 @@ use crate::pages::Page;
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn every_page_at_every_size() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     super::environment();
     let mut differ = Vec::new();
     for (width, height) in SIZES {
@@ -45,7 +46,8 @@ fn every_page_at_every_size() {
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn every_tab_in_both_appearances() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     super::environment();
     for (folder, appearance) in [
         ("tabs-light", Appearance::Light),
@@ -58,7 +60,8 @@ fn every_tab_in_both_appearances() {
 #[test]
 #[ignore = "needs a GPU, KCHESS_SCREENSHOTS and KCHESS_E2E_LICHESS"]
 fn every_screen_with_content() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     super::environment();
     for (folder, appearance) in [
         ("content-light", Appearance::Light),
@@ -74,7 +77,8 @@ fn every_screen_with_content() {
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn the_timeline() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("timeline");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -133,7 +137,8 @@ fn the_timeline() {
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn settings_sidebar() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("settings-sidebar");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -179,7 +184,8 @@ fn settings_sidebar() {
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn settings_reveal() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("settings-reveal");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -210,7 +216,8 @@ fn settings_reveal() {
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn settings_sections() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("settings");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -241,7 +248,8 @@ fn settings_sections() {
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn crazyhouse() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("crazyhouse");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -296,7 +304,8 @@ fn crazyhouse() {
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn figurines() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("figurines");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -352,7 +361,8 @@ fn figurines() {
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn computer_variant() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("computer-variant");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -407,7 +417,8 @@ fn computer_variant() {
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn home() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("home");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -481,7 +492,8 @@ fn home() {
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn players_search() {
     use gpui_kit::test::TestWindowExt as _;
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("players-search");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -572,7 +584,8 @@ fn players_search() {
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn lichess_history_search() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("lichess-history");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -706,7 +719,8 @@ fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn account_menu() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("account-menu");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -752,7 +766,8 @@ fn account_menu() {
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn shortcuts() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("shortcuts");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -784,7 +799,8 @@ fn shortcuts() {
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn low_clock() {
     use crate::pages::local::LocalPage;
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("low-clock");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -825,7 +841,8 @@ fn low_clock() {
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn over_the_board() {
     use crate::pages::local::LocalPage;
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("over-the-board");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -871,7 +888,8 @@ fn over_the_board() {
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn import_dialog() {
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("import");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -906,7 +924,8 @@ fn import_dialog() {
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn drop_zone() {
     use gpui_kit::InputEvent as _;
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("drop");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
@@ -1210,7 +1229,8 @@ fn capture(out: &Path, width: f32, height: f32, differ: &mut Vec<String>) {
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn board_coordinates() {
     use kchess_contracts::types::CoordinateMode;
-    let out = kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
     let out = Path::new(&out).join("coordinates");
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();

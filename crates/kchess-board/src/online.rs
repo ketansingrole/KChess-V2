@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use futures::FutureExt as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::check::{GameId, PresenceUsers, Uci, Username, Validate};
 use kchess_contracts::types::{
     ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, LobbyState, NotificationKind,
@@ -1205,11 +1206,11 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
     let core = cx.global::<AppCore>().clone();
     let resume = async move {
         if quiet_first {
-            let _ = core
-                .request(calls::StayConnected {
-                    account: OptionalAccount(String::new()),
-                })
-                .await;
+            core.request(calls::StayConnected {
+                account: OptionalAccount(String::new()),
+            })
+            .await
+            .warn_on_err();
         }
         core.request(calls::ResumeOnline {}).await
     };

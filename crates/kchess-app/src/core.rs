@@ -4,6 +4,7 @@
 //! reach views through `CoreEvents`, an entity they subscribe to. The app opens it and answers
 //! its host requests (`apps/gpui/src/core.rs`).
 
+use crate::log::ResultExt as _;
 use std::sync::Arc;
 
 use gpui_kit::{App, Entity, EventEmitter, Global, Subscription};
@@ -106,9 +107,12 @@ impl CoreBridge {
         crate::slow_calls::call("the core closing (AppCore::close)");
         let handle = self.handle.clone();
         let closing = self.runtime.spawn(async move { handle.close().await });
-        let _ = self.runtime.block_on(async {
-            tokio::time::timeout(std::time::Duration::from_secs(5), closing).await
-        });
+        self.runtime
+            .block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(5), closing).await
+            })
+            .map_err(|_| "The core did not close within 5 s")
+            .warn_on_err();
     }
 }
 

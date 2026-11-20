@@ -212,7 +212,8 @@ fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
         {
             app.settle();
             let before = resident_mib();
-            let all = kchess_host::env::var("KCHESS_PERF_PREWARM").is_some_and(|mode| mode == "all");
+            let all =
+                kchess_host::env::var("KCHESS_PERF_PREWARM").is_some_and(|mode| mode == "all");
             app.cx
                 .update_window(app.window, |_, window, cx| {
                     crate::shell::prewarm(window, cx);

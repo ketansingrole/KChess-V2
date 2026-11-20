@@ -6,6 +6,8 @@ mod move_reply;
 #[cfg(all(windows, not(test)))]
 mod windows_shortcuts;
 
+#[cfg(target_os = "macos")]
+use crate::log::ResultExt as _;
 use gpui_kit::App;
 use kchess_contracts::types::{NotificationKind, Settings};
 
@@ -462,7 +464,7 @@ fn alert(
                 {
                     static SENDER: std::sync::Once = std::sync::Once::new();
                     SENDER.call_once(|| {
-                        let _ = notify_rust::set_application(&sender());
+                        notify_rust::set_application(&sender()).warn_on_err();
                     });
                 }
                 let mut notification = notify_rust::Notification::new();

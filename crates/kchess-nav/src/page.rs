@@ -6,6 +6,7 @@
 //! The shell, Quick Pick and the menus reach every page through the registry the app sets
 //! (`set_registry`).
 
+use kchess_app::log::ResultExt as _;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -101,7 +102,7 @@ impl Page {
     /// write only means the next restart opens on Home.
     pub fn remember(self) {
         if let Some(file) = kchess_host::env::var_os("KCHESS_PAGE_FILE") {
-            let _ = std::fs::write(file, format!("{self:?}"));
+            std::fs::write(file, format!("{self:?}")).warn_on_err();
         }
     }
 
