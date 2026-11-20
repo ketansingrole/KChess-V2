@@ -3,6 +3,7 @@
 use crate::support;
 use futures_util::poll;
 use kchess_contracts::core_api::CoreApi;
+use kchess_contracts::types::Assistance;
 use kchess_core::engine::search;
 use kchess_core::{Config, Core};
 use serde_json::Value;
@@ -15,7 +16,7 @@ async fn prepared(dir: &Path, host: &Arc<support::Recording>) -> Core {
     let core = Core::open(Config::new(dir.to_path_buf()), host.clone()).unwrap();
     core.call("loadData", vec![]).await.unwrap();
     core.call("resumeOnline", vec![]).await.unwrap();
-    assert!(!core.assistance_blocked());
+    assert_eq!(core.assistance(), Assistance::Allowed);
     let engine = support::engine_copy(dir, "search");
     support::save_engine_path(&core, &engine);
     core
@@ -82,11 +83,11 @@ async fn recovery_cancels_analysis_waiting_for_settings() {
         poll!(&mut recovery).is_pending(),
         "recovery has reported checking and is awaiting accounts"
     );
-    assert!(core.assistance_blocked());
+    assert_eq!(core.assistance(), Assistance::Unverified);
     drop(storage);
     assert!(start.await.unwrap_err().aborted);
     assert!(host.named("engine:analysis").is_empty());
-    assert!(core.assistance_blocked());
+    assert_eq!(core.assistance(), Assistance::Unverified);
     recovery.await.unwrap();
     core.close().await;
 }

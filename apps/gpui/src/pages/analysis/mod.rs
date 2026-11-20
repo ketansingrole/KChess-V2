@@ -243,6 +243,25 @@ fn result_of(position: &VariantPosition) -> &'static str {
     }
 }
 
+/// Why the review or the explorer is held back, and Check again when a check for a Lichess game
+/// failed.
+fn paused_note(pause: crate::online::Pause, palette: &Palette) -> AnyElement {
+    v_flex()
+        .flex_1()
+        .items_center()
+        .gap(px(4.))
+        .px(px(8.))
+        .py(px(24.))
+        .text_size(px(13.))
+        .text_center()
+        .text_color(palette.text_muted)
+        .child(pause.text())
+        .when(pause == crate::online::Pause::Unverified, |note| {
+            note.child(crate::online::check_again_button("assistance-check-again"))
+        })
+        .into_any_element()
+}
+
 pub struct AnalysisPage {
     root: TreeNode,
     path: String,
@@ -275,6 +294,9 @@ pub struct AnalysisPage {
     practice: Option<practice::Practice>,
     /// The engine made way for a review of this game.
     paused_for_review: bool,
+    /// Engine help was lent when the online state last changed: its review is asked for when
+    /// that comes back.
+    assisted: bool,
     /// The comment and annotation of the move shown.
     notes: notes::Notes,
     /// The move list's scrolling, brought to the move shown after it changes.
@@ -476,7 +498,14 @@ impl AnalysisPage {
                 this.ask_cloud(cx);
                 this.redraw(cx);
             }),
-            cx.observe(&online, |this, _, cx| this.engine_changed(cx)),
+            cx.observe(&online, |this, _, cx| {
+                this.engine_changed(cx);
+                let assisted = Self::assistance_allowed(cx);
+                if assisted != this.assisted {
+                    this.assisted = assisted;
+                    this.follow_review(cx);
+                }
+            }),
             // Reviews streaming in, and the review queue: labels follow, and the engine makes way
             // while this game is reviewed.
             cx.observe(&cx.global::<ReviewHandle>().0.clone(), |this, _, cx| {
@@ -525,6 +554,7 @@ impl AnalysisPage {
             explainer: cx.new(|_| crate::ai::Explainer::default()),
             practice: None,
             paused_for_review: false,
+            assisted: Self::assistance_allowed(cx),
             notes: notes::Notes {
                 field: notes_field,
                 editing: false,
@@ -1701,7 +1731,7 @@ impl AnalysisPage {
     fn render_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let palette = *cx.global::<Palette>();
         let tool = Tool::of(&crate::prefs::get::<String>(cx, TOOL, "moves".into()));
-        let allowed = Self::assistance_allowed(cx);
+        let pause = Self::pause(cx);
         let board_size = self.board_size(window);
         let tool_body: AnyElement = match tool {
             // Never shorter than its list's minimum (`.moves-tool { min-height: auto }`).
@@ -1757,8 +1787,8 @@ impl AnalysisPage {
                         .child(text)
                         .into_any_element()
                 };
-                let body = if !allowed {
-                    note("Engine assistance is paused until Lichess game status is verified")
+                let body = if let Some(pause) = pause {
+                    paused_note(pause, &palette)
                 } else if self.root.children.is_empty() {
                     note("Make some moves or import a game to review it")
                 } else {
@@ -1774,22 +1804,22 @@ impl AnalysisPage {
             }
             Tool::Explorer => {
                 let note = if self.hides_engine() {
-                    Some("Shown once you find the move")
-                } else if !allowed {
-                    Some("Engine assistance is paused until Lichess game status is verified")
+                    Some(
+                        div()
+                            .flex_1()
+                            .px(px(8.))
+                            .py(px(24.))
+                            .text_size(px(13.))
+                            .text_center()
+                            .text_color(palette.text_muted)
+                            .child("Shown once you find the move")
+                            .into_any_element(),
+                    )
                 } else {
-                    None
+                    pause.map(|pause| paused_note(pause, &palette))
                 };
                 match note {
-                    Some(note) => div()
-                        .flex_1()
-                        .px(px(8.))
-                        .py(px(24.))
-                        .text_size(px(13.))
-                        .text_center()
-                        .text_color(palette.text_muted)
-                        .child(note)
-                        .into_any_element(),
+                    Some(note) => note,
                     None => {
                         let (fen, opened) = (self.node().fen.clone(), !self.explorer_open);
                         let variant = self.root.variant();

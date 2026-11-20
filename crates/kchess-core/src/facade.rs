@@ -7,8 +7,8 @@ use kchess_contracts::CoreEvent;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use kchess_contracts::core_api::CoreApi;
-use kchess_contracts::types::{AppData, ProfileArea, ProfileChange, Settings};
+use kchess_contracts::core_api::{Assist, CoreApi};
+use kchess_contracts::types::{AppData, Assistance, ProfileArea, ProfileChange, Settings};
 use std::sync::Arc;
 
 use crate::core::Core;
@@ -70,8 +70,8 @@ impl Host for GatedHost {
 }
 
 impl CoreApi for Core {
-    fn assistance_blocked(&self) -> bool {
-        self.services.online().assistance_blocked()
+    fn assistance(&self) -> Assistance {
+        self.services.online().assistance()
     }
 
     fn refused_arguments(&self, method: &str, cause: &str) {
@@ -229,12 +229,12 @@ impl Core {
         Ok(saved)
     }
 
-    /// An engine, review or explorer call while a live game is in progress.
-    pub(crate) fn assistance_allowed(&self, message: &str) -> Result<()> {
-        if self.services.online().assistance_blocked() {
-            return Err(CoreError::new(message));
+    /// An engine, review or explorer call refused while help is not lent, saying why.
+    pub(crate) fn assistance_allowed(&self, gate: Assist) -> Result<()> {
+        match self.services.online().assistance() {
+            Assistance::Allowed => Ok(()),
+            why => Err(CoreError::new(gate.refusal(why))),
         }
-        Ok(())
     }
 
     /// Whether `name` is a signed-in account.

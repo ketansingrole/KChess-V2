@@ -241,13 +241,16 @@ Some methods hold one caller's activity, and today replace the previous one:
 An account has at most one online game, one seek and one set of challenges, and the core owns the
 Lichess stream. These are shared:
 
-- `online:state`, `online:event`, `online:lobby`, `challenges:update` and
+- `online:state`, `online:event`, `online:lobby`, `online:assistance`, `challenges:update` and
   `online:ongoing-changed` go to every connection, so every window shows the same game.
 - Moves and actions are serialised in the core. Two windows cannot both send a move for the same
   position; the second is refused, never queued.
 - Fair play holds across connections: while a live human game is in progress, no connection gets
   engine analysis, review or explorer data, whichever window or tool asks. The core already owns
-  this rule and must check it for every connection, not only the window that is playing.
+  this rule and must check it for every connection, not only the window that is playing. Until
+  Lichess confirms no game is in progress, help stays locked too; `online:assistance` reports each
+  change of the lock (and `assistanceStatus` reads it), so a window follows the core's lock rather
+  than guessing it, and asks Lichess again (`resumeOnline`) after a check that failed.
 
 ### Alerts
 

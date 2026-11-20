@@ -157,7 +157,10 @@ async fn a_plan_connects_explains_and_disconnects() {
     assert_eq!(status["connected"], false);
     crate::support::wire::assert_wire("aiStatus.fresh", &status);
     let blocked = core.call("aiExplain", vec![request("e1e2")]).await;
-    assert!(blocked.unwrap_err().message.contains("live Lichess game"));
+    assert_eq!(
+        blocked.unwrap_err().message,
+        "Explanations are unavailable until your Lichess game status is verified."
+    );
     core.call("resumeOnline", vec![]).await.unwrap();
     let unconnected = core.call("aiExplain", vec![request("e1e2")]).await.unwrap();
     assert_eq!(unconnected["problem"], "connect");

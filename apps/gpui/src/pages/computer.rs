@@ -1142,6 +1142,21 @@ impl ComputerPage {
                 )
                 .into_any_element();
         }
+        // The computer waits for a check for a Lichess game that failed: say so, not nothing.
+        let pause = cx
+            .global::<crate::online::OnlineHandle>()
+            .0
+            .read(cx)
+            .pause();
+        if pause == Some(crate::online::Pause::Unverified) && !self.game.over() {
+            return widgets::StatusBanner::new(
+                Tone::Alert,
+                icon("triangle-alert"),
+                crate::online::Pause::Unverified.text().into(),
+            )
+            .extra(crate::online::check_again_button("assistance-check-again").into_any_element())
+            .into_any_element();
+        }
         if let Some(result) = self.game.result() {
             let (tone, glyph) = match result.kind {
                 computer::Kind::Win => (Tone::Win, icon("trophy")),

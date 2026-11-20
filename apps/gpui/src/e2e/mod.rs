@@ -11,6 +11,7 @@
 //! (`gpui_kit::test`); `Harness::paths` lists them when a lookup fails.
 
 mod analysis;
+mod assistance;
 mod audit;
 mod chesscom;
 mod computer;

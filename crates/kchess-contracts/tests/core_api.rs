@@ -5,6 +5,7 @@ use std::sync::Mutex;
 
 use kchess_contracts::calls::{self, CoreCall};
 use kchess_contracts::core_api::{self, Assist, METHODS, check_arguments, dispatch};
+use kchess_contracts::types::Assistance::{self, Allowed, LiveGame, Unverified};
 use kchess_contracts::types::ProfileArea;
 use serde_json::{Value, json};
 
@@ -213,13 +214,13 @@ fn an_answer_is_read_in_the_call_s_shape() {
 /// A core that records what the dispatch asked of it.
 #[derive(Default)]
 struct Recorder {
-    blocked: Mutex<Vec<bool>>,
+    blocked: Mutex<Vec<Assistance>>,
     refused: Mutex<Vec<String>>,
     changed: Mutex<Vec<&'static [ProfileArea]>>,
 }
 
 impl Recorder {
-    fn blocked_after(&self, checks: &[bool]) {
+    fn blocked_after(&self, checks: &[Assistance]) {
         *self.blocked.lock().unwrap() = checks.iter().rev().copied().collect();
     }
 }
@@ -244,22 +245,30 @@ fn the_dispatch_gates_assistance_before_and_after_and_reports_writes() {
     let api = recorder::Api::default();
     let fen = json!("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
     // Blocked before it runs: the stored review is refused until the game status is known.
-    api.0.blocked_after(&[true]);
+    api.0.blocked_after(&[Unverified]);
     let refused = futures_lite_block_on(dispatch(&api, "reviewGet", vec![fen.clone(), json!([])]));
     assert_eq!(
         refused.unwrap_err().message,
         "Review is unavailable until your Lichess game status is verified."
     );
     assert_eq!(api.calls(), Vec::<String>::new());
+    // During a live game, the refusal says so.
+    api.0.blocked_after(&[LiveGame]);
+    let refused = futures_lite_block_on(dispatch(&api, "reviewGet", vec![fen.clone(), json!([])]));
+    assert_eq!(
+        refused.unwrap_err().message,
+        "Review is unavailable during a live Lichess game."
+    );
+    assert_eq!(api.calls(), Vec::<String>::new());
     // A game started while it ran: the answer is held back.
-    api.0.blocked_after(&[false, true]);
+    api.0.blocked_after(&[Allowed, LiveGame]);
     let held = futures_lite_block_on(dispatch(&api, "reviewGet", vec![fen.clone(), json!([])]));
     assert_eq!(
         held.unwrap_err().message,
         "Review is unavailable during a live Lichess game."
     );
     assert_eq!(api.calls(), ["reviewGet"]);
-    api.0.blocked_after(&[false, false]);
+    api.0.blocked_after(&[Allowed, Allowed]);
     let answered = futures_lite_block_on(dispatch(&api, "reviewGet", vec![fen, json!([])]));
     assert_eq!(answered, Ok(Value::Null));
     assert_eq!(api.calls(), ["reviewGet"]);
@@ -351,8 +360,8 @@ mod recorder {
     }
 
     impl CoreApi for Api {
-        fn assistance_blocked(&self) -> bool {
-            self.0.blocked.lock().unwrap().pop().unwrap_or(false)
+        fn assistance(&self) -> Assistance {
+            self.0.blocked.lock().unwrap().pop().unwrap_or(Allowed)
         }
         fn refused_arguments(&self, method: &str, cause: &str) {
             self.0

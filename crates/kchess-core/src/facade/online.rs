@@ -3,8 +3,8 @@
 use kchess_contracts::check::{ChatText, FullFen, GameId, PresenceUsers, Uci, Username};
 use kchess_contracts::core_api::OnlineApi;
 use kchess_contracts::types::{
-    ChallengeInfo, ChatLine, ChatRoom, DeclineReason, OngoingGame, OnlineAction, OnlineOptions,
-    PresenceReport, Resumed, StartResult,
+    Assistance, ChallengeInfo, ChatLine, ChatRoom, DeclineReason, OngoingGame, OnlineAction,
+    OnlineOptions, PresenceReport, Resumed, StartResult,
 };
 
 use crate::core::Core;
@@ -25,6 +25,10 @@ impl OnlineApi for Core {
 
     async fn resume_online(&self) -> Result<Option<Resumed>> {
         self.services.online().resume().await
+    }
+
+    async fn assistance_status(&self) -> Result<Assistance> {
+        Ok(self.services.online().assistance())
     }
 
     async fn cancel_online(&self) -> Result<()> {

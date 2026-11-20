@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use kchess_contracts::types::{OnlinePhase, UsageKind};
+use kchess_contracts::types::{Assistance, OnlinePhase, UsageKind};
 use serde_json::{Value, json};
 
 use crate::lichess::accounts::path_segment;
@@ -144,7 +144,8 @@ impl OnlineSession {
         self.run_state_hook(false, self.assistance_blocked());
     }
 
-    /// Runs the state hook, if any; called without the state lock held.
+    /// Runs the state hook, if any, and reports the assistance when it changed; called without
+    /// the state lock held.
     pub(super) fn run_state_hook(&self, live_game: bool, blocked: bool) {
         let hook = self
             .inner
@@ -154,6 +155,20 @@ impl OnlineSession {
             .and_then(|slot| slot.clone());
         if let Some(hook) = hook {
             hook(live_game, blocked);
+        }
+        self.report_assistance();
+    }
+
+    /// Tells every frontend the assistance lent now, when it is not what they were last told: a
+    /// check for a game that failed left help locked while the app took it as lent.
+    fn report_assistance(&self) {
+        let Ok(mut reported) = self.inner.assistance_reported.lock() else {
+            return;
+        };
+        let now = self.assistance();
+        if *reported != Some(now) {
+            *reported = Some(now);
+            self.emit(CoreEvent::Assistance(now));
         }
     }
 
@@ -165,8 +180,20 @@ impl OnlineSession {
 
     /// Unknown startup or recovery state also blocks assistance, even before a game id is known.
     pub fn assistance_blocked(&self) -> bool {
+        self.assistance() != Assistance::Allowed
+    }
+
+    /// Whether assistance is lent, and why not: a game on the board or one not yet seen to end
+    /// comes first; otherwise a check for a game that has not answered (or failed).
+    pub fn assistance(&self) -> Assistance {
         let st = self.st();
-        st.recovery_unverified || st.live.is_some() || !st.protected_game.is_empty()
+        if st.live.is_some() || !st.protected_game.is_empty() {
+            Assistance::LiveGame
+        } else if st.recovery_unverified {
+            Assistance::Unverified
+        } else {
+            Assistance::Allowed
+        }
     }
 
     /// The login of the live game's account.
