@@ -836,8 +836,7 @@ impl OnlineState {
                         let id = game.game_id.clone();
                         let mine = game.is_my_turn;
                         let before = this.turns.get(&id).copied();
-                        if game.correspondence() && mine && before == Some(false) && id != this.id()
-                        {
+                        if is_your_move_now(game, before, this.id()) {
                             (hooks(cx).your_move)(game, cx);
                         }
                         this.turns.insert(id, mine);
@@ -1254,6 +1253,12 @@ fn typed<T: Validate>(value: &Value) -> Result<T, CoreError> {
     T::validate(value.into()).map_err(CoreError::new)
 }
 
+/// Whether a correspondence game just became the player's move: it was the opponent's when last
+/// seen, and it is not the game being played in the window now.
+fn is_your_move_now(game: &OngoingGame, before: Option<bool>, playing: &str) -> bool {
+    game.correspondence() && game.is_my_turn && before == Some(false) && game.game_id != playing
+}
+
 /// What the rules read of a call's answer.
 fn reply<T: 'static>(
     call: impl Future<Output = Result<T, CoreError>> + 'static,
@@ -1349,7 +1354,7 @@ mod tests {
         let mut app = Started::new(cx);
         app.with_window(|_, cx| cx.set_global(keeping()));
         let online = app.with_window(|_, cx| super::handle(cx));
-        let challenge = serde_json::from_value(json!({
+        let challenge = serde_json::from_value(serde_json::json!({
             "id": "c1", "account": "me", "direction": "in", "opponent": { "name": "Bob" },
             "variant": "standard", "variantName": "Standard", "rated": false, "speed": "blitz",
             "timeControl": { "type": "unlimited" }, "color": "random", "playable": true,
@@ -1371,7 +1376,7 @@ mod tests {
         });
         app.cx().run_until_parked();
         let session = app.with_window(|_, cx| online.read(cx).state_epoch());
-        let lost = serde_json::from_value(json!({
+        let lost = serde_json::from_value(serde_json::json!({
             "session": session, "account": "me", "gameId": "g1", "lane": "game",
             "phase": "disconnected",
         }))
@@ -1456,5 +1461,101 @@ mod tests {
         });
         assert!(!stale);
         assert_eq!(error, None);
+    }
+
+    fn ongoing(id: &str, speed: &str, my_turn: bool) -> kchess_contracts::types::OngoingGame {
+        serde_json::from_value(serde_json::json!({
+            "gameId": id,
+            "account": "alice",
+            "opponent": { "name": "bob" },
+            "fen": "8/8/8/8/8/8/8/8 w - - 0 1",
+            "isMyTurn": my_turn,
+            "variant": "standard",
+            "speed": speed,
+            "rated": false,
+        }))
+        .expect("an ongoing game")
+    }
+
+    /// A correspondence game announces the player's move only when it just turned to them, in a
+    /// game not being played in the window: each other case stays quiet.
+    #[test]
+    fn only_a_correspondence_game_that_just_turned_to_you_is_your_move() {
+        let game = ongoing("abc", "correspondence", true);
+        assert!(super::is_your_move_now(&game, Some(false), "other"));
+        // Not correspondence.
+        assert!(!super::is_your_move_now(
+            &ongoing("abc", "blitz", true),
+            Some(false),
+            "other"
+        ));
+        // Still the opponent's turn.
+        assert!(!super::is_your_move_now(
+            &ongoing("abc", "correspondence", false),
+            Some(false),
+            "other"
+        ));
+        // Already the player's move when last seen, or never seen.
+        assert!(!super::is_your_move_now(&game, Some(true), "other"));
+        assert!(!super::is_your_move_now(&game, None, "other"));
+        // The game open in the window needs no announcement.
+        assert!(!super::is_your_move_now(&game, Some(false), "abc"));
+    }
+
+    /// Asking for the games in progress with an account connected marks the list as read once the
+    /// current request's answer lands, failed or not.
+    #[gpui_kit::test]
+    fn the_current_answer_for_games_in_progress_lands(cx: &mut gpui_kit::TestAppContext) {
+        let server = kchess_testkit::Server::start(|_, out| {
+            kchess_testkit::respond(out, 500, "text/plain", b"")
+        })
+        .expect("a stand-in Lichess");
+        let mut app = Started::with_lichess(cx, Some(server.base().to_string()));
+        app.wait_for("the accounts read", |_, cx| {
+            crate::accounts::handle(cx).read(cx).data.is_some()
+        });
+        app.with_window(|_, cx| {
+            let settings = kchess_contracts::defaults::default_settings()
+                .expect("the default settings")
+                .core;
+            crate::accounts::handle(cx).update(cx, |accounts, cx| {
+                accounts.data = Some(kchess_contracts::types::AppData {
+                    settings,
+                    accounts: vec![kchess_contracts::types::Account {
+                        username: "alice".into(),
+                        connected: true,
+                        last_synced_at: None,
+                        synced_play_time: None,
+                    }],
+                    game_count: 0,
+                });
+                cx.notify();
+            });
+            super::handle(cx).update(cx, |online, cx| {
+                assert!(!online.ongoing_loaded);
+                online.refresh_ongoing(cx);
+            });
+        });
+        app.wait_for("the answer to land", |_, cx| {
+            super::handle(cx).read(cx).ongoing_loaded
+        });
+    }
+
+    /// Starting a game asks the core at once: the state is busy until its answer comes.
+    #[gpui_kit::test]
+    fn starting_a_game_is_busy_until_the_core_answers(cx: &mut gpui_kit::TestAppContext) {
+        let server = kchess_testkit::Server::start(|_, out| {
+            kchess_testkit::respond(out, 500, "text/plain", b"")
+        })
+        .expect("a stand-in Lichess");
+        let mut app = Started::with_lichess(cx, Some(server.base().to_string()));
+        let busy = app.with_window(|_, cx| {
+            super::handle(cx).update(cx, |online, cx| {
+                online.start(None, cx);
+                online.busy
+            })
+        });
+        assert!(busy);
+        app.wait_for("the start to end", |_, cx| !super::handle(cx).read(cx).busy);
     }
 }

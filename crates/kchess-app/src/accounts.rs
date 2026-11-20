@@ -828,6 +828,62 @@ mod tests {
         assert_eq!(HEARD.load(Ordering::SeqCst), 1, "refused");
     }
 
+    /// Run the app's and the core's work until `area` has logged more than `before` lines: the
+    /// core answers on a runtime of its own, so this waits in real time, at most five seconds.
+    fn wait_for_log(cx: &mut gpui_kit::TestAppContext, area: &str, before: usize) {
+        for _ in 0..500 {
+            cx.run_until_parked();
+            if crate::tests::logged_in(area) > before {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!(
+            "nothing more was logged under [{area}]:\n{}",
+            crate::tests::logged()
+        );
+    }
+
+    /// Every action on a player says when the core refuses it, in the window and in the log:
+    /// a refusal shown but not logged left Export diagnostics with nothing to go on.
+    #[gpui_kit::test]
+    fn a_refused_action_on_a_player_is_shown_and_logged(cx: &mut gpui_kit::TestAppContext) {
+        let (_core, window) = accounts_holding(vec![account("player", true)], cx);
+        // A name no Lichess or Chess.com account can have: the core refuses it before asking.
+        let invalid = || "no such name!".to_string();
+        type Action = fn(String, &mut Accounts, &mut Window, &mut gpui_kit::Context<Accounts>);
+        let actions: [(&str, Action); 6] = [
+            ("follow", |name, this, window, cx| {
+                this.follow(name, window, cx, |_, _, _| {})
+            }),
+            ("add a Chess.com player", |name, this, window, cx| {
+                this.add_chesscom(name, window, cx, |_, _, _| {})
+            }),
+            ("sync a Chess.com player", |name, this, window, cx| {
+                this.sync_chesscom(Some(name), window, cx)
+            }),
+            ("remove a Chess.com player", |name, this, window, cx| {
+                this.remove_chesscom(name, window, cx)
+            }),
+            ("clear a player's data", |name, this, window, cx| {
+                this.clear_data(name, window, cx)
+            }),
+            ("import players", |name, this, window, cx| {
+                this.import(vec![name], window, cx)
+            }),
+        ];
+        for (what, action) in actions {
+            let before = crate::tests::logged_in("accounts");
+            cx.update_window(window, |_, window, cx| {
+                super::handle(cx).update(cx, |this, cx| action(invalid(), this, window, cx));
+            })
+            .unwrap();
+            wait_for_log(cx, "accounts", before);
+            let busy = cx.update(|cx| super::handle(cx).read(cx).working());
+            assert!(!busy, "{what}: the refusal ends the work");
+        }
+    }
+
     /// After signing out the pages forget the account, told whether one is left, and start
     /// afresh.
     #[gpui_kit::test]

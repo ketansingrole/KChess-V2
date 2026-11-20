@@ -442,7 +442,7 @@ impl Render for PuzzleHistory {
                 )
             });
         let now = jiff::ZonedDateTime::now();
-        let body: AnyElement = if self.loading.busy() && rows.is_empty() {
+        let body: AnyElement = if shows_loading(self.loading.busy(), rows.is_empty()) {
             crate::widgets::loading("Loading from Lichess…", &palette).into_any_element()
         } else if any && rows.is_empty() && unsolved_only && shown_count > 0 {
             div()
@@ -656,9 +656,15 @@ impl Render for PuzzleHistory {
     }
 }
 
+/// The loading line stands in for the rows only while a load runs and there is nothing to show;
+/// a refresh over rows already shown keeps them.
+fn shows_loading(busy: bool, no_rows: bool) -> bool {
+    busy && no_rows
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{PuzzleHistory, compact, rows_of};
+    use super::{PuzzleHistory, compact, rows_of, shows_loading};
     use gpui_kit::AppContext as _;
     use kchess_board::testing::Started;
 
@@ -677,6 +683,16 @@ mod tests {
             })
         });
         assert!(!loading && !stale);
+    }
+
+    /// The loading line shows only while loading with no rows; rows already shown stay through a
+    /// refresh, and an idle empty page shows its own empty state.
+    #[test]
+    fn loading_replaces_only_an_empty_list_while_busy() {
+        assert!(shows_loading(true, true));
+        assert!(!shows_loading(true, false));
+        assert!(!shows_loading(false, true));
+        assert!(!shows_loading(false, false));
     }
 
     /// The columns need about 900 px: a 1024-wide window's card (about 700) once squeezed the

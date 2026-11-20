@@ -498,6 +498,7 @@ mod tests {
         DROPPED_MAX, PlayedGame, game_file_name, game_pgn, read_game_file, shown_fen,
         with_extension,
     };
+    use gpui_kit::AppContext as _;
     use kchess_domain::variant::{Setup, Variant};
     use shakmaty::Color;
     use std::ffi::OsStr;
@@ -610,5 +611,33 @@ mod tests {
         let path = folder.path().join("game.pgn");
         std::os::unix::fs::symlink("/dev/zero", &path).unwrap();
         assert_eq!(read_game_file(&path), None);
+    }
+
+    /// An upload Lichess refuses ends with the failure shown and logged, and the exporter free
+    /// to upload again.
+    #[gpui_kit::test]
+    fn a_refused_upload_is_logged_and_ends(cx: &mut gpui_kit::TestAppContext) {
+        let server = kchess_testkit::Server::start(|_, out| {
+            kchess_testkit::respond(out, 500, "text/plain", b"")
+        })
+        .expect("a stand-in Lichess");
+        let mut app = crate::testing::Started::with_lichess(cx, Some(server.base().to_string()));
+        let played = game(
+            Variant::Standard,
+            crate::game::STANDARD_FEN,
+            &["e2e4", "e7e5"],
+            None,
+        );
+        let before = kchess_app::tests::logged_in("export");
+        let exporter = app.with_window(|window, cx| {
+            let exporter = cx.new(|_| super::Exporter::default());
+            exporter.update(cx, |exporter, cx| exporter.upload(played, window, cx));
+            assert!(exporter.read(cx).uploading);
+            exporter
+        });
+        app.wait_for("the failure logged", |_, _| {
+            kchess_app::tests::logged_in("export") > before
+        });
+        app.wait_for("the upload to end", |_, cx| !exporter.read(cx).uploading);
     }
 }

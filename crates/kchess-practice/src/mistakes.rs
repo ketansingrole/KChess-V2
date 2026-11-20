@@ -170,6 +170,11 @@ impl Mistakes {
         self.reload(cx);
     }
 
+    /// Nothing is saved and nothing is on its way: "No mistakes yet" is true.
+    fn nothing_saved(&self) -> bool {
+        self.items.is_empty() && !self.loading.busy()
+    }
+
     /// The drills and games as they are now; a drill on the board stays.
     fn reload(&mut self, cx: &mut Context<Self>) {
         self.now = kchess_games::now_ms();
@@ -616,7 +621,7 @@ impl Mistakes {
                     .text_color(palette.error)
                     .child(error)
             }))
-            .when(self.items.is_empty() && !self.loading.busy(), |card| {
+            .when(self.nothing_saved(), |card| {
                 card.child(
                     widgets::empty_state(
                         icon("book-open"),
@@ -725,6 +730,77 @@ mod tests {
         });
         let error = app.with_window(|_, cx| page.read(cx).loading.error().cloned());
         assert_eq!(error, None);
+    }
+
+    fn drill() -> kchess_contracts::types::Drill {
+        serde_json::from_value(json!({
+            "id": "k:1", "fen": "", "solution": [], "judgment": "mistake",
+            "dueAt": 0, "streak": 0, "attempts": 0,
+        }))
+        .expect("a drill")
+    }
+
+    /// "No mistakes yet" shows only when no drill is saved and none is on its way.
+    #[gpui_kit::test]
+    fn no_mistakes_yet_is_said_only_when_none_are_saved_or_coming(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use gpui_kit::AppContext as _;
+        let mut app = kchess_board::testing::Started::new(cx);
+        let page = app.with_window(|window, cx| cx.new(|cx| super::Mistakes::new(window, cx)));
+        app.with_window(|_, cx| {
+            page.update(cx, |page, _| {
+                page.loading.stop();
+                assert!(page.nothing_saved(), "idle and empty");
+                page.loading.start();
+                assert!(!page.nothing_saved(), "busy and empty");
+                page.items = vec![drill()];
+                assert!(!page.nothing_saved(), "busy with a drill");
+                page.loading.stop();
+                assert!(!page.nothing_saved(), "idle with a drill");
+            })
+        });
+    }
+
+    /// The latest load's answer ends the loading and redraws the overview.
+    #[gpui_kit::test]
+    fn a_load_redraws_the_overview_when_it_answers(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = kchess_board::testing::Started::new(cx);
+        let page = app.with_window(|window, cx| cx.new(|cx| super::Mistakes::new(window, cx)));
+        app.wait_for("the first load", |_, cx| !page.read(cx).loading.busy());
+        let redraws = std::rc::Rc::new(std::cell::Cell::new(0));
+        let _watch = app.with_window(|_, cx| {
+            let redraws = redraws.clone();
+            cx.observe(&page, move |page, cx| {
+                // Asking redraws too: only an answer, which ends the loading, counts.
+                if !page.read(cx).loading.busy() {
+                    redraws.set(redraws.get() + 1);
+                }
+            })
+        });
+        app.with_window(|_, cx| page.update(cx, |page, cx| page.shown(cx)));
+        app.wait_for("the load", |_, cx| !page.read(cx).loading.busy());
+        assert!(redraws.get() > 0, "the answer redraws the overview");
+    }
+
+    /// A drill answered is scheduled again by the core, and the answer clears an earlier failure
+    /// from the overview.
+    #[gpui_kit::test]
+    fn an_answered_drill_clears_an_earlier_failure(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = kchess_board::testing::Started::new(cx);
+        let page = app.with_window(|window, cx| cx.new(|cx| super::Mistakes::new(window, cx)));
+        app.wait_for("the first load", |_, cx| !page.read(cx).loading.busy());
+        app.with_window(|_, cx| {
+            page.update(cx, |page, cx| {
+                page.loading.show_error("Saving failed");
+                page.answered("nope:1", true, cx)
+            })
+        });
+        app.wait_for("the failure cleared", |_, cx| {
+            page.read(cx).loading.error().is_none()
+        });
     }
 
     #[test]

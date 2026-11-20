@@ -36,6 +36,8 @@ kchess-board = { workspace = true, features = ["test-support"] }
 kchess-nav = { workspace = true, features = ["test-support"] }
 # Scratch folders for the game file test.
 tempfile = "3"
+# A stand-in Lichess that refuses, for the failure paths.
+kchess-testkit.workspace = true
 
 [lints]
 workspace = true

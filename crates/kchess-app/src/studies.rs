@@ -453,6 +453,57 @@ mod tests {
         assert_eq!(library.fresh_name("Z"), "Z");
     }
 
+    /// A change the core refuses is shown on the library and logged; one that works clears the
+    /// failure.
+    #[gpui_kit::test]
+    fn a_refused_change_is_shown_and_logged(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        cx.executor().allow_parking();
+        let _core = cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::tests::start_core(cx)
+        });
+        // The writer and the core answer on their own threads: step the app until `ready` holds.
+        let wait = |cx: &mut gpui_kit::TestAppContext,
+                    what: &str,
+                    ready: &dyn Fn(&mut gpui_kit::App) -> bool| {
+            for _ in 0..3000 {
+                cx.run_until_parked();
+                if cx.update(|cx| ready(cx)) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            panic!("timed out waiting for {what}");
+        };
+        cx.update(|cx| super::init(&kchess_contracts::types::Library::default(), cx));
+        let shown =
+            |cx: &mut gpui_kit::App| cx.global::<super::StudyHandle>().0.read(cx).error.clone();
+        let before = crate::tests::logged_in("studies");
+        cx.update(|cx| {
+            let answer =
+                cx.global::<super::StudyHandle>()
+                    .0
+                    .read(cx)
+                    .command(StudyCommand::AddChapter {
+                        id: "no-such-study".into(),
+                        name: "Chapter".into(),
+                    });
+            cx.background_spawn(answer).detach();
+        });
+        wait(cx, "the failure shown", &|cx| shown(cx).is_some());
+        assert!(crate::tests::logged_in("studies") > before, "logged");
+        cx.update(|cx| {
+            let answer = cx
+                .global::<super::StudyHandle>()
+                .0
+                .read(cx)
+                .command(chapter_save(None, None, "*"));
+            cx.background_spawn(answer).detach();
+        });
+        wait(cx, "the failure cleared", &|cx| shown(cx).is_none());
+    }
+
     #[test]
     fn chapters_are_numbered_in_order() {
         let study = study("s", "S", &[("a", "Main", "*"), ("b", "Side", "*")]);

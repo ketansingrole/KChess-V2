@@ -243,11 +243,7 @@ mod tests {
     /// A failure the page shows reaches the log too, under its area.
     #[test]
     fn a_shown_failure_is_logged() {
-        // The process's log starts once, in whichever test asks first; it is read from wherever
-        // that was.
-        static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-        let dir = DIR.get_or_init(|| tempfile::tempdir().expect("a temporary folder"));
-        crate::log::init(dir.path());
+        crate::tests::logged();
         let shown = super::failure("loading-test-area", &CoreError::new("the disk is full"));
         assert_eq!(shown, "the disk is full");
         let mut loading = Loading::default();
@@ -262,7 +258,7 @@ mod tests {
             loading.error().map(|error| error.as_ref()),
             Some("no answer")
         );
-        let log = crate::log::read().join("");
+        let log = crate::tests::logged();
         assert!(
             log.contains("[loading-test-area] the disk is full"),
             "{log}"
@@ -350,6 +346,40 @@ mod tests {
                 Some("Lichess did not answer")
             );
         });
+    }
+
+    /// `fetch` hands its answer to the page; a failure is logged, and the page keeps what it
+    /// showed.
+    #[gpui_kit::test]
+    fn fetch_shows_an_answer_and_logs_a_failure(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+
+        struct Page {
+            shown: Option<u32>,
+        }
+        let page = cx.new(|_| Page { shown: None });
+        page.update(cx, |_, cx| {
+            super::fetch(
+                cx,
+                "fetch-test",
+                async { Ok::<u32, CoreError>(7) },
+                |page, answer, _| page.shown = Some(answer),
+            );
+        });
+        cx.run_until_parked();
+        page.read_with(cx, |page, _| assert_eq!(page.shown, Some(7)));
+        let before = crate::tests::logged_in("fetch-test");
+        page.update(cx, |_, cx| {
+            super::fetch(
+                cx,
+                "fetch-test",
+                async { Err::<u32, _>(CoreError::new("Lichess did not answer")) },
+                |page, answer, _| page.shown = Some(answer),
+            );
+        });
+        cx.run_until_parked();
+        page.read_with(cx, |page, _| assert_eq!(page.shown, Some(7)));
+        assert_eq!(crate::tests::logged_in("fetch-test"), before + 1);
     }
 
     /// Answers come back in whatever order the core sends them: GPUI's test scheduler runs the

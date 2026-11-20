@@ -420,4 +420,59 @@ mod tests {
             ]
         );
     }
+
+    fn started_ai(cx: &mut gpui_kit::TestAppContext) -> crate::testing::Started {
+        let mut app = crate::testing::Started::new(cx);
+        app.with_window(|_, cx| super::init(cx));
+        app
+    }
+
+    /// An explanation the core cannot give (a position it cannot read) shows its message and logs it.
+    #[gpui_kit::test]
+    fn an_explanation_the_core_refuses_is_shown_and_logged(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = started_ai(cx);
+        let before = kchess_app::tests::logged_in("ai");
+        let explainer = app.with_window(|_, cx| {
+            let explainer = cx.new(|_| super::Explainer::default());
+            explainer.update(cx, |explainer, cx| {
+                explainer.ask(
+                    AiRequest {
+                        kind: AiKind::Nudge,
+                        fen: "not a position".into(),
+                        played: None,
+                        moves: Vec::new(),
+                        best: Vec::new(),
+                        refutation: Vec::new(),
+                        mate_before: None,
+                        mate_after: None,
+                    },
+                    None,
+                    cx,
+                );
+            });
+            explainer
+        });
+        app.wait_for("the failure shown", |_, cx| {
+            matches!(explainer.read(cx).phase, Some(super::Phase::Failed(_)))
+        });
+        assert!(kchess_app::tests::logged_in("ai") > before);
+    }
+
+    /// Signing in that the core cannot start ends the busy state and logs why.
+    #[gpui_kit::test]
+    fn a_sign_in_that_fails_is_logged_and_ends(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = started_ai(cx);
+        let before = kchess_app::tests::logged_in("ai");
+        let ai = app.with_window(|window, cx| {
+            let ai = super::handle(cx);
+            ai.update(cx, |ai, cx| ai.connect(window, cx));
+            assert!(ai.read(cx).busy);
+            ai
+        });
+        app.wait_for("the failure logged", |_, _| {
+            kchess_app::tests::logged_in("ai") > before
+        });
+        app.wait_for("the sign-in to end", |_, cx| !ai.read(cx).busy);
+    }
 }

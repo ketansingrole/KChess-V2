@@ -20,6 +20,9 @@ pub struct PuzzleDb {
     pub status: PuzzleDbStatus,
     progress: Option<PuzzleDbProgress>,
     error: Option<String>,
+    /// Counts installs, deletes and failures shown: a status read that started before one of
+    /// them is out of date when it lands, and neither its status nor its clearing counts.
+    changes: u64,
     _events: Subscription,
 }
 
@@ -35,6 +38,7 @@ pub fn init(cx: &mut App) {
         status: PuzzleDbStatus::default(),
         progress: None,
         error: None,
+        changes: 0,
         _events: cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
             if let ClientEvent::Event(CoreEvent::PuzzleDbProgress(progress)) = event {
                 this.progress = Some(progress.clone());
@@ -56,18 +60,23 @@ impl PuzzleDb {
     }
 
     /// Read the database's state again (a page was shown): a read that works clears the
-    /// failure an earlier one showed.
+    /// failure an earlier one showed. A read that an install, a delete or a failure overtook
+    /// changes nothing.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let status = cx.global::<AppCore>().request(calls::PuzzleDbStatus {});
+        let asked = self.changes;
         cx.spawn(async move |this, cx| {
             let status = status.await;
             this.update(cx, |this, cx| {
+                if this.changes != asked {
+                    return;
+                }
                 match status {
                     Ok(status) => {
                         this.status = status;
                         this.error = None;
                     }
-                    Err(cause) => this.error = Some(crate::loading::failure("puzzle-db", &cause)),
+                    Err(cause) => this.failed(&cause),
                 }
                 cx.notify();
             })
@@ -76,7 +85,14 @@ impl PuzzleDb {
         .detach();
     }
 
+    /// Shows a failure, which a status read already under way leaves on screen.
+    fn failed(&mut self, cause: &kchess_contracts::CoreError) {
+        self.changes += 1;
+        self.error = Some(crate::loading::failure("puzzle-db", cause));
+    }
+
     fn install(&mut self, cx: &mut Context<Self>) {
+        self.changes += 1;
         self.error = None;
         self.progress = Some(PuzzleDbProgress {
             phase: PuzzleDbPhase::Downloading,
@@ -92,7 +108,7 @@ impl PuzzleDb {
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(status) => this.status = status,
-                    Err(cause) => this.error = Some(crate::loading::failure("puzzle-db", &cause)),
+                    Err(cause) => this.failed(&cause),
                 }
                 let ended = this.progress.as_ref().is_none_or(|progress| {
                     matches!(
@@ -139,6 +155,7 @@ impl PuzzleDb {
     }
 
     fn delete(&mut self, cx: &mut Context<Self>) {
+        self.changes += 1;
         self.error = None;
         let delete = cx.global::<AppCore>().request(calls::PuzzleDbDelete {});
         cx.spawn(async move |this, cx| {
@@ -149,7 +166,7 @@ impl PuzzleDb {
                         this.status = status;
                         this.progress = None;
                     }
-                    Err(cause) => this.error = Some(crate::loading::failure("puzzle-db", &cause)),
+                    Err(cause) => this.failed(&cause),
                 }
                 cx.notify();
             });
@@ -390,5 +407,44 @@ mod tests {
         app.with_window(|_, cx| db.update(cx, |db, cx| db.cancel(cx)));
         app.wait_for("the install to end", |_, cx| db.read(cx).progress.is_none());
         assert!(app.with_window(|_, cx| db.read(cx).error.is_none()));
+    }
+
+    /// Deleting while a download runs is refused by the core: the refusal is logged and stays
+    /// shown, whenever the status read asked before it lands.
+    #[gpui_kit::test]
+    fn deleting_during_a_download_shows_and_logs_the_refusal(cx: &mut gpui_kit::TestAppContext) {
+        let asked = Arc::new(AtomicBool::new(false));
+        let server = {
+            let asked = Arc::clone(&asked);
+            kchess_testkit::Server::start(move |request, out| {
+                if !request.target.starts_with("/database/") {
+                    return kchess_testkit::respond(out, 404, "text/plain", b"");
+                }
+                asked.store(true, Ordering::SeqCst);
+                kchess_testkit::ndjson_stream(out, Vec::new(), Duration::MAX, || true, |_| None)
+            })
+            .expect("a stand-in Lichess")
+        };
+        let mut app = Started::with_lichess(cx, Some(server.base().to_string()));
+        let db = app.with_window(|_, cx| {
+            super::init(cx);
+            cx.global::<PuzzleDbHandle>().0.clone()
+        });
+        app.with_window(|_, cx| db.update(cx, |db, cx| db.install(cx)));
+        app.wait_for("the download to start", |_, _| asked.load(Ordering::SeqCst));
+        let before = kchess_app::tests::logged_in("puzzle-db");
+        app.with_window(|_, cx| db.update(cx, |db, cx| db.delete(cx)));
+        app.wait_for("the refusal logged", |_, _| {
+            kchess_app::tests::logged_in("puzzle-db") > before
+        });
+        // The database's first status read, asked before the delete, may land after it: it once
+        // cleared the refusal shown (3 runs in 15).
+        app.wait_for("the refusal shown", |_, cx| db.read(cx).error.is_some());
+        for _ in 0..20 {
+            app.cx().run_until_parked();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(app.with_window(|_, cx| db.read(cx).error.is_some()), "still shown");
+        app.with_window(|_, cx| db.update(cx, |db, cx| db.cancel(cx)));
     }
 }

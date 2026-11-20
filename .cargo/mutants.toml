@@ -1,6 +1,13 @@
 # cargo-mutants (`cargo install cargo-mutants`): `cargo mutants -p <package>` changes the code one
 # small edit at a time and reports each edit no test notices. See docs/mutation-testing.md.
 
+# A mutant that stops an answer coming fails its test when the test's wait for it gives up: 30 s,
+# in the pages' waits (`kchess_board::testing::Started::wait_for`) and the app's end-to-end
+# harness, room for a slow CI runner. cargo-mutants' own limit, 5 times the package's tests
+# untouched but at least 20 s, came first, and such a mutant counted as timed out rather than
+# caught.
+minimum_test_timeout = 45
+
 # Mutants no test can tell apart from the original, because the program behaves the same. Each
 # entry names why; never add one only because a test is missing.
 exclude_re = [

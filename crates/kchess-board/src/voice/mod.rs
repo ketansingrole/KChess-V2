@@ -855,4 +855,25 @@ mod tests {
         assert!(noise.text.is_empty() && noise.unclear);
         assert!(heard_of(&utterance(json!({ "text": " ", "words": [] }))).is_none());
     }
+
+    /// Turning voice on starts preparing it at once: loading, with its first message, until the
+    /// model and microphone are ready.
+    #[gpui_kit::test]
+    fn turning_voice_on_starts_preparing_it(cx: &mut gpui_kit::TestAppContext) {
+        // The core answers on its own threads.
+        cx.executor().allow_parking();
+        let _core = started(cx);
+        let (loading, preparing) = cx.update(|cx| {
+            handle(cx).update(cx, |voice, cx| {
+                let owner = voice.new_owner();
+                voice.enable(owner, Vec::new(), true, false, cx);
+                (
+                    matches!(voice.state, super::State::Loading),
+                    voice.preparing.clone(),
+                )
+            })
+        });
+        assert!(loading);
+        assert_eq!(preparing, "Preparing voice input…");
+    }
 }

@@ -621,6 +621,14 @@ fn answered(this: &mut Page, answer: Result<Report, CoreError>, cx: &mut App) {
         Ok(Reply::Done(found)) => this.found = found,
         Err(other) => this.other = Some(cause.message),
     }
+    match &answer {
+        &Err(ref cause) => this.error = Some(cause.message.clone()),
+        _ => {}
+    }
+    match answer {
+        (Err(cause)) => this.error = Some(cause.message),
+        _ => {}
+    }
 }
 "#;
         assert_eq!(
@@ -628,9 +636,12 @@ fn answered(this: &mut Page, answer: Result<Report, CoreError>, cx: &mut App) {
             [
                 ("unlogged_failure", 5),
                 ("unlogged_failure", 9),
-                ("unlogged_failure", 14)
+                ("unlogged_failure", 14),
+                ("unlogged_failure", 21),
+                ("unlogged_failure", 25)
             ],
-            "only the failures bound in each arm count: `other` is not `cause`"
+            "only the failures bound in each arm count, behind a reference or parentheses too: \
+             `other` is not `cause`"
         );
     }
 
