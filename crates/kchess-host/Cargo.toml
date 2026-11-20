@@ -12,7 +12,12 @@ regex = "1"
 dirs = "7"
 # `opens_in_browser` parses the URL (already in Cargo.lock through reqwest).
 url = "2"
+# The core's configuration crosses to the service as JSON (`config.rs`).
+serde.workspace = true
 kchess-hack = { version = "0.1", path = "../kchess-hack" }
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [features]
 # Set by `cargo xtask package` (through `kchess-core/packaged`) for every shipped build: the

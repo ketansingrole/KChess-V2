@@ -4629,6 +4629,8 @@ dependencies = [
  "dirs 7.0.0",
  "kchess-hack",
  "regex",
+ "serde",
+ "serde_json",
  "url",
 ]
 
