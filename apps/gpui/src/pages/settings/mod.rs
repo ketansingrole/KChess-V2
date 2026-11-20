@@ -519,10 +519,7 @@ impl SettingsPage {
     /// The Interface size select shows the setting, and what Auto means on this display.
     fn sync_zoom(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         use crate::interface_zoom::{PERCENTS, Setting, auto_for};
-        let shown = (
-            cx.global::<crate::interface_zoom::InterfaceZoom>().setting,
-            auto_for(window, cx),
-        );
+        let shown = (crate::interface_zoom::setting(cx), auto_for(window, cx));
         if self.zoom_shown == Some(shown) {
             return;
         }

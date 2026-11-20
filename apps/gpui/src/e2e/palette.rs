@@ -233,20 +233,14 @@ fn a_page_opening_after_its_read_leaves_quick_pick_open(cx: &mut gpui_kit::TestA
 
 #[gpui_kit::test]
 fn the_interface_zoom_steps_with_the_keys_and_is_kept(cx: &mut gpui_kit::TestAppContext) {
-    use crate::interface_zoom::{InterfaceZoom, Setting};
+    use crate::interface_zoom::{Setting, setting as chosen};
+    const KEY: &str = "kchess:interface-zoom";
     fn setting(app: &mut Harness) -> Setting {
-        app.cx.update(|cx| cx.global::<InterfaceZoom>().setting)
-    }
-    fn saved(app: &Harness) -> serde_json::Value {
-        let file = app.profile.as_ref().expect("the profile").path();
-        let text = std::fs::read_to_string(file.join("interface-zoom.json")).unwrap_or_default();
-        serde_json::from_str(&text).unwrap_or_default()
+        app.cx.update(|cx| chosen(cx))
     }
     fn wait_for_setting(app: &mut Harness, wanted: Setting) {
-        let mut shown = setting(app);
         app.wait_for(&format!("the zoom to be {wanted:?}"), |_, cx| {
-            shown = cx.global::<InterfaceZoom>().setting;
-            shown == wanted
+            chosen(cx) == wanted
         });
     }
 
@@ -257,20 +251,23 @@ fn the_interface_zoom_steps_with_the_keys_and_is_kept(cx: &mut gpui_kit::TestApp
     app.press("secondary-=");
     let larger = crate::interface_zoom::step(start, 1);
     wait_for_setting(&mut app, Setting::Percent(larger));
-    assert_eq!(saved(&app)["zoom"], json!(larger));
+    app.wait_for_view_preference(KEY, json!(larger));
 
     app.press("secondary--");
     app.press("secondary--");
     let smaller = crate::interface_zoom::step(start, -1);
     wait_for_setting(&mut app, Setting::Percent(smaller));
-    assert_eq!(saved(&app)["zoom"], json!(smaller));
+    app.wait_for_view_preference(KEY, json!(smaller));
 
     // The choice is there again after a restart, and ⌘0 goes back to Auto.
     let mut app = app.restart();
     assert_eq!(setting(&mut app), Setting::Percent(smaller));
     app.press("secondary-0");
     wait_for_setting(&mut app, Setting::Auto);
-    assert_eq!(saved(&app)["zoom"], json!("auto"));
+    app.wait_for_view_preference(KEY, serde_json::Value::Null);
+    // The core keeps it: the app writes no file of its own.
+    let profile = app.profile.as_ref().expect("the profile").path();
+    assert!(!profile.join("interface-zoom.json").exists());
 }
 
 /// A FEN typed or pasted into Quick Pick is analysed or edited from there; a Lichess game link

@@ -711,10 +711,26 @@ impl Harness {
 
     /// Wait until the core has saved `key` as `value`.
     pub fn wait_for_saved(&mut self, key: &str, value: serde_json::Value) {
+        self.wait_for_core(key, value, Self::saved_settings);
+    }
+
+    /// Wait until the core keeps the view preference `key` as `value` (`null`: forgotten).
+    pub fn wait_for_view_preference(&mut self, key: &str, value: serde_json::Value) {
+        self.wait_for_core(key, value, |app| {
+            serde_json::Value::Object(app.request(kchess_contracts::calls::ViewPreferences {}))
+        });
+    }
+
+    fn wait_for_core(
+        &mut self,
+        key: &str,
+        value: serde_json::Value,
+        read: impl Fn(&mut Self) -> serde_json::Value,
+    ) {
         let started = Instant::now();
         loop {
             self.cx.run_until_parked();
-            let saved = self.saved_settings();
+            let saved = read(self);
             if saved[key] == value {
                 return;
             }

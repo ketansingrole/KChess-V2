@@ -621,7 +621,7 @@ impl Workspace {
                     window.refresh();
                 },
             ),
-            crate::window_state::track(crate::profile::data_dir().unwrap_or_default(), window, cx),
+            crate::window_state::track(window, cx),
             // Auto follows the display: a move to another one may call for another size.
             cx.observe_window_bounds(window, |_, window, cx| {
                 let wanted = f32::from(crate::interface_zoom::percent(window, cx)) / 100.;

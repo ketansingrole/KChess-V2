@@ -119,8 +119,10 @@ fn main() {
 /// window.
 fn start_models(library: &kchess_contracts::types::Library, cx: &mut App) {
     settings::init(cx);
-    interface_zoom::init(profile::data_dir().unwrap_or_default(), cx);
     prefs::init(cx);
+    let profile_dir = profile::data_dir().unwrap_or_default();
+    interface_zoom::init(&profile_dir, cx);
+    window_state::init(&profile_dir, cx);
     played::init(library, cx);
     studies::init(library, cx);
     reviews::init(cx);
@@ -196,8 +198,7 @@ fn explain_and_quit(message: String, cx: &mut App) {
 
 /// The window, where and as it was left.
 fn main_window_options(cx: &mut App) -> WindowOptions {
-    let dir = profile::data_dir().unwrap_or_default();
-    let (window_bounds, _) = window_state::bounds(&dir, cx);
+    let (window_bounds, _) = window_state::bounds(cx);
     WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: Some(profile::APP_NAME.into()),
