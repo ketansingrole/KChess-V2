@@ -93,7 +93,7 @@ fn theme_rows(dashboard: &PuzzleDashboard, sort: &str) -> Vec<ThemeRow> {
 }
 
 pub struct PuzzleStats {
-    account: String,
+    pub(crate) account: String,
     accounts: Vec<String>,
     profile: LichessUser,
     history: Vec<RatingSeries>,

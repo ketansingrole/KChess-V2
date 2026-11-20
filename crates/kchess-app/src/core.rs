@@ -292,6 +292,39 @@ mod tests {
         );
     }
 
+    /// A test core given a stand-in Lichess asks it, never lichess.org.
+    #[gpui_kit::test]
+    fn a_test_core_asks_the_lichess_it_is_given(cx: &mut gpui_kit::TestAppContext) {
+        use std::sync::{Arc, Mutex};
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let server = {
+            let asked = Arc::clone(&asked);
+            kchess_testkit::Server::start(move |request, out| {
+                asked
+                    .lock()
+                    .expect("the requests")
+                    .push(request.path().to_string());
+                kchess_testkit::respond(out, 404, "text/plain", b"")
+            })
+            .expect("a stand-in Lichess")
+        };
+        let origin = server.base().to_string();
+        let _core = cx.update(|cx| crate::tests::start_core_with_lichess(cx, Some(origin)));
+        let core = cx.read(|cx| cx.global::<super::AppCore>().clone());
+        let answer = core
+            .bridge
+            .request_now(kchess_contracts::calls::Crosstable {
+                a: kchess_contracts::check::Username("alice".into()),
+                b: kchess_contracts::check::Username("bob".into()),
+            });
+        assert!(answer.is_err(), "the stand-in has no crosstable");
+        let asked = asked.lock().expect("the requests").clone();
+        assert!(
+            asked.iter().any(|path| path.contains("crosstable")),
+            "asked {asked:?}"
+        );
+    }
+
     /// 2026-11-15: a cloud evaluation the next position replaced kept running in the core, since
     /// the app's call ran detached on the core's runtime; dropping it now ends the work.
     #[test]

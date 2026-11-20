@@ -193,7 +193,7 @@ pub struct PuzzleHistory {
     progress: PuzzleProgress,
     /// `puzzleActivity`: what Lichess recorded for the account.
     activity: Vec<PuzzleActivityEntry>,
-    account: String,
+    pub(crate) account: String,
     loading: bool,
     error: Option<String>,
     reconnect: bool,

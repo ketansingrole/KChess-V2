@@ -2105,7 +2105,35 @@ mod tests {
     ) {
         use gpui_kit::AppContext as _;
         use gpui_kit::test::TestWindowExt as _;
-        let mut app = kchess_board::testing::Started::new(cx);
+        // Lichess, for the account signed in: it answers nothing.
+        let server = kchess_testkit::Server::start(|_, out| {
+            kchess_testkit::respond(out, 404, "text/plain", b"")
+        })
+        .expect("a stand-in Lichess");
+        let mut app =
+            kchess_board::testing::Started::with_lichess(cx, Some(server.base().to_string()));
+        // The core's own read of the accounts lands first, or it would replace the one set here.
+        app.wait_for("the accounts read", |_, cx| {
+            crate::accounts::handle(cx).read(cx).data.is_some()
+        });
+        app.with_window(|_, cx| {
+            let settings = kchess_contracts::defaults::default_settings()
+                .expect("the default settings")
+                .core;
+            crate::accounts::handle(cx).update(cx, |accounts, cx| {
+                accounts.data = Some(kchess_contracts::types::AppData {
+                    settings,
+                    accounts: vec![kchess_contracts::types::Account {
+                        username: "alice".into(),
+                        connected: true,
+                        last_synced_at: None,
+                        synced_play_time: None,
+                    }],
+                    game_count: 0,
+                });
+                cx.notify();
+            });
+        });
         let (window, page) = app.with_window(|_, cx| {
             crate::puzzle_db::init(cx);
             Tab::Train.store(cx);
@@ -2142,10 +2170,20 @@ mod tests {
         choose(Tab::History, &mut app);
         assert_eq!(shown(&mut app), ("history".into(), true, false));
         assert!(draws("puzzle-history", &mut app));
+        let history = app.with_window(|_, cx| page.read(cx).history.clone().expect("History"));
+        assert_eq!(
+            app.with_window(|_, cx| history.read(cx).account.clone()),
+            "alice"
+        );
         assert!(app.with_window(|_, cx| page.read(cx).daily.is_none()));
         choose(Tab::Stats, &mut app);
         assert_eq!(shown(&mut app), ("stats".into(), true, true));
         assert!(draws("puzzle-stats", &mut app));
+        let stats = app.with_window(|_, cx| page.read(cx).stats.clone().expect("Stats"));
+        assert_eq!(
+            app.with_window(|_, cx| stats.read(cx).account.clone()),
+            "alice"
+        );
         choose(Tab::Daily, &mut app);
         assert!(app.with_window(|_, cx| page.read(cx).daily.is_some()));
 
