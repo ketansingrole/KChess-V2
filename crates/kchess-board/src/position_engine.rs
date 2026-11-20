@@ -1,6 +1,6 @@
-//! One visible position's engine search, for boards that are not the
-//! analysis board: a new request replaces the search running (the core cancels it when the next
-//! starts), and only updates for the request asked last are kept.
+//! One visible position's engine search, for every board that follows one with the engine, the
+//! analysis board's included: a new request replaces the search running (the core cancels it when
+//! the next starts), and only updates for the request asked last are kept.
 //!
 //! Every search and stop names its client id, which rises with each request, so the core can
 //! tell a late one: it runs calls in any order, and a stop or start that lands after a newer
@@ -102,26 +102,18 @@ impl PositionEngine {
         self.restart(self.wanted.clone(), engine, cx);
     }
 
-    fn restart<V: 'static>(
+    /// Search `request` (or nothing) from the start, even when it is the search running.
+    pub fn restart<V: 'static>(
         &mut self,
         request: Option<AnalysisRequest>,
         engine: fn(&mut V) -> &mut PositionEngine,
         cx: &mut Context<V>,
     ) {
-        let id = next_client();
-        self.client_id = id;
-        self.latest_id = 0;
-        self.context = request.as_ref().map(context_of).unwrap_or_default();
-        self.wanted = request.clone();
-        self.update = None;
-        self.error = None;
-        self.busy = request.is_some();
         let Some(mut request) = request else {
-            // Cancellation reaches the core's search, not only its answers.
-            self._start = None;
-            stop_analysis(self.started, false, "position-engine", cx);
+            self.stop(false, cx);
             return;
         };
+        let id = self.forget(Some(&request));
         request.client_id = Some(id);
         self.started = Some(id);
         let core = cx.global::<AppCore>().clone();
@@ -149,6 +141,34 @@ impl PositionEngine {
                 engine.error = Some(error);
             });
         }));
+    }
+
+    /// Search nothing: the search running stops, and with `release` the engine goes too, where a
+    /// pause keeps it warm. Cancellation reaches the core's search, not only its answers.
+    pub fn stop<V: 'static>(&mut self, release: bool, cx: &mut Context<V>) {
+        self.forget(None);
+        self._start = None;
+        stop_analysis(self.started, release, "position-engine", cx);
+    }
+
+    /// What was asked for and heard goes, `request` is asked for under a new client id (its
+    /// updates are numbered by the core that answers it, from 1 again after it restarts), and
+    /// the id is returned.
+    fn forget(&mut self, request: Option<&AnalysisRequest>) -> u64 {
+        let id = next_client();
+        self.client_id = id;
+        self.latest_id = 0;
+        self.context = request.map(context_of).unwrap_or_default();
+        self.wanted = request.cloned();
+        self.update = None;
+        self.error = None;
+        self.busy = request.is_some();
+        id
+    }
+
+    /// The client id of the last search sent to the core, which its stop names.
+    pub fn started(&self) -> Option<u64> {
+        self.started
     }
 
     /// An `engine:analysis` event: kept, and true, when it is for the search asked for.

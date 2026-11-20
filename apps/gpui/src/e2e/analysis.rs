@@ -984,6 +984,76 @@ fn a_stop_that_lands_after_the_next_search_leaves_the_engine_searching(
     });
 }
 
+/// 2026-11-20: a restarted shared core numbers its searches' updates from 1 again, and the
+/// board kept the highest number the previous core had sent, so it dropped every update of the
+/// new core's searches and its engine showed nothing until their numbers caught up. The board
+/// searches as every board does (`PositionEngine`), which counts each search's updates afresh.
+#[gpui_kit::test]
+fn the_engine_follows_a_restarted_core_from_its_first_update(cx: &mut gpui_kit::TestAppContext) {
+    use crate::core::{AppCore, ClientEvent, CoreEvent};
+    use kchess_contracts::types::{AnalysisUpdate, EngineLine};
+    let mut app = Harness::start(cx);
+    app.open("Analysis board");
+    app.find("chess-board");
+    wait_for_search(&mut app);
+    // More searches, so the previous core's numbers are past the new core's first.
+    import(&mut app, "1. e4 e5");
+    wait_for_search(&mut app);
+    let send = |app: &mut Harness, event: ClientEvent| {
+        app.cx.update(|cx| {
+            let events = cx.global::<AppCore>().events.clone();
+            events.update(cx, |_, cx| cx.emit(event));
+        });
+    };
+    let page = |app: &mut Harness| {
+        app.with_window(|_, cx| {
+            crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+                .expect("the analysis board")
+        })
+    };
+    // Taken before reconnecting: `with_window` runs the app until it is idle, which would let the
+    // new search's own updates in first (higher numbers from the same core, which rightly win).
+    let board = page(&mut app);
+    send(&mut app, ClientEvent::Reconnected);
+    // The new core's first update for the board's new search, before the test lets anything else
+    // arrive: a depth no real search here reaches.
+    let (client, fen, context) = app.cx.update(|cx| {
+        let board = board.read(cx);
+        let (client, _) = board.engine_search();
+        let (fen, context) = board.engine_target();
+        (client, fen, context)
+    });
+    let client = client.and_then(|client| i64::try_from(client).ok());
+    assert!(
+        client.is_some(),
+        "the board searches again for the new core"
+    );
+    send(
+        &mut app,
+        ClientEvent::Event(CoreEvent::Analysis(AnalysisUpdate {
+            id: 1,
+            fen,
+            depth: 77.,
+            nps: None,
+            lines: vec![EngineLine {
+                rank: 1,
+                depth: 77.,
+                cp: Some(20.),
+                mate: None,
+                pv: vec!["g1f3".into()],
+            }],
+            done: false,
+            context,
+            client_id: client,
+            reason: None,
+            engine: "Stockfish".into(),
+            error: None,
+        })),
+    );
+    let text = app.cx.update(|cx| board.read(cx).engine_text(cx));
+    assert!(text.starts_with("Depth 77"), "{text}");
+}
+
 /// The FEN of the position the analysis board shows.
 fn shown_fen(app: &mut Harness) -> String {
     app.with_window(|_, cx| {

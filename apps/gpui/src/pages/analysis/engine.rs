@@ -62,9 +62,7 @@ impl AnalysisPage {
         self.attached = false;
         self.cloud_task = None;
         self.cloud_request += 1;
-        self.wanted.clear();
-        self.engine_busy = false;
-        crate::position_engine::stop_analysis(self.engine_started, true, "analysis", cx);
+        self.search.stop(true, cx);
     }
 
     pub(super) fn engine_changed(&mut self, cx: &mut Context<Self>) {
@@ -81,9 +79,6 @@ impl AnalysisPage {
         }
         let fen = self.engine_fen();
         let threat = self.threat_position().is_some();
-        self.client_id = crate::position_engine::next_client();
-        let request = self.client_id;
-        self.engine_error = None;
         let engine_on = Self::engine_on(cx);
         let lines = prefs_lines(cx);
         let infinite = crate::prefs::get(cx, INFINITE, false);
@@ -95,10 +90,8 @@ impl AnalysisPage {
             || !Self::assistance_allowed(cx)
             || self.reviewing(cx).is_some()
         {
-            self.wanted.clear();
-            self.engine_busy = false;
             // Turning analysis off releases the engine; other pauses keep it warm.
-            crate::position_engine::stop_analysis(self.engine_started, !engine_on, "analysis", cx);
+            self.search.stop(!engine_on, cx);
             cx.notify();
             return;
         }
@@ -111,16 +104,10 @@ impl AnalysisPage {
                     && known.lines.len() >= lines
             })
         {
-            self.wanted = fen;
-            self.engine_busy = false;
-            crate::position_engine::stop_analysis(self.engine_started, false, "analysis", cx);
+            self.search.stop(false, cx);
             cx.notify();
             return;
         }
-        self.wanted = fen.clone();
-        self.engine_started = Some(request);
-        self.live = None;
-        self.engine_busy = true;
         let asked = AnalysisRequest {
             fen: fen.clone(),
             lines: lines.clamp(1, 5) as u32,
@@ -135,67 +122,36 @@ impl AnalysisPage {
             } else {
                 moves_of(&self.path)
             }),
-            client_id: Some(request),
+            client_id: None,
             // Fairy-Stockfish analyses the other variants.
             variant: self
                 .fairy_variant()
                 .map(|variant| variant.key().to_string()),
         };
-        let start = cx
-            .global::<AppCore>()
-            .request(calls::StartAnalysis { request: asked });
-        cx.spawn(async move |this, cx| {
-            let started = start.await;
-            let _ = this.update(cx, |this, cx| {
-                let current = this.wanted == fen && this.client_id == request;
-                match started {
-                    Ok(id) if current => {
-                        this.latest_id = this.latest_id.max(id);
-                    }
-                    Err(cause) if current => {
-                        this.engine_busy = false;
-                        if let Some(error) = crate::position_engine::start_error(cause) {
-                            crate::log::write(
-                                Level::Warn,
-                                "analysis",
-                                &format!("starting analysis failed: {error}"),
-                            );
-                            this.engine_error = Some(error);
-                        }
-                        cx.notify();
-                    }
-                    _ => {}
-                }
-            });
-        })
-        .detach();
+        // Every look searches again: the board asks only when what it shows changed, or to retry.
+        self.search
+            .restart(Some(asked), |page: &mut AnalysisPage| &mut page.search, cx);
         cx.notify();
     }
 
     /// The client id of the search the board last sent, and whether the engine is searching.
     #[cfg(test)]
     pub(crate) fn engine_search(&self) -> (Option<u64>, bool) {
-        (self.engine_started, self.engine_busy)
+        (self.search.started(), self.search.busy)
+    }
+
+    /// The position the board's search is for, and its context.
+    #[cfg(test)]
+    pub(crate) fn engine_target(&self) -> (String, String) {
+        (self.engine_fen(), self.engine_context())
     }
 
     /// An engine update: kept when it is for the search running now.
     pub(super) fn receive(&mut self, update: AnalysisUpdate, cx: &mut Context<Self>) {
-        if update.fen != self.wanted
-            || update.client_id != i64::try_from(self.client_id).ok()
-            || update.context != self.engine_context()
-            || update.id < self.latest_id
-        {
+        if !self.search.receive(&update) {
             return;
         }
-        self.latest_id = update.id;
         self.remember(&update);
-        if let Some(error) = &update.error {
-            self.engine_error = Some(error.clone());
-            self.engine_busy = false;
-        } else if update.done {
-            self.engine_busy = false;
-        }
-        self.live = Some(update);
         self.redraw(cx);
     }
 
@@ -235,7 +191,7 @@ impl AnalysisPage {
             return None;
         }
         let context = self.engine_context();
-        if let Some(live) = &self.live
+        if let Some(live) = &self.search.update
             && live.fen == self.engine_fen()
             && live.context == context
         {
@@ -391,7 +347,7 @@ impl AnalysisPage {
         if !self.engine_ready {
             return "Stockfish not found".into();
         }
-        if let Some(error) = &self.engine_error {
+        if let Some(error) = &self.search.error {
             return error.clone();
         }
         if !Self::engine_on(cx) {
@@ -629,12 +585,12 @@ impl AnalysisPage {
                             .gap(px(4.))
                             .min_w_0()
                             .text_size(px(11.))
-                            .text_color(if self.engine_error.is_some() {
+                            .text_color(if self.search.error.is_some() {
                                 palette.error
                             } else {
                                 palette.text_muted
                             })
-                            .when(engine_on && self.engine_busy, |row| {
+                            .when(engine_on && self.search.busy, |row| {
                                 row.child(crate::widgets::spinner(px(12.)))
                             })
                             .child(

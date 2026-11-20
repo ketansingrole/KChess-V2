@@ -285,8 +285,7 @@ impl AnalysisPage {
             return;
         }
         self.review.requested = self.mainline_key();
-        self.wanted.clear();
-        crate::position_engine::stop_analysis(self.engine_started, false, "analysis", cx);
+        self.search.stop(false, cx);
         let origin = self.review.origin.clone().unwrap_or_default();
         let request = ReviewRequest {
             fen: self.root.fen.clone(),
