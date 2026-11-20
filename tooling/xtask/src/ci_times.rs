@@ -1,6 +1,7 @@
-//! `cargo xtask ci-times [--days <n>]`: how long CI took over the last n days (7), job by job, and
-//! the tests that failed and then passed on the same commit. The weekly CI times workflow writes
-//! it to its run's summary, so a slower job or a new flaky test shows within a week.
+//! `cargo xtask ci-times [--days <n>]`: how long CI took over the last n days (7), job by job, the
+//! tests that failed on main or on more than one branch, and those that failed and then passed on
+//! the same commit. The weekly CI times workflow writes it to its run's summary, so a slower job or
+//! a new flaky test shows within a week.
 
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,8 +11,9 @@ use crate::util::{Result, output, repository, say};
 /// Asks GitHub through `gh` with these arguments; the tests answer it themselves.
 type Gh<'a> = &'a dyn Fn(&[&str]) -> Result<String>;
 
-/// The completed CI runs, one per line: id, event, commit, conclusion, created (Unix seconds).
-const RUNS: &str = r#".workflow_runs[] | select(.status == "completed") | [.id, .event, .head_sha, .conclusion, (.created_at | fromdate)] | @tsv"#;
+/// The completed CI runs, one per line: id, event, branch, commit, conclusion, created (Unix
+/// seconds).
+const RUNS: &str = r#".workflow_runs[] | select(.status == "completed") | [.id, .event, .head_branch, .head_sha, .conclusion, (.created_at | fromdate)] | @tsv"#;
 
 /// A run's jobs over all its attempts, one per line: id, attempt, name, conclusion, started and
 /// completed (Unix seconds).
@@ -111,8 +113,13 @@ fn report_for(days: u64, now: u64, gh: Gh) -> Result<String> {
             ])?,
         ));
     }
-    let mut flaky = Vec::new();
-    for job in flaky_failures(&runs, &jobs) {
+    // Every failed job's log: a flaky test is mostly met by a new push, not by running the same
+    // commit again (2026-11-13 to 11-20: 22 failed runs, none run again, and "no flaky test").
+    let mut failed = Vec::new();
+    for job in jobs
+        .iter()
+        .filter(|job| job.conclusion == "failure" && job.name != "ci-passed")
+    {
         // A log GitHub no longer keeps names no test; the job still counts.
         let log = gh(&[
             "api",
@@ -120,15 +127,25 @@ fn report_for(days: u64, now: u64, gh: Gh) -> Result<String> {
             &format!("repos/{repo}/actions/jobs/{}/logs", job.id),
         ])
         .unwrap_or_default();
-        flaky.push((job, failed_tests(&log)));
+        failed.push((job.clone(), failed_tests(&log)));
     }
-    Ok(report(days, &since, &repo, &runs, &jobs, &flaky))
+    let flaky_ids: Vec<u64> = flaky_failures(&runs, &jobs)
+        .iter()
+        .map(|job| job.id)
+        .collect();
+    let flaky: Vec<(Job, Vec<String>)> = failed
+        .iter()
+        .filter(|(job, _)| flaky_ids.contains(&job.id))
+        .cloned()
+        .collect();
+    Ok(report(days, &since, &repo, &runs, &jobs, &failed, &flaky))
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct Run {
     id: u64,
     event: String,
+    branch: String,
     sha: String,
     conclusion: String,
     created: u64,
@@ -159,9 +176,10 @@ impl Job {
 fn parse_runs(tsv: &str) -> Vec<Run> {
     tsv.lines()
         .filter_map(|line| match line.split('\t').collect::<Vec<_>>()[..] {
-            [id, event, sha, conclusion, created] => Some(Run {
+            [id, event, branch, sha, conclusion, created] => Some(Run {
                 id: id.parse().ok()?,
                 event: event.into(),
+                branch: branch.into(),
                 sha: sha.into(),
                 conclusion: conclusion.into(),
                 created: created.parse().ok()?,
@@ -227,6 +245,53 @@ fn flaky_failures(runs: &[Run], jobs: &[Job]) -> Vec<Job> {
         .filter(|(passed, _)| *passed)
         .flat_map(|(_, failed)| failed.into_iter().cloned())
         .collect()
+}
+
+/// A test that failed in more than one place: how many times, on how many branches, whether on
+/// main, and the newest run it failed in.
+#[derive(Debug, PartialEq)]
+struct Recurring {
+    name: String,
+    times: usize,
+    branches: usize,
+    on_main: bool,
+    last_run: u64,
+}
+
+/// The tests of `failed` (each failed job with the tests its log names) that failed on main, which
+/// every change reaches only after passing them in its pull request, or on two branches or more:
+/// most likely flaky, though no run of one commit both failed and passed them. Most first.
+fn recurring_failures(runs: &[Run], failed: &[(Job, Vec<String>)]) -> Vec<Recurring> {
+    let by_id: BTreeMap<u64, &Run> = runs.iter().map(|run| (run.id, run)).collect();
+    let mut tests: BTreeMap<&str, (usize, Vec<&str>, bool, u64)> = BTreeMap::new();
+    for (job, names) in failed {
+        let Some(run) = by_id.get(&job.run) else {
+            continue;
+        };
+        let on_main = run.branch == "main" && run.event != "pull_request";
+        for name in names {
+            let entry = tests.entry(name).or_default();
+            entry.0 += 1;
+            if !entry.1.contains(&run.branch.as_str()) {
+                entry.1.push(&run.branch);
+            }
+            entry.2 |= on_main;
+            entry.3 = entry.3.max(job.run);
+        }
+    }
+    let mut recurring: Vec<Recurring> = tests
+        .into_iter()
+        .filter(|(_, (_, branches, on_main, _))| *on_main || branches.len() > 1)
+        .map(|(name, (times, branches, on_main, last_run))| Recurring {
+            name: name.to_string(),
+            times,
+            branches: branches.len(),
+            on_main,
+            last_run,
+        })
+        .collect();
+    recurring.sort_by(|a, b| b.times.cmp(&a.times).then(a.name.cmp(&b.name)));
+    recurring
 }
 
 /// The tests a job's log reports failed, each once: nextest's `FAIL [` and `TIMEOUT [` lines, or
@@ -310,6 +375,7 @@ fn report(
     repo: &str,
     runs: &[Run],
     jobs: &[Job],
+    failed: &[(Job, Vec<String>)],
     flaky: &[(Job, Vec<String>)],
 ) -> String {
     let mut out = format!("## CI times: the last {days} days (since {since})\n\n");
@@ -365,6 +431,25 @@ fn report(
             String::new()
         };
         out += &row(&name, minutes, &extra);
+    }
+    out += "\n### Tests that failed in more than one place\n\n";
+    let recurring = recurring_failures(runs, failed);
+    if recurring.is_empty() {
+        out += "None: no test failed on main or on more than one branch.\n";
+    } else {
+        out += "Failed on main, which each change reached passing them, or on more than one \
+                branch: most likely flaky.\n\n\
+                | Test | Times | Branches | On main | Last failed in |\n|---|---|---|---|---|\n";
+        for test in recurring {
+            out += &format!(
+                "| `{}` | {} | {} | {} | [run {run}](https://github.com/{repo}/actions/runs/{run}) |\n",
+                test.name,
+                test.times,
+                test.branches,
+                if test.on_main { "yes" } else { "no" },
+                run = test.last_run,
+            );
+        }
     }
     out += "\n### Flaky tests\n\n";
     if flaky.is_empty() {
@@ -501,6 +586,11 @@ mod tests {
         Run {
             id,
             event: event.into(),
+            branch: if event == "pull_request" {
+                format!("branch-{sha}")
+            } else {
+                "main".into()
+            },
             sha: sha.into(),
             conclusion: "success".into(),
             created: 1_000,
@@ -552,10 +642,11 @@ mod tests {
     #[test]
     fn runs_and_jobs_are_read_from_the_tsv_lines() {
         assert_eq!(
-            parse_runs("7\tpull_request\tabc\tsuccess\t100\nbroken line\n"),
+            parse_runs("7\tpull_request\tfix-it\tabc\tsuccess\t100\nbroken line\n"),
             [Run {
                 id: 7,
                 event: "pull_request".into(),
+                branch: "fix-it".into(),
                 sha: "abc".into(),
                 conclusion: "success".into(),
                 created: 100,
@@ -606,6 +697,77 @@ mod tests {
             .map(|job| job.id)
             .collect();
         assert_eq!(ids, [12, 10]);
+    }
+
+    #[test]
+    fn a_test_that_failed_on_main_or_on_two_branches_recurs() {
+        let runs = [
+            run(1, "pull_request", "a"),
+            run(2, "pull_request", "a"),
+            run(3, "pull_request", "b"),
+            run(4, "push", "c"),
+            Run {
+                branch: "main".into(),
+                ..run(5, "pull_request", "d")
+            },
+        ];
+        let failed = |id, run, names: &[&str]| {
+            (
+                job(id, run, 1, "check", "failure", 5),
+                names
+                    .iter()
+                    .map(|name| name.to_string())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let failed = [
+            // Twice on one branch: a real failure until fixed.
+            failed(10, 1, &["one_branch", "two_branches"]),
+            failed(11, 2, &["one_branch"]),
+            // Then on another branch too.
+            failed(12, 3, &["two_branches"]),
+            // On a push to main.
+            failed(13, 4, &["on_main"]),
+            // A pull request from a branch named main is no push to it.
+            failed(14, 5, &["main_named_branch"]),
+            // A job of a run outside the report counts nowhere.
+            failed(15, 9, &["unknown_run"]),
+        ];
+        assert_eq!(
+            recurring_failures(&runs, &failed),
+            [
+                Recurring {
+                    name: "two_branches".into(),
+                    times: 2,
+                    branches: 2,
+                    on_main: false,
+                    last_run: 3,
+                },
+                Recurring {
+                    name: "on_main".into(),
+                    times: 1,
+                    branches: 1,
+                    on_main: true,
+                    last_run: 4,
+                },
+            ]
+        );
+        let text = report(7, "d", "o/r", &runs, &[], &failed, &[]);
+        let table = text.find(
+            "| `two_branches` | 2 | 2 | no | [run 3](https://github.com/o/r/actions/runs/3) |",
+        );
+        let main = text
+            .find("| `on_main` | 1 | 1 | yes | [run 4](https://github.com/o/r/actions/runs/4) |");
+        assert!(table.is_some() && main.is_some() && table < main, "{text}");
+        assert!(
+            text.contains("None: no job failed and then passed"),
+            "{text}"
+        );
+        let quiet = report(7, "d", "o/r", &runs, &[], &failed[..2], &[]);
+        assert!(
+            quiet.contains("None: no test failed on main or on more than one branch."),
+            "{quiet}"
+        );
     }
 
     #[test]
@@ -667,7 +829,7 @@ mod tests {
             job(15, 4, 1, "deny", "cancelled", 60),
         ];
         let flaky = [(jobs[0].clone(), vec!["e2e::practice::slow".to_string()])];
-        let text = report(7, "2026-11-03", "o/r", &runs, &jobs, &flaky);
+        let text = report(7, "2026-11-03", "o/r", &runs, &jobs, &flaky, &flaky);
         assert!(
             text.starts_with("## CI times: the last 7 days (since 2026-11-03)\n"),
             "{text}"
@@ -700,7 +862,15 @@ mod tests {
             job(11, 1, 1, "mutants (3)", "failure", 9),
         ];
         let flaky = [(jobs[0].clone(), Vec::new()), (jobs[1].clone(), Vec::new())];
-        let text = report(7, "d", "o/r", &[run(1, "pull_request", "a")], &jobs, &flaky);
+        let text = report(
+            7,
+            "d",
+            "o/r",
+            &[run(1, "pull_request", "a")],
+            &jobs,
+            &flaky,
+            &flaky,
+        );
         assert!(
             text.ends_with(
                 "Jobs that failed, then passed, with no failed test in their log:\n\n\
@@ -713,7 +883,7 @@ mod tests {
 
     #[test]
     fn a_quiet_week_says_so() {
-        let text = report(7, "d", "o/r", &[], &[], &[]);
+        let text = report(7, "d", "o/r", &[], &[], &[], &[]);
         assert!(
             text.ends_with(
                 "### Flaky tests\n\nNone: no job failed and then passed on the same commit.\n"
@@ -733,9 +903,14 @@ mod tests {
                 .to_string();
             asked.borrow_mut().push(path.clone());
             Ok(if path.contains("/workflows/ci.yml/runs") {
-                "1\tpull_request\ta\tsuccess\t0\n".into()
-            } else if path.ends_with("/jobs?per_page=100&filter=all") {
+                "1\tpull_request\tfix\ta\tsuccess\t0\n2\tpull_request\tother\tb\tfailure\t0\n"
+                    .into()
+            } else if path.ends_with("/runs/1/jobs?per_page=100&filter=all") {
                 "10\t1\tcheck\tfailure\t0\t60\n11\t2\tcheck\tsuccess\t0\t60\n".into()
+            } else if path.ends_with("/runs/2/jobs?per_page=100&filter=all") {
+                // Failed on another branch's commit, never run again: only the log tells.
+                "20\t1\tgpui (macos-latest)\tfailure\t0\t60\n21\t1\tci-passed\tfailure\t0\t0\n"
+                    .into()
             } else {
                 "test flaky::one ... FAILED\n".into()
             })
@@ -750,10 +925,17 @@ mod tests {
                     "repos/{repo}/actions/workflows/ci.yml/runs?per_page=100&created=>=2026-11-03"
                 ),
                 format!("repos/{repo}/actions/runs/1/jobs?per_page=100&filter=all"),
+                format!("repos/{repo}/actions/runs/2/jobs?per_page=100&filter=all"),
                 format!("repos/{repo}/actions/jobs/10/logs"),
+                format!("repos/{repo}/actions/jobs/20/logs"),
             ]
         );
+        // Flaky on run 1's commit once; failed on two branches in all.
         assert!(text.contains("| `flaky::one` | 1 |"), "{text}");
+        assert!(
+            text.contains("| `flaky::one` | 2 | 2 | no | [run 2](https://github.com/"),
+            "{text}"
+        );
     }
 
     #[test]
