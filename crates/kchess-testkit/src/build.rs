@@ -19,7 +19,8 @@ use std::process::{Command, Stdio};
 /// The target folder is passed on: `cargo llvm-cov` moves it with a flag that a nested build does
 /// not inherit.
 pub fn workspace_binary(package: &str, name: &str) -> PathBuf {
-    let exe = std::env::current_exe().expect("the test's own program");
+    let exe =
+        std::env::current_exe().unwrap_or_else(|error| panic!("the test's own program: {error}"));
     let locked = |folder: &Path| LOCKS.iter().any(|lock| folder.join(lock).is_file());
     let (target, profile) = target_of(&exe, locked)
         .unwrap_or_else(|| panic!("{} is in no Cargo profile folder", exe.display()));
@@ -30,7 +31,8 @@ pub fn workspace_binary(package: &str, name: &str) -> PathBuf {
             build.env_remove(key);
         }
     }
-    let output = build.stderr(Stdio::inherit()).output().expect("cargo runs");
+    let output = (build.stderr(Stdio::inherit()).output())
+        .unwrap_or_else(|error| panic!("cargo does not run: {error}"));
     assert!(output.status.success(), "{name} builds");
     executable(&String::from_utf8_lossy(&output.stdout), name)
         .unwrap_or_else(|| panic!("cargo named no program {name}"))
