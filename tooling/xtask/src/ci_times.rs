@@ -206,7 +206,7 @@ fn parse_jobs(run: u64, tsv: &str) -> Vec<Job> {
         .collect()
 }
 
-/// A matrix job under its job's name and platform: `mutants (3)` is `mutants`, and
+/// A matrix job under its job's name and platform: `fuzz (3)` is `fuzz`, and
 /// `headless (windows-latest, -p kchess-cli …)` is `headless (windows-latest)`.
 fn normalize(name: &str) -> String {
     let Some((job, rest)) = name.split_once(" (") else {
@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn matrix_jobs_count_as_their_job_and_platform() {
-        assert_eq!(normalize("mutants (3)"), "mutants");
+        assert_eq!(normalize("fuzz (3)"), "fuzz");
         assert_eq!(
             normalize("headless (windows-latest, -p kchess-cli -p xtask)"),
             "headless (windows-latest)"
@@ -681,8 +681,8 @@ mod tests {
             job(12, 1, 1, "check", "failure", 5),
             job(13, 2, 1, "check", "success", 5),
             // Another shard passing proves nothing about this one.
-            job(14, 1, 1, "mutants (0)", "failure", 3),
-            job(15, 1, 1, "mutants (1)", "success", 3),
+            job(14, 1, 1, "fuzz (0)", "failure", 3),
+            job(15, 1, 1, "fuzz (1)", "success", 3),
             // Failed on another commit only: a real failure.
             job(16, 3, 1, "gpui (windows-latest)", "failure", 9),
             // `ci-passed` only follows the other jobs.
@@ -858,8 +858,8 @@ mod tests {
     #[test]
     fn a_flaky_job_without_a_named_test_is_listed_by_job() {
         let jobs = [
-            job(10, 1, 1, "mutants (2)", "failure", 9),
-            job(11, 1, 1, "mutants (3)", "failure", 9),
+            job(10, 1, 1, "fuzz (2)", "failure", 9),
+            job(11, 1, 1, "fuzz (3)", "failure", 9),
         ];
         let flaky = [(jobs[0].clone(), Vec::new()), (jobs[1].clone(), Vec::new())];
         let text = report(
@@ -874,7 +874,7 @@ mod tests {
         assert!(
             text.ends_with(
                 "Jobs that failed, then passed, with no failed test in their log:\n\n\
-                 - mutants ×2: [job 10](https://github.com/o/r/actions/runs/1/job/10), \
+                 - fuzz ×2: [job 10](https://github.com/o/r/actions/runs/1/job/10), \
                  [job 11](https://github.com/o/r/actions/runs/1/job/11)\n"
             ),
             "{text}"

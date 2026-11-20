@@ -219,14 +219,9 @@ Each step is one pull request, each green on its own.
   failed only the macOS build.
 - No `unwrap` or `expect` outside tests: a library is linted for them (`cargo xtask check`),
   where the app's binary is not.
-- A place in the Mutants workflow's package list (`.github/workflows/mutants.yml`), with GPUI's
-  system libraries installed for it there; CI's `mutants` job installs them for every UI crate.
 - Tests that need a core, Settings, the theme and a window start `kchess_board::testing::Started`
   (`test-support`), not the app's end-to-end harness, which a crate cannot reach.
   A test of how other pages open a page sets `kchess_nav::testing::OnlyPage`, a shell holding only
   that page.
 - xtask's checks that name a file by its path (`boundaries.rs`) name its new one: a check that
   cannot find its file fails, as the clocks' did when Puzzle Rush moved.
-- Its moved lines' mutants killed: a pull request's mutants run (`cargo xtask mutants`) tests a
-  UI crate's changed lines with its own tests, not the app's, so the code it takes along needs
-  tests of its own.

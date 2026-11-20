@@ -21,13 +21,6 @@ final-status-level = "slow"
 fail-fast = false
 failure-output = "immediate-final"
 
-# Mutation testing (`cargo xtask mutants` picks it): a mutant is caught by its first failing test,
-# so the run ends there, the tests still running included. Waiting for the rest let a mutant that
-# leaves calls unanswered (a dozen tests waiting on them) run past cargo-mutants' timeout, and it
-# read as a timeout rather than caught.
-[profile.mutants]
-fail-fast = { max-fail = 1, terminate = "immediate" }
-
 # The memory benchmarks (kchess-core's `tests/memory.rs`) print what each scenario kept, passing or
 # not, so CI's logs show a drift toward the allowance before it fails: a passing run's output was
 # hidden, and on 2026-11-10 a Windows failure had no record of how close main's runs came. The

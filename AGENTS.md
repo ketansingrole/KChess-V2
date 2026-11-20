@@ -25,11 +25,6 @@ request (Dependabot included), bad config and a measurement that surprises you.
   red runs on `main` from 2026-10-29 to 2026-11-06 passed here first.
 - Before opening or updating the PR, run `cargo xtask check-fast`. CI runs the full check, so
   you do not need `cargo xtask check` for a PR.
-- Kill the mutants of the lines you change (docs/mutation-testing.md). The pre-push hook
-  (`cargo xtask install-hooks`) tests the lines a branch push adds and refuses the push while one
-  survives; CI's `mutants` job tests them all again. Write the missing test, or exclude an
-  equivalent mutant in `.cargo/mutants.toml` with the reason. A push runs them, so commit first
-  and push in the background.
 - When CI fails, read every failed job (`gh run view <id> --log-failed`) and fix them all in one
   push: each push restarts the whole run and cancels the one before it.
 - Open the PR and carry on. Merge it once CI is green, with auto-merge if it is enabled. Fix

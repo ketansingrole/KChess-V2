@@ -13,7 +13,7 @@
 //! moved test programs from `target/<profile>/deps` to `target/<profile>/build/<package>/<hash>/out`
 //! (2026-11-20), and the tests that went two folders up from their own program built the engine
 //! into `target/debug/build/kchess-cli` and looked for it where it never was. `CACHEDIR.TAG` marks
-//! only a target folder Cargo made itself: cargo-mutants' copies have none.
+//! only a target folder Cargo made itself: a copied one has none.
 
 use std::fs::File;
 use std::io;
@@ -332,7 +332,7 @@ mod tests {
     }
 
     /// Cargo 1.100's layout and the one before it give the same profile, in a target folder with
-    /// no `CACHEDIR.TAG` too (cargo-mutants' copies, 2026-11-20).
+    /// no `CACHEDIR.TAG` too (a copied target folder).
     #[test]
     fn the_profile_is_the_nearest_locked_folder_above_the_test() {
         let locked = |folder: &Path| {

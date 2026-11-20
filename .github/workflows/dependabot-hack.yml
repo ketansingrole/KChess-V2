@@ -34,7 +34,7 @@ jobs:
       # xtask's build, read only.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          shared-key: mutants
+          shared-key: check
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: false
       - uses: ./.github/actions/install-tools

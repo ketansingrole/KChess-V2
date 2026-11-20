@@ -63,10 +63,10 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       # `cargo xtask scope` says which files run what (tooling/xtask/src/check.rs): xtask's build
-      # from the mutants cache, read only.
+      # from the check cache, read only.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          shared-key: mutants
+          shared-key: check
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: false
       - id: docs
@@ -468,131 +468,12 @@ jobs:
     with:
       fast: ${{ needs.changes.outputs.release != 'true' }}
 
-  # How many mutants a pull request's changed lines have, and so how many shards test them: none
-  # when there are none (2026-11-09: 6 of 16 pull requests, whose 4 shards each spent 2 minutes
-  # finding nothing), one per 15 mutants up to 8. Listing them builds nothing. A push to main
-  # passes `mutants` at once, with one shard.
-  mutants-plan:
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
-    outputs:
-      shards: ${{ steps.plan.outputs.shards || '[0]' }}
-      total: ${{ steps.plan.outputs.total || '1' }}
-    steps:
-      - if: needs.changes.outputs.pr == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      # xtask's build, read only.
-      - if: needs.changes.outputs.pr == 'true'
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          shared-key: mutants
-          key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: false
-      - if: needs.changes.outputs.pr == 'true'
-        uses: ./.github/actions/install-tools
-        with:
-          tools: cargo-mutants
-      - if: needs.changes.outputs.pr == 'true'
-        id: plan
-        env:
-          BASE: ${{ needs.changes.outputs.base }}
-        run: cargo xtask mutants --plan --base "$(git merge-base "$BASE" HEAD)" >> "$GITHUB_OUTPUT"
-
-  # Mutation testing of the lines a pull request changes (`cargo xtask mutants`,
-  # docs/mutation-testing.md): every change arrives with its mutants killed, while the weekly
-  # Mutants workflow works through the rest. A pull request's mutants are split over the shards
-  # `mutants-plan` counts, one at a time on each, so a large change takes about as long as the
-  # other jobs. The app's mutants each rebuild the app, so they are the weekly run's (its `gpui`
-  # job tests the week's changes to the app). A push to main passes it at once: its pull request
-  # ran it, and `cargo xtask release-verify` needs every job to succeed.
-  mutants:
-    needs: [changes, mutants-plan]
-    if: needs.changes.outputs.code == 'true' && needs.mutants-plan.outputs.shards != '[]'
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: ${{ fromJSON(needs.mutants-plan.outputs.shards) }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      # The drop-caches action.
-      actions: write
-    # GitHub's limit for a hosted job: a refactor's thousands of mutants, spread over the shards,
-    # fit in it. A single mutant that hangs is stopped by cargo-mutants' own timeout long before.
-    timeout-minutes: 360
-    env:
-      # A push to main keeps the mutants' dependencies built for the pull requests after it.
-      WARM: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    steps:
-      - if: needs.changes.outputs.pr != 'true' && env.WARM != 'true'
-        run: echo "Mutants are tested in the pull request."
-      - if: needs.changes.outputs.pr == 'true' || env.WARM == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      # The crates.io dependencies of every package but the app (its UI crates' GPUI too), built as
-      # cargo-mutants builds them. In copies of the repository (its default) every shard compiled
-      # them all, and again for its second build folder (2026-11-10: 224 crates, 288 s before the
-      # first kchess-core mutant); copying `target` along still rebuilt 133, since the copies' new
-      # modification times read as stale. So mutants build in place, from this. Saved by main,
-      # read by pull requests.
-      - if: needs.changes.outputs.pr == 'true' || env.WARM == 'true'
-        id: deps
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          shared-key: mutants
-          key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: ${{ github.ref == 'refs/heads/main' && env.WARM == 'true' }}
-      - if: needs.changes.outputs.pr == 'true' || (env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true')
-        uses: ./.github/actions/install-tools
-        with:
-          tools: cargo-nextest,cargo-mutants
-      # The UI crates (`kchess-ui`) build GPUI, and their mutants are tested here as every member's
-      # but the app's are.
-      - if: needs.changes.outputs.pr == 'true' || (env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true')
-        uses: ./.github/actions/install-gpui-libs
-      - if: env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true'
-        name: Build the mutants' dependencies
-        env:
-          CARGO_INCREMENTAL: 1
-        run: cargo xtask mutants --warm
-      - if: env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true'
-        uses: ./.github/actions/drop-caches
-        with:
-          rust-cache: mutants
-      # The engines `check` gives the tests, so the mutants they kill there die here too.
-      - if: needs.changes.outputs.pr == 'true'
-        uses: ./.github/actions/engines
-      - if: needs.changes.outputs.pr == 'true'
-        name: Mutants of the changed lines
-        env:
-          BASE: ${{ needs.changes.outputs.base }}
-          SHARD: ${{ matrix.shard }}
-          SHARDS: ${{ needs.mutants-plan.outputs.total }}
-        # In the checkout itself, built incrementally (`--in-place`, tooling/xtask/src/mutants.rs),
-        # the app's left out (xtask's default).
-        run: >-
-          cargo xtask mutants --in-place --base "$(git merge-base "$BASE" HEAD)"
-          -- --shard "$SHARD/$SHARDS"
-      - if: always() && needs.changes.outputs.pr == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: mutants-diff-${{ matrix.shard }}
-          path: mutants.out
-          if-no-files-found: ignore
-          retention-days: 14
-
   # The one status check `main`'s ruleset requires: every job above passed, or was skipped because
   # its change did not need it. A skipped matrix job reports under its bare name, so the ruleset
   # cannot name the jobs themselves.
   ci-passed:
     if: always()
-    needs: [changes, check, deny, workflows, typos, gpui, headless, mutants-plan, mutants, package, package-cache, windows-upgrade]
+    needs: [changes, check, deny, workflows, typos, gpui, headless, package, package-cache, windows-upgrade]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or was skipped

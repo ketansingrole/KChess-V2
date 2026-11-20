@@ -6,7 +6,7 @@ description: >-
 
 inputs:
   name:
-    description: What ran, as the issue's title names it ("Fuzz", "Mutants of the rules").
+    description: What ran, as the issue's title names it ("Fuzz", "Nightly CI").
     required: true
   failed:
     description: Whether any of the run's jobs failed or was cancelled ('true' or 'false').

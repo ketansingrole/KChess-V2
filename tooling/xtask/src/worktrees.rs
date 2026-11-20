@@ -9,11 +9,9 @@
 //! - once it has not been built for [`IDLE`],
 //!
 //! and while the disk has less than [`LOW`] free, the least recently built of the rest until it
-//! has. It never deletes a build folder while a build holds Cargo's lock on it, nor the mutants
-//! tree of a push in progress, nor anything but `target`: the worktree, its changes and its
-//! commits stay. A deleted build folder costs its worktree one full build.
+//! has. It never deletes a build folder while a build holds Cargo's lock on it, nor anything but
+//! `target`: the worktree, its changes and its commits stay. A deleted build folder costs its worktree one full build.
 
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -240,15 +238,12 @@ fn least_recent_first(folders: Vec<Folder>) -> Vec<Folder> {
 }
 
 /// Deletes the build folder `target` unless a build holds Cargo's lock on one of its profile
-/// folders (or the mutants tree's lock, for a mutants tree's): whether it went.
+/// folders: whether it went.
 ///
 /// Its contents go while the locks are held, so no build starts in it meanwhile; the lock files
 /// themselves go after, since Windows deletes no file that is open. A build that starts in
 /// between finds an empty folder and builds it again.
 fn delete(target: &Path) -> bool {
-    let Some(_tree) = mutants_tree_lock(target) else {
-        return false;
-    };
     let profiles = crate::sweep::profile_folders(target);
     let mut locks = Vec::new();
     for profile in &profiles {
@@ -264,21 +259,6 @@ fn delete(target: &Path) -> bool {
     remove_all_but(target, &held);
     drop(locks);
     std::fs::remove_dir_all(target).is_ok()
-}
-
-/// For the build folder of a checkout's mutants tree (`<checkout>/.data/mutants-tree/target`),
-/// the tree's lock, held, or `None` while a push uses the tree; for any other folder, a lock
-/// that holds nothing.
-fn mutants_tree_lock(target: &Path) -> Option<Option<File>> {
-    let checkout = target
-        .parent()
-        .filter(|tree| tree.ends_with(crate::mutants_tree::TREE))
-        .and_then(|tree| tree.parent())
-        .and_then(Path::parent);
-    match checkout {
-        Some(checkout) => crate::mutants_tree::idle_target(checkout).map(|(_, lock)| Some(lock)),
-        None => Some(None),
-    }
 }
 
 /// Deletes everything inside `folder` except the files in `kept` and the folders that hold them.
@@ -366,6 +346,7 @@ fn df_available(text: &str) -> Option<u64> {
 mod tests {
     use super::*;
     use crate::util::git;
+    use std::fs::File;
 
     const HOUR: Duration = Duration::from_secs(3600);
 
@@ -424,24 +405,6 @@ mod tests {
             said[0].starts_with("Could not list the other worktrees"),
             "{said:?}"
         );
-    }
-
-    #[test]
-    fn a_mutants_tree_a_push_holds_keeps_its_build_folder() {
-        let dir = tempfile::tempdir().unwrap();
-        let target = built(&dir.path().join(crate::mutants_tree::TREE));
-        let push = File::options()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(dir.path().join(crate::mutants_tree::LOCK))
-            .unwrap();
-        push.try_lock().unwrap();
-        assert!(!delete(&target));
-        assert!(target.is_dir());
-        drop(push);
-        assert!(delete(&target));
-        assert!(!target.exists());
     }
 
     #[test]

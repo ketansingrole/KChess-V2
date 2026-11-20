@@ -1506,8 +1506,7 @@ mod tests {
     }
 
     /// How long the core may take to answer a status read, which it answers at once: a read
-    /// that never lands fails the test inside the 20 s `cargo mutants` gives a test, which would
-    /// otherwise report a hang instead of a caught mutant.
+    /// that never lands fails the test promptly instead of hanging until the runner's timeout.
     const ANSWER: std::time::Duration = std::time::Duration::from_secs(10);
 
     /// The board's online state once its startup check has ended and the core lends help.

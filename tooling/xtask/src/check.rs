@@ -305,8 +305,8 @@ fn package_of(file: &str) -> Option<String> {
 /// What a change to a file asks `check-fast` to run.
 #[derive(Debug, PartialEq)]
 enum Scope {
-    /// Nothing `check-fast` runs reads it: documents, the site, the mutants' exclusions
-    /// (`.cargo/mutants.toml`, read only by `cargo mutants`), cargo-deny's and the hooks' settings.
+    /// Nothing `check-fast` runs reads it: documents, the site, cargo-deny's and the hooks'
+    /// settings.
     Nothing,
     /// Only the format and lints read it.
     Lints,
@@ -328,9 +328,6 @@ const EVERYTHING: [&str; 5] = [
     "tooling/macos-dev-runner.sh",
 ];
 
-/// cargo-mutants' settings: under `.cargo/`, but no build or test reads them.
-const MUTANTS_SETTINGS: &str = ".cargo/mutants.toml";
-
 /// rustfmt's and clippy's settings: the format and lints read them, no test does.
 const LINT_SETTINGS: [&str; 4] = [
     "rustfmt.toml",
@@ -347,7 +344,7 @@ const READ_BY_XTASK: [&str; 3] = ["apps/", "crates/", "tooling/"];
 /// (`package_of`). Anything inside a package counts, as `include_str!`, `build.rs` or a test may
 /// read it (a release key once skipped every test this way).
 fn scope_of(file: &str, package: Option<String>) -> Scope {
-    if EVERYTHING.contains(&file) || (file.starts_with(".cargo/") && file != MUTANTS_SETTINGS) {
+    if EVERYTHING.contains(&file) || file.starts_with(".cargo/") {
         return Scope::Everything;
     }
     if LINT_SETTINGS.contains(&file) {
@@ -606,8 +603,8 @@ pub fn push_problem(pushes: &[(String, String)], head: &str, status: &str) -> Op
     })
 }
 
-/// The pre-push hook: pushes to main must pass the full `check` first; other branches the
-/// mutants of their new lines (`branch_mutants`). Skip on purpose with `KCHESS_SKIP_PRE_PUSH=1`.
+/// The pre-push hook: pushes to main must pass the full `check` first; other branches push
+/// freely (CI tests them). Skip on purpose with `KCHESS_SKIP_PRE_PUSH=1`.
 pub fn pre_push() -> Result {
     let mut input = String::new();
     std::io::stdin()
@@ -615,7 +612,7 @@ pub fn pre_push() -> Result {
         .map_err(|cause| cause.to_string())?;
     let pushes = main_pushes(&input);
     if pushes.is_empty() {
-        return branch_mutants(&input);
+        return Ok(());
     }
     if std::env::var("KCHESS_SKIP_PRE_PUSH").as_deref() == Ok("1") {
         say("KCHESS_SKIP_PRE_PUSH=1: pushing to main without `cargo xtask check`.");
@@ -633,143 +630,6 @@ pub fn pre_push() -> Result {
     }
     say("Pushing to main: running `cargo xtask check`…");
     check(&[]).map_err(|cause| format!("Push to main refused: {cause}"))
-}
-
-/// A push of another branch: the mutants of the lines it sends, so a survivor stops the push here
-/// rather than failing CI's `mutants` job a quarter of an hour later. Only the lines new since the
-/// branch's last push, which was tested then; the app's are left out as in CI. They are tested in
-/// the checkout's own mutants tree (`mutants_tree`), set to the pushed commit, so each push
-/// rebuilds only what changed since the last: one at a time in place as in CI, or a big push's
-/// several at once in copies of the built tree (`jobs_for`); a push of anything but
-/// a clean HEAD, or without cargo-mutants, skips it: CI still runs them all.
-fn branch_mutants(input: &str) -> Result {
-    let head = output("git", &["rev-parse", "HEAD"])?;
-    let Some(remote) = head_push(input, head.trim()) else {
-        return Ok(());
-    };
-    if std::env::var("KCHESS_SKIP_PRE_PUSH").as_deref() == Ok("1") {
-        say("KCHESS_SKIP_PRE_PUSH=1: pushing without testing the changed lines' mutants.");
-        return Ok(());
-    }
-    let status = output(
-        "git",
-        &["status", "--porcelain", "--untracked-files=normal"],
-    )?;
-    if !status.trim().is_empty() {
-        say("Uncommitted or untracked files: not testing mutants before the push (CI does).");
-        return Ok(());
-    }
-    if !available("cargo", &["mutants", "--version"]) {
-        say(
-            "cargo-mutants is not installed (`cargo install cargo-mutants`): CI tests the mutants.",
-        );
-        return Ok(());
-    }
-    let is_ancestor = |remote: &str| {
-        Command::new("git")
-            .args(["merge-base", "--is-ancestor", remote, head.trim()])
-            .status()
-            .is_ok_and(|status| status.success())
-    };
-    let base = match mutants_base(&remote, is_ancestor) {
-        Some(base) => base.to_string(),
-        None => crate::util::merge_base(&root())?,
-    };
-    let refused = |cause| {
-        format!("Push refused: {cause}\nSkip on purpose with KCHESS_SKIP_PRE_PUSH=1 git push …")
-    };
-    let checkout = root();
-    let tree = crate::mutants_tree::prepare(&checkout, head.trim()).map_err(refused)?;
-    for message in crate::sweep::mutants_tree(&tree.target(), false) {
-        say(&message);
-    }
-    // The same lines and files as the run: the app's left out.
-    let count = crate::mutants::count_since(&tree.path, "cargo", &base, &[]).map_err(refused)?;
-    let cpus = std::thread::available_parallelism().map_or(1, |cpus| cpus.get());
-    let jobs = jobs_for(count, cpus);
-    if jobs > 1 {
-        say(&format!(
-            "{count} mutants: testing {jobs} at a time, each in a copy of the built tree."
-        ));
-    }
-    let args = branch_mutants_args(&base, &checkout, jobs);
-    crate::mutants::run_in(&tree.path, "cargo", &args).map_err(refused)
-}
-
-/// The remote's current commit for the pushed branch whose new commit is `head`, from the hook's
-/// standard input; none when no such branch is pushed (a delete, a tag, another commit).
-fn head_push(input: &str, head: &str) -> Option<String> {
-    input.lines().find_map(|line| {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        let [_, local_sha, remote_ref, remote_sha] = fields.as_slice() else {
-            return None;
-        };
-        (*local_sha == head && remote_ref.starts_with("refs/heads/"))
-            .then(|| (*remote_sha).to_string())
-    })
-}
-
-/// What the push's mutants are measured from: the branch's previous push, when the remote has one
-/// and this push builds on it (`is_ancestor`), since that push tested the lines before it; else
-/// none, for where the branch left main.
-fn mutants_base(remote: &str, is_ancestor: impl Fn(&str) -> bool) -> Option<&str> {
-    (!remote.bytes().all(|b| b == b'0') && is_ancestor(remote)).then_some(remote)
-}
-
-/// `cargo xtask mutants`' arguments for a branch push from `base`: CI's (the app left out), with
-/// the results in `checkout`'s `mutants.out`, where the pusher looks for them.
-///
-/// One job (`jobs_for`) tests them one at a time, in place, in the tree kept built: for a few
-/// mutants that beats copies built afresh (2026-11-10, the 4 kchess-core mutants of 9e39cc7f took
-/// 92 s on the next push against 337 s four at once, each build 8–19 s against 38–254 s). More test
-/// that many at once, each in cargo-mutants' own copy of the tree with its build (`--copy-target`,
-/// which APFS and other copy-on-write file systems clone rather than copy), so a job rebuilds
-/// the workspace's crates (at their new path) but not their dependencies.
-fn branch_mutants_args(base: &str, checkout: &Path, jobs: usize) -> Vec<String> {
-    let out = checkout.to_string_lossy();
-    if jobs <= 1 {
-        return ["--base", base, "--in-place", "--", "--output", &out]
-            .map(String::from)
-            .to_vec();
-    }
-    let jobs = jobs.to_string();
-    [
-        "--base",
-        base,
-        "--",
-        "--output",
-        &out,
-        "--jobs",
-        &jobs,
-        "--copy-target",
-        "true",
-    ]
-    .map(String::from)
-    .to_vec()
-}
-
-/// From how many mutants a branch push tests several at once (`jobs_for`). 2026-11-11, the 25
-/// kchess-domain mutants of 1efd5324 on a busy 10-core Mac: 294 s in place (about 12 s each),
-/// 174 s five at once with copied builds (the same outcomes). The copies paid about 115 s up
-/// front (28 s for the baseline, then 65–91 s for each copy's first build, which rebuilds the
-/// workspace's crates at their new path) and then 13 s a mutant per job, so they win from about
-/// 11 kchess-domain mutants. The core's first builds in a copy take longer (38–254 s, 2026-11-10,
-/// `branch_mutants_args`'s note), which moves its break-even towards 30.
-const PARALLEL_FROM: usize = 30;
-
-/// The most mutants a branch push tests at once: each job's builds and tests take several cores
-/// and a few gigabytes, and the machine is still in use.
-const MAX_JOBS: usize = 6;
-
-/// How many mutants a branch push of `count` tests at once on a machine of `cpus`: one, in place,
-/// below `PARALLEL_FROM`, where a copy's first build costs more than it saves; then half the
-/// CPUs, leaving the rest to the jobs' own builds and to whoever uses the machine, up to
-/// `MAX_JOBS`.
-fn jobs_for(count: usize, cpus: usize) -> usize {
-    if count < PARALLEL_FROM {
-        return 1;
-    }
-    (cpus / 2).clamp(1, MAX_JOBS)
 }
 
 /// Point Git at the repository's hooks, unless the clone already uses others on purpose.
@@ -1006,76 +866,6 @@ mod tests {
     }
 
     #[test]
-    fn a_branch_push_is_found_by_its_head() {
-        let input = "refs/heads/topic abc123 refs/heads/topic 999\n\
-                     refs/tags/v1 abc123 refs/tags/v1 000\n\
-                     refs/heads/other def456 refs/heads/other 888\n";
-        assert_eq!(head_push(input, "abc123").as_deref(), Some("999"));
-        assert_eq!(head_push(input, "def456").as_deref(), Some("888"));
-        assert_eq!(head_push(input, "fff"), None);
-        assert_eq!(
-            head_push("refs/tags/v1 abc123 refs/tags/v1 000\n", "abc123"),
-            None
-        );
-        assert_eq!(head_push("refs/heads/topic abc123\n", "abc123"), None);
-    }
-
-    #[test]
-    fn a_branch_push_tests_only_what_its_last_push_did_not() {
-        assert_eq!(mutants_base("999", |_| true), Some("999"));
-        // A rewritten branch: its previous push is not under this one.
-        assert_eq!(mutants_base("999", |_| false), None);
-        // A new branch: nothing pushed yet, measured from main.
-        assert_eq!(
-            mutants_base("0000", |_| panic!("no commit to ask about")),
-            None
-        );
-        assert_eq!(mutants_base("0a00", |_| true), Some("0a00"));
-    }
-
-    #[test]
-    fn a_push_tests_many_mutants_at_once_and_few_in_place() {
-        assert_eq!(jobs_for(0, 10), 1);
-        assert_eq!(jobs_for(PARALLEL_FROM - 1, 10), 1);
-        assert_eq!(jobs_for(PARALLEL_FROM, 10), 5);
-        assert_eq!(jobs_for(5282, 10), 5);
-        // Half the CPUs, at least one and at most `MAX_JOBS`.
-        assert_eq!(jobs_for(5282, 7), 3);
-        assert_eq!(jobs_for(5282, 1), 1);
-        assert_eq!(jobs_for(5282, 64), MAX_JOBS);
-    }
-
-    #[test]
-    fn a_push_s_mutants_land_in_the_checkout_one_job_in_place() {
-        let checkout = Path::new("/work/kchess");
-        assert_eq!(
-            branch_mutants_args("abc", checkout, 1),
-            [
-                "--base",
-                "abc",
-                "--in-place",
-                "--",
-                "--output",
-                "/work/kchess"
-            ]
-        );
-        assert_eq!(
-            branch_mutants_args("abc", checkout, 4),
-            [
-                "--base",
-                "abc",
-                "--",
-                "--output",
-                "/work/kchess",
-                "--jobs",
-                "4",
-                "--copy-target",
-                "true"
-            ]
-        );
-    }
-
-    #[test]
     fn a_push_must_be_the_clean_head() {
         let pushes = [("refs/heads/main".to_string(), "abc123".to_string())];
         assert_eq!(push_problem(&pushes, "abc123", ""), None);
@@ -1237,7 +1027,6 @@ mod tests {
         for file in [
             "THIRD_PARTY_NOTICES.md",
             "apps/gpui/WHATS_NEW.md",
-            ".cargo/mutants.toml",
             "deny.toml",
         ] {
             assert!(!is_document(file), "{file}");
@@ -1262,7 +1051,6 @@ mod tests {
             "apps/gpui/src/explorer.rs",
             "tooling/xtask/src/bench.rs",
             "docs/releasing.md",
-            ".cargo/mutants.toml",
             ".github/workflows/fuzz.yml",
         ] {
             assert!(!is_packaging(file, &modules), "{file}");
@@ -1388,7 +1176,7 @@ checksum = "aa"
     fn each_change_tests_what_reads_it() {
         let all = |member: &[&str]| member.iter().map(|s| s.to_string()).collect();
         let domain = all(&["kchess-cli", "kchess-core", "kchess-domain", "kchess-gpui"]);
-        let cases: [(&[&str], Selection); 22] = [
+        let cases: [(&[&str], Selection); 21] = [
             (&[".cargo/config.toml"], Selection::Everything),
             (&[".cargo/config"], Selection::Everything),
             (&["rust-toolchain.toml"], Selection::Everything),
@@ -1396,7 +1184,6 @@ checksum = "aa"
             (&["tooling/macos-dev-runner.sh"], Selection::Everything),
             (&["Cargo.toml"], Selection::Everything),
             (&["Cargo.lock", "docs/releasing.md"], Selection::Everything),
-            (&[".cargo/mutants.toml"], Selection::Nothing),
             (&["docs/releasing.md", "AGENTS.md"], Selection::Nothing),
             (&["fuzz/fuzz_targets/pgn.rs"], Selection::Nothing),
             (&["clippy.toml"], Selection::Lints),
