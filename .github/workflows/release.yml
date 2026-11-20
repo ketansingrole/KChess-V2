@@ -64,10 +64,9 @@ jobs:
         if: runner.os == 'Windows'
         uses: ./.github/actions/install-nsis
       # Restored, never saved (`save-if`): zizmor's `cache-poisoning`, in .github/zizmor.yml.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           shared-key: package
-          add-rust-environment-hash-key: false
           save-if: false
       # The packager signs with codesign directly, so the certificate goes into a keychain of this
       # job's own, and the identity is named by its hash.
