@@ -294,7 +294,8 @@ fn an_edited_study_is_summarized_again(cx: &mut gpui_kit::TestAppContext) {
 /// Only the cards in view are made, laid out and drawn: fifty studies' cards (the limit) were most
 /// of opening the page. Scrolled down with the wheel, the cards coming into view are made and those
 /// left behind are let go, and the grid keeps its height, so the oldest study can be reached;
-/// scrolled back by the page itself, which asks for no frame, the first cards come back.
+/// scrolled back by the page itself, which asks for no frame, the first cards come back with the
+/// next frame the window draws for any other reason.
 #[gpui_kit::test]
 fn only_the_studies_in_view_are_made(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
@@ -417,13 +418,23 @@ fn only_the_studies_in_view_are_made(cx: &mut gpui_kit::TestAppContext) {
             .read(cx)
             .scroll_to_top();
     });
-    app.wait_for("the first cards again", |window, cx| {
+    // One frame of the whole window, as a resize or a change of theme draws: the page, measuring
+    // the grid where it now is, asks for the frames after it itself. Counted in frames, not time:
+    // a bare draw reuses the page as it was cached, and the wait found the cards only when the
+    // review queue's first report redrew the window 10 s after launch.
+    app.with_window(|window, _| window.refresh());
+    let mut frames = 0;
+    while !app.with_window(|window, cx| {
         window.draw(cx).clear(cx);
         window
             .elements()
             .iter()
             .any(|element| element.label() == Some("Actions for Study 49"))
-    });
+    }) {
+        frames += 1;
+        assert!(frames < 20, "the first cards come back within a few frames");
+        app.tick();
+    }
 }
 
 #[gpui_kit::test]
