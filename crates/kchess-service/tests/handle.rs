@@ -203,6 +203,7 @@ async fn an_answered_call_is_not_cancelled() {
         value: Some(json!(1)),
         error: None,
         kind: None,
+        aborted: false,
     };
     write_frame(&mut stream, &answer).await.expect("answer");
     assert_eq!(calling.await.expect("joined"), Ok(json!(1)));

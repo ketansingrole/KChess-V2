@@ -870,6 +870,87 @@ fn a_cancelled_link_import_leaves_the_board_alone(cx: &mut gpui_kit::TestAppCont
     assert!(!app.shows("tree-e2e4"), "the late game replaced the board");
 }
 
+/// The board's last search's client id, and whether the engine is searching.
+fn engine_search(app: &mut Harness) -> (Option<u64>, bool) {
+    app.with_window(|_, cx| {
+        let page = crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .expect("the analysis board");
+        page.read(cx).engine_search()
+    })
+}
+
+/// Send `stopAnalysis` naming `client`'s search, and wait for the core's answer.
+fn stop_search(app: &mut Harness, client: Option<u64>, kill: bool) {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let answered = Arc::new(AtomicBool::new(false));
+    let stop = app.cx.update(|cx| {
+        cx.global::<crate::core::AppCore>()
+            .request(kchess_contracts::calls::StopAnalysis {
+                kill: kill.then_some(true),
+                client: client.map(kchess_contracts::check::Bounded),
+            })
+    });
+    let done = Arc::clone(&answered);
+    app.cx
+        .background_executor
+        .spawn(async move {
+            stop.await.expect("the stop is answered");
+            done.store(true, Ordering::SeqCst);
+        })
+        .detach();
+    app.wait_for("the stop's answer", |_, _| answered.load(Ordering::SeqCst));
+}
+
+/// The board stops its search and starts the next as you step. The core runs calls in any order,
+/// and a stop that ran after the next start aborted it: the engine line read "This operation was
+/// aborted" and the engine stayed quiet until the next move. The stop for the earlier search, run
+/// late (kill and all), now leaves the board searching.
+#[gpui_kit::test]
+fn a_stop_that_lands_after_the_next_search_leaves_the_engine_searching(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut app = Harness::start(cx);
+    // An infinite search runs until stopped, so a stop that ends it shows.
+    app.cx
+        .update(|cx| crate::prefs::set(cx, crate::pages::analysis::INFINITE, true));
+    app.open("Analysis board");
+    app.find("chess-board");
+    wait_for_search(&mut app);
+    let (first, busy) = engine_search(&mut app);
+    assert!(first.is_some() && busy, "the board searches the start");
+
+    import(&mut app, "1. e4");
+    app.wait_for("the search of the next position", |_, cx| {
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx).is_some_and(|page| {
+            let page = page.read(cx);
+            let (client, busy) = page.engine_search();
+            client != first && busy && page.engine_text(cx).starts_with("Depth ")
+        })
+    });
+    let (next, _) = engine_search(&mut app);
+
+    stop_search(&mut app, first, true);
+    app.settle();
+    let (client, busy) = engine_search(&mut app);
+    assert_eq!(client, next);
+    assert!(busy, "the late stop ended the board's search");
+    let text = app.with_window(|_, cx| {
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .expect("the analysis board")
+            .read(cx)
+            .engine_text(cx)
+    });
+    assert!(text.starts_with("Depth "), "{text}");
+
+    // Its own stop ends it, so the check above can fail.
+    stop_search(&mut app, next, false);
+    app.wait_for("the board's search to end", |_, cx| {
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .is_some_and(|page| !page.read(cx).engine_search().1)
+    });
+}
+
 /// The FEN of the position the analysis board shows.
 fn shown_fen(app: &mut Harness) -> String {
     app.with_window(|_, cx| {
