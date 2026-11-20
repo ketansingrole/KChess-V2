@@ -202,15 +202,15 @@ pub fn init(cx: &mut App) {
             Map::new()
         }
     };
+    let mut prefs = ViewPreferences::read(values);
     let (writes, queue) = mpsc::unbounded();
-    let failed = Failed::default();
-    let sending = Sending::default();
+    prefs.writes = Some(writes);
     let core = cx.global::<AppCore>().clone();
     cx.background_executor()
         .spawn(write_in_order(
             queue,
-            Arc::clone(&failed),
-            Arc::clone(&sending),
+            Arc::clone(&prefs.failed),
+            Arc::clone(&prefs.sending),
             move |key, value| {
                 let save = core.request(calls::SetViewPreference {
                     key: ViewPreferenceKey(key.clone()),
@@ -229,12 +229,7 @@ pub fn init(cx: &mut App) {
             },
         ))
         .detach();
-    cx.set_global(ViewPreferences {
-        failed,
-        writes: Some(writes),
-        sending,
-        ..ViewPreferences::read(values)
-    });
+    cx.set_global(prefs);
     crate::quit::on_quit(cx, |cx| {
         cx.try_global::<ViewPreferences>()
             .map(ViewPreferences::flushed)
@@ -553,6 +548,56 @@ mod tests {
             assert!(used(cx));
             assert_eq!(get(cx, "kchess:tab", String::new()), "games");
         });
+    }
+
+    /// The app starts with what the core keeps, and its changes reach the core.
+    #[gpui_kit::test]
+    fn the_preferences_are_read_from_the_core_and_saved_to_it(cx: &mut gpui_kit::TestAppContext) {
+        let _core = cx.update(crate::tests::start_core);
+        let core = cx.update(|cx| cx.global::<AppCore>().bridge.clone());
+        core.request_now(calls::SetViewPreference {
+            key: ViewPreferenceKey("kchess:test-tab".into()),
+            value: Some(json!("games")),
+        })
+        .expect("saved");
+        cx.update(init);
+        cx.update(|cx| {
+            assert_eq!(get(cx, "kchess:test-tab", String::new()), "games");
+            assert!(used(cx));
+            set(cx, "kchess:test-tab", "studies");
+        });
+        let flushed = cx.update(|cx| cx.global::<ViewPreferences>().flushed());
+        cx.executor().allow_parking();
+        assert_eq!(cx.foreground_executor().block_test(flushed), Ok(()));
+        let saved = core
+            .request_now(calls::ViewPreferences {})
+            .expect("the preferences");
+        assert_eq!(saved["kchess:test-tab"], json!("studies"));
+    }
+
+    /// A file that is not there is no trouble; one that cannot be read is logged and left.
+    #[gpui_kit::test]
+    fn only_a_file_that_cannot_be_read_is_logged(cx: &mut gpui_kit::TestAppContext) {
+        let dir = tempfile::tempdir().expect("a folder");
+        crate::log::init(dir.path());
+        let missing = dir.path().join("missing-old-setting.json");
+        // A folder where the file should be: there, but not readable as text.
+        let unreadable = dir.path().join("unreadable-old-setting.json");
+        std::fs::create_dir(&unreadable).expect("the folder");
+        let read = |text: &str| serde_json::from_str::<Value>(text).ok();
+        cx.update(|cx| {
+            cx.set_global(ViewPreferences::default());
+            take_file(cx, "kchess:test-old", &missing, read);
+            take_file(cx, "kchess:test-old", &unreadable, read);
+            assert_eq!(get(cx, "kchess:test-old", 0), 0);
+        });
+        let log = crate::log::read().join("");
+        assert!(!log.contains("missing-old-setting"), "{log}");
+        assert!(
+            log.contains("unreadable-old-setting.json unreadable"),
+            "{log}"
+        );
+        assert!(unreadable.exists());
     }
 
     /// An earlier release's file becomes the preference, wins over one saved before it, and is
