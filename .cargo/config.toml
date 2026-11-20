@@ -2,6 +2,13 @@
 [alias]
 xtask = "run -q -p xtask --"
 
+# Every target, joined with its own flags below: Rust's v0 symbol names, as Zed builds with, so a
+# backtrace names a closure by the function it is in and a generic by its types (`{closure#0}` in
+# `Board::render`, not a hash). The shipped builds drop local symbols, so it is the development and
+# test builds' backtraces it reads better.
+[target.'cfg(all())']
+rustflags = ["-C", "symbol-mangling-version=v0"]
+
 # macOS: the linker drops local symbols itself (-x). `strip` from recent Xcode releases leaves
 # large dylibs with a mis-aligned LINKEDIT string pool that dyld refuses to load.
 [target.aarch64-apple-darwin]
