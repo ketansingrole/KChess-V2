@@ -269,6 +269,41 @@ fn a_game_without_moves_is_aborted(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(writes(&lichess), ["POST /api/board/game/E2eGame1/abort"]);
 }
 
+/// A game that starts while KChess is in the background comes to its board on the Online page,
+/// and the system notification says so.
+#[gpui_kit::test]
+fn a_game_that_starts_comes_to_its_board_and_says_so(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, lichess) = Harness::signed_in(cx, false);
+    app.cx.update(|cx| {
+        crate::settings::change(cx, |s| {
+            s.frontend.notifications_enabled = true;
+            s.frontend.notify_background = true;
+        })
+    });
+    app.wait_for("the event stream to open", |_, _| {
+        lichess.lock().streams == 1
+    });
+    gpui_kit::VisualTestContext::from_window(app.window, &app.cx).deactivate_window();
+    lichess.start_game();
+    app.wait_for("the Online page", |_, cx| {
+        crate::shell::current_page(cx) == Some(crate::pages::Page::Online)
+    });
+    app.find("online-abort");
+    let told: Vec<(String, String)> = app
+        .cx
+        .shown_system_notifications()
+        .iter()
+        .map(|shown| (shown.title.to_string(), shown.body.to_string()))
+        .collect();
+    assert!(
+        told.contains(&(
+            "Game started".into(),
+            "You are playing Opponent as white.".into()
+        )),
+        "{told:?}"
+    );
+}
+
 #[gpui_kit::test]
 fn a_game_under_way_comes_to_the_board_when_signing_in(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _lichess) = Harness::signed_in(cx, true);

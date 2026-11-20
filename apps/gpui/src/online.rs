@@ -84,35 +84,6 @@ pub fn now() -> f64 {
     START.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.
 }
 
-/// What the live game asks of the app around it: the system's notifications and the Online
-/// page. The app sets them as it starts (`cx.set_global(Hooks { .. })`); until then, and in a
-/// crate's own tests, nothing is shown.
-#[derive(Clone, Copy)]
-pub struct Hooks {
-    /// A notice of `kind`, as a system notification when the window is not in front.
-    pub notify: fn(NotificationKind, &str, &str, &mut App),
-    /// It is your move in a game in progress elsewhere.
-    pub your_move: fn(&OngoingGame, &mut App),
-    /// A challenge came in, by its id, title and line.
-    pub challenge: fn(&str, &str, &str, &mut App),
-    /// The connection to a live game was lost: the Online page asks what to do.
-    pub connection_lost: fn(&mut gpui_kit::Window, &mut App),
-    /// A game started: show it on the Online page.
-    pub show_game: fn(&mut gpui_kit::Window, &mut App),
-}
-
-impl Global for Hooks {}
-
-fn hooks(cx: &App) -> Hooks {
-    cx.try_global::<Hooks>().copied().unwrap_or(Hooks {
-        notify: |_, _, _, _| {},
-        your_move: |_, _| {},
-        challenge: |_, _, _, _| {},
-        connection_lost: |_, _| {},
-        show_game: |_, _| {},
-    })
-}
-
 /// A challenge's clock as its card and notice name it: "5+3", "2 days per move", "No clock".
 pub fn describe_control(control: &ChallengeTimeControl) -> String {
     match control {
@@ -334,7 +305,11 @@ impl OnlineState {
         // on launch the page opening and the loss arrive in either order.
         cx.defer(|cx| {
             if let Some(window) = cx.active_window().or_else(|| cx.windows().first().copied()) {
-                let _ = window.update(cx, |_, window, cx| (hooks(cx).connection_lost)(window, cx));
+                window
+                    .update(cx, |_, window, cx| {
+                        crate::pages::online::game::connection_lost(window, cx)
+                    })
+                    .ok();
             }
         });
     }
@@ -503,7 +478,7 @@ impl OnlineState {
         match effect {
             Effect::Warn { message } => log(&format!("{message} {}", cause.unwrap_or_default())),
             Effect::Notify { kind, title, body } => {
-                (hooks(cx).notify)(*kind, title, body, cx);
+                crate::notifications::desktop(*kind, title, body, cx);
             }
             Effect::Moved { san } => {
                 crate::sound::move_sound(san.as_deref().unwrap_or_default(), cx)
@@ -836,7 +811,7 @@ impl OnlineState {
             if mine {
                 let left = self.clock_text(&turn);
                 let opponent = &self.model.online_opponent;
-                (hooks(cx).notify)(
+                crate::notifications::desktop(
                     NotificationKind::LowTime,
                     "Low on time",
                     &format!("{left} left against {opponent}"),
@@ -936,7 +911,7 @@ impl OnlineState {
                         let mine = game.is_my_turn;
                         let before = this.turns.get(&id).copied();
                         if is_your_move_now(game, before, this.id()) {
-                            (hooks(cx).your_move)(game, cx);
+                            crate::notifications::your_move(game, cx);
                         }
                         this.turns.insert(id, mine);
                     }
@@ -1114,8 +1089,11 @@ impl OnlineState {
                         if let Some(window) =
                             cx.active_window().or_else(|| cx.windows().first().copied())
                         {
-                            let _ = window
-                                .update(cx, |_, window, cx| (hooks(cx).show_game)(window, cx));
+                            window
+                                .update(cx, |_, window, cx| {
+                                    crate::shell::open(crate::pages::Page::Online, window, cx)
+                                })
+                                .ok();
                         }
                     });
                 }
@@ -1162,7 +1140,7 @@ impl OnlineState {
                 if !self.challenges.iter().any(|known| known.id == challenge.id) {
                     self.challenges.push(challenge);
                 }
-                (hooks(cx).challenge)(&id, &title, &body, cx);
+                crate::notifications::challenge(&id, &title, &body, cx);
             }
             _ => {}
         }
@@ -1492,28 +1470,6 @@ mod tests {
         );
     }
 
-    thread_local! {
-        static ASKED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
-    }
-
-    fn asked(what: String) {
-        ASKED.with(|asked| asked.borrow_mut().push(what));
-    }
-
-    /// Hooks that keep what the live game asked of the app.
-    fn keeping() -> super::Hooks {
-        super::Hooks {
-            notify: |kind, title, body, _| asked(format!("notify {kind:?}: {title} / {body}")),
-            your_move: |game, _| asked(format!("your move {}", game.game_id)),
-            challenge: |id, title, body, _| asked(format!("challenge {id}: {title} / {body}")),
-            connection_lost: |_, _| asked("connection lost".into()),
-            show_game: |_, _| asked("show game".into()),
-        }
-    }
-
-    /// What the live game asks of the app reaches it through the hooks the app set: a notice, a
-    /// challenge that came in, a game that started (told and shown) and its connection lost for
-    /// good.
     /// A resume is counted as it starts, so an answer to an earlier one is known for stale.
     #[gpui_kit::test]
     fn each_resume_is_counted_as_it_starts(cx: &mut gpui_kit::TestAppContext) {
@@ -1523,60 +1479,6 @@ mod tests {
         app.with_window(|_, cx| super::resume_quietly(online.clone(), true, cx));
         app.with_window(|_, cx| super::resume(online.clone(), cx));
         assert_eq!(app.with_window(|_, cx| online.read(cx).resumes), before + 2);
-    }
-
-    #[gpui_kit::test]
-    fn the_live_game_asks_the_app_through_its_hooks(cx: &mut gpui_kit::TestAppContext) {
-        use kchess_contracts::events::CoreEvent;
-        use serde_json::json;
-        let mut app = started(cx, None);
-        app.with_window(|_, cx| cx.set_global(keeping()));
-        let online = app.with_window(|_, cx| super::handle(cx));
-        let challenge = serde_json::from_value(serde_json::json!({
-            "id": "c1", "account": "me", "direction": "in", "opponent": { "name": "Bob" },
-            "variant": "standard", "variantName": "Standard", "rated": false, "speed": "blitz",
-            "timeControl": { "type": "unlimited" }, "color": "random", "playable": true,
-            "receivedAt": 0,
-        }))
-        .expect("a challenge");
-        app.with_window(|_, cx| {
-            online.update(cx, |online, cx| {
-                let notice = super::Effect::Notify {
-                    kind: kchess_contracts::types::NotificationKind::GameEvents,
-                    title: "Game over".into(),
-                    body: "You won".into(),
-                };
-                online.run(&notice, None, cx);
-                online.receive(&CoreEvent::ChallengeReceived(Box::new(challenge)), cx);
-                let start = json!({ "type": "gameStart", "game": { "gameId": "g1" } });
-                online.receive(&CoreEvent::OnlineEvent(start), cx);
-            })
-        });
-        app.cx().run_until_parked();
-        let session = app.with_window(|_, cx| online.read(cx).state_epoch());
-        let lost = serde_json::from_value(serde_json::json!({
-            "session": session, "account": "me", "gameId": "g1", "lane": "game",
-            "phase": "disconnected",
-        }))
-        .expect("a connection report");
-        app.with_window(|_, cx| {
-            online.update(cx, |online, cx| {
-                online.receive(&CoreEvent::OnlineState(lost), cx)
-            })
-        });
-        app.cx().run_until_parked();
-        let challenges = app.with_window(|_, cx| online.read(cx).challenges.len());
-        assert_eq!(challenges, 1);
-        assert_eq!(
-            ASKED.with(|asked| asked.take()),
-            [
-                "notify GameEvents: Game over / You won",
-                "challenge c1: Bob challenges you / No clock · Standard · Casual",
-                "notify GameEvents: Game started / You are playing Opponent as white.",
-                "show game",
-                "connection lost",
-            ]
-        );
     }
 
     /// A game being played redraws its clocks as they tick, and nothing else does.
@@ -1601,21 +1503,6 @@ mod tests {
         app.with_window(|_, cx| online.update(cx, |online, cx| online.tick(cx)));
         app.cx().run_until_parked();
         assert_eq!((idle, redraws.get()), (0, before + 1));
-    }
-
-    /// Before the app sets its hooks the live game shows nothing, and does not fail.
-    #[gpui_kit::test]
-    fn without_the_apps_hooks_nothing_is_shown(cx: &mut gpui_kit::TestAppContext) {
-        cx.update(|cx| {
-            let hooks = super::hooks(cx);
-            (hooks.notify)(
-                kchess_contracts::types::NotificationKind::LowTime,
-                "t",
-                "b",
-                cx,
-            );
-            (hooks.challenge)("c", "t", "b", cx);
-        });
     }
 
     /// How long the core may take to answer a status read, which it answers at once: a read
