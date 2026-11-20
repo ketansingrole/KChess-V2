@@ -1308,11 +1308,20 @@ async fn treats_a_late_credential_failure_for_a_cancelled_attachment_as_cancella
 async fn playing(
     extra: impl Fn(&Request) -> Option<Reply> + Send + 'static,
 ) -> (Arc<Recording>, fixtures::Fixture, OnlineSession) {
+    // The event stream answers at once and stays open with nothing to say, as Lichess's does. One
+    // that never answered held the game stream, and every request after it, for the stream's
+    // header deadline: each test of a live game took 5 s.
+    let mut open = Vec::new();
     let fixture = serve(move |seen| {
         if let Some(reply) = extra(seen) {
             return reply;
         }
         match seen.path() {
+            "/api/stream/event" => {
+                let (events, stream) = tokio::sync::mpsc::unbounded_channel();
+                open.push(events);
+                Reply::Stream(stream)
+            }
             "/api/account/playing" => Reply::Json(
                 200,
                 json!({
