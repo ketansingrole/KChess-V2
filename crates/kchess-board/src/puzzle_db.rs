@@ -409,6 +409,35 @@ mod tests {
         assert!(app.with_window(|_, cx| db.read(cx).error.is_none()));
     }
 
+    /// An install, a delete and a failure shown each move the count a status read compares on
+    /// landing, so a read asked before any of them is known for out of date.
+    #[gpui_kit::test]
+    fn installs_deletes_and_failures_each_overtake_a_read(cx: &mut gpui_kit::TestAppContext) {
+        let server = kchess_testkit::Server::start(|_, out| {
+            kchess_testkit::respond(out, 404, "text/plain", b"")
+        })
+        .expect("a stand-in Lichess");
+        let mut app = Started::with_lichess(cx, Some(server.base().to_string()));
+        let db = app.with_window(|_, cx| {
+            super::init(cx);
+            cx.global::<PuzzleDbHandle>().0.clone()
+        });
+        let moved = |app: &mut Started, change: fn(&mut super::PuzzleDb, &mut gpui_kit::Context<super::PuzzleDb>)| {
+            app.with_window(|_, cx| {
+                db.update(cx, |db, cx| {
+                    let before = db.changes;
+                    change(db, cx);
+                    db.changes > before
+                })
+            })
+        };
+        assert!(moved(&mut app, |db, _| db
+            .failed(&kchess_contracts::CoreError::new("no"))));
+        assert!(moved(&mut app, |db, cx| db.delete(cx)));
+        assert!(moved(&mut app, |db, cx| db.install(cx)));
+        app.wait_for("the install to end", |_, cx| db.read(cx).progress.is_none());
+    }
+
     /// Deleting while a download runs is refused by the core: the refusal is logged and stays
     /// shown, whenever the status read asked before it lands.
     #[gpui_kit::test]
