@@ -4,7 +4,8 @@ The workspace's one map; the other documents link here.
 
 ```text
 apps/
-  gpui/                  The app: GPUI Kit views, the board, shell, settings, voice, updater
+  gpui/                  The app: the shell, Settings, the updater and the pages that change most
+                         (analysis, Online, Players, Openings, the Computer page, …)
     assets/              Boards, pieces, sounds and icons embedded in the app
     build/               App icons (written by `cargo xtask app-icon`)
     src/e2e/             End-to-end tests that drive the whole app headless
@@ -24,7 +25,19 @@ crates/
   kchess-ui/             The app's design system over GPUI Kit: theme, motion, the line chart
                          (`docs/app-crates.md`: splitting the app into crates)
   kchess-app/            The app's services: the core as the app holds it, Settings, view
-                         preferences, the log, quitting
+                         preferences, the log, a page's loading, quitting
+  kchess-board/          The board and what every board page shares: game sessions, notation,
+                         sounds, voice and the microphone, the live Lichess game, the puzzle
+                         board and database, exporting games, finding players
+  kchess-nav/            Pages as the shell drives them: what a page declares, opening one from
+                         another, the board pages' layout
+  kchess-home/           The Home page
+  kchess-history/        The History page
+  kchess-local/          The Over the board page and its chess clock
+  kchess-practice/       The Practice page: drills, endgames, openings, your mistakes, Guess the move
+  kchess-puzzles/        The Puzzles page: training, the daily puzzle, Puzzle Rush, stats, history
+  kchess-studies/        The Studies page
+  kchess-watch/          The Watch page: Lichess TV, followed players' games, broadcasts
   kchess-testkit/        The loopback HTTP/1.1 server the tests' and xtask's stand-ins answer through
   kchess-hack/           The workspace hack (`cargo hakari`): one feature set for every dependency
 tooling/xtask/           `cargo xtask`: checks, the pre-push hook, release versions, packaging

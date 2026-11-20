@@ -65,7 +65,7 @@ const RULES: [Rule; 2] = [
             "apps/gpui/src/updates.rs",
             // Pictures Lichess serves (broadcast covers), from its image hosts only, drawn by the
             // app straight from the bytes. No login is sent.
-            "crates/kchess-board/src/remote_image.rs",
+            "crates/kchess-watch/src/remote_image.rs",
         ],
     },
 ];
