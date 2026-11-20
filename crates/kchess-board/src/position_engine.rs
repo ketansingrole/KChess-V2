@@ -4,7 +4,7 @@
 //!
 //! Every search and stop names its client id, which rises with each request, so the core can
 //! tell a late one: it runs calls in any order, and a stop or start that lands after a newer
-//! search of the window has started changes nothing (`kchess_core::engine::analysis`).
+//! search of the window has started changes nothing (`docs/shared-core.md`, Analysis).
 
 use kchess_contracts::calls;
 use kchess_contracts::types::{AnalysisRequest, AnalysisUpdate, EngineLine};
