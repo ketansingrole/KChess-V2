@@ -364,7 +364,11 @@ async fn with_core(
                 }
                 told_if_failed(
                     "Stopping the analysis",
-                    core.request(calls::StopAnalysis { kill: None }).await,
+                    core.request(calls::StopAnalysis {
+                        kill: None,
+                        client: None,
+                    })
+                    .await,
                 );
             }
             Command::Play | Command::Local => {

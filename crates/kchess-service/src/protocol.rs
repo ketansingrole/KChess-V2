@@ -77,6 +77,10 @@ pub enum Frame {
         /// The error's `ErrorKind`, so the client picks its action without reading the message.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         kind: Option<String>,
+        /// The error is a cancellation (`CoreError::aborted`), not a failure: a page that asked
+        /// for something since says nothing about it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        aborted: bool,
     },
     /// Stop a call in flight; its result is an error.
     Cancel { id: u64 },
@@ -224,6 +228,7 @@ mod tests {
             value: None,
             error: Some("No.".into()),
             kind: None,
+            aborted: false,
         };
         assert_eq!(
             serde_json::to_value(&result).expect("json"),
@@ -239,17 +244,46 @@ mod tests {
             value: None,
             error: Some("This game cannot be played with the Board API.".into()),
             kind: Some("refused".into()),
+            aborted: false,
         };
         let text = serde_json::to_string(&refused).expect("json");
-        let Frame::Result { kind, .. } = serde_json::from_str(&text).expect("frame") else {
+        let Frame::Result { kind, aborted, .. } = serde_json::from_str(&text).expect("frame")
+        else {
             panic!("a result");
         };
         assert_eq!(kind.as_deref(), Some("refused"));
+        assert!(!aborted);
         // A frame from a service without kinds still reads.
         let old: Frame =
             serde_json::from_value(json!({ "type": "result", "id": 3, "error": "No." }))
                 .expect("frame");
-        assert!(matches!(old, Frame::Result { kind: None, .. }));
+        assert!(matches!(
+            old,
+            Frame::Result {
+                kind: None,
+                aborted: false,
+                ..
+            }
+        ));
+    }
+
+    /// A cancellation crosses the service as one, so a page can tell it from a failure (an
+    /// analysis superseded before it started is no engine error).
+    #[test]
+    fn a_cancellation_crosses_as_one() {
+        let cancelled = Frame::Result {
+            id: 4,
+            value: None,
+            error: Some("This operation was aborted".into()),
+            kind: None,
+            aborted: true,
+        };
+        let text = serde_json::to_value(&cancelled).expect("json");
+        assert_eq!(text["aborted"], json!(true));
+        let Frame::Result { aborted, .. } = serde_json::from_value(text).expect("frame") else {
+            panic!("a result");
+        };
+        assert!(aborted);
     }
 
     /// A frame whose body is exactly `size` bytes.

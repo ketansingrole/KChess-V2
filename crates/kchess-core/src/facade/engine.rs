@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use kchess_contracts::Variant;
-use kchess_contracts::check::{Fen, GameIds, Moves, ReviewKey};
+use kchess_contracts::check::{AnalysisClient, Fen, GameIds, Moves, ReviewKey};
 use kchess_contracts::core_api::{Assist, EngineApi};
 use kchess_contracts::types::{
     AnalysisRequest, BestMoveOptions, EngineInstalled, EngineLevel, EngineStatus, Keyed,
@@ -95,8 +95,13 @@ impl EngineApi for Core {
             .await
     }
 
-    async fn stop_analysis(&self, kill: Option<bool>) -> Result<()> {
-        self.analysis.stop_mine(kill == Some(true));
+    async fn stop_analysis(
+        &self,
+        kill: Option<bool>,
+        client: Option<AnalysisClient>,
+    ) -> Result<()> {
+        self.analysis
+            .stop_mine(kill == Some(true), client.map(|client| client.0));
         Ok(())
     }
 

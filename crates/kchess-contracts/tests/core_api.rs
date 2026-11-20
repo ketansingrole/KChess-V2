@@ -52,16 +52,29 @@ fn excess_and_missing_arguments_are_refused_before_any_check() {
 /// An optional argument left out is `null` to the method; one given is checked.
 #[test]
 fn an_optional_argument_is_checked_only_when_given() {
-    assert_eq!(check("stopAnalysis", &[]), Some(Ok(vec![Value::Null])));
+    assert_eq!(
+        check("stopAnalysis", &[]),
+        Some(Ok(vec![Value::Null, Value::Null]))
+    );
     assert_eq!(
         check("stopAnalysis", &[Value::Null]),
-        Some(Ok(vec![Value::Null]))
+        Some(Ok(vec![Value::Null, Value::Null]))
     );
     assert_eq!(
         check("stopAnalysis", &[json!(true)]),
-        Some(Ok(vec![json!(true)]))
+        Some(Ok(vec![json!(true), Value::Null]))
     );
     assert!(!passes("stopAnalysis", &[json!("yes")]));
+    // A stop may name the client's search it ends: an analysis request's client id.
+    assert_eq!(
+        check("stopAnalysis", &[Value::Null, json!(7)]),
+        Some(Ok(vec![Value::Null, json!(7)]))
+    );
+    assert!(!passes("stopAnalysis", &[Value::Null, json!(0)]));
+    assert!(!passes(
+        "stopAnalysis",
+        &[Value::Null, json!(9_007_199_254_740_992_u64)]
+    ));
     // A username is trimmed by its check.
     assert_eq!(
         check("syncGames", &[json!(" alice ")]),
@@ -151,16 +164,31 @@ fn speech_recognition_takes_a_bounded_grammar_a_sample_rate_and_base64_audio() {
 fn a_call_sends_its_arguments_in_order_without_trailing_ones_left_out() {
     assert!(calls::DesktopSettings {}.args().expect("args").is_empty());
     assert!(
-        calls::StopAnalysis { kill: None }
-            .args()
-            .expect("args")
-            .is_empty()
+        calls::StopAnalysis {
+            kill: None,
+            client: None
+        }
+        .args()
+        .expect("args")
+        .is_empty()
     );
     assert_eq!(
-        calls::StopAnalysis { kill: Some(true) }
-            .args()
-            .expect("args"),
+        calls::StopAnalysis {
+            kill: Some(true),
+            client: None
+        }
+        .args()
+        .expect("args"),
         [json!(true)]
+    );
+    assert_eq!(
+        calls::StopAnalysis {
+            kill: None,
+            client: Some(kchess_contracts::check::Bounded(7))
+        }
+        .args()
+        .expect("args"),
+        [Value::Null, json!(7)]
     );
     // One left out between two given is sent as `null`, which the check reads alike.
     let command = calls::StudyCommand {

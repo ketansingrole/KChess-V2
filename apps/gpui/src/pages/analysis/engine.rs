@@ -59,7 +59,7 @@ impl AnalysisPage {
         self.cloud_request += 1;
         self.wanted.clear();
         self.engine_busy = false;
-        crate::position_engine::stop_analysis(true, "analysis", cx);
+        crate::position_engine::stop_analysis(self.engine_started, true, "analysis", cx);
     }
 
     pub(super) fn engine_changed(&mut self, cx: &mut Context<Self>) {
@@ -93,7 +93,7 @@ impl AnalysisPage {
             self.wanted.clear();
             self.engine_busy = false;
             // Turning analysis off releases the engine; other pauses keep it warm.
-            crate::position_engine::stop_analysis(!engine_on, "analysis", cx);
+            crate::position_engine::stop_analysis(self.engine_started, !engine_on, "analysis", cx);
             cx.notify();
             return;
         }
@@ -108,11 +108,12 @@ impl AnalysisPage {
         {
             self.wanted = fen;
             self.engine_busy = false;
-            crate::position_engine::stop_analysis(false, "analysis", cx);
+            crate::position_engine::stop_analysis(self.engine_started, false, "analysis", cx);
             cx.notify();
             return;
         }
         self.wanted = fen.clone();
+        self.engine_started = Some(request);
         self.live = None;
         self.engine_busy = true;
         let asked = AnalysisRequest {
@@ -147,13 +148,15 @@ impl AnalysisPage {
                         this.latest_id = this.latest_id.max(id);
                     }
                     Err(cause) if current => {
-                        crate::log::write(
-                            Level::Warn,
-                            "analysis",
-                            &format!("starting analysis failed: {}", cause.message),
-                        );
                         this.engine_busy = false;
-                        this.engine_error = Some(cause.message);
+                        if let Some(error) = crate::position_engine::start_error(cause) {
+                            crate::log::write(
+                                Level::Warn,
+                                "analysis",
+                                &format!("starting analysis failed: {error}"),
+                            );
+                            this.engine_error = Some(error);
+                        }
                         cx.notify();
                     }
                     _ => {}
@@ -162,6 +165,12 @@ impl AnalysisPage {
         })
         .detach();
         cx.notify();
+    }
+
+    /// The client id of the search the board last sent, and whether the engine is searching.
+    #[cfg(test)]
+    pub(crate) fn engine_search(&self) -> (Option<u64>, bool) {
+        (self.engine_started, self.engine_busy)
     }
 
     /// An engine update: kept when it is for the search running now.
