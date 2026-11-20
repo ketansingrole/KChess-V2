@@ -2118,28 +2118,7 @@ mod tests {
         .expect("a stand-in Lichess");
         let mut app =
             kchess_board::testing::Started::with_lichess(cx, Some(server.base().to_string()));
-        // The core's own read of the accounts lands first, or it would replace the one set here.
-        app.wait_for("the accounts read", |_, cx| {
-            crate::accounts::handle(cx).read(cx).data.is_some()
-        });
-        app.with_window(|_, cx| {
-            let settings = kchess_contracts::defaults::default_settings()
-                .expect("the default settings")
-                .core;
-            crate::accounts::handle(cx).update(cx, |accounts, cx| {
-                accounts.data = Some(kchess_contracts::types::AppData {
-                    settings,
-                    accounts: vec![kchess_contracts::types::Account {
-                        username: "alice".into(),
-                        connected: true,
-                        last_synced_at: None,
-                        synced_play_time: None,
-                    }],
-                    game_count: 0,
-                });
-                cx.notify();
-            });
-        });
+        app.with_account("alice", true);
         let (window, page) = app.with_window(|_, cx| {
             crate::puzzle_db::init(cx);
             Tab::Train.store(cx);
