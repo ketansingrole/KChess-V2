@@ -146,6 +146,32 @@ and in the App Store. Its readers play chess; they are not developers.
   fit the new use case; explain the concrete constraint. Do not duplicate functionality
   merely because it appears on a different page.
 
+## Writing GPUI views
+
+The app is GPUI (`gpui_kit::*` re-exports it). The mistakes below compile and then fail at run
+time; `cargo xtask lints` catches the first three (`tooling/lints`).
+
+- `render` only reads. Never `cx.notify()` or `entity.update(…)` directly in `render`: it asks for
+  another frame every frame. Change state in the handler or task that learned of the change, and
+  `cx.notify()` there; a closure built in `render` (`cx.listener(…)`, `on_click`) runs later and may.
+- The main thread never waits. A call to the disk, a process, the clipboard or the core in a
+  frame or handler blocks every window: run it with `cx.background_spawn` and adopt the answer in a
+  `cx.spawn`. A wait that must stay on the main thread is marked `slow_calls::call` (GUARDRAILS.md).
+- Never update an entity inside its own `update`: GPUI panics on the reentrant borrow. Use the
+  inner `cx` the closure gives, never the outer one.
+- A `Task` is cancelled when dropped. Keep it in a field (`work: Option<Task<()>>`, replaced to
+  cancel the previous run), await it, or `detach()` it; a `Subscription` likewise lives in a
+  `_subscriptions: Vec<Subscription>` field.
+- A spawned closure holds `WeakEntity` (`cx.spawn(async move |this, cx| …)`): the view may close
+  before it resumes, so its `update` returns `Err`, which is expected and is the one result that may
+  go unread (`.ok()`). Every other failure is returned or logged: `kchess_app::log::ResultExt`
+  (`.log_err()`, `.warn_on_err()`) logs it with its file and line, never `let _ =`.
+- Strings that never change are `SharedString::new_static("…")` or `&'static str`, not
+  `"…".into()` or `format!` in `render`.
+- Tests drive time with GPUI's executor (`cx.background_executor().timer(…)`, `run_until_parked`),
+  not `std::thread::sleep`, so they stay deterministic. A test that sends events in a random order
+  takes its seed from `kchess_testkit::random` (`SEED=<n>` replays a failure).
+
 ## Architecture and regression ownership
 
 - The headless core (`crates/kchess-core`) owns credentials, networking, privileged files,
