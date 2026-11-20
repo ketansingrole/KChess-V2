@@ -55,7 +55,9 @@ pub fn subfolders(folder: &Path) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-/// Runs `program` in the repository, its output going to this terminal.
+/// Runs `program` in the repository, its output going to this terminal and nothing for its
+/// input: a tool that asks a question (cargo-llvm-cov offering to install llvm-tools) then fails
+/// at once rather than wait for an answer, as a local `check` once did for hours.
 pub fn run(program: &str, args: &[&str]) -> Result {
     run_with(Command::new(program).args(args))
 }
@@ -103,6 +105,7 @@ fn run_watched(command: &mut Command, secrets: &[&str], quiet: Duration) -> Resu
     }
     let mut child = command
         .current_dir(root())
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -455,6 +458,14 @@ mod tests {
         );
         assert!(args.windows(2).any(|pair| pair == ["--speed-time", "1"]));
         assert_eq!(curl_args("u", "t", 60)[7..9], ["--speed-time", "60"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_that_asks_a_question_fails_instead_of_waiting() {
+        // `read` waits for a line from the terminal; with no input it reads nothing at once.
+        let failure = run("sh", &["-c", "read answer || exit 3"]).unwrap_err();
+        assert!(failure.contains("exit status: 3"), "{failure}");
     }
 
     const HELLO_SHA256: &str = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";

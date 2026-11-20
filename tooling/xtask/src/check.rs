@@ -8,14 +8,15 @@ use crate::members::{self, APP};
 use crate::util::{Result, available, output, root, run, run_with, say};
 
 /// Coverage floors for the workspace without the GPUI app and this tooling, as whole percentages
-/// rounded down from the measured totals of `cargo llvm-cov` (2026-10-29: lines 88.30%, regions
-/// 86.56%, functions 86.37%). The run fails below
-/// a floor. Ratchet them up when the measured totals rise; do not lower them without a
+/// rounded down from the measured totals of `cargo llvm-cov` (CI's Linux `check`, the same in its
+/// last twelve green runs on 2026-11-20: lines 95.52%, regions 93.95%, functions 94.71%; the floors
+/// had stayed at 2026-10-29's 88/86/86, seven points of coverage that could go unseen). The run
+/// fails below a floor. Ratchet them up when the measured totals rise; do not lower them without a
 /// measurement that explains the drop.
 ///
 /// The GPUI app's views are checked by running the app (its end-to-end suite), and its unit
 /// tests still run here, outside the coverage totals.
-const FLOORS: [(&str, f64); 3] = [("lines", 88.0), ("regions", 86.0), ("functions", 86.0)];
+const FLOORS: [(&str, f64); 3] = [("lines", 95.0), ("regions", 93.0), ("functions", 94.0)];
 
 fn step(name: &str, work: impl FnOnce() -> Result) -> Result {
     say(&format!("Checking {name}…"));
@@ -178,6 +179,10 @@ fn tests(app: bool) -> Result {
     Ok(())
 }
 
+/// What `cargo llvm-cov` measures with, for the toolchain `rust-toolchain.toml` pins: left out
+/// of its components so that only the jobs that measure download it.
+const COVERAGE_TOOLS: [&str; 3] = ["component", "add", "llvm-tools-preview"];
+
 /// `cargo llvm-cov`'s arguments: through nextest when it is installed.
 fn coverage_args(nextest: bool, report: &str) -> Vec<&str> {
     let mut args = vec!["llvm-cov"];
@@ -209,6 +214,9 @@ fn coverage() -> Result {
     std::fs::create_dir_all(report.parent().unwrap_or(&root()))
         .map_err(|cause| cause.to_string())?;
     let path = report.to_string_lossy().to_string();
+    // cargo-llvm-cov asks before installing the pinned toolchain's llvm-tools, which a command
+    // run here cannot answer (`util::run`): installed first, a no-op when it is there.
+    run("rustup", &COVERAGE_TOOLS)?;
     run("cargo", &coverage_args(nextest(), &path))?;
     let text = std::fs::read_to_string(&report).map_err(|cause| cause.to_string())?;
     let summary: serde_json::Value =
@@ -1380,6 +1388,16 @@ checksum = "aa"
         );
         // CI's gpui job runs the app's and its UI crates' (`ui_tests`).
         assert_eq!(uncovered(false), ["xtask"]);
+    }
+
+    #[test]
+    fn coverage_installs_its_tools_before_it_measures() {
+        assert_eq!(COVERAGE_TOOLS, ["component", "add", "llvm-tools-preview"]);
+        let source = std::fs::read_to_string(root().join("tooling/xtask/src/check.rs")).unwrap();
+        let body = &source[source.find("fn coverage() -> Result").unwrap()..];
+        let tools = body.find("run(\"rustup\", &COVERAGE_TOOLS)?").unwrap();
+        let measured = body.find("coverage_args(nextest(), &path)").unwrap();
+        assert!(tools < measured, "the tools are installed before the run");
     }
 
     #[test]
