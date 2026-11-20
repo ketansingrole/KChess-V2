@@ -11,7 +11,7 @@ use kchess_hack as _;
 
 use kchess_app::{accounts, core, loading, log, prefs, settings, timer};
 use kchess_board::{
-    board, engine_view, game, notation, online, position_engine, remote_image, widgets,
+    board, engine_view, game, live_game, notation, position_engine, remote_image, widgets,
 };
 use kchess_ui::{dates, theme};
 
@@ -30,7 +30,7 @@ use shakmaty::Color;
 
 use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::game::surface::{Faces, Steps};
-use crate::online::OnlineHandle;
+use crate::live_game::LiveGameHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{KeyboardFocus as _, Look};
@@ -237,7 +237,7 @@ impl Focusable for WatchPage {
 impl WatchPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> WatchPage {
         let events = cx.global::<AppCore>().events.clone();
-        let online = cx.global::<OnlineHandle>().0.clone();
+        let online = cx.global::<LiveGameHandle>().0.clone();
         let accounts = crate::accounts::handle(cx);
         let covers = crate::remote_image::handle(cx);
         let subscriptions = vec![
@@ -319,7 +319,7 @@ impl WatchPage {
     }
 
     fn playing_own_game(cx: &App) -> bool {
-        cx.global::<OnlineHandle>().0.read(cx).busy_with_game()
+        cx.global::<LiveGameHandle>().0.read(cx).busy_with_game()
     }
 
     /// The page was shown: channels, presence and broadcasts afresh, and the feed again.

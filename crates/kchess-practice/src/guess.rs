@@ -24,7 +24,7 @@ use crate::board::{Arrow, BoardEvent, ChessBoard};
 use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::game::tree::TreeNode;
 use crate::game::view;
-use crate::online::OnlineHandle;
+use crate::live_game::LiveGameHandle;
 use crate::position_engine::{EngineLook, PositionEngine};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
@@ -330,7 +330,11 @@ impl GuessMoves {
     /// Whether the engine can judge guesses now: installed, and no live Lichess game going on.
     fn engine_usable(&self, cx: &App) -> bool {
         self.engine_ready == Some(true)
-            && cx.global::<OnlineHandle>().0.read(cx).assistance_allowed()
+            && cx
+                .global::<LiveGameHandle>()
+                .0
+                .read(cx)
+                .assistance_allowed()
     }
 
     /// Whether the core has said if the engine is installed; `forget` makes it unsaid again.

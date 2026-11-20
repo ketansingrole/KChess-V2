@@ -110,6 +110,13 @@ needed only Practice. Watch came last of the pages that rarely change
 player's name opened their profile there (`player_search::player_link`, answered by the Players
 page through `OpenPlayer`).
 
+The live Lichess game went back to the app (`apps/gpui/src/online.rs`, 2026-11-20). The pages
+asked only two things of it, whether engine help may show and whether a game holds the
+connection, so `kchess-board` keeps just those (`live_game::LiveGame`), which the app's game
+keeps up to date and the pages read or observe. Online changes as often as anything in the app
+(below), and in the board each of its edits rebuilt every page crate. Lichess's pictures went to
+Watch, the one page that shows them (#291).
+
 ### After Practice, Studies and Watch
 
 2026-11-19, a different container from the measurements above (4 cores, about 1.4 times

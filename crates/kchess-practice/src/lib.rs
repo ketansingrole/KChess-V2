@@ -10,7 +10,7 @@ use kchess_hack as _;
 
 use kchess_app::{core, loading, log, network, prefs, reviews, settings, studies, timer};
 use kchess_board::{
-    board, game, notation, online, player_search, position_engine, puzzle_board, sound, voice,
+    board, game, live_game, notation, player_search, position_engine, puzzle_board, sound, voice,
     widgets,
 };
 use kchess_ui::theme;

@@ -23,7 +23,7 @@ use crate::board::Arrow;
 use crate::core::AppCore;
 use crate::game::tree::{analysis_context, format_eval};
 use crate::game::view;
-use crate::online::OnlineHandle;
+use crate::live_game::LiveGameHandle;
 use crate::position_engine::{EngineLook, PositionEngine};
 use crate::theme::Palette;
 use crate::widgets::Choice;
@@ -70,7 +70,10 @@ fn context_of(game: &BroadcastGame) -> String {
 }
 
 fn assistance(cx: &App) -> bool {
-    cx.global::<OnlineHandle>().0.read(cx).assistance_allowed()
+    cx.global::<LiveGameHandle>()
+        .0
+        .read(cx)
+        .assistance_allowed()
 }
 
 impl BroadcastEngine {

@@ -190,7 +190,7 @@ pub struct OnlineState {
 
 impl OnlineState {
     /// The core session whose reports the board follows.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub fn state_epoch(&self) -> f64 {
         self.model.state_epoch
     }
@@ -363,7 +363,7 @@ impl OnlineState {
 
     /// Put the state in a phase as the rules would (tests): the model too, which the phase is
     /// derived from again whenever a late answer lands.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub fn set_phase(&mut self, phase: GamePhase, cx: &mut Context<Self>) {
         self.model.online_phase = phase;
         self.sync_phase(cx);
@@ -1093,6 +1093,14 @@ pub fn handle(cx: &App) -> Entity<OnlineState> {
 
 pub use crate::accounts::set_active_account;
 
+/// Tells the board and the pages (`kchess_board::live_game`) whether engine help may show and
+/// whether a game holds the connection.
+fn tell_live_game(state: &Entity<OnlineState>, cx: &mut App) {
+    let state = state.read(cx);
+    let (allowed, busy) = (state.assistance_allowed(), state.busy_with_game());
+    kchess_board::live_game::handle(cx).update(cx, |live, cx| live.set(allowed, busy, cx));
+}
+
 pub fn init(cx: &mut App) {
     let state = cx.new(|cx| {
         let mut state = OnlineState {
@@ -1129,6 +1137,11 @@ pub fn init(cx: &mut App) {
         state
     });
     cx.set_global(OnlineHandle(state.clone()));
+    // What the board and the pages know of the game follows it.
+    kchess_board::live_game::init(cx);
+    tell_live_game(&state, cx);
+    cx.observe(&state, |state, cx| tell_live_game(&state, cx))
+        .detach();
     let events = cx.global::<AppCore>().events.clone();
     cx.subscribe(&events, {
         let state = state.clone();
@@ -1289,7 +1302,14 @@ pub fn challenge_alert(challenge: &ChallengeInfo) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::describe_control;
-    use crate::testing::Started;
+    use kchess_board::testing::Started;
+
+    /// A board page's app with the live game of its own, its Lichess at `origin`.
+    fn started(cx: &mut gpui_kit::TestAppContext, origin: Option<String>) -> Started {
+        let mut app = Started::with_lichess(cx, origin);
+        app.with_window(|_, cx| super::init(cx));
+        app
+    }
     use kchess_contracts::types::ChallengeTimeControl;
     use serde_json::Number;
 
@@ -1339,7 +1359,7 @@ mod tests {
     /// A resume is counted as it starts, so an answer to an earlier one is known for stale.
     #[gpui_kit::test]
     fn each_resume_is_counted_as_it_starts(cx: &mut gpui_kit::TestAppContext) {
-        let mut app = Started::new(cx);
+        let mut app = started(cx, None);
         let online = app.with_window(|_, cx| super::handle(cx));
         let before = app.with_window(|_, cx| online.read(cx).resumes);
         app.with_window(|_, cx| super::resume_quietly(online.clone(), true, cx));
@@ -1351,7 +1371,7 @@ mod tests {
     fn the_live_game_asks_the_app_through_its_hooks(cx: &mut gpui_kit::TestAppContext) {
         use kchess_contracts::events::CoreEvent;
         use serde_json::json;
-        let mut app = Started::new(cx);
+        let mut app = started(cx, None);
         app.with_window(|_, cx| cx.set_global(keeping()));
         let online = app.with_window(|_, cx| super::handle(cx));
         let challenge = serde_json::from_value(serde_json::json!({
@@ -1405,7 +1425,7 @@ mod tests {
     #[gpui_kit::test]
     fn a_game_being_played_redraws_as_its_clocks_tick(cx: &mut gpui_kit::TestAppContext) {
         use kchess_domain::online_game::model::GamePhase;
-        let mut app = Started::new(cx);
+        let mut app = started(cx, None);
         let online = app.with_window(|_, cx| super::handle(cx));
         let redraws = std::rc::Rc::new(std::cell::Cell::new(0));
         let _watch = app.with_window(|_, cx| {
@@ -1446,7 +1466,7 @@ mod tests {
     fn games_in_progress_from_before_signing_out_do_not_come_back(
         cx: &mut gpui_kit::TestAppContext,
     ) {
-        let mut app = Started::new(cx);
+        let mut app = started(cx, None);
         let (stale, error) = app.with_window(|_, cx| {
             super::handle(cx).update(cx, |online, cx| {
                 online.ongoing_loading.show_error("Lichess did not answer");
@@ -1510,7 +1530,7 @@ mod tests {
             kchess_testkit::respond(out, 500, "text/plain", b"")
         })
         .expect("a stand-in Lichess");
-        let mut app = Started::with_lichess(cx, Some(server.base().to_string()));
+        let mut app = started(cx, Some(server.base().to_string()));
         app.wait_for("the accounts read", |_, cx| {
             crate::accounts::handle(cx).read(cx).data.is_some()
         });
@@ -1548,7 +1568,7 @@ mod tests {
             kchess_testkit::respond(out, 500, "text/plain", b"")
         })
         .expect("a stand-in Lichess");
-        let mut app = Started::with_lichess(cx, Some(server.base().to_string()));
+        let mut app = started(cx, Some(server.base().to_string()));
         let busy = app.with_window(|_, cx| {
             super::handle(cx).update(cx, |online, cx| {
                 online.start(None, cx);

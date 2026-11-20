@@ -652,7 +652,7 @@ impl WatchPage {
                 )
                 .when(self.broadcasts.current().is_none(), |bar| {
                     let allowed = cx
-                        .global::<crate::online::OnlineHandle>()
+                        .global::<crate::live_game::LiveGameHandle>()
                         .0
                         .read(cx)
                         .assistance_allowed();
@@ -705,7 +705,7 @@ impl WatchPage {
         let games = self.broadcasts.games.clone();
         let grid_evaluations = crate::prefs::get(cx, GRID_EVALUATIONS, true)
             && cx
-                .global::<crate::online::OnlineHandle>()
+                .global::<crate::live_game::LiveGameHandle>()
                 .0
                 .read(cx)
                 .assistance_allowed();

@@ -5,8 +5,9 @@ use std::time::{Duration, Instant};
 use gpui_kit::{AnyWindowHandle, App, AppContext as _, Context, IntoElement, Render, Window};
 use kchess_app::tests::TestCore;
 
-/// The app as a board page needs it: a core of the test's own, Settings, the accounts, the live
-/// Lichess game, the theme and voice, and a window to put the page's views in.
+/// The app as a board page needs it: a core of the test's own, Settings, the accounts, what the
+/// pages know of the live Lichess game (none is played: engine help is lent), the theme and voice,
+/// and a window to put the page's views in.
 pub struct Started {
     cx: gpui_kit::TestAppContext,
     window: AnyWindowHandle,
@@ -35,7 +36,8 @@ impl Started {
             let core = kchess_app::tests::start_core_with_lichess(cx, origin);
             kchess_app::settings::init_for_tests(cx);
             kchess_app::accounts::init(cx);
-            crate::online::init(cx);
+            crate::live_game::init(cx);
+            crate::live_game::handle(cx).update(cx, |live, cx| live.set(true, false, cx));
             let colors = kchess_ui::theme::colors("kchess", &[], false);
             cx.set_global(kchess_ui::theme::Palette::of(&colors, false));
             crate::voice::init(cx);
