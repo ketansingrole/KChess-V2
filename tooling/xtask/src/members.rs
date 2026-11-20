@@ -94,6 +94,11 @@ pub fn uncovered() -> impl Iterator<Item = &'static str> {
         .map(|(name, _)| *name)
 }
 
+/// Whether `file` is a workspace manifest or the lock, which add and drop dependencies.
+pub fn is_manifest(file: &str) -> bool {
+    file == "Cargo.lock" || file == "Cargo.toml" || file.ends_with("/Cargo.toml")
+}
+
 /// The app's UI crates (`Role::Ui`).
 pub fn ui() -> impl Iterator<Item = &'static str> {
     ROLES

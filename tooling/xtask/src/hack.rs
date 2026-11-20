@@ -23,7 +23,7 @@ const FUZZ: &str = "fuzz/Cargo.toml";
 /// Whether `check` reads `file`: the hack's settings, Dependabot's hold list, and the manifests
 /// and lock it is written from.
 pub fn reads(file: &str) -> bool {
-    file == CONFIG || file == DEPENDABOT || crate::check::is_manifest(file)
+    file == CONFIG || file == DEPENDABOT || crate::members::is_manifest(file)
 }
 
 /// How `.github/dependabot.yml` holds a package only the hack depends on to the hack's

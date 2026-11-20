@@ -418,11 +418,6 @@ impl Selection {
     }
 }
 
-/// Whether `file` is a workspace manifest or the lock, which add and drop dependencies.
-pub fn is_manifest(file: &str) -> bool {
-    file == "Cargo.lock" || file == "Cargo.toml" || file.ends_with("/Cargo.toml")
-}
-
 type Check = fn() -> Result;
 
 /// The steps beside the format, lints and tests that `check-fast` runs for these changes: each
@@ -917,6 +912,10 @@ fn packaging_modules(repo: &Path) -> Result<Vec<String>> {
     let mut modules = vec!["deltas".to_string()];
     while let Some(file) = files.pop() {
         let text = std::fs::read_to_string(&file).map_err(|cause| cause.to_string())?;
+        // What packaging runs: the code before the file's tests, which may name anything.
+        let text = text
+            .find("#[cfg(test)]\nmod tests")
+            .map_or(text.as_str(), |at| &text[..at]);
         for (at, _) in text.match_indices("crate::") {
             let rest = &text[at + "crate::".len()..];
             let names: Vec<&str> = match rest.strip_prefix('{') {
