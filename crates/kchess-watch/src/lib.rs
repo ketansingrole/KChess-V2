@@ -1476,6 +1476,7 @@ mod tests {
     #[gpui_kit::test]
     fn watch_follows_the_live_game(cx: &mut gpui_kit::TestAppContext) {
         let mut app = kchess_board::testing::Started::new(cx);
+        app.wait_for_engine_help();
         let read = |app: &mut kchess_board::testing::Started| {
             app.with_window(|_, cx| {
                 (

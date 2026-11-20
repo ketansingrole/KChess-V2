@@ -119,7 +119,9 @@ impl AnalysisPage {
         if store.read(cx).get(&key).is_some() {
             self.review.shown = key.clone();
         }
-        if key != self.review.looked_up {
+        // Held back, the core would refuse it: it is asked for once help is lent (the board
+        // follows the online state). Asked for and refused, it was never asked for again.
+        if key != self.review.looked_up && Self::assistance_allowed(cx) {
             self.review.looked_up = key.clone();
             self.review.request_error = None;
             self.review.requested.clear();

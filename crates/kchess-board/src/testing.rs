@@ -1,19 +1,58 @@
 //! What the board's tests and the pages' share: the app as a board page needs it.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::{AnyWindowHandle, App, AppContext as _, Context, IntoElement, Render, Window};
+use gpui_kit::{
+    AnyWindowHandle, App, AppContext as _, Context, IntoElement, Render, Subscription, Task, Window,
+};
+use kchess_app::core::{AppCore, ClientEvent, CoreEvent};
 use kchess_app::tests::TestCore;
+use kchess_contracts::calls;
+use kchess_contracts::types::Assistance;
 
 /// The app as a board page needs it: a core of the test's own, Settings, the accounts, what the
-/// pages know of the live Lichess game (none is played: engine help is lent), the theme and voice,
-/// and a window to put the page's views in.
+/// pages know of the live Lichess game (none is played: engine help is as the core lends it), the
+/// theme and voice, and a window to put the page's views in.
 pub struct Started {
     cx: gpui_kit::TestAppContext,
     window: AnyWindowHandle,
     _core: TestCore,
+    /// Standing in for the app's live game, which none is played here (`follow_assistance`).
+    _assistance: Option<(Subscription, Task<()>)>,
+}
+
+/// What the app's live game does as it starts, with no game to play: asks the core for a game
+/// left running, and lends engine help as the core says (`online:assistance`, whose lock is the
+/// one that counts). A status answer older than a report is dropped, as the game drops it.
+fn follow_assistance(cx: &mut App) -> (Subscription, Task<()>) {
+    let core = cx.global::<AppCore>().clone();
+    let reports = Rc::new(Cell::new(0_u64));
+    let tell = |assistance: Assistance, cx: &mut App| {
+        crate::live_game::handle(cx).update(cx, |live, cx| {
+            live.set(assistance == Assistance::Allowed, false, cx)
+        });
+    };
+    let resume = core.request(calls::ResumeOnline {});
+    let status = core.request(calls::AssistanceStatus {});
+    let seen = Rc::clone(&reports);
+    let answered = cx.spawn(async move |cx| {
+        resume.await.expect("the check for a game in progress");
+        let assistance = status.await.expect("the core's engine help");
+        cx.update(|cx| {
+            if seen.get() == 0 {
+                tell(assistance, cx);
+            }
+        });
+    });
+    let reported = cx.subscribe(&core.events, move |_, event: &ClientEvent, cx| {
+        if let ClientEvent::Event(CoreEvent::Assistance(assistance)) = event {
+            reports.set(reports.get() + 1);
+            tell(*assistance, cx);
+        }
+    });
+    (reported, answered)
 }
 
 struct Blank;
@@ -31,15 +70,22 @@ impl Started {
 
     /// `new`, with the core's Lichess at `origin` (a local stand-in, `kchess_testkit::Server`).
     pub fn with_lichess(cx: &mut gpui_kit::TestAppContext, origin: Option<String>) -> Started {
+        let mut started = Started::bare(cx, origin);
+        started._assistance = Some(cx.update(follow_assistance));
+        started
+    }
+
+    /// `with_lichess` for the app's own live game, which tells the pages what they know of it
+    /// (`live_game`) itself: nothing stands in for it.
+    pub fn bare(cx: &mut gpui_kit::TestAppContext, origin: Option<String>) -> Started {
         // The core answers on its Tokio threads; the test waits for them in real time.
         cx.executor().allow_parking();
         let core = cx.update(|cx| {
             gpui_kit::init(cx);
-            let core = kchess_app::tests::start_core_with_lichess(cx, origin);
+            let core = kchess_app::tests::start_core_delivering(cx, origin);
             kchess_app::settings::init_for_tests(cx);
             kchess_app::accounts::init(cx);
             crate::live_game::init(cx);
-            crate::live_game::handle(cx).update(cx, |live, cx| live.set(true, false, cx));
             let colors = kchess_ui::theme::colors("kchess", &[], false);
             cx.set_global(kchess_ui::theme::Palette::of(&colors, false));
             crate::voice::init(cx);
@@ -50,29 +96,12 @@ impl Started {
                 .expect("a window")
                 .0
         });
-        let mut started = Started {
+        Started {
             cx: cx.clone(),
             window,
             _core: core,
-        };
-        // The app's live game asks the core for a game left running as it starts, and the core
-        // lends engine help only once that check has answered: ask it here, and wait.
-        let checked = Arc::new(AtomicBool::new(false));
-        started.with_window(|_, cx| {
-            let check = cx
-                .global::<kchess_app::core::AppCore>()
-                .request(kchess_contracts::calls::ResumeOnline {});
-            let checked = Arc::clone(&checked);
-            cx.background_spawn(async move {
-                check.await.expect("the check for a game in progress");
-                checked.store(true, Ordering::SeqCst);
-            })
-            .detach();
-        });
-        started.wait_for("the check for a game in progress", |_, _| {
-            checked.load(Ordering::SeqCst)
-        });
-        started
+            _assistance: None,
+        }
     }
 
     /// Work in the window, as a page's views are made and changed.
@@ -85,19 +114,42 @@ impl Started {
     /// Wait, in real time, until `ready` holds; `what` names it on failure. The core answers on
     /// its own threads, so the test looks again every 5 ms for up to 30 s, as the app's
     /// end-to-end harness does.
-    pub fn wait_for(&mut self, what: &str, mut ready: impl FnMut(&mut Window, &mut App) -> bool) {
-        const TIMEOUT: Duration = Duration::from_secs(30);
+    pub fn wait_for(&mut self, what: &str, ready: impl FnMut(&mut Window, &mut App) -> bool) {
+        self.wait_within(Duration::from_secs(30), what, ready);
+    }
+
+    /// `wait_for`, failing after `limit`: for an answer the core gives at once, so that a test
+    /// whose answer never comes fails promptly instead of running into the runner's timeout
+    /// (which reads as a hang, not a failure, to `cargo mutants`).
+    pub fn wait_within(
+        &mut self,
+        limit: Duration,
+        what: &str,
+        mut ready: impl FnMut(&mut Window, &mut App) -> bool,
+    ) {
         const POLL: Duration = Duration::from_millis(5);
         let started = Instant::now();
         while !self.with_window(&mut ready) {
             assert!(
-                started.elapsed() < TIMEOUT,
-                "timed out after {TIMEOUT:?} waiting for {what}"
+                started.elapsed() < limit,
+                "timed out after {limit:?} waiting for {what}"
             );
             std::thread::sleep(POLL);
             self.cx.executor().advance_clock(POLL);
             self.cx.run_until_parked();
         }
+    }
+
+    /// Wait until the core's startup check for a live Lichess game has ended and engine help is
+    /// lent (a profile with no account has nothing to find). The core ends it at once, so a
+    /// board that never lifts the lock fails within 10 s, inside the 20 s `cargo mutants` gives
+    /// a test, which would otherwise report a hang instead of a caught mutant.
+    pub fn wait_for_engine_help(&mut self) {
+        self.wait_within(
+            Duration::from_secs(10),
+            "the startup check to end",
+            |_, cx| crate::live_game::handle(cx).read(cx).assistance_allowed(),
+        );
     }
 
     /// The test's app, to run its tasks or read its state.

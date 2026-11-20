@@ -32,6 +32,7 @@ impl EventPayload for Value {
 impl EventPayload for () {}
 impl EventPayload for String {}
 impl EventPayload for OnlineConnection {}
+impl EventPayload for Assistance {}
 impl EventPayload for PuzzleDbProgress {}
 impl EventPayload for crate::voice::Progress {}
 impl EventPayload for AnalysisUpdate {}
@@ -98,6 +99,8 @@ core_events! {
     /// Lichess's own stream event, read by the online game (`ServerEvent::read`).
     OnlineEvent = "online:event" (Value),
     OnlineError = "online:error" (String),
+    /// The engine, review and explorer help the core lends, whenever it changes.
+    Assistance = "online:assistance" (Assistance),
     PuzzleDbProgress = "puzzledb:progress" (PuzzleDbProgress),
     VoiceModelProgress = "voicemodel:progress" (crate::voice::Progress),
     /// To the window that started the analysis.
@@ -219,6 +222,11 @@ mod tests {
     #[test]
     fn small_events_cross_as_before() {
         crosses_as(CoreEvent::OngoingChanged(()), "null");
+        crosses_as(
+            CoreEvent::Assistance(Assistance::Unverified),
+            r#""unverified""#,
+        );
+        crosses_as(CoreEvent::Assistance(Assistance::LiveGame), r#""liveGame""#);
         crosses_as(CoreEvent::OnlineError("Gone".into()), r#""Gone""#);
         crosses_as(
             CoreEvent::AlertsOwner(AlertOwner { connection: None }),

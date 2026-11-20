@@ -348,7 +348,7 @@ impl Core {
             ..BestMoveOptions::default()
         };
         let reply = async {
-            self.assistance_allowed(Assist::Engine.refusal())?;
+            self.assistance_allowed(Assist::Engine)?;
             EngineApi::best_move(self, Moves::default(), EngineLevel::Club, Some(options)).await
         };
         match reply.await {

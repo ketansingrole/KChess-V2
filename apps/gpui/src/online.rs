@@ -15,11 +15,11 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use kchess_app::log::ResultExt as _;
 use kchess_contracts::check::{GameId, PresenceUsers, Uci, Username, Validate};
+use kchess_contracts::types::{Assistance, Lane, OnlineConnection, OnlinePhase};
 use kchess_contracts::types::{
     ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, LobbyState, NotificationKind,
     OngoingGame, PresenceReport,
 };
-use kchess_contracts::types::{Lane, OnlineConnection, OnlinePhase};
 use kchess_contracts::types::{OnlineAction, OnlineOptions};
 use kchess_contracts::{CoreError, ErrorKind, Level};
 use kchess_domain::online_game::model::{
@@ -186,7 +186,42 @@ pub struct OnlineState {
     _ongoing_poll: Option<Task<()>>,
     /// Which `resumeOnline` answer is current: a later one (after a reconnect) replaces it.
     resumes: u64,
+    /// The help the core lends, as it last said (`online:assistance`): its lock is the one that
+    /// counts. Locked until it says otherwise, as a core starts.
+    pub assistance: Assistance,
+    /// `online:assistance` reports seen, so an answer to `assistanceStatus` older than one is
+    /// dropped.
+    assistance_reports: u64,
+    /// How long after a failed check for a game in progress the next one runs; doubles up to
+    /// `RECHECK_MAX`, and starts over once a check answers.
+    recheck_after: Duration,
+    _recheck: Option<Task<()>>,
 }
+
+/// Why engine help is held back now (`OnlineState::pause`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pause {
+    /// Lichess is being asked for a game in progress.
+    Checking,
+    /// Lichess could not be asked, or did not answer: offered again (`check_again`).
+    Unverified,
+    /// A live game is being played, looked for, or not yet seen to end.
+    LiveGame,
+}
+
+impl Pause {
+    pub fn text(self) -> &'static str {
+        match self {
+            Pause::Checking => "Checking Lichess for a game in progress…",
+            Pause::Unverified => "Couldn't check Lichess for a game in progress",
+            Pause::LiveGame => "Paused during your Lichess game",
+        }
+    }
+}
+
+/// The first wait before a failed check for a game in progress is tried again, and the longest.
+const RECHECK_FIRST: Duration = Duration::from_secs(15);
+const RECHECK_MAX: Duration = Duration::from_secs(5 * 60);
 
 impl OnlineState {
     /// The core session whose reports the board follows.
@@ -195,9 +230,73 @@ impl OnlineState {
         self.model.state_epoch
     }
 
-    /// The engine may help: no live game, and none still being looked for.
+    /// The engine may help: no live game, none still being looked for, and the core lends it.
+    /// (The app's phase alone took a failed check for a game as all clear, while the core kept
+    /// refusing every engine call.)
     pub fn assistance_allowed(&self) -> bool {
         matches!(self.phase, Phase::Idle | Phase::Finished)
+            && self.assistance == Assistance::Allowed
+    }
+
+    /// Why engine help is held back, if it is.
+    pub fn pause(&self) -> Option<Pause> {
+        if self.assistance_allowed() {
+            return None;
+        }
+        let checking = self.phase == Phase::Checking
+            || self
+                .model
+                .online_connection
+                .as_ref()
+                .is_some_and(OnlineConnection::checking);
+        Some(if checking {
+            Pause::Checking
+        } else if matches!(self.phase, Phase::Idle | Phase::Finished)
+            && self.assistance == Assistance::Unverified
+        {
+            Pause::Unverified
+        } else {
+            Pause::LiveGame
+        })
+    }
+
+    /// Ask the core what help it lends now, unless it reports a change first.
+    fn read_assistance(&mut self, cx: &mut Context<Self>) {
+        let seen = self.assistance_reports;
+        let status = cx.global::<AppCore>().request(calls::AssistanceStatus {});
+        cx.spawn(async move |this, cx| match status.await {
+            Ok(assistance) => {
+                this.update(cx, |state, cx| {
+                    if state.assistance_reports == seen {
+                        state.assistance = assistance;
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }
+            Err(cause) => log(&format!("reading engine help failed: {}", cause.message)),
+        })
+        .detach();
+    }
+
+    /// A check for a game in progress failed: try again later, longer each time. A refused login
+    /// waits for the account to be connected again, which checks again itself.
+    fn schedule_recheck(&mut self, cx: &mut Context<Self>) {
+        let refused = self
+            .model
+            .online_connection
+            .as_ref()
+            .is_some_and(|connection| connection.phase == OnlinePhase::AuthRequired);
+        if refused {
+            self._recheck = None;
+            return;
+        }
+        let wait = self.recheck_after;
+        self.recheck_after = (wait * 2).min(RECHECK_MAX);
+        self._recheck = Some(cx.spawn(async move |_, cx| {
+            cx.background_executor().timer(wait).await;
+            cx.update(check_again);
+        }));
     }
 
     /// A game of the account's is using the connection.
@@ -1036,6 +1135,11 @@ impl OnlineState {
                     self.alert_if_lost(report, cx);
                 }
             }
+            CoreEvent::Assistance(assistance) => {
+                self.assistance_reports += 1;
+                self.assistance = *assistance;
+                cx.notify();
+            }
             CoreEvent::OnlineError(message) => notice(cx, message.clone()),
             CoreEvent::OnlineLobby(lobby) => {
                 self.lobby = Some(lobby.clone());
@@ -1132,7 +1236,12 @@ pub fn init(cx: &mut App) {
             _presence: None,
             _ongoing_poll: None,
             resumes: 0,
+            assistance: Assistance::Unverified,
+            assistance_reports: 0,
+            recheck_after: RECHECK_FIRST,
+            _recheck: None,
         };
+        state.read_assistance(cx);
         state.transition(Model::checking, None, cx);
         state
     });
@@ -1171,12 +1280,55 @@ pub fn init(cx: &mut App) {
                     state.phase = Phase::Checking;
                     state.transition(Model::checking, None, cx);
                 }
+                state.read_assistance(cx);
             });
             resume(state.clone(), cx);
         }
     })
     .detach();
+    // Back on a network: a check for a game that failed is tried again at once.
+    if let Some(network) = cx.try_global::<crate::network::NetworkHandle>() {
+        cx.observe(&network.0.clone(), |network, cx| {
+            if network.read(cx).online {
+                check_again(cx);
+            }
+        })
+        .detach();
+    }
     resume(state, cx);
+}
+
+/// Ask Lichess again for a game in progress after a check that failed (its Check again button,
+/// the retry timer, the network's return): the core lends engine help only once one answers.
+pub fn check_again(cx: &mut App) {
+    let Some(state) = cx
+        .try_global::<OnlineHandle>()
+        .map(|handle| handle.0.clone())
+    else {
+        return;
+    };
+    let failed = state.update(cx, |state, cx| {
+        if state.pause() != Some(Pause::Unverified) {
+            return false;
+        }
+        state._recheck = None;
+        state.transition(Model::checking, None, cx);
+        true
+    });
+    if failed {
+        resume(state, cx);
+    }
+}
+
+/// The Check again link shown where a failed check holds engine help back.
+pub fn check_again_button(id: &'static str) -> gpui_kit::component::button::Button {
+    use gpui_kit::component::Sizable as _;
+    use gpui_kit::component::button::{Button, ButtonVariants as _};
+    Button::new(id)
+        .link()
+        .xsmall()
+        .label("Check again")
+        .on_click(|_, _, cx| check_again(cx))
 }
 
 /// An account was connected: its game and its event stream, as at startup. A game on the board
@@ -1225,6 +1377,10 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
             if state.resumes != attempt {
                 return;
             }
+            if resumed.is_ok() {
+                state.recheck_after = RECHECK_FIRST;
+                state._recheck = None;
+            }
             match resumed {
                 Ok(Some(game)) => {
                     // The game may belong to any connected account; it becomes the active one.
@@ -1246,6 +1402,8 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
                     if state.model.online_phase != GamePhase::Playing {
                         state.model.online_phase = GamePhase::Idle;
                     }
+                    // The core keeps help locked until a check answers: nothing else asks again.
+                    state.schedule_recheck(cx);
                 }
             }
             // The check is over: the phase is the rules' from now on.
@@ -1306,7 +1464,7 @@ mod tests {
 
     /// A board page's app with the live game of its own, its Lichess at `origin`.
     fn started(cx: &mut gpui_kit::TestAppContext, origin: Option<String>) -> Started {
-        let mut app = Started::with_lichess(cx, origin);
+        let mut app = Started::bare(cx, origin);
         app.with_window(|_, cx| super::init(cx));
         app
     }
@@ -1458,6 +1616,190 @@ mod tests {
             );
             (hooks.challenge)("c", "t", "b", cx);
         });
+    }
+
+    /// How long the core may take to answer a status read, which it answers at once: a read
+    /// that never lands fails the test inside the 20 s `cargo mutants` gives a test, which would
+    /// otherwise report a hang instead of a caught mutant.
+    const ANSWER: std::time::Duration = std::time::Duration::from_secs(10);
+
+    /// The board's online state once its startup check has ended and the core lends help.
+    fn settled(app: &mut Started) -> gpui_kit::Entity<super::OnlineState> {
+        app.wait_for_engine_help();
+        app.with_window(|_, cx| super::handle(cx))
+    }
+
+    /// A connection report in `phase`, for the state to hold.
+    fn connection(
+        lane: &str,
+        phase: &str,
+    ) -> kchess_domain::online_game::connection::OnlineConnection {
+        serde_json::from_value(serde_json::json!({
+            "session": 1, "account": "me", "gameId": "", "lane": lane, "phase": phase,
+        }))
+        .expect("a connection report")
+    }
+
+    #[test]
+    fn each_pause_says_why() {
+        use super::Pause;
+        assert_eq!(
+            Pause::Checking.text(),
+            "Checking Lichess for a game in progress…"
+        );
+        assert_eq!(
+            Pause::Unverified.text(),
+            "Couldn't check Lichess for a game in progress"
+        );
+        assert_eq!(Pause::LiveGame.text(), "Paused during your Lichess game");
+    }
+
+    /// Engine help needs both: no game of the account's on the board, and the core lending it. A
+    /// check that failed is told apart from a check under way and from a live game, which is
+    /// what decides whether Check again is offered.
+    #[gpui_kit::test]
+    fn engine_help_follows_both_the_board_and_the_core(cx: &mut gpui_kit::TestAppContext) {
+        use super::{Pause, Phase};
+        use kchess_contracts::types::Assistance;
+        let mut app = started(cx, None);
+        let online = settled(&mut app);
+        let all = [
+            Phase::Checking,
+            Phase::Idle,
+            Phase::Seeking,
+            Phase::Playing,
+            Phase::Finished,
+            Phase::Disconnected,
+        ];
+        let lent = [
+            Assistance::Allowed,
+            Assistance::Unverified,
+            Assistance::LiveGame,
+        ];
+        let seen = app.with_window(|_, cx| {
+            online.update(cx, |state, _| {
+                let mut seen = Vec::new();
+                for phase in all {
+                    for assistance in lent {
+                        state.phase = phase;
+                        state.assistance = assistance;
+                        seen.push((phase, assistance, state.assistance_allowed(), state.pause()));
+                    }
+                }
+                // The core reporting its check of the game lane counts as checking, whatever the
+                // board's phase.
+                state.phase = Phase::Idle;
+                state.assistance = Assistance::Unverified;
+                state.model.online_connection = Some(connection("game", "checking"));
+                let reported = state.pause();
+                state.model.online_connection = Some(connection("events", "checking"));
+                let other_lane = state.pause();
+                state.model.online_connection = None;
+                (seen, reported, other_lane)
+            })
+        });
+        let (seen, reported, other_lane) = seen;
+        let expected = |phase: Phase, assistance: Assistance| match (phase, assistance) {
+            (Phase::Idle | Phase::Finished, Assistance::Allowed) => (true, None),
+            (Phase::Checking, _) => (false, Some(Pause::Checking)),
+            (Phase::Idle | Phase::Finished, Assistance::Unverified) => {
+                (false, Some(Pause::Unverified))
+            }
+            _ => (false, Some(Pause::LiveGame)),
+        };
+        for (phase, assistance, allowed, pause) in seen {
+            assert_eq!(
+                (allowed, pause),
+                expected(phase, assistance),
+                "{phase:?} with the core's {assistance:?}"
+            );
+        }
+        assert_eq!(reported, Some(Pause::Checking));
+        assert_eq!(other_lane, Some(Pause::Unverified));
+    }
+
+    /// Each change the core reports is taken and counted, so a status read asked before it is
+    /// known for stale; a read with nothing reported since sets the state to the core's.
+    #[gpui_kit::test]
+    fn the_cores_lock_is_followed(cx: &mut gpui_kit::TestAppContext) {
+        use kchess_contracts::events::CoreEvent;
+        use kchess_contracts::types::Assistance;
+        let mut app = started(cx, None);
+        let online = settled(&mut app);
+        let (before, after, taken) = app.with_window(|_, cx| {
+            online.update(cx, |state, cx| {
+                let before = state.assistance_reports;
+                state.receive(&CoreEvent::Assistance(Assistance::LiveGame), cx);
+                (before, state.assistance_reports, state.assistance)
+            })
+        });
+        assert_eq!((after, taken), (before + 1, Assistance::LiveGame));
+        // The core still lends help (nothing changed there): reading it corrects the state.
+        app.with_window(|_, cx| online.update(cx, |state, cx| state.read_assistance(cx)));
+        app.wait_within(ANSWER, "the core's answer", |_, cx| {
+            online.read(cx).assistance == Assistance::Allowed
+        });
+    }
+
+    /// A failed check is tried again later, twice as late each time up to five minutes; not
+    /// while Lichess refuses the login, which connecting the account again checks itself.
+    #[gpui_kit::test]
+    fn a_failed_check_is_retried_later_each_time(cx: &mut gpui_kit::TestAppContext) {
+        use std::time::Duration;
+        let mut app = started(cx, None);
+        let online = settled(&mut app);
+        let waits = app.with_window(|_, cx| {
+            online.update(cx, |state, cx| {
+                state.recheck_after = super::RECHECK_FIRST;
+                state._recheck = None;
+                state.schedule_recheck(cx);
+                let first = (state.recheck_after, state._recheck.is_some());
+                state.recheck_after = Duration::from_secs(4 * 60);
+                state.schedule_recheck(cx);
+                let capped = state.recheck_after;
+                state.recheck_after = super::RECHECK_FIRST;
+                state.model.online_connection = Some(connection("events", "auth-required"));
+                state.schedule_recheck(cx);
+                let refused = (state.recheck_after, state._recheck.is_some());
+                state.model.online_connection = None;
+                (first, capped, refused)
+            })
+        });
+        assert_eq!(
+            waits,
+            (
+                (Duration::from_secs(30), true),
+                Duration::from_secs(5 * 60),
+                (Duration::from_secs(15), false),
+            )
+        );
+    }
+
+    /// Check again asks Lichess once more after a failed check, and only then.
+    #[gpui_kit::test]
+    fn check_again_follows_only_a_failed_check(cx: &mut gpui_kit::TestAppContext) {
+        use super::Phase;
+        use kchess_contracts::types::Assistance;
+        let mut app = started(cx, None);
+        let online = settled(&mut app);
+        let asked = |app: &mut Started, assistance: Assistance| {
+            app.with_window(|_, cx| {
+                let before = online.update(cx, |state, _| {
+                    state.model.online_connection = None;
+                    state.phase = Phase::Idle;
+                    state.assistance = assistance;
+                    state.resumes
+                });
+                super::check_again(cx);
+                let state = online.read(cx);
+                (state.resumes - before, state.pause())
+            })
+        };
+        assert_eq!(asked(&mut app, Assistance::Allowed), (0, None));
+        assert_eq!(
+            asked(&mut app, Assistance::Unverified),
+            (1, Some(super::Pause::Checking))
+        );
     }
 
     /// Signing out while the games in progress loaded kept that request current: its answer

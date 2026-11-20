@@ -350,9 +350,7 @@ mod tests {
         }
         let mut app = crate::testing::Started::new(cx);
         // The core refuses analysis until its startup check for a live Lichess game is over.
-        app.wait_for("the startup check to finish", |_, cx| {
-            crate::live_game::handle(cx).read(cx).assistance_allowed()
-        });
+        app.wait_for_engine_help();
         let owner = app.with_window(|_, cx| {
             let events = cx.global::<AppCore>().events.clone();
             cx.new(|cx| Owner {

@@ -21,6 +21,8 @@ exclude_re = [
     # A deadline compared with `<=` instead of `<` differs only at the very instant it passes, and
     # the next attempt's own deadline ends the loop at that instant either way.
     'kchess-service/src/client\.rs:.*: replace < with <= in (connect_or_start|wait_until_gone)',
+    # The board tests' wait gives up at its limit; `<=` differs only at the very instant it passes.
+    'kchess-board/src/testing\.rs:.*: replace < with <= in Started::wait_within$',
     # A game stream closed within 10 s of opening counts as taken by another device; `<=` differs
     # only for a stream that lived exactly 10 s to the nanosecond, which no read can arrange.
     'kchess-core/src/lichess/online/session\.rs:.*: replace < with <= in OnlineSession::listen_loop$',

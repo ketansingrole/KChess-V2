@@ -92,7 +92,7 @@ impl StudiesApi for Core {
             ));
         }
         // A game starting while settings loaded still blocks, as `bestMove` rechecks.
-        self.assistance_allowed(Assist::Analysis.refusal_after())?;
+        self.assistance_allowed(Assist::Analysis)?;
         let lichess = self.services.lichess();
         lookups::cloud_eval(lichess, self.services.cloud(), &fen.0, lines.0 as usize).await
     }

@@ -8,7 +8,7 @@ use serde_json::Value;
 use kchess_domain::misc::value::J;
 
 use crate::error::CoreError;
-use crate::types::ProfileArea;
+use crate::types::{Assistance, ProfileArea};
 
 /// One core method as a typed call.
 pub trait CoreCall {
@@ -63,41 +63,47 @@ pub struct Method {
     pub writes: &'static [ProfileArea],
 }
 
-/// The assistance a method gives, refused while a live human game is played (or not yet known
-/// to be over): before the method runs, and again before its answer is let out, as a game may
-/// have started meanwhile.
+/// The assistance a method gives, refused while a live human game is played or Lichess has not
+/// confirmed that none is (`Assistance`): before the method runs, and again before its answer is
+/// let out, as a game may have started meanwhile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Assist {
     Engine,
     Analysis,
     Review,
-    /// A stored review: refused until the game status is verified.
-    StoredReview,
     Lookups,
     Explain,
 }
 
 impl Assist {
-    /// Why the method is refused before it runs.
-    pub fn refusal(self) -> &'static str {
-        match self {
-            Assist::StoredReview => {
+    /// Why the method is refused while help is not lent for `why`.
+    pub fn refusal(self, why: Assistance) -> &'static str {
+        let unverified = why == Assistance::Unverified;
+        match (self, unverified) {
+            (Assist::Engine, true) => {
+                "Engine assistance is unavailable until your Lichess game status is verified."
+            }
+            (Assist::Engine, false) => {
+                "Engine assistance is unavailable during a live Lichess game."
+            }
+            (Assist::Analysis, true) => {
+                "Analysis is unavailable until your Lichess game status is verified."
+            }
+            (Assist::Analysis, false) => "Analysis is unavailable during a live Lichess game.",
+            (Assist::Review, true) => {
                 "Review is unavailable until your Lichess game status is verified."
             }
-            other => other.refusal_after(),
-        }
-    }
-
-    /// Why its answer is held back once it ran.
-    pub fn refusal_after(self) -> &'static str {
-        match self {
-            Assist::Engine => "Engine assistance is unavailable during a live Lichess game.",
-            Assist::Analysis => "Analysis is unavailable during a live Lichess game.",
-            Assist::Review | Assist::StoredReview => {
-                "Review is unavailable during a live Lichess game."
+            (Assist::Review, false) => "Review is unavailable during a live Lichess game.",
+            (Assist::Lookups, true) => {
+                "Position lookups are unavailable until your Lichess game status is verified."
             }
-            Assist::Lookups => "Position lookups are unavailable during a live Lichess game.",
-            Assist::Explain => "Explanations are unavailable during a live Lichess game.",
+            (Assist::Lookups, false) => {
+                "Position lookups are unavailable during a live Lichess game."
+            }
+            (Assist::Explain, true) => {
+                "Explanations are unavailable until your Lichess game status is verified."
+            }
+            (Assist::Explain, false) => "Explanations are unavailable during a live Lichess game.",
         }
     }
 }
@@ -243,8 +249,9 @@ macro_rules! core_api {
 
         /// The core's API: every area's methods, and what the generated dispatch asks of it.
         pub trait CoreApi: $($area +)* Sync {
-            /// Whether assistance is refused now: a live human game is played, or one may be.
-            fn assistance_blocked(&self) -> bool;
+            /// Whether assistance is lent now, and why not: a live human game is played, or one
+            /// may be.
+            fn assistance(&self) -> Assistance;
             /// A call was refused before it ran: its arguments did not pass their checks.
             fn refused_arguments(&self, method: &str, cause: &str);
             /// A call changed these parts of the profile.
@@ -327,16 +334,18 @@ macro_rules! core_api {
                                 }
                             };
                         $(
-                            if api.assistance_blocked() {
-                                return Err(CoreError::new(Assist::$gate.refusal()));
+                            let why = api.assistance();
+                            if why != Assistance::Allowed {
+                                return Err(CoreError::new(Assist::$gate.refusal(why)));
                             }
                         )?
                         // Boxed: the futures of all the methods would make this one too large
                         // for a worker's stack.
                         let answered = Box::pin(api.$fn($($arg,)* $($($opt,)+)?)).await?;
                         $(
-                            if api.assistance_blocked() {
-                                return Err(CoreError::new(Assist::$gate.refusal_after()));
+                            let why = api.assistance();
+                            if why != Assistance::Allowed {
+                                return Err(CoreError::new(Assist::$gate.refusal(why)));
                             }
                         )?
                         $(api.changed(&[$(ProfileArea::$written),*]);)?

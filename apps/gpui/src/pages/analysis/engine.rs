@@ -22,6 +22,11 @@ impl AnalysisPage {
         cx.global::<OnlineHandle>().0.read(cx).assistance_allowed()
     }
 
+    /// Why engine help is held back, if it is.
+    pub(super) fn pause(cx: &App) -> Option<crate::online::Pause> {
+        cx.global::<OnlineHandle>().0.read(cx).pause()
+    }
+
     /// Start following the board with the engine (the page is shown).
     pub fn attach(&mut self, cx: &mut Context<Self>) {
         if self.attached {
@@ -395,13 +400,8 @@ impl AnalysisPage {
         if let Some(over) = game_over(self.position().as_ref()) {
             return over.into();
         }
-        if !Self::assistance_allowed(cx) {
-            return if cx.global::<OnlineHandle>().0.read(cx).phase == crate::online::Phase::Checking
-            {
-                "Checking Lichess game status…".into()
-            } else {
-                "Analysis paused until Lichess game status is verified".into()
-            };
+        if let Some(pause) = Self::pause(cx) {
+            return pause.text().into();
         }
         let threat = if self.threat_position().is_some() {
             "Threat · "
@@ -642,6 +642,14 @@ impl AnalysisPage {
                                     .truncate()
                                     .font_features(crate::widgets::tabular())
                                     .child(status),
+                            )
+                            .when(
+                                Self::pause(cx) == Some(crate::online::Pause::Unverified),
+                                |row| {
+                                    row.child(crate::online::check_again_button(
+                                        "engine-check-again",
+                                    ))
+                                },
                             ),
                     ),
             )

@@ -41,7 +41,7 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
         .unwrap_err();
     assert_eq!(
         blocked.message,
-        "Analysis is unavailable during a live Lichess game."
+        "Analysis is unavailable until your Lichess game status is verified."
     );
     core.call("resumeOnline", vec![]).await.unwrap();
     let off = core

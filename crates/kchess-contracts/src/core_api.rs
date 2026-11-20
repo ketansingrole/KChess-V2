@@ -229,7 +229,7 @@ core_api! {
         ) -> ();
         /// The stored review of these moves from this position, if any; `variant` is a variant
         /// game's Lichess key.
-        #[assist(StoredReview)]
+        #[assist(Review)]
         #[check(crate::check::review_get)]
         ReviewGet = "reviewGet" fn review_get(
             fen: Fen,
@@ -257,6 +257,9 @@ core_api! {
         ) -> StartResult;
         /// Reattach to a game in progress on any connected account.
         ResumeOnline = "resumeOnline" fn resume_online() -> Option<Resumed>;
+        /// Whether engine, review and explorer help is lent now (`online:assistance` reports
+        /// each change).
+        AssistanceStatus = "assistanceStatus" fn assistance_status() -> crate::types::Assistance;
         CancelOnline = "cancelOnline" fn cancel_online() -> ();
         PlayOnline = "playOnline" fn play_online(id: GameId, r#move: Uci) -> ();
         /// Send a move to a correspondence game that is not on the board (a reply from its

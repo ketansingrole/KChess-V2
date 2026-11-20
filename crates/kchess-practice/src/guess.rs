@@ -1182,6 +1182,7 @@ mod tests {
     fn the_engine_judges_only_when_installed_and_allowed(cx: &mut gpui_kit::TestAppContext) {
         use gpui_kit::AppContext as _;
         let mut app = kchess_board::testing::Started::new(cx);
+        app.wait_for_engine_help();
         let page = app.with_window(|window, cx| cx.new(|cx| super::GuessMoves::new(window, cx)));
         let usable =
             |app: &mut kchess_board::testing::Started, ready: Option<bool>, allowed: bool| {
