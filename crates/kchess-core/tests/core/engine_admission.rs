@@ -22,6 +22,29 @@ async fn prepared(dir: &Path, host: &Arc<support::Recording>) -> Core {
     core
 }
 
+/// The engine refuses on its own, not only at the method table: a call that reaches it without
+/// the table's check (a game started while it waited, or a caller inside the core) is refused
+/// while Lichess has not confirmed that no game is in progress, and says so.
+#[tokio::test]
+async fn the_engine_refuses_until_the_check_for_a_game_answers() {
+    use kchess_contracts::check::Moves;
+    use kchess_contracts::core_api::EngineApi;
+    use kchess_contracts::types::EngineLevel;
+    let dir = tempfile::tempdir().unwrap();
+    let host = support::host();
+    let core = Core::open(Config::new(dir.path().to_path_buf()), host.clone()).unwrap();
+    core.call("loadData", vec![]).await.unwrap();
+    assert_eq!(core.assistance(), Assistance::Unverified);
+    let refused = EngineApi::best_move(&core, Moves::default(), EngineLevel::Club, None)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refused.message,
+        "Engine assistance is unavailable until your Lichess game status is verified."
+    );
+    core.close().await;
+}
+
 async fn scored(host: &support::Recording) -> Value {
     support::wait_until(Duration::from_secs(5), "a scored update", || {
         host.named("engine:analysis").into_iter().find(|value| {
