@@ -7,6 +7,7 @@
 //! and shares the parsing and the response heads (`Request::from_head`, `sized_head`,
 //! `chunked_head`, `chunk`).
 
+pub mod build;
 pub mod memory;
 
 use std::io::{BufRead, BufReader, Write};

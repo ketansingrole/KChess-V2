@@ -4359,6 +4359,7 @@ dependencies = [
  "kchess-hack",
  "kchess-host",
  "kchess-service",
+ "kchess-testkit",
  "serde_json",
  "tempfile",
  "tokio",
@@ -4738,6 +4739,7 @@ version = "2026.11.7"
 dependencies = [
  "kchess-hack",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
