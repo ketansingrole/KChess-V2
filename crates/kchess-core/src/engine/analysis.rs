@@ -5,6 +5,10 @@
 //!
 //! Analysis runs on its own task: `start_analysis` returns its id at once, and `stop_analysis`
 //! (or a newer request) ends it.
+//!
+//! The core runs a connection's calls in any order, so a stop sent before a start can land after
+//! it. A client numbers its requests (`clientId`, rising): a stop or a start naming a client
+//! older than the newest one the connection has heard of comes too late, and changes nothing.
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -43,11 +47,21 @@ pub type AnalysisSink = Arc<dyn Fn(AnalysisUpdate) + Send + Sync>;
 /// The analysis service's state.
 #[derive(Default)]
 struct State {
-    /// The request in progress, with its id.
-    current: Option<(u64, CancellationToken)>,
+    /// The request in progress.
+    current: Option<Current>,
     next_id: u64,
+    /// The newest `clientId` a start or a stop named: a start naming it or an older one is
+    /// refused, since the core already ran that client's stop or a newer start.
+    newest_client: u64,
     /// The analyses in the order they were asked for.
     line: Line,
+}
+
+/// The request in progress: its id, its client's own id for it, and its cancellation.
+struct Current {
+    id: u64,
+    client: Option<u64>,
+    token: CancellationToken,
 }
 
 struct Shared {
@@ -115,18 +129,19 @@ impl Analysis {
     /// `startAnalysis` for the calling connection: supersedes only its own analysis.
     pub fn start_analysis(&self, raw: Value, configured: &str, send: AnalysisSink) -> Result<u64> {
         let request = check::<AnalysisRequest>(J::from(&raw)).map_err(CoreError::new)?;
-        let (engine, pending) = self.admit(request);
+        let (engine, pending) = self.admit(request)?;
         Ok(engine.start_pending(pending, configured.to_string(), send))
     }
 
-    /// Interrupts every other connection's analysis and reserves `request` for the calling one,
-    /// as one step (`admission`).
-    fn admit(&self, request: AnalysisRequest) -> (AnalysisEngine, PendingAnalysis) {
+    /// Reserves `request` for the calling connection and interrupts every other connection's
+    /// analysis, as one step (`admission`). A request that comes too late
+    /// (`AnalysisEngine::reserve`) is refused and interrupts nothing.
+    fn admit(&self, request: AnalysisRequest) -> Result<(AnalysisEngine, PendingAnalysis)> {
         let _admission = lock(&self.admission);
-        self.interrupt_others();
         let engine = self.mine();
-        let pending = engine.reserve(request);
-        (engine, pending)
+        let pending = engine.reserve(request)?;
+        self.interrupt_others();
+        Ok((engine, pending))
     }
 
     pub(crate) async fn start_analysis_with_settings(
@@ -135,7 +150,7 @@ impl Analysis {
         configured: impl Future<Output = Result<String>>,
         send: AnalysisSink,
     ) -> Result<u64> {
-        let (engine, pending) = self.admit(request);
+        let (engine, pending) = self.admit(request)?;
         engine.start_reserved(pending, configured, send).await
     }
 
@@ -158,13 +173,12 @@ impl Analysis {
         }
     }
 
-    /// `stopAnalysis` from a client: stops the calling connection's analysis only.
-    pub fn stop_mine(&self, kill: bool) {
-        let connection = crate::connection::current_or_app();
-        let engine = lock(&self.engines).get(&connection).cloned();
-        if let Some(engine) = engine {
-            engine.stop_analysis(kill);
-        }
+    /// `stopAnalysis` from a client: stops the calling connection's analysis only; with
+    /// `client`, only that client's search or an older one (`AnalysisEngine::stop_client`).
+    pub fn stop_mine(&self, kill: bool, client: Option<u64>) {
+        // Kept even before the connection's first start: that start may be the one this stop
+        // was sent after.
+        self.mine().stop_client(kill, client);
     }
 
     /// A connection went away: its analysis stops and its engine closes.
@@ -282,7 +296,11 @@ struct PendingAnalysis {
 impl Drop for Finish {
     fn drop(&mut self) {
         let mut state = lock(&self.shared.state);
-        if state.current.as_ref().is_some_and(|(id, _)| *id == self.id) {
+        if state
+            .current
+            .as_ref()
+            .is_some_and(|current| current.id == self.id)
+        {
             state.current = None;
             self.shared.engine.release();
         }
@@ -300,13 +318,6 @@ impl AnalysisEngine {
         }
     }
 
-    /// Validates the request, supersedes the analysis
-    /// running, and starts this one on its own task. Returns the request's id.
-    pub fn start_analysis(&self, raw: Value, configured: &str, send: AnalysisSink) -> Result<u64> {
-        let request = check::<AnalysisRequest>(J::from(&raw)).map_err(CoreError::new)?;
-        Ok(self.start_pending(self.reserve(request), configured.to_string(), send))
-    }
-
     /// Admitted before the first await; stopping the service cancels pending settings reads
     /// too.
     async fn start_reserved(
@@ -320,20 +331,33 @@ impl AnalysisEngine {
         Ok(self.start_pending(pending, configured, send))
     }
 
-    fn reserve(&self, request: AnalysisRequest) -> PendingAnalysis {
+    /// Supersedes the request running with `request`, unless `request` comes too late: the core
+    /// already ran its client's stop for it, or a newer start (`State::newest_client`). Then it
+    /// is refused as aborted, and what runs carries on.
+    fn reserve(&self, request: AnalysisRequest) -> Result<PendingAnalysis> {
         let (id, token, place) = {
             let mut state = lock(&self.shared.state);
+            if let Some(client) = request.client_id {
+                if client <= state.newest_client {
+                    return Err(signal_aborted());
+                }
+                state.newest_client = client;
+            }
             state.next_id += 1;
             let id = state.next_id;
-            if let Some((_, running)) = &state.current {
-                running.cancel();
+            if let Some(running) = &state.current {
+                running.token.cancel();
             }
             let token = CancellationToken::new();
-            state.current = Some((id, token.clone()));
+            state.current = Some(Current {
+                id,
+                client: request.client_id,
+                token: token.clone(),
+            });
             self.shared.engine.keep();
             (id, token, state.line.join())
         };
-        PendingAnalysis {
+        Ok(PendingAnalysis {
             request,
             id,
             token,
@@ -342,7 +366,7 @@ impl AnalysisEngine {
                 shared: Arc::clone(&self.shared),
                 id,
             },
-        }
+        })
     }
 
     fn start_pending(
@@ -425,9 +449,27 @@ impl AnalysisEngine {
     /// Ends the analysis in progress (its final update is `interrupted`); with `kill`, also
     /// closes the engine.
     pub fn stop_analysis(&self, kill: bool) {
-        let state = lock(&self.shared.state);
-        if let Some((_, token)) = &state.current {
-            token.cancel();
+        self.stop_client(kill, None);
+    }
+
+    /// `stop_analysis`, from `client` when it says which of its searches it stops: then a newer
+    /// search of the connection (a later client id) carries on, engine and all, and a start for
+    /// `client` or an older one that the core runs after this stop is refused.
+    pub fn stop_client(&self, kill: bool, client: Option<u64>) {
+        let mut state = lock(&self.shared.state);
+        if let Some(client) = client {
+            let newer = state
+                .current
+                .as_ref()
+                .and_then(|current| current.client)
+                .is_some_and(|running| running > client);
+            if newer {
+                return;
+            }
+            state.newest_client = state.newest_client.max(client);
+        }
+        if let Some(current) = &state.current {
+            current.token.cancel();
         }
         if kill {
             self.shared.engine.close();

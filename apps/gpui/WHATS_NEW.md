@@ -16,7 +16,7 @@ refuses to release with nothing there.
 - **Captured pieces on the analysis board**: the pieces each side has won, and who is ahead, show above and below the board as they do in your games.
 - **Easier on your battery**: on a laptop running on battery, automatic game reviews now wait for a charger unless Also on battery power is on, and the engine uses fewer cores.
 - **Engine back after a Lichess hiccup**: if KChess can't reach Lichess when it starts, the engine, game review and Play with computer now say so and come back on their own once Lichess answers, instead of staying off until you restart.
-- **Fixes**: A wrong move in a puzzle goes back, so you can try another right away. Insights opened during a sync fill in once it finishes. Cancel seek no longer goes missing right after you sign in to Lichess. The voice meter moves as you speak. Plus many smaller fixes.
+- **Fixes**: A wrong move in a puzzle goes back, so you can try another right away. Cancel seek no longer goes missing right after you sign in to Lichess. The voice meter moves as you speak. The analysis engine keeps going as you step through moves. Plus many smaller fixes.
 
 ## 2026.11.7 (2026-11-09)
 

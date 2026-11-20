@@ -1,13 +1,18 @@
 //! Interface size: the whole
 //! window scaled together, like a browser's page zoom, through the window zoom KChess adds to
-//! GPUI (vendor/gpui-pre/KCHESS-PATCH.md). `auto` follows the display; the setting is the
-//! profile's `interface-zoom.json`. ⌘+ and ⌘− step it, ⌘0 returns to
+//! GPUI (vendor/gpui-pre/KCHESS-PATCH.md). `auto` follows the display; the setting is the view
+//! preference `kchess:interface-zoom`, kept by the core. ⌘+ and ⌘− step it, ⌘0 returns to
 //! Auto.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use gpui_kit::*;
 use serde_json::{Value, json};
+
+/// The view preference holding a chosen percent; Auto when it is missing.
+const KEY: &str = "kchess:interface-zoom";
+/// Where releases before the setting was a view preference kept it, as `{"zoom": …}`.
+const LEGACY_FILE: &str = "interface-zoom.json";
 
 pub const PERCENTS: [u16; 13] = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300];
 
@@ -41,13 +46,6 @@ impl Setting {
             _ => Setting::Auto,
         }
     }
-
-    fn to_json(self) -> Value {
-        match self {
-            Setting::Auto => json!("auto"),
-            Setting::Percent(percent) => json!(percent),
-        }
-    }
 }
 
 /// What `auto` picks for a work area: 100% up to a 1440p-sized workspace, then the largest step
@@ -79,53 +77,21 @@ pub fn step(percent: u16, direction: i8) -> u16 {
     }
 }
 
-fn file(dir: &Path) -> PathBuf {
-    dir.join("interface-zoom.json")
+/// The setting chosen, from anywhere.
+pub fn setting(cx: &App) -> Setting {
+    Setting::parse(&crate::prefs::get(cx, KEY, Value::Null))
 }
 
-#[track_caller]
-fn read(dir: &Path) -> Setting {
-    crate::slow_calls::call("the interface zoom file");
-    match std::fs::read_to_string(file(dir)) {
-        Ok(text) => serde_json::from_str::<Value>(&text)
-            .map_or(Setting::Auto, |saved| Setting::parse(&saved["zoom"])),
-        Err(cause) => {
-            if cause.kind() != std::io::ErrorKind::NotFound {
-                crate::log::write(
-                    kchess_contracts::Level::Warn,
-                    "zoom",
-                    &format!("Interface zoom unreadable; using Auto: {cause}"),
-                );
-            }
-            Setting::Auto
-        }
-    }
-}
-
-fn write(dir: &Path, setting: Setting) {
-    let target = file(dir);
-    let temp = target.with_extension("json.tmp");
-    let text = format!("{}\n", json!({ "zoom": setting.to_json() }));
-    if let Err(cause) = std::fs::write(&temp, text).and_then(|_| std::fs::rename(&temp, &target)) {
-        crate::log::write(
-            kchess_contracts::Level::Warn,
-            "zoom",
-            &format!("Interface zoom not saved: {cause}"),
-        );
-    }
-}
-
-/// The saved setting, from anywhere: `cx.global::<InterfaceZoom>()`.
-pub struct InterfaceZoom {
-    dir: PathBuf,
-    pub setting: Setting,
-}
-
-impl Global for InterfaceZoom {}
-
-pub fn init(dir: PathBuf, cx: &mut App) {
-    let setting = read(&dir);
-    cx.set_global(InterfaceZoom { dir, setting });
+/// Move the setting out of the file an earlier release kept it in (`profile`'s
+/// `interface-zoom.json`), once, after the view preferences are read and before the window opens.
+pub fn init(profile: &Path, cx: &mut App) {
+    crate::prefs::take_file(cx, KEY, &profile.join(LEGACY_FILE), |text| {
+        let saved: Value = serde_json::from_str(text).ok()?;
+        Some(match Setting::parse(&saved["zoom"]) {
+            Setting::Auto => json!("auto"),
+            Setting::Percent(percent) => json!(percent),
+        })
+    });
 }
 
 /// What `auto` picks for the display the window is on.
@@ -138,7 +104,7 @@ pub fn auto_for(window: &Window, cx: &App) -> u16 {
 
 /// The percent in effect in `window`.
 pub fn percent(window: &Window, cx: &App) -> u16 {
-    match cx.global::<InterfaceZoom>().setting {
+    match setting(cx) {
         Setting::Auto => auto_for(window, cx),
         Setting::Percent(percent) => percent,
     }
@@ -162,11 +128,10 @@ fn traffic_lights(factor: f32) -> Point<Pixels> {
 }
 
 /// Choose a setting, save it, and zoom `window` (the app's one window) to it.
-pub fn choose(setting: Setting, window: &mut Window, cx: &mut App) {
-    let zoom = cx.global_mut::<InterfaceZoom>();
-    if zoom.setting != setting {
-        zoom.setting = setting;
-        write(&zoom.dir, setting);
+pub fn choose(chosen: Setting, window: &mut Window, cx: &mut App) {
+    match chosen {
+        Setting::Auto => crate::prefs::forget(cx, KEY),
+        Setting::Percent(percent) => crate::prefs::set(cx, KEY, percent),
     }
     apply(window, cx);
 }

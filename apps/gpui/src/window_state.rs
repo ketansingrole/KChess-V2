@@ -1,7 +1,7 @@
-//! Where the window opens: as it was left, in the profile's
-//! `window-state.json`, unless no connected display can still show it.
+//! Where the window opens: as it was left, in the view preference `kchess:window-state` the
+//! core keeps, unless no connected display can still show it.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use gpui_kit::*;
@@ -14,6 +14,10 @@ const GRAB_HEIGHT: f32 = 52.;
 const GRAB_WIDTH: f32 = 120.;
 /// Saved this long after the last move or resize.
 const SAVE_DELAY: Duration = Duration::from_millis(500);
+/// The view preference holding how the window was left.
+pub const KEY: &str = "kchess:window-state";
+/// Where releases before it was a view preference kept it.
+const LEGACY_FILE: &str = "window-state.json";
 
 /// How the window was left: its normal bounds and its mode.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -32,13 +36,13 @@ pub struct WindowState {
 /// A rectangle as `x, y, width, height`.
 pub type Area = (f32, f32, f32, f32);
 
-fn file(dir: &Path) -> PathBuf {
-    dir.join("window-state.json")
+/// A saved state, or `None` when it is damaged or empty.
+pub fn parse(text: &str) -> Option<WindowState> {
+    usable(serde_json::from_str(text).ok()?)
 }
 
-/// A saved state, or `None` when it is missing, damaged or empty.
-pub fn parse(text: &str) -> Option<WindowState> {
-    let state: WindowState = serde_json::from_str(text).ok()?;
+/// `state` in whole points, or `None` when it has no size or is not a number.
+fn usable(state: WindowState) -> Option<WindowState> {
     let finite = [state.x, state.y, state.width, state.height]
         .iter()
         .all(|n| n.is_finite());
@@ -84,37 +88,22 @@ pub fn restored(
     (Some((x, y)), (width, height))
 }
 
-pub fn read(dir: &Path) -> Option<WindowState> {
-    match std::fs::read_to_string(file(dir)) {
-        Ok(text) => parse(&text),
-        Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => None,
-        Err(cause) => {
-            crate::log::write(
-                kchess_contracts::Level::Warn,
-                "window",
-                &format!("Window state unreadable; using the default size: {cause}"),
-            );
-            None
-        }
-    }
+/// How the window was left, if that is known and usable.
+pub fn read(cx: &App) -> Option<WindowState> {
+    crate::prefs::get::<Option<WindowState>>(cx, KEY, None).and_then(usable)
 }
 
-fn write(dir: &Path, state: &WindowState) {
-    let target = file(dir);
-    let temp = target.with_extension("json.tmp");
-    let text = format!("{}\n", serde_json::to_string(state).unwrap_or_default());
-    if let Err(cause) = std::fs::write(&temp, text).and_then(|_| std::fs::rename(&temp, &target)) {
-        crate::log::write(
-            kchess_contracts::Level::Warn,
-            "window",
-            &format!("Window state not saved: {cause}"),
-        );
-    }
+/// Move the state out of the file an earlier release kept it in (`profile`'s
+/// `window-state.json`), once, after the view preferences are read and before the window opens.
+pub fn init(profile: &Path, cx: &mut App) {
+    crate::prefs::take_file(cx, KEY, &profile.join(LEGACY_FILE), |text| {
+        serde_json::to_value(parse(text)?).ok()
+    });
 }
 
 /// The window's options for opening where it was left.
-pub fn bounds(dir: &Path, cx: &App) -> (Option<WindowBounds>, WindowState) {
-    let saved = read(dir);
+pub fn bounds(cx: &App) -> (Option<WindowBounds>, WindowState) {
+    let saved = read(cx);
     let area = |bounds: Bounds<Pixels>| {
         (
             bounds.origin.x.as_f32(),
@@ -155,8 +144,10 @@ pub fn bounds(dir: &Path, cx: &App) -> (Option<WindowBounds>, WindowState) {
     (Some(bounds), state)
 }
 
-/// Saves the window's bounds and mode shortly after each change.
-pub fn track<V: 'static>(dir: PathBuf, window: &mut Window, cx: &mut Context<V>) -> Subscription {
+/// Saves the window's bounds and mode shortly after each change, through the core, which writes
+/// one at a time for every app on the profile. (Each app writing its own file under one shared
+/// temporary name, two apps saving at once lost one of the saves.)
+pub fn track<V: 'static>(window: &mut Window, cx: &mut Context<V>) -> Subscription {
     // The newest save replaces the one waiting, which is dropped and so never runs.
     let pending: std::rc::Rc<std::cell::RefCell<Option<Task<()>>>> = Default::default();
     cx.observe_window_bounds(window, move |_, window, cx| {
@@ -174,12 +165,9 @@ pub fn track<V: 'static>(dir: PathBuf, window: &mut Window, cx: &mut Context<V>)
             maximized,
             full_screen,
         };
-        let dir = dir.clone();
         *pending.borrow_mut() = Some(cx.spawn(async move |_, cx| {
             cx.background_executor().timer(SAVE_DELAY).await;
-            cx.background_executor()
-                .spawn(async move { write(&dir, &state) })
-                .await;
+            cx.update(|cx| crate::prefs::keep(cx, KEY, state));
         }));
     })
 }

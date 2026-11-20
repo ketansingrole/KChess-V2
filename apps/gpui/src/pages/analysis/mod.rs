@@ -330,6 +330,8 @@ pub struct AnalysisPage {
     /// The position the running search is for, and the request's ids.
     wanted: String,
     client_id: u64,
+    /// The client id of the last search sent to the core, which a stop names.
+    engine_started: Option<u64>,
     latest_id: u64,
     cloud: Option<kchess_contracts::types::CloudEval>,
     cloud_busy: bool,
@@ -584,6 +586,7 @@ impl AnalysisPage {
             engine_busy: false,
             wanted: String::new(),
             client_id: 0,
+            engine_started: None,
             latest_id: 0,
             cloud: None,
             cloud_busy: false,

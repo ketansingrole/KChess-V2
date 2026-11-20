@@ -170,21 +170,20 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
     Some(key)
 }
 
-/// Write `text` to a file only its owner can read.
+/// Write `text` to a file only its owner can read, replacing it whole: written beside it under a
+/// name of its own, then renamed over it. Truncated in place, a crash between emptying the file
+/// and writing it left the profile's id empty, and every saved login unreadable.
 fn write_private(path: &Path, text: &str) -> Result<()> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(path)
-        .map_err(|e| CoreError::wrap("credential file", e))?;
-    file.write_all(text.as_bytes())
-        .and_then(|()| file.sync_all())
-        .map_err(|e| CoreError::wrap("credential file", e))
+    let wrap = |e: std::io::Error| CoreError::wrap("credential file", e);
+    let dir = path
+        .parent()
+        .ok_or_else(|| CoreError::new("The credential file has no folder."))?;
+    // Created owner-only (0600 on Unix), with a random name no other writer shares.
+    let mut file = tempfile::NamedTempFile::new_in(dir).map_err(wrap)?;
+    file.write_all(text.as_bytes()).map_err(wrap)?;
+    file.as_file().sync_all().map_err(wrap)?;
+    file.persist(path).map_err(|e| wrap(e.error))?;
+    Ok(())
 }
 
 fn read_optional(path: &Path) -> Result<Option<String>> {
@@ -409,6 +408,29 @@ mod tests {
             .unwrap();
         let reopened = Credentials::new(Box::new(FileKeys(path.clone())));
         assert_eq!(reopened.open(&sealed).unwrap(), "lip_token");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+    }
+
+    /// The id was rewritten in place: emptied first, so a crash before the write left an empty
+    /// id and every saved login unreadable. It now replaces the file whole, owner-only, and leaves
+    /// nothing else behind.
+    #[test]
+    fn a_credential_file_is_replaced_whole_and_stays_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(ID_FILE);
+        std::fs::write(&path, "an older, longer id that must not show through").unwrap();
+        write_private(&path, "abc").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "abc");
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [std::ffi::OsString::from(ID_FILE)]);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

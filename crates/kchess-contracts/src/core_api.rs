@@ -220,9 +220,12 @@ core_api! {
         StartAnalysis = "startAnalysis" fn start_analysis(
             request: AnalysisRequest
         ) -> u64;
-        /// Stop the running analysis; with `kill`, also closes the engine.
+        /// Stop the running analysis; with `kill`, also closes the engine. With `client`, only
+        /// that client's search stops: a stop that arrives after a newer search started (the
+        /// core runs calls in any order) leaves it running.
         StopAnalysis = "stopAnalysis" fn stop_analysis(;
-            kill: Option<bool>
+            kill: Option<bool>,
+            client: Option<AnalysisClient>
         ) -> ();
         /// The stored review of these moves from this position, if any; `variant` is a variant
         /// game's Lichess key.

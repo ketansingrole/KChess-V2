@@ -159,6 +159,76 @@ fn a_category_opened_in_a_short_window_scrolls_into_its_list(cx: &mut gpui_kit::
     assert!(updates.bottom() <= list.bottom());
 }
 
+/// The window's place and the interface size were files each app wrote itself under one
+/// temporary name: two apps on a profile saving at once lost a save ("No such file or
+/// directory"). The core keeps both now, and takes an earlier release's files once.
+#[gpui_kit::test]
+fn an_earlier_releases_window_and_interface_size_move_into_the_core(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use crate::interface_zoom::{Setting, setting};
+    let mut app = Harness::start_with(cx, |profile| {
+        let state = json!({ "x": 0, "y": 0, "width": 1100, "height": 700 });
+        std::fs::write(profile.join("window-state.json"), state.to_string())
+            .expect("the window state");
+        std::fs::write(profile.join("interface-zoom.json"), r#"{"zoom":125}"#)
+            .expect("the interface size");
+    });
+    assert_eq!(app.cx.update(|cx| setting(cx)), Setting::Percent(125));
+    let size = app.with_window(|window, _| window.bounds().size);
+    assert_eq!((size.width.as_f32(), size.height.as_f32()), (1100., 700.));
+    app.wait_for_view_preference("kchess:interface-zoom", json!(125));
+    app.wait_for_view_preference(
+        crate::window_state::KEY,
+        json!({ "x": 0, "y": 0, "width": 1100, "height": 700,
+                "maximized": false, "fullScreen": false }),
+    );
+    let profile = app
+        .profile
+        .as_ref()
+        .expect("the profile")
+        .path()
+        .to_path_buf();
+    assert!(!profile.join("window-state.json").exists());
+    assert!(!profile.join("interface-zoom.json").exists());
+}
+
+/// A resized window is saved through the core, and opens at that size again.
+#[gpui_kit::test]
+fn the_window_opens_as_it_was_left(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{px, size};
+    let mut app = Harness::start(cx);
+    app.cx
+        .simulate_window_resize(app.window, size(px(1000.), px(680.)));
+    let started = std::time::Instant::now();
+    loop {
+        app.cx.run_until_parked();
+        let saved = app.request(kchess_contracts::calls::ViewPreferences {});
+        let kept = saved.get(crate::window_state::KEY);
+        if kept.is_some_and(|kept| kept["width"] == json!(1000) && kept["height"] == json!(680)) {
+            break;
+        }
+        assert!(
+            started.elapsed() < super::TIMEOUT,
+            "the size stayed {kept:?}"
+        );
+        app.tick();
+    }
+    let profile = app
+        .profile
+        .as_ref()
+        .expect("the profile")
+        .path()
+        .to_path_buf();
+    assert!(!profile.join("window-state.json").exists());
+    let mut app = app.restart();
+    let opened = app.with_window(|window, _| window.bounds().size);
+    assert_eq!(
+        (opened.width.as_f32(), opened.height.as_f32()),
+        (1000., 680.)
+    );
+}
+
 #[gpui_kit::test]
 fn moves_can_be_shown_with_piece_symbols(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);

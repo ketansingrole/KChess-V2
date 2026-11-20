@@ -227,7 +227,10 @@ Some methods hold one caller's activity, and today replace the previous one:
   started it. The engine scheduler gives its whole thread budget to one lease at a time
   (`EngineContext::lease`), so the newest request wins: starting an analysis interrupts any other
   window's (a final `interrupted` update), and that window restarts it when the person returns to
-  it. A window's `stopAnalysis` stops only its own.
+  it. A window's `stopAnalysis` stops only its own. The core runs a window's calls in any order,
+  so a window numbers its searches (`clientId`, rising) and names the one a stop ends: a stop or a
+  start that arrives after a newer search of that window changes nothing, and a start whose stop
+  already ran is refused as aborted.
 - **Voice input** has one owner: the window that called `voiceStart` last. Audio from another
   window is refused ("Voice input is in use in another KChess window.") until the owner stops or
   disconnects.
