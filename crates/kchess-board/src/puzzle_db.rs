@@ -435,7 +435,12 @@ mod tests {
             .failed(&kchess_contracts::CoreError::new("no"))));
         assert!(moved(&mut app, |db, cx| db.delete(cx)));
         assert!(moved(&mut app, |db, cx| db.install(cx)));
-        app.wait_for("the install to end", |_, cx| db.read(cx).progress.is_none());
+        // The install clears the failure shown as it starts: either answer ends it, a refusal
+        // keeping its progress on the card.
+        app.wait_for("the install's answer", |_, cx| {
+            let db = db.read(cx);
+            db.progress.is_none() || db.error.is_some()
+        });
     }
 
     /// Deleting while a download runs is refused by the core: the refusal is logged and stays
