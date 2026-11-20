@@ -12,10 +12,6 @@ runner = "tooling/macos-dev-runner.sh"
 [target.x86_64-apple-darwin]
 rustflags = ["-C", "link-arg=-Wl,-x"]
 
-# Linux: remove the local symbol table from the shipped binaries.
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-Wl,--strip-all"]
-
-# Not shipped, but a Linux build on Apple Silicon (`tooling/linux/Dockerfile`) uses the same flags.
-[target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-Wl,--strip-all"]
+# Linux: no flags. Every build keeps its symbol table, so a backtrace (a failed test's, a panic in a
+# player's log) names its functions; `--strip-all` once dropped it to keep the Electron app's Node
+# module small, and left every frame `<unknown>`. Release builds carry no debug info to strip.
