@@ -164,7 +164,7 @@ pub async fn accepted(listener: &std::net::TcpListener) -> std::net::TcpStream {
 /// (`KCHESS_VARIANT_ENGINE_PATH`). The tests that call it are ignored unless the variable was set
 /// when they were built (`build.rs`); set to a missing file, the test fails.
 pub fn engine(variable: &str) -> PathBuf {
-    let path = std::env::var_os(variable)
+    let path = kchess_host::env::var_os(variable)
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| panic!("set {variable} to the engine"));

@@ -2,6 +2,11 @@
 //! executable's own resources: the icon Start menu and desktop shortcuts show, and the version
 //! Windows reads from the file.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "Cargo hands a build script its variables in the environment"
+)]
+
 use std::path::Path;
 
 /// The name Windows shows for the executable.

@@ -2,7 +2,8 @@
 //! The theme and its colors (`theme`), the system's reduced motion (`motion`), the line chart
 //! (`chart`), the generic widgets (`widgets`), dates as the app shows them (`dates`) and the keys
 //! bound to an action (`keys`),
-//! Quick Pick's search (`quick_pick`) and the dialog that asks for a name (`name_dialog`). It never depends on the app: what it needs from it (where log
+//! Quick Pick's search (`quick_pick`), the dialog that asks for a name (`name_dialog`) and every
+//! widget drawn in a gallery for development (`gallery`). It never depends on the app: what it needs from it (where log
 //! lines go, which theme Settings chose) the app passes in.
 
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
@@ -10,6 +11,7 @@ use kchess_hack as _;
 
 pub mod chart;
 pub mod dates;
+pub mod gallery;
 pub mod keys;
 pub mod motion;
 pub mod name_dialog;

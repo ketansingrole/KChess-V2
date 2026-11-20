@@ -52,6 +52,13 @@ exclude_re = [
     # A patch exactly as long as the file whole: either makes the same file, and no input makes
     # bsdiff's compressed patch and bzip2's whole file the same length to test it.
     'kchess-delta/src/lib\.rs:.*: replace < with <= in build',
+    # Only macOS keeps crash reports where KChess looks, and only a Mac build runs in the App
+    # Sandbox: where CI runs mutants (Linux) both answer nothing either way. Their tests tell the
+    # mutants apart on macOS, where the pre-push hook runs them
+    # (`crash_reports_are_looked_for_where_macos_keeps_them`,
+    # `only_a_sandboxed_mac_build_is_the_app_stores`).
+    'kchess-app/src/crashes\.rs:.*: replace crash_reports -> Option<PathBuf> with None$',
+    'kchess-host/src/lib\.rs:.*: replace app_store -> bool with false$',
     # Mutants run on x86-64, where the arm64 arm is never taken; the app's updater tests use it on
     # the Apple Silicon runner (CI's `gpui` job on macOS), where every asset name needs it.
     'kchess-delta/src/assets\.rs:.*: delete match arm "aarch64" in Arch::current$',

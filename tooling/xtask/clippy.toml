@@ -1,0 +1,4 @@
+# xtask runs tools (Command::status, ::output) and reads Cargo's and CI's variables (std::env::var)
+# by design, so it leaves out the workspace's bans (../../clippy.toml); clippy reads only the
+# nearest clippy.toml, so the rest is repeated here.
+cognitive-complexity-threshold = 25

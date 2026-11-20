@@ -354,3 +354,19 @@ fn a_page_key_runs_its_action_by_any_of_its_names() {
     assert_eq!(page_key(&keys, "p"), Some(2));
     assert_eq!(page_key(&keys, "q"), None);
 }
+
+/// `cargo xtask app --watch` starts the app again on the page it was on: the page is noted in
+/// `KCHESS_PAGE_FILE` and read back from it.
+#[test]
+fn a_watched_restart_comes_back_to_the_page() {
+    set_registry(&REGISTRY);
+    let file = std::env::temp_dir().join(format!("kchess-nav-page-{}", std::process::id()));
+    kchess_host::env::set("KCHESS_PAGE_FILE", &file);
+    Page::Analysis.remember();
+    let noted = std::fs::read_to_string(&file);
+    let remembered = Page::remembered();
+    kchess_host::env::reset("KCHESS_PAGE_FILE");
+    std::fs::remove_file(&file).ok();
+    assert_eq!(noted.ok().as_deref(), Some("Analysis"));
+    assert_eq!(remembered, Some(Page::Analysis));
+}

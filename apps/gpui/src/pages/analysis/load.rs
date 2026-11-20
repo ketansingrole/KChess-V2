@@ -1,5 +1,6 @@
 //! How other pages put something on the analysis board and show it.
 
+use crate::log::ResultExt as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::dialog::AlertDialog;
@@ -327,7 +328,7 @@ fn study_changed(saved: String, window: &mut Window, cx: &mut App) {
             if analysis.unsaved_study_edits() {
                 drop(analysis.flush_study(cx));
             } else {
-                let _ = analysis.open_study(&saved, Some(&chapter), cx);
+                analysis.open_study(&saved, Some(&chapter), cx).log_err();
             }
         });
     }

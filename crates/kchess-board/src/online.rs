@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use futures::FutureExt as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::check::{GameId, PresenceUsers, Uci, Username, Validate};
 use kchess_contracts::types::{
     ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, LobbyState, NotificationKind,
@@ -1205,11 +1206,11 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
     let core = cx.global::<AppCore>().clone();
     let resume = async move {
         if quiet_first {
-            let _ = core
-                .request(calls::StayConnected {
-                    account: OptionalAccount(String::new()),
-                })
-                .await;
+            core.request(calls::StayConnected {
+                account: OptionalAccount(String::new()),
+            })
+            .await
+            .warn_on_err();
         }
         core.request(calls::ResumeOnline {}).await
     };
@@ -1337,6 +1338,17 @@ mod tests {
     /// What the live game asks of the app reaches it through the hooks the app set: a notice, a
     /// challenge that came in, a game that started (told and shown) and its connection lost for
     /// good.
+    /// A resume is counted as it starts, so an answer to an earlier one is known for stale.
+    #[gpui_kit::test]
+    fn each_resume_is_counted_as_it_starts(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = Started::new(cx);
+        let online = app.with_window(|_, cx| super::handle(cx));
+        let before = app.with_window(|_, cx| online.read(cx).resumes);
+        app.with_window(|_, cx| super::resume_quietly(online.clone(), true, cx));
+        app.with_window(|_, cx| super::resume(online.clone(), cx));
+        assert_eq!(app.with_window(|_, cx| online.read(cx).resumes), before + 2);
+    }
+
     #[gpui_kit::test]
     fn the_live_game_asks_the_app_through_its_hooks(cx: &mut gpui_kit::TestAppContext) {
         use kchess_contracts::events::CoreEvent;

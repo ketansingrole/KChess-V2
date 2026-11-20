@@ -3,6 +3,7 @@
 //! share and performance by theme over a period, the rating history, and the Storm and Streak
 //! results. Read-only.
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
@@ -92,7 +93,7 @@ fn theme_rows(dashboard: &PuzzleDashboard, sort: &str) -> Vec<ThemeRow> {
 }
 
 pub struct PuzzleStats {
-    account: String,
+    pub(crate) account: String,
     accounts: Vec<String>,
     profile: LichessUser,
     history: Vec<RatingSeries>,
@@ -475,6 +476,7 @@ impl Render for PuzzleStats {
         let page = |content: AnyElement| {
             div()
                 .id("puzzle-stats")
+                .test_support()
                 .size_full()
                 .overflow_y_scroll()
                 .child(

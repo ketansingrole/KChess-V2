@@ -23,11 +23,16 @@ impl Render for Blank {
 
 impl Started {
     pub fn new(cx: &mut gpui_kit::TestAppContext) -> Started {
+        Started::with_lichess(cx, None)
+    }
+
+    /// `new`, with the core's Lichess at `origin` (a local stand-in, `kchess_testkit::Server`).
+    pub fn with_lichess(cx: &mut gpui_kit::TestAppContext, origin: Option<String>) -> Started {
         // The core answers on its Tokio threads; the test waits for them in real time.
         cx.executor().allow_parking();
         let core = cx.update(|cx| {
             gpui_kit::init(cx);
-            let core = kchess_app::tests::start_core(cx);
+            let core = kchess_app::tests::start_core_with_lichess(cx, origin);
             kchess_app::settings::init_for_tests(cx);
             kchess_app::accounts::init(cx);
             crate::online::init(cx);

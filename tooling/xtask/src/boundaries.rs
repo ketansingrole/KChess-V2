@@ -14,7 +14,7 @@
 use std::path::Path;
 
 use crate::members::APP_SOURCES;
-use crate::util::{Result, root};
+use crate::util::{Result, root, sources_under};
 
 /// What only some files of the frontends may name.
 struct Rule {
@@ -100,30 +100,6 @@ fn offences(rule: &Rule, files: &[(String, String)]) -> Vec<String> {
         }
     }
     found
-}
-
-/// The Rust sources under `dir` of `repo`, as (path from `repo`, text), in path order.
-fn sources_under(repo: &Path, dir: &str, into: &mut Vec<(String, String)>) -> Result {
-    let full = repo.join(dir);
-    let entries =
-        std::fs::read_dir(&full).map_err(|cause| format!("{}: {cause}", full.display()))?;
-    let mut names: Vec<String> = entries
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
-    names.sort();
-    for name in names {
-        let path = format!("{dir}/{name}");
-        let full = repo.join(&path);
-        if full.is_dir() {
-            sources_under(repo, &path, into)?;
-        } else if name.ends_with(".rs") {
-            let text = std::fs::read_to_string(&full)
-                .map_err(|cause| format!("{}: {cause}", full.display()))?;
-            into.push((path, text));
-        }
-    }
-    Ok(())
 }
 
 /// Every rule's offences in `repo`'s frontends.

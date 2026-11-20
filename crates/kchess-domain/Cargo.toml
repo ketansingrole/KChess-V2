@@ -14,6 +14,9 @@ memchr.workspace = true
 kchess-hack = { version = "0.1", path = "../kchess-hack" }
 
 [dev-dependencies]
+# The tests' switches (`KCHESS_WRITE_CORPUS`, `KCHESS_WRITE_UNICODE`) and seeded random runs.
+kchess-host.workspace = true
+kchess-testkit.workspace = true
 regex = { version = "1" }
 # Regenerates and checks src/misc/unicode_tables.rs (patterns.rs tests).
 regex-syntax = "0.8"

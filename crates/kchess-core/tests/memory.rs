@@ -143,7 +143,7 @@ async fn measure<F, Fut>(
     );
     // For a heap profiler: exit with everything the cycles left still live, tasks included
     // (`KCHESS_MEMORY_KEEP=1 valgrind --tool=dhat <test binary> <scenario>`).
-    if std::env::var_os("KCHESS_MEMORY_KEEP").is_some() {
+    if kchess_host::env::var_os("KCHESS_MEMORY_KEEP").is_some() {
         std::process::exit(0);
     }
     assert!(

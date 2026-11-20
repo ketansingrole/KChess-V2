@@ -1,6 +1,11 @@
 //! An 8 MiB main-thread stack on Windows, as macOS and Linux give: MSVC's default is 1 MiB, and
 //! the command line reads game trees (up to 1024 plies deep) on its main thread.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "Cargo hands a build script its variables in the environment"
+)]
+
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
         println!("cargo:rustc-link-arg-bins=/STACK:8388608");

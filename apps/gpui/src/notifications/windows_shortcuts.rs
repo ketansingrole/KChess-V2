@@ -23,7 +23,7 @@ use windows::core::{BSTR, HSTRING};
 /// The shortcuts the installer makes, and the taskbar's copy of one pinned from them.
 fn shortcuts() -> Vec<PathBuf> {
     let mut found = Vec::new();
-    if let Some(roaming) = std::env::var_os("APPDATA").map(PathBuf::from) {
+    if let Some(roaming) = kchess_host::env::var_os("APPDATA").map(PathBuf::from) {
         found.push(roaming.join(r"Microsoft\Windows\Start Menu\Programs\KChess.lnk"));
         found.push(
             roaming

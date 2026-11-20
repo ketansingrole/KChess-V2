@@ -20,6 +20,10 @@ pub fn var_os(name: &str) -> Option<OsString> {
     let overrides = OVERRIDES.read().unwrap_or_else(PoisonError::into_inner);
     match overrides.get(name) {
         Some(value) => value.clone(),
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the one read of the environment, behind the overrides"
+        )]
         None => std::env::var_os(name),
     }
 }
@@ -81,7 +85,12 @@ mod tests {
         unset("PATH");
         assert_eq!(var_os("PATH"), None);
         reset("PATH");
-        assert_eq!(var_os("PATH"), std::env::var_os("PATH"));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "compared with the environment itself"
+        )]
+        let environment = std::env::var_os("PATH");
+        assert_eq!(var_os("PATH"), environment);
         reset(name);
     }
 }

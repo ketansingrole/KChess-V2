@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use kchess_delta::{APPIMAGE, Delta, Entry};
 
 use super::Package;
+use crate::log::{IoResultExt as _, ResultExt as _};
 
 /// The release asset of the patch from `current`'s files to `package` (the release asset this
 /// installation updates from).
@@ -59,7 +60,7 @@ pub fn rebuild(patch: &Patch, work: &Path) -> Result<PathBuf, String> {
         ));
     }
     let out = work.join("patched");
-    let _ = std::fs::remove_dir_all(&out);
+    std::fs::remove_dir_all(&out).ok_if_missing().warn_on_err();
     match package {
         Package::MacZip => {
             let bundle = out.join(kchess_delta::installed::MAC_BUNDLE);
@@ -193,6 +194,8 @@ fn write_deb(
     member("data.tar", data_size, &mut data).map_err(fail)?;
     deb.flush().map_err(fail)?;
     drop(data);
-    let _ = std::fs::remove_file(&data_path);
+    std::fs::remove_file(&data_path)
+        .ok_if_missing()
+        .warn_on_err();
     Ok(())
 }

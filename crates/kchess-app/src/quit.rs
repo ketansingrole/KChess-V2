@@ -206,6 +206,7 @@ fn saves_again(saved: bool, discarded: bool) -> bool {
 
 /// Every registered flush, then the core's close, then the work for after both.
 pub fn quit(cx: &mut App) -> impl Future<Output = ()> + 'static + use<> {
+    crate::crashes::closed();
     let quitting = cx.default_global::<Quitting>();
     let (saved, discarded) = (std::mem::take(&mut quitting.saved), quitting.discarded);
     let pending = if saves_again(saved, discarded) {

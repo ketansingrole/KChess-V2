@@ -57,11 +57,18 @@ impl OnlineSession {
                 lichess,
                 host,
                 challenges,
+                listing_challenges: Mutex::default(),
                 state: Mutex::new(State::new()),
                 backoff,
                 state_hook: Mutex::new(None),
             }),
         }
+    }
+
+    /// Whether a challenge listing `ongoing` started is still under way: its news arrives as
+    /// events, so a test waits for it to end before reading the inbox.
+    pub fn lists_challenges(&self) -> bool {
+        !crate::tasks::lock(&self.inner.listing_challenges).is_empty()
     }
 
     /// The pending challenges of the connected accounts (`ChallengeInbox`). The service forgets an

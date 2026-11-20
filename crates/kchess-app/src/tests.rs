@@ -15,10 +15,20 @@ pub struct TestCore {
 /// A core of the test's own, embedded over a fresh profile, as the app holds it
 /// (`cx.global::<AppCore>()`).
 pub fn start_core(cx: &mut App) -> TestCore {
+    start_core_with_lichess(cx, None)
+}
+
+/// `start_core`, with Lichess (its API and its puzzle database) at `origin`: a local stand-in.
+pub fn start_core_with_lichess(cx: &mut App, origin: Option<String>) -> TestCore {
     let profile = tempfile::tempdir().expect("a profile");
     let runtime = kchess_service::core_runtime().expect("the core's runtime");
+    let mut config = kchess_core::Config::new(profile.path().to_path_buf());
+    config.test = origin.map(|origin| kchess_core::TestSwitches {
+        lichess_origin: Some(origin),
+        ..Default::default()
+    });
     let options = Options {
-        config: kchess_core::Config::new(profile.path().to_path_buf()),
+        config,
         hello: Hello {
             kind: "test".into(),
             capabilities: Vec::new(),

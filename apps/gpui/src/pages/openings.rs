@@ -262,8 +262,6 @@ pub struct OpeningsPage {
     search: Entity<InputState>,
     query: String,
     search_task: Option<Task<()>>,
-    /// The browser starts afresh once a line was opened from it.
-    clear_search: bool,
     /// A line was just opened from the list: its page takes the keys from the search field.
     focus_line: bool,
     expanded: HashSet<String>,
@@ -315,12 +313,16 @@ impl OpeningsPage {
         let explorer =
             cx.new(|cx| PositionExplorer::new(crate::explorer::Layout::Grid, window, cx));
         let subscriptions = vec![
-            cx.subscribe(&explorer, |this, _, event: &ExplorerEvent, cx| {
-                let ExplorerEvent::Play(uci) = event;
-                let mut moves = this.line.clone().unwrap_or_default();
-                moves.push(uci.clone());
-                this.show_line(Some(moves), cx);
-            }),
+            cx.subscribe_in(
+                &explorer,
+                window,
+                |this, _, event: &ExplorerEvent, window, cx| {
+                    let ExplorerEvent::Play(uci) = event;
+                    let mut moves = this.line.clone().unwrap_or_default();
+                    moves.push(uci.clone());
+                    this.show_line(Some(moves), window, cx);
+                },
+            ),
             cx.subscribe(&search, |this, state, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     let text = state.read(cx).value().to_string();
@@ -333,11 +335,11 @@ impl OpeningsPage {
                     }));
                 }
             }),
-            cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
+            cx.subscribe_in(&board, window, |this, _, event: &BoardEvent, window, cx| {
                 if let BoardEvent::Move(uci) = event {
                     let mut moves = this.line.clone().unwrap_or_default();
                     moves.push(uci.clone());
-                    this.show_line(Some(moves), cx);
+                    this.show_line(Some(moves), window, cx);
                 }
             }),
             typed,
@@ -347,7 +349,6 @@ impl OpeningsPage {
             search,
             query: String::new(),
             search_task: None,
-            clear_search: false,
             focus_line: false,
             expanded: HashSet::new(),
             previews: Default::default(),
@@ -405,7 +406,12 @@ impl OpeningsPage {
     }
 
     /// Show an opening (its line), or the browser (`None`).
-    pub fn show_line(&mut self, moves: Option<Vec<String>>, cx: &mut Context<Self>) {
+    pub fn show_line(
+        &mut self,
+        moves: Option<Vec<String>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.description = None;
         self.full_description = false;
         self.description_task = None;
@@ -416,8 +422,12 @@ impl OpeningsPage {
             cx.notify();
             return;
         };
+        // Leaving the browser for a line: back in it, every opening shows again.
         if self.line.is_none() {
-            self.clear_search = true;
+            self.query.clear();
+            self.search_task = None;
+            self.search
+                .update(cx, |search, cx| search.set_value("", window, cx));
             self.focus_line = true;
         }
         // The moves as far as they are legal.
@@ -536,7 +546,7 @@ impl OpeningsPage {
         if let Some(uci) = self.move_box.take(position.as_ref(), window, cx) {
             let mut moves = line;
             moves.push(uci);
-            self.show_line(Some(moves), cx);
+            self.show_line(Some(moves), window, cx);
         }
     }
 
@@ -562,7 +572,7 @@ impl OpeningsPage {
                 }
             }
             Action::Flip => self.flip(cx),
-            Action::AllOpenings => self.show_line(None, cx),
+            Action::AllOpenings => self.show_line(None, window, cx),
         }
     }
 
@@ -610,8 +620,11 @@ impl OpeningsPage {
                 })
                 .into_any_element(),
             width,
-            on_open: std::rc::Rc::new(move |_, cx| {
-                let _ = page.update(cx, |page, cx| page.show_line(Some(open.clone()), cx));
+            on_open: std::rc::Rc::new(move |window, cx| {
+                page.update(cx, |page, cx| {
+                    page.show_line(Some(open.clone()), window, cx)
+                })
+                .ok();
             }),
         }
         .into_any_element()
@@ -676,8 +689,8 @@ impl OpeningsPage {
                 match &node.moves {
                     Some(moves) => {
                         let moves = moves.clone();
-                        link.on_click(cx.listener(move |this, _, _, cx| {
-                            this.show_line(Some(moves.clone()), cx)
+                        link.on_click(cx.listener(move |this, _, window, cx| {
+                            this.show_line(Some(moves.clone()), window, cx)
                         }))
                     }
                     None => {
@@ -777,8 +790,8 @@ impl OpeningsPage {
                                 .text_color(palette.text_muted)
                                 .child(eco.clone()),
                         )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.show_line(Some(moves.clone()), cx)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.show_line(Some(moves.clone()), window, cx)
                         }))
                         .into_any_element()
                 })
@@ -847,8 +860,8 @@ impl OpeningsPage {
                         .bg(palette.elevated)
                         .cursor_pointer()
                         .pressable(palette)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.show_line(Some(moves.clone()), cx)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.show_line(Some(moves.clone()), window, cx)
                         }))
                         .child(
                             div()
@@ -992,8 +1005,8 @@ impl OpeningsPage {
                             .cursor_pointer()
                             .when(current, |chip| chip.font_weight(FontWeight::MEDIUM))
                             .pressable(palette)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.show_line(Some(upto.clone()), cx)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.show_line(Some(upto.clone()), window, cx)
                             }))
                             .child(crate::notation::shown(san, &figurine)),
                     )
@@ -1092,7 +1105,7 @@ impl OpeningsPage {
                             .small()
                             .icon(icon("arrow-left"))
                             .label("All openings")
-                            .on_click(cx.listener(|this, _, _, cx| this.show_line(None, cx))),
+                            .on_click(cx.listener(|this, _, window, cx| this.show_line(None, window, cx))),
                     )
                     .child(div().flex_1())
                     .child(
@@ -1226,19 +1239,13 @@ impl Render for OpeningsPage {
                         return;
                     }
                     if event.keystroke.key == "escape" {
-                        this.show_line(None, cx);
+                        this.show_line(None, window, cx);
                         cx.stop_propagation();
                     }
                 }))
                 .takes_keys(&self.focus)
                 .child(self.render_detail(window, cx, &palette))
                 .into_any_element();
-        }
-        if std::mem::take(&mut self.clear_search) {
-            self.query.clear();
-            self.search_task = None;
-            self.search
-                .update(cx, |search, cx| search.set_value("", window, cx));
         }
         let browser = self.render_browser(window, cx, &palette);
         div()
@@ -1310,8 +1317,8 @@ impl PageView for OpeningsPage {
     }
 
     /// The sidebar's Openings is the browser, not the line shown last.
-    fn shown(this: &Entity<Self>, _again: bool, _window: &mut Window, cx: &mut App) {
-        this.update(cx, |openings, cx| openings.show_line(None, cx));
+    fn shown(this: &Entity<Self>, _again: bool, window: &mut Window, cx: &mut App) {
+        this.update(cx, |openings, cx| openings.show_line(None, window, cx));
     }
 
     fn search_fields(&self) -> Vec<Entity<InputState>> {

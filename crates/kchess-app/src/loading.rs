@@ -130,4 +130,49 @@ mod tests {
         loading.stop();
         assert!(!loading.busy());
     }
+
+    /// Answers come back in whatever order the core sends them: GPUI's test scheduler runs the
+    /// tasks in a different order under each seed (`SEED=<n>` replays one). The page shows the
+    /// latest request's answer however the earlier ones interleave with it, and stops loading.
+    #[gpui_kit::test(iterations = 64)]
+    fn the_latest_request_wins_in_any_order_of_answers(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+
+        #[derive(Default)]
+        struct Page {
+            loading: Loading,
+            shown: Option<u64>,
+            answers: u64,
+        }
+        const REQUESTS: u64 = 6;
+        let executor = cx.executor();
+        let page = cx.new(|_| Page::default());
+        page.update(cx, |page, cx| {
+            for request in 0..REQUESTS {
+                let turn = page.loading.start();
+                let delay = executor.simulate_random_delay();
+                cx.spawn(async move |this, cx| {
+                    delay.await;
+                    this.update(cx, |page: &mut Page, _| {
+                        page.answers += 1;
+                        if page.loading.answered(turn) {
+                            page.shown = Some(request);
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+        });
+        cx.run_until_parked();
+        page.read_with(cx, |page, _| {
+            assert_eq!(page.answers, REQUESTS, "every answer arrived");
+            assert_eq!(
+                page.shown,
+                Some(REQUESTS - 1),
+                "only the latest request's shows"
+            );
+            assert!(!page.loading.busy());
+        });
+    }
 }

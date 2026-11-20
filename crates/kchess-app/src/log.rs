@@ -119,24 +119,114 @@ pub fn read() -> Vec<String> {
 
 use kchess_host::redact;
 
+/// A failure nobody returns is logged, with the file and line that dropped it, rather than lost to
+/// `let _ =` (Zed's `log_err`). The value comes back as an `Option` for the caller to go on with.
+pub trait ResultExt<T> {
+    /// The value, or `None` with the error logged as an error: a failure needing attention.
+    #[track_caller]
+    fn log_err(self) -> Option<T>;
+    /// The value, or `None` with the error logged as a warning: a failure the app recovers from
+    /// (a leftover file, a cache it rebuilds).
+    #[track_caller]
+    fn warn_on_err(self) -> Option<T>;
+}
+
+impl<T, E: std::fmt::Display> ResultExt<T> for Result<T, E> {
+    #[track_caller]
+    fn log_err(self) -> Option<T> {
+        let at = std::panic::Location::caller();
+        self.map_err(|error| dropped(Level::Error, &error, at)).ok()
+    }
+
+    #[track_caller]
+    fn warn_on_err(self) -> Option<T> {
+        let at = std::panic::Location::caller();
+        self.map_err(|error| dropped(Level::Warn, &error, at)).ok()
+    }
+}
+
+fn dropped(level: Level, error: &dyn std::fmt::Display, at: &std::panic::Location<'_>) {
+    write(
+        level,
+        "app",
+        &format!("{error} (at {}:{})", at.file(), at.line()),
+    );
+}
+
+/// Removing what may already be gone: its absence is success.
+pub trait IoResultExt {
+    /// `Ok` when the operation failed only because the file or folder is not there.
+    fn ok_if_missing(self) -> std::io::Result<()>;
+}
+
+impl IoResultExt for std::io::Result<()> {
+    fn ok_if_missing(self) -> std::io::Result<()> {
+        match self {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The tests' log, one per test process: the log starts once, so every test writes to it.
+    fn logged() -> String {
+        static DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
+        let dir = DIR.get_or_init(|| tempfile::tempdir().expect("a temporary folder"));
+        init(dir.path());
+        read().join("")
+    }
+
     /// A line reaches the profile's log with its time and level, redacted as it is written.
     #[test]
     fn a_line_is_written_to_the_profiles_log_redacted() {
-        let dir = std::env::temp_dir().join(format!("kchess-app-log-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        init(&dir);
+        logged();
         write(Level::Warn, "test", "sent by me@example.com");
-        let log = read().join("");
-        let _ = fs::remove_dir_all(&dir);
+        let log = logged();
         let line = log
             .lines()
             .find(|line| line.contains("[test]"))
             .unwrap_or_else(|| panic!("no line written: {log:?}"));
         assert!(line.contains(" WARN [test] sent by [redacted]"), "{line}");
         assert!(line.starts_with("20"), "the time first: {line}");
+    }
+
+    /// A dropped failure is logged at its level with the line that dropped it; a success passes.
+    #[test]
+    fn a_dropped_failure_is_logged_with_where_it_was_dropped() {
+        logged();
+        assert_eq!(Ok::<_, String>(7).log_err(), Some(7));
+        assert_eq!(Ok::<_, String>(8).warn_on_err(), Some(8));
+        let line = line!() + 1;
+        assert_eq!(Err::<u8, _>("the disk is full").log_err(), None);
+        assert_eq!(Err::<u8, _>("a leftover stayed").warn_on_err(), None);
+        let log = logged();
+        let at = format!("(at {}:{line})", file!());
+        assert!(
+            log.lines()
+                .any(|entry| entry.contains(" ERROR [app] the disk is full ")
+                    && entry.ends_with(&at)),
+            "{log}"
+        );
+        let next = format!("(at {}:{})", file!(), line + 1);
+        assert!(
+            log.lines()
+                .any(|entry| entry.contains(" WARN [app] a leftover stayed ")
+                    && entry.ends_with(&next)),
+            "{log}"
+        );
+    }
+
+    /// Removing what is already gone succeeds; any other failure stays one.
+    #[test]
+    fn only_a_missing_file_counts_as_removed() {
+        let missing = std::fs::remove_file("/nonexistent/kchess/never-there");
+        assert!(missing.ok_if_missing().is_ok());
+        let denied = Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(denied.ok_if_missing().is_err());
+        assert!(Ok(()).ok_if_missing().is_ok());
     }
 }
