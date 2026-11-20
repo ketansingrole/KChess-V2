@@ -3,6 +3,9 @@
 //! the board pages' shared layout (`play_layout`, `part`). It never depends on the app or on any
 //! page: the app registers its pages (`page::set_registry`) and its workspace answers `Shell`.
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 pub mod page;
 pub mod part;
 pub mod play_layout;

@@ -3,6 +3,9 @@
 //! them. Lichess's own studies are a tab of their own when an account is connected.
 
 // The app's services, the design system and the board, under the names this page's modules use.
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 use kchess_app::{accounts, core, log, prefs, studies, timer};
 use kchess_board::{board, export, game, widgets};
 use kchess_ui::{name_dialog, theme};

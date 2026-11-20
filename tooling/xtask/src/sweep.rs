@@ -1,4 +1,5 @@
-//! Deletes the object files in the build's `deps` folders that no program needs any more.
+//! Deletes the object files in the build folder that no program needs any more: in each unit's
+//! own `out` folder since Cargo 1.100 (`build/<package>/<hash>/out`), in `deps` before.
 //!
 //! On macOS a debug build keeps each program's compiled objects (`*.rcgu.o`) beside it: its debug
 //! info stays in them, and the program's debug map names them (`split-debuginfo = "unpacked"`,
@@ -31,7 +32,7 @@ const LC_SYMTAB: u32 = 0x2;
 const N_OSO: u8 = 0x66;
 /// The bytes of a 64-bit symbol table entry (`nlist_64`).
 const NLIST_64: usize = 16;
-/// The file beside a profile's `deps` whose time is the last sweep's.
+/// The file in a profile folder whose time is the last sweep's.
 const SWEPT: &str = ".kchess-swept";
 /// The longest object path read from the string table.
 const LONGEST_PATH: usize = 4096;
@@ -83,18 +84,18 @@ fn idle_mutants_tree(checkout: &Path, dry_run: bool) -> Vec<String> {
 /// Sweeps every profile folder in `target`, the build folder of the workspace at `workspace`, and
 /// its objects when `objects`: what to say about it.
 fn sweep_all(target: &Path, workspace: &Path, dry_run: bool, objects: bool) -> Vec<String> {
-    let folders = deps_folders(target);
+    let folders = profile_folders(target);
     let targets = crate::superseded::workspace_targets(workspace);
     let (units, unit_bytes) = folders
         .iter()
-        .map(|deps| superseded(deps, targets.as_ref(), dry_run))
+        .map(|profile| superseded(profile, targets.as_ref(), dry_run))
         .fold((0, 0), |(units, bytes), (more, size)| {
             (units + more, bytes + size)
         });
     let (files, bytes) = if objects {
         folders
             .iter()
-            .map(|deps| sweep(deps, dry_run))
+            .map(|profile| sweep(profile, dry_run))
             .fold((0, 0), |(files, bytes), (more, size)| {
                 (files + more, bytes + size)
             })
@@ -134,16 +135,13 @@ fn units_summary(units: usize, bytes: u64, dry_run: bool) -> Option<String> {
     })
 }
 
-/// Deletes, under Cargo's build lock, the units of one profile folder (the parent of `deps`)
-/// that no current build of the workspace's `targets` uses: how many, and their size.
+/// Deletes, under Cargo's build lock, the units of one profile folder that no current build of
+/// the workspace's `targets` uses: how many, and their size.
 fn superseded(
-    deps: &Path,
+    profile: &Path,
     targets: Option<&crate::superseded::Targets>,
     dry_run: bool,
 ) -> (usize, u64) {
-    let Some(profile) = deps.parent() else {
-        return (0, 0);
-    };
     let Some(_lock) = build_lock(profile) else {
         return (0, 0);
     };
@@ -162,71 +160,82 @@ fn target_folder(cargo_target_dir: Option<std::ffi::OsString>) -> PathBuf {
         .unwrap_or_else(|| crate::util::root().join("target"))
 }
 
-/// `target/<profile>/deps` and `target/<triple or tool>/<profile>/deps`.
-pub(crate) fn deps_folders(target: &Path) -> Vec<PathBuf> {
+/// The profile folders of the build folder `target`: `target/<profile>` and
+/// `target/<triple or tool>/<profile>`, each a folder Cargo keeps its locks in (`LOCKS`), which
+/// every build since Cargo 1.100 takes, or a `deps` folder, which every build before it wrote.
+pub(crate) fn profile_folders(target: &Path) -> Vec<PathBuf> {
+    let is_profile = |folder: &Path| {
+        folder.join("deps").is_dir() || LOCKS.iter().any(|name| folder.join(name).is_file())
+    };
     let mut folders = Vec::new();
-    for first in subfolders(target) {
-        if first.join("deps").is_dir() {
-            folders.push(first.join("deps"));
+    for first in crate::util::subfolders(target) {
+        if is_profile(&first) {
+            folders.push(first.clone());
         }
-        for second in subfolders(&first) {
-            if second.file_name().is_some_and(|name| name != "deps") && second.join("deps").is_dir()
-            {
-                folders.push(second.join("deps"));
-            }
-        }
+        folders.extend(
+            crate::util::subfolders(&first)
+                .into_iter()
+                .filter(|second| is_profile(second)),
+        );
     }
     folders.sort();
     folders
 }
 
-fn subfolders(folder: &Path) -> Vec<PathBuf> {
-    std::fs::read_dir(folder)
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|path| path.is_dir())
-                .collect()
-        })
-        .unwrap_or_default()
+/// The folders of `profile` that hold programs and their loose objects: each unit's `out` (but a
+/// build script run's, which is the script's own) and, from before Cargo 1.100, `deps`.
+fn object_folders(profile: &Path) -> Vec<PathBuf> {
+    let mut folders: Vec<PathBuf> = crate::util::subfolders(&profile.join("build"))
+        .iter()
+        .flat_map(|package| crate::util::subfolders(package))
+        .filter(|unit| unit.join("fingerprint").is_dir() && !unit.join("run").is_dir())
+        .map(|unit| unit.join("out"))
+        .filter(|out| out.is_dir())
+        .collect();
+    if profile.join("deps").is_dir() {
+        folders.push(profile.join("deps"));
+    }
+    folders.sort();
+    folders
 }
 
-/// Deletes one `deps` folder's stale objects under Cargo's build lock: how many, and their size.
+/// Deletes one profile folder's stale objects under Cargo's build lock: how many, and their size.
 /// With `dry_run`, only counts them.
-fn sweep(deps: &Path, dry_run: bool) -> (usize, u64) {
-    let Some(_lock) = deps.parent().and_then(build_lock) else {
+fn sweep(profile: &Path, dry_run: bool) -> (usize, u64) {
+    let Some(_lock) = build_lock(profile) else {
         return (0, 0);
     };
-    let names: Vec<String> = std::fs::read_dir(deps)
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter_map(|entry| entry.file_name().into_string().ok())
-                .collect()
-        })
-        .unwrap_or_default();
     // A program's objects change only when it is built again, so one not built since the last
     // sweep keeps them unread: a sweep after a rebuild reads a few programs, not hundreds.
-    let marker = deps.with_file_name(SWEPT);
+    let marker = profile.join(SWEPT);
     let since = crate::util::modified(&marker);
     let unchanged = |path: &Path| {
         since.is_some_and(|since| crate::util::modified(path).is_some_and(|built| built <= since))
     };
     let mut deleted = (0, 0);
-    let stale = stale(&names, |image| {
-        let path = deps.join(image);
-        if unchanged(&path) {
-            Image::Kept
-        } else {
-            debug_map_of(&path)
-        }
-    });
-    for name in stale {
-        let path = deps.join(&name);
-        let size = std::fs::metadata(&path).map_or(0, |file| file.len());
-        if dry_run || std::fs::remove_file(&path).is_ok() {
-            deleted = (deleted.0 + 1, deleted.1 + size);
+    for folder in object_folders(profile) {
+        let names: Vec<String> = std::fs::read_dir(&folder)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter_map(|entry| entry.file_name().into_string().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let stale = stale(&names, |image| {
+            let path = folder.join(image);
+            if unchanged(&path) {
+                Image::Kept
+            } else {
+                debug_map_of(&path)
+            }
+        });
+        for name in stale {
+            let path = folder.join(&name);
+            let size = std::fs::metadata(&path).map_or(0, |file| file.len());
+            if dry_run || std::fs::remove_file(&path).is_ok() {
+                deleted = (deleted.0 + 1, deleted.1 + size);
+            }
         }
     }
     if !dry_run {
@@ -236,7 +245,7 @@ fn sweep(deps: &Path, dry_run: bool) -> (usize, u64) {
 }
 
 /// The lock files Cargo keeps in a profile folder.
-pub(crate) const LOCKS: [&str; 3] = [".cargo-build-lock", ".cargo-artifact-lock", ".cargo-lock"];
+pub(crate) use kchess_testkit::build::LOCKS;
 
 /// Cargo's locks on a profile folder, held while no build is running there; `None` while one is
 /// (or when they cannot be opened), so its objects are left alone.
@@ -266,9 +275,11 @@ enum Image {
     Names(HashSet<String>),
 }
 
-/// The loose objects among a `deps` folder's file `names` that no program needs, given what each
-/// program's or library's file (by name) holds. An object `<crate>-<hash>.<…>.rcgu.o` belongs to
-/// the program `<crate>-<hash>` or the library `lib<crate>-<hash>.dylib` beside it.
+/// The loose objects among a folder's file `names` that no program needs, given what each
+/// program's or library's file (by name) holds. An object `<unit>.<…>.rcgu.o` belongs to the
+/// program `<unit>` or the library `lib<unit>.dylib` beside it: `<crate>-<hash>` in `deps`, and
+/// in a unit's own `out` since Cargo 1.100 the same, or a program's bare name (`kchess-cli`'s
+/// `kchess_cli`).
 fn stale(names: &[String], image: impl Fn(&str) -> Image) -> Vec<String> {
     let present: HashSet<&str> = names.iter().map(String::as_str).collect();
     let mut images: std::collections::HashMap<&str, Image> = std::collections::HashMap::new();
@@ -702,7 +713,7 @@ mod tests {
         };
         std::fs::write(&object, b"o").unwrap();
         assert_eq!(
-            sweep(&deps, false),
+            sweep(profile.path(), false),
             (1, 1),
             "the first sweep reads every program"
         );
@@ -710,7 +721,7 @@ mod tests {
         std::fs::write(&object, b"o").unwrap();
         built(60);
         assert_eq!(
-            sweep(&deps, false),
+            sweep(profile.path(), false),
             (0, 0),
             "a program built before the last sweep is not read"
         );
@@ -722,32 +733,93 @@ mod tests {
             .unwrap()
             .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(30))
             .unwrap();
-        assert_eq!(sweep(&deps, false), (1, 1), "one built since is");
+        assert_eq!(sweep(profile.path(), false), (1, 1), "one built since is");
     }
 
+    /// Cargo 1.100 writes no `deps` folder (2026-11-20): a profile folder is one with Cargo's
+    /// locks, or the `deps` of a build before.
     #[test]
-    fn the_deps_folders_of_every_profile_and_target_are_swept() {
+    fn every_profile_folder_of_either_layout_is_swept() {
         let target = tempfile::tempdir().unwrap();
         for folder in [
             "debug/deps",
-            "release/deps",
+            "release",
             "llvm-cov-target/debug/deps",
-            "x86_64-pc-windows-msvc/debug/deps",
-            "debug/build/x-1/deps/deps",
+            "x86_64-pc-windows-msvc/debug",
+            "aarch64-apple-darwin/release",
+            "debug/build/x/1/deps/deps",
             "debug/incremental",
+            "doc",
         ] {
             std::fs::create_dir_all(target.path().join(folder)).unwrap();
         }
+        for (folder, lock) in [
+            ("release", ".cargo-lock"),
+            ("x86_64-pc-windows-msvc/debug", ".cargo-build-lock"),
+            ("aarch64-apple-darwin/release", ".cargo-artifact-lock"),
+        ] {
+            std::fs::write(target.path().join(folder).join(lock), b"").unwrap();
+        }
+        // A folder named as a lock is none.
+        std::fs::create_dir_all(target.path().join("doc/.cargo-lock")).unwrap();
         assert_eq!(
-            deps_folders(target.path()),
+            profile_folders(target.path()),
             [
-                "debug/deps",
-                "llvm-cov-target/debug/deps",
-                "release/deps",
-                "x86_64-pc-windows-msvc/debug/deps"
+                "aarch64-apple-darwin/release",
+                "debug",
+                "llvm-cov-target/debug",
+                "release",
+                "x86_64-pc-windows-msvc/debug",
             ]
             .map(|folder| target.path().join(folder))
         );
+    }
+
+    /// Since Cargo 1.100 each program's objects stay in its unit's `out` (2026-11-20): those no
+    /// program there names go, wherever they are; a build script's `out` is its own.
+    #[test]
+    fn the_objects_in_each_units_own_folder_are_swept() {
+        let profile = tempfile::tempdir().unwrap();
+        let unit = |package: &str, hash: &str, run: bool| {
+            let folder = profile.path().join("build").join(package).join(hash);
+            std::fs::create_dir_all(folder.join("fingerprint")).unwrap();
+            std::fs::create_dir_all(folder.join("out")).unwrap();
+            if run {
+                std::fs::create_dir_all(folder.join("run")).unwrap();
+            }
+            folder.join("out")
+        };
+        let test = unit("core", "0000000000000001", false);
+        std::fs::write(
+            test.join("core-0000000000000001"),
+            mach_o(&[(0x0f, "_main")]),
+        )
+        .unwrap();
+        std::fs::write(test.join("core-0000000000000001.a.b.rcgu.o"), b"12").unwrap();
+        let program = unit("cli", "0000000000000002", false);
+        std::fs::write(program.join("kchess_cli"), mach_o(&[(0x0f, "_main")])).unwrap();
+        std::fs::write(program.join("kchess_cli.a.b.rcgu.o"), b"123").unwrap();
+        let script = unit("ring", "0000000000000003", true);
+        std::fs::write(script.join("ring-core.a.b.rcgu.o"), b"1").unwrap();
+        // No unit's: no fingerprint beside it.
+        let stray = profile.path().join("build/ring/0000000000000004/out");
+        std::fs::create_dir_all(&stray).unwrap();
+        std::fs::write(stray.join("x.a.b.rcgu.o"), b"1").unwrap();
+        // The layout before, beside it.
+        let deps = profile.path().join("deps");
+        std::fs::create_dir(&deps).unwrap();
+        std::fs::write(deps.join("gone-1.a.b.rcgu.o"), b"1234").unwrap();
+        assert_eq!(
+            object_folders(profile.path()),
+            [program.clone(), test.clone(), deps.clone()]
+        );
+        assert_eq!(sweep(profile.path(), true), (3, 9), "a dry run counts");
+        assert!(test.join("core-0000000000000001.a.b.rcgu.o").exists());
+        assert_eq!(sweep(profile.path(), false), (3, 9));
+        assert!(!program.join("kchess_cli.a.b.rcgu.o").exists());
+        assert!(script.join("ring-core.a.b.rcgu.o").exists());
+        assert!(stray.join("x.a.b.rcgu.o").exists());
+        assert!(program.join("kchess_cli").exists());
     }
 
     #[test]
@@ -761,14 +833,18 @@ mod tests {
         let cargo = File::options().write(true).open(&lock).unwrap();
         cargo.lock().unwrap();
         crate::superseded::tests::replaced_build(profile.path(), 5);
-        assert_eq!(sweep(&deps, false), (0, 0));
-        assert_eq!(superseded(&deps, None, false), (0, 0));
+        assert_eq!(sweep(profile.path(), false), (0, 0));
+        assert_eq!(superseded(profile.path(), None, false), (0, 0));
         assert!(deps.join("gone-1.a.b.rcgu.o").exists());
         cargo.unlock().unwrap();
-        assert_eq!(sweep(&deps, false), (1, 4));
-        assert_eq!(superseded(&deps, None, true).0, 1, "a dry run counts");
-        assert_eq!(superseded(&deps, None, false).0, 1);
-        assert_eq!(superseded(&deps, None, false), (0, 0));
+        assert_eq!(sweep(profile.path(), false), (1, 4));
+        assert_eq!(
+            superseded(profile.path(), None, true).0,
+            1,
+            "a dry run counts"
+        );
+        assert_eq!(superseded(profile.path(), None, false).0, 1);
+        assert_eq!(superseded(profile.path(), None, false), (0, 0));
         assert!(!deps.join("gone-1.a.b.rcgu.o").exists());
     }
 
@@ -807,7 +883,7 @@ mod tests {
             .collect();
         assert!(!kept.is_empty());
         std::fs::write(deps.join("probe-0123456789abcdef.old.x.rcgu.o"), b"12").unwrap();
-        assert_eq!(sweep(&deps, false), (1, 2));
+        assert_eq!(sweep(profile.path(), false), (1, 2));
         for name in kept {
             assert!(deps.join(name).exists());
         }

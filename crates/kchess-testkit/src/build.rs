@@ -8,6 +8,12 @@
 //! The end-to-end tests built in each of their processes, a thousand times a run, and one test's
 //! copy of the engine then and again found it gone mid-build ("copy the scripted engine:
 //! NotFound", the Stress workflow on macOS, 2026-11-12 and 2026-11-18).
+//!
+//! The profile folder is the one holding Cargo's lock, which every build takes there. Cargo 1.100
+//! moved test programs from `target/<profile>/deps` to `target/<profile>/build/<package>/<hash>/out`
+//! (2026-11-20), and the tests that went two folders up from their own program built the engine
+//! into `target/debug/build/kchess-cli` and looked for it where it never was. `CACHEDIR.TAG` marks
+//! only a target folder Cargo made itself: cargo-mutants' copies have none.
 
 use std::fs::File;
 use std::io;
@@ -101,15 +107,26 @@ fn run_key() -> String {
     .clone()
 }
 
-/// The folder of the profile the running test was built in, `target/<profile>`, whose `deps`
-/// holds the test.
+/// The lock files Cargo keeps in a profile folder (`target/debug`): `.cargo-lock` in every
+/// version, the other two since 1.100.
+pub const LOCKS: [&str; 3] = [".cargo-lock", ".cargo-build-lock", ".cargo-artifact-lock"];
+
+/// The folder of the profile the running test was built in, `target/<profile>`.
 fn profile_dir() -> io::Result<PathBuf> {
     let exe = std::env::current_exe()?;
-    exe.parent()
-        .and_then(Path::parent)
+    let locked = |folder: &Path| LOCKS.iter().any(|lock| folder.join(lock).is_file());
+    profile_of(&exe, locked)
+        .ok_or_else(|| io::Error::other(format!("{} is in no Cargo profile", exe.display())))
+}
+
+/// The profile folder holding `exe`: the nearest folder above it that `is_profile` accepts, with a
+/// target folder above it in turn.
+fn profile_of(exe: &Path, is_profile: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    exe.ancestors()
+        .skip(1)
+        .find(|folder| is_profile(folder))
         .filter(|profile| profile.parent().is_some())
         .map(Path::to_path_buf)
-        .ok_or_else(|| io::Error::other("the test executable is not in target/<profile>/deps"))
 }
 
 /// `cargo build` of `package`'s `name` into the target folder `profile` is in, in its profile.
@@ -306,7 +323,45 @@ mod tests {
     fn the_profile_is_the_tests_own() {
         let profile = profile_dir().unwrap();
         let exe = std::env::current_exe().unwrap();
-        assert_eq!(exe.parent().unwrap(), profile.join("deps"));
+        assert!(exe.starts_with(&profile), "{exe:?} in {profile:?}");
+        assert!(profile.join(".cargo-lock").is_file());
+    }
+
+    /// Cargo 1.100's layout and the one before it give the same profile, in a target folder with
+    /// no `CACHEDIR.TAG` too (cargo-mutants' copies, 2026-11-20).
+    #[test]
+    fn the_profile_is_the_nearest_locked_folder_above_the_test() {
+        let locked = |folder: &Path| {
+            [Path::new("/w/target/debug"), Path::new("/w/target/release")].contains(&folder)
+        };
+        let new = Path::new("/w/target/debug/build/kchess-cli/64f4467b/out/cli-64f4467b");
+        let old = Path::new("/w/target/release/deps/cli-64f4467b");
+        assert_eq!(
+            profile_of(new, locked),
+            Some(PathBuf::from("/w/target/debug"))
+        );
+        assert_eq!(
+            profile_of(old, locked),
+            Some(PathBuf::from("/w/target/release"))
+        );
+        // The nearest: `cargo llvm-cov`'s target folder inside the usual one.
+        let cov = Path::new("/w/target/debug/cov/debug/build/x/1/out/x-1");
+        assert_eq!(
+            profile_of(cov, |folder| folder.ends_with("debug")),
+            Some(PathBuf::from("/w/target/debug/cov/debug"))
+        );
+        assert_eq!(profile_of(new, |_| false), None);
+        // Only a folder above the test: a program is never its own profile folder.
+        assert_eq!(profile_of(Path::new("/w/target/debug"), locked), None);
+        // A profile folder needs a target folder above it.
+        assert_eq!(
+            profile_of(Path::new("/x"), |folder| folder == Path::new("/")),
+            None
+        );
+        assert_eq!(
+            LOCKS,
+            [".cargo-lock", ".cargo-build-lock", ".cargo-artifact-lock"]
+        );
     }
 
     #[test]

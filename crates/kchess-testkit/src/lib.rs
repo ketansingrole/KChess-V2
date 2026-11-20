@@ -7,6 +7,9 @@
 //! and shares the parsing and the response heads (`Request::from_head`, `sized_head`,
 //! `chunked_head`, `chunk`).
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 pub mod build;
 pub mod memory;
 

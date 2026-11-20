@@ -36,18 +36,13 @@ runs:
       if: inputs.save != 'true'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        # Its libraries are named gpui, gpui_apple, gpui_macos and gpui_windows.
+        # Since Cargo 1.100 every unit of a package is under `build/<package>`: the four vendored
+        # packages whole (rust-cache keeps the registry's `gpui-pre-*` crates).
         path: |
-          target/**/deps/libgpui-*
-          target/**/deps/gpui-*.d
-          target/**/deps/libgpui_apple-*
-          target/**/deps/gpui_apple-*.d
-          target/**/deps/libgpui_macos-*
-          target/**/deps/gpui_macos-*.d
-          target/**/deps/libgpui_windows-*
-          target/**/deps/gpui_windows-*.d
-          target/**/.fingerprint/gpui-pre*
-          target/**/build/gpui-pre*
+          target/**/build/gpui-pre
+          target/**/build/gpui-pre-apple
+          target/**/build/gpui-pre-macos
+          target/**/build/gpui-pre-windows
         key: ${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}
     - if: inputs.save == 'true' && github.ref == 'refs/heads/main' && inputs.cache-hit != 'true'
       uses: ./.github/actions/drop-caches
@@ -57,14 +52,8 @@ runs:
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
-          target/**/deps/libgpui-*
-          target/**/deps/gpui-*.d
-          target/**/deps/libgpui_apple-*
-          target/**/deps/gpui_apple-*.d
-          target/**/deps/libgpui_macos-*
-          target/**/deps/gpui_macos-*.d
-          target/**/deps/libgpui_windows-*
-          target/**/deps/gpui_windows-*.d
-          target/**/.fingerprint/gpui-pre*
-          target/**/build/gpui-pre*
+          target/**/build/gpui-pre
+          target/**/build/gpui-pre-apple
+          target/**/build/gpui-pre-macos
+          target/**/build/gpui-pre-windows
         key: ${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}

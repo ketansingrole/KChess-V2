@@ -5,6 +5,8 @@
 # `cargo xtask check` refuses an outdated hack; after a dependency change run `cargo xtask hack`,
 # which runs `cargo hakari generate` and `manage-deps` and writes what follows from them
 # (.github/workflows/dependabot-hack.yml runs it on Dependabot's crate updates).
+# A new workspace package's library or program root then needs `use kchess_hack as _;`, or Cargo
+# warns the hack is unused.
 hakari-package = "kchess-hack"
 dep-format-version = "4"
 resolver = "2"

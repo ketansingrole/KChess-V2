@@ -2,6 +2,9 @@
 //! the randomness and the clock the rules leave to the host, the Game history writes, a puzzle on
 //! the board and broadcast rounds. The GPUI app and the CLI share them.
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 pub mod broadcast;
 pub mod history;
 pub mod puzzle;

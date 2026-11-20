@@ -172,20 +172,31 @@ fn folder(root: &Path, worktree: &Worktree) -> Option<Folder> {
     })
 }
 
-/// When a build last wrote to `target`: the newest of the folders a build adds files to.
+/// When a build last wrote to `target`: the newest of the folders a build adds files to. Since
+/// Cargo 1.100 that is a profile folder (its programs), `build` and each package's folder in it
+/// (a unit's), and `incremental` and each crate's cache in it (a session's); before, `deps` and
+/// `.fingerprint` too.
 fn last_built(target: &Path) -> Option<SystemTime> {
-    let mut folders = vec![target.to_path_buf()];
-    for deps in crate::sweep::deps_folders(target) {
-        if let Some(profile) = deps.parent() {
-            folders.push(profile.join(".fingerprint"));
-            folders.push(profile.join("incremental"));
-        }
-        folders.push(deps);
-    }
-    folders
+    written(target)
         .iter()
         .filter_map(|folder| crate::util::modified(folder))
         .max()
+}
+
+/// The folders of `target` whose times [`last_built`] reads.
+fn written(target: &Path) -> Vec<PathBuf> {
+    let mut folders = vec![target.to_path_buf()];
+    for profile in crate::sweep::profile_folders(target) {
+        for parent in ["build", "incremental"] {
+            let parent = profile.join(parent);
+            folders.extend(crate::util::subfolders(&parent));
+            folders.push(parent);
+        }
+        folders.push(profile.join(".fingerprint"));
+        folders.push(profile.join("deps"));
+        folders.push(profile);
+    }
+    folders
 }
 
 /// Why `folder` goes at `now` whatever the free space: merged and idle, or long idle. A folder
@@ -238,16 +249,16 @@ fn delete(target: &Path) -> bool {
     let Some(_tree) = mutants_tree_lock(target) else {
         return false;
     };
+    let profiles = crate::sweep::profile_folders(target);
     let mut locks = Vec::new();
-    for deps in crate::sweep::deps_folders(target) {
-        match deps.parent().and_then(crate::sweep::build_lock) {
+    for profile in &profiles {
+        match crate::sweep::build_lock(profile) {
             Some(held) => locks.extend(held),
             None => return false,
         }
     }
-    let held: Vec<PathBuf> = crate::sweep::deps_folders(target)
+    let held: Vec<PathBuf> = profiles
         .iter()
-        .filter_map(|deps| deps.parent())
         .flat_map(|profile| crate::sweep::LOCKS.map(|name| profile.join(name)))
         .collect();
     remove_all_but(target, &held);
@@ -571,6 +582,21 @@ mod tests {
         target
     }
 
+    /// A build folder in `checkout` as Cargo 1.100 leaves it: no `deps`, one unit in a folder of
+    /// its own.
+    fn built_nested(checkout: &Path) -> PathBuf {
+        let target = checkout.join("target");
+        let profile = target.join("debug");
+        let unit = profile.join("build/kchess-core/0123456789abcdef");
+        std::fs::create_dir_all(unit.join("fingerprint")).unwrap();
+        std::fs::create_dir_all(unit.join("out")).unwrap();
+        std::fs::create_dir_all(profile.join("incremental/kchess_core-1abc")).unwrap();
+        std::fs::write(unit.join("out/kchess_core-0123456789abcdef"), b"program").unwrap();
+        std::fs::write(profile.join(".cargo-lock"), b"").unwrap();
+        std::fs::write(profile.join(".cargo-build-lock"), b"").unwrap();
+        target
+    }
+
     fn sweep_after(root: &Path, idle: Duration, free: u64) -> Vec<String> {
         sweep_at(root, SystemTime::now() + idle, false, |_| Some(free))
     }
@@ -661,6 +687,54 @@ mod tests {
             said[0].ends_with("the disk has less than 50 GB free."),
             "{said:?}"
         );
+    }
+
+    /// A build folder of Cargo 1.100 has no `deps` (2026-11-20): its profiles are still found by
+    /// their locks, so one a build holds is never deleted, and its last build is read where 1.100
+    /// writes.
+    #[test]
+    fn a_build_folder_of_cargo_1_100_being_built_is_never_deleted() {
+        let (_dir, root, other) = repo();
+        let theirs = built_nested(&other);
+        let lock = File::options()
+            .write(true)
+            .open(theirs.join("debug/.cargo-build-lock"))
+            .unwrap();
+        lock.try_lock().unwrap();
+        assert!(sweep_after(&root, 4 * 24 * HOUR, LOW - 1).is_empty());
+        assert!(
+            theirs.join("debug/build/kchess-core").is_dir(),
+            "a build holds its lock"
+        );
+        drop(lock);
+        assert_eq!(sweep_after(&root, 4 * 24 * HOUR, LOW - 1).len(), 1);
+        assert!(!theirs.exists());
+    }
+
+    #[test]
+    fn the_last_build_is_read_from_where_either_layout_writes() {
+        let (_dir, _root, other) = repo();
+        let target = built_nested(&other);
+        let profile = target.join("debug");
+        let written = written(&target);
+        for folder in [
+            target.clone(),
+            profile.clone(),
+            profile.join("build"),
+            profile.join("build/kchess-core"),
+            profile.join("incremental"),
+            profile.join("incremental/kchess_core-1abc"),
+            profile.join("deps"),
+            profile.join(".fingerprint"),
+        ] {
+            assert!(written.contains(&folder), "{folder:?} in {written:?}");
+        }
+        assert!(
+            !written.contains(&profile.join("build/kchess-core/0123456789abcdef")),
+            "not each unit: a package's folder gains one when it is built"
+        );
+        assert!(last_built(&target).is_some());
+        assert_eq!(last_built(&other.join("none")), None);
     }
 
     #[test]

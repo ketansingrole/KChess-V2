@@ -1,5 +1,8 @@
 //! `kchess-cli`: the KChess command line, over the same profile and core as the app.
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 mod core;
 mod play;
 mod puzzle;

@@ -10,6 +10,9 @@
 //! - `layout`: the profile and the programs a frontend configures the core with;
 //! - `runtime`: the per-release copy the service runs from.
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 pub mod client;
 pub mod discovery;
 pub mod handle;

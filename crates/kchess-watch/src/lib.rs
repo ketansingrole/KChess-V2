@@ -3,6 +3,9 @@
 //! page is shown: leaving it stops the stream.
 
 // The app's services, the design system and the board, under the names this page's modules use.
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 use kchess_app::{accounts, core, loading, log, prefs, settings, timer};
 use kchess_board::{
     board, engine_view, game, notation, online, position_engine, remote_image, widgets,
