@@ -212,6 +212,7 @@ impl Client {
                             value,
                             error,
                             kind,
+                            aborted,
                         } => {
                             let waiting = pending
                                 .lock()
@@ -222,6 +223,7 @@ impl Client {
                                     Some(error) => {
                                         let mut error = CoreError::new(error);
                                         error.kind = kind.as_deref().and_then(ErrorKind::from_key);
+                                        error.aborted = aborted;
                                         Err(error)
                                     }
                                     None => Ok(value.unwrap_or(Value::Null)),

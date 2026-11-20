@@ -248,6 +248,106 @@ async fn a_stopped_analysis_ends_with_an_interrupted_final_update() {
     analysis.stop_analysis(true);
 }
 
+/// The core runs a window's calls in any order. The Analysis board stopped its search and started
+/// the next one; the stop ran after the start and aborted it, and the board showed "This
+/// operation was aborted" where the engine's lines go. A stop that names an older search, kill
+/// and all, now leaves the newer one and its engine running.
+#[tokio::test]
+async fn a_stop_that_lands_after_a_newer_search_leaves_it_running() {
+    let log = log_path("analysis-late-stop");
+    let (analysis, _) = analysis_with("search", &log);
+    let (updates, sink) = recorder();
+    let request = |fen: &str, client: u64| json!({ "fen": fen, "lines": 1, "infinite": true, "clientId": client });
+    let older = analysis
+        .start_analysis(request(ITALIAN, 10), &fake_path(), Arc::clone(&sink))
+        .expect("the older search");
+    wait_until(WAIT, "the older search's lines", || {
+        find(&updates, |u| u.id == older && !u.lines.is_empty())
+    })
+    .await;
+    let newer = analysis
+        .start_analysis(request(MATE_IN_ONE, 11), &fake_path(), sink)
+        .expect("the newer search");
+    wait_until(WAIT, "the newer search's lines", || {
+        find(&updates, |u| u.id == newer && !u.lines.is_empty())
+    })
+    .await;
+
+    // The stop the board sent for its older search, before the newer start, runs now.
+    analysis.stop_mine(true, Some(10));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(analysis.analysis_running(), "the newer search carries on");
+    assert!(find(&updates, |u| u.id == newer && u.done).is_none());
+    let lines_before = updates.lock().expect("updates").len();
+
+    // Its own stop ends it.
+    analysis.stop_mine(false, Some(11));
+    let last = wait_until(WAIT, "the newer search's final update", || {
+        find(&updates, |u| u.id == newer && u.done)
+    })
+    .await;
+    assert_eq!(last.reason, Some(Reason::Interrupted));
+    assert!(updates.lock().expect("updates").len() > lines_before);
+    analysis.stop_analysis(true);
+}
+
+/// A stop that runs before the start it was sent after (or a start older than one already run)
+/// refuses that start as aborted: the window asked for something since, and an infinite search
+/// started now would run for nobody.
+#[tokio::test]
+async fn a_start_that_lands_after_its_stop_is_refused() {
+    let log = log_path("analysis-late-start");
+    let (analysis, _) = analysis_with("search", &log);
+    let (updates, sink) = recorder();
+    let request =
+        |client: u64| json!({ "fen": START, "lines": 1, "infinite": true, "clientId": client });
+
+    analysis.stop_mine(false, Some(20));
+    for client in [20, 19] {
+        let refused = analysis
+            .start_analysis(request(client), &fake_path(), Arc::clone(&sink))
+            .expect_err("a start its stop already ended");
+        assert!(refused.aborted, "{client}: a cancellation, not a failure");
+    }
+    assert!(!analysis.analysis_running());
+
+    let started = analysis
+        .start_analysis(request(21), &fake_path(), Arc::clone(&sink))
+        .expect("a newer search");
+    wait_until(WAIT, "the newer search's lines", || {
+        find(&updates, |u| u.id == started && !u.lines.is_empty())
+    })
+    .await;
+    // A start that comes after a newer one is refused, and the newer one runs on.
+    let late = analysis
+        .start_analysis(request(20), &fake_path(), sink)
+        .expect_err("an older start");
+    assert!(late.aborted);
+    assert!(analysis.analysis_running());
+    assert!(find(&updates, |u| u.id == started && u.done).is_none());
+
+    // A request without a client id is not ordered: it supersedes as before.
+    let (plain, plain_sink) = recorder();
+    let unnumbered = analysis
+        .start_analysis(
+            json!({ "fen": ITALIAN, "lines": 1, "infinite": true }),
+            &fake_path(),
+            plain_sink,
+        )
+        .expect("an unnumbered search");
+    wait_until(WAIT, "the numbered search interrupted", || {
+        find(&updates, |u| {
+            u.id == started && u.reason == Some(Reason::Interrupted)
+        })
+    })
+    .await;
+    wait_until(WAIT, "the unnumbered search's lines", || {
+        find(&plain, |u| u.id == unnumbered && !u.lines.is_empty())
+    })
+    .await;
+    analysis.stop_analysis(true);
+}
+
 /// `settled` (what closing waits for) ends only once the running analysis has sent its final
 /// update.
 #[tokio::test]
@@ -383,7 +483,7 @@ async fn each_connection_has_its_own_analysis() {
     );
 
     // The first window's stop leaves the second window's analysis running.
-    scope(1, async { analysis.stop_mine(false) }).await;
+    scope(1, async { analysis.stop_mine(false, None) }).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(analysis.analysis_running());
     assert!(find(&second, |u| u.done).is_none());
