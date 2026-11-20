@@ -872,7 +872,7 @@ impl OnlineState {
                 if !this.presence_epoch.is_current(epoch) || this.phase != Phase::Playing {
                     return;
                 }
-                // A missed poll leaves the last reading; a later one recovers.
+                // gpui-lints: allow(dropped_failure) a missed poll keeps the last reading and a later one recovers; logging each would fill the log while offline
                 if let Ok(report) = answer {
                     this.latency.push(report.latency_ms as f64);
                     if this.latency.len() > LATENCY_KEPT {
@@ -937,7 +937,11 @@ impl OnlineState {
             .unwrap_or_default();
         let core = cx.global::<AppCore>().clone();
         cx.spawn(async move |this, cx| {
-            let joined = joined.await.unwrap_or_default();
+            // Unknown tournaments leave the stream as it is: read as none, a player's tournament
+            // stream would close.
+            let Some(joined) = joined.await.warn_on_err() else {
+                return;
+            };
             let now = kchess_games::now_ms();
             let current: Vec<_> = joined.iter().filter(|entry| entry.until > now).collect();
             let participant = current
@@ -967,7 +971,7 @@ impl OnlineState {
     fn load_challenges(&mut self, cx: &mut Context<Self>) {
         let call = cx.global::<AppCore>().request(calls::Challenges {});
         cx.spawn(async move |this, cx| {
-            if let Ok(list) = call.await {
+            if let Some(list) = call.await.warn_on_err() {
                 let _ = this.update(cx, |this, cx| {
                     this.challenges = list;
                     cx.notify();

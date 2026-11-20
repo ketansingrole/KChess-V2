@@ -5,6 +5,7 @@
 
 use crate::loading::Epoch;
 use futures::FutureExt as _;
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{Fen, GameId};
 use kchess_contracts::types::{
@@ -431,7 +432,9 @@ impl PositionExplorer {
     fn load_accounts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let data = cx.global::<AppCore>().request(calls::LoadData {});
         cx.spawn_in(window, async move |this, cx| {
-            let Ok(data) = data.await else { return };
+            let Some(data) = data.await.warn_on_err() else {
+                return;
+            };
             let accounts: Vec<String> = data
                 .accounts
                 .into_iter()

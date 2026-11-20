@@ -63,7 +63,7 @@ impl AnalysisPage {
                         if this.study_pgn == text {
                             this.study_pgn = previous;
                         }
-                        this.study_error = Some(cause.message);
+                        this.study_error = Some(crate::loading::failure("study", &cause));
                     }
                     Err(_) => {}
                 }

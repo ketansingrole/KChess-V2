@@ -3,6 +3,7 @@
 //! them while it quits. Each command's answer comes back to its caller; the library shows the
 //! studies the answers name. A command the core refuses shows its error and what the profile keeps.
 
+use crate::log::ResultExt as _;
 use kchess_contracts::calls;
 use std::collections::HashMap;
 
@@ -194,6 +195,7 @@ fn write_in_order(
                 if let Some(key) = saved_chapter(&command) {
                     match &result {
                         Err(cause) if !is_stale(cause) => {
+                            // gpui-lints: allow(unlogged_failure) logged above, with its command
                             unsaved.insert(key, cause.message.clone());
                         }
                         _ => {
@@ -363,7 +365,7 @@ impl StudyLibrary {
             }) else {
                 return;
             };
-            if let Ok(library) = library.await {
+            if let Some(library) = library.await.warn_on_err() {
                 let items = library.studies;
                 let _ = this.update(cx, |this, cx| match this.reads.answer(read) {
                     Answer::Show => {

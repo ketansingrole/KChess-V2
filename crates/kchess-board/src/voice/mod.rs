@@ -3,6 +3,7 @@
 //! first time, opens the microphone, sends its audio to the core's recognizer (`voiceStart`,
 //! `voiceAccept`, `voiceFinish`, `voiceStop`) in order, and hands each phrase heard to its owner.
 
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{SampleRate, VoiceAudio, VoiceGrammar};
 use std::collections::VecDeque;
@@ -129,7 +130,7 @@ pub type Listener = Arc<dyn Fn(&model::Progress) + Send + Sync>;
 /// Whether the offline model is installed, or being prepared (`voiceModelStatus`).
 pub fn model_status(cx: &App) -> impl Future<Output = Option<model::Status>> + 'static + use<> {
     let status = cx.global::<AppCore>().request(calls::VoiceModelStatus {});
-    async move { status.await.ok() }
+    async move { status.await.warn_on_err() }
 }
 
 /// Have the core download and prepare the model (`voiceModelInstall`); `progress` hears its

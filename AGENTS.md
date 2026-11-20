@@ -144,7 +144,7 @@ and in the App Store. Its readers play chess; they are not developers.
 ## Writing GPUI views
 
 The app is GPUI (`gpui_kit::*` re-exports it). The mistakes below compile and then fail at run
-time. `cargo xtask lints` finds the first three and a failure shown but not logged, from the syntax (`tooling/xtask/src/gpui_lints.rs`;
+time. `cargo xtask lints` finds the first three, a failure shown but not logged and a core call's failure thrown away, from the syntax (`tooling/xtask/src/gpui_lints.rs`;
 `check-fast` runs it when an app source changed): a line that must stay says why on the line
 before, `// gpui-lints: allow(<lint>) <reason>`.
 

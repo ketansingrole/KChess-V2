@@ -2,6 +2,7 @@
 //! board with ticking clocks, the moves once Lichess's delayed export lines up, the head-to-head,
 //! a channel's earlier games, and Analyse.
 
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::Username;
 use kchess_contracts::types::{Crosstable, TvPastGame, WatchFrame, WatchPhase, WatchSource};
@@ -238,7 +239,7 @@ impl Live {
         });
         cx.spawn(async move |this, cx| {
             // Optional context: the game is watchable without it.
-            if let Ok(table) = call.await
+            if let Some(table) = call.await.warn_on_err()
                 && table.nb_games > 0
             {
                 let _ = this.update(cx, |page, cx| {

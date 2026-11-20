@@ -14,6 +14,10 @@
 //! - `unlogged_failure`: a failure's message reaches the page (`Err(cause) => this.error =
 //!   Some(cause.message)`) but not the log, so a reported failure leaves no trace in the
 //!   diagnostics. Show it through `Loading` or `loading::failure`, which log it too.
+//! - `dropped_failure`: a core call's answer whose failure is thrown away, neither shown nor
+//!   logged (`answer.ok()`, `if let Ok(x) = answer` with no `else`, `let _ = answer.await`, an
+//!   `Err(_)` arm): the page keeps what it showed and nobody learns why. Log it
+//!   (`.warn_on_err()`, `loading::failure`) or show it through `Loading`.
 //!
 //! A line that must stay says why on the line before: `// gpui-lints: allow(<lint>) <reason>`.
 
@@ -120,7 +124,15 @@ impl<'ast> Visit<'ast> for Lints {
 
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
         if !is_test(&item.attrs) {
+            self.dropped(&item.block);
             visit::visit_item_fn(self, item);
+        }
+    }
+
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        if !is_test(&item.attrs) {
+            self.dropped(&item.block);
+            visit::visit_impl_item_fn(self, item);
         }
     }
 
@@ -183,6 +195,20 @@ impl<'ast> Visit<'ast> for Lints {
 }
 
 impl Lints {
+    /// The core calls' failures `body`, one function's, throws away.
+    fn dropped(&mut self, body: &syn::Block) {
+        let mut answers = Answers::default();
+        answers.visit_block(body);
+        for span in answers.found {
+            self.report(
+                span,
+                "dropped_failure",
+                "a core call's failure is thrown away, neither shown nor logged: log it \
+                 (`.warn_on_err()`, `loading::failure(area, &cause)`) or show it through `Loading`",
+            );
+        }
+    }
+
     /// A failure bound by `pattern` (`Err(cause)`) whose message `body` reads without logging it.
     fn unlogged(&mut self, pattern: &syn::Pat, body: impl FnOnce(&mut FailureUse<'_>)) {
         let mut bound = Vec::new();
@@ -227,6 +253,8 @@ fn failures(pattern: &syn::Pat, bound: &mut Vec<String>) {
         syn::Pat::Or(or) => or.cases.iter().for_each(|inner| failures(inner, bound)),
         syn::Pat::Reference(reference) => failures(&reference.pat, bound),
         syn::Pat::Paren(paren) => failures(&paren.pat, bound),
+        // syn 3 keeps an arm's guard in its pattern: `Err(cause) if !cause.aborted`.
+        syn::Pat::Guard(guarded) => failures(&guarded.pat, bound),
         _ => {}
     }
 }
@@ -243,6 +271,258 @@ const LOGGING_CALLS: [&str; 8] = [
     "log_err",
     "warn_on_err",
 ];
+
+/// Whether `name` is one of the calls that log a failure.
+fn is_logging(name: &syn::Ident) -> bool {
+    LOGGING_CALLS.iter().any(|logging| name == logging)
+}
+
+/// Whether running `node` logs: it calls one of `LOGGING_CALLS`.
+fn logs(node: impl FnOnce(&mut Logs)) -> bool {
+    let mut found = Logs(false);
+    node(&mut found);
+    found.0
+}
+
+/// Whether a logging call was seen.
+struct Logs(bool);
+
+impl<'ast> Visit<'ast> for Logs {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = &*call.func
+            && path
+                .path
+                .segments
+                .last()
+                .is_some_and(|last| is_logging(&last.ident))
+        {
+            self.0 = true;
+        }
+        visit::visit_expr_call(self, call);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        self.0 |= is_logging(&call.method);
+        visit::visit_expr_method_call(self, call);
+    }
+}
+
+/// A call to the core: `request`, `request_now` or `lookup` with one argument, the call itself
+/// (`core.request(calls::Library {})`); HTTP clients' `request(method, url)` take two.
+fn is_core_call(call: &syn::ExprMethodCall) -> bool {
+    ["request", "request_now", "lookup"]
+        .iter()
+        .any(|name| call.method == name)
+        && call.args.len() == 1
+}
+
+/// Whether `expr`'s value comes from a core call: the call itself, awaited or not, a closure's
+/// answer (`this.update(cx, |_, cx| core.request(…))`), a branch's or a block's last value, or one
+/// wrapped (`Some(core.request(…))`). A value merely computed after a call asked the core
+/// (`let rebuilt = { let rated = core.request(…).await…; Some(series(rated)) }`) is not one.
+fn asks_core(expr: &syn::Expr) -> bool {
+    let tail = |block: &syn::Block| match block.stmts.last() {
+        Some(syn::Stmt::Expr(last, None)) => asks_core(last),
+        _ => false,
+    };
+    match expr {
+        syn::Expr::MethodCall(call) => {
+            is_core_call(call) || asks_core(&call.receiver) || call.args.iter().any(asks_core)
+        }
+        syn::Expr::Call(call) => call.args.iter().any(asks_core),
+        syn::Expr::Closure(closure) => asks_core(&closure.body),
+        syn::Expr::Await(awaited) => asks_core(&awaited.base),
+        syn::Expr::Paren(paren) => asks_core(&paren.expr),
+        syn::Expr::Reference(reference) => asks_core(&reference.expr),
+        syn::Expr::Block(block) => tail(&block.block),
+        syn::Expr::If(branch) => {
+            tail(&branch.then_branch)
+                || branch
+                    .else_branch
+                    .as_ref()
+                    .is_some_and(|(_, otherwise)| asks_core(otherwise))
+        }
+        syn::Expr::Match(matched) => matched.arms.iter().any(|arm| asks_core(&arm.body)),
+        _ => false,
+    }
+}
+
+/// The names a pattern binds.
+fn bound_names(pattern: &syn::Pat, names: &mut Vec<String>) {
+    struct Names<'a>(&'a mut Vec<String>);
+    impl<'ast> Visit<'ast> for Names<'_> {
+        fn visit_pat_ident(&mut self, ident: &'ast syn::PatIdent) {
+            self.0.push(ident.ident.to_string());
+            visit::visit_pat_ident(self, ident);
+        }
+    }
+    Names(names).visit_pat(pattern);
+}
+
+/// Whether `pattern` is `Ok(…)`.
+fn is_ok_pattern(pattern: &syn::Pat) -> bool {
+    matches!(pattern, syn::Pat::TupleStruct(tuple)
+        if tuple.path.segments.last().is_some_and(|last| last.ident == "Ok"))
+}
+
+/// Whether `pattern` is `Err(_)`: the failure matched and not bound.
+fn is_ignored_failure(pattern: &syn::Pat) -> bool {
+    matches!(pattern, syn::Pat::TupleStruct(tuple)
+        if tuple.path.segments.last().is_some_and(|last| last.ident == "Err")
+            && tuple.elems.iter().all(|inner| matches!(inner, syn::Pat::Wild(_))))
+}
+
+/// One function's core answers, by the names they are bound to (the call, its awaited answer and
+/// what that is bound to next), and where a failure of one is thrown away.
+#[derive(Default)]
+struct Answers {
+    names: Vec<String>,
+    found: Vec<Span>,
+}
+
+impl Answers {
+    /// Whether `expr` is an answer: a name bound to one, awaited or not, or a core call itself.
+    fn is_answer(&self, expr: &syn::Expr) -> bool {
+        match expr {
+            syn::Expr::Await(awaited) => self.is_answer(&awaited.base),
+            syn::Expr::Paren(paren) => self.is_answer(&paren.expr),
+            syn::Expr::Path(path) => path
+                .path
+                .get_ident()
+                .is_some_and(|ident| self.names.iter().any(|name| ident == name)),
+            syn::Expr::MethodCall(call) => is_core_call(call),
+            _ => false,
+        }
+    }
+
+    /// The names `pattern` binds from `init` that hold an answer.
+    fn bind(&mut self, pattern: &syn::Pat, init: &syn::Expr) {
+        let pattern = match pattern {
+            syn::Pat::Type(typed) => &*typed.pat,
+            other => other,
+        };
+        match (pattern, init) {
+            (syn::Pat::Tuple(patterns), syn::Expr::Tuple(values)) => {
+                for (pattern, value) in patterns.elems.iter().zip(&values.elems) {
+                    self.bind(pattern, value);
+                }
+            }
+            (syn::Pat::Wild(_), _) => {}
+            _ if self.is_answer(init) || asks_core(init) => {
+                bound_names(pattern, &mut self.names);
+            }
+            _ => {}
+        }
+    }
+
+    /// Answers passed to a call are its to handle (`loading.settle(turn, area, &answer)`,
+    /// `this.show(answer)`): no longer this function's.
+    fn hand_over<'a>(&mut self, args: impl IntoIterator<Item = &'a syn::Expr>) {
+        for arg in args {
+            let arg = match arg {
+                syn::Expr::Reference(reference) => &*reference.expr,
+                other => other,
+            };
+            if let syn::Expr::Path(path) = arg
+                && let Some(ident) = path.path.get_ident()
+            {
+                self.names.retain(|name| ident != name);
+            }
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for Answers {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        self.hand_over(&call.args);
+        visit::visit_expr_call(self, call);
+    }
+
+    fn visit_item(&mut self, _: &'ast syn::Item) {
+        // A function inside this one is read as its own.
+    }
+
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        if let Some(init) = &local.init {
+            let answer = self.is_answer(&init.expr);
+            match (&local.pat, &init.diverge) {
+                // `let _ = answer.await`: the failure goes with the rest.
+                (syn::Pat::Wild(wild), None) if answer => self.found.push(wild.span()),
+                // `let Ok(x) = answer else { return }`: unless the `else` logs.
+                (pattern, Some((_, otherwise)))
+                    if answer
+                        && is_ok_pattern(pattern)
+                        && !logs(|log| log.visit_expr(otherwise)) =>
+                {
+                    self.found.push(pattern.span());
+                }
+                _ => {}
+            }
+            self.bind(&local.pat, &init.expr);
+        }
+        visit::visit_local(self, local);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        if self.is_answer(&call.receiver) {
+            let method = call.method.to_string();
+            let dropped = match method.as_str() {
+                "ok" | "unwrap_or" | "unwrap_or_default" => true,
+                // `unwrap_or_else(|cause| …)` may log it; `|_|` cannot.
+                "unwrap_or_else" => call.args.iter().any(|arg| {
+                    matches!(arg, syn::Expr::Closure(closure)
+                        if closure.inputs.iter().all(|input| matches!(input, syn::Pat::Wild(_)))
+                            && !logs(|log| log.visit_expr(&closure.body)))
+                }),
+                _ => false,
+            };
+            if dropped {
+                self.found.push(call.method.span());
+            }
+        }
+        self.hand_over(&call.args);
+        visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_if(&mut self, branch: &'ast syn::ExprIf) {
+        if branch.else_branch.is_none() {
+            // `if let Ok(x) = answer` and `if let Ok(x) = answer && …` with no `else`.
+            let mut conditions = vec![&*branch.cond];
+            while let Some(condition) = conditions.pop() {
+                match condition {
+                    syn::Expr::Binary(both) if matches!(both.op, syn::BinOp::And(_)) => {
+                        conditions.extend([&*both.left, &*both.right]);
+                    }
+                    syn::Expr::Let(binding)
+                        if is_ok_pattern(&binding.pat) && self.is_answer(&binding.expr) =>
+                    {
+                        self.found.push(binding.pat.span());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        visit::visit_expr_if(self, branch);
+    }
+
+    fn visit_expr_match(&mut self, matched: &'ast syn::ExprMatch) {
+        if self.is_answer(&matched.expr) {
+            // `Err(cause) if !cause.aborted => …` before it: `Err(_)` is only what that one
+            // leaves (a cancelled search).
+            let mut sorted = false;
+            for arm in &matched.arms {
+                if is_ignored_failure(&arm.pat) && !sorted && !logs(|log| log.visit_expr(&arm.body))
+                {
+                    self.found.push(arm.pat.span());
+                }
+                let mut bound = Vec::new();
+                failures(&arm.pat, &mut bound);
+                sorted |= matches!(arm.pat, syn::Pat::Guard(_)) && !bound.is_empty();
+            }
+        }
+        visit::visit_expr_match(self, matched);
+    }
+}
 
 /// Where a failure's `.message` is read, and whether the same arm logs.
 struct FailureUse<'a> {
@@ -671,6 +951,107 @@ fn answered(this: &mut Page, answer: Result<Report, CoreError>, cx: &mut App) {
         Err(_) => this.failed = true,
         Ok(_) => {}
     }
+}
+"#;
+        assert_eq!(lints_of(text), []);
+    }
+
+    /// syn 3 keeps a match arm's guard in its pattern: a guarded arm that shows the failure
+    /// without logging it went unread from the move to syn 3 until this lint looked inside it.
+    #[test]
+    fn a_guarded_arm_that_shows_a_failure_is_read_too() {
+        let text = r#"
+fn answered(this: &mut Page, answer: Result<Report, CoreError>) {
+    match answer {
+        Err(cause) if this.current => this.error = Some(cause.message),
+        _ => {}
+    }
+}
+"#;
+        assert_eq!(lints_of(text), [("unlogged_failure", 4)]);
+    }
+
+    #[test]
+    fn a_core_failure_thrown_away_is_found() {
+        let text = r#"
+fn load(&mut self, cx: &mut Context<Self>) {
+    let status = cx.global::<AppCore>().request(calls::EngineStatus { variant: None });
+    let data = core.request(calls::LoadData {});
+    let library = this.update(cx, |_, cx| cx.global::<AppCore>().request(calls::Library {}));
+    cx.spawn(async move |this, cx| {
+        let status = status.await.ok();
+        let Ok(data) = data.await else { return };
+        let answer = library.await;
+        if let Ok(library) = answer {
+            this.library = library;
+        }
+        if let Ok(table) = core.request(calls::Crosstable { a, b }).await
+            && table.nb_games > 0
+        {
+            this.table = Some(table);
+        }
+        let joined = joined_read.await.unwrap_or_default();
+        let themes = bridge.request_now(CustomThemes {}).unwrap_or_else(|_| empty());
+        match core.request(calls::Days { name }).await {
+            Ok(days) => this.days = Some(days),
+            Err(_) => this.days_error = true,
+        }
+        let _ = core.request(calls::Save { value }).await;
+    });
+}
+"#;
+        assert_eq!(
+            lints_of(text),
+            [
+                ("dropped_failure", 7),
+                ("dropped_failure", 8),
+                ("dropped_failure", 10),
+                ("dropped_failure", 13),
+                ("dropped_failure", 19),
+                ("dropped_failure", 22),
+                ("dropped_failure", 24),
+            ],
+            "`joined_read` was never bound to a core call: only answers count"
+        );
+    }
+
+    #[test]
+    fn a_core_failure_logged_shown_or_handed_on_is_left_alone() {
+        let text = r#"
+fn load(&mut self, cx: &mut Context<Self>) {
+    let status = core.request(calls::EngineStatus { variant: None });
+    let page = core.request(calls::GamePage { query });
+    let search = core.request(calls::BestMove { fen });
+    let rated = core.request(calls::RecentGames { name });
+    let client = reqwest::Client::new();
+    cx.spawn(async move |this, cx| {
+        let status = status.await.warn_on_err();
+        let page = page.await;
+        if !this.loading.settle(turn, "history", &page) {
+            return;
+        }
+        if let Ok(page) = page {
+            this.games = page.games;
+        }
+        match search.await {
+            Ok(best) => this.best = Some(best),
+            Err(cause) if !cause.aborted => this.error = Some(failure("engine", &cause)),
+            Err(_) => {}
+        }
+        let rebuilt = if known {
+            None
+        } else {
+            let games = rated.await.warn_on_err().unwrap_or_default();
+            Some(series(games))
+        };
+        let shown = rebuilt.unwrap_or_default();
+        let body = client.request(Method::GET, url).send().await.ok();
+        if let Ok(answer) = core.request(calls::Profile { name }).await {
+            this.profile = Some(answer);
+        } else {
+            log_warn("no profile");
+        }
+    });
 }
 "#;
         assert_eq!(lints_of(text), []);

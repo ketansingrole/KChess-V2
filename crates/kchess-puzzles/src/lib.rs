@@ -6,6 +6,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_app::log::ResultExt as _;
 use kchess_hack as _;
 
 use kchess_nav::page::PageView;
@@ -469,7 +470,7 @@ impl PuzzlesPage {
         cx.spawn(async move |this, cx| {
             let progress = progress.await;
             let _ = this.update(cx, |this, cx| {
-                if let Ok(progress) = progress {
+                if let Some(progress) = progress.warn_on_err() {
                     this.progress = progress;
                 }
                 if first || this.session.phase() == "idle" {

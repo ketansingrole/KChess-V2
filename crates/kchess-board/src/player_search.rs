@@ -4,6 +4,7 @@
 //! which the Players page answers (`OpenPlayer`).
 
 use gpui_kit::*;
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::Username;
 use kchess_contracts::types::PlayerSuggestion;
@@ -128,7 +129,7 @@ impl NameMatches {
                 if !matches.epoch.is_current(epoch) {
                     return;
                 }
-                if let Ok(mut found) = found {
+                if let Some(mut found) = found.warn_on_err() {
                     found.truncate(SUGGESTED);
                     matches.found = found;
                 }

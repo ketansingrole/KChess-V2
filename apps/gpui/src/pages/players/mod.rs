@@ -6,6 +6,7 @@ mod rating_speeds;
 
 use crate::loading::{Epoch, Loading, Turn};
 use crate::pages::PageView;
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{MessageText, PresenceUsers, Username};
 use kchess_contracts::types::{
@@ -444,7 +445,10 @@ impl PlayersPage {
                 }
                 match answer {
                     Ok(days) => this.days = Some(days),
-                    Err(_) => this.days_error = true,
+                    Err(cause) => {
+                        crate::loading::failure("players", &cause);
+                        this.days_error = true;
+                    }
                 }
                 cx.notify();
             });
@@ -537,7 +541,10 @@ impl PlayersPage {
                 }
                 match answer {
                     Ok(report) => this.status = report.users.get(&key).cloned(),
-                    Err(_) => this.extras_failed.push("online status"),
+                    Err(cause) => {
+                        crate::loading::failure("players", &cause);
+                        this.extras_failed.push("online status");
+                    }
                 }
                 cx.notify();
             });
@@ -582,10 +589,10 @@ impl PlayersPage {
             username: Username(username.to_string()),
         });
         cx.spawn(async move |this, cx| {
-            let answer = relation.await;
+            let answer = relation.await.warn_on_err();
             let _ = this.update(cx, |this, cx| {
                 if this.account_epoch.is_current(account_epoch)
-                    && let Ok(Reply::Done(relation)) = answer
+                    && let Some(Reply::Done(relation)) = answer
                 {
                     this.relation = Some(relation);
                     cx.notify();
@@ -605,7 +612,10 @@ impl PlayersPage {
                 }
                 match answer {
                     Ok(record) => this.record = Some(record),
-                    Err(_) => this.extras_failed.push("your record"),
+                    Err(cause) => {
+                        crate::loading::failure("players", &cause);
+                        this.extras_failed.push("your record");
+                    }
                 }
                 cx.notify();
             });
@@ -656,7 +666,10 @@ impl PlayersPage {
                 match answer {
                     Ok(games) => this.games = Some(games),
                     // Lichess sometimes answers "not found" for every player's games.
-                    Err(_) => this.games_error = true,
+                    Err(cause) => {
+                        crate::loading::failure("players", &cause);
+                        this.games_error = true;
+                    }
                 }
                 cx.notify();
             });
@@ -666,7 +679,7 @@ impl PlayersPage {
             username: Username(username.clone()),
         });
         cx.spawn(async move |this, cx| {
-            let official = official.await.unwrap_or_default();
+            let official = official.await.warn_on_err().unwrap_or_default();
             let rebuilt = if has_points(&official) {
                 None
             } else {
@@ -674,7 +687,7 @@ impl PlayersPage {
                     username: Username(username),
                     rated: Some(true),
                 });
-                let rated = rated.await.unwrap_or_default();
+                let rated = rated.await.warn_on_err().unwrap_or_default();
                 Some(kchess_domain::records::ratings::rating_series(
                     rated.iter().filter_map(LichessGame::rated_game),
                 ))

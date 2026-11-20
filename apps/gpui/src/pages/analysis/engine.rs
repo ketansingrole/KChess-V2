@@ -2,6 +2,7 @@
 //! the position shown, their lines and the engine panel.
 
 use super::*;
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{Bounded, Position};
 use kchess_contracts::types::{AnalysisReason, AnalysisRequest, EngineLine};
@@ -37,7 +38,7 @@ impl AnalysisPage {
             .global::<AppCore>()
             .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
-            let status = status.await.ok();
+            let status = status.await.warn_on_err();
             let _ = this.update(cx, |this, cx| {
                 this.engine_ready = status.as_ref().is_some_and(|status| status.ready);
                 let identity = status.and_then(|status| status.identity);
