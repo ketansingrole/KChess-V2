@@ -169,11 +169,11 @@ impl IoResultExt for std::io::Result<()> {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
 
     /// The tests' log, one per test process: the log starts once, so every test writes to it.
-    pub(crate) fn logged() -> String {
+    fn logged() -> String {
         static DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
         let dir = DIR.get_or_init(|| tempfile::tempdir().expect("a temporary folder"));
         init(dir.path());

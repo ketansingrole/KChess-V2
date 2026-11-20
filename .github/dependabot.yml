@@ -51,8 +51,6 @@ updates:
       - { dependency-name: once_cell, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: percent-encoding, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: potential_utf, update-types: [version-update:semver-major, version-update:semver-minor] }
-      - { dependency-name: proc-macro2, update-types: [version-update:semver-major, version-update:semver-minor] }
-      - { dependency-name: quote, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: regex-automata, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: serde_core, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: simd-adler32, update-types: [version-update:semver-major, version-update:semver-minor] }
@@ -61,7 +59,6 @@ updates:
       - { dependency-name: socket2, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: stable_deref_trait, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: subtle, update-types: [version-update:semver-major, version-update:semver-minor] }
-      - { dependency-name: syn, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: tinystr, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: toml_datetime, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: tracing, update-types: [version-update:semver-major, version-update:semver-minor] }

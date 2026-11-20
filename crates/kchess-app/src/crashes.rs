@@ -168,6 +168,15 @@ fn newest_report(dir: &Path, since: SystemTime) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// The log, started once for the test process (whichever test starts it first): every line
+    /// written goes to it.
+    fn logged() -> String {
+        static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+        let dir = DIR.get_or_init(|| tempfile::tempdir().expect("a temporary folder"));
+        crate::log::init(dir.path());
+        crate::log::read().join("")
+    }
+
     /// A marker no app holds is reported once with its version, and removed; a held one is not.
     #[test]
     fn a_run_that_did_not_quit_is_reported_once_and_a_running_one_never() {
@@ -248,7 +257,7 @@ mod tests {
     /// A panic reaches the log with its thread, place, message and backtrace.
     #[test]
     fn a_panic_is_logged_with_where_it_happened_and_its_backtrace() {
-        crate::log::tests::logged();
+        logged();
         report_panics();
         let line = line!() + 3;
         let caught = std::thread::Builder::new()
@@ -257,7 +266,7 @@ mod tests {
             .expect("a thread")
             .join();
         assert!(caught.is_err());
-        let log = crate::log::tests::logged();
+        let log = logged();
         let at = format!(
             "ERROR [panic] thread 'crashing' panicked at {}:{line}: the board broke",
             file!()
