@@ -4,6 +4,7 @@
 
 use kchess_contracts::calls;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use futures::StreamExt as _;
@@ -33,6 +34,8 @@ pub struct ViewPreferences {
     changed_at: HashMap<String, u64>,
     /// Reads of the saved preferences started; only the newest one is taken.
     reads: u64,
+    /// Whether the profile held any preference when this start first read them (`used`).
+    used: bool,
 }
 
 type Failed = Arc<Mutex<HashMap<String, (Value, String)>>>;
@@ -48,6 +51,15 @@ enum Write {
 impl Global for ViewPreferences {}
 
 impl ViewPreferences {
+    /// The preferences this start read from the core.
+    fn read(values: Map<String, Value>) -> ViewPreferences {
+        ViewPreferences {
+            used: !values.is_empty(),
+            values,
+            ..ViewPreferences::default()
+        }
+    }
+
     /// The core refused the latest write of `key`: the shown value is not what the profile keeps.
     fn unsaved(&self, key: &str) -> bool {
         self.failed
@@ -190,15 +202,15 @@ pub fn init(cx: &mut App) {
             Map::new()
         }
     };
+    let mut prefs = ViewPreferences::read(values);
     let (writes, queue) = mpsc::unbounded();
-    let failed = Failed::default();
-    let sending = Sending::default();
+    prefs.writes = Some(writes);
     let core = cx.global::<AppCore>().clone();
     cx.background_executor()
         .spawn(write_in_order(
             queue,
-            Arc::clone(&failed),
-            Arc::clone(&sending),
+            Arc::clone(&prefs.failed),
+            Arc::clone(&prefs.sending),
             move |key, value| {
                 let save = core.request(calls::SetViewPreference {
                     key: ViewPreferenceKey(key.clone()),
@@ -217,13 +229,7 @@ pub fn init(cx: &mut App) {
             },
         ))
         .detach();
-    cx.set_global(ViewPreferences {
-        values,
-        failed,
-        writes: Some(writes),
-        sending,
-        ..ViewPreferences::default()
-    });
+    cx.set_global(prefs);
     crate::quit::on_quit(cx, |cx| {
         cx.try_global::<ViewPreferences>()
             .map(ViewPreferences::flushed)
@@ -266,25 +272,70 @@ pub fn get<T: DeserializeOwned>(cx: &App, key: &str, fallback: T) -> T {
         .unwrap_or(fallback)
 }
 
-/// Whether any preference was saved on this profile: it was in use before this start.
+/// Whether any preference was saved on this profile: it was in use before this start. Read as
+/// this start first read them, so what it saves since (an earlier release's files moved in,
+/// where the window was left) does not count.
 pub fn used(cx: &App) -> bool {
     cx.try_global::<ViewPreferences>()
-        .is_some_and(|prefs| !prefs.values.is_empty())
+        .is_some_and(|prefs| prefs.used)
 }
 
 /// Remember a preference for every KChess app on this profile. Choosing the shown value again
 /// writes it again when the core refused it.
 pub fn set<T: Serialize>(cx: &mut App, key: &str, value: T) {
-    let value = json!(value);
+    if store(cx, key, json!(value)) {
+        // Views read preferences while rendering without observing them; a cached one shows the
+        // change only when the windows redraw past their caches.
+        cx.refresh_windows();
+    }
+}
+
+/// Remember a preference no view draws from (where the window was left): as `set`, without
+/// redrawing every window.
+pub fn keep<T: Serialize>(cx: &mut App, key: &str, value: T) {
+    store(cx, key, json!(value));
+}
+
+/// Store `value` under `key` unless it is already kept; whether it changed.
+fn store(cx: &mut App, key: &str, value: Value) -> bool {
     let prefs = cx.default_global::<ViewPreferences>();
     if prefs.values.get(key) == Some(&value) && !prefs.unsaved(key) {
-        return;
+        return false;
     }
     prefs.values.insert(key.to_string(), value.clone());
     prefs.write(key, value);
-    // Views read preferences while rendering without observing them; a cached one shows the
-    // change only when the windows redraw past their caches.
-    cx.refresh_windows();
+    true
+}
+
+/// Move a setting an earlier release kept in its own profile file into the preference `key`,
+/// once: `read` turns the file's text into the value (`None` when it is damaged). A file there
+/// was written by an earlier release after the preference (one opened on the profile again), so
+/// it wins. Read before the window opens.
+#[track_caller]
+pub fn take_file(cx: &mut App, key: &str, file: &Path, read: impl FnOnce(&str) -> Option<Value>) {
+    crate::slow_calls::call("an earlier release's profile file (prefs::take_file)");
+    let text = match std::fs::read_to_string(file) {
+        Ok(text) => text,
+        Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => return,
+        Err(cause) => {
+            crate::log::write(
+                Level::Warn,
+                "view-preferences",
+                &format!("{} unreadable: {cause}", file.display()),
+            );
+            return;
+        }
+    };
+    if let Some(value) = read(&text) {
+        keep(cx, key, value);
+    }
+    if let Err(cause) = std::fs::remove_file(file) {
+        crate::log::write(
+            Level::Warn,
+            "view-preferences",
+            &format!("{} not removed: {cause}", file.display()),
+        );
+    }
 }
 
 /// Forget a preference: its default applies again.
@@ -468,5 +519,109 @@ mod tests {
         cx.update(|cx| forget(cx, "kchess:test-size"));
         draw(cx);
         assert_eq!(shown.get(), 0);
+
+        // The value already shown, set again, redraws nothing.
+        cx.update(|cx| set(cx, "kchess:test-size", 7));
+        draw(cx);
+        let before = renders.get();
+        cx.update(|cx| set(cx, "kchess:test-size", 7));
+        draw(cx);
+        assert_eq!(renders.get(), before, "an unchanged preference redrew");
+
+        // One no view draws from (where the window was left) is kept without redrawing.
+        cx.update(|cx| keep(cx, "kchess:test-place", 3));
+        draw(cx);
+        assert_eq!(renders.get(), before, "a kept preference redrew");
+        assert_eq!(cx.update(|cx| get(cx, "kchess:test-place", 0)), 3);
+    }
+
+    /// A profile counts as used from what this start read, not from what it saved since (the
+    /// window's place, kept as it opens, made a new profile look used and show release notes).
+    #[gpui_kit::test]
+    fn a_profile_is_used_by_what_this_start_read(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(ViewPreferences::read(Map::new()));
+            keep(cx, "kchess:test-place", 1);
+            assert!(!used(cx));
+            let saved = Map::from_iter([("kchess:tab".to_string(), json!("games"))]);
+            cx.set_global(ViewPreferences::read(saved));
+            assert!(used(cx));
+            assert_eq!(get(cx, "kchess:tab", String::new()), "games");
+        });
+    }
+
+    /// The app starts with what the core keeps, and its changes reach the core.
+    #[gpui_kit::test]
+    fn the_preferences_are_read_from_the_core_and_saved_to_it(cx: &mut gpui_kit::TestAppContext) {
+        let _core = cx.update(crate::tests::start_core);
+        let core = cx.update(|cx| cx.global::<AppCore>().bridge.clone());
+        core.request_now(calls::SetViewPreference {
+            key: ViewPreferenceKey("kchess:test-tab".into()),
+            value: Some(json!("games")),
+        })
+        .expect("saved");
+        cx.update(init);
+        cx.update(|cx| {
+            assert_eq!(get(cx, "kchess:test-tab", String::new()), "games");
+            assert!(used(cx));
+            set(cx, "kchess:test-tab", "studies");
+        });
+        let flushed = cx.update(|cx| cx.global::<ViewPreferences>().flushed());
+        cx.executor().allow_parking();
+        assert_eq!(cx.foreground_executor().block_test(flushed), Ok(()));
+        let saved = core
+            .request_now(calls::ViewPreferences {})
+            .expect("the preferences");
+        assert_eq!(saved["kchess:test-tab"], json!("studies"));
+    }
+
+    /// A file that is not there is no trouble; one that cannot be read is logged and left.
+    #[gpui_kit::test]
+    fn only_a_file_that_cannot_be_read_is_logged(cx: &mut gpui_kit::TestAppContext) {
+        let dir = tempfile::tempdir().expect("a folder");
+        crate::log::init(dir.path());
+        let missing = dir.path().join("missing-old-setting.json");
+        // A folder where the file should be: there, but not readable as text.
+        let unreadable = dir.path().join("unreadable-old-setting.json");
+        std::fs::create_dir(&unreadable).expect("the folder");
+        let read = |text: &str| serde_json::from_str::<Value>(text).ok();
+        cx.update(|cx| {
+            cx.set_global(ViewPreferences::default());
+            take_file(cx, "kchess:test-old", &missing, read);
+            take_file(cx, "kchess:test-old", &unreadable, read);
+            assert_eq!(get(cx, "kchess:test-old", 0), 0);
+        });
+        let log = crate::log::read().join("");
+        assert!(!log.contains("missing-old-setting"), "{log}");
+        assert!(
+            log.contains("unreadable-old-setting.json unreadable"),
+            "{log}"
+        );
+        assert!(unreadable.exists());
+    }
+
+    /// An earlier release's file becomes the preference, wins over one saved before it, and is
+    /// removed; a damaged one is removed without changing anything.
+    #[gpui_kit::test]
+    fn an_earlier_releases_file_becomes_the_preference_once(cx: &mut gpui_kit::TestAppContext) {
+        let dir = tempfile::tempdir().expect("a folder");
+        let file = dir.path().join("old.json");
+        let read = |text: &str| serde_json::from_str::<Value>(text).ok();
+        cx.update(|cx| {
+            cx.set_global(ViewPreferences::default());
+            set(cx, "kchess:test-old", 1);
+            take_file(cx, "kchess:test-old", &file, read);
+            assert_eq!(get(cx, "kchess:test-old", 0), 1, "no file changes nothing");
+
+            std::fs::write(&file, "2").expect("the file");
+            take_file(cx, "kchess:test-old", &file, read);
+            assert_eq!(get(cx, "kchess:test-old", 0), 2);
+            assert!(!file.exists());
+
+            std::fs::write(&file, "damaged").expect("the file");
+            take_file(cx, "kchess:test-old", &file, read);
+            assert_eq!(get(cx, "kchess:test-old", 0), 2);
+            assert!(!file.exists());
+        });
     }
 }
