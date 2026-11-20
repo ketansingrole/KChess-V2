@@ -291,9 +291,25 @@ impl Harness {
         self.cx.run_until_parked();
     }
 
+    /// One look while settling: real time passes, for the core's threads to answer, only while
+    /// the app waits on one of its calls. A page at rest waits on none, and sleeping through
+    /// every look of every settle was 96% of the layout audit's time (17.7 s → 0.7 s alone).
+    fn settle_tick(&mut self) {
+        let waiting = self
+            .cx
+            .read(|cx| cx.global::<crate::core::AppCore>().bridge.waiting());
+        if waiting > 0 {
+            std::thread::sleep(POLL);
+        }
+        self.cx.executor().advance_clock(POLL);
+        self.cx.run_until_parked();
+    }
+
     /// Let the page come to rest: at least 20 looks, then until its controls hold still for 10.
     /// A fixed number of looks measured a page loading on a loaded machine and loaded on a quiet
-    /// one, so a layout check saw a different page from run to run.
+    /// one, so a layout check saw a different page from run to run. A call still unanswered does
+    /// not hold it: a page may keep one open on purpose (a seek on a server that never answers
+    /// waited out the whole timeout).
     pub fn settle(&mut self) {
         let layout = |app: &mut Harness| {
             app.with_window(|window, _| {
@@ -305,13 +321,13 @@ impl Harness {
             })
         };
         for _ in 0..20 {
-            self.tick();
+            self.settle_tick();
         }
         let started = Instant::now();
         let mut last = layout(self);
         let mut still = 0;
         while still < 10 && started.elapsed() < TIMEOUT {
-            self.tick();
+            self.settle_tick();
             let now = layout(self);
             still = if now == last { still + 1 } else { 0 };
             last = now;

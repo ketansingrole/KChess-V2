@@ -6,6 +6,7 @@
 
 use crate::log::ResultExt as _;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use gpui_kit::{App, Entity, EventEmitter, Global, Subscription};
 use kchess_client::CoreHandle;
@@ -25,12 +26,34 @@ impl EventEmitter<ClientEvent> for CoreEvents {}
 pub struct CoreBridge {
     runtime: tokio::runtime::Runtime,
     handle: CoreHandle,
+    /// The calls sent and not yet answered to the app (`waiting`).
+    waiting: Arc<AtomicUsize>,
+}
+
+/// One call counted in `CoreBridge::waiting` until its answer is taken or the call is dropped.
+struct Waiting(Arc<AtomicUsize>);
+
+impl Waiting {
+    fn start(count: &Arc<AtomicUsize>) -> Waiting {
+        count.fetch_add(1, Ordering::SeqCst);
+        Waiting(Arc::clone(count))
+    }
+}
+
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl CoreBridge {
     /// The core behind `handle`, running on `runtime`.
     pub fn new(runtime: tokio::runtime::Runtime, handle: CoreHandle) -> CoreBridge {
-        CoreBridge { runtime, handle }
+        CoreBridge {
+            runtime,
+            handle,
+            waiting: Arc::default(),
+        }
     }
 
     /// This app's connection on the core: `origin` of its own writes in `profile:changed`.
@@ -49,8 +72,10 @@ impl CoreBridge {
         &self,
         work: W,
     ) -> impl Future<Output = Result<T, CoreError>> + 'static + use<T, W> {
+        let waiting = Waiting::start(&self.waiting);
         let task = self.runtime.spawn(work);
         async move {
+            let _waiting = waiting;
             task.await
                 .unwrap_or_else(|_| Err(CoreError::new("The KChess core stopped")))
         }
@@ -65,7 +90,19 @@ impl CoreBridge {
     where
         C::Answer: Send,
     {
-        abortable(self.runtime.handle(), self.handle.request(call))
+        let waiting = Waiting::start(&self.waiting);
+        let answer = abortable(self.runtime.handle(), self.handle.request(call));
+        async move {
+            let _waiting = waiting;
+            answer.await
+        }
+    }
+
+    /// The calls this app has sent the core and not yet had answered: none while it waits on
+    /// nothing. The end-to-end tests let real time pass for the core's threads only while some
+    /// are (`Harness::settle`).
+    pub fn waiting(&self) -> usize {
+        self.waiting.load(Ordering::SeqCst)
     }
 
     /// A typed core call (`kchess_contracts::calls`); the future resolves on any executor.
@@ -290,6 +327,23 @@ mod tests {
                 .request_now(kchess_contracts::calls::Usage {})
                 .is_err()
         );
+    }
+
+    /// A call is waited on from when it is sent until its answer is taken or the call is dropped,
+    /// a lookup's too: the end-to-end tests let real time pass only while one is.
+    #[gpui_kit::test]
+    fn calls_are_waited_on_until_answered_or_dropped(cx: &mut gpui_kit::TestAppContext) {
+        let _core = cx.update(crate::tests::start_core);
+        let core = cx.read(|cx| cx.global::<super::AppCore>().clone());
+        let bridge = &core.bridge;
+        assert_eq!(bridge.waiting(), 0);
+        let answer = bridge.request(kchess_contracts::calls::Usage {});
+        let lookup = bridge.lookup(kchess_contracts::calls::Usage {});
+        assert_eq!(bridge.waiting(), 2);
+        drop(lookup);
+        assert_eq!(bridge.waiting(), 1);
+        assert!(futures::executor::block_on(answer).is_ok());
+        assert_eq!(bridge.waiting(), 0);
     }
 
     /// A test core given a stand-in Lichess asks it, never lichess.org.
