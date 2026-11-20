@@ -4,7 +4,7 @@
 
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
-use kchess_contracts::types::Library;
+use kchess_contracts::types::{Library, Settings};
 
 use crate::core::AppCore;
 use kchess_contracts::{CoreError, calls};
@@ -14,30 +14,38 @@ pub struct Started;
 
 impl Global for Started {}
 
-/// The library the models start from, when the core can read what they need, or why not.
-pub fn check(cx: &App) -> Result<Library, String> {
+/// What the models start from, as the core read it from the profile.
+pub struct Profile {
+    pub settings: Settings,
+    pub library: Library,
+}
+
+/// The settings and library the models start from, when the core can read them, or why not.
+pub fn check(cx: &App) -> Result<Profile, String> {
     let bridge = &cx.global::<AppCore>().bridge;
     readable(
-        || bridge.request_now(calls::DesktopSettings {}).map(drop),
+        || bridge.request_now(calls::DesktopSettings {}),
         || bridge.request_now(calls::Library {}),
     )
+    .map(|(settings, library)| Profile { settings, library })
     .map_err(|cause| cause.message)
 }
 
-/// The settings must be readable, and the library is read once for every model that starts
-/// from it: each read decodes every study and replays every played game.
-fn readable<T>(
-    settings: impl FnOnce() -> Result<(), CoreError>,
+/// The settings must be readable, and each is read once for every model that starts from it:
+/// Settings starts from these (it read them a second time before), and each library read
+/// decodes every study and replays every played game.
+fn readable<S, T>(
+    settings: impl FnOnce() -> Result<S, CoreError>,
     library: impl FnOnce() -> Result<T, CoreError>,
-) -> Result<T, CoreError> {
-    settings()?;
-    library()
+) -> Result<(S, T), CoreError> {
+    let settings = settings()?;
+    Ok((settings, library()?))
 }
 
 /// Start the models and open the window, or the startup screen when the profile cannot be read.
 pub fn start(cx: &mut App) {
     match check(cx) {
-        Ok(library) => crate::start_models(&library, cx),
+        Ok(profile) => crate::start_models(profile, cx),
         Err(message) => show(message, cx),
     }
 }
@@ -71,10 +79,10 @@ struct StartupScreen {
 impl StartupScreen {
     fn retry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match check(cx) {
-            Ok(library) => {
+            Ok(profile) => {
                 // The workspace opens in its own window where this one stood.
                 window.remove_window();
-                cx.defer(move |cx| crate::start_models(&library, cx));
+                cx.defer(move |cx| crate::start_models(profile, cx));
             }
             Err(message) => {
                 self.error = message.into();
@@ -128,11 +136,11 @@ mod tests {
     #[test]
     fn a_failed_read_keeps_the_models_from_starting() {
         assert_eq!(
-            readable(|| Ok(()), || Ok(json!("library"))).map_err(|e| e.message),
-            Ok(json!("library"))
+            readable(|| Ok(json!("settings")), || Ok(json!("library"))).map_err(|e| e.message),
+            Ok((json!("settings"), json!("library")))
         );
         let failed = readable(
-            || Err(CoreError::new("The settings file is locked")),
+            || Err::<(), _>(CoreError::new("The settings file is locked")),
             || Ok(Value::Null),
         );
         assert_eq!(
@@ -157,7 +165,7 @@ mod tests {
         .expect("readable");
         assert_eq!(reads.get(), 1);
         let _ = readable(
-            || Err(CoreError::new("locked")),
+            || Err::<(), _>(CoreError::new("locked")),
             || {
                 reads.set(reads.get() + 1);
                 Ok(Value::Null)

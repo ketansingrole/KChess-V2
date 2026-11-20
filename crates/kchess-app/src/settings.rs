@@ -91,13 +91,11 @@ fn defaults() -> Settings {
     }
 }
 
-/// Starts with the defaults and loads the saved settings and themes from the core.
-/// Read the settings and themes before the window opens, so it opens in the chosen theme.
-pub fn init(cx: &mut App) {
+/// Starts from `settings`, as the app's startup read them from the core (`startup::check`, which
+/// refuses to start without them), and reads the custom themes. Both are in before the window
+/// opens, so it opens in the chosen theme.
+pub fn init(settings: Settings, cx: &mut App) {
     let bridge = std::sync::Arc::clone(&cx.global::<AppCore>().bridge);
-    let settings = bridge
-        .request_now(DesktopSettings {})
-        .unwrap_or_else(|_| defaults());
     let report = bridge
         .request_now(CustomThemes {})
         .unwrap_or_else(|_| CustomThemeReport {
