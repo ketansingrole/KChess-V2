@@ -3,6 +3,7 @@
 use crate::fixtures::{Reply, serve};
 use crate::signed_in;
 use kchess_contracts::core_api::CoreApi;
+use kchess_contracts::types::Assistance;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{sync::Arc, time::Duration};
@@ -45,7 +46,7 @@ async fn a_game_starting_mid_lookup_blocks_the_explorer_answer() {
     let core = &profile.core;
     // Startup leaves assistance blocked until recovery verifies no game is in progress.
     core.call("resumeOnline", vec![]).await.unwrap();
-    assert_eq!(json!(core.assistance_blocked()), json!(false));
+    assert_eq!(core.assistance(), Assistance::Allowed);
     let lookup = tokio::spawn({
         let core = Arc::clone(core);
         async move {
@@ -71,8 +72,8 @@ async fn a_game_starting_mid_lookup_blocks_the_explorer_answer() {
     fixture.requested(PLAYING, 2).await;
     assert!(!recovery.is_finished(), "the gated fixture holds recovery");
     assert_eq!(
-        json!(core.assistance_blocked()),
-        json!(true),
+        core.assistance(),
+        Assistance::Unverified,
         "recovery is verifying and assistance is blocked mid-lookup"
     );
     lookup_open.send(true).unwrap();
@@ -81,9 +82,10 @@ async fn a_game_starting_mid_lookup_blocks_the_explorer_answer() {
         .expect("the gated lookup resolves")
         .unwrap()
         .unwrap_err();
-    assert!(
-        error.message.contains("live Lichess game"),
-        "the mid-lookup game blocks the answer: {error:?}"
+    assert_eq!(
+        error.message,
+        "Position lookups are unavailable until your Lichess game status is verified.",
+        "the check under way blocks the answer, and says so"
     );
     recovery_open.send(true).unwrap();
     tokio::time::timeout(Duration::from_secs(30), recovery)
@@ -92,8 +94,8 @@ async fn a_game_starting_mid_lookup_blocks_the_explorer_answer() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        json!(core.assistance_blocked()),
-        json!(false),
+        core.assistance(),
+        Assistance::Allowed,
         "recovery that finds no game unblocks assistance again"
     );
     core.close().await;

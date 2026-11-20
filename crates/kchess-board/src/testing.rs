@@ -32,7 +32,7 @@ impl Started {
         cx.executor().allow_parking();
         let core = cx.update(|cx| {
             gpui_kit::init(cx);
-            let core = kchess_app::tests::start_core_with_lichess(cx, origin);
+            let core = kchess_app::tests::start_core_delivering(cx, origin);
             kchess_app::settings::init_for_tests(cx);
             kchess_app::accounts::init(cx);
             crate::online::init(cx);
@@ -63,19 +63,42 @@ impl Started {
     /// Wait, in real time, until `ready` holds; `what` names it on failure. The core answers on
     /// its own threads, so the test looks again every 5 ms for up to 30 s, as the app's
     /// end-to-end harness does.
-    pub fn wait_for(&mut self, what: &str, mut ready: impl FnMut(&mut Window, &mut App) -> bool) {
-        const TIMEOUT: Duration = Duration::from_secs(30);
+    pub fn wait_for(&mut self, what: &str, ready: impl FnMut(&mut Window, &mut App) -> bool) {
+        self.wait_within(Duration::from_secs(30), what, ready);
+    }
+
+    /// `wait_for`, failing after `limit`: for an answer the core gives at once, so that a test
+    /// whose answer never comes fails promptly instead of running into the runner's timeout
+    /// (which reads as a hang, not a failure, to `cargo mutants`).
+    pub fn wait_within(
+        &mut self,
+        limit: Duration,
+        what: &str,
+        mut ready: impl FnMut(&mut Window, &mut App) -> bool,
+    ) {
         const POLL: Duration = Duration::from_millis(5);
         let started = Instant::now();
         while !self.with_window(&mut ready) {
             assert!(
-                started.elapsed() < TIMEOUT,
-                "timed out after {TIMEOUT:?} waiting for {what}"
+                started.elapsed() < limit,
+                "timed out after {limit:?} waiting for {what}"
             );
             std::thread::sleep(POLL);
             self.cx.executor().advance_clock(POLL);
             self.cx.run_until_parked();
         }
+    }
+
+    /// Wait until the core's startup check for a live Lichess game has ended and engine help is
+    /// lent (a profile with no account has nothing to find). The core ends it at once, so a
+    /// board that never lifts the lock fails within 10 s, inside the 20 s `cargo mutants` gives
+    /// a test, which would otherwise report a hang instead of a caught mutant.
+    pub fn wait_for_engine_help(&mut self) {
+        self.wait_within(
+            Duration::from_secs(10),
+            "the startup check to end",
+            |_, cx| crate::online::handle(cx).read(cx).assistance_allowed(),
+        );
     }
 
     /// The test's app, to run its tasks or read its state.

@@ -2038,6 +2038,18 @@ pub struct ReviewFailure {
     pub message: String,
 }
 
+/// Whether the core lends engine, review and explorer help now, and why not. Reported on
+/// `online:assistance` whenever it changes, and answered by `assistanceStatus`.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Assistance {
+    Allowed,
+    /// A live Lichess game is played, or one may still be (its end not seen).
+    LiveGame,
+    /// Lichess has not confirmed that no game is in progress: the check is running, or failed.
+    Unverified,
+}
+
 /// Progress of the review queue, sent whenever it changes.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]

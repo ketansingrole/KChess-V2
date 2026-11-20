@@ -3,6 +3,7 @@
 use crate::support;
 use futures_util::poll;
 use kchess_contracts::core_api::CoreApi;
+use kchess_contracts::types::Assistance;
 use kchess_core::engine::search;
 use kchess_core::{Config, Core};
 use serde_json::Value;
@@ -15,10 +16,33 @@ async fn prepared(dir: &Path, host: &Arc<support::Recording>) -> Core {
     let core = Core::open(Config::new(dir.to_path_buf()), host.clone()).unwrap();
     core.call("loadData", vec![]).await.unwrap();
     core.call("resumeOnline", vec![]).await.unwrap();
-    assert!(!core.assistance_blocked());
+    assert_eq!(core.assistance(), Assistance::Allowed);
     let engine = support::engine_copy(dir, "search");
     support::save_engine_path(&core, &engine);
     core
+}
+
+/// The engine refuses on its own, not only at the method table: a call that reaches it without
+/// the table's check (a game started while it waited, or a caller inside the core) is refused
+/// while Lichess has not confirmed that no game is in progress, and says so.
+#[tokio::test]
+async fn the_engine_refuses_until_the_check_for_a_game_answers() {
+    use kchess_contracts::check::Moves;
+    use kchess_contracts::core_api::EngineApi;
+    use kchess_contracts::types::EngineLevel;
+    let dir = tempfile::tempdir().unwrap();
+    let host = support::host();
+    let core = Core::open(Config::new(dir.path().to_path_buf()), host.clone()).unwrap();
+    core.call("loadData", vec![]).await.unwrap();
+    assert_eq!(core.assistance(), Assistance::Unverified);
+    let refused = EngineApi::best_move(&core, Moves::default(), EngineLevel::Club, None)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refused.message,
+        "Engine assistance is unavailable until your Lichess game status is verified."
+    );
+    core.close().await;
 }
 
 async fn scored(host: &support::Recording) -> Value {
@@ -82,11 +106,11 @@ async fn recovery_cancels_analysis_waiting_for_settings() {
         poll!(&mut recovery).is_pending(),
         "recovery has reported checking and is awaiting accounts"
     );
-    assert!(core.assistance_blocked());
+    assert_eq!(core.assistance(), Assistance::Unverified);
     drop(storage);
     assert!(start.await.unwrap_err().aborted);
     assert!(host.named("engine:analysis").is_empty());
-    assert!(core.assistance_blocked());
+    assert_eq!(core.assistance(), Assistance::Unverified);
     recovery.await.unwrap();
     core.close().await;
 }

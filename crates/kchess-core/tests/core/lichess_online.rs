@@ -14,7 +14,7 @@ use fixtures::{MemoryStore, Recording, Reply, Request, capabilities_for, http_cl
 use futures_util::future::BoxFuture;
 use kchess_contracts::Variant;
 use kchess_contracts::error::{CoreError, Result as CoreResult};
-use kchess_contracts::types::{ChallengeColor, ChatRoom, TournamentSystem};
+use kchess_contracts::types::{Assistance, ChallengeColor, ChatRoom, TournamentSystem};
 use kchess_core::host::Host;
 use kchess_core::lichess::accounts::Lichess;
 use kchess_core::lichess::challenges::{ChallengeInfo, PlayerRef, TimeControl};
@@ -1380,6 +1380,47 @@ async fn recovery_goes_on_past_an_account_whose_check_failed() {
     assert_eq!(fixture.to("/api/account/playing").len(), 2);
     assert!(host.logged().contains("Game recovery check failed: Alice"));
     online.cancel();
+    online.close();
+}
+
+/// 2026-11-20: a failed check for a game in progress left help locked while every frontend took
+/// it as lent. Each change of the lock is now reported, once, so they follow it: locked while
+/// the check runs, still locked when it fails, lent once a check finds no game.
+#[tokio::test]
+async fn each_change_of_the_assistance_lock_is_reported_once() {
+    let failing = Arc::new(AtomicBool::new(true));
+    let fails = Arc::clone(&failing);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/account/playing" if fails.load(Ordering::SeqCst) => {
+            Reply::Json(503, json!({ "error": "Unavailable" }).to_string())
+        }
+        "/api/account/playing" => Reply::Json(200, json!({ "nowPlaying": [] }).to_string()),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let reported = || -> Vec<Value> {
+        host.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(name, _)| name == "online:assistance")
+            .map(|(_, payload)| payload.clone())
+            .collect()
+    };
+    assert!(online.resume().await.is_err());
+    assert_eq!(online.assistance(), Assistance::Unverified);
+    assert!(online.resume().await.is_err());
+    assert_eq!(
+        reported(),
+        [json!("unverified")],
+        "a failure again changes nothing"
+    );
+    failing.store(false, Ordering::SeqCst);
+    assert_eq!(online.resume().await.unwrap(), None);
+    assert_eq!(online.assistance(), Assistance::Allowed);
+    assert_eq!(reported(), [json!("unverified"), json!("allowed")]);
     online.close();
 }
 

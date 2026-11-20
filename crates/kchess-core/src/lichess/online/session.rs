@@ -61,6 +61,7 @@ impl OnlineSession {
                 state: Mutex::new(State::new()),
                 backoff,
                 state_hook: Mutex::new(None),
+                assistance_reported: Mutex::new(None),
             }),
         }
     }

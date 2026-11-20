@@ -42,6 +42,44 @@ fn a_finished_review_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCon
     wait_for_review(&mut app);
 }
 
+/// 2026-11-20: the board asked for its review while the check for a Lichess game had not
+/// answered (refused 39 times in a development log), and never asked again: once the check
+/// failed, the review stayed missing until the moves changed.
+#[gpui_kit::test]
+fn a_review_held_back_by_the_startup_check_shows_once_it_ends(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, lichess) = Harness::signed_in(cx, false);
+    app.wait_for("engine help", |_, cx| {
+        crate::online::handle(cx).read(cx).assistance_allowed()
+    });
+    app.open("Analysis board");
+    super::analysis::import(&mut app, SCHOLARS_MATE);
+    app.click("Review");
+    app.click("review-start");
+    wait_for_review(&mut app);
+
+    // The check on the next launch fails: the board's lookup is held back, not refused.
+    lichess.lock().fail_check = true;
+    let mut app = app.restart();
+    app.wait_for("the check to fail", |_, cx| {
+        crate::online::handle(cx).read(cx).pause() == Some(crate::online::Pause::Unverified)
+    });
+    app.open("Analysis board");
+    // The review queue reports its status meanwhile (it looks for work 10 s after launch): the
+    // board follows the reviews again, and asked for its review then, to be refused.
+    app.with_window(|_, cx| {
+        let reviews = cx.global::<crate::reviews::ReviewHandle>().0.clone();
+        reviews.update(cx, |_, cx| cx.notify());
+    });
+    app.settle();
+    assert!(
+        !app.shows("practice-review-mistakes"),
+        "held back until Lichess answers"
+    );
+    lichess.lock().fail_check = false;
+    app.click("assistance-check-again");
+    wait_for_review(&mut app);
+}
+
 /// A Crazyhouse game is reviewed in Crazyhouse, drops and all: the review is asked for in its
 /// variant and kept under it, and its mistakes are offered for practice.
 #[gpui_kit::test]

@@ -21,7 +21,7 @@ impl Core {
     async fn configured_engine(&self, gate: Assist) -> Result<String> {
         let settings = self.get_settings().await?;
         // A game can start while the settings were read.
-        self.assistance_allowed(gate.refusal_after())?;
+        self.assistance_allowed(gate)?;
         Ok(settings.core.engine_path)
     }
 }
