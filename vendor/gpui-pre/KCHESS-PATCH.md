@@ -35,6 +35,10 @@ A fourth patch makes a reused view keep its **title-bar areas** (`Window::reuse_
 not these, so a frame that reused the top bar left Windows with no drag area or window buttons
 until the bar next drew: the bar could not move the window and the buttons did nothing.
 
+A fifth patch calls the atomics' `try_update` where upstream calls `fetch_update`, which Rust 1.100
+deprecates under that new name (`src/profiler.rs`, `src/profiler/journal.rs`), so building GPUI
+warns of nothing.
+
 The app sets the zoom (`apps/gpui/src/interface_zoom.rs`) and moves the macOS traffic lights to
 stay centred on its top bar.
 
