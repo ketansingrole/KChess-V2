@@ -81,7 +81,7 @@ const NOTICES: &str = "THIRD_PARTY_NOTICES.md";
 
 /// Whether `check_notices` reads `file`: the notices, and the manifests that name dependencies.
 pub fn reads(file: &str) -> bool {
-    file == NOTICES || crate::check::is_manifest(file)
+    file == NOTICES || crate::members::is_manifest(file)
 }
 
 /// `notices`: every direct dependency of a shipped KChess crate is attributed.

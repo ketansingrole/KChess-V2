@@ -94,6 +94,19 @@ pub fn uncovered() -> impl Iterator<Item = &'static str> {
         .map(|(name, _)| *name)
 }
 
+/// Whether `file` is a workspace manifest or the lock, which add and drop dependencies.
+pub fn is_manifest(file: &str) -> bool {
+    file == "Cargo.lock" || file == "Cargo.toml" || file.ends_with("/Cargo.toml")
+}
+
+/// The app's UI crates (`Role::Ui`).
+pub fn ui() -> impl Iterator<Item = &'static str> {
+    ROLES
+        .iter()
+        .filter(|(_, role)| *role == Role::Ui)
+        .map(|(name, _)| *name)
+}
+
 /// Whether `name` is headless: neither the app, nor its UI crates, nor tooling, nor the hack. The
 /// hack never makes a headless member build the app's or xtask's dependencies.
 pub fn headless(name: &str) -> bool {
@@ -141,6 +154,22 @@ mod tests {
                 "kchess-studies",
                 "kchess-watch",
                 "xtask"
+            ]
+        );
+        assert_eq!(
+            ui().collect::<Vec<_>>(),
+            [
+                "kchess-ui",
+                "kchess-app",
+                "kchess-board",
+                "kchess-nav",
+                "kchess-puzzles",
+                "kchess-history",
+                "kchess-home",
+                "kchess-local",
+                "kchess-practice",
+                "kchess-studies",
+                "kchess-watch",
             ]
         );
         assert_eq!(

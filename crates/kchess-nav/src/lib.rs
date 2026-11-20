@@ -3,6 +3,9 @@
 //! the board pages' shared layout (`play_layout`, `part`). It never depends on the app or on any
 //! page: the app registers its pages (`page::set_registry`) and its workspace answers `Shell`.
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
 
@@ -17,6 +20,8 @@ pub mod swipe;
 use kchess_board::widgets;
 
 #[cfg(any(test, feature = "test-support"))]
+// Test code, which other crates' tests build too.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 pub mod testing;
 #[cfg(test)]
 mod tests;

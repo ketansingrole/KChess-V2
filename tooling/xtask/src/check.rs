@@ -45,48 +45,43 @@ fn clippy_workspace() -> Result {
     )
 }
 
+/// The format and one clippy run. `unwrap` and `expect` outside tests are denied by each library's
+/// and shipped program's own root (`every_crate_root_denies_unwrap_outside_tests`), not by clippy
+/// runs of their own: from 2026-11-13 to 11-20 two such runs here (`--lib`, then the shipped
+/// programs' `--bins`) found what `check-fast` never ran, and two pull requests went red in CI on
+/// an `expect()`; with their own flags they also made each run re-check every member.
 fn lints() -> Result {
     format()?;
-    clippy_workspace()?;
-    run(
-        "cargo",
-        &[
-            "clippy",
-            "--workspace",
-            "--lib",
-            "--locked",
-            "--",
-            "-D",
-            "clippy::unwrap_used",
-            "-D",
-            "clippy::expect_used",
-        ],
-    )?;
-    run("cargo", &shipped_bins_args())
+    clippy_workspace()
 }
 
-/// The shipped binaries whose code must not unwrap or expect outside tests: every shipped
-/// program's crate but the app's.
-fn shipped_bins() -> impl Iterator<Item = &'static str> {
-    members::shipped().filter(|package| *package != APP)
-}
+/// The attribute every library's root and every shipped program's but the app's holds. What
+/// other crates' tests build (`test-support`) allows `unwrap` item by item: a crate-wide exception
+/// would be off in every workspace run, which builds the tests' features too.
+#[cfg(test)]
+const DENY_UNWRAP: &str = "#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]";
 
-/// One clippy run over every shipped binary, its `unwrap`/`expect` denied as the libraries' are.
-fn shipped_bins_args() -> Vec<&'static str> {
-    let mut args = vec!["clippy"];
-    for bin in shipped_bins() {
-        args.extend(["-p", bin]);
+/// The crate roots that must deny `unwrap` and `expect` outside tests, from `cargo metadata`:
+/// every member's library, and the programs of every shipped crate but the app (`shipped`). From
+/// the workspace root as the metadata names it: `root()` is canonical, which on Windows is a
+/// `\\?\` path that Cargo's `D:\` paths do not start with.
+#[cfg(test)]
+fn unwrap_free_roots(metadata: &serde_json::Value) -> Vec<String> {
+    let repo = Path::new(metadata["workspace_root"].as_str().unwrap_or_default());
+    let shipped: Vec<&str> = members::shipped().filter(|name| *name != APP).collect();
+    let mut roots = Vec::new();
+    for package in metadata["packages"].as_array().into_iter().flatten() {
+        let name = package["name"].as_str().unwrap_or_default();
+        for target in package["targets"].as_array().into_iter().flatten() {
+            let kind = target["kind"][0].as_str().unwrap_or_default();
+            if kind == "lib" || (kind == "bin" && shipped.contains(&name)) {
+                let path = Path::new(target["src_path"].as_str().unwrap_or_default());
+                let relative = path.strip_prefix(repo).unwrap_or(path);
+                roots.push(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
     }
-    args.extend([
-        "--bins",
-        "--locked",
-        "--",
-        "-D",
-        "clippy::unwrap_used",
-        "-D",
-        "clippy::expect_used",
-    ]);
-    args
+    roots
 }
 
 /// Whether cargo-nextest is installed (CI installs it). It runs every test in its own process and
@@ -139,11 +134,22 @@ fn run_tests(packages: &[String]) -> Result {
     Ok(())
 }
 
+/// The members outside the coverage gate whose tests `check` runs: without the app's and its UI
+/// crates' (`app` false) when CI's `gpui` job runs them (`ui_tests`). They build GPUI without
+/// coverage's instruments, which that job builds anyway: here it cost 2 min 45 s with a warm cache
+/// and 7 min 38 s without (2026-11-19).
 fn uncovered(app: bool) -> Vec<String> {
     members::uncovered()
-        .filter(|package| app || *package != APP)
+        .filter(|package| app || members::role(package) == members::Role::Tooling)
         .map(|package| package.to_string())
         .collect()
+}
+
+/// `ui-tests`: the tests of the app's UI crates, which `check --without-app-tests` leaves to CI's
+/// `gpui` job on Linux (`uncovered`).
+pub fn ui_tests(_: &[String]) -> Result {
+    let packages: Vec<String> = members::ui().map(str::to_string).collect();
+    run_tests(&packages)
 }
 
 /// The workspace's tests: under the coverage gate when cargo-llvm-cov is installed (CI installs
@@ -230,7 +236,7 @@ fn coverage() -> Result {
 }
 
 /// `check [--without-app-tests]`: everything a push to main must pass. CI's check job leaves the
-/// app's tests to its `gpui` job, which runs them on Linux beside it.
+/// app's and its UI crates' tests to its `gpui` job, which runs them on Linux beside it.
 pub fn check(args: &[String]) -> Result {
     let app = with_app_tests(args);
     crate::sweep::build_folder(false)?;
@@ -245,7 +251,8 @@ pub fn check(args: &[String]) -> Result {
     Ok(())
 }
 
-/// Whether `check` runs the app's tests: unless `--without-app-tests` says another job does.
+/// Whether `check` runs the app's and its UI crates' tests: unless `--without-app-tests` says
+/// another job does.
 fn with_app_tests(args: &[String]) -> bool {
     !args.iter().any(|arg| arg == "--without-app-tests")
 }
@@ -411,11 +418,6 @@ impl Selection {
             Selection::Nothing | Selection::Lints => false,
         }
     }
-}
-
-/// Whether `file` is a workspace manifest or the lock, which add and drop dependencies.
-pub fn is_manifest(file: &str) -> bool {
-    file == "Cargo.lock" || file == "Cargo.toml" || file.ends_with("/Cargo.toml")
 }
 
 type Check = fn() -> Result;
@@ -796,9 +798,7 @@ pub fn is_document(file: &str) -> bool {
 }
 
 /// Files outside xtask's sources that packaging is made from.
-const PACKAGING_FILES: [&str; 10] = [
-    "Cargo.toml",
-    "Cargo.lock",
+const PACKAGING_FILES: [&str; 8] = [
     "rust-toolchain.toml",
     ".cargo/config.toml",
     "apps/gpui/build.rs",
@@ -808,6 +808,90 @@ const PACKAGING_FILES: [&str; 10] = [
     ".github/workflows/release.yml",
     ".github/workflows/windows-upgrade.yml",
 ];
+
+/// The manifests packaging reads only in part: a change to one counts when `changes_packaging`
+/// says it does. From 2026-11-13 to 11-20 the packaging jobs ran on 62 of 76 pull request runs,
+/// most of them moving a page out of the app into a crate of its own: that changes both files and
+/// packages nothing new, and the slowest of those jobs, the Windows upgrade's build, is the
+/// longest of a run.
+const PARTLY_PACKAGING: [&str; 2] = ["Cargo.toml", "Cargo.lock"];
+
+/// Whether the change of `file` (one of `PARTLY_PACKAGING`) from `old` to `new` may change a
+/// package: anything in the root manifest but its member list, its members' path dependencies and
+/// its lints (the version, a profile, a patch, an outside dependency), and in the lock, any
+/// package from outside the workspace. A file added or removed counts.
+fn changes_packaging(file: &str, old: Option<&str>, new: Option<&str>) -> bool {
+    let (Some(old), Some(new)) = (old, new) else {
+        return true;
+    };
+    if file == "Cargo.lock" {
+        outside_packages(old) != outside_packages(new)
+    } else {
+        packaging_lines(old) != packaging_lines(new)
+    }
+}
+
+/// The root manifest's lines packaging reads, each with its section, sorted, without comments,
+/// blank lines, the member list, path-only dependencies on members and the lints' sections.
+fn packaging_lines(manifest: &str) -> Vec<(String, String)> {
+    let mut section = String::new();
+    let mut in_members = false;
+    let mut lines = Vec::new();
+    for line in manifest.lines().map(str::trim) {
+        if in_members {
+            in_members = !line.contains(']');
+            continue;
+        }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            section = line.to_string();
+            continue;
+        }
+        if section == "[workspace]" && line.starts_with("members") {
+            in_members = !line.contains(']');
+            continue;
+        }
+        let member_path = section == "[workspace.dependencies]"
+            && line
+                .split_once('=')
+                .map(|(_, value)| value.trim())
+                .and_then(|value| value.strip_prefix('{')?.strip_suffix('}'))
+                .is_some_and(|table| {
+                    let table = table.trim();
+                    table.starts_with("path") && !table.contains(',')
+                });
+        if member_path || section.starts_with("[workspace.lints") {
+            continue;
+        }
+        lines.push((section.clone(), line.to_string()));
+    }
+    lines.sort();
+    lines
+}
+
+/// The lock's packages from outside the workspace (those with a `source`): name, version, source
+/// and checksum, sorted.
+fn outside_packages(lock: &str) -> Vec<String> {
+    let mut packages: Vec<String> = lock
+        .split("[[package]]")
+        .filter(|block| block.lines().any(|line| line.starts_with("source = ")))
+        .map(|block| {
+            block
+                .lines()
+                .filter(|line| {
+                    ["name = ", "version = ", "source = ", "checksum = "]
+                        .iter()
+                        .any(|key| line.starts_with(key))
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect();
+    packages.sort();
+    packages
+}
 
 /// Folders packaging is made from: the app's icons and bundle files, the shipped speech helper,
 /// the release crate, xtask's packaging and the repository's own actions.
@@ -833,6 +917,10 @@ fn packaging_modules(repo: &Path) -> Result<Vec<String>> {
     let mut modules = vec!["deltas".to_string()];
     while let Some(file) = files.pop() {
         let text = std::fs::read_to_string(&file).map_err(|cause| cause.to_string())?;
+        // What packaging runs: the code before the file's tests, which may name anything.
+        let text = text
+            .find("#[cfg(test)]\nmod tests")
+            .map_or(text.as_str(), |at| &text[..at]);
         for (at, _) in text.match_indices("crate::") {
             let rest = &text[at + "crate::".len()..];
             let names: Vec<&str> = match rest.strip_prefix('{') {
@@ -889,7 +977,16 @@ fn scope_report(repo: &Path, base: &str) -> Result<String> {
     let files = changed_files(repo, base, false)?;
     let modules = packaging_modules(repo)?;
     let code = files.iter().any(|file| !is_document(file));
-    let packaging = files.iter().any(|file| is_packaging(file, &modules));
+    let at = |commit: &str, file: &str| {
+        crate::util::git(repo, &["show", &format!("{commit}:{file}")], &[0]).ok()
+    };
+    let packaging = files.iter().any(|file| {
+        if PARTLY_PACKAGING.contains(&file.as_str()) {
+            changes_packaging(file, at(base, file).as_deref(), at("HEAD", file).as_deref())
+        } else {
+            is_packaging(file, &modules)
+        }
+    });
     Ok(format!("code={code}\npackaging={packaging}\n"))
 }
 
@@ -1155,7 +1252,6 @@ mod tests {
             "crates/kchess-delta/src/lib.rs",
             "crates/kchess-voice/src/main.rs",
             "crates/kchess-core/src/engine/managed/shipped.rs",
-            "Cargo.lock",
             ".cargo/config.toml",
             ".github/actions/engines/action.yml",
             ".github/workflows/release.yml",
@@ -1171,6 +1267,91 @@ mod tests {
         ] {
             assert!(!is_packaging(file, &modules), "{file}");
         }
+    }
+
+    /// Moving a page into a crate of its own changes the manifest's members, its path
+    /// dependencies and the lock's own packages: no package changes. Anything else does.
+    #[test]
+    fn only_what_packages_read_of_the_manifests_counts() {
+        let manifest = r#"[workspace]
+resolver = "3"
+members = ["crates/a", "apps/gpui"]
+
+[workspace.package]
+version = "2026.11.7"
+
+[workspace.lints.clippy]
+all = "warn"
+
+[workspace.dependencies]
+kchess-a = { path = "crates/a" }
+serde = { version = "1", default-features = false }
+
+[profile.release]
+lto = "fat"
+"#;
+        let same = |new: &str| !changes_packaging("Cargo.toml", Some(manifest), Some(new));
+        assert!(same(&manifest.replace(
+            r#"members = ["crates/a", "apps/gpui"]"#,
+            r#"members = ["crates/a", "crates/b", "apps/gpui"]"#
+        )));
+        assert!(same(&manifest.replace(
+            r#"members = ["crates/a", "apps/gpui"]"#,
+            "members = [\n    \"crates/a\",\n    \"crates/b\",\n]"
+        )));
+        assert!(same(&manifest.replace(
+            "serde = ",
+            "kchess-b = { path = \"crates/b\" }\nserde = "
+        )));
+        assert!(same(&manifest.replace("all = \"warn\"", "all = \"deny\"")));
+        assert!(same(
+            &manifest.replace("lto = \"fat\"", "# A comment.\nlto = \"fat\"")
+        ));
+        assert!(!same(&manifest.replace("2026.11.7", "2026.11.8")));
+        assert!(!same(&manifest.replace("lto = \"fat\"", "lto = \"thin\"")));
+        assert!(!same(
+            &manifest.replace("version = \"1\"", "version = \"2\"")
+        ));
+        assert!(!same(&manifest.replace(
+            "kchess-a = { path = \"crates/a\" }",
+            "kchess-a = { path = \"crates/a\", features = [\"x\"] }"
+        )));
+        assert!(!same(&format!(
+            "{manifest}\n[patch.crates-io]\nx = {{ path = \"x\" }}\n"
+        )));
+        // A member on the line after `members` is still the list.
+        assert!(!same(
+            &manifest.replace("resolver = \"3\"", "resolver = \"2\"")
+        ));
+
+        let lock = r#"version = 4
+
+[[package]]
+name = "kchess-a"
+version = "2026.11.7"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "serde"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa"
+"#;
+        let same = |new: &str| !changes_packaging("Cargo.lock", Some(lock), Some(new));
+        assert!(same(&format!(
+            "{lock}\n[[package]]\nname = \"kchess-b\"\nversion = \"2026.11.7\"\ndependencies = [\n \"serde\",\n]\n"
+        )));
+        assert!(same(&lock.replace(" \"serde\",\n", "")));
+        assert!(!same(
+            &lock.replace("1.0.1", "1.0.2").replace("\"aa\"", "\"bb\"")
+        ));
+        assert!(!same(&format!(
+            "{lock}\n[[package]]\nname = \"zip\"\nversion = \"9.0.0\"\nsource = \"registry+x\"\nchecksum = \"cc\"\n"
+        )));
+        assert!(changes_packaging("Cargo.lock", None, Some(lock)));
+        assert!(changes_packaging("Cargo.toml", Some(manifest), None));
     }
 
     /// A build like the workspace's: the app uses the vendored GPUI, which uses its Apple backend.
@@ -1343,18 +1524,50 @@ mod tests {
         assert!(!with_app_tests(&["--without-app-tests".to_string()]));
     }
 
-    /// One clippy run denies `unwrap` in every shipped program but the app's.
+    /// Every library and shipped program but the app denies `unwrap` and `expect` outside its
+    /// tests in its own root, so the one clippy run `check-fast` and `check` share enforces it.
     #[test]
-    fn the_shipped_programs_but_the_app_are_linted_for_unwrap() {
-        let args = shipped_bins_args();
-        let packages: Vec<&str> = args
-            .windows(2)
-            .filter(|pair| pair[0] == "-p")
-            .map(|pair| pair[1])
+    fn every_crate_root_denies_unwrap_outside_tests() {
+        let text = output(
+            "cargo",
+            &["metadata", "--no-deps", "--format-version", "1", "--locked"],
+        )
+        .unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let roots = unwrap_free_roots(&metadata);
+        for expected in [
+            "crates/kchess-core/src/lib.rs",
+            "crates/kchess-board/src/lib.rs",
+            "crates/kchess-service/src/bin/kchess-service.rs",
+            "apps/cli/src/main.rs",
+            "crates/kchess-voice/src/main.rs",
+        ] {
+            assert!(
+                roots.iter().any(|path| path == expected),
+                "{expected}: {roots:?}"
+            );
+        }
+        // The app's program, xtask's and the core's test helpers may unwrap.
+        for allowed in [
+            "apps/gpui/src/main.rs",
+            "tooling/xtask/src/main.rs",
+            "crates/kchess-core/tests/support/fake_uci.rs",
+        ] {
+            assert!(!roots.iter().any(|path| path == allowed), "{allowed}");
+        }
+        let missing: Vec<&String> = roots
+            .iter()
+            .filter(|path| {
+                !std::fs::read_to_string(root().join(path))
+                    .unwrap()
+                    .lines()
+                    .any(|line| line == DENY_UNWRAP)
+            })
             .collect();
-        assert_eq!(packages, ["kchess-service", "kchess-cli", "kchess-voice"]);
-        assert_eq!(args[0], "clippy");
-        assert!(args.ends_with(&["-D", "clippy::unwrap_used", "-D", "clippy::expect_used"]));
+        assert!(
+            missing.is_empty(),
+            "{missing:?} lack one of {DENY_UNWRAP:?}"
+        );
     }
 
     /// The members outside coverage run their tests on their own, the app's only when asked.
@@ -1378,23 +1591,8 @@ mod tests {
                 "xtask"
             ]
         );
-        assert_eq!(
-            uncovered(false),
-            [
-                "kchess-ui",
-                "kchess-app",
-                "kchess-board",
-                "kchess-nav",
-                "kchess-puzzles",
-                "kchess-history",
-                "kchess-home",
-                "kchess-local",
-                "kchess-practice",
-                "kchess-studies",
-                "kchess-watch",
-                "xtask"
-            ]
-        );
+        // CI's gpui job runs the app's and its UI crates' (`ui_tests`).
+        assert_eq!(uncovered(false), ["xtask"]);
     }
 
     #[test]
@@ -1499,6 +1697,25 @@ mod tests {
         commit(dir, "code");
         assert_eq!(
             scope_report(dir, &base).unwrap(),
+            "code=true\npackaging=false\n"
+        );
+
+        // A manifest added since the base counts; a new member in it then does not.
+        std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = [\"a\"]\n").unwrap();
+        commit(dir, "manifest");
+        assert_eq!(
+            scope_report(dir, &base).unwrap(),
+            "code=true\npackaging=true\n"
+        );
+        let manifest = git_in(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"a\", \"b\"]\n",
+        )
+        .unwrap();
+        commit(dir, "member");
+        assert_eq!(
+            scope_report(dir, &manifest).unwrap(),
             "code=true\npackaging=false\n"
         );
 

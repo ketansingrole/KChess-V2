@@ -1,6 +1,9 @@
 //! The `kchess-voice` helper's pipe protocol, shared by the helper, the core that runs it and the
 //! core's scripted stand-in for its tests.
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
 

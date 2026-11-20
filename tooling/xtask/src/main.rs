@@ -99,6 +99,15 @@ const COMMANDS: &[Command] = &[
         run: check::check,
     },
     Command {
+        name: "ui-tests",
+        forms: &[(
+            "",
+            "The tests of the app's UI crates, which `check --without-app-tests` leaves out \
+             (CI's gpui job on Linux)",
+        )],
+        run: check::ui_tests,
+    },
+    Command {
         name: "check-fast",
         forms: &[(
             "",
@@ -129,8 +138,9 @@ const COMMANDS: &[Command] = &[
         name: "ci-times",
         forms: &[(
             "[--days <n>]",
-            "How long CI took over the last n days (7), job by job, and the tests that failed and \
-             then passed on the same commit, as Markdown (the weekly CI times workflow)",
+            "How long CI took over the last n days (7), job by job, the tests that failed on main \
+             or on more than one branch, and those that failed and then passed on the same \
+             commit, as Markdown (the weekly CI times workflow)",
         )],
         run: ci_times::run,
     },

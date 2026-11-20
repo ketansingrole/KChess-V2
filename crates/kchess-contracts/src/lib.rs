@@ -2,6 +2,9 @@
 //! its methods (`core_api`, with their typed `calls`), its events (`events`), and the errors and
 //! log levels that cross between them (`error`).
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
 

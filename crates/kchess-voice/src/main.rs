@@ -3,6 +3,9 @@
 //! its own process keeps a crash in the native recognizer or a bad model file away from the core.
 //! libvosk is loaded from beside this executable unless `--library` names it.
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 mod vosk;
 
 use std::io::{self, BufWriter, Write};

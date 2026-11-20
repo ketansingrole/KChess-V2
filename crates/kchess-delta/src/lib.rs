@@ -26,6 +26,8 @@
 //! The format: `MAGIC`, the header's length as a little-endian `u64`, the header (JSON), then
 //! the blobs it refers to by offset.
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.

@@ -9,6 +9,9 @@
 //! It depends on the design system (`kchess-ui`) and the app's services (`kchess-app`), never on
 //! the app: what it needs from it (whether voice owns Space) the app passes in.
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
 
@@ -31,6 +34,8 @@ pub mod rating_history;
 pub mod remote_image;
 pub mod sound;
 #[cfg(any(test, feature = "test-support"))]
+// Test code, which other crates' tests build too.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 pub mod testing;
 pub mod voice;
 pub mod widgets;

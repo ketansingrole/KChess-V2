@@ -2,6 +2,9 @@
 //! Lichess.
 //! It reads the unfinished computer game and the accounts again each time it is shown.
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 // The app's services, the design system and the board, under the names this page's modules use.
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;

@@ -214,6 +214,89 @@ jobs:
     }
 }
 
+/// The `rust-cache` steps of `yaml` that may save a cache from a pull request: those with no
+/// `save-if`, or one that does not name main (`false` saves nothing). By their path from the root.
+fn caches_saved_from_any_branch(yaml: &yaml_rust2::Yaml, path: &str) -> Vec<String> {
+    use yaml_rust2::Yaml;
+    match yaml {
+        Yaml::Hash(map) => {
+            let uses = yaml["uses"].as_str().unwrap_or_default();
+            let mut found = Vec::new();
+            if uses.starts_with("Swatinem/rust-cache@") {
+                let save_if = &yaml["with"]["save-if"];
+                let only_main = match save_if {
+                    Yaml::Boolean(save) => !save,
+                    Yaml::String(condition) => {
+                        condition == "false" || condition.contains("refs/heads/main")
+                    }
+                    _ => false,
+                };
+                if !only_main {
+                    found.push(path.to_string());
+                }
+            }
+            found.extend(map.iter().flat_map(|(key, value)| {
+                caches_saved_from_any_branch(
+                    value,
+                    &format!("{path}.{}", key.as_str().unwrap_or_default()),
+                )
+            }));
+            found
+        }
+        Yaml::Array(items) => items
+            .iter()
+            .enumerate()
+            .flat_map(|(index, item)| {
+                caches_saved_from_any_branch(item, &format!("{path}[{index}]"))
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The repository's caches share 10 GB, and main's alone take about 9 (2026-11-20). The Fuzz
+/// workflow saved six caches of 200 MB from every pull request that ran it, the total reached
+/// 10.7 GB, and GitHub evicted main's: CI's check found no cache and rebuilt everything. Only main
+/// saves a Rust cache.
+#[test]
+fn only_main_saves_a_rust_cache() {
+    let parse = |text: &str| {
+        yaml_rust2::YamlLoader::load_from_str(text)
+            .unwrap()
+            .remove(0)
+    };
+    let steps = parse(
+        "jobs:
+  a:
+    steps:
+      - uses: Swatinem/rust-cache@abc
+      - uses: Swatinem/rust-cache@abc
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: Swatinem/rust-cache@abc
+        with:
+          save-if: false
+      - uses: Swatinem/rust-cache@abc
+        with:
+          save-if: ${{ matrix.os == 'x' }}
+      - uses: actions/checkout@abc
+",
+    );
+    assert_eq!(
+        caches_saved_from_any_branch(&steps, ""),
+        [".jobs.a.steps[0]", ".jobs.a.steps[3]"]
+    );
+    for path in workflow_files() {
+        let workflow = parse(&std::fs::read_to_string(&path).unwrap());
+        let any = caches_saved_from_any_branch(&workflow, "");
+        assert!(
+            any.is_empty(),
+            "{} saves a Rust cache from any branch at {any:?}",
+            path.display()
+        );
+    }
+}
+
 /// The Mutants workflow started by hand offers every member but the workspace hack: its list
 /// was written by hand and lacked kchess-delta, the crate installed apps read updates with.
 #[test]

@@ -2,6 +2,9 @@
 //! studies on the analysis board, start or import one, and rename, copy, drill, upload or delete
 //! them. Lichess's own studies are a tab of their own when an account is connected.
 
+// A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 // The app's services, the design system and the board, under the names this page's modules use.
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
