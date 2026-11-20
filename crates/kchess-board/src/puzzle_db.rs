@@ -444,7 +444,10 @@ mod tests {
             app.cx().run_until_parked();
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(app.with_window(|_, cx| db.read(cx).error.is_some()), "still shown");
+        assert!(
+            app.with_window(|_, cx| db.read(cx).error.is_some()),
+            "still shown"
+        );
         app.with_window(|_, cx| db.update(cx, |db, cx| db.cancel(cx)));
     }
 }
