@@ -87,8 +87,11 @@ fn the_computer_waits_with_a_reason(cx: &mut gpui_kit::TestAppContext) {
     app.find("assistance-check-again");
     lichess.lock().fail_check = false;
     app.click("assistance-check-again");
+    // The banner goes as the check starts, before Lichess answers: wait for the answer.
+    app.wait_for("engine help to come back", |_, cx| {
+        crate::online::handle(cx).read(cx).assistance_allowed()
+    });
     app.wait_gone("assistance-check-again");
-    assert!(allowed(&mut app));
 }
 
 /// The core's refusals say what is going on: no game is being played, the check is not done.
