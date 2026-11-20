@@ -24,7 +24,8 @@ kchess-hack = { version = "0.1", path = "../../crates/kchess-hack" }
 
 [dev-dependencies]
 tempfile = "3"
-kchess-testkit = { path = "../../crates/kchess-testkit" }
+# The scripted engine and the service, built once per test run (`kchess_testkit::build`).
+kchess-testkit.workspace = true
 
 [lints]
 workspace = true

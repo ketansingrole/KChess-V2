@@ -4739,6 +4739,7 @@ version = "2026.11.7"
 dependencies = [
  "kchess-hack",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

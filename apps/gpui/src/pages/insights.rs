@@ -444,6 +444,13 @@ impl InsightsPage {
         self.report.is_some() && !self.loading
     }
 
+    /// A report is in and nothing will replace it on its own: none is loading, and no sync is
+    /// running whose end reads it again. A test changes the report shown only then.
+    #[cfg(test)]
+    pub(crate) fn settled(&self) -> bool {
+        self.loaded() && !self.syncing
+    }
+
     /// How many reports the page has asked for.
     #[cfg(test)]
     pub(crate) fn requests(&self) -> crate::loading::Turn {
@@ -465,6 +472,10 @@ impl InsightsPage {
     /// As if the last report had named `variants` as played.
     #[cfg(test)]
     pub(crate) fn show_report_variants(&mut self, variants: &[&str], cx: &mut Context<Self>) {
+        assert!(
+            self.settled(),
+            "a report on its way, or a sync's end, would replace these variants"
+        );
         if let Some(report) = &mut self.report {
             report.variants = variants
                 .iter()
@@ -478,8 +489,8 @@ impl InsightsPage {
     #[cfg(test)]
     pub(crate) fn show_time_use(&mut self, time: TimeUseReport, cx: &mut Context<Self>) {
         assert!(
-            !self.loading,
-            "a report is on its way and would replace this time use"
+            self.settled(),
+            "a report on its way, or a sync's end, would replace this time use"
         );
         if let Some(report) = &mut self.report {
             report.time_use = Some(time);

@@ -17,7 +17,8 @@ updates:
       - dependency-name: gpui-fast*
       # The packages only the workspace hack names: `cargo hakari generate` writes their
       # requirements from what the real crates resolve, so Dependabot brings only their patches.
-      # `cargo xtask check` keeps this list (tooling/xtask/src/hack.rs).
+      # `cargo xtask hack` writes this list and `cargo xtask check` keeps it (tooling/xtask/src/hack.rs);
+      # .github/workflows/dependabot-hack.yml commits it, the hack and the locks to these updates.
       - { dependency-name: aho-corasick, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: arrayvec, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: bitflags, update-types: [version-update:semver-major, version-update:semver-minor] }

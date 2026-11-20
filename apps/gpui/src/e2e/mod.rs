@@ -798,29 +798,15 @@ fn environment() {
     });
 }
 
-/// The scripted engine (`kchess-fake-uci`, built first), as the copy `engine-search`
-/// beside it, which the engine reads its mode from.
+/// The scripted engine (`kchess-fake-uci`, built once per test run), as the copy
+/// `engine-search` beside it, which the engine reads its mode from.
 fn engine() -> PathBuf {
-    // Built every time (`kchess_testkit::build`): Cargo does nothing when it is fresh, and one
-    // left over from before a change is never run.
-    let fake = kchess_testkit::build::workspace_binary("kchess-core", "kchess-fake-uci");
-    let target = fake.parent().expect("the scripted engine's folder");
-    let copy = target.join(format!("engine-search{}", std::env::consts::EXE_SUFFIX));
-    let same = |a: &Path, b: &Path| {
-        std::fs::read(a)
-            .ok()
-            .zip(std::fs::read(b).ok())
-            .is_some_and(|(a, b)| a == b)
-    };
-    if !same(&fake, &copy) {
-        // Under another name first, so a test binary starting at the same time never runs half a copy.
-        let partial = target.join(format!(
-            "engine-search-{}{}",
-            std::process::id(),
-            std::env::consts::EXE_SUFFIX
-        ));
-        std::fs::copy(&fake, &partial).expect("copy the scripted engine");
-        std::fs::rename(&partial, &copy).expect("name the scripted engine's copy");
-    }
+    let fake = kchess_testkit::build::workspace_binary("kchess-core", "kchess-fake-uci")
+        .expect("the scripted engine builds");
+    let copy = fake
+        .path()
+        .with_file_name(format!("engine-search{}", std::env::consts::EXE_SUFFIX));
+    // Under the build lock: no other test's build replaces the engine while this one copies it.
+    fake.copy_to(&copy).expect("copy the scripted engine");
     copy
 }
