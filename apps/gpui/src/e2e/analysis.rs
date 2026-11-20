@@ -775,6 +775,9 @@ fn the_position_can_be_played_over_the_board(cx: &mut gpui_kit::TestAppContext) 
     wait_for_fen(&mut app, "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
     app.click("play-friend");
     app.find("local-new");
+    // 2026-11-20, Windows CI: the move was typed before the page had read its saved game, while
+    // the move box takes nothing, so it was lost. The position starts once that read is in.
+    super::local::wait_resumed(&mut app);
     app.click_label("Enter a chess move in SAN or UCI");
     app.type_text("Kd2");
     app.press("enter");
