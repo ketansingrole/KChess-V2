@@ -541,6 +541,17 @@ fn app_commands(cx: &App) -> Vec<Command> {
         )
         .keywords("release notes changelog update version"),
     ];
+    // A development build's own: every shared widget in each state.
+    #[cfg(debug_assertions)]
+    list.push(
+        Command::new(
+            "dev:gallery",
+            "Component gallery",
+            icon("palette"),
+            crate::gallery::open,
+        )
+        .keywords("widgets components design system"),
+    );
     // Studies' Lichess tab is there only with an account.
     if connected {
         list.push(

@@ -961,3 +961,30 @@ fn quick_pick_names_settings_as_their_rows_do(cx: &mut gpui_kit::TestAppContext)
     app.type_text("#legal moves");
     wait_for_first(&mut app, "Show possible moves");
 }
+
+/// A development build opens the component gallery from Quick Pick, in a window of its own.
+#[gpui_kit::test]
+fn the_component_gallery_opens_in_a_window_of_its_own(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let before = app.cx.update(|cx| cx.windows().len());
+    run_command(&mut app, "Component gallery");
+    app.cx.run_until_parked();
+    let galleries = app.cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .filter(|window| {
+                window
+                    .downcast::<gpui_kit::base::Root>()
+                    .and_then(|root| root.read(cx).ok())
+                    .is_some_and(|root| {
+                        root.view()
+                            .clone()
+                            .downcast::<kchess_ui::gallery::Gallery>()
+                            .is_ok()
+                    })
+            })
+            .count()
+    });
+    assert_eq!(app.cx.update(|cx| cx.windows().len()), before + 1);
+    assert_eq!(galleries, 1, "the new window is the gallery");
+}

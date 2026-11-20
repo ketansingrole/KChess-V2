@@ -15,6 +15,8 @@ mod dock_icon;
 #[cfg(test)]
 mod e2e;
 mod explorer;
+#[cfg(debug_assertions)]
+mod gallery;
 #[cfg(test)]
 mod gpui_patches;
 mod interface_zoom;
