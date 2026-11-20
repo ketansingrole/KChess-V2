@@ -523,6 +523,32 @@ fn a_seek_is_cancelled_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
+/// Settling lets the core's threads run while a call is unanswered, but does not wait for every
+/// answer: a page may hold a call open on purpose, as this check does while Lichess holds it, and
+/// waiting for it waited out the whole timeout.
+#[gpui_kit::test]
+fn settling_does_not_wait_for_a_call_held_open(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let lichess = app.connect_with("Tester", false, |session| session.hold_playing = true);
+    app.open("Play on Lichess");
+    let started = std::time::Instant::now();
+    app.settle();
+    let waiting = app
+        .cx
+        .read(|cx| cx.global::<crate::core::AppCore>().bridge.waiting());
+    assert!(
+        waiting > 0,
+        "the check for a game in progress is still unanswered"
+    );
+    assert!(
+        started.elapsed() < super::TIMEOUT / 3,
+        "settled after {:?}",
+        started.elapsed()
+    );
+    lichess.lock().hold_playing = false;
+    app.find("online-start");
+}
+
 /// Signing in asks Lichess for a game in progress, and no seek goes out until it answers. A seek
 /// begun first (Windows CI was slow enough to click Find opponent then) cut the check short, and
 /// the check's end put the page back to its form while Lichess still held the seek, with no
