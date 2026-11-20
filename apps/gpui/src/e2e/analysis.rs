@@ -1011,10 +1011,12 @@ fn the_engine_follows_a_restarted_core_from_its_first_update(cx: &mut gpui_kit::
                 .expect("the analysis board")
         })
     };
+    // Taken before reconnecting: `with_window` runs the app until it is idle, which would let the
+    // new search's own updates in first (higher numbers from the same core, which rightly win).
+    let board = page(&mut app);
     send(&mut app, ClientEvent::Reconnected);
     // The new core's first update for the board's new search, before the test lets anything else
     // arrive: a depth no real search here reaches.
-    let board = page(&mut app);
     let (client, fen, context) = app.cx.update(|cx| {
         let board = board.read(cx);
         let (client, _) = board.engine_search();
