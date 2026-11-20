@@ -28,7 +28,12 @@ const START_DEADLINE: Duration = Duration::from_secs(30);
 /// How long a core has to answer `hello`.
 const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(5);
 const STOPPED: &str = "The KChess core stopped.";
-const RETRY: Duration = Duration::from_millis(50);
+/// How often a client looks for a core that is starting (or for one that is closing to be gone).
+/// A core serves about 35 ms after it is started, and every app start waits for one: looking
+/// every 50 ms, the first call was answered 75 ms after the start; every 10 ms, 44 ms after
+/// (medians of 12 cold starts each, a release build on an Apple M5). A look that finds no core
+/// reads one small file.
+const RETRY: Duration = Duration::from_millis(10);
 
 /// Who this client is, for `hello`.
 #[derive(Clone, Debug)]
