@@ -126,7 +126,8 @@ impl<V: Resumes> SessionSaver<V> {
         self.state == Resume::Ready
     }
 
-    /// Back to before the read, as on a profile slow to answer.
+    /// Back to before the read, as on a profile slow to answer. The test answers it (`answer`)
+    /// before it ends: quitting waits for the read, as for a real one.
     #[cfg(any(test, feature = "test-support"))]
     pub fn forget(&mut self) {
         self.state = Resume::Reading;
