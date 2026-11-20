@@ -114,8 +114,9 @@ The live Lichess game went back to the app (`apps/gpui/src/online.rs`, 2026-11-2
 asked only two things of it, whether engine help may show and whether a game holds the
 connection, so `kchess-board` keeps just those (`live_game::LiveGame`), which the app's game
 keeps up to date and the pages read or observe. Online changes as often as anything in the app
-(below), and in the board each of its edits rebuilt every page crate. Lichess's pictures went to
-Watch, the one page that shows them (#291).
+(below), and in the board each of its edits rebuilt every page crate. Back in the app it calls
+the notifications and the Online page itself, and `online::Hooks` went. Lichess's pictures went
+to Watch, the one page that shows them (#291).
 
 ### After Practice, Studies and Watch
 

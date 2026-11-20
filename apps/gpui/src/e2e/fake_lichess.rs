@@ -108,6 +108,17 @@ impl Handle {
     pub fn lock(&self) -> MutexGuard<'_, Session> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
+
+    /// A game starts while the app listens (a seek paired, a challenge accepted elsewhere): the
+    /// account's event stream announces it, and its board stream plays it.
+    pub fn start_game(&self) {
+        let mut session = self.lock();
+        session.game = true;
+        session
+            .events
+            .push(json!({ "type": "gameStart", "game": summary(false, None) }));
+        session.changed();
+    }
 }
 
 struct Server {

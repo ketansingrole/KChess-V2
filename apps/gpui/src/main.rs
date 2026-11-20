@@ -135,20 +135,6 @@ fn start_models(library: &kchess_contracts::types::Library, cx: &mut App) {
     });
     // A player's name opens their profile on the Players page.
     cx.set_global(player_search::OpenPlayer(pages::players::open_player));
-    // What the live game asks of the app: notifications and the Online page.
-    cx.set_global(online::Hooks {
-        notify: |kind, title, body, cx| {
-            notifications::desktop(kind, title, body, cx);
-        },
-        your_move: |game, cx| {
-            notifications::your_move(game, cx);
-        },
-        challenge: |id, title, body, cx| {
-            notifications::challenge(id, title, body, cx);
-        },
-        connection_lost: pages::online::game::connection_lost,
-        show_game: |window, cx| shell::open(pages::Page::Online, window, cx),
-    });
     accounts::init(cx);
     ai::init(cx);
     puzzle_db::init(cx);
