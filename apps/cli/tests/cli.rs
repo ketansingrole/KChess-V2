@@ -352,7 +352,8 @@ fn scripted_engine() -> std::path::PathBuf {
 /// The scripted engine in `mode` (`search`, `quick`, `review`), chosen by its copy's name.
 #[cfg(unix)]
 fn scripted_engine_in(mode: &str) -> std::path::PathBuf {
-    let fake = kchess_testkit::build::workspace_binary("kchess-core", "kchess-fake-uci");
+    let fake = kchess_testkit::build::workspace_binary("kchess-core", "kchess-fake-uci")
+        .expect("the scripted engine builds");
     let target = fake.path().parent().expect("target folder").to_path_buf();
     // A copy of this call's own, so tests running at once never share a half-written file.
     // One folder per call: the tests of this binary run at once, in one process.
@@ -361,7 +362,7 @@ fn scripted_engine_in(mode: &str) -> std::path::PathBuf {
     let folder = target.join(format!("cli-engine-{mode}-{}-{call}", std::process::id()));
     std::fs::create_dir_all(&folder).expect("engine folder");
     let copy = folder.join(format!("engine-{mode}"));
-    fake.copy_to(&copy);
+    fake.copy_to(&copy).expect("copy the scripted engine");
     copy
 }
 
@@ -408,6 +409,7 @@ fn analyze_streams_until_interrupted() {
 #[test]
 fn the_cli_shares_the_profiles_core_unless_embedded() {
     let service = kchess_testkit::build::workspace_binary("kchess-service", "kchess-service")
+        .expect("the service builds")
         .path()
         .to_path_buf();
     let runtime = tempfile::tempdir().expect("runtime");

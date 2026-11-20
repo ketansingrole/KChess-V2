@@ -10,19 +10,23 @@
 //! NotFound", the Stress workflow on macOS, 2026-11-12 and 2026-11-18).
 
 use std::fs::File;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
 /// `name`, a binary of the workspace's `package`, as this test run built it. The lock it holds
 /// keeps every other test process from building until it is dropped: copy it before then.
-pub fn workspace_binary(package: &str, name: &str) -> Built {
-    let profile = profile_dir();
-    let command = build_command(Path::new(env!("CARGO")), &profile, package, name);
+pub fn workspace_binary(package: &str, name: &str) -> io::Result<Built> {
+    let profile = profile_dir()?;
+    let mut command = build_command(Path::new(env!("CARGO")), &profile, package, name);
     built(&profile, name, &run_key(), || {
-        let mut command = command;
-        let status = command.status().expect("cargo runs");
-        assert!(status.success(), "{name} builds");
+        let status = command.status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!("{name} did not build: {status}")))
+        }
     })
 }
 
@@ -40,40 +44,44 @@ impl Built {
     /// Copy the binary to `dest`, unless it is a copy already: whole, under another name first,
     /// so a test starting at the same time never runs half a copy, and only when it differs, as
     /// Windows refuses to replace a program that is running.
-    pub fn copy_to(&self, dest: &Path) {
+    pub fn copy_to(&self, dest: &Path) -> io::Result<()> {
         let same = std::fs::read(&self.path)
             .ok()
             .zip(std::fs::read(dest).ok())
             .is_some_and(|(binary, copy)| binary == copy);
         if same {
-            return;
+            return Ok(());
         }
         let mut partial = dest.as_os_str().to_owned();
         partial.push(format!(".{}.partial", std::process::id()));
         let partial = PathBuf::from(partial);
-        std::fs::copy(&self.path, &partial).expect("copy the binary");
-        std::fs::rename(&partial, dest).expect("name the binary's copy");
+        std::fs::copy(&self.path, &partial)?;
+        std::fs::rename(&partial, dest)
     }
 }
 
 /// `name` in `profile`, once `build` has made it, unless this run (`run`) did already and it is
 /// still there. Holds the profile's build lock, taken first.
-fn built(profile: &Path, name: &str, run: &str, build: impl FnOnce()) -> Built {
+fn built(
+    profile: &Path,
+    name: &str,
+    run: &str,
+    build: impl FnOnce() -> io::Result<()>,
+) -> io::Result<Built> {
     let lock = File::options()
         .create(true)
         .truncate(false)
         .write(true)
-        .open(profile.join(".kchess-test-builds.lock"))
-        .expect("the build lock");
-    lock.lock().expect("take the build lock");
+        .open(profile.join(".kchess-test-builds.lock"))?;
+    lock.lock()?;
     let path = profile.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
     let stamp = profile.join(format!("{name}.test-run"));
     let current = std::fs::read_to_string(&stamp).is_ok_and(|built| built == run);
     if !current || !path.exists() {
-        build();
-        std::fs::write(&stamp, run).expect("note the run that built it");
+        build()?;
+        std::fs::write(&stamp, run)?;
     }
-    Built { path, _lock: lock }
+    Ok(Built { path, _lock: lock })
 }
 
 /// The test run this process belongs to: nextest's for its run, whose tests each have a process,
@@ -95,11 +103,13 @@ fn run_key() -> String {
 
 /// The folder of the profile the running test was built in, `target/<profile>`, whose `deps`
 /// holds the test.
-fn profile_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| Some(exe.parent()?.parent()?.to_path_buf()))
-        .expect("the test executable is in target/<profile>/deps")
+fn profile_dir() -> io::Result<PathBuf> {
+    let exe = std::env::current_exe()?;
+    exe.parent()
+        .and_then(Path::parent)
+        .filter(|profile| profile.parent().is_some())
+        .map(Path::to_path_buf)
+        .ok_or_else(|| io::Error::other("the test executable is not in target/<profile>/deps"))
 }
 
 /// `cargo build` of `package`'s `name` into the target folder `profile` is in, in its profile.
@@ -118,7 +128,7 @@ fn build_command(cargo: &Path, profile: &Path, package: &str, name: &str) -> Com
     // nested build does not inherit.
     build
         .arg("--target-dir")
-        .arg(profile.parent().expect("the target folder"));
+        .arg(profile.parent().unwrap_or(profile));
     if profile.file_name().is_some_and(|name| name == "release") {
         build.arg("--release");
     }
@@ -155,11 +165,11 @@ mod tests {
         profile: &'a Path,
         content: &'a str,
         builds: &'a Cell<usize>,
-    ) -> impl FnOnce() + 'a {
+    ) -> impl FnOnce() -> io::Result<()> + 'a {
         move || {
             builds.set(builds.get() + 1);
             let path = profile.join(format!("tool{}", std::env::consts::EXE_SUFFIX));
-            std::fs::write(path, content).unwrap();
+            std::fs::write(path, content)
         }
     }
 
@@ -172,7 +182,8 @@ mod tests {
             "tool",
             "run 1",
             making(profile.path(), "1", &builds),
-        );
+        )
+        .unwrap();
         assert_eq!(std::fs::read_to_string(first.path()).unwrap(), "1");
         drop(first);
         let again = built(
@@ -180,7 +191,8 @@ mod tests {
             "tool",
             "run 1",
             making(profile.path(), "2", &builds),
-        );
+        )
+        .unwrap();
         assert_eq!(builds.get(), 1, "the run built it already");
         assert_eq!(std::fs::read_to_string(again.path()).unwrap(), "1");
         drop(again);
@@ -190,7 +202,8 @@ mod tests {
             "tool",
             "run 2",
             making(profile.path(), "3", &builds),
-        );
+        )
+        .unwrap();
         assert_eq!(builds.get(), 2);
         assert_eq!(std::fs::read_to_string(next.path()).unwrap(), "3");
     }
@@ -204,7 +217,8 @@ mod tests {
             "tool",
             "run",
             making(profile.path(), "1", &builds),
-        );
+        )
+        .unwrap();
         std::fs::remove_file(first.path()).unwrap();
         drop(first);
         let again = built(
@@ -212,7 +226,8 @@ mod tests {
             "tool",
             "run",
             making(profile.path(), "2", &builds),
-        );
+        )
+        .unwrap();
         assert_eq!(builds.get(), 2);
         assert!(again.path().exists());
     }
@@ -227,7 +242,8 @@ mod tests {
             "tool",
             "run",
             making(profile.path(), "1", &builds),
-        );
+        )
+        .unwrap();
         let lock = File::open(profile.path().join(".kchess-test-builds.lock")).unwrap();
         assert!(matches!(
             lock.try_lock(),
@@ -246,9 +262,10 @@ mod tests {
             "tool",
             "run",
             making(profile.path(), "1", &builds),
-        );
+        )
+        .unwrap();
         let dest = profile.path().join("copy");
-        binary.copy_to(&dest);
+        binary.copy_to(&dest).unwrap();
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), "1");
         let leftovers: Vec<_> = std::fs::read_dir(profile.path())
             .unwrap()
@@ -265,13 +282,13 @@ mod tests {
             .unwrap()
             .set_modified(old)
             .unwrap();
-        binary.copy_to(&dest);
+        binary.copy_to(&dest).unwrap();
         let modified = std::fs::metadata(&dest).unwrap().modified().unwrap();
         assert_eq!(modified, old);
 
         // Different: replaced.
         std::fs::write(&dest, "stale").unwrap();
-        binary.copy_to(&dest);
+        binary.copy_to(&dest).unwrap();
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), "1");
     }
 
@@ -287,7 +304,7 @@ mod tests {
 
     #[test]
     fn the_profile_is_the_tests_own() {
-        let profile = profile_dir();
+        let profile = profile_dir().unwrap();
         let exe = std::env::current_exe().unwrap();
         assert_eq!(exe.parent().unwrap(), profile.join("deps"));
     }

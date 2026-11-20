@@ -801,11 +801,12 @@ fn environment() {
 /// The scripted engine (`kchess-fake-uci`, built once per test run), as the copy
 /// `engine-search` beside it, which the engine reads its mode from.
 fn engine() -> PathBuf {
-    let fake = kchess_testkit::build::workspace_binary("kchess-core", "kchess-fake-uci");
+    let fake = kchess_testkit::build::workspace_binary("kchess-core", "kchess-fake-uci")
+        .expect("the scripted engine builds");
     let copy = fake
         .path()
         .with_file_name(format!("engine-search{}", std::env::consts::EXE_SUFFIX));
     // Under the build lock: no other test's build replaces the engine while this one copies it.
-    fake.copy_to(&copy);
+    fake.copy_to(&copy).expect("copy the scripted engine");
     copy
 }
