@@ -2,8 +2,9 @@
 # dependency, whichever packages a build selects. Without it `cargo test -p kchess-core` and
 # `cargo test -p kchess-service` resolve tokio, serde and getrandom with different features, so
 # each compiled the core and its tests again under a new hash, and target/ kept every copy.
-# `cargo xtask check` refuses an outdated hack; after a dependency change run
-# `cargo hakari generate` (and `cargo hakari manage-deps` for a new workspace package).
+# `cargo xtask check` refuses an outdated hack; after a dependency change run `cargo xtask hack`,
+# which runs `cargo hakari generate` and `manage-deps` and writes what follows from them
+# (.github/workflows/dependabot-hack.yml runs it on Dependabot's crate updates).
 hakari-package = "kchess-hack"
 dep-format-version = "4"
 resolver = "2"

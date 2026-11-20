@@ -10,11 +10,15 @@
 
 use std::collections::BTreeSet;
 
-use crate::util::{Result, available, output, run, say};
+use crate::util::{Result, available, output, root, run, say};
 
 const MANIFEST: &str = "crates/kchess-hack/Cargo.toml";
 const CONFIG: &str = ".config/hakari.toml";
 const DEPENDABOT: &str = ".github/dependabot.yml";
+/// The fuzz targets' own workspace (`fuzz/`): it depends on `kchess-domain`, and so on the hack,
+/// but Dependabot updates only the root's lock, so its lock missed each package the hack gained
+/// (byteorder on 2026-11-18, socket2 on 11-20) and `check` refused it.
+const FUZZ: &str = "fuzz/Cargo.toml";
 
 /// Whether `check` reads `file`: the hack's settings, Dependabot's hold list, and the manifests
 /// and lock it is written from.
@@ -54,18 +58,11 @@ pub fn check() -> Result {
         run("cargo", &["hakari", "generate", "--diff"])
             .and_then(|()| run("cargo", &["hakari", "manage-deps", "--dry-run"]))
             .map_err(|cause| {
-                format!(
-                    "{cause}\nThe hack is out of date: run `cargo hakari generate` and \
-                     `cargo hakari manage-deps`."
-                )
+                format!("{cause}\nThe hack is out of date: run `cargo xtask hack`.")
             })?;
     } else {
         say("cargo-hakari is not installed (`cargo install cargo-hakari`): CI checks the hack.");
     }
-    let read = |path: &str| {
-        std::fs::read_to_string(crate::util::root().join(path))
-            .map_err(|cause| format!("{path}: {cause}"))
-    };
     let text = read(MANIFEST)?;
     let platforms = platforms(&read(CONFIG)?);
     if platforms.is_empty() {
@@ -101,13 +98,44 @@ pub fn check() -> Result {
             if extra.len() == 1 { "it" } else { "them" }
         ));
     }
+    unkept(&hack_only(&metadata()?), &kept(&read(DEPENDABOT)?))
+}
+
+/// `hack`: writes everything `check` wants to follow the dependencies, so a crate update needs no
+/// hand afterwards (`.github/workflows/dependabot-hack.yml` runs it on Dependabot's pull
+/// requests): the hack and the lock (`cargo hakari generate`), each package's dependency on it
+/// (`cargo hakari manage-deps`), Dependabot's hold list, and the fuzz targets' lock. Then checks
+/// it all, since a dependency the headless packages lack needs a person's `[final-excludes]`.
+pub fn write() -> Result {
+    if !available("cargo", &["hakari", "--version"]) {
+        return Err("`cargo xtask hack` needs cargo-hakari: `cargo install cargo-hakari`.".into());
+    }
+    run("cargo", &["hakari", "generate"])?;
+    run("cargo", &["hakari", "manage-deps", "--yes"])?;
+    let config = read(DEPENDABOT)?;
+    let held = hold(&config, &hack_only(&metadata()?))?;
+    if held != config {
+        std::fs::write(root().join(DEPENDABOT), held)
+            .map_err(|cause| format!("{DEPENDABOT}: {cause}"))?;
+        say(&format!(
+            "{DEPENDABOT} holds the packages only the hack depends on."
+        ));
+    }
+    // Only what the manifests changed: the packages it already locks keep their versions.
+    run("cargo", &["update", "--workspace", "--manifest-path", FUZZ])?;
+    check()
+}
+
+fn read(path: &str) -> Result<String> {
+    std::fs::read_to_string(root().join(path)).map_err(|cause| format!("{path}: {cause}"))
+}
+
+fn metadata() -> Result<serde_json::Value> {
     let metadata = output(
         "cargo",
         &["metadata", "--format-version", "1", "--no-deps", "--locked"],
     )?;
-    let metadata =
-        serde_json::from_str(&metadata).map_err(|cause| format!("cargo metadata: {cause}"))?;
-    unkept(&hack_only(&metadata), &kept(&read(DEPENDABOT)?))
+    serde_json::from_str(&metadata).map_err(|cause| format!("cargo metadata: {cause}"))
 }
 
 /// The packages only the hack depends on, from `cargo metadata --no-deps`: no other manifest
@@ -162,6 +190,38 @@ fn unkept(hack_only: &BTreeSet<String>, kept: &BTreeSet<String>) -> Result {
         ));
     }
     Err(message)
+}
+
+/// `config` holding exactly `names`: its hold lines replaced by one per name, in order, where
+/// the first of them was.
+fn hold(config: &str, names: &BTreeSet<String>) -> Result<String> {
+    let mut lines = Vec::new();
+    let mut first = None;
+    for line in config.lines() {
+        let trimmed = line.trim_start();
+        if kept(line).is_empty() {
+            lines.push(line.to_string());
+        } else if first.is_none() {
+            first = Some((lines.len(), &line[..line.len() - trimmed.len()]));
+        }
+    }
+    let Some((at, indent)) = first else {
+        return Err(format!(
+            "{DEPENDABOT} has no `- {{ dependency-name: <name>, {KEPT} }}` line to write the \
+             hack's packages beside."
+        ));
+    };
+    lines.splice(
+        at..at,
+        names
+            .iter()
+            .map(|name| format!("{indent}- {{ dependency-name: {name}, {KEPT} }}")),
+    );
+    let mut text = lines.join("\n");
+    if config.ends_with('\n') {
+        text.push('\n');
+    }
+    Ok(text)
 }
 
 fn packages(tree: &str) -> BTreeSet<String> {
@@ -252,6 +312,41 @@ mod tests {
         assert!(error.contains("remove log,"));
         assert!(unkept(&set(&["zbus"]), &set(&[])).is_err());
         assert!(unkept(&set(&[]), &set(&["log"])).is_err());
+    }
+
+    #[test]
+    fn the_hold_list_is_rewritten_in_place_with_exactly_the_names() {
+        let line = |name: &str| format!("      - {{ dependency-name: {name}, {KEPT} }}\n");
+        let config = format!(
+            "    ignore:\n      - dependency-name: gpui-kit\n      # held\n{}{}    groups:\n",
+            line("log"),
+            line("zbus")
+        );
+        let held = hold(&config, &set(&["socket2", "zbus", "aho-corasick"])).unwrap();
+        assert_eq!(
+            held,
+            format!(
+                "    ignore:\n      - dependency-name: gpui-kit\n      # held\n{}{}{}    groups:\n",
+                line("aho-corasick"),
+                line("socket2"),
+                line("zbus")
+            )
+        );
+        assert_eq!(kept(&held), set(&["aho-corasick", "socket2", "zbus"]));
+        // Already held: unchanged, to the byte; without a final newline, none is added.
+        assert_eq!(hold(&held, &kept(&held)).unwrap(), held);
+        assert_eq!(
+            hold(line("log").trim_end(), &set(&["x"])).unwrap(),
+            line("x").trim_end()
+        );
+        // Nothing held: an empty list in its place.
+        assert_eq!(
+            hold(&config, &set(&[])).unwrap(),
+            "    ignore:\n      - dependency-name: gpui-kit\n      # held\n    groups:\n"
+        );
+        // No hold line to write beside.
+        let error = hold("    ignore:\n", &set(&["zbus"])).unwrap_err();
+        assert!(error.contains("no `- { dependency-name: <name>,"));
     }
 
     #[test]
