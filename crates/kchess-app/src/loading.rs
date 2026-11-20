@@ -167,7 +167,11 @@ mod tests {
         cx.run_until_parked();
         page.read_with(cx, |page, _| {
             assert_eq!(page.answers, REQUESTS, "every answer arrived");
-            assert_eq!(page.shown, Some(REQUESTS - 1), "only the latest request's shows");
+            assert_eq!(
+                page.shown,
+                Some(REQUESTS - 1),
+                "only the latest request's shows"
+            );
             assert!(!page.loading.busy());
         });
     }

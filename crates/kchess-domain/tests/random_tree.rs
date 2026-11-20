@@ -69,8 +69,18 @@ fn check_whole(tree: &TreeNode) {
         let legal = legal_ucis(&node.fen);
         let mut seen = Vec::new();
         for child in &node.children {
-            assert!(legal.contains(&child.uci), "{} is not legal at {}", child.uci, node.fen);
-            assert_eq!(child.ply, node.ply + 1, "{} follows its parent by one ply", child.uci);
+            assert!(
+                legal.contains(&child.uci),
+                "{} is not legal at {}",
+                child.uci,
+                node.fen
+            );
+            assert_eq!(
+                child.ply,
+                node.ply + 1,
+                "{} follows its parent by one ply",
+                child.uci
+            );
             assert!(!seen.contains(&&child.uci), "{} is tried twice", child.uci);
             seen.push(&child.uci);
             sound(child);
@@ -79,12 +89,18 @@ fn check_whole(tree: &TreeNode) {
     sound(tree);
     let pgn = tree.to_pgn().expect("the tree writes as PGN");
     let read = TreeNode::from_pgn(&pgn).expect("its PGN reads back");
-    assert_eq!(kept(&read), kept(tree), "the tree reads back from its PGN:\n{pgn}");
+    assert_eq!(
+        kept(&read),
+        kept(tree),
+        "the tree reads back from its PGN:\n{pgn}"
+    );
 }
 
 /// A comment of a few words, as a person types one.
 fn comment(rng: &mut Rng) -> String {
-    const WORDS: [&str; 8] = ["good", "idea", "but", "the", "knight", "hangs", "later", "!"];
+    const WORDS: [&str; 8] = [
+        "good", "idea", "but", "the", "knight", "hangs", "later", "!",
+    ];
     let count = 1 + rng.below(4);
     let words: Vec<&str> = (0..count)
         .filter_map(|_| rng.pick(&WORDS).copied())
@@ -106,10 +122,22 @@ fn edit(tree: &mut TreeNode, rng: &mut Rng) {
             let tried = tree.node_at(&path).children.iter().any(|c| c.uci == uci);
             let added = tree.add_move(&path, &uci).expect("a legal move is added");
             assert_eq!(moves_of(&added).last(), Some(&uci));
-            assert_eq!(tree.existing_path(&added), added, "the new move is in the tree");
+            assert_eq!(
+                tree.existing_path(&added),
+                added,
+                "the new move is in the tree"
+            );
             let now = tree.node_at(&path).children.len();
-            assert_eq!(now, children + usize::from(!tried), "a move tried before is re-used");
-            assert_eq!(tree.add_move(&path, &uci), Some(added), "playing it again re-uses it");
+            assert_eq!(
+                now,
+                children + usize::from(!tried),
+                "a move tried before is re-used"
+            );
+            assert_eq!(
+                tree.add_move(&path, &uci),
+                Some(added),
+                "playing it again re-uses it"
+            );
         }
         6 if !path.is_empty() => {
             let parent = tree.delete_at(&path);
@@ -121,7 +149,11 @@ fn edit(tree: &mut TreeNode, rng: &mut Rng) {
         7 => {
             tree.promote(&path);
             assert!(tree.on_mainline(&path), "a promoted line is the main line");
-            assert_eq!(tree.existing_path(&path), path, "promoting keeps every move");
+            assert_eq!(
+                tree.existing_path(&path),
+                path,
+                "promoting keeps every move"
+            );
         }
         8 if !path.is_empty() => {
             let text = comment(rng);
@@ -141,7 +173,10 @@ fn edit(tree: &mut TreeNode, rng: &mut Rng) {
         _ => {
             let end = tree.line_end(&path);
             assert!(end.starts_with(&path), "{end} continues {path}");
-            assert!(tree.node_at(&end).children.is_empty(), "a line's end has no moves after");
+            assert!(
+                tree.node_at(&end).children.is_empty(),
+                "a line's end has no moves after"
+            );
         }
     }
 }

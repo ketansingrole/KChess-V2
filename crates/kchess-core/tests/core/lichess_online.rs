@@ -2317,9 +2317,15 @@ async fn the_ongoing_games_answer_without_waiting_for_the_challenge_listing() {
     fixture.requested("/api/stream/event", 1).await;
     // Well inside the requests' own deadline (5 s in these tests), which the games waited for.
     let answered = tokio::time::timeout(Duration::from_secs(2), online.ongoing()).await;
-    assert!(matches!(answered, Ok(Ok(_))), "the games answer while the listing hangs");
+    assert!(
+        matches!(answered, Ok(Ok(_))),
+        "the games answer while the listing hangs"
+    );
     fixture.requested("/api/challenge", 1).await;
-    assert!(online.lists_challenges(), "the listing goes on after the games answered");
+    assert!(
+        online.lists_challenges(),
+        "the listing goes on after the games answered"
+    );
     online.close();
 }
 

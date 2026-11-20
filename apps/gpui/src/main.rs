@@ -96,11 +96,13 @@ fn main() {
         motion::init(cx);
         menu::init(cx);
         notifications::init(cx);
-        if let Err(message) = core::start(data_dir, cx) {
+        if let Err(message) = core::start(data_dir.clone(), cx) {
             log::write(Level::Error, "app", &message);
             explain_and_quit(message, cx);
             return;
         }
+        // From here on a quit removes the mark: an exit before it is not a crash.
+        kchess_app::crashes::watch(&data_dir, &updates::current_version());
         cx.on_app_quit(quit::quit).detach();
         dock_icon::apply(cx);
         startup::start(cx);
