@@ -14,7 +14,7 @@ use kchess_app::{accounts, core, loading, network, played, reviews, settings};
 use kchess_board::{board, export, game, notation, widgets};
 use kchess_ui::{dates, quick_pick, theme};
 
-use crate::loading::Epoch;
+use crate::loading::Loading;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -275,9 +275,8 @@ pub struct HistoryPage {
     lichess: lichess::LichessTab,
     /// The Bookmarks tab: the games, once read, or why they are not.
     bookmarks: Option<Vec<LichessGame>>,
-    bookmarks_error: Option<SharedString>,
+    bookmarks_loading: Loading,
     bookmarks_reconnect: bool,
-    bookmarks_epoch: Epoch,
     area: Measured,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -332,9 +331,8 @@ impl HistoryPage {
             outcomes: Default::default(),
             lichess,
             bookmarks: None,
-            bookmarks_error: None,
+            bookmarks_loading: Loading::default(),
             bookmarks_reconnect: false,
-            bookmarks_epoch: Epoch::default(),
             area: Measured::default(),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -480,7 +478,7 @@ impl HistoryPage {
     #[cfg(any(test, feature = "test-support"))]
     pub fn lichess_listed(&self) -> Option<(usize, Vec<String>)> {
         let tab = &self.lichess;
-        (!tab.loading).then(|| {
+        (!tab.loading.busy()).then(|| {
             let openings = tab
                 .games
                 .iter()
@@ -537,12 +535,11 @@ impl HistoryPage {
     }
 
     fn load_bookmarks(&mut self, cx: &mut Context<Self>) {
-        let epoch = self.bookmarks_epoch.start();
         self.bookmarks = None;
-        self.bookmarks_error = None;
         self.bookmarks_reconnect = false;
         let account = crate::accounts::handle(cx).read(cx).active(cx);
         let Some(account) = account.filter(|_| crate::network::online(cx)) else {
+            self.bookmarks_loading.stop();
             return;
         };
         let games = cx
@@ -550,21 +547,17 @@ impl HistoryPage {
             .request(calls::BookmarkedGames {
                 account: Username(account.clone()),
             });
-        cx.spawn(async move |this, cx| {
-            let answer = games.await;
-            let _ = this.update(cx, |this, cx| {
-                if !this.bookmarks_epoch.is_current(epoch) {
-                    return;
-                }
-                match answer {
-                    Ok(Reply::Done(games)) => this.bookmarks = Some(games),
-                    Ok(Reply::NeedsReconnect) => this.bookmarks_reconnect = true,
-                    Err(cause) => this.bookmarks_error = Some(cause.message.into()),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+        self.bookmarks_loading.load(
+            cx,
+            "history",
+            |this: &mut Self| &mut this.bookmarks_loading,
+            games,
+            |this, answer, _| match answer {
+                Ok(Reply::Done(games)) => this.bookmarks = Some(games),
+                Ok(Reply::NeedsReconnect) => this.bookmarks_reconnect = true,
+                Err(_) => {}
+            },
+        );
     }
 
     fn render_bookmarks(&self, cx: &App, palette: &Palette) -> AnyElement {
@@ -598,7 +591,7 @@ impl HistoryPage {
                 )
                 .into_any_element();
         }
-        if let Some(error) = &self.bookmarks_error {
+        if let Some(error) = self.bookmarks_loading.error() {
             return card
                 .child(note(error.to_string(), palette.error))
                 .into_any_element();

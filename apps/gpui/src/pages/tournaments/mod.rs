@@ -372,7 +372,10 @@ impl TournamentsPage {
                         open.received = Instant::now();
                         open.error = None;
                     }
-                    Err(cause) => open.error = Some(cause.message.into()),
+                    Err(cause) => {
+                        open.error =
+                            Some(kchess_app::loading::failure("tournaments", &cause).into())
+                    }
                 }
                 // The core forgets an arena that is over or that you left.
                 this.reload_joined(cx);
@@ -485,7 +488,8 @@ impl TournamentsPage {
                         this.reload_joined(cx);
                         this.load_event(cx);
                     }
-                    Err(cause) => window.push_notification(cause.message, cx),
+                    Err(cause) => window
+                        .push_notification(kchess_app::loading::failure("tournaments", &cause), cx),
                 }
                 cx.notify();
             });

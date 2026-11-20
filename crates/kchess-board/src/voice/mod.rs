@@ -380,7 +380,11 @@ impl Voice {
                         this.ready = true;
                         this.open_microphone(cx);
                     }
-                    Some(Err(cause)) => this.fail(cause.message, ErrorKind::Model, cx),
+                    Some(Err(cause)) => this.fail(
+                        kchess_app::loading::failure("voice", &cause),
+                        ErrorKind::Model,
+                        cx,
+                    ),
                     None => this.fail(
                         "The voice model couldn’t download. Connect to the internet and try again."
                             .into(),
@@ -541,7 +545,13 @@ impl Voice {
         }
         let heard = match answer {
             Ok(heard) => heard.unwrap_or_default(),
-            Err(cause) => return self.fail(cause.message, ErrorKind::Model, cx),
+            Err(cause) => {
+                return self.fail(
+                    kchess_app::loading::failure("voice", &cause),
+                    ErrorKind::Model,
+                    cx,
+                );
+            }
         };
         if let Some(result) = &heard.result {
             self.partial.clear();

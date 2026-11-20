@@ -240,7 +240,8 @@ impl Exporter {
                         );
                     }
                     Err(cause) => window.push_notification(
-                        Notification::error(cause.message).title("Could not upload the game"),
+                        Notification::error(kchess_app::loading::failure("export", &cause))
+                            .title("Could not upload the game"),
                         cx,
                     ),
                 }

@@ -59,10 +59,78 @@ impl Loading {
         self.epoch.start()
     }
 
-    /// Nothing is asked after all (no account to ask for): earlier answers no longer count.
+    /// Ask the core for what the page shows, the way every page loads: answers to earlier loads no
+    /// longer count, the page is busy until this one's answer, and a failure is logged under
+    /// `area` and shown (`error`). `done` receives the latest answer, a failure included, to keep
+    /// or clear what the page showed; `slot` finds this `Loading` in the view again.
+    pub fn load<V: 'static, T: 'static>(
+        &mut self,
+        cx: &mut Context<V>,
+        area: &'static str,
+        slot: fn(&mut V) -> &mut Loading,
+        request: impl Future<Output = Result<T, CoreError>> + 'static,
+        done: impl FnOnce(&mut V, Result<T, CoreError>, &mut Context<V>) + 'static,
+    ) {
+        let turn = self.start();
+        cx.spawn(async move |this, cx| {
+            let answer = request.await;
+            this.update(cx, |view, cx| {
+                if slot(view).settle(turn, area, &answer) {
+                    done(view, answer, cx);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The answer to `turn` arrived: whether it is the latest request's, which ends the loading,
+    /// and if it failed, the failure is logged under `area` and shown.
+    pub fn settle<T>(&mut self, turn: Turn, area: &str, answer: &Result<T, CoreError>) -> bool {
+        if !self.answered(turn) {
+            return false;
+        }
+        if let Err(cause) = answer {
+            self.failed(area, cause);
+        }
+        true
+    }
+
+    /// Nothing is asked after all (no account to ask for): earlier answers no longer count, and
+    /// no failure is shown.
     pub fn stop(&mut self) {
         self.epoch.invalidate();
         self.busy = false;
+        self.error = None;
+    }
+
+    /// Nothing is asked because what would be asked is wrong (a name that cannot be one): earlier
+    /// answers no longer count, and `message` is shown as the failure.
+    pub fn refuse(&mut self, message: impl Into<SharedString>) {
+        self.stop();
+        self.error = Some(message.into());
+    }
+
+    /// What failed is fine now (a later save worked): no failure is shown.
+    pub fn clear_error(&mut self) {
+        self.error = None;
+    }
+
+    /// Show `message` in place of the failure's own (the logged one stays the core's).
+    pub fn show_error(&mut self, message: impl Into<SharedString>) {
+        self.error = Some(message.into());
+    }
+
+    /// The latest request, for the requests that follow from its answer (a player's games after
+    /// their profile): they count only while it is still the latest.
+    pub fn current(&self) -> Turn {
+        self.epoch.current()
+    }
+
+    /// Whether `turn` is the latest request, without ending the loading.
+    pub fn is_current(&self, turn: Turn) -> bool {
+        self.epoch.is_current(turn)
     }
 
     /// The answer to `turn` arrived: whether it is the latest request's, which ends the loading.
@@ -89,6 +157,13 @@ impl Loading {
     }
 }
 
+/// A failure the page shows outside a `Loading` (an action's, a stream's): logged under `area`,
+/// and its message to show.
+pub fn failure(area: &str, cause: &CoreError) -> String {
+    crate::log::write(Level::Warn, area, &cause.message);
+    cause.message.clone()
+}
+
 /// Ask the core for something the page shows when it can: its answer goes to `done`, and a
 /// failure is logged under `area`, the page keeping what it showed.
 pub fn fetch<V: 'static, T: 'static>(
@@ -99,10 +174,11 @@ pub fn fetch<V: 'static, T: 'static>(
 ) {
     cx.spawn(async move |this, cx| match request.await {
         Ok(answer) => {
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 done(this, answer, cx);
                 cx.notify();
-            });
+            })
+            .ok();
         }
         Err(cause) => crate::log::write(Level::Warn, area, &cause.message),
     })
@@ -124,11 +200,156 @@ mod tests {
         assert!(loading.busy());
         assert!(loading.answered(second));
         assert!(!loading.busy());
-        loading.failed("test", &CoreError::new("offline"));
+        loading.failed("loading-test", &CoreError::new("offline"));
         assert_eq!(loading.error().map(|error| error.as_ref()), Some("offline"));
         assert!(loading.start() != second && loading.error().is_none());
         loading.stop();
         assert!(!loading.busy());
+    }
+
+    /// Nothing asked shows no failure; a refused request shows its own message.
+    #[test]
+    fn stopping_clears_the_failure_and_refusing_shows_its_own() {
+        let mut loading = Loading::default();
+        let turn = loading.start();
+        loading.failed("loading-test", &CoreError::new("offline"));
+        loading.stop();
+        assert!(loading.error().is_none() && !loading.busy());
+        assert!(
+            !loading.is_current(turn),
+            "an answer from before stopping no longer counts"
+        );
+        loading.start();
+        loading.refuse("Enter a name");
+        assert_eq!(
+            loading.error().map(|error| error.as_ref()),
+            Some("Enter a name")
+        );
+        assert!(!loading.busy());
+        let turn = loading.start();
+        assert!(loading.is_current(turn) && loading.current() == turn);
+        loading.show_error("Lichess is busy");
+        assert_eq!(
+            loading.error().map(|error| error.as_ref()),
+            Some("Lichess is busy")
+        );
+        loading.clear_error();
+        assert!(
+            loading.error().is_none() && loading.busy(),
+            "only the failure is cleared"
+        );
+    }
+
+    /// A failure the page shows reaches the log too, under its area.
+    #[test]
+    fn a_shown_failure_is_logged() {
+        // The process's log starts once, in whichever test asks first; it is read from wherever
+        // that was.
+        static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+        let dir = DIR.get_or_init(|| tempfile::tempdir().expect("a temporary folder"));
+        crate::log::init(dir.path());
+        let shown = super::failure("loading-test-area", &CoreError::new("the disk is full"));
+        assert_eq!(shown, "the disk is full");
+        let mut loading = Loading::default();
+        let turn = loading.start();
+        let settled = loading.settle(
+            turn,
+            "loading-test-settle",
+            &Err::<(), _>(CoreError::new("no answer")),
+        );
+        assert!(settled && !loading.busy());
+        assert_eq!(
+            loading.error().map(|error| error.as_ref()),
+            Some("no answer")
+        );
+        let log = crate::log::read().join("");
+        assert!(
+            log.contains("[loading-test-area] the disk is full"),
+            "{log}"
+        );
+        assert!(log.contains("[loading-test-settle] no answer"), "{log}");
+    }
+
+    /// `load`: only the latest request's answer reaches the page, a failure included, however
+    /// the answers interleave (`SEED=<n>` replays an order); a stale failure is never shown.
+    #[gpui_kit::test(iterations = 64)]
+    fn load_shows_only_the_latest_answer(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+
+        #[derive(Default)]
+        struct Page {
+            loading: Loading,
+            shown: Vec<Result<u64, String>>,
+        }
+        const REQUESTS: u64 = 6;
+        let executor = cx.executor();
+        let page = cx.new(|_| Page::default());
+        page.update(cx, |page, cx| {
+            for request in 0..REQUESTS {
+                let delay = executor.simulate_random_delay();
+                // Every answer but the last fails: none of those failures may show.
+                let answer = async move {
+                    delay.await;
+                    if request + 1 == REQUESTS {
+                        Ok(request)
+                    } else {
+                        Err(CoreError::new(format!("failure {request}")))
+                    }
+                };
+                page.loading.load(
+                    cx,
+                    "loading-test",
+                    |page: &mut Page| &mut page.loading,
+                    answer,
+                    |page, answer, _| page.shown.push(answer.map_err(|cause| cause.message)),
+                );
+            }
+        });
+        cx.run_until_parked();
+        page.read_with(cx, |page, _| {
+            assert_eq!(
+                page.shown,
+                [Ok(REQUESTS - 1)],
+                "only the latest answer shows"
+            );
+            assert!(!page.loading.busy());
+            assert!(page.loading.error().is_none(), "no stale failure shows");
+        });
+    }
+
+    /// `load`'s failure is shown, and `done` still hears of it to clear what it showed.
+    #[gpui_kit::test]
+    fn load_shows_the_latest_failure(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+
+        #[derive(Default)]
+        struct Page {
+            loading: Loading,
+            report: Option<u32>,
+        }
+        let page = cx.new(|_| Page {
+            report: Some(7),
+            ..Page::default()
+        });
+        page.update(cx, |page, cx| {
+            page.loading.load(
+                cx,
+                "loading-test",
+                |page: &mut Page| &mut page.loading,
+                async { Err::<u32, _>(CoreError::new("Lichess did not answer")) },
+                |page, answer, _| page.report = answer.ok(),
+            );
+            assert!(page.loading.busy());
+        });
+        cx.run_until_parked();
+        page.read_with(cx, |page, _| {
+            assert!(!page.loading.busy());
+            assert_eq!(page.report, None);
+            assert_eq!(
+                page.loading.error().map(|error| error.as_ref()),
+                Some("Lichess did not answer")
+            );
+        });
     }
 
     /// Answers come back in whatever order the core sends them: GPUI's test scheduler runs the

@@ -78,8 +78,8 @@ pub struct CreateArena {
     password: Entity<InputState>,
     description: Entity<TextareaState>,
     rated: bool,
-    busy: bool,
-    error: Option<SharedString>,
+    /// The tournament's creation, while Lichess answers.
+    creating: crate::loading::Loading,
     reconnect: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -179,8 +179,7 @@ impl CreateArena {
             }),
             description: cx.new(|cx| TextareaState::new(window, cx).rows(2)),
             rated: true,
-            busy: false,
-            error: None,
+            creating: Default::default(),
             reconnect: false,
             _subscriptions: subscriptions,
         }
@@ -246,11 +245,10 @@ impl CreateArena {
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy || self.start_problem(cx).is_some() {
+        if self.creating.busy() || self.start_problem(cx).is_some() {
             return;
         }
-        self.busy = true;
-        self.error = None;
+        let turn = self.creating.start();
         self.reconnect = false;
         cx.notify();
         let call = cx.global::<AppCore>().request(calls::CreateTournament {
@@ -260,18 +258,21 @@ impl CreateArena {
         let page = self.page.clone();
         cx.spawn_in(window, async move |this, cx| {
             let answer = call.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.busy = false;
+            this.update_in(cx, |this, window, cx| {
+                if !this.creating.settle(turn, "tournaments", &answer) {
+                    return;
+                }
                 match answer {
                     Ok(Reply::NeedsReconnect) => this.reconnect = true,
                     Ok(Reply::Done(created)) => {
                         window.close_dialog(cx);
                         let _ = page.update(cx, |page, cx| page.created(&created, window, cx));
                     }
-                    Err(cause) => this.error = Some(cause.message.into()),
+                    Err(_) => {}
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -371,7 +372,7 @@ impl Render for CreateArena {
                             )
                             .into_any_element(),))
             })
-            .children(self.error.clone().map(|error| {
+            .children(self.creating.error().cloned().map(|error| {
                 div()
                     .text_size(px(13.))
                     .text_color(palette.error)
@@ -392,8 +393,8 @@ impl Render for CreateArena {
                             .primary()
                             .icon(icon("plus"))
                             .label("Create arena")
-                            .loading(self.busy)
-                            .disabled(problem.is_some() || self.busy)
+                            .loading(self.creating.busy())
+                            .disabled(problem.is_some() || self.creating.busy())
                             .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
                     ),
             )

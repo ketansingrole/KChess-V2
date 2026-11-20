@@ -231,7 +231,7 @@ fn write_in_order(
                         this.error = None;
                     }
                     Err(cause) => {
-                        this.error = Some(cause.message);
+                        this.error = Some(crate::loading::failure("studies", &cause));
                         this.reload(cx);
                     }
                 }

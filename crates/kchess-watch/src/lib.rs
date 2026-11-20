@@ -463,7 +463,9 @@ impl WatchPage {
                     Ok(found) => {
                         this.open_tour_at(found.tour_id, Some(round), game, window, cx);
                     }
-                    Err(cause) => this.error = Some(cause.message.into()),
+                    Err(cause) => {
+                        this.error = Some(kchess_app::loading::failure("watch", &cause).into())
+                    }
                 }
                 cx.notify();
             });
@@ -498,7 +500,10 @@ impl WatchPage {
                         this.channels_error = None;
                         this.channels = channels
                     }
-                    Err(cause) => this.channels_error = Some(cause.message.into()),
+                    Err(cause) => {
+                        this.channels_error =
+                            Some(kchess_app::loading::failure("watch", &cause).into())
+                    }
                 }
                 cx.notify();
             });
@@ -553,7 +558,7 @@ impl WatchPage {
                     Err(cause) => {
                         this.pending = None;
                         this.early.clear();
-                        this.error = Some(cause.message.into());
+                        this.error = Some(kchess_app::loading::failure("watch", &cause).into());
                         this.target = None;
                     }
                 }
@@ -666,7 +671,10 @@ impl WatchPage {
                                 this.presence.insert(name.to_lowercase(), entry);
                             }
                         }
-                        Err(cause) => this.presence_error = Some(cause.message.into()),
+                        Err(cause) => {
+                            this.presence_error =
+                                Some(kchess_app::loading::failure("watch", &cause).into())
+                        }
                     }
                     cx.notify();
                 });

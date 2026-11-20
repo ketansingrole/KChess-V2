@@ -2,7 +2,7 @@
 //! filtered by account, result and rating and searched by opponent or opening; each with its review's accuracy; opened to go through
 //! move by move or to review on the analysis board.
 
-use crate::loading::Epoch;
+use crate::loading::{Epoch, Loading};
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -55,10 +55,9 @@ pub struct LichessTab {
     pub page_size: usize,
     pub games: Vec<LichessGame>,
     pub total: usize,
-    pub loading: bool,
-    pub error: Option<String>,
+    /// `gamePage`'s load: answers to an earlier page or filter are dropped.
+    pub loading: Loading,
     pub summaries: Keyed<ReviewSummary>,
-    epoch: Epoch,
     pub account_select: Entity<SelectState<Vec<Choice>>>,
     pub rated_select: Entity<SelectState<Vec<Choice>>>,
     pub size_select: Entity<SelectState<Vec<Choice>>>,
@@ -198,10 +197,8 @@ pub fn new_tab(
             page_size: 20,
             games: Vec::new(),
             total: 0,
-            loading: false,
-            error: None,
+            loading: Loading::default(),
             summaries: Keyed::default(),
-            epoch: Epoch::default(),
             account_select,
             rated_select,
             size_select,
@@ -217,9 +214,7 @@ impl HistoryPage {
     /// `gamePage`: the page of games the filters ask for, and their reviews.
     pub(super) fn load_lichess(&mut self, cx: &mut Context<Self>) {
         let tab = &mut self.lichess;
-        let epoch = tab.epoch.start();
-        tab.loading = true;
-        tab.error = None;
+        let turn = tab.loading.start();
         // Filters left at "all" are left out.
         let query = GamePageQuery {
             account: (tab.account != "all").then(|| tab.account.clone()),
@@ -247,30 +242,27 @@ impl HistoryPage {
                     .await
                     .ok()
             };
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let tab = &mut this.lichess;
-                if !tab.epoch.is_current(epoch) {
+                if !tab.loading.settle(turn, "history", &page) {
                     return;
                 }
-                tab.loading = false;
-                match page {
-                    Ok(page) => {
-                        tab.total = usize::try_from(page.total).unwrap_or_default();
-                        tab.games = page.games;
-                        let pages = tab.total.div_ceil(tab.page_size).max(1);
-                        if tab.page >= pages {
-                            tab.page = pages - 1;
-                            this.load_lichess(cx);
-                            return;
-                        }
+                if let Ok(page) = page {
+                    tab.total = usize::try_from(page.total).unwrap_or_default();
+                    tab.games = page.games;
+                    let pages = tab.total.div_ceil(tab.page_size).max(1);
+                    if tab.page >= pages {
+                        tab.page = pages - 1;
+                        this.load_lichess(cx);
+                        return;
                     }
-                    Err(cause) => tab.error = Some(cause.message),
                 }
                 if let Some(summaries) = summaries {
                     tab.summaries = summaries;
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -693,12 +685,12 @@ impl HistoryPage {
             })
             .child(div().flex_1())
             .child(sync);
-        let body = if tab.loading && tab.games.is_empty() {
+        let body = if tab.loading.busy() && tab.games.is_empty() {
             div()
                 .p(px(24.))
                 .child(widgets::loading("Loading games…", palette))
                 .into_any_element()
-        } else if let Some(error) = &tab.error {
+        } else if let Some(error) = tab.loading.error() {
             div()
                 .p(px(24.))
                 .text_color(palette.error)

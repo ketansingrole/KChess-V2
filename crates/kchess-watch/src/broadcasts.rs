@@ -2,7 +2,7 @@
 //! relays, searchable; a tournament's rounds and boards with their clocks; one board followed
 //! move by move, and Analyse.
 
-use crate::loading::Epoch;
+use crate::loading::Loading;
 use kchess_contracts::calls;
 use kchess_contracts::check::{BroadcastQuery, LichessId};
 use kchess_contracts::types::{
@@ -119,13 +119,12 @@ pub(super) fn setup_of(game: &BroadcastGame) -> Setup {
 
 pub struct Broadcasts {
     list: Option<Vec<BroadcastSummary>>,
-    loading: bool,
-    error: Option<SharedString>,
+    /// `list`'s load.
+    loading: Loading,
     pub(super) query: Entity<InputState>,
     results: Vec<BroadcastSummary>,
-    searching: bool,
-    search_error: Option<SharedString>,
-    search_epoch: Epoch,
+    /// The search for `query`: a later one replaces it.
+    searching: Loading,
     pub(super) tour: Option<BroadcastTourDetail>,
     round: String,
     round_select: Entity<SelectState<Vec<Choice>>>,
@@ -171,13 +170,10 @@ impl Broadcasts {
         ];
         Broadcasts {
             list: None,
-            loading: false,
-            error: None,
+            loading: Loading::default(),
             query,
             results: Vec::new(),
-            searching: false,
-            search_error: None,
-            search_epoch: Epoch::default(),
+            searching: Loading::default(),
             tour: None,
             round: String::new(),
             round_select,
@@ -335,27 +331,23 @@ impl Broadcasts {
     }
 
     pub fn load(&mut self, cx: &mut Context<WatchPage>) {
-        if self.loading {
+        if self.loading.busy() {
             return;
         }
-        self.loading = true;
-        self.error = None;
         let call = cx
             .global::<AppCore>()
             .request(calls::Broadcasts { query: None });
-        cx.spawn(async move |this, cx| {
-            let answer = call.await;
-            let _ = this.update(cx, |this, cx| {
-                let broadcasts = &mut this.broadcasts;
-                broadcasts.loading = false;
-                match answer {
-                    Ok(list) => broadcasts.list = Some(list),
-                    Err(cause) => broadcasts.error = Some(cause.message.into()),
+        self.loading.load(
+            cx,
+            "watch",
+            |this: &mut WatchPage| &mut this.broadcasts.loading,
+            call,
+            |this, answer, _| {
+                if let Ok(list) = answer {
+                    this.broadcasts.list = Some(list);
                 }
-                cx.notify();
-            });
-        })
-        .detach();
+            },
+        );
     }
 }
 
@@ -364,15 +356,14 @@ impl WatchPage {
     fn search(&mut self, cx: &mut Context<Self>) {
         let broadcasts = &mut self.broadcasts;
         let query = broadcasts.query.read(cx).value().trim().to_string();
-        let epoch = broadcasts.search_epoch.start();
         broadcasts.results.clear();
-        broadcasts.search_error = None;
-        broadcasts.searching = !query.is_empty();
         cx.notify();
         if query.is_empty() {
+            broadcasts.searching.stop();
             broadcasts._search = None;
             return;
         }
+        let turn = broadcasts.searching.start();
         let core = cx.global::<AppCore>().clone();
         broadcasts._search = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SEARCH_DELAY).await;
@@ -381,18 +372,17 @@ impl WatchPage {
                     query: Some(BroadcastQuery(query)),
                 })
                 .await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let broadcasts = &mut this.broadcasts;
-                if !broadcasts.search_epoch.is_current(epoch) {
+                if !broadcasts.searching.settle(turn, "watch", &answer) {
                     return;
                 }
-                broadcasts.searching = false;
-                match answer {
-                    Ok(found) => broadcasts.results = found,
-                    Err(cause) => broadcasts.search_error = Some(cause.message.into()),
+                if let Ok(found) = answer {
+                    broadcasts.results = found;
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         }));
     }
 
@@ -460,7 +450,9 @@ impl WatchPage {
                             this.open_round(round, game, window, cx);
                         }
                     }
-                    Err(cause) => this.error = Some(cause.message.into()),
+                    Err(cause) => {
+                        this.error = Some(kchess_app::loading::failure("watch", &cause).into())
+                    }
                 }
                 cx.notify();
             });
@@ -529,7 +521,7 @@ impl WatchPage {
                     Err(cause) => {
                         this.pending = None;
                         this.early.clear();
-                        this.error = Some(cause.message.into());
+                        this.error = Some(kchess_app::loading::failure("watch", &cause).into());
                     }
                 }
                 cx.notify();
@@ -826,11 +818,14 @@ impl WatchPage {
         };
         let disabled = Self::playing_own_game(cx);
         let now = kchess_games::now_ms();
-        let status = if broadcasts.searching {
+        let status = if broadcasts.searching.busy() {
             Some("Searching…")
-        } else if !searching && broadcasts.loading {
+        } else if !searching && broadcasts.loading.busy() {
             Some("Loading broadcasts…")
-        } else if searching && broadcasts.results.is_empty() && broadcasts.search_error.is_none() {
+        } else if searching
+            && broadcasts.results.is_empty()
+            && broadcasts.searching.error().is_none()
+        {
             Some("No broadcasts found")
         } else {
             None
@@ -857,20 +852,20 @@ impl WatchPage {
                         ),
                     ),
             )
-            .children(broadcasts.search_error.clone().map(|error| {
+            .children(broadcasts.searching.error().cloned().map(|error| {
                 div()
                     .text_size(px(13.))
                     .text_color(palette.error)
                     .child(error)
             }))
             .children(status.map(|status| {
-                if broadcasts.searching || broadcasts.loading {
+                if broadcasts.searching.busy() || broadcasts.loading.busy() {
                     widgets::loading(status, palette)
                 } else {
                     widgets::hint(status, palette)
                 }
             }))
-            .when(!searching && broadcasts.error.is_some(), |body| {
+            .when(!searching && broadcasts.loading.error().is_some(), |body| {
                 body.child(
                     h_flex()
                         .gap(px(12.))
@@ -878,7 +873,7 @@ impl WatchPage {
                         .child(
                             div()
                                 .text_color(palette.error)
-                                .child(broadcasts.error.clone().unwrap_or_default()),
+                                .child(broadcasts.loading.error().cloned().unwrap_or_default()),
                         )
                         .child(
                             Button::new("broadcasts-retry")

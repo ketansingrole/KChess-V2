@@ -4,7 +4,7 @@
 //! Engine help stays off while a game is live or being looked for, and
 //! until the core has said whether one was left running.
 
-use crate::loading::Epoch;
+use crate::loading::{Epoch, Loading};
 use kchess_contracts::calls;
 use kchess_contracts::check::OptionalAccount;
 use std::sync::OnceLock;
@@ -164,9 +164,8 @@ pub struct OnlineState {
     pub lobby: Option<LobbyState>,
     pub ongoing: Vec<OngoingGame>,
     pub ongoing_loaded: bool,
-    pub ongoing_error: Option<String>,
-    /// Each games-in-progress request; an answer to an earlier one is dropped.
-    ongoing_request: u64,
+    /// The games-in-progress request: an answer to an earlier one is dropped.
+    pub ongoing_loading: Loading,
     /// The kind of failure that ended the game's connection, until it recovers.
     pub failure: Option<ErrorKind>,
     /// The game connection's state that ended it for good, kept until the game connects again.
@@ -503,7 +502,10 @@ impl OnlineState {
             this.update(cx, |this, cx| {
                 let (reply, cause) = match answer {
                     Ok(reply) => (reply, None),
-                    Err(error) => (Reply::Failed, Some(error.message)),
+                    Err(error) => (
+                        Reply::Failed,
+                        Some(kchess_app::loading::failure("online-game", &error)),
+                    ),
                 };
                 let settled = this.transition(
                     |model, ctx| model.settle(&pending, reply, ctx),
@@ -590,7 +592,7 @@ impl OnlineState {
         let options: OnlineOptions = match typed(&wanted) {
             Ok(options) => options,
             Err(refused) => {
-                notice(cx, refused.message);
+                notice(cx, kchess_app::loading::failure("online-game", &refused));
                 return;
             }
         };
@@ -697,7 +699,7 @@ impl OnlineState {
         cx.spawn(async move |_, cx| match call.await {
             Ok(_) => true,
             Err(cause) => {
-                cx.update(|cx| notice(cx, cause.message));
+                cx.update(|cx| notice(cx, kchess_app::loading::failure("online-game", &cause)));
                 false
             }
         })
@@ -815,40 +817,32 @@ impl OnlineState {
     pub fn refresh_ongoing(&mut self, cx: &mut Context<Self>) {
         // A newer request either way: an answer still on its way (a poll overtaken by a change,
         // or from before signing out) must not bring back older games, or their notifications.
-        self.ongoing_request += 1;
-        let request = self.ongoing_request;
         if crate::accounts::handle(cx).read(cx).connected().is_empty() {
+            self.ongoing_loading.stop();
             self.ongoing.clear();
-            self.ongoing_error = None;
             cx.notify();
             return;
         }
+        let turn = self.ongoing_loading.start();
         let call = cx.global::<AppCore>().request(calls::OngoingGames {});
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
-                if request != this.ongoing_request {
+                if !this.ongoing_loading.settle(turn, "online-game", &answer) {
                     return;
                 }
-                match answer {
-                    Ok(games) => {
-                        for game in &games {
-                            let id = game.game_id.clone();
-                            let mine = game.is_my_turn;
-                            let before = this.turns.get(&id).copied();
-                            if game.correspondence()
-                                && mine
-                                && before == Some(false)
-                                && id != this.id()
-                            {
-                                (hooks(cx).your_move)(game, cx);
-                            }
-                            this.turns.insert(id, mine);
+                if let Ok(games) = answer {
+                    for game in &games {
+                        let id = game.game_id.clone();
+                        let mine = game.is_my_turn;
+                        let before = this.turns.get(&id).copied();
+                        if game.correspondence() && mine && before == Some(false) && id != this.id()
+                        {
+                            (hooks(cx).your_move)(game, cx);
                         }
-                        this.ongoing = games;
-                        this.ongoing_error = None;
+                        this.turns.insert(id, mine);
                     }
-                    Err(cause) => this.ongoing_error = Some(cause.message),
+                    this.ongoing = games;
                 }
                 this.ongoing_loaded = true;
                 cx.notify();
@@ -926,7 +920,7 @@ impl OnlineState {
                 match answer {
                     Ok(_) => true,
                     Err(cause) => {
-                        notice(cx, cause.message);
+                        notice(cx, kchess_app::loading::failure("online-game", &cause));
                         false
                     }
                 }
@@ -1119,8 +1113,7 @@ pub fn init(cx: &mut App) {
             lobby: None,
             ongoing: Vec::new(),
             ongoing_loaded: false,
-            ongoing_error: None,
-            ongoing_request: 0,
+            ongoing_loading: Loading::default(),
             failure: None,
             failed_state: None,
             lost: None,
@@ -1451,13 +1444,13 @@ mod tests {
         let mut app = Started::new(cx);
         let (stale, error) = app.with_window(|_, cx| {
             super::handle(cx).update(cx, |online, cx| {
-                online.ongoing_error = Some("Lichess did not answer".into());
-                let asked = online.ongoing_request;
+                online.ongoing_loading.show_error("Lichess did not answer");
+                let asked = online.ongoing_loading.current();
                 // No account is connected in a fresh profile.
                 online.refresh_ongoing(cx);
                 (
-                    online.ongoing_request == asked,
-                    online.ongoing_error.clone(),
+                    online.ongoing_loading.is_current(asked),
+                    online.ongoing_loading.error().cloned(),
                 )
             })
         });

@@ -133,7 +133,7 @@ impl StudiesPage {
                         entry.fetched_at = now_ms();
                         entry.needs_reconnect = false;
                     }
-                    Err(cause) => entry.error = cause.message,
+                    Err(cause) => entry.error = kchess_app::loading::failure("studies", &cause),
                 }
                 cx.notify();
             });
@@ -226,7 +226,8 @@ impl StudiesPage {
                     }
                     Ok(Reply::Done(chapters)) => chapters,
                     Err(cause) => {
-                        let _ = cx.update(|window, cx| fail(cause.message, window, cx));
+                        let message = kchess_app::loading::failure("studies", &cause);
+                        let _ = cx.update(|window, cx| fail(message, window, cx));
                         return;
                     }
                 };
@@ -411,7 +412,8 @@ impl StudiesPage {
                         this.load_lichess(true, cx);
                     }
                     Err(cause) => window.push_notification(
-                        Notification::error(cause.message).title("Could not send to Lichess"),
+                        Notification::error(kchess_app::loading::failure("studies", &cause))
+                            .title("Could not send to Lichess"),
                         cx,
                     ),
                 }

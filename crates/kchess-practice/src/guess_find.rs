@@ -118,7 +118,7 @@ impl GameFinder {
                     }
                     Err(cause) => {
                         this.player = None;
-                        this.error = Some(cause.message.into());
+                        this.error = Some(kchess_app::loading::failure("guess", &cause).into());
                     }
                 }
                 cx.notify();
@@ -157,7 +157,9 @@ impl GameFinder {
                 this.opening = None;
                 match answer {
                     Ok(pgn) => cx.emit(Found::Game { pgn, side }),
-                    Err(cause) => this.error = Some(cause.message.into()),
+                    Err(cause) => {
+                        this.error = Some(kchess_app::loading::failure("guess", &cause).into())
+                    }
                 }
                 cx.notify();
             });

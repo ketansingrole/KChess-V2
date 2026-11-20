@@ -463,7 +463,7 @@ impl AnalysisPage {
                         });
                     }
                     Err(cause) => {
-                        failure = Some(cause.message);
+                        failure = Some(kchess_app::loading::failure("review", &cause));
                         break;
                     }
                 }

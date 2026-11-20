@@ -212,8 +212,7 @@ fn when(at: f64) -> String {
 
 pub struct VoiceHistory {
     entries: Vec<Entry>,
-    loading: bool,
-    error: Option<SharedString>,
+    loading: crate::loading::Loading,
     shown: usize,
 }
 
@@ -221,39 +220,30 @@ impl VoiceHistory {
     pub fn new(cx: &mut Context<Self>) -> VoiceHistory {
         let mut history = VoiceHistory {
             entries: Vec::new(),
-            loading: true,
-            error: None,
+            loading: Default::default(),
             shown: SHOWN,
         };
         history.load(cx);
         history
     }
 
+    /// The history as stored: a reload (after clearing it, or Refresh) replaces an earlier read
+    /// still on its way, which would bring back what was cleared.
     pub fn load(&mut self, cx: &mut Context<Self>) {
-        self.loading = true;
-        self.error = None;
         let read = cx.global::<AppCore>().request(calls::VoiceHistory {
             limit: VoiceLimit(LIMIT as u32),
         });
-        cx.spawn(async move |this, cx| {
-            let read = read.await;
-            let _ = this.update(cx, |this, cx| {
-                this.loading = false;
-                match read {
-                    Ok(list) => this.entries = list.into_iter().map(Entry::from).collect(),
-                    Err(cause) => {
-                        crate::log::write(
-                            kchess_contracts::Level::Warn,
-                            "voice-history",
-                            &format!("Could not read voice history: {}", cause.message),
-                        );
-                        this.error = Some(cause.message.into());
-                    }
+        self.loading.load(
+            cx,
+            "voice-history",
+            |this: &mut Self| &mut this.loading,
+            read,
+            |this, answer, _| {
+                if let Ok(list) = answer {
+                    this.entries = list.into_iter().map(Entry::from).collect();
                 }
-                cx.notify();
-            });
-        })
-        .detach();
+            },
+        );
         cx.notify();
     }
 
@@ -263,7 +253,7 @@ impl VoiceHistory {
             .request(calls::VoiceHistoryDocument {});
         cx.spawn_in(window, async move |_, cx| {
             let outcome = match document.await {
-                Err(cause) => Some(Err(cause.message)),
+                Err(cause) => Some(Err(kchess_app::loading::failure("voice-history", &cause))),
                 Ok(text) => {
                     let name = format!(
                         "kchess-voice-history-{}.json",
@@ -312,12 +302,7 @@ impl VoiceHistory {
             let _ = this.update(cx, |this, cx| match cleared {
                 Ok(_) => this.load(cx),
                 Err(cause) => {
-                    crate::log::write(
-                        kchess_contracts::Level::Warn,
-                        "voice-history",
-                        &format!("Clearing voice history failed: {}", cause.message),
-                    );
-                    this.error = Some(cause.message.into());
+                    this.loading.failed("voice-history", &cause);
                     cx.notify();
                 }
             });
@@ -356,7 +341,7 @@ impl Render for VoiceHistory {
                         Button::new("voice-history-refresh")
                             .ghost()
                             .icon(icon("rotate-cw"))
-                            .loading(self.loading)
+                            .loading(self.loading.busy())
                             .accessibility_label("Refresh")
                             .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
                     )
@@ -381,7 +366,7 @@ impl Render for VoiceHistory {
                     ),
             );
         let mut card = widgets::card(&palette).gap(px(16.)).child(header);
-        if let Some(error) = &self.error {
+        if let Some(error) = self.loading.error() {
             return card.child(
                 div()
                     .text_size(px(13.))
@@ -390,7 +375,7 @@ impl Render for VoiceHistory {
             );
         }
         if empty {
-            if !self.loading {
+            if !self.loading.busy() {
                 card = card.child(muted(
                     "Nothing yet. Speak a few moves in Play with computer or answer a practice drill by voice, then come back.",
                     &palette,

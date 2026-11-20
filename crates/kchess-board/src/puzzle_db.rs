@@ -55,18 +55,23 @@ impl PuzzleDb {
         self.status.installed
     }
 
-    /// Read the database's state again (a page was shown).
+    /// Read the database's state again (a page was shown): a read that works clears the
+    /// failure an earlier one showed.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let status = cx.global::<AppCore>().request(calls::PuzzleDbStatus {});
         cx.spawn(async move |this, cx| {
             let status = status.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 match status {
-                    Ok(status) => this.status = status,
-                    Err(cause) => this.error = Some(cause.message),
+                    Ok(status) => {
+                        this.status = status;
+                        this.error = None;
+                    }
+                    Err(cause) => this.error = Some(crate::loading::failure("puzzle-db", &cause)),
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -87,7 +92,7 @@ impl PuzzleDb {
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(status) => this.status = status,
-                    Err(cause) => this.error = Some(cause.message),
+                    Err(cause) => this.error = Some(crate::loading::failure("puzzle-db", &cause)),
                 }
                 let ended = this.progress.as_ref().is_none_or(|progress| {
                     matches!(
@@ -144,7 +149,7 @@ impl PuzzleDb {
                         this.status = status;
                         this.progress = None;
                     }
-                    Err(cause) => this.error = Some(cause.message),
+                    Err(cause) => this.error = Some(crate::loading::failure("puzzle-db", &cause)),
                 }
                 cx.notify();
             });
@@ -339,6 +344,25 @@ mod tests {
 
     use super::PuzzleDbHandle;
     use crate::testing::Started;
+
+    /// A failed status read left its error under the page after a later read worked.
+    #[gpui_kit::test]
+    fn a_status_read_that_works_clears_an_earlier_failure(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = Started::new(cx);
+        let db = app.with_window(|_, cx| {
+            super::init(cx);
+            cx.global::<PuzzleDbHandle>().0.clone()
+        });
+        app.with_window(|_, cx| {
+            db.update(cx, |db, cx| {
+                db.error = Some("The puzzle database could not be read".into());
+                db.refresh(cx);
+            })
+        });
+        app.wait_for("the status read to clear the failure", |_, cx| {
+            db.read(cx).error.is_none()
+        });
+    }
 
     /// Cancel stops a download under way: the install ends at once, with nothing installed.
     #[gpui_kit::test]

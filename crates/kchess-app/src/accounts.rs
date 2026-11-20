@@ -208,7 +208,7 @@ impl Accounts {
                 let result = match result {
                     Ok(result) => result,
                     Err(cause) => {
-                        say(window, cx, cause.message);
+                        say(window, cx, crate::loading::failure("accounts", &cause));
                         return false;
                     }
                 };
@@ -278,7 +278,7 @@ impl Accounts {
                         };
                         say(window, cx, message);
                     }
-                    Err(cause) => say(window, cx, cause.message),
+                    Err(cause) => say(window, cx, crate::loading::failure("accounts", &cause)),
                 }
                 cx.notify();
             });
@@ -316,7 +316,7 @@ impl Accounts {
                 }
                 let added = this.chesscom().len() > before;
                 if let Err(cause) = result {
-                    say(window, cx, cause.message);
+                    say(window, cx, crate::loading::failure("accounts", &cause));
                 }
                 // The game count (`loadData`) changed with the games synced.
                 this.refresh(cx);
@@ -353,7 +353,7 @@ impl Accounts {
                         this.chesscom = players;
                         say(window, cx, "Chess.com games synced");
                     }
-                    Err(cause) => say(window, cx, cause.message),
+                    Err(cause) => say(window, cx, crate::loading::failure("accounts", &cause)),
                 }
                 this.refresh(cx);
                 cx.notify();
@@ -383,7 +383,7 @@ impl Accounts {
                         this.refresh(cx);
                         say(window, cx, format!("{username} removed. Their Chess.com games were deleted from this device."));
                     }
-                    Err(cause) => say(window, cx, cause.message),
+                    Err(cause) => say(window, cx, crate::loading::failure("accounts", &cause)),
                 }
                 cx.notify();
             });
@@ -434,7 +434,7 @@ impl Accounts {
                         this.sync(username, window, cx);
                     }
                     Err(cause) => {
-                        say(window, cx, cause.message);
+                        say(window, cx, crate::loading::failure("accounts", &cause));
                         window.defer(cx, move |window, cx| done(false, window, cx));
                     }
                 }
@@ -525,7 +525,7 @@ impl Accounts {
                             format!("Cleared @{username}'s synced data. You still follow them; sync to download again."),
                         );
                     }
-                    Err(cause) => say(window, cx, cause.message),
+                    Err(cause) => say(window, cx, crate::loading::failure("accounts", &cause)),
                 }
                 cx.notify();
             });
@@ -558,7 +558,7 @@ impl Accounts {
                             ),
                         );
                     }
-                    Err(cause) => say(window, cx, cause.message),
+                    Err(cause) => say(window, cx, crate::loading::failure("accounts", &cause)),
                 }
                 cx.notify();
             });
@@ -636,7 +636,7 @@ impl Accounts {
                 let data = match result {
                     Ok(data) => data,
                     Err(cause) => {
-                        say(window, cx, cause.message);
+                        say(window, cx, crate::loading::failure("accounts", &cause));
                         cx.notify();
                         return;
                     }

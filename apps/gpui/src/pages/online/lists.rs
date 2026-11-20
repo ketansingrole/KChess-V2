@@ -328,7 +328,7 @@ impl OnlinePage {
         let online = cx.global::<OnlineHandle>().0.read(cx);
         let games = online.ongoing.clone();
         let loaded = online.ongoing_loaded;
-        let error = online.ongoing_error.clone();
+        let error = online.ongoing_loading.error().cloned();
         let current =
             (online.phase == crate::online::Phase::Playing).then(|| online.id().to_string());
         let several = crate::accounts::handle(cx).read(cx).connected().len() > 1;

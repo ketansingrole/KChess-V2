@@ -94,12 +94,9 @@ pub enum MistakeAction {
 
 pub struct Mistakes {
     items: Vec<Drill>,
-    /// Until the saved drills arrive, "no mistakes yet" would not be true.
-    loading: bool,
-    /// Each load of the overview; an answer to an earlier one is dropped.
-    load: u64,
+    /// The overview's load: until the saved drills arrive, "no mistakes yet" would not be true.
+    loading: crate::loading::Loading,
     games: Vec<MistakeGame>,
-    error: Option<String>,
     has_accounts: bool,
     /// The drill on the board, or none on the home view.
     current: Option<String>,
@@ -149,10 +146,8 @@ impl Mistakes {
         });
         let mut trainer = Mistakes {
             items: Vec::new(),
-            loading: false,
-            load: 0,
+            loading: Default::default(),
             games: Vec::new(),
-            error: None,
             has_accounts: false,
             current: None,
             done: false,
@@ -178,9 +173,7 @@ impl Mistakes {
     /// The drills and games as they are now; a drill on the board stays.
     fn reload(&mut self, cx: &mut Context<Self>) {
         self.now = kchess_games::now_ms();
-        self.loading = true;
-        self.load += 1;
-        let load = self.load;
+        let turn = self.loading.start();
         let core = cx.global::<AppCore>().clone();
         let (library, games, data) = (
             core.request(calls::Library {}),
@@ -189,18 +182,13 @@ impl Mistakes {
         );
         cx.spawn(async move |this, cx| {
             let (library, games, data) = (library.await, games.await, data.await);
-            let _ = this.update(cx, |this, cx| {
-                if load != this.load {
+            this.update(cx, |this, cx| {
+                // A failure to load is the last load's: one that worked clears it.
+                if !this.loading.settle(turn, "mistake-trainer", &library) {
                     return;
                 }
-                this.loading = false;
-                match library {
-                    // A failure to load is the last load's: one that worked clears it.
-                    Ok(library) => {
-                        this.items = library.mistakes;
-                        this.error = None;
-                    }
-                    Err(cause) => this.error = Some(cause.message),
+                if let Ok(library) = library {
+                    this.items = library.mistakes;
                 }
                 match games {
                     Ok(games) => this.games = games,
@@ -214,7 +202,8 @@ impl Mistakes {
                     this.has_accounts = !data.accounts.is_empty();
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
         cx.notify();
@@ -328,16 +317,9 @@ impl Mistakes {
                 match answer {
                     Ok(items) => {
                         this.items = items;
-                        this.error = None;
+                        this.loading.clear_error();
                     }
-                    Err(cause) => {
-                        crate::log::write(
-                            Level::Warn,
-                            "mistakes",
-                            &format!("saving drills failed: {}", cause.message),
-                        );
-                        this.error = Some(cause.message);
-                    }
+                    Err(cause) => this.loading.failed("mistakes", &cause),
                 }
                 cx.notify();
             });
@@ -384,7 +366,7 @@ impl Mistakes {
                         palette,
                     )),
             )
-            .children(self.error.clone().map(|error| {
+            .children(self.loading.error().cloned().map(|error| {
                 div()
                     .text_size(px(14.))
                     .text_color(palette.error)
@@ -628,13 +610,13 @@ impl Mistakes {
         };
         let overview = widgets::card(palette)
             .child(widgets::heading("Practice your mistakes", palette))
-            .children(self.error.clone().map(|error| {
+            .children(self.loading.error().cloned().map(|error| {
                 div()
                     .text_size(px(14.))
                     .text_color(palette.error)
                     .child(error)
             }))
-            .when(self.items.is_empty() && !self.loading, |card| {
+            .when(self.items.is_empty() && !self.loading.busy(), |card| {
                 card.child(
                     widgets::empty_state(
                         icon("book-open"),
@@ -733,13 +715,15 @@ mod tests {
         let page = app.with_window(|window, cx| {
             let page = cx.new(|cx| super::Mistakes::new(window, cx));
             page.update(cx, |page, cx| {
-                page.error = Some("The library could not be read".into());
+                page.loading.show_error("The library could not be read");
                 page.shown(cx);
             });
             page
         });
-        app.wait_for("the overview to load", |_, cx| !page.read(cx).loading);
-        let error = app.with_window(|_, cx| page.read(cx).error.clone());
+        app.wait_for("the overview to load", |_, cx| {
+            !page.read(cx).loading.busy()
+        });
+        let error = app.with_window(|_, cx| page.read(cx).loading.error().cloned());
         assert_eq!(error, None);
     }
 

@@ -113,7 +113,9 @@ impl Ai {
                             welcome(window, cx);
                         }
                     }
-                    Err(cause) => window.push_notification(cause.message, cx),
+                    Err(cause) => {
+                        window.push_notification(kchess_app::loading::failure("ai", &cause), cx)
+                    }
                 }
             });
         })
@@ -202,7 +204,7 @@ impl Explainer {
                         Phase::Said(text.into())
                     }
                     Ok(AiExplanation::Refused { problem }) => Phase::Refused(problem),
-                    Err(cause) => Phase::Failed(cause.message),
+                    Err(cause) => Phase::Failed(kchess_app::loading::failure("ai", &cause)),
                 });
                 cx.notify();
                 handle(cx).update(cx, |ai, cx| ai.refresh(cx));

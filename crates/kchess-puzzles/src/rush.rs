@@ -220,7 +220,7 @@ impl PuzzleRush {
                         return;
                     }
                     Err(cause) => {
-                        this.error = Some(cause.message);
+                        this.error = Some(kchess_app::loading::failure("puzzle-rush", &cause));
                         this.stage = Stage::Menu;
                         cx.notify();
                         return;
