@@ -24,9 +24,11 @@ runs:
         PREFIXES: ${{ inputs.prefix }}
       run: |
         # rust-cache names the system and processor as Node does: Darwin, Windows_NT; x64, arm64.
+        # No dash after them: the keys #301 left without their hashes (`v0-rust-gpui-Linux-x64`)
+        # go too. The system follows the name, so `package` takes nothing of `package-fast`.
         if [ -n "$RUST_CACHE" ]; then
           case "$RUNNER_OS" in macOS) os=Darwin ;; Windows) os=Windows_NT ;; *) os="$RUNNER_OS" ;; esac
-          PREFIXES="v0-rust-$RUST_CACHE-$os-$(echo "$RUNNER_ARCH" | tr '[:upper:]' '[:lower:]')-"
+          PREFIXES="v0-rust-$RUST_CACHE-$os-$(echo "$RUNNER_ARCH" | tr '[:upper:]' '[:lower:]')"
         fi
         # Housekeeping: a failure warns, and the cache limit's eviction is all it costs.
         for prefix in $PREFIXES; do

@@ -1,0 +1,51 @@
+name: Rust cache
+description: >-
+  Swatinem/rust-cache keyed by what the build is made of: the toolchain the workspace pins, Cargo's
+  variables, the manifests and Cargo.lock. A new Cargo.lock restores the cache before it and saves
+  its own. Every other toolchain the runner has goes first, as rust-cache hashes each one's version
+  into its key: runner images with and without their own Rust 1.99.1 gave two keys, so a run on
+  the other image found no cache (2026-11-20: 11 of 15 jobs in five pull requests). Turning that
+  hash off (`add-rust-environment-hash-key: false`, #301) also dropped the lockfile's, which left
+  one key per job forever: never saved again, a cache that only grew staler.
+
+inputs:
+  shared-key:
+    description: The cache's name, shared by the jobs that build the same thing.
+    required: true
+  save-if:
+    description: Whether this job saves the cache; only main does (`workflows::only_main_saves_a_rust_cache`).
+    default: 'false'
+  workspace:
+    description: The Cargo workspace, whose rust-toolchain.toml names the toolchain kept.
+    default: '.'
+  cache-on-failure:
+    description: Save the cache when the job failed too.
+    default: 'false'
+
+outputs:
+  cache-hit:
+    description: Whether the exact key was found (rust-cache's own).
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: ${{ inputs.workspace }}
+      run: |
+        # The pinned toolchain, installed if the runner lacks it, as the build's first cargo would.
+        rustc -vV > /dev/null
+        # Windows' rustup ends its lines with a carriage return, which would make the pinned
+        # toolchain look like another one.
+        pinned="$(rustup show active-toolchain | tr -d '\r' | cut -d' ' -f1)"
+        rustup default "$pinned"
+        rustup toolchain list --quiet | tr -d '\r' | cut -d' ' -f1 | while read -r toolchain; do
+          [ "$toolchain" = "$pinned" ] || rustup toolchain uninstall "$toolchain"
+        done
+    - id: cache
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      with:
+        shared-key: ${{ inputs.shared-key }}
+        save-if: ${{ inputs.save-if }}
+        workspaces: ${{ inputs.workspace }}
+        cache-on-failure: ${{ inputs.cache-on-failure }}
