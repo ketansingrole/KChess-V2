@@ -237,6 +237,13 @@ before, `// gpui-lints: allow(<lint>) <reason>`.
   the background with its output in a file, and read the result when it finishes. Never wait in
   a loop (`sleep`, `until grep …; do sleep`, `while pgrep`): the tool reports when a background
   command ends, and `gh run watch` in the background reports when a CI run ends.
+- A background command that waits for input or hangs never ends, so its report never comes: a
+  local `cargo xtask check` once sat at a `[Y/n]` prompt for four and a half hours. Start each
+  long run with no input (`</dev/null`). Once it has run longer than it usually takes, or when you
+  pick work up again after a break or a summarised conversation, look at whether its output file
+  is still growing; when it has stopped, find out why and fix that, then start it again. Commands
+  that `cargo xtask` starts already get no input (`tooling/xtask/src/util.rs`), so a tool that
+  asks a question fails instead of waiting.
 - The development shell is zsh on macOS. Quote globs and `grep --include` patterns (an unmatched
   glob is an error in zsh), and do not call `timeout`, which macOS lacks: use the tool's own
   timeout or run the command in the background.
