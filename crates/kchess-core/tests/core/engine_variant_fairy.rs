@@ -58,12 +58,15 @@ async fn analyse(
 )]
 async fn crazyhouse_lines_drop_pieces_from_the_pockets() {
     let engine = support::engine("KCHESS_VARIANT_ENGINE_PATH");
-    // 1. e4 d5 2. exd5 Qxd5: a pawn each in hand.
+    // The knight in White's hand mates at once from f7, smothered by Black's own rook and pawns,
+    // and no move on the board mates: the best line must start with the drop. (An open position
+    // with a pawn each in hand left the drop to the engine's judgement: on 2026-11-20 its three
+    // depth-10 lines on CI were all board moves.)
     let update = analyse(
         engine,
-        "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3",
+        "6rk/6pp/8/8/8/8/8/4K3[N] w - - 0 1",
         "crazyhouse",
-        |update| update.lines.len() == 3 && update.depth >= 10.0,
+        |update| update.lines.first().is_some_and(|line| line.mate.is_some()),
     )
     .await;
     assert!(
@@ -71,14 +74,13 @@ async fn crazyhouse_lines_drop_pieces_from_the_pockets() {
         "{}",
         update.engine
     );
-    assert!(
-        update
-            .lines
-            .iter()
-            .any(|line| line.pv.iter().any(|mv| mv.contains('@'))),
-        "a drop in some line: {:?}",
-        update.lines
+    let best = &update.lines[0];
+    assert_eq!(
+        best.pv.first().map(String::as_str),
+        Some("N@f7"),
+        "{best:?}"
     );
+    assert_eq!(best.mate, Some(1.0), "{best:?}");
 }
 
 #[tokio::test]
