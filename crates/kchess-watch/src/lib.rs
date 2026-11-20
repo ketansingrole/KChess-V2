@@ -10,7 +10,7 @@
 use kchess_hack as _;
 
 use kchess_app::{accounts, core, loading, log, prefs, settings, timer};
-use kchess_board::{board, engine_view, game, notation, online, position_engine, widgets};
+use kchess_board::{board, engine_view, game, live_game, notation, position_engine, widgets};
 use kchess_ui::{dates, theme};
 
 use crate::loading::Epoch;
@@ -28,7 +28,7 @@ use shakmaty::Color;
 
 use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::game::surface::{Faces, Steps};
-use crate::online::OnlineHandle;
+use crate::live_game::LiveGameHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{KeyboardFocus as _, Look};
@@ -236,7 +236,7 @@ impl Focusable for WatchPage {
 impl WatchPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> WatchPage {
         let events = cx.global::<AppCore>().events.clone();
-        let online = cx.global::<OnlineHandle>().0.clone();
+        let online = cx.global::<LiveGameHandle>().0.clone();
         let accounts = crate::accounts::handle(cx);
         let covers = crate::remote_image::handle(cx);
         let subscriptions = vec![
@@ -318,7 +318,7 @@ impl WatchPage {
     }
 
     fn playing_own_game(cx: &App) -> bool {
-        cx.global::<OnlineHandle>().0.read(cx).busy_with_game()
+        cx.global::<LiveGameHandle>().0.read(cx).busy_with_game()
     }
 
     /// The page was shown: channels, presence and broadcasts afresh, and the feed again.
@@ -1462,5 +1462,46 @@ mod tests {
         });
         let tour = app.with_window(|_, cx| page.read(cx).broadcasts.tour.is_some());
         assert!(tour);
+        let toolbar = app.with_window(|_, cx| {
+            let palette = *cx.global::<crate::theme::Palette>();
+            page.update(cx, |page, cx| {
+                page.broadcasts_toolbar(cx, &palette).is_some()
+            })
+        });
+        assert!(toolbar, "an open tour has its toolbar");
+    }
+
+    /// Watch follows the live game: engine help (the engine's arrows, the grid's evaluation bars)
+    /// only while it is allowed, and its own feed stops while a game holds the connection.
+    #[gpui_kit::test]
+    fn watch_follows_the_live_game(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = kchess_board::testing::Started::new(cx);
+        app.wait_for_engine_help();
+        let read = |app: &mut kchess_board::testing::Started| {
+            app.with_window(|_, cx| {
+                (
+                    crate::broadcast_engine::assistance(cx),
+                    crate::broadcasts::grid_evaluations(cx),
+                    WatchPage::playing_own_game(cx),
+                )
+            })
+        };
+        let live = |app: &mut kchess_board::testing::Started, allowed: bool, busy: bool| {
+            app.with_window(|_, cx| {
+                kchess_board::live_game::handle(cx)
+                    .update(cx, |live, cx| live.set(allowed, busy, cx))
+            })
+        };
+        assert_eq!(read(&mut app), (true, true, false), "no live game");
+        app.with_window(|_, cx| {
+            crate::prefs::init(cx);
+            crate::prefs::set(cx, crate::broadcast_engine::GRID_EVALUATIONS, false);
+        });
+        assert_eq!(read(&mut app), (true, false, false), "the bars turned off");
+        app.with_window(|_, cx| {
+            crate::prefs::set(cx, crate::broadcast_engine::GRID_EVALUATIONS, true)
+        });
+        live(&mut app, false, true);
+        assert_eq!(read(&mut app), (false, false, true), "a live game");
     }
 }

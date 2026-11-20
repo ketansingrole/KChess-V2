@@ -122,6 +122,11 @@ fn status_line(
     }
 }
 
+/// The tour's grid shows evaluation bars: turned on, and engine help allowed.
+pub(super) fn grid_evaluations(cx: &App) -> bool {
+    crate::prefs::get(cx, GRID_EVALUATIONS, true) && super::broadcast_engine::assistance(cx)
+}
+
 /// The list's load failure shows (with its retry) on the directory, not over a search's results.
 fn shows_load_error(searching: bool, load_failed: bool) -> bool {
     !searching && load_failed
@@ -651,11 +656,7 @@ impl WatchPage {
                         .child(tour.name.clone()),
                 )
                 .when(self.broadcasts.current().is_none(), |bar| {
-                    let allowed = cx
-                        .global::<crate::online::OnlineHandle>()
-                        .0
-                        .read(cx)
-                        .assistance_allowed();
+                    let allowed = super::broadcast_engine::assistance(cx);
                     bar.child(
                         h_flex()
                             .gap(px(8.))
@@ -703,12 +704,7 @@ impl WatchPage {
             return self.broadcast_game(window, cx, palette);
         }
         let games = self.broadcasts.games.clone();
-        let grid_evaluations = crate::prefs::get(cx, GRID_EVALUATIONS, true)
-            && cx
-                .global::<crate::online::OnlineHandle>()
-                .0
-                .read(cx)
-                .assistance_allowed();
+        let grid_evaluations = grid_evaluations(cx);
         let cells: Vec<AnyElement> = games
             .iter()
             .enumerate()

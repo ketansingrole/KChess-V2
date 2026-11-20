@@ -24,7 +24,7 @@ use crate::board::{Arrow, BoardEvent, ChessBoard};
 use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::game::tree::TreeNode;
 use crate::game::view;
-use crate::online::OnlineHandle;
+use crate::live_game::LiveGameHandle;
 use crate::position_engine::{EngineLook, PositionEngine};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
@@ -330,7 +330,11 @@ impl GuessMoves {
     /// Whether the engine can judge guesses now: installed, and no live Lichess game going on.
     fn engine_usable(&self, cx: &App) -> bool {
         self.engine_ready == Some(true)
-            && cx.global::<OnlineHandle>().0.read(cx).assistance_allowed()
+            && cx
+                .global::<LiveGameHandle>()
+                .0
+                .read(cx)
+                .assistance_allowed()
     }
 
     /// Whether the core has said if the engine is installed; `forget` makes it unsaid again.
@@ -1170,5 +1174,30 @@ mod tests {
         assert_eq!(eval_of(&ahead, Color::Black), Some(Eval::Cp(-31)));
         let mate = line(None, Some(-2.));
         assert_eq!(eval_of(&mate, Color::Black), Some(Eval::Mate(2)));
+    }
+
+    /// The engine judges guesses only once it is installed and while no live Lichess game holds
+    /// engine help back.
+    #[gpui_kit::test]
+    fn the_engine_judges_only_when_installed_and_allowed(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = kchess_board::testing::Started::new(cx);
+        app.wait_for_engine_help();
+        let page = app.with_window(|window, cx| cx.new(|cx| super::GuessMoves::new(window, cx)));
+        let usable =
+            |app: &mut kchess_board::testing::Started, ready: Option<bool>, allowed: bool| {
+                app.with_window(|_, cx| {
+                    kchess_board::live_game::handle(cx)
+                        .update(cx, |live, cx| live.set(allowed, false, cx));
+                    page.update(cx, |page, cx| {
+                        page.engine_ready = ready;
+                        page.engine_usable(cx)
+                    })
+                })
+            };
+        assert!(usable(&mut app, Some(true), true));
+        assert!(!usable(&mut app, Some(true), false), "a live game");
+        assert!(!usable(&mut app, Some(false), true), "not installed");
+        assert!(!usable(&mut app, None, true), "not known yet");
     }
 }

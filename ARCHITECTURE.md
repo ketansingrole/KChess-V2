@@ -5,7 +5,8 @@ The workspace's one map; the other documents link here.
 ```text
 apps/
   gpui/                  The app: the shell, Settings, the updater and the pages that change most
-                         (analysis, Online, Players, Openings, the Computer page, …)
+                         (analysis, Online, Players, Openings, the Computer page, …) and the
+                         live Lichess game
     assets/              Boards, pieces, sounds and icons embedded in the app
     build/               App icons (written by `cargo xtask app-icon`)
     src/e2e/             End-to-end tests that drive the whole app headless
@@ -27,8 +28,8 @@ crates/
   kchess-app/            The app's services: the core as the app holds it, Settings, view
                          preferences, the log, a page's loading, quitting
   kchess-board/          The board and what every board page shares: game sessions, notation,
-                         sounds, voice and the microphone, the live Lichess game, the puzzle
-                         board and database, exporting games, finding players
+                         sounds, voice and the microphone, what pages know of the live game,
+                         the puzzle board and database, exporting games, finding players
   kchess-nav/            Pages as the shell drives them: what a page declares, opening one from
                          another, the board pages' layout
   kchess-home/           The Home page
