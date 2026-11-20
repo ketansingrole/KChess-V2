@@ -272,8 +272,10 @@ mod tests {
             file!()
         );
         let start = log.find(&at).unwrap_or_else(|| panic!("{at} not in {log}"));
+        // Its frames, not their names: Linux builds are linked with every symbol stripped
+        // (`.cargo/config.toml`), so there each frame reads `<unknown>`.
         let after = &log[start..];
-        assert!(after.contains("describe"), "a backtrace follows: {after}");
+        assert!(after.contains("\n   0: "), "a backtrace follows: {after}");
     }
 
     /// macOS keeps its crash reports in the user's `Library/Logs/DiagnosticReports`; elsewhere
