@@ -4334,6 +4334,7 @@ dependencies = [
  "kchess-domain",
  "kchess-games",
  "kchess-hack",
+ "kchess-testkit",
  "kchess-ui",
  "objc2 0.6.5",
  "objc2-av-foundation",

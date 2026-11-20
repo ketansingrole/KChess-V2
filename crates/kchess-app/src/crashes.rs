@@ -276,6 +276,18 @@ mod tests {
         assert!(after.contains("describe"), "a backtrace follows: {after}");
     }
 
+    /// macOS keeps its crash reports in the user's `Library/Logs/DiagnosticReports`; elsewhere
+    /// there is no folder to look in.
+    #[test]
+    fn crash_reports_are_looked_for_where_macos_keeps_them() {
+        kchess_host::env::set("HOME", "/Users/someone");
+        let found = crash_reports();
+        kchess_host::env::reset("HOME");
+        let expected = cfg!(target_os = "macos")
+            .then(|| PathBuf::from("/Users/someone/Library/Logs/DiagnosticReports"));
+        assert_eq!(found, expected);
+    }
+
     /// Watching marks this run; closing removes the mark; a second close does nothing.
     #[test]
     fn this_run_is_marked_until_it_quits() {

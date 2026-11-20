@@ -168,12 +168,30 @@ fn played_games(cx: &App, limit: usize) -> Vec<PlayedGame> {
     games.into_iter().take(limit).cloned().collect()
 }
 
+/// The account whose activity Home shows: the one chosen to play online (`active`), else the
+/// first Chess.com player's games.
+fn shown_account(
+    active: Option<String>,
+    chesscom: &[kchess_contracts::types::ChesscomAccount],
+) -> Option<String> {
+    active.or_else(|| {
+        chesscom
+            .first()
+            .map(|player| kchess_domain::chesscom::account_of(&player.username))
+    })
+}
+
 impl HomePage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> HomePage {
         let played = cx.global::<PlayedHandle>().0.clone();
         // The last game's opening shows only while opening names are.
         let settings = cx.global::<crate::settings::SettingsHandle>().0.clone();
         let home = cx.entity().downgrade();
+        // The account whose activity shows, as the accounts and the account chosen are now.
+        let now = |cx: &App| {
+            let accounts = crate::accounts::handle(cx).read(cx);
+            shown_account(accounts.active(cx), accounts.chesscom())
+        };
         let mut page = HomePage {
             continue_game: None,
             board: None,
@@ -188,14 +206,14 @@ impl HomePage {
                 cx.observe_in(
                     &crate::accounts::handle(cx),
                     window,
-                    |home, _, window, cx| {
-                        home.follow_activity(window, cx);
+                    move |home, _, window, cx| {
+                        home.follow_activity(now(cx), window, cx);
                         cx.notify();
                     },
                 ),
                 cx.observe_global_in::<kchess_app::prefs::ViewPreferences>(
                     window,
-                    |home, window, cx| home.follow_activity(window, cx),
+                    move |home, window, cx| home.follow_activity(now(cx), window, cx),
                 ),
                 cx.observe(&settings, |_, _, cx| cx.notify()),
                 // Another window started or ended a game against the computer.
@@ -208,27 +226,19 @@ impl HomePage {
                 ),
             ],
         };
-        page.follow_activity(window, cx);
+        page.follow_activity(now(cx), window, cx);
         page.refresh(cx);
         page
     }
 
-    /// The account whose activity Home shows: the one chosen to play online, else the first
-    /// Chess.com player's games.
-    fn shown_account(cx: &App) -> Option<String> {
-        let accounts = crate::accounts::handle(cx);
-        let accounts = accounts.read(cx);
-        accounts.active(cx).or_else(|| {
-            accounts
-                .chesscom()
-                .first()
-                .map(|player| kchess_domain::chesscom::account_of(&player.username))
-        })
-    }
-
-    /// Show the activity of the account shown now, loading it when that account changed.
-    fn follow_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(account) = Self::shown_account(cx) else {
+    /// Show `account`'s activity (`shown_account`), loading it when the account changed.
+    fn follow_activity(
+        &mut self,
+        account: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(account) = account else {
             if self.activity.take().is_some() {
                 cx.notify();
             }
@@ -911,6 +921,63 @@ mod tests {
             shell
         });
         assert_eq!(*shell.opened.borrow(), ["History"]);
+    }
+
+    /// The activity is the account chosen to play online's, else the first Chess.com player's.
+    #[test]
+    fn the_activity_shown_is_the_chosen_accounts_else_a_chesscom_players() {
+        let player = |name: &str| kchess_contracts::types::ChesscomAccount {
+            username: name.into(),
+            added_at: 0,
+            last_synced_at: None,
+        };
+        let players = [player("Hikaru"), player("Magnus")];
+        assert_eq!(
+            super::shown_account(Some("alice".into()), &players),
+            Some("alice".into())
+        );
+        assert_eq!(
+            super::shown_account(None, &players),
+            Some(kchess_domain::chesscom::account_of("Hikaru"))
+        );
+        assert_eq!(super::shown_account(None, &[]), None);
+    }
+
+    /// The activity follows the account: another account loads in the same card, the same one
+    /// keeps it, and none takes it away.
+    #[gpui_kit::test]
+    fn the_activity_follows_the_account_shown(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = kchess_board::testing::Started::new(cx);
+        let page = app.with_window(|window, cx| {
+            crate::played::init(&Default::default(), cx);
+            cx.new(|cx| super::HomePage::new(window, cx))
+        });
+        let shown = |app: &mut kchess_board::testing::Started| {
+            app.with_window(|_, cx| {
+                let page = page.read(cx);
+                page.activity
+                    .as_ref()
+                    .map(|(account, view)| (account.clone(), view.entity_id()))
+            })
+        };
+        let follow = |account: Option<&str>, app: &mut kchess_board::testing::Started| {
+            app.with_window(|window, cx| {
+                page.update(cx, |page, cx| {
+                    page.follow_activity(account.map(str::to_string), window, cx)
+                })
+            })
+        };
+        assert_eq!(shown(&mut app), None, "no account, no activity");
+        follow(Some("alice"), &mut app);
+        let (account, card) = shown(&mut app).expect("alice's activity");
+        assert_eq!(account, "alice");
+        follow(Some("alice"), &mut app);
+        assert_eq!(shown(&mut app), Some(("alice".into(), card)));
+        follow(Some("bob"), &mut app);
+        assert_eq!(shown(&mut app), Some(("bob".into(), card)), "the same card");
+        follow(None, &mut app);
+        assert_eq!(shown(&mut app), None);
     }
 
     /// A 1000px window with the sidebar open leaves Home about 680px: the tiles once shared

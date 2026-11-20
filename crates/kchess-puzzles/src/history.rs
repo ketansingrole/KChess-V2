@@ -3,6 +3,7 @@
 //! list, each to try again or study on the analysis board; with today's and all-time totals.
 
 use crate::loading::Epoch;
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
@@ -642,6 +643,7 @@ impl Render for PuzzleHistory {
         };
         div()
             .id("puzzle-history")
+            .test_support()
             .size_full()
             .overflow_y_scroll()
             .child(

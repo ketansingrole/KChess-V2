@@ -430,7 +430,7 @@ fn steps_for(files: &[String], selection: &Selection) -> Vec<(&'static str, Chec
         steps.push(("workspace hack", crate::hack::check));
     }
     if any(crate::gpui_lints::reads) {
-        steps.push(("GPUI lints", crate::gpui_lints::check));
+        steps.push(("GPUI lints", || crate::gpui_lints::check(&root())));
     }
     if any(|file| file.starts_with("fuzz/")) || selection.tests(FUZZED) {
         steps.push(("fuzz targets", fuzz_targets));

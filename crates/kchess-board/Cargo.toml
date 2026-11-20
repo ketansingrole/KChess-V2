@@ -58,6 +58,8 @@ gpui-kit = { version = "=0.10.0", features = ["test-support"] }
 kchess-app = { workspace = true, features = ["test-support"] }
 # Scratch folders for the export tests.
 tempfile = "3"
+# A stand-in Lichess for the puzzle database's download (`puzzle_db.rs`).
+kchess-testkit.workspace = true
 
 [lints]
 workspace = true

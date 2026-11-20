@@ -2096,6 +2096,69 @@ mod tests {
         assert_eq!(*shell.opened.borrow(), ["Puzzles", "Puzzles"]);
     }
 
+    /// A tab is told it is shown where it is chosen, never while the page draws: History and
+    /// Stats read the account as they come into view, the page draws the chosen tab's view, and
+    /// leaving Puzzle Rush ends a run under way.
+    #[gpui_kit::test]
+    fn a_tab_is_shown_as_it_is_chosen_and_leaving_rush_ends_its_run(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use gpui_kit::AppContext as _;
+        use gpui_kit::test::TestWindowExt as _;
+        let mut app = kchess_board::testing::Started::new(cx);
+        let (window, page) = app.with_window(|_, cx| {
+            crate::puzzle_db::init(cx);
+            Tab::Train.store(cx);
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                cx.new(|cx| super::PuzzlesPage::new(window, cx))
+            })
+            .expect("a window")
+        });
+        let choose = |tab: Tab, app: &mut kchess_board::testing::Started| {
+            app.with_window(|_, cx| tab.store(cx));
+            app.cx().run_until_parked();
+            app.cx()
+                .update_window(window, |_, window, cx| window.render_frame(cx))
+                .expect("the window");
+        };
+        let shown = |app: &mut kchess_board::testing::Started| {
+            app.with_window(|_, cx| {
+                let page = page.read(cx);
+                (
+                    page.shown_tab.clone(),
+                    page.history.is_some(),
+                    page.stats.is_some(),
+                )
+            })
+        };
+        let draws = |id: &'static str, app: &mut kchess_board::testing::Started| {
+            app.cx()
+                .update_window(window, |_, window, _| window.try_find(id).is_some())
+                .expect("the window")
+        };
+        app.with_window(|window, cx| page.update(cx, |page, cx| page.shown(window, cx)));
+        assert_eq!(shown(&mut app), ("train".into(), false, false));
+
+        choose(Tab::History, &mut app);
+        assert_eq!(shown(&mut app), ("history".into(), true, false));
+        assert!(draws("puzzle-history", &mut app));
+        assert!(app.with_window(|_, cx| page.read(cx).daily.is_none()));
+        choose(Tab::Stats, &mut app);
+        assert_eq!(shown(&mut app), ("stats".into(), true, true));
+        assert!(draws("puzzle-stats", &mut app));
+        choose(Tab::Daily, &mut app);
+        assert!(app.with_window(|_, cx| page.read(cx).daily.is_some()));
+
+        choose(Tab::Rush, &mut app);
+        assert_eq!(shown(&mut app).0, "rush");
+        let rush = app.with_window(|_, cx| page.read(cx).rush.clone().expect("Rush is drawn"));
+        app.with_window(|_, cx| {
+            rush.update(cx, |rush, _| rush.stage = super::rush::Stage::Running)
+        });
+        choose(Tab::Train, &mut app);
+        assert!(app.with_window(|_, cx| rush.read(cx).stage != super::rush::Stage::Running));
+    }
+
     /// The command palette offers each of the page's tabs.
     #[gpui_kit::test]
     fn each_tab_is_a_place_to_go(cx: &mut gpui_kit::TestAppContext) {

@@ -44,10 +44,17 @@ impl Render for Gallery {
             .bg(palette.bg)
             .text_color(palette.text);
         let mut group = None;
+        let mut groups = 0usize;
         for (index, sample) in self.samples.iter().enumerate() {
             if group != Some(sample.group) {
                 group = Some(sample.group);
-                column = column.child(widgets::heading(sample.group, &palette));
+                column = column.child(
+                    div()
+                        .id(("group", groups))
+                        .test_support()
+                        .child(widgets::heading(sample.group, &palette)),
+                );
+                groups += 1;
             }
             column = column.child(
                 v_flex()
@@ -329,6 +336,48 @@ mod tests {
             })
             .unwrap();
         }
+    }
+
+    /// Each group is headed once, above its samples.
+    #[gpui_kit::test]
+    fn each_group_is_headed_once(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        cx.update(|cx| cx.set_global(Palette::of(&colors("kchess", &[], false), false)));
+        let mut groups: Vec<&str> = samples().iter().map(|sample| sample.group).collect();
+        groups.dedup();
+        let window = cx.add_window(|_, _| Gallery::new(samples()));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            for index in 0..groups.len() {
+                assert!(window.try_find(("group", index)).is_some(), "group {index}");
+            }
+            assert!(window.try_find(("group", groups.len())).is_none());
+        })
+        .unwrap();
+    }
+
+    /// The pills show choices as the pages' do: several, named, with a count and a disabled one.
+    #[test]
+    fn the_samples_choices_are_the_pages_kind() {
+        let names: Vec<String> = super::tabs()
+            .into_iter()
+            .map(|(icon, label)| format!("{}{label}", if icon.is_some() { "+" } else { "" }))
+            .collect();
+        assert_eq!(names, ["+Games", "+Tournaments", "Studies"]);
+        let pills: Vec<(String, Option<String>, bool)> = super::pills()
+            .into_iter()
+            .map(|pill| {
+                (
+                    pill.label.to_string(),
+                    pill.badge.map(|b| b.to_string()),
+                    pill.disabled,
+                )
+            })
+            .collect();
+        assert_eq!(pills.len(), 4);
+        assert_eq!(pills[1], ("Rated".into(), Some("12".into()), false));
+        assert!(pills[3].2, "a disabled choice");
+        assert!(samples().len() >= 16, "every widget's samples");
     }
 
     /// Samples are listed by group, each group in one run, so the gallery heads each once.

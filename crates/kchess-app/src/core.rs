@@ -274,6 +274,24 @@ mod tests {
     use super::{Answer, Reads};
     use kchess_contracts::types::ProfileArea;
 
+    /// Closing an embedded core ends it: what is asked of it afterwards fails.
+    #[gpui_kit::test]
+    fn a_closed_core_answers_nothing_more(cx: &mut gpui_kit::TestAppContext) {
+        let _core = cx.update(crate::tests::start_core);
+        let core = cx.read(|cx| cx.global::<super::AppCore>().clone());
+        assert!(
+            core.bridge
+                .request_now(kchess_contracts::calls::Usage {})
+                .is_ok()
+        );
+        core.bridge.close();
+        assert!(
+            core.bridge
+                .request_now(kchess_contracts::calls::Usage {})
+                .is_err()
+        );
+    }
+
     /// 2026-11-15: a cloud evaluation the next position replaced kept running in the core, since
     /// the app's call ran detached on the core's runtime; dropping it now ends the work.
     #[test]

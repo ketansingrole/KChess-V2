@@ -21,7 +21,7 @@ use syn::spanned::Spanned as _;
 use syn::visit::{self, Visit};
 
 use crate::members::APP_SOURCES;
-use crate::util::{Result, root};
+use crate::util::Result;
 
 /// What one lint found: where, which lint, and what to do instead.
 #[derive(Debug, PartialEq)]
@@ -285,8 +285,8 @@ fn is_test_file(path: &str) -> bool {
     path.contains("/e2e/") || path.contains("/tests/") || path.ends_with("/tests.rs")
 }
 
-/// Every finding in `repo`'s app sources, as `path:line: lint: message`.
-fn check_in(repo: &Path) -> Result {
+/// Every finding in `repo`'s app sources, as `path:line: lint: message`: `cargo xtask lints`.
+pub fn check(repo: &Path) -> Result {
     let mut files = Vec::new();
     for dir in APP_SOURCES {
         crate::util::sources_under(repo, dir, &mut files)?;
@@ -310,11 +310,6 @@ fn check_in(repo: &Path) -> Result {
         if found.len() == 1 { "" } else { "s" },
         found.join("\n")
     ))
-}
-
-/// `cargo xtask lints`.
-pub fn check() -> Result {
-    check_in(&root())
 }
 
 /// Whether a change to `file` can add a finding: an app source.
@@ -442,10 +437,74 @@ fn a_test(cx: &mut TestAppContext) {
         assert_eq!(lints_of(text), [("notify_in_render", 7)]);
     }
 
+    #[test]
+    fn a_module_is_read_unless_it_is_a_test_module_and_a_feature_is_no_test() {
+        let text = r#"
+mod views {
+    impl Render for Board {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            cx.notify();
+        }
+    }
+}
+#[cfg(feature = "bench")]
+impl Render for Probe {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        cx.notify();
+    }
+}
+"#;
+        assert_eq!(
+            lints_of(text),
+            [("notify_in_render", 5), ("notify_in_render", 12)]
+        );
+    }
+
+    #[test]
+    fn an_update_in_a_closure_run_inside_the_update_is_reentrant_too() {
+        let text = r#"
+fn sync(board: &Entity<Board>, cx: &mut App) {
+    board.update(cx, |_, cx| {
+        moves.iter().for_each(|_| board.update(cx, |_, _| {}));
+    });
+}
+"#;
+        assert_eq!(lints_of(text), [("reentrant_update", 4)]);
+    }
+
+    #[test]
+    fn test_files_are_known_by_their_path() {
+        assert!(is_test_file("apps/gpui/src/e2e/shell.rs"));
+        assert!(is_test_file("crates/kchess-core/tests/core/lichess.rs"));
+        assert!(is_test_file("crates/kchess-ui/src/widgets/tests.rs"));
+        assert!(!is_test_file("crates/kchess-ui/src/widgets/panel.rs"));
+    }
+
+    /// A whole tree: a mistake in an app source is reported with its path and line, and the same
+    /// mistake in a test file is not.
+    #[test]
+    fn a_tree_is_checked_but_its_tests() {
+        let repo = tempfile::tempdir().expect("a scratch tree");
+        for dir in APP_SOURCES {
+            std::fs::create_dir_all(repo.path().join(dir)).expect("a source folder");
+        }
+        let view = "impl Render for V {\n    fn render(&mut self, cx: &mut Context<Self>) {\n        cx.notify();\n    }\n}\n";
+        std::fs::create_dir_all(repo.path().join("apps/gpui/src/e2e")).expect("e2e");
+        std::fs::write(repo.path().join("apps/gpui/src/e2e/probe.rs"), view).expect("a test");
+        assert_eq!(check(repo.path()), Ok(()));
+        std::fs::write(repo.path().join("crates/kchess-ui/src/view.rs"), view).expect("a view");
+        let found = check(repo.path()).expect_err("the view's notify");
+        assert!(
+            found.contains("1 GPUI mistake ")
+                && found.contains("crates/kchess-ui/src/view.rs:3: notify_in_render: "),
+            "{found}"
+        );
+    }
+
     /// The app keeps every rule: a finding fails here with its file and line.
     #[test]
     fn the_app_keeps_the_gpui_rules() {
-        check_in(&root()).unwrap_or_else(|found| panic!("{found}"));
+        check(&crate::util::root()).unwrap_or_else(|found| panic!("{found}"));
     }
 
     #[test]

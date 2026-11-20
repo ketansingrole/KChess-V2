@@ -330,3 +330,41 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
                 .child(error)
         }))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    use super::PuzzleDbHandle;
+    use crate::testing::Started;
+
+    /// Cancel stops a download under way: the install ends at once, with nothing installed.
+    #[gpui_kit::test]
+    fn cancel_stops_the_download_under_way(cx: &mut gpui_kit::TestAppContext) {
+        let asked = Arc::new(AtomicBool::new(false));
+        let server = {
+            let asked = Arc::clone(&asked);
+            // The database's first bytes never come, as from a stalled connection.
+            kchess_testkit::Server::start(move |request, out| {
+                if !request.target.starts_with("/database/") {
+                    return kchess_testkit::respond(out, 404, "text/plain", b"");
+                }
+                asked.store(true, Ordering::SeqCst);
+                kchess_testkit::ndjson_stream(out, Vec::new(), Duration::MAX, || true, |_| None)
+            })
+            .expect("a stand-in Lichess")
+        };
+        let mut app = Started::with_lichess(cx, Some(server.base().to_string()));
+        let db = app.with_window(|_, cx| {
+            super::init(cx);
+            cx.global::<PuzzleDbHandle>().0.clone()
+        });
+        app.with_window(|_, cx| db.update(cx, |db, cx| db.install(cx)));
+        app.wait_for("the download to start", |_, _| asked.load(Ordering::SeqCst));
+        app.with_window(|_, cx| db.update(cx, |db, cx| db.cancel(cx)));
+        app.wait_for("the install to end", |_, cx| db.read(cx).progress.is_none());
+        assert!(app.with_window(|_, cx| db.read(cx).error.is_none()));
+    }
+}

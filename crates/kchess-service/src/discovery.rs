@@ -117,8 +117,12 @@ fn socket_dir(base: &Path, uid: u32, name: &str, sandboxed: bool) -> PathBuf {
 
 /// The pipe of `profile`'s core, per user.
 #[cfg(windows)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the user Windows signed in, which names the pipe; no test switches it"
+)]
 pub fn socket_path(profile: &Path) -> std::io::Result<PathBuf> {
-    let user = kchess_host::env::var("USERNAME").unwrap_or_default();
+    let user = std::env::var("USERNAME").unwrap_or_default();
     let mut hash = Sha256::new();
     hash.update(user.as_bytes());
     hash.update(profile.to_string_lossy().as_bytes());

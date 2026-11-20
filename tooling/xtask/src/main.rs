@@ -276,7 +276,7 @@ const COMMANDS: &[Command] = &[
             "",
             "Find the GPUI mistakes that compile and fail at run time (AGENTS.md)",
         )],
-        run: |_| gpui_lints::check(),
+        run: |_| gpui_lints::check(&util::root()),
     },
     Command {
         name: "icons",

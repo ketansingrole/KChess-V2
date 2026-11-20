@@ -58,6 +58,18 @@ pub fn opens_in_browser(url: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// Only a Mac build in the App Sandbox, which names its container, is the App Store's.
+    #[test]
+    fn only_a_sandboxed_mac_build_is_the_app_stores() {
+        env::set("APP_SANDBOX_CONTAINER_ID", "com.kchess.app");
+        let sandboxed = app_store();
+        env::unset("APP_SANDBOX_CONTAINER_ID");
+        let plain = app_store();
+        env::reset("APP_SANDBOX_CONTAINER_ID");
+        assert_eq!(sandboxed, cfg!(target_os = "macos"));
+        assert!(!plain);
+    }
+
     #[test]
     fn only_web_pages_and_this_machine_open() {
         assert!(opens_in_browser("https://lichess.org/oauth?state=x"));
