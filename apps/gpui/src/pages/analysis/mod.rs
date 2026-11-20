@@ -324,15 +324,9 @@ pub struct AnalysisPage {
     evaluations: HashMap<String, AnalysisUpdate>,
     /// The cache's keys, oldest first.
     order: VecDeque<String>,
-    live: Option<AnalysisUpdate>,
-    engine_error: Option<String>,
-    engine_busy: bool,
-    /// The position the running search is for, and the request's ids.
-    wanted: String,
-    client_id: u64,
-    /// The client id of the last search sent to the core, which a stop names.
-    engine_started: Option<u64>,
-    latest_id: u64,
+    /// The search of the position shown, as every board searches one: its latest update, error
+    /// and whether it runs.
+    search: crate::position_engine::PositionEngine,
     cloud: Option<kchess_contracts::types::CloudEval>,
     cloud_busy: bool,
     cloud_error: Option<String>,
@@ -581,13 +575,7 @@ impl AnalysisPage {
             engine_identity: None,
             evaluations: HashMap::new(),
             order: VecDeque::new(),
-            live: None,
-            engine_error: None,
-            engine_busy: false,
-            wanted: String::new(),
-            client_id: 0,
-            engine_started: None,
-            latest_id: 0,
+            search: Default::default(),
             cloud: None,
             cloud_busy: false,
             cloud_error: None,
@@ -963,7 +951,7 @@ impl AnalysisPage {
     fn clear_evaluations(&mut self) {
         self.evaluations.clear();
         self.order.clear();
-        self.live = None;
+        self.search.update = None;
     }
 
     fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
