@@ -1,5 +1,7 @@
 //! What the board's tests and the pages' share: the app as a board page needs it.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui_kit::{AnyWindowHandle, App, AppContext as _, Context, IntoElement, Render, Window};
@@ -48,11 +50,29 @@ impl Started {
                 .expect("a window")
                 .0
         });
-        Started {
+        let mut started = Started {
             cx: cx.clone(),
             window,
             _core: core,
-        }
+        };
+        // The app's live game asks the core for a game left running as it starts, and the core
+        // lends engine help only once that check has answered: ask it here, and wait.
+        let checked = Arc::new(AtomicBool::new(false));
+        started.with_window(|_, cx| {
+            let check = cx
+                .global::<kchess_app::core::AppCore>()
+                .request(kchess_contracts::calls::ResumeOnline {});
+            let checked = Arc::clone(&checked);
+            cx.background_spawn(async move {
+                check.await.expect("the check for a game in progress");
+                checked.store(true, Ordering::SeqCst);
+            })
+            .detach();
+        });
+        started.wait_for("the check for a game in progress", |_, _| {
+            checked.load(Ordering::SeqCst)
+        });
+        started
     }
 
     /// Work in the window, as a page's views are made and changed.
