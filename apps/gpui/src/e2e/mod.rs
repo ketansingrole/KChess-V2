@@ -775,7 +775,7 @@ fn environment() {
     static SET: OnceLock<()> = OnceLock::new();
     SET.get_or_init(|| {
         let engine = engine();
-        let lichess = std::env::var("KCHESS_E2E_LICHESS").unwrap_or_else(|_| fake_lichess::base());
+        let lichess = kchess_host::env::var("KCHESS_E2E_LICHESS").unwrap_or_else(fake_lichess::base);
         set("KCHESS_CORE_MODE", "embedded");
         // The scripted engine in its `search` mode, which a copy's name chooses.
         set("KCHESS_ENGINE_PATH", &engine);
@@ -847,6 +847,7 @@ fn engine() -> PathBuf {
     if target.file_name().is_some_and(|name| name == "release") {
         build.arg("--release");
     }
+    #[expect(clippy::disallowed_methods, reason = "the test waits for the build it needs")]
     let status = build.status().expect("cargo runs");
     assert!(status.success(), "the scripted engine builds");
     let copy = target.join(format!("engine-search{}", std::env::consts::EXE_SUFFIX));

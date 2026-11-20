@@ -229,7 +229,7 @@ mod tests {
             text.push_str("];\n");
         }
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/misc/unicode_tables.rs");
-        if std::env::var_os("KCHESS_WRITE_UNICODE").is_some() {
+        if kchess_host::env::var_os("KCHESS_WRITE_UNICODE").is_some() {
             std::fs::write(path, &text).expect("write tables");
         }
         // A Windows checkout with `core.autocrlf` has the file in CRLF.

@@ -10,7 +10,7 @@ pub use redact::redact;
 /// sets `APP_SANDBOX_CONTAINER_ID` for the app and every program it starts. The App Store updates
 /// it and forbids downloading programs, so its updater and the Stockfish download stay off.
 pub fn app_store() -> bool {
-    cfg!(target_os = "macos") && std::env::var_os("APP_SANDBOX_CONTAINER_ID").is_some()
+    cfg!(target_os = "macos") && env::var_os("APP_SANDBOX_CONTAINER_ID").is_some()
 }
 
 /// Whether this build honours the development overrides: the test switches (`Config::test`), and

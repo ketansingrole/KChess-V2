@@ -1,5 +1,10 @@
 //! The helper as the core starts it, up to loading libvosk (which these tests do not ship).
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test waits for the programs it runs, on its own thread (allowed: some platforms run none)"
+)]
+
 use std::process::Command;
 
 fn helper(args: &[&str]) -> (Option<i32>, String) {

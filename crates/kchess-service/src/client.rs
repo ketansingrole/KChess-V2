@@ -450,6 +450,7 @@ fn launch(profile: &Path, start: &Start) -> Result<(), ConnectError> {
     })?;
     // Reaped when it ends, so a core that stops while this app runs leaves no zombie behind.
     std::thread::spawn(move || {
+        #[expect(clippy::disallowed_methods, reason = "on a thread of its own, for the core's life")]
         let _ = child.wait();
     });
     Ok(())

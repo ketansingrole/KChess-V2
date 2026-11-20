@@ -2,6 +2,11 @@
 //! the checks at `hello`, the version check and the idle stop. Starting the service binary sets
 //! the runtime folder in the environment, so it runs in a binary of its own (`service_start.rs`).
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test waits for the programs it runs, on its own thread (allowed: some platforms run none)"
+)]
+
 use std::path::Path;
 use std::time::Duration;
 

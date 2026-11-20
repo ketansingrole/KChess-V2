@@ -91,8 +91,8 @@ fn private_dir(dir: &Path) -> std::io::Result<()> {
 pub fn socket_path(profile: &Path) -> std::io::Result<PathBuf> {
     let uid = rustix::process::getuid().as_raw();
     let name = format!("core-{}.sock", profile_hash(profile));
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
-        .or_else(|| std::env::var_os("TMPDIR"))
+    let base = kchess_host::env::var_os("XDG_RUNTIME_DIR")
+        .or_else(|| kchess_host::env::var_os("TMPDIR"))
         .map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
     let dir = socket_dir(&base, uid, &name, kchess_host::app_store());
     private_dir(&dir)?;
@@ -118,7 +118,7 @@ fn socket_dir(base: &Path, uid: u32, name: &str, sandboxed: bool) -> PathBuf {
 /// The pipe of `profile`'s core, per user.
 #[cfg(windows)]
 pub fn socket_path(profile: &Path) -> std::io::Result<PathBuf> {
-    let user = std::env::var("USERNAME").unwrap_or_default();
+    let user = kchess_host::env::var("USERNAME").unwrap_or_default();
     let mut hash = Sha256::new();
     hash.update(user.as_bytes());
     hash.update(profile.to_string_lossy().as_bytes());
@@ -194,15 +194,15 @@ pub fn runtime_dir() -> Option<PathBuf> {
         return Some(PathBuf::from(dir).join("core"));
     }
     #[cfg(target_os = "macos")]
-    let base = std::env::var_os("HOME")
+    let base = kchess_host::env::var_os("HOME")
         .map(|home| PathBuf::from(home).join("Library/Application Support/KChess Runtime"));
     #[cfg(windows)]
     let base =
-        std::env::var_os("LOCALAPPDATA").map(|local| PathBuf::from(local).join("KChess Runtime"));
+        kchess_host::env::var_os("LOCALAPPDATA").map(|local| PathBuf::from(local).join("KChess Runtime"));
     #[cfg(all(unix, not(target_os = "macos")))]
-    let base = std::env::var_os("XDG_DATA_HOME")
+    let base = kchess_host::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+        .or_else(|| kchess_host::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
         .map(|data| data.join("kchess-runtime"));
     base.map(|base| base.join("core"))
 }

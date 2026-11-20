@@ -75,6 +75,10 @@ fn system_reduces_motion() -> bool {
 
 /// GNOME's (and its derivatives') Animations switch, else KDE's animation speed at "Instant".
 #[cfg(target_os = "linux")]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "`refresh` runs it on the background executor"
+)]
 fn system_reduces_motion() -> bool {
     let gnome = std::process::Command::new("gsettings")
         .args(["get", "org.gnome.desktop.interface", "enable-animations"])

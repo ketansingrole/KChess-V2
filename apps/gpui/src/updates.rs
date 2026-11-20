@@ -194,7 +194,7 @@ pub fn offer(release: &Release, current: &str, package: Option<Package>) -> Opti
 
 /// How the running app was installed, if it was.
 fn installed() -> Option<Install> {
-    let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
+    let appimage = kchess_host::env::var_os("APPIMAGE").map(PathBuf::from);
     detect(
         std::env::consts::OS,
         &std::env::current_exe().ok()?,
@@ -759,6 +759,10 @@ async fn download_signed(
 
 /// Unpack a macOS update's zip into `folder`; the `.app` it holds. The zip stays where it was
 /// kept, so a later start can unpack it again.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the updater's own thread runs it (`on_runtime`); allowed, not expected, since some platforms' builds have no such call"
+)]
 fn unpack(archive: &Path, folder: &Path) -> Result<PathBuf, String> {
     let unpacked = folder.join("app");
     let _ = std::fs::remove_dir_all(&unpacked);
@@ -804,6 +808,10 @@ fn signed_alike(running: &Signer, update: &Signer) -> Result<(), String> {
 }
 
 /// The signature of `path`, a bundle or program of `package`'s kind.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the updater's own thread runs it (`on_runtime`); allowed, not expected, since some platforms' builds have no such call"
+)]
 fn signer(package: Package, path: &Path) -> Signer {
     match package {
         Package::MacZip => {
@@ -1020,6 +1028,10 @@ fn developer_requirement(app: &str, team: &str) -> String {
 }
 
 /// Whether the bundle at `path` passes `codesign --verify` against `requirement`.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the updater's own thread runs it (`on_runtime`); allowed, not expected, since some platforms' builds have no such call"
+)]
 fn meets_requirement(path: &Path, requirement: &str) -> bool {
     Command::new("codesign")
         .args(["--verify", "--deep", "--strict", "-R", requirement])
@@ -1031,6 +1043,10 @@ fn meets_requirement(path: &Path, requirement: &str) -> bool {
 
 /// Put the staged update in place of `install`, which `lock` holds; with `reopen`, open the new
 /// KChess once this one has quit.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "off the UI thread (`on_runtime`), or at quit once the windows are closed; allowed, not expected, since some platforms' builds have no such call"
+)]
 fn apply(staged: &Path, install: &Install, lock: &InstallLock, reopen: bool) -> Result<(), String> {
     match install.package {
         Package::MacZip => {

@@ -4430,6 +4430,8 @@ dependencies = [
  "flate2",
  "kchess-contracts",
  "kchess-hack",
+ "kchess-host",
+ "kchess-testkit",
  "memchr",
  "regex",
  "regex-syntax",
@@ -4654,6 +4656,7 @@ dependencies = [
  "kchess-app",
  "kchess-board",
  "kchess-hack",
+ "kchess-host",
  "kchess-ui",
 ]
 
@@ -4737,6 +4740,7 @@ name = "kchess-testkit"
 version = "2026.11.7"
 dependencies = [
  "kchess-hack",
+ "kchess-host",
  "serde_json",
 ]
 

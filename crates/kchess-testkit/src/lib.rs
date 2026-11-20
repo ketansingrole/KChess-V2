@@ -8,6 +8,7 @@
 //! `chunked_head`, `chunk`).
 
 pub mod memory;
+pub mod random;
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};

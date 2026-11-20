@@ -2,6 +2,11 @@
 //! (`KCHESS_ENGINE_PATH` for Stockfish, `KCHESS_VARIANT_ENGINE_PATH` for Fairy-Stockfish); without
 //! it they are ignored, so the run reports them as skipped rather than passed.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "Cargo hands a build script its variables in the environment"
+)]
+
 fn main() {
     for (variable, cfg) in [
         ("KCHESS_ENGINE_PATH", "kchess_stockfish"),
