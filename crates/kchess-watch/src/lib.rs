@@ -1394,26 +1394,7 @@ mod tests {
         let server = lichess();
         let mut app =
             kchess_board::testing::Started::with_lichess(cx, Some(server.base().to_string()));
-        app.wait_for("the accounts read", |_, cx| {
-            crate::accounts::handle(cx).read(cx).data.is_some()
-        });
-        app.with_window(|_, cx| {
-            let settings = kchess_contracts::defaults::default_settings()
-                .expect("the default settings")
-                .core;
-            crate::accounts::handle(cx).update(cx, |accounts, _| {
-                accounts.data = Some(kchess_contracts::types::AppData {
-                    settings,
-                    accounts: vec![kchess_contracts::types::Account {
-                        username: "bob".into(),
-                        connected: false,
-                        last_synced_at: None,
-                        synced_play_time: None,
-                    }],
-                    game_count: 0,
-                });
-            });
-        });
+        app.with_account("bob", false);
         let page = app.with_window(|window, cx| cx.new(|cx| WatchPage::new(window, cx)));
         let before = kchess_app::tests::logged_in("watch");
         app.with_window(|_, cx| page.update(cx, |page, cx| page.refresh_presence(cx)));

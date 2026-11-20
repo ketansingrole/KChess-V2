@@ -132,6 +132,33 @@ impl Started {
             .expect("the window")
     }
 
+    /// Accounts holding `username` alone, connected to Lichess or not, as the pages read them. Set
+    /// once the core's own read of the accounts has landed, which would replace them.
+    pub fn with_account(&mut self, username: &str, connected: bool) {
+        self.wait_for("the accounts read", |_, cx| {
+            kchess_app::accounts::handle(cx).read(cx).data.is_some()
+        });
+        let username = username.to_string();
+        self.with_window(|_, cx| {
+            let settings = kchess_contracts::defaults::default_settings()
+                .expect("the default settings")
+                .core;
+            kchess_app::accounts::handle(cx).update(cx, |accounts, cx| {
+                accounts.data = Some(kchess_contracts::types::AppData {
+                    settings,
+                    accounts: vec![kchess_contracts::types::Account {
+                        username,
+                        connected,
+                        last_synced_at: None,
+                        synced_play_time: None,
+                    }],
+                    game_count: 0,
+                });
+                cx.notify();
+            });
+        });
+    }
+
     /// Wait, in real time, until `ready` holds; `what` names it on failure. The core answers on
     /// its own threads, so the test looks again every 5 ms for up to 30 s, as the app's
     /// end-to-end harness does.
