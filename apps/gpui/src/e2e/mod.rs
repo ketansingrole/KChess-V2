@@ -92,6 +92,8 @@ pub struct Harness {
     profile: Option<tempfile::TempDir>,
     /// Whether this harness made the app (`restart`) rather than `#[gpui_kit::test]`.
     owns_app: bool,
+    /// The app has quit already (`restart_while_quitting`): dropping it quits nothing again.
+    quit: bool,
 }
 
 /// A page's tab by name, as its pills are found: `tab("practice-tabs", Tab::Guess)`.
@@ -218,6 +220,16 @@ impl Harness {
         Self::boot(cx, profile, true)
     }
 
+    /// `restart`, running `meanwhile` once the quit has asked for its saves and before they are
+    /// waited for: what lands while the app quits (a read that answers late).
+    pub fn restart_while_quitting(mut self, meanwhile: impl FnOnce(&mut Harness)) -> Harness {
+        let quit = self.cx.update(crate::quit::quit);
+        meanwhile(&mut self);
+        self.cx.foreground_executor().block_test(quit);
+        self.quit = true;
+        self.restart()
+    }
+
     fn boot(mut cx: TestAppContext, profile: tempfile::TempDir, owns_app: bool) -> Harness {
         crate::profile::TEST_DATA_DIR.set(Some(profile.path().to_path_buf()));
         // The core answers on its Tokio threads; the test waits for them in real time.
@@ -261,6 +273,7 @@ impl Harness {
             window,
             profile: Some(profile),
             owns_app,
+            quit: false,
         };
         // Every test runs on a network, as the fixtures stand in for it: on a runner without a
         // route out, the app read the machine as offline (`e2e::shell::the_app_starts_on_home`
@@ -774,8 +787,10 @@ pub const SETTINGS_SHOWN: &str = "settings-dialog";
 impl Drop for Harness {
     fn drop(&mut self) {
         // Saves are flushed and the core closed as at quit, before the profile is removed.
-        let quit = self.cx.update(crate::quit::quit);
-        self.cx.foreground_executor().block_test(quit);
+        if !self.quit {
+            let quit = self.cx.update(crate::quit::quit);
+            self.cx.foreground_executor().block_test(quit);
+        }
         if self.owns_app {
             // `#[gpui_kit::test]` drains the shared scheduler after the test, which runs this
             // app's tasks too: they need it alive until the test's thread ends.

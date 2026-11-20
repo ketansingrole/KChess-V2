@@ -130,6 +130,7 @@ fn timed_start(cx: TestAppContext, profile: tempfile::TempDir) -> (Harness, [f64
         window,
         profile: Some(profile),
         owns_app: true,
+        quit: false,
     };
     app.online();
     app.find("settings");

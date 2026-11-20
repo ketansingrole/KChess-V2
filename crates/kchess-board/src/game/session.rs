@@ -111,8 +111,7 @@ impl<V: Resumes> SessionSaver<V> {
         let page = cx.entity().downgrade();
         crate::quit::on_quit(cx, move |cx| {
             let page = page.upgrade()?;
-            page.update(cx, |page, cx| Self::write_now(page, cx));
-            Some(cx.global::<PlayedHandle>().0.read(cx).flushed())
+            Some(page.update(cx, Self::save_before_quit))
         });
         SessionSaver {
             kind,
@@ -203,6 +202,30 @@ impl<V: Resumes> SessionSaver<V> {
             cx.background_executor().timer(SAVE_DELAY).await;
             let _ = this.update(cx, |this, cx| Self::write_now(this, cx));
         }));
+    }
+
+    /// Save the page before the app quits. One whose session is still being read saves once the
+    /// read is in: what the player did meanwhile is kept (`Resumes::resume`), and was lost when
+    /// the app quit first (2026-11-20). One whose read failed saves nothing over the profile's.
+    fn save_before_quit(this: &mut V, cx: &mut Context<V>) -> crate::quit::BoxedSave {
+        if this.saver().state != Resume::Reading {
+            Self::write_now(this, cx);
+            return cx.global::<PlayedHandle>().0.read(cx).flushed();
+        }
+        let (done, read) = futures::channel::oneshot::channel();
+        this.saver().waiting.push(Box::new(move |this, _, cx| {
+            Self::write_now(this, cx);
+            // The quit no longer waits when the app closed without it: nothing to tell.
+            done.send(cx.global::<PlayedHandle>().0.read(cx).flushed())
+                .ok();
+        }));
+        Box::pin(async move {
+            match read.await {
+                Ok(flushed) => flushed.await,
+                // The page closed before its read was in: it had nothing it could save.
+                Err(_) => Ok(()),
+            }
+        })
     }
 
     /// Save the page now, after the writes sent before it.
