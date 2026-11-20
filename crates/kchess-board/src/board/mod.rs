@@ -140,6 +140,9 @@ pub struct Arrow {
     pub color: u32,
     pub opacity: f32,
     pub width: f32,
+    /// What a screen reader hears it as, for an arrow that tells the player a move (a hint, a
+    /// solution); drawings and the engine's lines are seen, not said.
+    pub spoken: Option<&'static str>,
 }
 
 /// Chessground's brushes by name: `green`, `red`, `blue` and `yellow`.
@@ -161,17 +164,24 @@ impl Arrow {
             color: brush_color(brush),
             opacity: 1.,
             width: 10.,
+            spoken: None,
         }
     }
 
     /// The solution's next move, shown (the `green` brush).
     pub fn solution(from: Square, to: Square) -> Arrow {
-        Arrow::brush("green", from, to)
+        Arrow {
+            spoken: Some("Solution"),
+            ..Arrow::brush("green", from, to)
+        }
     }
 
     /// A move shown on request (the `blue` brush).
     pub fn hint(from: Square, to: Square) -> Arrow {
-        Arrow::brush("blue", from, to)
+        Arrow {
+            spoken: Some("Hint"),
+            ..Arrow::brush("blue", from, to)
+        }
     }
 
     /// The analysis board's arrows: the best line pale blue and bold, the others pale grey and
@@ -192,6 +202,7 @@ impl Arrow {
             } else {
                 (9. - rank as f32 * 2.).max(4.)
             },
+            spoken: None,
         }
     }
 }
@@ -1870,18 +1881,42 @@ pub fn page_has_keys(page: &FocusHandle, window: &Window, cx: &App) -> bool {
                 .is_some_and(|context| context.contains(keyboard::CONTEXT)))
 }
 
-/// What a screen reader says of the board: the last move and
-/// the side to move.
+/// What a screen reader says of the board: the last move, the side to move, and a hint or
+/// solution shown on it.
 fn describe(state: &BoardState) -> String {
     let to_move = if kchess_domain::rules::fen_turn(&state.fen).is_black() {
         "Black to move"
     } else {
         "White to move"
     };
-    match state.last_move {
-        Some((from, to)) => format!("Last move {from}–{to} · {to_move}"),
-        None => to_move.to_string(),
+    let mut parts = Vec::new();
+    if let Some((from, to)) = state.last_move {
+        parts.push(format!("Last move {from}–{to}"));
     }
+    parts.push(to_move.to_string());
+    // What the board shows the player to play, which is otherwise only seen: a hint's piece, and
+    // the moves its arrows tell ("Hint g1–f3"), each kind once.
+    let mut told: Vec<(&str, Vec<String>)> = Vec::new();
+    let shown = state
+        .hint
+        .map(|square| ("Hint", square.to_string()))
+        .into_iter()
+        .chain(state.arrows.iter().filter_map(|arrow| {
+            arrow
+                .spoken
+                .map(|kind| (kind, format!("{}–{}", arrow.from, arrow.to)))
+        }));
+    for (kind, said) in shown {
+        match told.iter_mut().find(|(told, _)| *told == kind) {
+            Some((_, moves)) => moves.push(said),
+            None => told.push((kind, vec![said])),
+        }
+    }
+    parts.extend(
+        told.into_iter()
+            .map(|(kind, moves)| format!("{kind} {}", moves.join(", "))),
+    );
+    parts.join(" · ")
 }
 
 /// The strip a board that follows Settings keeps right of and below its squares for coordinates
@@ -2457,6 +2492,35 @@ mod description_tests {
             Some("e2e4"),
         );
         assert_eq!(describe(&after), "Last move e2–e4 · Black to move");
+    }
+
+    /// A hint or a solution shown on the board is said too, not only drawn; the engine's lines
+    /// and a lesson's drawings are not.
+    #[test]
+    fn the_board_says_a_hint_or_a_solution_it_shows() {
+        use super::Arrow;
+        use shakmaty::Square;
+        let mut state = BoardState::shown(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            kchess_domain::variant::Variant::Standard,
+            Color::White,
+            None,
+        );
+        state.arrows = vec![
+            Arrow::engine(Square::D2, Square::D4, 0),
+            Arrow::brush("green", Square::E2, Square::E4),
+        ];
+        assert_eq!(describe(&state), "White to move");
+        state.hint = Some(Square::G1);
+        assert_eq!(describe(&state), "White to move · Hint g1");
+        state.hint = None;
+        state.arrows.push(Arrow::hint(Square::G1, Square::F3));
+        assert_eq!(describe(&state), "White to move · Hint g1–f3");
+        state.arrows = vec![
+            Arrow::solution(Square::E2, Square::E4),
+            Arrow::solution(Square::D2, Square::D4),
+        ];
+        assert_eq!(describe(&state), "White to move · Solution e2–e4, d2–d4");
     }
 }
 

@@ -204,6 +204,50 @@ fn quick_pick_shows_the_solution(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
+/// A hint and a solution are said to a screen reader, not only drawn: the board's description
+/// names the piece to move, then the move.
+#[gpui_kit::test]
+fn a_hint_and_a_solution_are_said_not_only_drawn(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = Harness::start(cx);
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "https://lichess.org/training/{}",
+        super::fake_lichess::LINKED_PUZZLE
+    ));
+    super::palette::wait_for_first(&mut app, "Solve this puzzle");
+    app.press("enter");
+    app.wait_for("the puzzle to be playable", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_some_and(|hint| hint.disabled() != Some(true))
+    });
+    let description = |app: &mut Harness| {
+        app.find("chess-board")
+            .description()
+            .unwrap_or_default()
+            .to_string()
+    };
+    assert!(
+        !description(&mut app).contains("Hint"),
+        "{}",
+        description(&mut app)
+    );
+    app.click("puzzle-hint");
+    // The queen on h5 mates on f7.
+    assert!(
+        description(&mut app).ends_with(" · Hint h5"),
+        "{}",
+        description(&mut app)
+    );
+    app.click("puzzle-solution");
+    assert!(
+        description(&mut app).ends_with(" · Solution h5–f7"),
+        "{}",
+        description(&mut app)
+    );
+}
+
 /// A Storm run starts, ends and goes back to the modes from Quick Pick, offering only what its
 /// buttons do: Storm has no skips.
 #[gpui_kit::test]
