@@ -89,6 +89,18 @@ impl Started {
         }
     }
 
+    /// Wait until the core's startup check for a live Lichess game has ended and engine help is
+    /// lent (a profile with no account has nothing to find). The core ends it at once, so a
+    /// board that never lifts the lock fails within 10 s, inside the 20 s `cargo mutants` gives
+    /// a test, which would otherwise report a hang instead of a caught mutant.
+    pub fn wait_for_engine_help(&mut self) {
+        self.wait_within(
+            Duration::from_secs(10),
+            "the startup check to end",
+            |_, cx| crate::online::handle(cx).read(cx).assistance_allowed(),
+        );
+    }
+
     /// The test's app, to run its tasks or read its state.
     pub fn cx(&mut self) -> &mut gpui_kit::TestAppContext {
         &mut self.cx

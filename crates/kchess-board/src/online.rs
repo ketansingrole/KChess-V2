@@ -1601,17 +1601,14 @@ mod tests {
     }
 
     /// How long the core may take to answer a status read, which it answers at once: a read
-    /// that never lands fails the test well inside the runner's timeout.
-    const ANSWER: std::time::Duration = std::time::Duration::from_secs(5);
+    /// that never lands fails the test inside the 20 s `cargo mutants` gives a test, which would
+    /// otherwise report a hang instead of a caught mutant.
+    const ANSWER: std::time::Duration = std::time::Duration::from_secs(10);
 
-    /// The board's online state once its startup check has ended (no account: nothing to find)
-    /// and the core, reporting its lock, lends engine help.
+    /// The board's online state once its startup check has ended and the core lends help.
     fn settled(app: &mut Started) -> gpui_kit::Entity<super::OnlineState> {
-        let online = app.with_window(|_, cx| super::handle(cx));
-        app.wait_for("the startup check to end", |_, cx| {
-            online.read(cx).assistance_allowed()
-        });
-        online
+        app.wait_for_engine_help();
+        app.with_window(|_, cx| super::handle(cx))
     }
 
     /// A connection report in `phase`, for the state to hold.
