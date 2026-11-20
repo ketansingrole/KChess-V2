@@ -207,6 +207,14 @@ jobs:
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       # The scripts' shell is checked by xtask (`every_workflow_step_parses_in_bash`).
       - run: actionlint -color -shellcheck= -pyflakes=
+      # Their security, as Zed audits its own: an event's text expanded into a script, a token
+      # with more permissions than its job uses, credentials left in a checkout, an action not
+      # pinned to a commit. Offline, so it reads only this repository; what it accepts on purpose
+      # is in `.github/zizmor.yml`, each with its reason.
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: zizmor
+      - run: zizmor --offline --format=github .github
 
   # Spelling in code, comments, documents and the app's text (`_typos.toml`), as Zed and GPUI Kit
   # check theirs. It runs on documents-only changes too: they are most of what it reads.

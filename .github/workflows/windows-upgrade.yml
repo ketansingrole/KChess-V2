@@ -128,8 +128,11 @@ jobs:
           Write-Host "Published installer: $($installer.Name)"
       - name: Upgrade and check
         shell: pwsh
+        # Through the environment, not expanded into the script (zizmor's `template-injection`).
+        env:
+          MODE: ${{ matrix.mode }}
         run: >
-          ./tooling/windows-upgrade-test.ps1 -Mode ${{ matrix.mode }}
+          ./tooling/windows-upgrade-test.ps1 -Mode $env:MODE
           -OldInstaller (Get-Item old/*-win-x64.exe).FullName
           -NewInstaller (Get-Item new/*.exe).FullName
           -NewVersion $env:KCHESS_TEST_VERSION
