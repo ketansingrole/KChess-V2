@@ -23,10 +23,24 @@ pub struct Started {
     _assistance: Option<(Subscription, Task<()>)>,
 }
 
-/// The status answer, asked before any report, still says what the core lends: no report
-/// (`reports_since` of them) came after it.
-fn status_is_current(reports_since: u64) -> bool {
-    reports_since == 0
+/// Reports of the core's engine help seen, so that a status answer asked before one is known for
+/// out of date: the report is newer.
+#[derive(Clone, Default)]
+struct Reports(Rc<Cell<u64>>);
+
+impl Reports {
+    fn seen(&self) -> u64 {
+        self.0.get()
+    }
+
+    fn report(&self) {
+        self.0.set(self.0.get() + 1);
+    }
+
+    /// No report came since `asked` were seen.
+    fn none_since(&self, asked: u64) -> bool {
+        self.0.get() == asked
+    }
 }
 
 /// What the app's live game does as it starts, with no game to play: asks the core for a game
@@ -34,7 +48,7 @@ fn status_is_current(reports_since: u64) -> bool {
 /// one that counts). A status answer older than a report is dropped, as the game drops it.
 fn follow_assistance(cx: &mut App) -> (Subscription, Task<()>) {
     let core = cx.global::<AppCore>().clone();
-    let reports = Rc::new(Cell::new(0_u64));
+    let reports = Reports::default();
     let tell = |assistance: Assistance, cx: &mut App| {
         crate::live_game::handle(cx).update(cx, |live, cx| {
             live.set(assistance == Assistance::Allowed, false, cx)
@@ -42,19 +56,20 @@ fn follow_assistance(cx: &mut App) -> (Subscription, Task<()>) {
     };
     let resume = core.request(calls::ResumeOnline {});
     let status = core.request(calls::AssistanceStatus {});
-    let seen = Rc::clone(&reports);
+    let seen = reports.clone();
+    let asked = reports.seen();
     let answered = cx.spawn(async move |cx| {
         resume.await.expect("the check for a game in progress");
         let assistance = status.await.expect("the core's engine help");
         cx.update(|cx| {
-            if status_is_current(seen.get()) {
+            if seen.none_since(asked) {
                 tell(assistance, cx);
             }
         });
     });
     let reported = cx.subscribe(&core.events, move |_, event: &ClientEvent, cx| {
         if let ClientEvent::Event(CoreEvent::Assistance(assistance)) = event {
-            reports.set(reports.get() + 1);
+            reports.report();
             tell(*assistance, cx);
         }
     });
@@ -172,9 +187,15 @@ mod tests {
     /// newer.
     #[test]
     fn a_report_outdates_the_status_answer() {
-        assert!(super::status_is_current(0));
-        assert!(!super::status_is_current(1));
-        assert!(!super::status_is_current(2));
+        let reports = super::Reports::default();
+        let asked = reports.seen();
+        assert!(reports.none_since(asked));
+        reports.report();
+        assert!(!reports.none_since(asked));
+        let again = reports.seen();
+        assert!(reports.none_since(again));
+        reports.report();
+        assert!(!reports.none_since(again));
     }
 
     /// A wait looks until what it waits for holds, and no longer.
