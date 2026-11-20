@@ -52,8 +52,6 @@ pub fn init(cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::AppContext as _;
-
     /// Help is held back until the game says otherwise, and observers hear of a change only.
     #[gpui_kit::test]
     fn observers_hear_only_of_a_change(cx: &mut gpui_kit::TestAppContext) {
