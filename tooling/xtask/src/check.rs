@@ -132,11 +132,22 @@ fn run_tests(packages: &[String]) -> Result {
     Ok(())
 }
 
+/// The members outside the coverage gate whose tests `check` runs: without the app's and its UI
+/// crates' (`app` false) when CI's `gpui` job runs them (`ui_tests`). They build GPUI without
+/// coverage's instruments, which that job builds anyway: here it cost 2 min 45 s with a warm cache
+/// and 7 min 38 s without (2026-11-19).
 fn uncovered(app: bool) -> Vec<String> {
     members::uncovered()
-        .filter(|package| app || *package != APP)
+        .filter(|package| app || members::role(package) == members::Role::Tooling)
         .map(|package| package.to_string())
         .collect()
+}
+
+/// `ui-tests`: the tests of the app's UI crates, which `check --without-app-tests` leaves to CI's
+/// `gpui` job on Linux (`uncovered`).
+pub fn ui_tests(_: &[String]) -> Result {
+    let packages: Vec<String> = members::ui().map(str::to_string).collect();
+    run_tests(&packages)
 }
 
 /// The workspace's tests: under the coverage gate when cargo-llvm-cov is installed (CI installs
@@ -223,7 +234,7 @@ fn coverage() -> Result {
 }
 
 /// `check [--without-app-tests]`: everything a push to main must pass. CI's check job leaves the
-/// app's tests to its `gpui` job, which runs them on Linux beside it.
+/// app's and its UI crates' tests to its `gpui` job, which runs them on Linux beside it.
 pub fn check(args: &[String]) -> Result {
     let app = with_app_tests(args);
     crate::sweep::build_folder(false)?;
@@ -238,7 +249,8 @@ pub fn check(args: &[String]) -> Result {
     Ok(())
 }
 
-/// Whether `check` runs the app's tests: unless `--without-app-tests` says another job does.
+/// Whether `check` runs the app's and its UI crates' tests: unless `--without-app-tests` says
+/// another job does.
 fn with_app_tests(args: &[String]) -> bool {
     !args.iter().any(|arg| arg == "--without-app-tests")
 }
@@ -1400,23 +1412,8 @@ mod tests {
                 "xtask"
             ]
         );
-        assert_eq!(
-            uncovered(false),
-            [
-                "kchess-ui",
-                "kchess-app",
-                "kchess-board",
-                "kchess-nav",
-                "kchess-puzzles",
-                "kchess-history",
-                "kchess-home",
-                "kchess-local",
-                "kchess-practice",
-                "kchess-studies",
-                "kchess-watch",
-                "xtask"
-            ]
-        );
+        // CI's gpui job runs the app's and its UI crates' (`ui_tests`).
+        assert_eq!(uncovered(false), ["xtask"]);
     }
 
     #[test]

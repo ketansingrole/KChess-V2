@@ -100,10 +100,11 @@ exclude_re = [
     # Run cargo fmt, clippy and the test suites over the whole workspace, so a test of them
     # would run `check` inside `check`; what they decide is tested (`test_commands`,
     # `coverage_args`, `with_dependents`, `scope_of`, `select`, `merge_base`). CI's check job
-    # runs them and its log shows each step. `fast` only runs what `select` chose. Likewise
+    # runs them and its log shows each step. `fast` only runs what `select` chose; `ui_tests`
+    # runs `ui`'s packages' tests (CI's gpui job on Linux, `uncovered` tested). Likewise
     # `fuzz_targets`, which runs `cargo check` over the fuzz workspace, and `scope`, which prints
     # `scope_report`'s answer for the repository (tested on a scratch one) for CI's changes job.
-    'tooling/xtask/src/check\.rs:.*: replace (format|clippy_workspace|lints|tests|fast|full|full_with|check|fuzz_targets|scope) -> Result with ',
+    'tooling/xtask/src/check\.rs:.*: replace (format|clippy_workspace|lints|tests|ui_tests|fast|full|full_with|check|fuzz_targets|scope) -> Result with ',
     # Commands over the repository's own files and `cargo metadata`, which pass there, so a test
     # sees the same `Ok` from them as from their mutants; what they decide is tested: the hack's
     # `dependencies`, `outside` and `packages`, the notices' `direct_dependencies` and `names`,

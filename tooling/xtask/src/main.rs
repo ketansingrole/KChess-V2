@@ -98,6 +98,15 @@ const COMMANDS: &[Command] = &[
         run: check::check,
     },
     Command {
+        name: "ui-tests",
+        forms: &[(
+            "",
+            "The tests of the app's UI crates, which `check --without-app-tests` leaves out \
+             (CI's gpui job on Linux)",
+        )],
+        run: check::ui_tests,
+    },
+    Command {
         name: "check-fast",
         forms: &[(
             "",
