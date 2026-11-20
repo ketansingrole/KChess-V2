@@ -290,20 +290,33 @@ mod tests {
         assert_eq!(found, expected);
     }
 
-    /// Watching marks this run; closing removes the mark; a second close does nothing.
+    /// Watching marks this run, held, with its version; closing removes the mark; a second close
+    /// does nothing. The mark is read only as the next start reads it: Windows refuses to read a
+    /// file another handle has locked, the running app's own included.
     #[test]
     fn this_run_is_marked_until_it_quits() {
         let dir = tempfile::tempdir().expect("a temporary folder");
-        fs::create_dir_all(dir.path().join("logs")).expect("logs");
+        let logs = dir.path().join("logs");
+        fs::create_dir_all(&logs).expect("logs");
+        let marker = logs.join(format!("{PREFIX}{}", crate::log::session_id()));
         watch(dir.path(), "9.9.9");
-        let marker = dir
-            .path()
-            .join("logs")
-            .join(format!("{PREFIX}{}", crate::log::session_id()));
-        assert_eq!(fs::read_to_string(&marker).expect("marked"), "9.9.9\n");
-        assert!(report_leftovers(&dir.path().join("logs"), None).is_empty());
+        assert!(marker.exists(), "marked");
+        assert!(
+            report_leftovers(&logs, None).is_empty(),
+            "held while it runs"
+        );
         closed();
         assert!(!marker.exists());
         closed();
+
+        // Ended without quitting: the system releases the lock, the mark stays.
+        watch(dir.path(), "9.9.9");
+        let held = MARKER.lock().expect("the marker").take().expect("marked");
+        drop(held.file);
+        assert_eq!(
+            report_leftovers(&logs, None),
+            ["KChess 9.9.9 did not quit cleanly the last time it ran"]
+        );
+        assert!(!marker.exists());
     }
 }
