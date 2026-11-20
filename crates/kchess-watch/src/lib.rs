@@ -10,9 +10,7 @@
 use kchess_hack as _;
 
 use kchess_app::{accounts, core, loading, log, prefs, settings, timer};
-use kchess_board::{
-    board, engine_view, game, notation, online, position_engine, remote_image, widgets,
-};
+use kchess_board::{board, engine_view, game, notation, online, position_engine, widgets};
 use kchess_ui::{dates, theme};
 
 use crate::loading::Epoch;
@@ -43,6 +41,7 @@ use kchess_ui::icon;
 mod broadcast_engine;
 mod broadcasts;
 pub mod live;
+mod remote_image;
 
 use broadcasts::Broadcasts;
 use live::Live;
