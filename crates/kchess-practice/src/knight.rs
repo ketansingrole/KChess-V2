@@ -14,7 +14,6 @@ use shakmaty::{Color, Square};
 
 use super::run::{self, Drill, DrillRun, Stage};
 use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
-use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent};
@@ -321,13 +320,7 @@ impl KnightPaths {
             .into_iter()
             .collect();
         }
-        let frontend = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
+        let frontend = crate::settings::frontend(cx).clone();
         state.coordinates = Some(if frontend.coordinates == CoordinateMode::None {
             CoordinateMode::Inside
         } else {

@@ -1614,13 +1614,7 @@ pub fn init(cx: &mut App) {
     // restart into it): only after every document is saved, since the installer closes the app.
     let quitting = updates.clone();
     crate::quit::after_quit(cx, move |cx| {
-        let on_quit = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .update_install_on_quit;
+        let on_quit = crate::settings::frontend(cx).update_install_on_quit;
         let updates = quitting.read(cx);
         let reopen = updates.restart;
         let (true, Some(staged), Some(install)) = (
@@ -1654,13 +1648,7 @@ impl Updates {
 
     /// Check on startup and every six hours while automatic checks are on.
     fn schedule(&mut self, cx: &mut Context<Self>) {
-        let auto = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .update_auto_check;
+        let auto = crate::settings::frontend(cx).update_auto_check;
         if !auto || !self.can_check() {
             self._timer = None;
             return;
@@ -1733,13 +1721,7 @@ impl Updates {
         self.version = Some(version);
         self.released = release.published_at.clone();
         self.release = Some(release);
-        let auto_download = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .update_auto_download;
+        let auto_download = crate::settings::frontend(cx).update_auto_download;
         if automatic && auto_download {
             self.download(cx);
         }

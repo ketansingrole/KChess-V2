@@ -1176,13 +1176,7 @@ impl LocalPage {
                 }),
             );
         let running = self.clock.running.is_some();
-        let zen = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .zen_mode;
+        let zen = crate::settings::frontend(cx).zen_mode;
         // The shared board's panel's place and size, its actions at the foot as there.
         let panel = widgets::side_panel(palette)
             .id("local-clock-panel")
@@ -1300,13 +1294,7 @@ impl Render for LocalPage {
         let orientation = self.orientation(cx);
         let display = view::position_at(self.setup(), &moves, shown);
         let display_turn = view::turn(display.as_ref());
-        let frontend = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
+        let frontend = crate::settings::frontend(cx).clone();
         let fen = display
             .as_ref()
             .map(kchess_domain::rules::make_fen)
@@ -1436,13 +1424,7 @@ impl LocalPage {
         let over = self.game.over();
         let result = self.game.result();
         let display = view::position_at(self.setup(), &moves, shown);
-        let frontend = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
+        let frontend = crate::settings::frontend(cx).clone();
         let (timed, paused) = (self.game.timed(), self.game.paused());
         let variant_label = crate::game::setup_label(self.setup());
         let clock_label = self.game.clock().map(|clock| {

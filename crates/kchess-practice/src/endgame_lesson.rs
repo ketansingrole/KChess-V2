@@ -561,14 +561,7 @@ impl EndgameLesson {
         }
         // The pieces show while there is nothing to play, and once the step is over.
         let reveal = status.over || !self.playable();
-        state.blindfold = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .blindfold
-            && !reveal;
+        state.blindfold = crate::settings::frontend(cx).blindfold && !reveal;
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
         cx.notify();

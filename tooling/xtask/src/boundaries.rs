@@ -722,3 +722,57 @@ fn a_clock_without_tabular_figures_is_found() {
         ]
     );
 }
+
+/// Each place reading the player's look and feel through the Settings model by hand, as
+/// `path:line`: `settings::frontend(cx)` reads it in one call, and 37 hand-written five-line
+/// chains of `global::<SettingsHandle>().0.read(cx).settings.frontend` had grown beside it.
+fn frontend_read_by_hand(files: &[(String, String)]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (path, text) in files {
+        if path == "crates/kchess-app/src/settings.rs" {
+            continue;
+        }
+        for (at, _) in text.match_indices("global::<SettingsHandle>()") {
+            let chain: String = text[at..]
+                .chars()
+                .take(160)
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            let Some(rest) = chain.strip_prefix("global::<SettingsHandle>().0.read(") else {
+                continue;
+            };
+            if rest
+                .split_once(')')
+                .is_some_and(|(_, after)| after.starts_with(".settings.frontend"))
+            {
+                found.push(format!("{path}:{}", text[..at].matches('\n').count() + 1));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn the_app_reads_its_look_and_feel_in_one_call() {
+    let found = frontend_read_by_hand(&app_sources());
+    assert!(
+        found.is_empty(),
+        "read with `crate::settings::frontend(cx)` at {found:?}"
+    );
+}
+
+#[test]
+fn a_look_and_feel_read_by_hand_is_found_with_its_line() {
+    let files = [
+        file(
+            "apps/gpui/src/a.rs",
+            "let sound = cx.global::<SettingsHandle>().0.read(cx).settings.sound;\nlet blindfold = cx\n    \
+             .global::<SettingsHandle>()\n    .0\n    .read(cx)\n    .settings\n    .frontend\n    .blindfold;\n",
+        ),
+        file(
+            "crates/kchess-app/src/settings.rs",
+            "&cx.global::<SettingsHandle>().0.read(cx).settings.frontend",
+        ),
+    ];
+    assert_eq!(frontend_read_by_hand(&files), ["apps/gpui/src/a.rs:3"]);
+}

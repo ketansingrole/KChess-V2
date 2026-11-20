@@ -615,13 +615,7 @@ impl ChessBoard {
     /// Slide the pieces from `self.pieces` to `next` (Chessground's `animate`): each piece that
     /// left a square goes to the nearest square a like piece arrived on.
     fn animate(&mut self, next: &Board, orientation: Color, cx: &mut Context<Self>) {
-        let choice = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .piece_animation;
+        let choice = crate::settings::frontend(cx).piece_animation;
         let choice = serde_json::to_value(choice)
             .ok()
             .and_then(|value| value.as_str().map(str::to_string))
@@ -1018,13 +1012,7 @@ impl ChessBoard {
             piece.role == Role::Pawn && matches!(to.rank(), Rank::First | Rank::Eighth)
         });
         if promotes {
-            let mode = cx
-                .global::<SettingsHandle>()
-                .0
-                .read(cx)
-                .settings
-                .frontend
-                .promotion;
+            let mode = crate::settings::frontend(cx).promotion;
             if mode == PromotionMode::Queen || (premove && mode == PromotionMode::Premove) {
                 cx.emit(BoardEvent::Move(format!("{from}{to}q")));
             } else {
@@ -1902,13 +1890,7 @@ impl Render for ChessBoard {
         let focus = (!self.state.preview).then(|| self.focus_handle(cx));
         let focused = self.has_keys(window);
         let ring = cx.global::<crate::theme::Palette>().primary;
-        let frontend = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
+        let frontend = crate::settings::frontend(cx).clone();
         let look = looks::board(&frontend.board_theme);
         let set = looks::piece_set(&frontend.piece_set).to_string();
         let lifted = self

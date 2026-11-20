@@ -40,7 +40,6 @@ use crate::game::puzzle::{PuzzleSession, PuzzleStatus, Selection, Step, local_da
 use crate::game::surface::TakesKeys as _;
 use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
 use crate::puzzle_db::PuzzleDbHandle;
-use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii, tint};
 use kchess_domain::trainer::puzzle_session::{Answer, Detail, Reply, Request, Resume};
 use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
@@ -702,13 +701,7 @@ impl PuzzlesPage {
         let step = self.session.end(&local_day());
         self.follow(step, Settle::Load, cx);
         let solved = self.puzzle.read(cx).status() == PuzzleStatus::Solved;
-        let auto_next = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .puzzle_auto_next;
+        let auto_next = crate::settings::frontend(cx).puzzle_auto_next;
         if solved && auto_next {
             let key = self.session.puzzle_key();
             // An earlier puzzle's countdown has nothing left to do (it was replaced): dropped,
