@@ -3,6 +3,9 @@
 //! It reads the unfinished computer game and the accounts again each time it is shown.
 
 // The app's services, the design system and the board, under the names this page's modules use.
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 use kchess_app::{accounts, core, loading, log, network, played, settings};
 use kchess_board::{board, game, rating_history, widgets};
 use kchess_ui::{dates, theme};

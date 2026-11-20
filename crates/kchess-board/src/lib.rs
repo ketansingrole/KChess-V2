@@ -9,6 +9,9 @@
 //! It depends on the design system (`kchess-ui`) and the app's services (`kchess-app`), never on
 //! the app: what it needs from it (whether voice owns Space) the app passes in.
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 pub mod ai;
 pub mod analysis;
 pub mod assets;

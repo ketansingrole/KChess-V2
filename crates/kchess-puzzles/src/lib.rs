@@ -2,6 +2,9 @@
 //! rated puzzles. The session's transitions are Rust (`game/puzzle.rs`); this page fetches what
 //! they ask for, plays the puzzle on the board and keeps the attempt log up to date.
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 use kchess_nav::page::PageView;
 // The app's services, the design system and the board, under the names this page's modules use.
 use kchess_app::{accounts, core, loading, log, network, prefs, quit, settings, timer};
