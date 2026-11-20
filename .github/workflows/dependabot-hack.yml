@@ -1,0 +1,103 @@
+name: Dependabot hack
+# Dependabot's crate updates change the features their dependencies resolve, and with them the
+# files written from those: the workspace hack and the lock, the hack's hold list in
+# dependabot.yml and the fuzz targets' own lock. `cargo xtask check` refuses each out of date, and
+# Dependabot cannot run cargo-hakari, so every such update needed a hand (2026-11-18, 11-20). This
+# writes them (`cargo xtask hack`) and commits them to the pull request. CI then tests that commit:
+# a push by GITHUB_TOKEN starts no `pull_request` run, so this starts ci.yml on the branch, as a
+# pull request onto its base, and that run's `ci-passed` is the commit's.
+on:
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: dependabot-hack-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Builds and runs the pull request's code, the updated crates' build scripts included, so it may
+  # only read: it hands the next job a patch.
+  write:
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/cargo/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      # The branch itself, not its merge with main: the commit goes on top of it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      # xtask's build, read only.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: mutants
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: false
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: cargo-hakari
+      # Fails, and leaves the files alone, when the hack would need a person: a dependency the
+      # headless packages lack goes in `[final-excludes]` by hand.
+      - run: cargo xtask hack
+      - id: diff
+        run: |
+          git diff --binary > "$RUNNER_TEMP/hack.patch"
+          if [ -s "$RUNNER_TEMP/hack.patch" ]; then
+            git diff --stat
+            echo changed=true >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing to write."
+            echo changed=false >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: hack-patch
+          path: ${{ runner.temp }}/hack.patch
+          retention-days: 1
+
+  # Runs nothing of the repository's: applies the patch to the files `cargo xtask hack` writes,
+  # pushes it, and starts CI on it.
+  commit:
+    needs: write
+    if: needs.write.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # `gh workflow run`.
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: hack-patch
+          path: ${{ runner.temp }}/hack
+      - name: Commit the written files to the pull request
+        env:
+          BRANCH: ${{ github.head_ref }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          patch="$RUNNER_TEMP/hack/hack.patch"
+          # Only what `cargo xtask hack` writes: the locks, Dependabot's settings and manifests.
+          for path in $(git apply --numstat "$patch" | cut -f3); do
+            case "$path" in
+              Cargo.lock|fuzz/Cargo.lock|.github/dependabot.yml|Cargo.toml) ;;
+              crates/*/Cargo.toml|apps/*/Cargo.toml|tooling/*/Cargo.toml) ;;
+              *) echo "::error::cargo xtask hack wrote $path, which it never should"; exit 1 ;;
+            esac
+          done
+          git apply "$patch"
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -a -m 'Workspace hack follows the crate updates' \
+            -m 'Written by `cargo xtask hack` (.github/workflows/dependabot-hack.yml).'
+          # Refused when Dependabot pushed since: its push starts this workflow again.
+          git push origin "HEAD:refs/heads/$BRANCH"
+          gh workflow run ci.yml --ref "$BRANCH" -f base="$BASE"

@@ -7,7 +7,14 @@ on:
   # packaged (`changes`); the rest of CI ran on each push. By hand: package main now.
   schedule:
     - cron: '17 2 * * *'
+  # By hand, or with `base` the Dependabot hack workflow's run after it commits to a Dependabot pull
+  # request: its push by GITHUB_TOKEN starts no `pull_request` run.
   workflow_dispatch:
+    inputs:
+      base:
+        description: Test the branch as a pull request onto this commit, rather than package it.
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -30,7 +37,7 @@ jobs:
   # - the nightly run, when packaging may have changed since main last packaged: measured from the
   #   newest main commit whose packaging jobs all passed (else the last release), so a change keeps
   #   running them each night until they pass. A push to main does not: its pull request packaged.
-  # - a run started by hand, always.
+  # - a run started by hand, always; with a `base`, as a pull request onto it.
   #
   # Whether this push or pull request changes more than the documents nothing reads. A release
   # commit changes Cargo.toml, so `cargo xtask release-verify` never meets a skipped `check`.
@@ -46,6 +53,9 @@ jobs:
     outputs:
       code: ${{ steps.docs.outputs.code }}
       release: ${{ steps.docs.outputs.release }}
+      # Whether this run tests a pull request (or a branch dispatched as one), and onto which commit.
+      pr: ${{ steps.docs.outputs.pr }}
+      base: ${{ steps.docs.outputs.base }}
       packaging: ${{ steps.diff.outputs.packaging }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -61,11 +71,22 @@ jobs:
           save-if: false
       - id: docs
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha || inputs.base || github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha || inputs.base }}
           EVENT: ${{ github.event_name }}
         run: |
+          if [ -n "$PR_BASE" ]; then
+            pr=true
+            # A dispatched branch is not merged onto its base: compare from where it left it.
+            [ "$EVENT" != workflow_dispatch ] || BASE="$(git merge-base "$PR_BASE" HEAD)"
+          else
+            pr=false
+          fi
+          echo "Pull request: $pr${PR_BASE:+ onto $BASE}"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          [ "$pr" = false ] || echo "base=$BASE" >> "$GITHUB_OUTPUT"
           # The nightly and by-hand runs only package: each push to main ran the rest.
-          if [ "$EVENT" = schedule ] || [ "$EVENT" = workflow_dispatch ]; then
+          if [ "$EVENT" = schedule ] || { [ "$EVENT" = workflow_dispatch ] && [ "$pr" = false ]; }; then
             code=false
           elif scope="$(cargo xtask scope "$BASE")"; then
             code="$(echo "$scope" | sed -n 's/^code=//p')"
@@ -101,11 +122,12 @@ jobs:
           done
       - id: diff
         env:
-          BASE: ${{ github.event.pull_request.base.sha || steps.packaged.outputs.sha }}
+          BASE: ${{ steps.docs.outputs.base || steps.packaged.outputs.sha }}
           EVENT: ${{ github.event_name }}
+          PR: ${{ steps.docs.outputs.pr }}
           RELEASE: ${{ steps.docs.outputs.release }}
         run: |
-          if [ "$RELEASE" = true ] || [ "$EVENT" = workflow_dispatch ]; then
+          if [ "$RELEASE" = true ] || { [ "$EVENT" = workflow_dispatch ] && [ "$PR" = false ]; }; then
             packaging=true
             echo "Packaging: a release commit or a run by hand"
           elif [ "$EVENT" = push ]; then
@@ -373,7 +395,7 @@ jobs:
       # pull requests that could not pass until it recovered. Main's nightly run, a run by hand (on
       # any branch, to test a Snap change before it merges) and release commits build it;
       # `release.yml` builds the published one.
-      - if: runner.os == 'Linux' && github.event_name != 'pull_request'
+      - if: runner.os == 'Linux' && needs.changes.outputs.pr != 'true'
         uses: ./.github/actions/snap
 
   # The package caches, for the pull requests that package: built as `cargo xtask package` builds
@@ -440,26 +462,26 @@ jobs:
       shards: ${{ steps.plan.outputs.shards || '[0]' }}
       total: ${{ steps.plan.outputs.total || '1' }}
     steps:
-      - if: github.event_name == 'pull_request'
+      - if: needs.changes.outputs.pr == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           fetch-depth: 0
       # xtask's build, read only.
-      - if: github.event_name == 'pull_request'
+      - if: needs.changes.outputs.pr == 'true'
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: mutants
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: false
-      - if: github.event_name == 'pull_request'
+      - if: needs.changes.outputs.pr == 'true'
         uses: ./.github/actions/install-tools
         with:
           tools: cargo-mutants
-      - if: github.event_name == 'pull_request'
+      - if: needs.changes.outputs.pr == 'true'
         id: plan
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE: ${{ needs.changes.outputs.base }}
         run: cargo xtask mutants --plan --base "$(git merge-base "$BASE" HEAD)" >> "$GITHUB_OUTPUT"
 
   # Mutation testing of the lines a pull request changes (`cargo xtask mutants`,
@@ -488,9 +510,9 @@ jobs:
       # A push to main keeps the mutants' dependencies built for the pull requests after it.
       WARM: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
-      - if: github.event_name != 'pull_request' && env.WARM != 'true'
+      - if: needs.changes.outputs.pr != 'true' && env.WARM != 'true'
         run: echo "Mutants are tested in the pull request."
-      - if: github.event_name == 'pull_request' || env.WARM == 'true'
+      - if: needs.changes.outputs.pr == 'true' || env.WARM == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
@@ -501,20 +523,20 @@ jobs:
       # first kchess-core mutant); copying `target` along still rebuilt 133, since the copies' new
       # modification times read as stale. So mutants build in place, from this. Saved by main,
       # read by pull requests.
-      - if: github.event_name == 'pull_request' || env.WARM == 'true'
+      - if: needs.changes.outputs.pr == 'true' || env.WARM == 'true'
         id: deps
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: mutants
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ env.WARM == 'true' }}
-      - if: github.event_name == 'pull_request' || (env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true')
+      - if: needs.changes.outputs.pr == 'true' || (env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true')
         uses: ./.github/actions/install-tools
         with:
           tools: cargo-nextest,cargo-mutants
       # The UI crates (`kchess-ui`) build GPUI, and their mutants are tested here as every member's
       # but the app's are.
-      - if: github.event_name == 'pull_request' || (env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true')
+      - if: needs.changes.outputs.pr == 'true' || (env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true')
         uses: ./.github/actions/install-gpui-libs
       - if: env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true'
         name: Build the mutants' dependencies
@@ -526,12 +548,12 @@ jobs:
         with:
           rust-cache: mutants
       # The engines `check` gives the tests, so the mutants they kill there die here too.
-      - if: github.event_name == 'pull_request'
+      - if: needs.changes.outputs.pr == 'true'
         uses: ./.github/actions/engines
-      - if: github.event_name == 'pull_request'
+      - if: needs.changes.outputs.pr == 'true'
         name: Mutants of the changed lines
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE: ${{ needs.changes.outputs.base }}
           SHARD: ${{ matrix.shard }}
           SHARDS: ${{ needs.mutants-plan.outputs.total }}
         # In the checkout itself, built incrementally (`--in-place`, tooling/xtask/src/mutants.rs),
@@ -539,7 +561,7 @@ jobs:
         run: >-
           cargo xtask mutants --in-place --base "$(git merge-base "$BASE" HEAD)"
           -- --shard "$SHARD/$SHARDS"
-      - if: always() && github.event_name == 'pull_request'
+      - if: always() && needs.changes.outputs.pr == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: mutants-diff-${{ matrix.shard }}

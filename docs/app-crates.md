@@ -196,7 +196,7 @@ Each step is one pull request, each green on its own.
 ## What each new crate needs
 
 - A line in the root `Cargo.toml`'s `[workspace.dependencies]` and `members`, and `kchess-hack`
-  as every member has it (`cargo hakari generate`).
+  as every member has it (`cargo xtask hack`).
 - Its role in xtask's member table (`tooling/xtask/src/members.rs`): a GPUI crate the app is
   built from is `Role::Ui`, outside the coverage totals as the app is (the app's end-to-end suite
   checks its views), its tests run with the headless members' (Linux in `check`, Windows and

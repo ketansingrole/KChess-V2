@@ -103,6 +103,16 @@ const COMMANDS: &[Command] = &[
         run: |_| check::fast(),
     },
     Command {
+        name: "hack",
+        forms: &[(
+            "",
+            "Write what a dependency change leaves `check` refusing: the workspace hack and the \
+             lock (cargo-hakari), Dependabot's hold list and the fuzz targets' lock; then check \
+             them (CI runs it on Dependabot's crate updates)",
+        )],
+        run: |_| hack::write(),
+    },
+    Command {
         name: "scope",
         forms: &[(
             "<base>",
