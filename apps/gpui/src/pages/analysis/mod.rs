@@ -103,7 +103,7 @@ use shakmaty::variant::VariantPosition;
 use shakmaty::{Color, Position as _, Square};
 
 use crate::assets::icon;
-use crate::board::{Arrow, Badge, BoardEvent, BoardState, ChessBoard, Circle};
+use crate::board::{Arrow, Badge, BoardEvent, BoardState, ChessBoard};
 use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::engine_view::EVAL_BAR;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
@@ -1094,7 +1094,8 @@ impl AnalysisPage {
                 .map(|(from, to)| Arrow::brush("red", from, to))
                 .into_iter()
                 .collect();
-            state.circles = hint.map(Circle::green).into_iter().collect();
+            // The piece to move ringed as a puzzle's hint is, which the board also says.
+            state.hint = hint;
             self.board
                 .update(cx, |board, cx| board.set_state(state, cx));
             cx.notify();
