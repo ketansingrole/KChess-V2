@@ -69,7 +69,8 @@ fn context_of(game: &BroadcastGame) -> String {
     analysis_context(&game.start_fen, &game.moves)
 }
 
-fn assistance(cx: &App) -> bool {
+/// Engine help may show: no live Lichess game, and none being looked for.
+pub(super) fn assistance(cx: &App) -> bool {
     cx.global::<LiveGameHandle>()
         .0
         .read(cx)
