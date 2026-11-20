@@ -5,8 +5,6 @@
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::settings::SettingsHandle;
-
 /// How figurines are drawn, or `None` while moves are written with letters.
 pub type Figurine = Option<Figurines>;
 
@@ -30,7 +28,7 @@ impl Figurines {
 /// How moves are shown now: the board's piece set in the body text's colour, when figurines are
 /// on.
 pub fn figurine(cx: &App) -> Figurine {
-    let frontend = &cx.global::<SettingsHandle>().0.read(cx).settings.frontend;
+    let frontend = &crate::settings::frontend(cx);
     frontend.figurine_notation.then(|| Figurines {
         set: crate::board::looks::piece_set(&frontend.piece_set)
             .to_string()

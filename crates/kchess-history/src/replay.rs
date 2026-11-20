@@ -11,7 +11,6 @@ use shakmaty::{Color, Position as _};
 use crate::board::ChessBoard;
 use crate::game::surface::{self, Steps};
 use crate::game::view;
-use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::widgets::{self, Side};
 use kchess_board::FlipBoard;
@@ -125,14 +124,7 @@ impl Steps for GameReplay {
 impl Render for GameReplay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let set = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .piece_set
-            .clone();
+        let set = crate::settings::frontend(cx).piece_set.clone();
         let position = view::position_at(&self.setup, &self.moves, self.ply);
         let fen = position
             .as_ref()

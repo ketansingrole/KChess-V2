@@ -16,7 +16,6 @@ use shakmaty::{Color, Square};
 use super::run::{self, Drill, DrillRun, Stage, Tally};
 use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
 use crate::game::STANDARD_FEN;
-use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent};
@@ -405,13 +404,7 @@ impl Coordinates {
         state.fen = fen.to_string();
         let show = crate::prefs::get(cx, SHOW, false);
         let on_squares = crate::prefs::get(cx, ON_SQUARES, false);
-        let settings = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .clone();
+        let settings = crate::settings::frontend(cx).clone();
         state.coordinates = Some(if show || on_squares {
             if settings.coordinates == CoordinateMode::None {
                 CoordinateMode::Inside

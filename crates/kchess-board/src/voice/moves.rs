@@ -369,13 +369,7 @@ impl VoiceMoves {
         if !self.choices.is_empty() {
             self.settle("replaced", None, cx);
         }
-        let confirm = cx
-            .global::<crate::settings::SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .voice_confirm_moves;
+        let confirm = crate::settings::frontend(cx).voice_confirm_moves;
         if let [only] = offered.as_slice()
             && (immediate || (!confirm && !heard.unclear))
         {

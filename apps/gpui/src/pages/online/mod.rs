@@ -297,13 +297,7 @@ impl OnlinePage {
     /// A move made on the board: sent, or in a correspondence game held for Confirm when
     /// `confirmCorrespondence` is on, since a sent move there cannot be taken back.
     fn board_move(&mut self, uci: String, cx: &mut Context<Self>) {
-        let confirm = cx
-            .global::<crate::settings::SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .confirm_correspondence;
+        let confirm = crate::settings::frontend(cx).confirm_correspondence;
         let online = crate::online::handle(cx);
         let held = {
             let online = online.read(cx);
@@ -382,12 +376,7 @@ impl OnlinePage {
             }
             let mut state =
                 crate::game::view::board_state(&setup, &moves, ply, online.orientation(), movable);
-            let frontend = &cx
-                .global::<crate::settings::SettingsHandle>()
-                .0
-                .read(cx)
-                .settings
-                .frontend;
+            let frontend = &crate::settings::frontend(cx);
             // Blindfold hides the pieces while the game is on (`settings.blindfold && playing`).
             state.blindfold = frontend.blindfold && online.phase == Phase::Playing;
             // On the opponent's turn a move can be queued (`premove && !correspondence`).

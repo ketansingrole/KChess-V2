@@ -46,14 +46,7 @@ impl Control {
     }
 
     fn push_to_talk(&self, cx: &App) -> bool {
-        self.push
-            && cx
-                .global::<crate::settings::SettingsHandle>()
-                .0
-                .read(cx)
-                .settings
-                .frontend
-                .voice_push_to_talk
+        self.push && crate::settings::frontend(cx).voice_push_to_talk
     }
 
     /// Voice on or off for this page.

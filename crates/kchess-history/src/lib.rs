@@ -83,12 +83,7 @@ fn filter_of(outcome: &str) -> Option<Filter> {
 
 /// Whether openings are named (Settings → Gameplay → _Show opening names_).
 pub fn opening_names_shown(cx: &App) -> bool {
-    cx.global::<crate::settings::SettingsHandle>()
-        .0
-        .read(cx)
-        .settings
-        .frontend
-        .show_opening_name
+    crate::settings::frontend(cx).show_opening_name
 }
 
 /// A played game's opening, with its ECO code ("C20 King's Pawn Game"); none for a variant or a

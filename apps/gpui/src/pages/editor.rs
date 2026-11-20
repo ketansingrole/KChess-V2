@@ -783,15 +783,7 @@ impl Render for EditorPage {
             self.refresh_fields(window, cx);
         }
         let palette = *cx.global::<Palette>();
-        let set = looks::piece_set(
-            &cx.global::<SettingsHandle>()
-                .0
-                .read(cx)
-                .settings
-                .frontend
-                .piece_set,
-        )
-        .to_string();
+        let set = looks::piece_set(&crate::settings::frontend(cx).piece_set).to_string();
         let problem = self.problem();
         let turn = self.setup.turn;
         let available = editor::castling_available(&self.setup.board);

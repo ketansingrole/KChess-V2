@@ -15,7 +15,6 @@ use shakmaty::Color;
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
 use crate::game::STANDARD_FEN;
 use crate::game::puzzle::{OnBoard, PuzzleStatus};
-use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii, tint};
 use crate::voice::moves::{Access, Action, BoardBar, Turn, VoiceMoves, board_bar};
 use crate::widgets;
@@ -680,14 +679,7 @@ impl Render for PuzzleBoard {
             .as_ref()
             .map(|board| board.fen().to_string())
             .unwrap_or_default();
-        let set = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .piece_set
-            .clone();
+        let set = crate::settings::frontend(cx).piece_set.clone();
         let orientation = self.orientation();
         let entry = widgets::move_entry(&self.move_box.input, true, &palette);
         let (listening, grammar) = (self.voice_listening(), self.voice_grammar());

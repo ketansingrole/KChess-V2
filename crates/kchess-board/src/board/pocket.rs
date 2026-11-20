@@ -9,7 +9,6 @@ use gpui_kit::*;
 use shakmaty::{Color, Piece, Role};
 
 use super::{ChessBoard, looks};
-use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii, tint};
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
@@ -48,15 +47,7 @@ pub fn pocket(board: &Entity<ChessBoard>, color: Color, cx: &App) -> Option<AnyE
         .filter(|role| movable && shown.state.drops.contains_key(role))
         .collect();
     let palette = *cx.global::<Palette>();
-    let set = looks::piece_set(
-        &cx.global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .piece_set,
-    )
-    .to_string();
+    let set = looks::piece_set(&crate::settings::frontend(cx).piece_set).to_string();
     let side = if color == Color::White {
         "White"
     } else {

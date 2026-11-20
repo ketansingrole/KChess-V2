@@ -26,7 +26,6 @@ use crate::game::tree::TreeNode;
 use crate::game::view;
 use crate::live_game::LiveGameHandle;
 use crate::position_engine::{EngineLook, PositionEngine};
-use crate::settings::SettingsHandle;
 use crate::theme::Palette;
 use crate::widgets::{self, Pill, Tone};
 use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
@@ -719,13 +718,7 @@ impl GuessMoves {
         {
             state.arrows = vec![Arrow::brush("blue", from, to)];
         }
-        state.blindfold = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .blindfold;
+        state.blindfold = crate::settings::frontend(cx).blindfold;
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
         cx.notify();

@@ -1074,13 +1074,7 @@ impl Repertoire {
             let active = to_play(node, color);
             let mut state = BoardState::of(&position, color, active.then_some(color), last);
             state.arrows = self.hint.clone();
-            state.blindfold = cx
-                .global::<SettingsHandle>()
-                .0
-                .read(cx)
-                .settings
-                .frontend
-                .blindfold;
+            state.blindfold = crate::settings::frontend(cx).blindfold;
             state
         });
         if let Some(state) = state {

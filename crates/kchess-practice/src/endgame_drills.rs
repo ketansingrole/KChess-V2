@@ -328,14 +328,7 @@ impl EndgameDrills {
             state.arrows = vec![Arrow::hint(from, to)];
         }
         // The pieces show again once the drill is over.
-        state.blindfold = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .blindfold
-            && !over;
+        state.blindfold = crate::settings::frontend(cx).blindfold && !over;
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
         cx.notify();

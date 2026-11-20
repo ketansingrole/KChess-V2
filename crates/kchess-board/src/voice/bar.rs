@@ -36,13 +36,7 @@ fn status(bar: &Bar, cx: &App) -> Option<(SharedString, bool)> {
     if voice.owner() != Some(bar.owner) || !bar.enabled {
         return None;
     }
-    let push = cx
-        .global::<crate::settings::SettingsHandle>()
-        .0
-        .read(cx)
-        .settings
-        .frontend
-        .voice_push_to_talk;
+    let push = crate::settings::frontend(cx).voice_push_to_talk;
     let line: SharedString = match voice.state {
         State::Error => voice.error.as_ref().map_or_else(
             || "Voice input unavailable".into(),
@@ -91,13 +85,7 @@ pub fn voice_bar(
     let voice = super::handle(cx).read(cx);
     let mine = voice.owner() == Some(bar.owner) && bar.enabled;
     let state = if mine { voice.state } else { State::Off };
-    let push = cx
-        .global::<crate::settings::SettingsHandle>()
-        .0
-        .read(cx)
-        .settings
-        .frontend
-        .voice_push_to_talk;
+    let push = crate::settings::frontend(cx).voice_push_to_talk;
     let line = status(&bar, cx).filter(|_| bar.inline);
     let denied = matches!(voice.error, Some((_, ErrorKind::Denied)));
     let privacy = crate::microphone::privacy_settings(cx);

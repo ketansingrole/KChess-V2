@@ -18,7 +18,6 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::game_image::{self, ImageOptions};
-use crate::settings::SettingsHandle;
 use kchess_ui::icon;
 
 /// Ask where to save `text` as `name`, then write it; the outcome, or `None` when cancelled.
@@ -266,7 +265,7 @@ impl Exporter {
             game_file_name(&game.white, &game.black),
             kind.name()
         );
-        let frontend = &cx.global::<SettingsHandle>().0.read(cx).settings.frontend;
+        let frontend = &crate::settings::frontend(cx);
         let options = ImageOptions {
             setup: game.setup.clone(),
             moves: game.moves.clone(),

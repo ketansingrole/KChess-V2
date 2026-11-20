@@ -1169,15 +1169,7 @@ impl AnalysisPage {
                 Some(AnalysisKey::Explorer) => self.toggle_explorer(window, cx),
                 Some(AnalysisKey::Delete) => self.delete_from_here(window, cx),
                 // Push to talk holds Space for the microphone.
-                Some(AnalysisKey::Best)
-                    if !cx
-                        .global::<SettingsHandle>()
-                        .0
-                        .read(cx)
-                        .settings
-                        .frontend
-                        .voice_push_to_talk =>
-                {
+                Some(AnalysisKey::Best) if !crate::settings::frontend(cx).voice_push_to_talk => {
                     self.play_best(cx)
                 }
                 _ => return,
@@ -1505,13 +1497,7 @@ impl AnalysisPage {
     /// The opening the moves up to the one shown reached, as the game pages name it:
     /// only in standard chess, and while Settings show opening names.
     fn opening(&self, cx: &App) -> Option<String> {
-        let shown = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .show_opening_name;
+        let shown = crate::settings::frontend(cx).show_opening_name;
         if !shown || self.root.variant() != Variant::Standard {
             return None;
         }
@@ -1923,14 +1909,7 @@ impl Render for AnalysisPage {
         // What each side has won, as in a game: the far side's above the board, the near
         // side's beside the move box. The row above keeps its place, so the board holds still.
         let fen = self.node().fen.clone();
-        let piece_set = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .piece_set
-            .clone();
+        let piece_set = crate::settings::frontend(cx).piece_set.clone();
         let material = |color: Color, id: &'static str| {
             widgets::material(&fen, color == Color::White, &piece_set, &palette)
                 .map(|won| div().id(id).test_support().child(won))

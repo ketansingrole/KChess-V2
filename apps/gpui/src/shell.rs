@@ -763,7 +763,7 @@ impl Workspace {
 
     /// A trackpad scroll: a horizontal two-finger swipe goes back or forward.
     fn scrolled(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let settings = &cx.global::<SettingsHandle>().0.read(cx).settings.frontend;
+        let settings = &crate::settings::frontend(cx);
         let (enabled, feedback) = (settings.swipe_navigation, settings.swipe_indicator);
         // A mouse wheel scrolls in lines; only the trackpad's pixels can swipe.
         if !enabled || !event.delta.precise() {
@@ -1369,14 +1369,7 @@ impl Render for Workspace {
             self.title = title;
         }
         // Zen mode on a game page leaves the board and its panel.
-        let zen = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .zen_mode
-            && self.pages.zen(cx);
+        let zen = crate::settings::frontend(cx).zen_mode && self.pages.zen(cx);
         h_flex()
             .size_full()
             .relative()

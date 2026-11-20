@@ -28,7 +28,6 @@ use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::tree::format_eval;
 use crate::game::view;
-use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Side, Tone};
@@ -1041,14 +1040,7 @@ impl WatchPage {
         let Some(game) = broadcasts.current().cloned() else {
             return div().into_any_element();
         };
-        let set = cx
-            .global::<SettingsHandle>()
-            .0
-            .read(cx)
-            .settings
-            .frontend
-            .piece_set
-            .clone();
+        let set = crate::settings::frontend(cx).piece_set.clone();
         let orientation = broadcasts.orientation;
         let moves = game.moves.clone();
         let ply = broadcasts.shown_ply();

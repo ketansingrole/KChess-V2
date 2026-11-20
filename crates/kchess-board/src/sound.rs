@@ -11,8 +11,6 @@ use kchess_contracts::Level;
 use rodio::buffer::SamplesBuffer;
 use rodio::{Decoder, MixerDeviceSink, Source as _};
 
-use crate::settings::SettingsHandle;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Sound {
     Move,
@@ -139,7 +137,7 @@ pub fn play_at(sound: Sound, gain: f64, cx: &mut App) {
     if cx.has_global::<Played>() {
         cx.global_mut::<Played>().0.push(sound);
     }
-    let frontend = &cx.global::<SettingsHandle>().0.read(cx).settings.frontend;
+    let frontend = &crate::settings::frontend(cx);
     if !frontend.sound_enabled {
         return;
     }
