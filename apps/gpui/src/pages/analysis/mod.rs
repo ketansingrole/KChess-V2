@@ -396,12 +396,7 @@ impl Resumes for AnalysisPage {
         let session = saved.analysis.take();
         if let Some(session) = session.filter(|_| self.navigation == 0) {
             self.reopen(&session, cx);
-            // The game's review too, as a change looks it up: without it a kept review showed
-            // only once something else looked, the review queue's first report 10 s after launch.
-            self.follow_review(cx);
-            self.redraw(cx);
-            self.analyse(cx);
-            self.ask_cloud(cx);
+            self.follow_game(cx);
         } else if self.navigation > 0 || !self.root.children.is_empty() {
             self.schedule_save(cx);
         }
@@ -972,12 +967,20 @@ impl AnalysisPage {
         let typing = self.typing_comment.take();
         self.edits.track(&self.root, &self.path, typing);
         self.reveal_move.set(true);
+        self.follow_game(cx);
+        self.schedule_save(cx);
+    }
+
+    /// Everything shown of the game follows the one on the board: its review, the practice of
+    /// it, the board, the engine and the cloud's evaluation. A change and a reopened session both
+    /// come here; the reopened one once listed its own steps and left out the review, which then
+    /// showed only once the review queue's first report, 10 s after launch, looked it up.
+    fn follow_game(&mut self, cx: &mut Context<Self>) {
         self.follow_review(cx);
         self.check_practice(cx);
         self.redraw(cx);
         self.analyse(cx);
         self.ask_cloud(cx);
-        self.schedule_save(cx);
     }
 
     /// Save the session, and the open study's chapter, shortly after the last change.
