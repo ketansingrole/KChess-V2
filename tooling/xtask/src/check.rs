@@ -63,9 +63,11 @@ const DENY_UNWRAP: &str = "#![cfg_attr(not(test), deny(clippy::unwrap_used, clip
 
 /// The crate roots that must deny `unwrap` and `expect` outside tests, from `cargo metadata`:
 /// every member's library, and the programs of every shipped crate but the app (`shipped`). From
-/// the repository root.
+/// the workspace root as the metadata names it: `root()` is canonical, which on Windows is a
+/// `\\?\` path that Cargo's `D:\` paths do not start with.
 #[cfg(test)]
-fn unwrap_free_roots(metadata: &serde_json::Value, repo: &Path) -> Vec<String> {
+fn unwrap_free_roots(metadata: &serde_json::Value) -> Vec<String> {
+    let repo = Path::new(metadata["workspace_root"].as_str().unwrap_or_default());
     let shipped: Vec<&str> = members::shipped().filter(|name| *name != APP).collect();
     let mut roots = Vec::new();
     for package in metadata["packages"].as_array().into_iter().flatten() {
@@ -1529,7 +1531,7 @@ checksum = "aa"
         )
         .unwrap();
         let metadata: serde_json::Value = serde_json::from_str(&text).unwrap();
-        let roots = unwrap_free_roots(&metadata, &root());
+        let roots = unwrap_free_roots(&metadata);
         for expected in [
             "crates/kchess-core/src/lib.rs",
             "crates/kchess-board/src/lib.rs",
