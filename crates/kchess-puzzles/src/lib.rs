@@ -320,6 +320,11 @@ impl PuzzlesPage {
         let puzzle_db = cx.global::<PuzzleDbHandle>().0.clone();
         let account_select = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
         let subscriptions = vec![
+            // The tab is a view preference: chosen here, from Quick Pick or from another page.
+            cx.observe_global_in::<kchess_app::prefs::ViewPreferences>(
+                window,
+                |this, window, cx| this.show_tab(window, cx),
+            ),
             cx.subscribe(
                 &account_select,
                 |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
@@ -384,6 +389,7 @@ impl PuzzlesPage {
                 |this, accounts, window, cx| {
                     this.shown_tab.clear();
                     this.sync_accounts(window, cx);
+                    this.show_tab(window, cx);
                     let waiting = matches!(this.session.phase(), "noaccount" | "reconnect");
                     if waiting && !accounts.read(cx).busy {
                         this.load_next(cx);
@@ -442,6 +448,7 @@ impl PuzzlesPage {
     /// puzzle if there is none.
     pub fn shown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_accounts(window, cx);
+        self.show_tab(window, cx);
         let core = cx.global::<AppCore>().clone();
         let puzzle_db = cx.global::<PuzzleDbHandle>().0.clone();
         puzzle_db.update(cx, |db, cx| db.refresh(cx));
@@ -1698,6 +1705,90 @@ impl PuzzlesPage {
 }
 
 impl PuzzlesPage {
+    /// The History tab's view, made the first time it is wanted.
+    fn history_view(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<history::PuzzleHistory> {
+        if let Some(history) = &self.history {
+            return history.clone();
+        }
+        let themes = self.theme_list.clone();
+        let history = cx.new(|cx| history::PuzzleHistory::new(themes, window, cx));
+        self._subscriptions.push(cx.subscribe_in(
+            &history,
+            window,
+            |this, _, event: &history::HistoryEvent, window, cx| match event {
+                history::HistoryEvent::Retry(puzzle) => this.retry(puzzle.clone(), cx),
+                history::HistoryEvent::Analyse(puzzle, wrong) => kchess_board::analysis::open(
+                    kchess_board::analysis::Open::Puzzle {
+                        puzzle: puzzle.clone(),
+                        wrong_moves: wrong.clone(),
+                    },
+                    window,
+                    cx,
+                ),
+                history::HistoryEvent::Train => {
+                    Tab::Train.store(cx);
+                    cx.notify();
+                }
+                history::HistoryEvent::Reconnect => {
+                    crate::accounts::handle(cx)
+                        .update(cx, |accounts, cx| accounts.connect(window, cx));
+                }
+            },
+        ));
+        self.history = Some(history.clone());
+        history
+    }
+
+    /// Puzzle Rush's view, made the first time it is wanted, over the Stats tab's.
+    fn rush_view(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<rush::PuzzleRush> {
+        if let Some(rush) = &self.rush {
+            return rush.clone();
+        }
+        let stats = self.stats_view(window, cx);
+        let rush = cx.new(|cx| rush::PuzzleRush::new(stats, window, cx));
+        self.rush = Some(rush.clone());
+        rush
+    }
+
+    /// What a tab does as it comes into view: History and Stats (and Puzzle Rush, which shows
+    /// the stats' runs) read the account shown, and a run of Puzzle Rush ends when another tab
+    /// replaces it. Run where the tab or the accounts change and as the page is shown, never
+    /// while drawing (AGENTS.md, "Writing GPUI views").
+    fn show_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let tab = Tab::stored(cx).info().key;
+        if self.shown_tab == tab {
+            return;
+        }
+        match tab {
+            "history" => {
+                let history = self.history_view(window, cx);
+                let account = self.account(cx);
+                history.update(cx, |history, cx| history.shown(account, cx));
+            }
+            "stats" | "rush" => {
+                let stats = self.stats_view(window, cx);
+                let (account, accounts) = (self.account(cx), self.accounts(cx));
+                stats.update(cx, |stats, cx| stats.shown(account, accounts, window, cx));
+            }
+            _ => {}
+        }
+        if self.shown_tab == "rush"
+            && let Some(rush) = &self.rush
+        {
+            rush.update(cx, |rush, cx| rush.leave(cx));
+        }
+        self.shown_tab = tab.to_string();
+        cx.notify();
+    }
+
     /// The Daily tab's view, made when first shown.
     fn daily_view(
         &mut self,
@@ -1883,77 +1974,14 @@ impl Render for PuzzlesPage {
         let body = if tab == "daily" {
             self.daily_view(window, cx).into_any_element()
         } else if tab == "history" {
-            let history = match &self.history {
-                Some(history) => history.clone(),
-                None => {
-                    let themes = self.theme_list.clone();
-                    let history = cx.new(|cx| history::PuzzleHistory::new(themes, window, cx));
-                    self._subscriptions.push(cx.subscribe_in(
-                        &history,
-                        window,
-                        |this, _, event: &history::HistoryEvent, window, cx| match event {
-                            history::HistoryEvent::Retry(puzzle) => this.retry(puzzle.clone(), cx),
-                            history::HistoryEvent::Analyse(puzzle, wrong) => {
-                                kchess_board::analysis::open(
-                                    kchess_board::analysis::Open::Puzzle {
-                                        puzzle: puzzle.clone(),
-                                        wrong_moves: wrong.clone(),
-                                    },
-                                    window,
-                                    cx,
-                                )
-                            }
-                            history::HistoryEvent::Train => {
-                                Tab::Train.store(cx);
-                                cx.notify();
-                            }
-                            history::HistoryEvent::Reconnect => {
-                                crate::accounts::handle(cx)
-                                    .update(cx, |accounts, cx| accounts.connect(window, cx));
-                            }
-                        },
-                    ));
-                    self.history = Some(history.clone());
-                    history
-                }
-            };
-            if self.shown_tab != tab {
-                let account = self.account(cx);
-                history.update(cx, |history, cx| history.shown(account, cx));
-            }
-            history.into_any_element()
+            self.history_view(window, cx).into_any_element()
         } else if tab == "stats" {
-            let stats = self.stats_view(window, cx);
-            if self.shown_tab != tab {
-                let (account, accounts) = (self.account(cx), self.accounts(cx));
-                stats.update(cx, |stats, cx| stats.shown(account, accounts, window, cx));
-            }
-            stats.into_any_element()
+            self.stats_view(window, cx).into_any_element()
         } else if tab == "rush" {
-            let stats = self.stats_view(window, cx);
-            if self.shown_tab != tab {
-                let (account, accounts) = (self.account(cx), self.accounts(cx));
-                stats.update(cx, |stats, cx| stats.shown(account, accounts, window, cx));
-            }
-            let rush = match &self.rush {
-                Some(rush) => rush.clone(),
-                None => {
-                    let rush = cx.new(|cx| rush::PuzzleRush::new(stats.clone(), window, cx));
-                    self.rush = Some(rush.clone());
-                    rush
-                }
-            };
-            rush.into_any_element()
+            self.rush_view(window, cx).into_any_element()
         } else {
             self.render_train(window, cx, &palette)
         };
-        if self.shown_tab == "rush"
-            && tab != "rush"
-            && let Some(rush) = &self.rush
-        {
-            rush.update(cx, |rush, cx| rush.leave(cx));
-        }
-        self.shown_tab = tab.to_string();
         v_flex()
             .size_full()
             .track_focus(&self.focus)

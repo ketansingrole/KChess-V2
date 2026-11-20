@@ -14,6 +14,7 @@ mod electron_step;
 mod engines;
 mod fairy;
 mod fake_lichess;
+mod gpui_lints;
 mod hack;
 mod icons;
 mod licenses;
@@ -268,6 +269,14 @@ const COMMANDS: &[Command] = &[
             "Draw the app icon in every size and format the app needs",
         )],
         run: |_| app_icon::write(),
+    },
+    Command {
+        name: "lints",
+        forms: &[(
+            "",
+            "Find the GPUI mistakes that compile and fail at run time (AGENTS.md)",
+        )],
+        run: |_| gpui_lints::check(),
     },
     Command {
         name: "icons",

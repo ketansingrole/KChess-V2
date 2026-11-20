@@ -149,7 +149,9 @@ and in the App Store. Its readers play chess; they are not developers.
 ## Writing GPUI views
 
 The app is GPUI (`gpui_kit::*` re-exports it). The mistakes below compile and then fail at run
-time; `cargo xtask lints` catches the first three (`tooling/lints`).
+time. `cargo xtask lints` finds the first three, from the syntax (`tooling/xtask/src/gpui_lints.rs`;
+`check-fast` runs it when an app source changed): a line that must stay says why on the line
+before, `// gpui-lints: allow(<lint>) <reason>`.
 
 - `render` only reads. Never `cx.notify()` or `entity.update(…)` directly in `render`: it asks for
   another frame every frame. Change state in the handler or task that learned of the change, and

@@ -169,7 +169,7 @@ fn played_games(cx: &App, limit: usize) -> Vec<PlayedGame> {
 }
 
 impl HomePage {
-    pub fn new(cx: &mut Context<Self>) -> HomePage {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> HomePage {
         let played = cx.global::<PlayedHandle>().0.clone();
         // The last game's opening shows only while opening names are.
         let settings = cx.global::<crate::settings::SettingsHandle>().0.clone();
@@ -184,7 +184,19 @@ impl HomePage {
             focus: cx.focus_handle(),
             _subscriptions: vec![
                 cx.observe(&played, |_, _, cx| cx.notify()),
-                cx.observe(&crate::accounts::handle(cx), |_, _, cx| cx.notify()),
+                // The activity follows the accounts, and the one chosen to play online.
+                cx.observe_in(
+                    &crate::accounts::handle(cx),
+                    window,
+                    |home, _, window, cx| {
+                        home.follow_activity(window, cx);
+                        cx.notify();
+                    },
+                ),
+                cx.observe_global_in::<kchess_app::prefs::ViewPreferences>(
+                    window,
+                    |home, window, cx| home.follow_activity(window, cx),
+                ),
                 cx.observe(&settings, |_, _, cx| cx.notify()),
                 // Another window started or ended a game against the computer.
                 crate::core::profile_changes(
@@ -196,8 +208,47 @@ impl HomePage {
                 ),
             ],
         };
+        page.follow_activity(window, cx);
         page.refresh(cx);
         page
+    }
+
+    /// The account whose activity Home shows: the one chosen to play online, else the first
+    /// Chess.com player's games.
+    fn shown_account(cx: &App) -> Option<String> {
+        let accounts = crate::accounts::handle(cx);
+        let accounts = accounts.read(cx);
+        accounts.active(cx).or_else(|| {
+            accounts
+                .chesscom()
+                .first()
+                .map(|player| kchess_domain::chesscom::account_of(&player.username))
+        })
+    }
+
+    /// Show the activity of the account shown now, loading it when that account changed.
+    fn follow_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(account) = Self::shown_account(cx) else {
+            if self.activity.take().is_some() {
+                cx.notify();
+            }
+            return;
+        };
+        if self
+            .activity
+            .as_ref()
+            .is_some_and(|(shown, _)| *shown == account)
+        {
+            return;
+        }
+        let view = self
+            .activity
+            .take()
+            .map(|(_, view)| view)
+            .unwrap_or_else(|| cx.new(|cx| lichess::LichessActivity::new(window, cx)));
+        view.update(cx, |view, cx| view.load(&account, cx));
+        self.activity = Some((account, view));
+        cx.notify();
     }
 
     /// The newest played games, worked out again only once the played games change.
@@ -353,18 +404,7 @@ fn tile(
 impl Render for HomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let (connected, busy) = {
-            let accounts = crate::accounts::handle(cx);
-            let accounts = accounts.read(cx);
-            // Without a Lichess account, the first Chess.com player's games are the activity.
-            let account = accounts.active(cx).or_else(|| {
-                accounts
-                    .chesscom()
-                    .first()
-                    .map(|player| kchess_domain::chesscom::account_of(&player.username))
-            });
-            (account, accounts.busy)
-        };
+        let busy = crate::accounts::handle(cx).read(cx).busy;
         let padding = side_padding(window);
         // Before the first layout, the window less the sidebar is the guess.
         let measured = self.area.size().width;
@@ -703,28 +743,7 @@ impl Render for HomePage {
             );
         // A connected account's (or Chess.com player's) activity follows; until then, one line to
         // connect it.
-        let activity = match connected.clone() {
-            Some(account) => {
-                let stale = self
-                    .activity
-                    .as_ref()
-                    .is_none_or(|(shown, _)| *shown != account);
-                if stale {
-                    let view = self
-                        .activity
-                        .take()
-                        .map(|(_, view)| view)
-                        .unwrap_or_else(|| cx.new(|cx| lichess::LichessActivity::new(window, cx)));
-                    view.update(cx, |view, cx| view.load(&account, cx));
-                    self.activity = Some((account, view));
-                }
-                self.activity.as_ref().map(|(_, view)| view.clone())
-            }
-            None => {
-                self.activity = None;
-                None
-            }
-        };
+        let activity = self.activity.as_ref().map(|(_, view)| view.clone());
         let connect = activity.is_none().then(|| {
             widgets::card(&palette).py(px(16.)).child(
                 h_flex()
@@ -837,8 +856,8 @@ impl PageView for HomePage {
 
     type Action = Action;
 
-    fn create(_: &mut Window, cx: &mut Context<Self>) -> Self {
-        HomePage::new(cx)
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        HomePage::new(window, cx)
     }
 
     /// Home shows the unfinished game and accounts as they are now.
@@ -885,7 +904,7 @@ mod tests {
                 ..Default::default()
             };
             crate::played::init(&library, cx);
-            let page = cx.new(super::HomePage::new);
+            let page = cx.new(|cx| super::HomePage::new(window, cx));
             let shell = std::rc::Rc::new(kchess_nav::testing::OnlyPage::of(page.clone()));
             cx.set_global(kchess_nav::shell::Navigator(shell.clone()));
             page.update(cx, |page, cx| page.act(super::Action::Review, window, cx));
