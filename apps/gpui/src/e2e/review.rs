@@ -31,6 +31,9 @@ fn a_game_is_reviewed_to_its_end(cx: &mut gpui_kit::TestAppContext) {
     wait_for_review(&mut app);
 }
 
+/// 2026-11-21: the board reopened its game at launch without looking up the game's review, so
+/// the kept review showed only when something else looked: the review queue's first report, 10 s
+/// after launch. The board finds it before the queue has said anything.
 #[gpui_kit::test]
 fn a_finished_review_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppContext) {
     let mut app = scholars_mate(cx);
@@ -40,6 +43,14 @@ fn a_finished_review_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCon
     let mut app = app.restart();
     app.open("Analysis board");
     wait_for_review(&mut app);
+    let reports = app.with_window(|_, cx| {
+        let reviews = cx.global::<crate::reviews::ReviewHandle>().0.clone();
+        reviews.read(cx).status_events()
+    });
+    assert_eq!(
+        reports, 0,
+        "the review showed only after the queue reported"
+    );
 }
 
 /// 2026-11-20: the board asked for its review while the check for a Lichess game had not

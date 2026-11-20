@@ -87,6 +87,12 @@ pub fn init(cx: &mut App) {
 }
 
 impl ReviewStore {
+    /// How many status reports the review queue has sent: none before it first looks for work.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn status_events(&self) -> u64 {
+        self.status_events
+    }
+
     /// Read the queue's status, unless a status event arrives first.
     fn read_status(&mut self, cx: &mut Context<Self>) {
         let seen = self.status_events;

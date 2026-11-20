@@ -396,6 +396,9 @@ impl Resumes for AnalysisPage {
         let session = saved.analysis.take();
         if let Some(session) = session.filter(|_| self.navigation == 0) {
             self.reopen(&session, cx);
+            // The game's review too, as a change looks it up: without it a kept review showed
+            // only once something else looked, the review queue's first report 10 s after launch.
+            self.follow_review(cx);
             self.redraw(cx);
             self.analyse(cx);
             self.ask_cloud(cx);
