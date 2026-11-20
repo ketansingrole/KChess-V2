@@ -325,7 +325,7 @@ impl EndgameDrills {
             .as_deref()
             .and_then(|hint| move_squares(&fen, hint))
         {
-            state.arrows = vec![Arrow::solution(from, to)];
+            state.arrows = vec![Arrow::hint(from, to)];
         }
         // The pieces show again once the drill is over.
         state.blindfold = cx

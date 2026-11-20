@@ -712,11 +712,12 @@ impl GuessMoves {
         let ply = self.viewing.unwrap_or(self.ply);
         let movable = self.your_turn().then_some(self.side);
         let mut state = view::board_state(&game.setup, &game.moves, ply, self.side, movable);
-        // The guess being judged, over the position it was made in.
+        // The guess being judged, over the position it was made in: the player's own move, just
+        // made, so it is drawn and not said as a hint.
         if let Some(uci) = &self.pending
             && let Some((from, to)) = crate::board::last_squares(uci)
         {
-            state.arrows = vec![Arrow::hint(from, to)];
+            state.arrows = vec![Arrow::brush("blue", from, to)];
         }
         state.blindfold = cx
             .global::<SettingsHandle>()
