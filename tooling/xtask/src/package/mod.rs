@@ -112,7 +112,7 @@ pub struct Built {
 impl Built {
     /// The programs a package installs side by side, each with the name it is installed as: the
     /// app as `app`, the engines, the core service and, with `cli`, the command line. The app
-    /// finds them by these names beside itself (`crates/kchess-service/src/layout.rs`).
+    /// finds them by these names beside itself (`crates/kchess-client/src/layout.rs`).
     pub fn programs(&self, app: &str, cli: bool) -> Vec<(&Path, String)> {
         let mut programs = vec![
             (self.app.as_path(), installed::program(app)),

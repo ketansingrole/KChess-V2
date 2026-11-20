@@ -370,6 +370,111 @@ fn a_fenced_block_in_a_doc_comment_is_found() {
     assert_eq!(doc_code_blocks(&files), ["a.rs:2", "a.rs:4", "b.rs:1"]);
 }
 
+/* The crates the app is built from never build the core. */
+
+/// The core's crates. A UI crate holds its core through `kchess-client`; one that built these
+/// rebuilt after every edit to the core (2026-11-20: ten did, through `kchess-app` naming
+/// `kchess-service`, which ran their builds and tests again for 91 of the core's 221 commits that
+/// month that touched no frontend). Only their tests may, through `test-support`.
+const CORE_CRATES: [&str; 2] = ["kchess-core", "kchess-service"];
+
+/// Each UI crate that builds a core crate through the members it always depends on (not an
+/// optional dependency, a test's, or a build script's), as the path it takes.
+fn ui_crates_building_the_core(metadata: &serde_json::Value) -> Vec<String> {
+    let packages = metadata["packages"].as_array().cloned().unwrap_or_default();
+    let members: std::collections::HashSet<&str> = packages
+        .iter()
+        .filter_map(|package| package["name"].as_str())
+        .collect();
+    let built: std::collections::HashMap<&str, Vec<&str>> = packages
+        .iter()
+        .filter_map(|package| {
+            let uses = package["dependencies"]
+                .as_array()?
+                .iter()
+                .filter(|dependency| dependency["kind"].is_null() && dependency["optional"] != true)
+                .filter_map(|dependency| dependency["name"].as_str())
+                .filter(|name| members.contains(name))
+                .collect();
+            Some((package["name"].as_str()?, uses))
+        })
+        .collect();
+    let mut found = Vec::new();
+    let mut ui: Vec<&str> = built
+        .keys()
+        .copied()
+        .filter(|name| crate::members::role(name) == crate::members::Role::Ui)
+        .collect();
+    ui.sort_unstable();
+    for start in ui {
+        let mut paths = vec![vec![start]];
+        let mut seen = std::collections::HashSet::from([start]);
+        while let Some(path) = paths.pop() {
+            let Some(last) = path.last() else { continue };
+            if CORE_CRATES.contains(last) {
+                found.push(path.join(" → "));
+                break;
+            }
+            for next in built.get(last).into_iter().flatten() {
+                if seen.insert(next) {
+                    let mut longer = path.clone();
+                    longer.push(next);
+                    paths.push(longer);
+                }
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn the_crates_the_app_is_built_from_never_build_the_core() {
+    let text = crate::util::output(
+        "cargo",
+        &["metadata", "--no-deps", "--format-version", "1", "--locked"],
+    )
+    .expect("cargo metadata");
+    let metadata = serde_json::from_str(&text).expect("its JSON");
+    let found = ui_crates_building_the_core(&metadata);
+    assert!(
+        found.is_empty(),
+        "a UI crate builds the core; name `kchess-client` instead: {found:?}"
+    );
+}
+
+#[test]
+fn a_ui_crate_reaching_the_core_is_named_with_its_path() {
+    let package = |name: &str, dependencies: serde_json::Value| serde_json::json!({ "name": name, "dependencies": dependencies });
+    let normal = |name: &str| serde_json::json!({ "name": name, "kind": null, "optional": false });
+    let metadata = serde_json::json!({ "packages": [
+        package("kchess-board", serde_json::json!([normal("kchess-app")])),
+        package("kchess-app", serde_json::json!([
+            normal("kchess-client"),
+            // Optional, and a test's: neither is built with the crate.
+            { "name": "kchess-core", "kind": null, "optional": true },
+            { "name": "kchess-service", "kind": "dev", "optional": false },
+        ])),
+        package("kchess-client", serde_json::json!([])),
+        package("kchess-core", serde_json::json!([])),
+        package("kchess-service", serde_json::json!([normal("kchess-core")])),
+    ]});
+    assert!(ui_crates_building_the_core(&metadata).is_empty());
+
+    let metadata = serde_json::json!({ "packages": [
+        package("kchess-board", serde_json::json!([normal("kchess-app")])),
+        package("kchess-app", serde_json::json!([normal("kchess-service")])),
+        package("kchess-service", serde_json::json!([normal("kchess-core")])),
+        package("kchess-core", serde_json::json!([])),
+    ]});
+    assert_eq!(
+        ui_crates_building_the_core(&metadata),
+        [
+            "kchess-app → kchess-service",
+            "kchess-board → kchess-app → kchess-service"
+        ]
+    );
+}
+
 /* The app's look: rules that hold across every page, which no test of one page can see. */
 
 /// The app's shipped sources, as (path from the repository root, text before its test module).

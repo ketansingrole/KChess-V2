@@ -7,6 +7,7 @@
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
 
+pub mod config;
 pub mod env;
 mod redact;
 

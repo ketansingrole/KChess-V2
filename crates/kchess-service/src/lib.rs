@@ -1,14 +1,12 @@
 //! The shared KChess core (`docs/shared-core.md`): one core per profile, which every KChess
-//! window, and later a CLI or MCP server, uses over a private local socket.
+//! window and the command line use over a private local socket.
 //!
-//! - `protocol`: the frames, the release and the protocol fingerprint;
-//! - `discovery`: the socket, `core.json`, `core.token` and the runtime folder;
-//! - `transport`: Unix sockets and Windows named pipes;
 //! - `server`: the service (`kchess-service serve`);
-//! - `client`: connecting, and starting the service when none runs;
-//! - `handle`: a frontend's core, embedded or shared, with its events and host requests;
-//! - `layout`: the profile and the programs a frontend configures the core with;
-//! - `runtime`: the per-release copy the service runs from.
+//! - `embedded`: the core in a frontend's own process (`embed`), for the programs that host it.
+//!
+//! What a frontend holds of its core (the connection, the protocol, the handle, the profile's
+//! layout) is `kchess-client`, re-exported here for the service and the programs that host the
+//! core; the crates a frontend is built from name `kchess-client` alone.
 
 // A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
@@ -16,18 +14,8 @@
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
 
-pub mod client;
-pub mod discovery;
-pub mod handle;
-pub mod layout;
-pub mod protocol;
-pub mod runtime;
+pub mod embedded;
 pub mod server;
-pub mod transport;
 
-pub use client::{
-    Client, ClientEvent, ConnectError, Hello, Start, connect_or_start, connect_or_start_within,
-};
-pub use handle::{Answer, CORE_STACK, CoreHandle, Log, Mode, Options, core_runtime};
-pub use layout::Layout;
-pub use protocol::Capability;
+pub use embedded::embed;
+pub use kchess_client::*;

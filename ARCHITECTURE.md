@@ -17,12 +17,16 @@ crates/
                          archive and Game history, and the round a broadcast opens at
   kchess-contracts/      `CoreApi`, its typed calls, its events and the serde types frontends decode
   kchess-core/           The headless core: storage, engines, Lichess, puzzles, reviews, voice
-  kchess-service/        One core per profile, served to every KChess window and the CLI
+  kchess-client/         The core as a frontend holds it, without the core: the handle, the
+                         service's protocol and socket, the profile's layout
+  kchess-service/        One core per profile, served to every KChess window and the CLI, and the
+                         core a frontend embeds (`embed`)
   kchess-voice/          The speech recognition helper (libvosk)
   kchess-delta/          What a release and an installed app agree on: versions, release notes,
                          asset and install names, the signed checksums and update patches
   kchess-host/           What the core and frontends read alike of their process: the `KCHESS_*`
-                         switches, the App Store sandbox, log redaction, links a browser may open
+                         switches, the App Store sandbox, log redaction, links a browser may open,
+                         and the core's configuration (`config`)
   kchess-ui/             The app's design system over GPUI Kit: theme, motion, the line chart
                          (`docs/app-crates.md`: splitting the app into crates)
   kchess-app/            The app's services: the core as the app holds it, Settings, view

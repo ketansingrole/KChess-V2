@@ -300,11 +300,14 @@ older one; nothing tries to make two versions work together.
 
 ## Clients
 
-- Both frontends hold their core through `kchess_service::CoreHandle` (`handle.rs`): one shared
-  or embedded backend, one event channel, typed calls, host replies, focus, `suspend` and `close`
-  with one meaning each, and, for the app, a reconnect after the service stops. Both configure it
-  through `kchess_service::Layout` (`layout.rs`): the profile, the engines, the speech helper,
-  the service binary and the test switches, read once as the frontend starts.
+- Both frontends hold their core through `kchess_client::CoreHandle` (`crates/kchess-client`,
+  `handle.rs`): one shared or embedded backend, one event channel, typed calls, host replies,
+  focus, `suspend` and `close` with one meaning each, and, for the app, a reconnect after the
+  service stops. Both configure it through `kchess_client::Layout` (`layout.rs`): the profile, the
+  engines, the speech helper, the service binary and the test switches, read once as the frontend
+  starts. `kchess-client` does not depend on the core: an embedded core is opened by
+  `kchess_service::embed`, which the app's and the CLI's `core.rs` pass in, so the crates the app
+  is built from do not rebuild when the core changes.
 - **GPUI.** `CoreBridge` (`apps/gpui/src/core.rs`) runs the handle on its runtime; views do not
   change. `answer_host` answers routed `host:request`s on the UI thread.
 - **CLI** (`apps/cli`), **and MCP (later).** Socket clients without a window: the CLI declares

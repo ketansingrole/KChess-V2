@@ -9,14 +9,14 @@ publish.workspace = true
 [features]
 # What the app's end-to-end tests check with: the slow calls a frame made (`slow_calls::drawing`);
 # and a real core for the tests of the crates the app is built from (`tests::start_core`).
-test-support = ["dep:kchess-core", "dep:tempfile"]
+test-support = ["dep:kchess-core", "dep:kchess-service", "dep:tempfile"]
 
 [dependencies]
 kchess-contracts.workspace = true
 kchess-domain.workspace = true
 kchess-host.workspace = true
-# The shared core as a client holds it (`docs/shared-core.md`).
-kchess-service.workspace = true
+# The profile's core as a client holds it, without the core (`docs/shared-core.md`).
+kchess-client.workspace = true
 # Dates as the app shows them (`kchess_ui::dates`), for the log.
 kchess-ui.workspace = true
 # Pinned with the app's (apps/gpui/Cargo.toml).
@@ -32,6 +32,7 @@ jiff = "1.0"
 getrandom = "0.4"
 # A real core, embedded, for tests (`test-support`, `src/tests.rs`).
 kchess-core = { workspace = true, optional = true }
+kchess-service = { workspace = true, optional = true }
 tempfile = { version = "3", optional = true }
 kchess-hack = { version = "0.1", path = "../kchess-hack" }
 
@@ -40,6 +41,7 @@ kchess-hack = { version = "0.1", path = "../kchess-hack" }
 gpui-kit = { version = "=0.10.0", features = ["test-support"] }
 # A real core for the tests, embedded over a fresh profile (`src/tests.rs`).
 kchess-core.workspace = true
+kchess-service.workspace = true
 # A stand-in Lichess for the test core (`start_core_with_lichess`).
 kchess-testkit.workspace = true
 tempfile = "3"

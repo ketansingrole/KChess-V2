@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use kchess_contracts::CoreEvent;
 use kchess_contracts::{CoreError, ErrorKind};
-use kchess_core::Config;
+use kchess_host::config::Config;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 

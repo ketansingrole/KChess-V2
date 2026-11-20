@@ -1,4 +1,4 @@
-//! The profile's core, as the CLI reaches it (`kchess_service::CoreHandle`): the shared core
+//! The profile's core, as the CLI reaches it (`kchess_client::CoreHandle`): the shared core
 //! service the app also uses (started when none runs), or, with `--embedded`, a core in this
 //! process. Its host requests are answered here as they arrive (`answer`), and its errors are
 //! told with the command line's own fix (`told`).
@@ -63,6 +63,7 @@ impl CoreClient {
                 capabilities: vec![Capability::Browser],
             },
             mode,
+            embed: kchess_service::embed(),
             reconnect: false,
             log: Arc::new(log),
             answer: Some(Arc::new(move |request| {

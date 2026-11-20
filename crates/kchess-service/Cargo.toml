@@ -1,6 +1,6 @@
 [package]
 name = "kchess-service"
-description = "The shared KChess core: one core per profile, served to every KChess window over a local socket (docs/shared-core.md)."
+description = "The shared KChess core: one core per profile, served to every KChess window over a local socket, and the core embedded by a frontend's host (docs/shared-core.md)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,28 +11,15 @@ name = "kchess-service"
 path = "src/bin/kchess-service.rs"
 
 [dependencies]
+# What a frontend holds of its core, re-exported for the programs that host it.
+kchess-client.workspace = true
 kchess-contracts.workspace = true
 kchess-core.workspace = true
 kchess-host.workspace = true
-# The names packages install programs under.
-kchess-delta.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "process", "net", "signal"] }
-# The socket name and the protocol fingerprint (already in Cargo.lock through kchess-core).
-sha2 = { version = "0.11", default-features = false }
-# The connection token (already in Cargo.lock through kchess-core).
-getrandom = "0.4"
 kchess-hack = { version = "0.1", path = "../kchess-hack" }
-
-# The caller's user id, checked against the socket's peer (already in Cargo.lock).
-[target.'cfg(unix)'.dependencies]
-rustix = { version = "1", features = ["process"] }
-
-# The pipe's owner-only security descriptor and the owner check (already in Cargo.lock through
-# tokio).
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "3"
