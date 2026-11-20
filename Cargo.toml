@@ -103,8 +103,9 @@ lto = "fat"
 overflow-checks = true
 codegen-units = 1
 panic = "unwind"
-# Not "symbols": a release build has no debug info, so its backtraces name functions from the
-# symbol table alone, and Xcode's `strip` breaks the app's dylibs (.cargo/config.toml).
+# Not "symbols": a backtrace names a release build's functions from its symbol table, and Xcode's
+# `strip` breaks the app's dylibs (.cargo/config.toml). Linux packages drop the standard
+# library's debug info (`cargo xtask package`); macOS drops local symbols at link.
 strip = "none"
 
 # GPUI with a window zoom (Settings → Interface size, like a browser's page zoom): see

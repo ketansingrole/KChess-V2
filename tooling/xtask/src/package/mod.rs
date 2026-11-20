@@ -207,8 +207,8 @@ fn verify_no_dev_build(path: &Path) -> Result {
     Ok(())
 }
 
-/// The release build of everything packaging ships.
-fn compile() -> Command {
+/// The release build of everything packaging ships, on `os` (`std::env::consts::OS`).
+fn compile(os: &str) -> Command {
     let mut cargo = Command::new("cargo");
     cargo.args(["build", "--release", "--locked"]);
     for package in crate::members::shipped() {
@@ -216,14 +216,23 @@ fn compile() -> Command {
     }
     // A shipped build ignores the development overrides (`kchess_host::dev_overrides`).
     cargo.args(["--features", "kchess-core/packaged"]);
+    // Linux: the linker drops the debug info the standard library brings (4 of the command
+    // line's 27 MB) and keeps the symbol table, so a panic's backtrace names its functions.
+    // macOS drops local symbols at link instead (.cargo/config.toml).
+    if os == "linux" {
+        cargo.args(["--config", LINUX_STRIP]);
+    }
     cargo
 }
+
+/// Linux packages' strip setting (`compile`): the debug info, not the symbols.
+const LINUX_STRIP: &str = "profile.release.strip=\"debuginfo\"";
 
 fn build(skip: bool) -> Result<Built> {
     let target = root().join("target/release");
     if !skip {
         say("Building the app, core service, command line and voice helper (release)…");
-        run_with(&mut compile())?;
+        run_with(&mut compile(std::env::consts::OS))?;
     }
     let voice = crate::voice::stage("release")?;
     let fairy = crate::fairy::build()?;
@@ -305,7 +314,7 @@ pub fn run(args: &[String]) -> Result {
     } = options(args);
     if build_only {
         say("Building the app, core service, command line and voice helper (release)…");
-        return run_with(&mut compile());
+        return run_with(&mut compile(std::env::consts::OS));
     }
     // KCHESS_PACKAGE_VERSION builds a test installer above every release (windows-upgrade.yml);
     // the app reads the same variable (apps/gpui/build.rs).
@@ -403,6 +412,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(verify_no_dev_build(&app), Ok(()));
+    }
+
+    /// Linux packages drop their debug info and keep their symbol table; elsewhere the build is
+    /// as the release profile has it.
+    #[test]
+    fn only_linux_packages_strip_their_debug_info() {
+        let strips = |os| compile(os).get_args().any(|arg| arg == LINUX_STRIP);
+        assert!(strips("linux"));
+        assert!(!strips("macos"));
+        assert!(!strips("windows"));
     }
 
     #[test]
