@@ -23,6 +23,12 @@ pub struct Started {
     _assistance: Option<(Subscription, Task<()>)>,
 }
 
+/// The status answer, asked before any report, still says what the core lends: no report
+/// (`reports_since` of them) came after it.
+fn status_is_current(reports_since: u64) -> bool {
+    reports_since == 0
+}
+
 /// What the app's live game does as it starts, with no game to play: asks the core for a game
 /// left running, and lends engine help as the core says (`online:assistance`, whose lock is the
 /// one that counts). A status answer older than a report is dropped, as the game drops it.
@@ -41,7 +47,7 @@ fn follow_assistance(cx: &mut App) -> (Subscription, Task<()>) {
         resume.await.expect("the check for a game in progress");
         let assistance = status.await.expect("the core's engine help");
         cx.update(|cx| {
-            if seen.get() == 0 {
+            if status_is_current(seen.get()) {
                 tell(assistance, cx);
             }
         });
@@ -161,6 +167,15 @@ impl Started {
 #[cfg(test)]
 mod tests {
     use super::Started;
+
+    /// A status answer counts only while no report has come since it was asked: a report is
+    /// newer.
+    #[test]
+    fn a_report_outdates_the_status_answer() {
+        assert!(super::status_is_current(0));
+        assert!(!super::status_is_current(1));
+        assert!(!super::status_is_current(2));
+    }
 
     /// A wait looks until what it waits for holds, and no longer.
     #[gpui_kit::test]
