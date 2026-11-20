@@ -57,7 +57,9 @@ pub fn check() -> Result {
     if available("cargo", &["hakari", "--version"]) {
         run("cargo", &["hakari", "generate", "--diff"])
             .and_then(|()| run("cargo", &["hakari", "manage-deps", "--dry-run"]))
-            .map_err(|cause| format!("{cause}\nThe hack is out of date: run `cargo xtask hack`."))?;
+            .map_err(|cause| {
+                format!("{cause}\nThe hack is out of date: run `cargo xtask hack`.")
+            })?;
     } else {
         say("cargo-hakari is not installed (`cargo install cargo-hakari`): CI checks the hack.");
     }
@@ -115,7 +117,9 @@ pub fn write() -> Result {
     if held != config {
         std::fs::write(root().join(DEPENDABOT), held)
             .map_err(|cause| format!("{DEPENDABOT}: {cause}"))?;
-        say(&format!("{DEPENDABOT} holds the packages only the hack depends on."));
+        say(&format!(
+            "{DEPENDABOT} holds the packages only the hack depends on."
+        ));
     }
     // Only what the manifests changed: the packages it already locks keep their versions.
     run("cargo", &["update", "--workspace", "--manifest-path", FUZZ])?;
