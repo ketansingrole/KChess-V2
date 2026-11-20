@@ -275,8 +275,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/install-gpui-libs
       - uses: ./.github/actions/windows-linker
-      # `headless` restores this cache too, and saves none of its own. On macOS it holds the
-      # lints' and the command line's builds too.
+      # On macOS it holds the lints' and the command line's builds too.
       - id: cache
         uses: ./.github/actions/rust-cache
         with:
@@ -334,18 +333,25 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/windows-linker
-      # The gpui job's dependencies, read only: a cache of its own held 554 to 602 MB more per
-      # platform (2026-11-10), room the package caches need under the repository's 10 GB.
-      - uses: ./.github/actions/rust-cache
+      # A cache of its own, saved from main. It restored the gpui job's, which holds no lint
+      # build: clippy checked all 470 dependencies again on every run, 3.5 of the job's 13 minutes
+      # (run 44761306490), on CI's longest job. It costs about 700 MB of the repository's 10 GB,
+      # which the mutation tests' cache gave back.
+      - id: cache
+        uses: ./.github/actions/rust-cache
         with:
-          shared-key: gpui
-          save-if: false
+          shared-key: headless
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The vendored GPUI's lint build, kept as the gpui job keeps its test build.
       - id: vendor
         uses: ./.github/actions/vendor-gpui
         with:
           name: vendor-headless
       - uses: ./.github/actions/headless-tests
+      - if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/drop-caches
+        with:
+          rust-cache: headless
       - uses: ./.github/actions/vendor-gpui
         with:
           name: vendor-headless
