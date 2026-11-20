@@ -86,7 +86,8 @@ jobs:
         run: |
           patch="$RUNNER_TEMP/hack/hack.patch"
           # Only what `cargo xtask hack` writes: the locks, Dependabot's settings and manifests.
-          for path in $(git apply --numstat "$patch" | cut -f3); do
+          numstat="$(git apply --numstat "$patch")"
+          for path in $(echo "$numstat" | cut -f3); do
             case "$path" in
               Cargo.lock|fuzz/Cargo.lock|.github/dependabot.yml|Cargo.toml) ;;
               crates/*/Cargo.toml|apps/*/Cargo.toml|tooling/*/Cargo.toml) ;;
