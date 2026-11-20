@@ -581,9 +581,9 @@ fn vendor_gpui_is_saved_with_its_rust_cache() {
         "rust-cache is given the vendored sources' hash"
     );
     assert!(
-        cache["with"]["env-vars"]
-            .as_str()
-            .is_some_and(|vars| vars.split_whitespace().any(|var| var == "KCHESS_VENDORED_GPUI")),
+        cache["with"]["env-vars"].as_str().is_some_and(|vars| vars
+            .split_whitespace()
+            .any(|var| var == "KCHESS_VENDORED_GPUI")),
         "rust-cache hashes the vendored sources into its key"
     );
 }
@@ -610,9 +610,13 @@ fn xtask_sources(metadata: &serde_json::Value) -> Vec<String> {
                 .into_iter()
                 .flatten()
                 .filter(|dep| {
-                    dep["dep_kinds"].as_array().into_iter().flatten().any(|kind| {
-                        kind["kind"].is_null() || kind["kind"].as_str() == Some("build")
-                    })
+                    dep["dep_kinds"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|kind| {
+                            kind["kind"].is_null() || kind["kind"].as_str() == Some("build")
+                        })
                 })
                 .filter_map(|dep| dep["pkg"].as_str())
                 .collect();
@@ -701,10 +705,13 @@ fn xtask_program_is_keyed_by_its_sources() {
         ["a/**", "Cargo.lock"]
     );
 
-    let text = crate::util::output("cargo", &["metadata", "--format-version", "1", "--locked"])
-        .unwrap();
+    let text =
+        crate::util::output("cargo", &["metadata", "--format-version", "1", "--locked"]).unwrap();
     let sources = xtask_sources(&serde_json::from_str(&text).unwrap());
-    assert!(sources.contains(&"tooling/xtask".to_string()), "{sources:?}");
+    assert!(
+        sources.contains(&"tooling/xtask".to_string()),
+        "{sources:?}"
+    );
     let ci = yaml_rust2::YamlLoader::load_from_str(
         &std::fs::read_to_string(crate::util::root().join(".github/workflows/ci.yml")).unwrap(),
     )
@@ -722,8 +729,13 @@ fn xtask_program_is_keyed_by_its_sources() {
         .iter()
         .map(|folder| format!("{folder}/**"))
         .chain(
-            ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml"]
-                .map(String::from),
+            [
+                "Cargo.toml",
+                "Cargo.lock",
+                "rust-toolchain.toml",
+                ".cargo/config.toml",
+            ]
+            .map(String::from),
         )
         .filter(|pattern| !hashed.contains(pattern))
         .collect();
