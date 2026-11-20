@@ -1,6 +1,6 @@
 [package]
 name = "kchess-testkit"
-description = "What the tests share: a loopback HTTP/1.1 server their stand-ins answer through (request parsing, response heads, chunked streams), memory measurement and seeded random runs."
+description = "What the tests share: a loopback HTTP/1.1 server the tests and xtask's stand-ins answer through (request parsing, response heads, chunked streams), the workspace binaries tests run, built once per run, memory measurement and seeded random runs."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,6 +11,10 @@ publish.workspace = true
 kchess-host.workspace = true
 serde_json.workspace = true
 kchess-hack = { version = "0.1", path = "../kchess-hack" }
+
+[dev-dependencies]
+# Scratch target folders for the build tests (`src/build.rs`).
+tempfile = "3"
 
 [lints]
 workspace = true

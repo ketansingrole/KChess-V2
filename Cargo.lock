@@ -4361,6 +4361,7 @@ dependencies = [
  "kchess-hack",
  "kchess-host",
  "kchess-service",
+ "kchess-testkit",
  "serde_json",
  "tempfile",
  "tokio",
@@ -4745,6 +4746,7 @@ dependencies = [
  "kchess-hack",
  "kchess-host",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

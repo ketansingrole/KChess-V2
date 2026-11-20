@@ -1,5 +1,8 @@
 //! `cargo xtask <command>`: KChess's own tooling, in Rust like the rest of the repository.
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 mod app;
 mod app_icon;
 mod app_mutants;
@@ -102,6 +105,16 @@ const COMMANDS: &[Command] = &[
             "Format, lints and the tests of the packages changed since main",
         )],
         run: |_| check::fast(),
+    },
+    Command {
+        name: "hack",
+        forms: &[(
+            "",
+            "Write what a dependency change leaves `check` refusing: the workspace hack and the \
+             lock (cargo-hakari), Dependabot's hold list and the fuzz targets' lock; then check \
+             them (CI runs it on Dependabot's crate updates)",
+        )],
+        run: |_| hack::write(),
     },
     Command {
         name: "scope",

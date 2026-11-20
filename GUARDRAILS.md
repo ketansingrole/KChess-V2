@@ -45,8 +45,8 @@ refuse direct pushes to `main`: a pull request merges once CI's `ci-passed` chec
 check is `cargo fmt --check`, clippy over every target with
 warnings denied (and `unwrap`/`expect` denied in libraries and shipped binaries), the notices
 check, the workspace hack (`crates/kchess-hack`: one feature set for every dependency, whichever
-packages a command selects; after a dependency change run `cargo hakari generate`, with
-`cargo install cargo-hakari`), the release metadata, and every test, under the coverage gate when `cargo-llvm-cov` is
+packages a command selects; after a dependency change run `cargo xtask hack`, with
+`cargo install cargo-hakari`, which Dependabot's crate updates get from CI), the release metadata, and every test, under the coverage gate when `cargo-llvm-cov` is
 installed. Packaging changes also need `cargo xtask package` on the platform they touch. CI runs
 `check` and `cargo deny` on Linux, the app's tests on macOS, Windows and Linux, and every other
 member's lints and tests on macOS and Windows (`.github/actions/headless-tests`). It also packages for macOS

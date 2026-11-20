@@ -5,6 +5,9 @@
 //! (`loading`), timers (`timer`) and the watch on calls that block the UI thread (`slow_calls`).
 //! It never depends on the app, and never names the core's own crate: the app opens the core and
 //! hands it over.
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 pub mod accounts;
 pub mod core;
 pub mod crashes;

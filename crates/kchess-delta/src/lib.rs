@@ -28,6 +28,9 @@
 
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 mod assets;
 pub mod installed;
 pub mod notes;

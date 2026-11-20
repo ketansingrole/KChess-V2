@@ -38,6 +38,19 @@ pub fn modified(path: &Path) -> Option<std::time::SystemTime> {
         .ok()
 }
 
+/// The folders right inside `folder`; none when it cannot be read.
+pub fn subfolders(folder: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(folder)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.is_dir())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Runs `program` in the repository, its output going to this terminal.
 pub fn run(program: &str, args: &[&str]) -> Result {
     run_with(Command::new(program).args(args))

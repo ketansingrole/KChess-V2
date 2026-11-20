@@ -10,11 +10,15 @@
 
 use std::collections::BTreeSet;
 
-use crate::util::{Result, available, output, run, say};
+use crate::util::{Result, available, output, root, run, say};
 
 const MANIFEST: &str = "crates/kchess-hack/Cargo.toml";
 const CONFIG: &str = ".config/hakari.toml";
 const DEPENDABOT: &str = ".github/dependabot.yml";
+/// The fuzz targets' own workspace (`fuzz/`): it depends on `kchess-domain`, and so on the hack,
+/// but Dependabot updates only the root's lock, so its lock missed each package the hack gained
+/// (byteorder on 2026-11-18, socket2 on 11-20) and `check` refused it.
+const FUZZ: &str = "fuzz/Cargo.toml";
 
 /// Whether `check` reads `file`: the hack's settings, Dependabot's hold list, and the manifests
 /// and lock it is written from.
@@ -54,18 +58,11 @@ pub fn check() -> Result {
         run("cargo", &["hakari", "generate", "--diff"])
             .and_then(|()| run("cargo", &["hakari", "manage-deps", "--dry-run"]))
             .map_err(|cause| {
-                format!(
-                    "{cause}\nThe hack is out of date: run `cargo hakari generate` and \
-                     `cargo hakari manage-deps`."
-                )
+                format!("{cause}\nThe hack is out of date: run `cargo xtask hack`.")
             })?;
     } else {
         say("cargo-hakari is not installed (`cargo install cargo-hakari`): CI checks the hack.");
     }
-    let read = |path: &str| {
-        std::fs::read_to_string(crate::util::root().join(path))
-            .map_err(|cause| format!("{path}: {cause}"))
-    };
     let text = read(MANIFEST)?;
     let platforms = platforms(&read(CONFIG)?);
     if platforms.is_empty() {
@@ -101,13 +98,79 @@ pub fn check() -> Result {
             if extra.len() == 1 { "it" } else { "them" }
         ));
     }
+    let metadata = metadata()?;
+    let source = |path: &str| std::fs::read_to_string(path).unwrap_or_default();
+    if let unnamed @ [_, ..] = unnamed(&metadata, source).as_slice() {
+        return Err(format!("{} {NAMED_HELP}", unnamed.join(", ")));
+    }
+    unkept(&hack_only(&metadata), &kept(&read(DEPENDABOT)?))
+}
+
+/// `hack`: writes everything `check` wants to follow the dependencies, so a crate update needs no
+/// hand afterwards (`.github/workflows/dependabot-hack.yml` runs it on Dependabot's pull
+/// requests): the hack and the lock (`cargo hakari generate`), each package's dependency on it
+/// (`cargo hakari manage-deps`), Dependabot's hold list, and the fuzz targets' lock. Then checks
+/// it all, since a dependency the headless packages lack needs a person's `[final-excludes]`.
+pub fn write() -> Result {
+    if !available("cargo", &["hakari", "--version"]) {
+        return Err("`cargo xtask hack` needs cargo-hakari: `cargo install cargo-hakari`.".into());
+    }
+    run("cargo", &["hakari", "generate"])?;
+    run("cargo", &["hakari", "manage-deps", "--yes"])?;
+    let config = read(DEPENDABOT)?;
+    let held = hold(&config, &hack_only(&metadata()?))?;
+    if held != config {
+        std::fs::write(root().join(DEPENDABOT), held)
+            .map_err(|cause| format!("{DEPENDABOT}: {cause}"))?;
+        say(&format!(
+            "{DEPENDABOT} holds the packages only the hack depends on."
+        ));
+    }
+    // Only what the manifests changed: the packages it already locks keep their versions.
+    run("cargo", &["update", "--workspace", "--manifest-path", FUZZ])?;
+    check()
+}
+
+fn read(path: &str) -> Result<String> {
+    std::fs::read_to_string(root().join(path)).map_err(|cause| format!("{path}: {cause}"))
+}
+
+fn metadata() -> Result<serde_json::Value> {
     let metadata = output(
         "cargo",
         &["metadata", "--format-version", "1", "--no-deps", "--locked"],
     )?;
-    let metadata =
-        serde_json::from_str(&metadata).map_err(|cause| format!("cargo metadata: {cause}"))?;
-    unkept(&hack_only(&metadata), &kept(&read(DEPENDABOT)?))
+    serde_json::from_str(&metadata).map_err(|cause| format!("cargo metadata: {cause}"))
+}
+
+/// How a package's code names the hack. Its code uses nothing of the hack, so without this line
+/// Cargo's `unused_dependencies` lint (Rust 1.100) warns about the dependency every time it
+/// compiles the package.
+const NAMED: &str = "use kchess_hack as _;";
+const NAMED_HELP: &str = "depend on the hack (`cargo xtask hack`) without naming it: add \
+                          `use kchess_hack as _;` to the root of its library or program.";
+
+/// The packages that depend on the hack but name it in none of their libraries' or programs'
+/// roots (`src_path` in `cargo metadata --no-deps`), read by `read`.
+fn unnamed(metadata: &serde_json::Value, read: impl Fn(&str) -> String) -> Vec<String> {
+    let packages = metadata["packages"].as_array().into_iter().flatten();
+    packages
+        .filter(|package| {
+            let mut dependencies = package["dependencies"].as_array().into_iter().flatten();
+            dependencies.any(|dependency| dependency["name"] == "kchess-hack")
+        })
+        .filter(|package| {
+            let targets = package["targets"].as_array().into_iter().flatten();
+            !targets
+                .filter(|target| {
+                    let mut kinds = target["kind"].as_array().into_iter().flatten();
+                    kinds.any(|kind| kind == "lib" || kind == "bin")
+                })
+                .filter_map(|target| target["src_path"].as_str())
+                .any(|root| read(root).lines().any(|line| line.trim() == NAMED))
+        })
+        .filter_map(|package| package["name"].as_str().map(str::to_string))
+        .collect()
 }
 
 /// The packages only the hack depends on, from `cargo metadata --no-deps`: no other manifest
@@ -162,6 +225,38 @@ fn unkept(hack_only: &BTreeSet<String>, kept: &BTreeSet<String>) -> Result {
         ));
     }
     Err(message)
+}
+
+/// `config` holding exactly `names`: its hold lines replaced by one per name, in order, where
+/// the first of them was.
+fn hold(config: &str, names: &BTreeSet<String>) -> Result<String> {
+    let mut lines = Vec::new();
+    let mut first = None;
+    for line in config.lines() {
+        let trimmed = line.trim_start();
+        if kept(line).is_empty() {
+            lines.push(line.to_string());
+        } else if first.is_none() {
+            first = Some((lines.len(), &line[..line.len() - trimmed.len()]));
+        }
+    }
+    let Some((at, indent)) = first else {
+        return Err(format!(
+            "{DEPENDABOT} has no `- {{ dependency-name: <name>, {KEPT} }}` line to write the \
+             hack's packages beside."
+        ));
+    };
+    lines.splice(
+        at..at,
+        names
+            .iter()
+            .map(|name| format!("{indent}- {{ dependency-name: {name}, {KEPT} }}")),
+    );
+    let mut text = lines.join("\n");
+    if config.ends_with('\n') {
+        text.push('\n');
+    }
+    Ok(text)
 }
 
 fn packages(tree: &str) -> BTreeSet<String> {
@@ -234,6 +329,39 @@ mod tests {
         assert_eq!(hack_only(&serde_json::json!({})), set(&[]));
     }
 
+    /// Rust 1.100's `unused_dependencies` lint warned about the hack in every package that
+    /// compiled (2026-11-20): only a library's or program's root naming it counts as using it.
+    #[test]
+    fn a_package_depending_on_the_hack_names_it_in_a_library_or_program() {
+        let package = |name: &str, dependency: &str, targets: &[(&str, &str)]| {
+            let targets: Vec<_> = targets
+                .iter()
+                .map(|(kind, path)| serde_json::json!({ "kind": [kind], "src_path": path }))
+                .collect();
+            serde_json::json!({
+                "name": name, "dependencies": [{ "name": dependency }], "targets": targets,
+            })
+        };
+        let metadata = serde_json::json!({ "packages": [
+            package("named-lib", "kchess-hack", &[("lib", "/named"), ("bin", "/bare")]),
+            package("named-bin", "kchess-hack", &[("lib", "/bare"), ("bin", "/named")]),
+            package("in-a-test", "kchess-hack", &[("lib", "/bare"), ("test", "/named")]),
+            package("in-a-comment", "kchess-hack", &[("lib", "/commented")]),
+            package("unnamed", "kchess-hack", &[("bin", "/bare")]),
+            package("no-hack", "serde", &[("lib", "/bare")]),
+        ]});
+        let read = |path: &str| match path {
+            "/named" => format!("//! Docs.\n\n    {NAMED}\nmod x;\n"),
+            "/commented" => format!("// {NAMED}\n"),
+            _ => "mod x;\n".to_string(),
+        };
+        assert_eq!(
+            unnamed(&metadata, read),
+            ["in-a-test", "in-a-comment", "unnamed"]
+        );
+        assert!(unnamed(&serde_json::json!({}), read).is_empty());
+    }
+
     #[test]
     fn dependabot_keeps_only_the_lines_holding_both_update_types() {
         let config = format!(
@@ -252,6 +380,41 @@ mod tests {
         assert!(error.contains("remove log,"));
         assert!(unkept(&set(&["zbus"]), &set(&[])).is_err());
         assert!(unkept(&set(&[]), &set(&["log"])).is_err());
+    }
+
+    #[test]
+    fn the_hold_list_is_rewritten_in_place_with_exactly_the_names() {
+        let line = |name: &str| format!("      - {{ dependency-name: {name}, {KEPT} }}\n");
+        let config = format!(
+            "    ignore:\n      - dependency-name: gpui-kit\n      # held\n{}{}    groups:\n",
+            line("log"),
+            line("zbus")
+        );
+        let held = hold(&config, &set(&["socket2", "zbus", "aho-corasick"])).unwrap();
+        assert_eq!(
+            held,
+            format!(
+                "    ignore:\n      - dependency-name: gpui-kit\n      # held\n{}{}{}    groups:\n",
+                line("aho-corasick"),
+                line("socket2"),
+                line("zbus")
+            )
+        );
+        assert_eq!(kept(&held), set(&["aho-corasick", "socket2", "zbus"]));
+        // Already held: unchanged, to the byte; without a final newline, none is added.
+        assert_eq!(hold(&held, &kept(&held)).unwrap(), held);
+        assert_eq!(
+            hold(line("log").trim_end(), &set(&["x"])).unwrap(),
+            line("x").trim_end()
+        );
+        // Nothing held: an empty list in its place.
+        assert_eq!(
+            hold(&config, &set(&[])).unwrap(),
+            "    ignore:\n      - dependency-name: gpui-kit\n      # held\n    groups:\n"
+        );
+        // No hold line to write beside.
+        let error = hold("    ignore:\n", &set(&["zbus"])).unwrap_err();
+        assert!(error.contains("no `- { dependency-name: <name>,"));
     }
 
     #[test]

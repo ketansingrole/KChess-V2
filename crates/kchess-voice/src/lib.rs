@@ -1,6 +1,9 @@
 //! The `kchess-voice` helper's pipe protocol, shared by the helper, the core that runs it and the
 //! core's scripted stand-in for its tests.
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 pub mod protocol;
 
 /// The libvosk file the helper loads from beside its executable.

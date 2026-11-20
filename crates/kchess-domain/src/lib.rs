@@ -1,6 +1,9 @@
 //! KChess rules shared by every frontend through the core: chess rules,
 //! PGN, the analysis tree, game replay and library document decoding.
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 pub mod calendar;
 pub mod chesscom;
 pub mod coach;

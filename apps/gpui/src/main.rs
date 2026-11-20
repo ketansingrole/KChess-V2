@@ -5,6 +5,9 @@
 // profile's log file). Debug builds keep the console for `cargo run` output.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 mod account_menu;
 mod activity;
 mod assets;

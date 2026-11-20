@@ -3,6 +3,9 @@
 //! place in Game history, and the board game resumes in either app.
 
 // The app's services, the design system and the board, under the names this page's modules use.
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 use kchess_app::{log, played, prefs, quit, settings, timer};
 use kchess_board::{board, export, game, notation, sound, voice, widgets};
 use kchess_ui::{dates, theme};

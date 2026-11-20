@@ -4,6 +4,9 @@
 //! move by move, exported as PGN or deleted.
 
 // The app's services, the design system and the board, under the names this page's modules use.
+// Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
+use kchess_hack as _;
+
 use kchess_app::{accounts, core, loading, network, played, reviews, settings};
 use kchess_board::{board, export, game, notation, widgets};
 use kchess_ui::{dates, quick_pick, theme};

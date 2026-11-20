@@ -116,6 +116,12 @@ exclude_re = [
     # `dependencies`, `outside` and `packages`, the notices' `direct_dependencies` and `names`,
     # the license file's `shipped_crates` and `license_text`. `check` runs the first two.
     'tooling/xtask/src/hack\.rs:.*: replace check -> Result with ',
+    # `hack` writes the hack, the locks and dependabot.yml with cargo-hakari and Cargo, then runs
+    # `check`, so on the repository a mutant changes nothing a test sees; what it writes is `hold`
+    # and `hack_only`, tested. The Dependabot hack workflow runs it, and CI's check refuses what it
+    # leaves out of date. `read` and `metadata` feed only these two.
+    'tooling/xtask/src/hack\.rs:.*: replace (write -> Result|read -> Result<String>|metadata -> Result<serde_json::Value>) with ',
+    'tooling/xtask/src/hack\.rs:.*: .* in write$',
     'tooling/xtask/src/licenses\.rs:.*: replace (check_notices|write) -> Result with ',
     'tooling/xtask/src/check\.rs:.*: .* in fast$',
     # `check`'s tests without cargo-llvm-cov: whether it leaves out the app's tests is

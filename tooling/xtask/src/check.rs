@@ -268,6 +268,9 @@ fn fuzz_targets() -> Result {
             &target.to_string_lossy(),
         ],
     )
+    .map_err(|cause| {
+        format!("{cause}\nWhen fuzz/Cargo.lock is out of date, `cargo xtask hack` writes it.")
+    })
 }
 
 /// The member the fuzz targets build on.

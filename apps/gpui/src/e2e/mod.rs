@@ -799,77 +799,15 @@ fn environment() {
     });
 }
 
-/// The scripted engine (`kchess-fake-uci`, built first), as the copy `engine-search`
-/// beside it, which the engine reads its mode from.
+/// The scripted engine (`kchess-fake-uci`, built once per test run), as the copy
+/// `engine-search` beside it, which the engine reads its mode from.
 fn engine() -> PathBuf {
-    let target = std::env::current_exe()
-        .ok()
-        .and_then(|exe| Some(exe.parent()?.parent()?.to_path_buf()))
-        .expect("the test executable is in target/<profile>/deps");
-    let fake = target.join(format!("kchess-fake-uci{}", std::env::consts::EXE_SUFFIX));
-    // Built every time: Cargo does nothing when it is fresh, and one left over from before a
-    // change is never run.
-    let mut build = std::process::Command::new(env!("CARGO"));
-    build.args([
-        "build",
-        "-q",
-        "--locked",
-        "-p",
-        "kchess-core",
-        "--bin",
-        "kchess-fake-uci",
-    ]);
-    // Without the variables Cargo set for this package (`CARGO_MANIFEST_DIR`, `OUT_DIR`, `CARGO_PKG_*`…):
-    // build scripts that watch one (ring's) would rebuild for it, and the next outer build
-    // rebuild them back.
-    for (key, _) in std::env::vars_os() {
-        if key.to_str().is_some_and(|key| {
-            key.starts_with("CARGO_PKG_")
-                || key.starts_with("CARGO_BIN_EXE_")
-                || matches!(
-                    key,
-                    "CARGO_MANIFEST_DIR"
-                        | "CARGO_MANIFEST_PATH"
-                        | "CARGO_CRATE_NAME"
-                        | "CARGO_PRIMARY_PACKAGE"
-                        | "CARGO_TARGET_TMPDIR"
-                        | "CARGO_BIN_NAME"
-                        | "OUT_DIR"
-                )
-        }) {
-            build.env_remove(key);
-        }
-    }
-    // Into the target folder this test runs from, which `cargo llvm-cov` moves with a flag that
-    // a nested build does not inherit.
-    build
-        .arg("--target-dir")
-        .arg(target.parent().expect("the target folder"));
-    if target.file_name().is_some_and(|name| name == "release") {
-        build.arg("--release");
-    }
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the test waits for the build it needs"
-    )]
-    let status = build.status().expect("cargo runs");
-    assert!(status.success(), "the scripted engine builds");
-    let copy = target.join(format!("engine-search{}", std::env::consts::EXE_SUFFIX));
-    let same = |a: &Path, b: &Path| {
-        std::fs::read(a)
-            .ok()
-            .zip(std::fs::read(b).ok())
-            .is_some_and(|(a, b)| a == b)
-    };
-    if !same(&fake, &copy) {
-        // Under another name first, so a test binary starting at the same time never runs half a copy.
-        let partial = target.join(format!(
-            "engine-search-{}{}",
-            std::process::id(),
-            std::env::consts::EXE_SUFFIX
-        ));
-        std::fs::copy(&fake, &partial).expect("copy the scripted engine");
-        std::fs::rename(&partial, &copy).expect("name the scripted engine's copy");
-    }
+    let fake = kchess_testkit::build::workspace_binary("kchess-core", "kchess-fake-uci")
+        .expect("the scripted engine builds");
+    let copy = fake
+        .path()
+        .with_file_name(format!("engine-search{}", std::env::consts::EXE_SUFFIX));
+    // Under the build lock: no other test's build replaces the engine while this one copies it.
+    fake.copy_to(&copy).expect("copy the scripted engine");
     copy
 }
