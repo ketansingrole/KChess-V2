@@ -76,6 +76,13 @@ fn a_search_finds_an_opening_and_its_moves_can_be_stepped_back(cx: &mut gpui_kit
     app.click(("opening-move", 2usize));
     assert_eq!(app.find("opening-title").label(), Some("King's Gambit"));
     assert!(!app.shows(("opening-move", 3usize)));
+    // Back in the browser the search is gone: every opening shows again.
+    app.click("all-openings");
+    app.wait_for("the browser", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find("opening-title").is_none()
+    });
+    assert!(!app.shows(format!("result-{KIESERITZKY}")));
 }
 
 #[gpui_kit::test]

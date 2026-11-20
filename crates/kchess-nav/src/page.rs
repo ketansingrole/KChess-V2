@@ -6,6 +6,7 @@
 //! The shell, Quick Pick and the menus reach every page through the registry the app sets
 //! (`set_registry`).
 
+use kchess_app::log::ResultExt as _;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -93,15 +94,15 @@ impl Page {
     /// The page `cargo xtask app --watch` was on before it restarted the app, from
     /// `KCHESS_PAGE_FILE`.
     pub fn remembered() -> Option<Page> {
-        let file = std::env::var_os("KCHESS_PAGE_FILE")?;
+        let file = kchess_host::env::var_os("KCHESS_PAGE_FILE")?;
         Page::named(std::fs::read_to_string(file).ok()?.trim())
     }
 
     /// Notes the page in `KCHESS_PAGE_FILE`, when a watch set it. A development aid: a failed
     /// write only means the next restart opens on Home.
     pub fn remember(self) {
-        if let Some(file) = std::env::var_os("KCHESS_PAGE_FILE") {
-            let _ = std::fs::write(file, format!("{self:?}"));
+        if let Some(file) = kchess_host::env::var_os("KCHESS_PAGE_FILE") {
+            std::fs::write(file, format!("{self:?}")).warn_on_err();
         }
     }
 

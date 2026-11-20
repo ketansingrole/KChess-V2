@@ -187,6 +187,9 @@ pub(crate) struct Inner {
     pub(crate) lichess: Arc<Lichess>,
     pub(crate) host: Arc<dyn Host>,
     pub(crate) challenges: ChallengeInbox,
+    /// The accounts whose challenges are being listed (`ongoing`): one listing at a time each, so
+    /// an older answer never lands after a newer one.
+    pub(crate) listing_challenges: Mutex<std::collections::HashSet<String>>,
     pub(crate) state: Mutex<State>,
     /// How long a dropped stream waits before it reconnects.
     pub(crate) backoff: Backoff,

@@ -61,6 +61,8 @@ memchr = { version = "2" }
 num-traits = { version = "0.2", features = ["i128", "libm"] }
 once_cell = { version = "1" }
 potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-onepass", "hybrid", "meta", "nfa", "perf", "std", "unicode"] }
 regex-syntax = { version = "0.8" }
 serde = { version = "1", features = ["alloc", "derive", "rc"] }
@@ -70,6 +72,7 @@ sha2 = { version = "0.11" }
 simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
 stable_deref_trait = { version = "1", default-features = false, features = ["alloc"] }
+syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 tinystr = { version = "0.8", default-features = false, features = ["alloc", "zerovec"] }
 tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 uuid = { version = "1", features = ["serde", "v4"] }
@@ -135,8 +138,6 @@ mio = { version = "1", features = ["net", "os-ext"] }
 num-complex = { version = "0.4", features = ["bytemuck"] }
 num-rational = { version = "0.4", features = ["num-bigint-std"] }
 percent-encoding = { version = "2" }
-proc-macro2 = { version = "1", features = ["span-locations"] }
-quote = { version = "1" }
 rustix = { version = "1", features = ["event", "net", "pipe", "process", "shm", "system", "time"] }
 smallvec = { version = "1", default-features = false, features = ["write"] }
 socket2 = { version = "0.6", default-features = false, features = ["all"] }

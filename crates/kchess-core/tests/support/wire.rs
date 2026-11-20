@@ -20,7 +20,7 @@ fn recording(name: &str) -> PathBuf {
 pub fn assert_wire(name: &str, answer: &impl Serialize) {
     let sent = serde_json::to_string(answer).expect("the answer is JSON");
     let path = recording(name);
-    if std::env::var_os("KCHESS_WRITE_WIRE").is_some() {
+    if kchess_host::env::var_os("KCHESS_WRITE_WIRE").is_some() {
         std::fs::create_dir_all(path.parent().expect("a folder")).expect("the folder is made");
         std::fs::write(&path, format!("{sent}\n")).expect("the recording is written");
         return;

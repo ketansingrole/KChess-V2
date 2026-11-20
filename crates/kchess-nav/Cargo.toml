@@ -11,6 +11,8 @@ publish.workspace = true
 test-support = []
 
 [dependencies]
+# `KCHESS_PAGE_FILE`, as a test sets it in memory too.
+kchess-host.workspace = true
 kchess-app.workspace = true
 kchess-board.workspace = true
 kchess-ui.workspace = true

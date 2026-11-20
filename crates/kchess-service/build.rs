@@ -1,6 +1,11 @@
 //! `KCHESS_RELEASE`: the workspace version, or `KCHESS_PACKAGE_VERSION` for a test installer built
 //! above every release (`windows-upgrade.yml`), as the app's own `build.rs` reads it.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "Cargo hands a build script its variables in the environment"
+)]
+
 fn main() {
     println!("cargo:rerun-if-env-changed=KCHESS_PACKAGE_VERSION");
     let release = std::env::var("KCHESS_PACKAGE_VERSION")

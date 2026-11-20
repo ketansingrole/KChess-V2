@@ -1,2 +1,21 @@
 # Limit for the workspace `cognitive_complexity` lint (Cargo.toml). Clippy default is 25.
 cognitive-complexity-threshold = 25
+
+# Calls with a better way in this repository, as Zed bans its own (its clippy.toml). A call that
+# must stay says why with `#[expect(clippy::disallowed_methods, reason = "…")]`. xtask, which
+# runs tools and reads Cargo's variables by design, has its own clippy.toml without them.
+disallowed-methods = [
+    # Tests set switches in memory, since setting the environment is `unsafe` (edition 2024):
+    # a read past `kchess_host::env` misses them, and a service it starts never gets them.
+    { path = "std::env::var", reason = "a test's override of the switch is missed", replacement = "kchess_host::env::var" },
+    { path = "std::env::var_os", reason = "a test's override of the switch is missed", replacement = "kchess_host::env::var_os" },
+    # Waiting for another process blocks the thread it runs on for as long as that process takes.
+    # In the app that must never be the main thread (AGENTS.md, "Writing GPUI views"): wait on a
+    # background thread and name it in the `expect`'s reason; the core waits with tokio's process.
+    { path = "std::process::Command::output", reason = "waits for the process on this thread", replacement = "tokio::process::Command::output" },
+    { path = "std::process::Command::status", reason = "waits for the process on this thread", replacement = "tokio::process::Command::status" },
+    { path = "std::process::Child::wait", reason = "waits for the process on this thread", replacement = "tokio::process::Child::wait" },
+    { path = "std::process::Child::wait_with_output", reason = "waits for the process on this thread", replacement = "tokio::process::Child::wait_with_output" },
+    # serde_json reads a reader a byte at a time: read it whole, then parse.
+    { path = "serde_json::from_reader", reason = "parsing from a reader is many times slower than from a buffer", replacement = "serde_json::from_slice" },
+]

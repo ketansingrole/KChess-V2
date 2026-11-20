@@ -775,7 +775,8 @@ fn environment() {
     static SET: OnceLock<()> = OnceLock::new();
     SET.get_or_init(|| {
         let engine = engine();
-        let lichess = std::env::var("KCHESS_E2E_LICHESS").unwrap_or_else(|_| fake_lichess::base());
+        let lichess =
+            kchess_host::env::var("KCHESS_E2E_LICHESS").unwrap_or_else(fake_lichess::base);
         set("KCHESS_CORE_MODE", "embedded");
         // The scripted engine in its `search` mode, which a copy's name chooses.
         set("KCHESS_ENGINE_PATH", &engine);

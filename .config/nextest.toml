@@ -35,3 +35,21 @@ fail-fast = { max-fail = 1, terminate = "immediate" }
 [[profile.default.overrides]]
 filter = 'package(kchess-core) & binary(memory)'
 success-output = "final"
+
+# The tests that wait by design start first, as Zed orders its slowest, so the run's end is not
+# held for one that started late: the review queue's first pass waits its 10 s startup delay, the
+# service tests start and stop real service processes (5 to 11 s), the memory benchmarks run their
+# scenarios (4 to 5 s). Measured on 2026-11-20, every other test took under 4 s; one that took
+# longer was a test waiting out a deadline it should not have met (ongoingGames' challenge listing,
+# 30 s), so a slow test is a cause to find before it is one to list here.
+[[profile.default.overrides]]
+filter = 'package(kchess-core) & test(engine_review::a_review_asked_for_while_the_queue_finds_nothing_still_runs)'
+priority = 100
+
+[[profile.default.overrides]]
+filter = 'package(kchess-service) & (test(the_first_app_starts_the_service_and_the_second_reuses_it) | test(one_core_per_profile_and_it_stops_when_idle) | test(a_core_that_never_answers_hello_fails_the_connection))'
+priority = 90
+
+[[profile.default.overrides]]
+filter = 'package(kchess-core) & binary(memory)'
+priority = 80

@@ -121,7 +121,7 @@ fn check_the_corpus() {
     flate2::read::GzDecoder::new(std::fs::File::open(&path).unwrap())
         .read_to_string(&mut text)
         .unwrap();
-    let write = std::env::var("KCHESS_WRITE_CORPUS").as_deref() == Ok("1");
+    let write = kchess_host::env::var("KCHESS_WRITE_CORPUS").as_deref() == Some("1");
     let mut rewritten = Vec::new();
     let mut differ = Vec::new();
     let mut cases = 0;

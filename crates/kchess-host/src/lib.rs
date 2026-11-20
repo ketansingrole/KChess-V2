@@ -13,7 +13,7 @@ pub use redact::redact;
 /// sets `APP_SANDBOX_CONTAINER_ID` for the app and every program it starts. The App Store updates
 /// it and forbids downloading programs, so its updater and the Stockfish download stay off.
 pub fn app_store() -> bool {
-    cfg!(target_os = "macos") && std::env::var_os("APP_SANDBOX_CONTAINER_ID").is_some()
+    cfg!(target_os = "macos") && env::var_os("APP_SANDBOX_CONTAINER_ID").is_some()
 }
 
 /// Whether this build honours the development overrides: the test switches (`Config::test`), and
@@ -60,6 +60,18 @@ pub fn opens_in_browser(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only a Mac build in the App Sandbox, which names its container, is the App Store's.
+    #[test]
+    fn only_a_sandboxed_mac_build_is_the_app_stores() {
+        env::set("APP_SANDBOX_CONTAINER_ID", "com.kchess.app");
+        let sandboxed = app_store();
+        env::unset("APP_SANDBOX_CONTAINER_ID");
+        let plain = app_store();
+        env::reset("APP_SANDBOX_CONTAINER_ID");
+        assert_eq!(sandboxed, cfg!(target_os = "macos"));
+        assert!(!plain);
+    }
 
     #[test]
     fn only_web_pages_and_this_machine_open() {

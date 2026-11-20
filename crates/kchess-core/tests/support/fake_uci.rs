@@ -236,7 +236,7 @@ fn main() {
     let state = Mutex::new(Search::default());
 
     #[cfg(unix)]
-    if mode == "ignore-term" && std::env::var_os(TERM_IGNORED).is_none() {
+    if mode == "ignore-term" && kchess_host::env::var_os(TERM_IGNORED).is_none() {
         use std::os::unix::process::CommandExt as _;
         let exe = std::env::current_exe().expect("the fake engine's path");
         let mut again = std::process::Command::new("/bin/sh");

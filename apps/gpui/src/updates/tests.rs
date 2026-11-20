@@ -1,3 +1,7 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test waits for the programs it runs, on its own thread (allowed: some platforms run none)"
+)]
 use super::{
     BRIDGE_FOLDER, INSTALLING, Install, InstallLock, Package, Release, Signer, Workspace, aside,
     asset_name, detect, download_signed, downloads_in, incoming, last_install_error, latest, offer,

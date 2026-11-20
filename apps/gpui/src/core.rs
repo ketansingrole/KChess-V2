@@ -85,7 +85,12 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
     // Tokens are sealed by the core, so this app is never asked to seal or open one.
     let config = layout.config(&data_dir, true);
     let test = config.test.clone().map(Arc::new);
-    let (bridge, mut receiver) = open(config, layout.mode(false)?)?;
+    let mode = layout.mode(false)?;
+    // A core in this process logs every panic in it already; the service logs only its own.
+    if matches!(mode, Mode::Service { .. }) {
+        kchess_app::crashes::report_panics();
+    }
+    let (bridge, mut receiver) = open(config, mode)?;
     if let Some(test) = test {
         if let Some(audio) = test.voice_audio.clone() {
             cx.set_global(kchess_board::voice::capture::TestAudio(audio));

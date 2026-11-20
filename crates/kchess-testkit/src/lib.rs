@@ -12,6 +12,7 @@ use kchess_hack as _;
 
 pub mod build;
 pub mod memory;
+pub mod random;
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};

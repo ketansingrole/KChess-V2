@@ -75,8 +75,10 @@ impl<V: 'static> Part<V> {
 impl<V: 'static> Render for Part<V> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let render = self.render;
+        // The owner draws its part with its own context, as its `render` would: no state changes.
         let element = self
             .owner
+            // gpui-lints: allow(update_in_render) lends the owner's context to its own drawing
             .update(cx, |owner, cx| render(owner, window, cx))
             .unwrap_or_else(|_| Empty.into_any_element());
         if self.fill {

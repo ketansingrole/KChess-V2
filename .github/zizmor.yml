@@ -1,0 +1,14 @@
+# zizmor's audit of the workflows and actions (CI's `workflows` job). Each rule left out says why.
+rules:
+  # It asks for `$/.github/actions/…` in place of `./.github/actions/…`, which differ only when a job
+  # checks out another repository or ref over its own. Every job here checks out the commit its
+  # workflow runs from, and actionlint (the same job) reads the `./` form.
+  self-repository:
+    disable: true
+  # A release that restores a cache could ship what an untrusted run put in it. The Release
+  # workflow restores the release commit's dependencies (it saves none), and a tag's run reads only
+  # main's caches, never a pull request's, which CI saves from main's runs alone (`save-if`).
+  # Building them afresh would double the release's time.
+  cache-poisoning:
+    ignore:
+      - release.yml

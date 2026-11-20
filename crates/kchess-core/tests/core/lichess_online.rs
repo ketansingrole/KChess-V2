@@ -1308,11 +1308,20 @@ async fn treats_a_late_credential_failure_for_a_cancelled_attachment_as_cancella
 async fn playing(
     extra: impl Fn(&Request) -> Option<Reply> + Send + 'static,
 ) -> (Arc<Recording>, fixtures::Fixture, OnlineSession) {
+    // The event stream answers at once and stays open with nothing to say, as Lichess's does. One
+    // that never answered held the game stream, and every request after it, for the stream's
+    // header deadline: each test of a live game took 5 s.
+    let mut open = Vec::new();
     let fixture = serve(move |seen| {
         if let Some(reply) = extra(seen) {
             return reply;
         }
         match seen.path() {
+            "/api/stream/event" => {
+                let (events, stream) = tokio::sync::mpsc::unbounded_channel();
+                open.push(events);
+                Reply::Stream(stream)
+            }
             "/api/account/playing" => Reply::Json(
                 200,
                 json!({
@@ -2186,6 +2195,11 @@ async fn a_refused_record_on_every_connect_backs_off_instead_of_reconnecting_eac
     online.close();
 }
 
+/// Waits for the challenge listing `ongoing` started in the background to end.
+async fn challenges_listed(online: &OnlineSession) {
+    crate::support::until("the challenge listing ends", || !online.lists_challenges()).await;
+}
+
 /// Challenges sent to a connected account whose event stream is not open reached no inbox: the
 /// ongoing refresh lists them (`GET /api/challenge`) for every account but the one streaming, and a
 /// later listing without one removes it.
@@ -2227,6 +2241,7 @@ async fn lists_the_challenges_of_accounts_without_an_open_event_stream() {
     fixture.requested("/api/stream/event", 1).await;
 
     online.ongoing().await.unwrap();
+    challenges_listed(&online).await;
     let calls = fixture.to("/api/challenge");
     assert_eq!(
         calls.len(),
@@ -2248,11 +2263,13 @@ async fn lists_the_challenges_of_accounts_without_an_open_event_stream() {
 
     // Listed again: not announced again.
     online.ongoing().await.unwrap();
+    challenges_listed(&online).await;
     assert_eq!(emitted(&host, "challenge:received").len(), 1);
 
     // Answered elsewhere: gone from the next listing, gone from the inbox.
     *pending.lock().unwrap() = false;
     online.ongoing().await.unwrap();
+    challenges_listed(&online).await;
     assert!(online.challenges().list().is_empty());
     online.close();
 }
@@ -2272,12 +2289,42 @@ async fn a_refused_challenge_listing_is_logged() {
     online.stay_connected("Alice");
     fixture.requested("/api/stream/event", 1).await;
     online.ongoing().await.unwrap();
+    challenges_listed(&online).await;
     assert_eq!(fixture.to("/api/challenge").len(), 1);
     assert!(online.challenges().list().is_empty());
     assert!(
         host.logged().contains("Could not load challenges: Bob"),
         "{}",
         host.logged()
+    );
+    online.close();
+}
+
+/// The ongoing games answer at once while Lichess takes its time to list the challenges, which
+/// go on in the background and reach the app as events: the games waited for the listing, for the
+/// request's whole deadline when it hung (the online play wire test took 30 s for it).
+#[tokio::test]
+async fn the_ongoing_games_answer_without_waiting_for_the_challenge_listing() {
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/stream/event" | "/api/challenge" => Reply::Hang,
+        "/api/account/playing" => Reply::Json(200, json!({ "nowPlaying": [] }).to_string()),
+        _ => refuse(seen),
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true), ("Bob", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.stay_connected("Alice");
+    fixture.requested("/api/stream/event", 1).await;
+    // Well inside the requests' own deadline (5 s in these tests), which the games waited for.
+    let answered = tokio::time::timeout(Duration::from_secs(2), online.ongoing()).await;
+    assert!(
+        matches!(answered, Ok(Ok(_))),
+        "the games answer while the listing hangs"
+    );
+    fixture.requested("/api/challenge", 1).await;
+    assert!(
+        online.lists_challenges(),
+        "the listing goes on after the games answered"
     );
     online.close();
 }

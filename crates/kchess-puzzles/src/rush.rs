@@ -7,6 +7,7 @@ use kchess_contracts::calls;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -64,7 +65,7 @@ pub enum RushAction {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Stage {
+pub(crate) enum Stage {
     Menu,
     Loading,
     Running,
@@ -75,7 +76,7 @@ pub struct PuzzleRush {
     configs: &'static BTreeMap<String, RushConfig>,
     choices: &'static [String],
     choice: String,
-    stage: Stage,
+    pub(crate) stage: Stage,
     error: Option<String>,
     ladder: Vec<Puzzle>,
     index: usize,
@@ -619,6 +620,7 @@ impl PuzzleRush {
         let stacked = window.viewport_size().width < px(900.);
         div()
             .id("puzzle-rush")
+            .test_support()
             .size_full()
             .overflow_y_scroll()
             .child(

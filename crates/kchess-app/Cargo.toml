@@ -40,6 +40,8 @@ kchess-hack = { version = "0.1", path = "../kchess-hack" }
 gpui-kit = { version = "=0.10.0", features = ["test-support"] }
 # A real core for the tests, embedded over a fresh profile (`src/tests.rs`).
 kchess-core.workspace = true
+# A stand-in Lichess for the test core (`start_core_with_lichess`).
+kchess-testkit.workspace = true
 tempfile = "3"
 
 [lints]

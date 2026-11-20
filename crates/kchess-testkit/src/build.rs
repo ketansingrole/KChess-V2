@@ -27,6 +27,10 @@ pub fn workspace_binary(package: &str, name: &str) -> io::Result<Built> {
     let profile = profile_dir()?;
     let mut command = build_command(Path::new(env!("CARGO")), &profile, package, name);
     built(&profile, name, &run_key(), || {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the test waits for the build it needs"
+        )]
         let status = command.status()?;
         if status.success() {
             Ok(())
@@ -95,7 +99,7 @@ fn built(
 fn run_key() -> String {
     static KEY: OnceLock<String> = OnceLock::new();
     KEY.get_or_init(|| {
-        std::env::var("NEXTEST_RUN_ID").unwrap_or_else(|_| {
+        kchess_host::env::var("NEXTEST_RUN_ID").unwrap_or_else(|| {
             // With the time, so a later process given the same ID builds again.
             let started = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -313,9 +317,9 @@ mod tests {
     fn the_run_is_nextests_or_this_process() {
         let key = run_key();
         assert_eq!(run_key(), key, "the same for the whole process");
-        match std::env::var("NEXTEST_RUN_ID") {
-            Ok(run) => assert_eq!(key, run),
-            Err(_) => assert!(key.starts_with(&format!("process {} at ", std::process::id()))),
+        match kchess_host::env::var("NEXTEST_RUN_ID") {
+            Some(run) => assert_eq!(key, run),
+            None => assert!(key.starts_with(&format!("process {} at ", std::process::id()))),
         }
     }
 

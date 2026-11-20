@@ -193,7 +193,7 @@ fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
     let mut pages: Vec<(Page, &'static str)> =
         Page::all().map(|page| (page, page.info().label)).collect();
     // `KCHESS_PERF_PAGES=Studies,Game history`: those pages alone, to profile their openings.
-    if let Ok(only) = std::env::var("KCHESS_PERF_PAGES") {
+    if let Some(only) = kchess_host::env::var("KCHESS_PERF_PAGES") {
         pages.retain(|(_, label)| only.split(',').any(|name| name == *label));
     }
     let mut first: Vec<Vec<f64>> = vec![Vec::new(); pages.len()];
@@ -212,7 +212,8 @@ fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
         {
             app.settle();
             let before = resident_mib();
-            let all = std::env::var("KCHESS_PERF_PREWARM").is_ok_and(|mode| mode == "all");
+            let all =
+                kchess_host::env::var("KCHESS_PERF_PREWARM").is_some_and(|mode| mode == "all");
             app.cx
                 .update_window(app.window, |_, window, cx| {
                     crate::shell::prewarm(window, cx);

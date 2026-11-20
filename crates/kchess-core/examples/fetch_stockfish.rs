@@ -34,7 +34,7 @@ async fn main() -> ExitCode {
     let mut location = ManagedLocation::shipped(dir);
     location.github_token = ["GH_TOKEN", "GITHUB_TOKEN"]
         .into_iter()
-        .find_map(|name| std::env::var(name).ok().filter(|token| !token.is_empty()));
+        .find_map(|name| kchess_host::env::var(name).filter(|token| !token.is_empty()));
     match install_managed_engine(&Stderr, &location).await {
         Ok(result) => {
             eprintln!(

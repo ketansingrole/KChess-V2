@@ -445,7 +445,7 @@ impl OnlineSession {
                     games.push(ongoing_game(game, &account));
                 }
                 if challenges_wanted && !self.has_event_stream(&account) {
-                    self.sync_challenges(&account, &auth).await;
+                    self.list_challenges_later(&account, auth);
                 }
                 Ok(())
             }
@@ -506,6 +506,24 @@ impl OnlineSession {
 
     /// Bring `account`'s challenges in the inbox up to date from `GET /api/challenge`; a failure
     /// leaves them as they were.
+    /// List `account`'s challenges in the background: the games answer without waiting for it
+    /// (Lichess can take a request's whole deadline, 30 s, to list them), and what it finds reaches
+    /// the app as events (`ChallengeReceived`, the inbox's `ChallengesUpdate`). One listing an
+    /// account at a time; asked again while one runs, that one answers.
+    fn list_challenges_later(&self, account: &str, auth: Auth) {
+        if !crate::tasks::lock(&self.inner.listing_challenges).insert(account.to_string()) {
+            return;
+        }
+        let this = self.clone();
+        let account = account.to_string();
+        tokio::spawn(async move {
+            let _listed = crate::tasks::on_drop(|| {
+                crate::tasks::lock(&this.inner.listing_challenges).remove(&account);
+            });
+            this.sync_challenges(&account, &auth).await;
+        });
+    }
+
     async fn sync_challenges(&self, account: &str, auth: &Auth) {
         let listed = self
             .inner

@@ -71,9 +71,11 @@ jobs:
       # `gh workflow run`.
       actions: write
     steps:
+      # The token is not kept in the checkout: only the push below is given it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: hack-patch
@@ -83,6 +85,7 @@ jobs:
           BRANCH: ${{ github.head_ref }}
           BASE: ${{ github.event.pull_request.base.sha }}
           GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           patch="$RUNNER_TEMP/hack/hack.patch"
           # Only what `cargo xtask hack` writes: the locks, Dependabot's settings and manifests.
@@ -99,6 +102,9 @@ jobs:
             -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit -a -m 'Workspace hack follows the crate updates' \
             -m 'Written by `cargo xtask hack` (.github/workflows/dependabot-hack.yml).'
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
           # Refused when Dependabot pushed since: its push starts this workflow again.
-          git push origin "HEAD:refs/heads/$BRANCH"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push "https://github.com/$REPOSITORY.git" "HEAD:refs/heads/$BRANCH"
           gh workflow run ci.yml --ref "$BRANCH" -f base="$BASE"

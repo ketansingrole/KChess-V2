@@ -1,6 +1,11 @@
 //! The command line as a person runs it: an embedded core over a scratch profile, a local game
 //! played through stdin and saved to the library, and the errors of commands it cannot run.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test waits for the programs it runs, on its own thread (allowed: some platforms run none)"
+)]
+
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
