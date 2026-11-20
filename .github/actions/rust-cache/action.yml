@@ -6,7 +6,10 @@ description: >-
   into its key: runner images with and without their own Rust 1.99.1 gave two keys, so a run on
   the other image found no cache (2026-11-20: 11 of 15 jobs in five pull requests). Turning that
   hash off (`add-rust-environment-hash-key: false`, #301) also dropped the lockfile's, which left
-  one key per job forever: never saved again, a cache that only grew staler.
+  one key per job forever: never saved again, a cache that only grew staler. The vendored GPUI's
+  sources too (`env-vars`): the registry crates built on it (`gpui-base`, `gpui-kit`) are in this
+  cache, and `.github/actions/vendor-gpui` is saved with them
+  (`workflows::vendor_gpui_is_saved_with_its_rust_cache`).
 
 inputs:
   shared-key:
@@ -44,8 +47,13 @@ runs:
         done
     - id: cache
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      # Hashed into the key (`env-vars`): a change to the vendored GPUI rebuilds every crate built
+      # on it, so the cache of those builds is a new one.
+      env:
+        KCHESS_VENDORED_GPUI: ${{ hashFiles('vendor/**') }}
       with:
         shared-key: ${{ inputs.shared-key }}
         save-if: ${{ inputs.save-if }}
         workspaces: ${{ inputs.workspace }}
         cache-on-failure: ${{ inputs.cache-on-failure }}
+        env-vars: KCHESS_VENDORED_GPUI

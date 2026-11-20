@@ -5,9 +5,19 @@ description: >-
   only crates from outside the repository, and Cargo rebuilds a path crate whose files are newer
   than its build, as a fresh checkout's are. So its files get a fixed old date and its build a
   cache of its own, keyed by those files: Cargo finds it up to date, and with it the registry
-  crates built on it, until a file of it changes. Use it twice: at the start of the job to restore,
-  and at its end with `save: true` and the restore's `cache-hit`, which on main replaces the cache
-  when the restore missed.
+  crates built on it, until a file of it changes.
+
+  Cargo also rebuilds a crate when one it depends on was built after it ("the dependency
+  `gpui-pre-util` was rebuilt"). This build sits between the job's Rust cache's crates, under it
+  (`gpui-pre-util`) and over it (`gpui-base`, `gpui-kit`), so the two must come from one build.
+  Keyed by its sources alone, it outlived Rust caches that new manifests and keys replaced, and
+  from 2026-11-20 every job rebuilt GPUI with both caches found (macOS's app tests: 2 more
+  minutes, 4m17s to compile). It is saved whenever the job's Rust cache is (its `cache-hit`), under
+  a key of this run's, and the newest build of the same sources is restored; the Rust cache's key
+  holds the vendored sources for the other way round (`.github/actions/rust-cache`).
+
+  Use it twice: at the start of the job, after the Rust cache, to restore; and at its end with
+  `save: true`, the restore's `restored` and the Rust cache's `cache-hit`.
 
 inputs:
   name:
@@ -16,14 +26,17 @@ inputs:
   save:
     description: "'true' at the end of the job."
     default: 'false'
-  cache-hit:
-    description: The restore's `cache-hit` output, when saving.
+  restored:
+    description: The restore's `restored` output, when saving.
+    default: ''
+  rust-cache-hit:
+    description: The `cache-hit` of the job's Rust cache (`.github/actions/rust-cache`), when saving.
     default: ''
 
 outputs:
-  cache-hit:
-    description: Whether the restore found this exact build.
-    value: ${{ steps.restore.outputs.cache-hit }}
+  restored:
+    description: Whether the restore found a build of these sources.
+    value: ${{ steps.restore.outputs.cache-matched-key != '' }}
 
 runs:
   using: composite
@@ -43,12 +56,13 @@ runs:
           target/**/build/gpui-pre-apple
           target/**/build/gpui-pre-macos
           target/**/build/gpui-pre-windows
-        key: ${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}
-    - if: inputs.save == 'true' && github.ref == 'refs/heads/main' && inputs.cache-hit != 'true'
+        key: ${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: ${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}-
+    - if: inputs.save == 'true' && github.ref == 'refs/heads/main' && (inputs.rust-cache-hit != 'true' || inputs.restored != 'true')
       uses: ./.github/actions/drop-caches
       with:
         prefix: ${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-
-    - if: inputs.save == 'true' && github.ref == 'refs/heads/main' && inputs.cache-hit != 'true'
+    - if: inputs.save == 'true' && github.ref == 'refs/heads/main' && (inputs.rust-cache-hit != 'true' || inputs.restored != 'true')
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
@@ -56,4 +70,4 @@ runs:
           target/**/build/gpui-pre-apple
           target/**/build/gpui-pre-macos
           target/**/build/gpui-pre-windows
-        key: ${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}
+        key: ${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
