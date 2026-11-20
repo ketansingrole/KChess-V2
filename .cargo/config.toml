@@ -4,8 +4,8 @@ xtask = "run -q -p xtask --"
 
 # Every target, joined with its own flags below: Rust's v0 symbol names, as Zed builds with, so a
 # backtrace names a closure by the function it is in and a generic by its types (`{closure#0}` in
-# `Board::render`, not a hash). The shipped builds drop local symbols, so it is the development and
-# test builds' backtraces it reads better.
+# `Board::render`, not a hash). macOS's shipped builds drop local symbols, so there it is the
+# development and test builds' backtraces it reads better; Linux keeps them in every build.
 [target.'cfg(all())']
 rustflags = ["-C", "symbol-mangling-version=v0"]
 
@@ -19,10 +19,7 @@ runner = "tooling/macos-dev-runner.sh"
 [target.x86_64-apple-darwin]
 rustflags = ["-C", "link-arg=-Wl,-x"]
 
-# Linux: remove the local symbol table from the shipped binaries.
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-Wl,--strip-all"]
-
-# Not shipped, but a Linux build on Apple Silicon (`tooling/linux/Dockerfile`) uses the same flags.
-[target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-Wl,--strip-all"]
+# Linux: no flags. Every build keeps its symbol table, so a backtrace (a failed test's, a panic in a
+# player's log) names its functions; `--strip-all` once dropped it to keep the Electron app's Node
+# module small, and left every frame `<unknown>`. Packages drop only the debug info
+# (`cargo xtask package`, tooling/xtask/src/package/mod.rs).
