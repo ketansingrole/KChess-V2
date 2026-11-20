@@ -798,9 +798,7 @@ pub fn is_document(file: &str) -> bool {
 }
 
 /// Files outside xtask's sources that packaging is made from.
-const PACKAGING_FILES: [&str; 10] = [
-    "Cargo.toml",
-    "Cargo.lock",
+const PACKAGING_FILES: [&str; 8] = [
     "rust-toolchain.toml",
     ".cargo/config.toml",
     "apps/gpui/build.rs",
@@ -810,6 +808,90 @@ const PACKAGING_FILES: [&str; 10] = [
     ".github/workflows/release.yml",
     ".github/workflows/windows-upgrade.yml",
 ];
+
+/// The manifests packaging reads only in part: a change to one counts when `changes_packaging`
+/// says it does. From 2026-11-13 to 11-20 the packaging jobs ran on 62 of 76 pull request runs,
+/// most of them moving a page out of the app into a crate of its own: that changes both files and
+/// packages nothing new, and the slowest of those jobs, the Windows upgrade's build, is the
+/// longest of a run.
+const PARTLY_PACKAGING: [&str; 2] = ["Cargo.toml", "Cargo.lock"];
+
+/// Whether the change of `file` (one of `PARTLY_PACKAGING`) from `old` to `new` may change a
+/// package: anything in the root manifest but its member list, its members' path dependencies and
+/// its lints (the version, a profile, a patch, an outside dependency), and in the lock, any
+/// package from outside the workspace. A file added or removed counts.
+fn changes_packaging(file: &str, old: Option<&str>, new: Option<&str>) -> bool {
+    let (Some(old), Some(new)) = (old, new) else {
+        return true;
+    };
+    if file == "Cargo.lock" {
+        outside_packages(old) != outside_packages(new)
+    } else {
+        packaging_lines(old) != packaging_lines(new)
+    }
+}
+
+/// The root manifest's lines packaging reads, each with its section, sorted, without comments,
+/// blank lines, the member list, path-only dependencies on members and the lints' sections.
+fn packaging_lines(manifest: &str) -> Vec<(String, String)> {
+    let mut section = String::new();
+    let mut in_members = false;
+    let mut lines = Vec::new();
+    for line in manifest.lines().map(str::trim) {
+        if in_members {
+            in_members = !line.contains(']');
+            continue;
+        }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            section = line.to_string();
+            continue;
+        }
+        if section == "[workspace]" && line.starts_with("members") {
+            in_members = !line.contains(']');
+            continue;
+        }
+        let member_path = section == "[workspace.dependencies]"
+            && line
+                .split_once('=')
+                .map(|(_, value)| value.trim())
+                .and_then(|value| value.strip_prefix('{')?.strip_suffix('}'))
+                .is_some_and(|table| {
+                    let table = table.trim();
+                    table.starts_with("path") && !table.contains(',')
+                });
+        if member_path || section.starts_with("[workspace.lints") {
+            continue;
+        }
+        lines.push((section.clone(), line.to_string()));
+    }
+    lines.sort();
+    lines
+}
+
+/// The lock's packages from outside the workspace (those with a `source`): name, version, source
+/// and checksum, sorted.
+fn outside_packages(lock: &str) -> Vec<String> {
+    let mut packages: Vec<String> = lock
+        .split("[[package]]")
+        .filter(|block| block.lines().any(|line| line.starts_with("source = ")))
+        .map(|block| {
+            block
+                .lines()
+                .filter(|line| {
+                    ["name = ", "version = ", "source = ", "checksum = "]
+                        .iter()
+                        .any(|key| line.starts_with(key))
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect();
+    packages.sort();
+    packages
+}
 
 /// Folders packaging is made from: the app's icons and bundle files, the shipped speech helper,
 /// the release crate, xtask's packaging and the repository's own actions.
@@ -891,7 +973,16 @@ fn scope_report(repo: &Path, base: &str) -> Result<String> {
     let files = changed_files(repo, base, false)?;
     let modules = packaging_modules(repo)?;
     let code = files.iter().any(|file| !is_document(file));
-    let packaging = files.iter().any(|file| is_packaging(file, &modules));
+    let at = |commit: &str, file: &str| {
+        crate::util::git(repo, &["show", &format!("{commit}:{file}")], &[0]).ok()
+    };
+    let packaging = files.iter().any(|file| {
+        if PARTLY_PACKAGING.contains(&file.as_str()) {
+            changes_packaging(file, at(base, file).as_deref(), at("HEAD", file).as_deref())
+        } else {
+            is_packaging(file, &modules)
+        }
+    });
     Ok(format!("code={code}\npackaging={packaging}\n"))
 }
 
@@ -1157,7 +1248,6 @@ mod tests {
             "crates/kchess-delta/src/lib.rs",
             "crates/kchess-voice/src/main.rs",
             "crates/kchess-core/src/engine/managed/shipped.rs",
-            "Cargo.lock",
             ".cargo/config.toml",
             ".github/actions/engines/action.yml",
             ".github/workflows/release.yml",
@@ -1173,6 +1263,91 @@ mod tests {
         ] {
             assert!(!is_packaging(file, &modules), "{file}");
         }
+    }
+
+    /// Moving a page into a crate of its own changes the manifest's members, its path
+    /// dependencies and the lock's own packages: no package changes. Anything else does.
+    #[test]
+    fn only_what_packages_read_of_the_manifests_counts() {
+        let manifest = r#"[workspace]
+resolver = "3"
+members = ["crates/a", "apps/gpui"]
+
+[workspace.package]
+version = "2026.11.7"
+
+[workspace.lints.clippy]
+all = "warn"
+
+[workspace.dependencies]
+kchess-a = { path = "crates/a" }
+serde = { version = "1", default-features = false }
+
+[profile.release]
+lto = "fat"
+"#;
+        let same = |new: &str| !changes_packaging("Cargo.toml", Some(manifest), Some(new));
+        assert!(same(&manifest.replace(
+            r#"members = ["crates/a", "apps/gpui"]"#,
+            r#"members = ["crates/a", "crates/b", "apps/gpui"]"#
+        )));
+        assert!(same(&manifest.replace(
+            r#"members = ["crates/a", "apps/gpui"]"#,
+            "members = [\n    \"crates/a\",\n    \"crates/b\",\n]"
+        )));
+        assert!(same(&manifest.replace(
+            "serde = ",
+            "kchess-b = { path = \"crates/b\" }\nserde = "
+        )));
+        assert!(same(&manifest.replace("all = \"warn\"", "all = \"deny\"")));
+        assert!(same(
+            &manifest.replace("lto = \"fat\"", "# A comment.\nlto = \"fat\"")
+        ));
+        assert!(!same(&manifest.replace("2026.11.7", "2026.11.8")));
+        assert!(!same(&manifest.replace("lto = \"fat\"", "lto = \"thin\"")));
+        assert!(!same(
+            &manifest.replace("version = \"1\"", "version = \"2\"")
+        ));
+        assert!(!same(&manifest.replace(
+            "kchess-a = { path = \"crates/a\" }",
+            "kchess-a = { path = \"crates/a\", features = [\"x\"] }"
+        )));
+        assert!(!same(&format!(
+            "{manifest}\n[patch.crates-io]\nx = {{ path = \"x\" }}\n"
+        )));
+        // A member on the line after `members` is still the list.
+        assert!(!same(
+            &manifest.replace("resolver = \"3\"", "resolver = \"2\"")
+        ));
+
+        let lock = r#"version = 4
+
+[[package]]
+name = "kchess-a"
+version = "2026.11.7"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "serde"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa"
+"#;
+        let same = |new: &str| !changes_packaging("Cargo.lock", Some(lock), Some(new));
+        assert!(same(&format!(
+            "{lock}\n[[package]]\nname = \"kchess-b\"\nversion = \"2026.11.7\"\ndependencies = [\n \"serde\",\n]\n"
+        )));
+        assert!(same(&lock.replace(" \"serde\",\n", "")));
+        assert!(!same(
+            &lock.replace("1.0.1", "1.0.2").replace("\"aa\"", "\"bb\"")
+        ));
+        assert!(!same(&format!(
+            "{lock}\n[[package]]\nname = \"zip\"\nversion = \"9.0.0\"\nsource = \"registry+x\"\nchecksum = \"cc\"\n"
+        )));
+        assert!(changes_packaging("Cargo.lock", None, Some(lock)));
+        assert!(changes_packaging("Cargo.toml", Some(manifest), None));
     }
 
     /// A build like the workspace's: the app uses the vendored GPUI, which uses its Apple backend.
@@ -1518,6 +1693,25 @@ mod tests {
         commit(dir, "code");
         assert_eq!(
             scope_report(dir, &base).unwrap(),
+            "code=true\npackaging=false\n"
+        );
+
+        // A manifest added since the base counts; a new member in it then does not.
+        std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = [\"a\"]\n").unwrap();
+        commit(dir, "manifest");
+        assert_eq!(
+            scope_report(dir, &base).unwrap(),
+            "code=true\npackaging=true\n"
+        );
+        let manifest = git_in(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"a\", \"b\"]\n",
+        )
+        .unwrap();
+        commit(dir, "member");
+        assert_eq!(
+            scope_report(dir, &manifest).unwrap(),
             "code=true\npackaging=false\n"
         );
 
