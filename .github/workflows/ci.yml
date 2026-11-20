@@ -174,7 +174,6 @@ jobs:
       - uses: ./.github/actions/install-tools
         with:
           tools: cargo-llvm-cov,cargo-nextest,cargo-hakari
-      - run: rustup component add llvm-tools-preview
       - uses: ./.github/actions/engines
       - run: cargo xtask check --without-app-tests
       - if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
