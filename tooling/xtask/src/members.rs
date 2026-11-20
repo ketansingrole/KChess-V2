@@ -1,5 +1,5 @@
-//! What each workspace member is: the one table `check`, `licenses`, `hack`, `mutants` and
-//! `package` ask whether a member ships, is the app, or is tooling. A member it does not name is
+//! What each workspace member is: the one table `check`, `licenses`, `hack` and `package`
+//! ask whether a member ships, is the app, or is tooling. A member it does not name is
 //! a headless library: shipped only through the programs that depend on it, tested under the
 //! coverage gate.
 
@@ -43,9 +43,6 @@ pub const APP_SOURCES: [&str; 12] = [
     "crates/kchess-studies/src",
     "crates/kchess-watch/src",
 ];
-
-/// The app's sources, as cargo-mutants' file globs name them.
-pub const APP_FILES: &str = "apps/gpui/**";
 
 const ROLES: [(&str, Role); 17] = [
     (APP, Role::App),
@@ -181,8 +178,8 @@ mod tests {
     #[test]
     fn the_app_sources_are_the_apps() {
         let manifest = crate::util::root()
-            .join(APP_FILES.trim_end_matches("**"))
-            .join("Cargo.toml");
+            .join(APP_SOURCES[0])
+            .with_file_name("Cargo.toml");
         let text = std::fs::read_to_string(manifest).unwrap();
         assert!(text.contains(&format!("name = \"{APP}\"")));
     }

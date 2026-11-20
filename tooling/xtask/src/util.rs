@@ -149,9 +149,9 @@ pub fn succeeds(command: &mut Command) -> bool {
 }
 
 /// The variables that tell Git which repository to use. A Git hook sets them for its own
-/// repository: from a worktree, `GIT_DIR` is the absolute path of the shared one, so the mutants
-/// tests' `git init` in a temporary folder, run by the pre-push hook, re-initialized the real
-/// repository as bare (2026-11-10).
+/// repository: from a worktree, `GIT_DIR` is the absolute path of the shared one, so a test's
+/// `git init` in a temporary folder, run by the pre-push hook, re-initialized the real repository
+/// as bare (2026-11-10).
 const GIT_LOCATION: [&str; 6] = [
     "GIT_DIR",
     "GIT_WORK_TREE",

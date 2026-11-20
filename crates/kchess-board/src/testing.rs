@@ -140,8 +140,7 @@ impl Started {
     }
 
     /// `wait_for`, failing after `limit`: for an answer the core gives at once, so that a test
-    /// whose answer never comes fails promptly instead of running into the runner's timeout
-    /// (which reads as a hang, not a failure, to `cargo mutants`).
+    /// whose answer never comes fails promptly instead of running into the runner's timeout.
     pub fn wait_within(
         &mut self,
         limit: Duration,
@@ -163,8 +162,8 @@ impl Started {
 
     /// Wait until the core's startup check for a live Lichess game has ended and engine help is
     /// lent (a profile with no account has nothing to find). The core ends it at once, so a
-    /// board that never lifts the lock fails within 10 s, inside the 20 s `cargo mutants` gives
-    /// a test, which would otherwise report a hang instead of a caught mutant.
+    /// board that never lifts the lock fails within 10 s instead of hanging until the runner's
+    /// timeout.
     pub fn wait_for_engine_help(&mut self) {
         self.wait_within(
             Duration::from_secs(10),

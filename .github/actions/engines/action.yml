@@ -4,7 +4,7 @@ description: >-
   Fairy-Stockfish, built from its pinned source, so the variant-analysis tests run too; both named
   in the job's environment (KCHESS_ENGINE_PATH, KCHESS_VARIANT_ENGINE_PATH). Kept between runs,
   keyed by their pins: fetching them built the fetcher and Fairy-Stockfish anew each time
-  (2026-11-09: 70 s of `check` and of each mutants shard). `cargo xtask engines` answers kept
+  (2026-11-09: 70 s of `check`). `cargo xtask engines` answers kept
   ones without building either.
 
 runs:

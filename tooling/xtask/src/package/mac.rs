@@ -4,7 +4,7 @@
 //! (`electron_step`), whose zip carries the bridge for `com.kchess.electron`.
 //!
 //! Compiled for the tests on every Unix too, so the plists, the zip check and the bundle's layout
-//! are tested where mutants run; only macOS packages with it.
+//! are tested on Linux CI too; only macOS packages with it.
 
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 

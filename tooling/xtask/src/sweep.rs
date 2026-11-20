@@ -38,16 +38,14 @@ const SWEPT: &str = ".kchess-swept";
 const LONGEST_PATH: usize = 4096;
 
 /// Sweeps the build folder: the units no current build uses (`superseded.rs`) on every platform,
-/// then on macOS the objects no program uses, saying what went; then the build folder of the
-/// checkout's mutants tree, unless a push is testing in it; then the build folders of the other
-/// worktrees nobody is building in (`worktrees.rs`). With `dry_run`, deletes nothing and says
+/// then on macOS the objects no program uses, saying what went; then the build folders of the
+/// other worktrees nobody is building in (`worktrees.rs`). With `dry_run`, deletes nothing and says
 /// what would go, and whether a build would be refused. Refuses a build afterwards when the disk
 /// is still too full for one.
 pub fn build_folder(dry_run: bool) -> crate::util::Result {
     let target = target_folder(std::env::var_os("CARGO_TARGET_DIR"));
     let root = crate::util::root();
     let mut messages = sweep_all(&target, &root, dry_run, cfg!(target_os = "macos"));
-    messages.extend(idle_mutants_tree(&root, dry_run));
     messages.extend(crate::worktrees::sweep(&root, dry_run));
     for message in messages {
         say(&message);
@@ -61,24 +59,6 @@ pub fn build_folder(dry_run: bool) -> crate::util::Result {
     } else {
         space
     }
-}
-
-/// Sweeps the build folder (`target`) of the pre-push hook's mutants tree (`mutants_tree.rs`),
-/// which builds a pushed commit's mutants in place and so replaces units as the checkout's own
-/// build does: the units no current build of the tree (its parent) uses, under the same build
-/// lock. What to say about it.
-pub fn mutants_tree(target: &Path, dry_run: bool) -> Vec<String> {
-    sweep_all(target, target.parent().unwrap_or(target), dry_run, false)
-        .into_iter()
-        .map(|message| format!("Mutants tree: {message}"))
-        .collect()
-}
-
-/// [`mutants_tree`] of `checkout`'s tree, while no push holds it: one that does sweeps it itself.
-fn idle_mutants_tree(checkout: &Path, dry_run: bool) -> Vec<String> {
-    crate::mutants_tree::idle_target(checkout)
-        .map(|(target, _lock)| mutants_tree(&target, dry_run))
-        .unwrap_or_default()
 }
 
 /// Sweeps every profile folder in `target`, the build folder of the workspace at `workspace`, and
@@ -526,37 +506,6 @@ mod tests {
         sweep_all(&root.join("target"), root, false, false);
         assert!(!deps.join("x-0000000000000001").exists());
         assert!(deps.join("x-0000000000000002").exists());
-    }
-
-    #[test]
-    fn the_mutants_tree_loses_its_replaced_builds_unless_a_push_holds_it() {
-        let checkout = tempfile::tempdir().unwrap();
-        assert!(
-            idle_mutants_tree(checkout.path(), true).is_empty(),
-            "no tree"
-        );
-        let target = checkout.path().join(".data/mutants-tree/target");
-        let deps = target.join("debug").join("deps");
-        std::fs::create_dir_all(&deps).unwrap();
-        let object = deps.join("gone-1.a.b.rcgu.o");
-        std::fs::write(&object, b"o").unwrap();
-        crate::superseded::tests::replaced_build(&target.join("debug"), 2_000_000_000);
-        let held = crate::mutants_tree::idle_target(checkout.path()).unwrap();
-        assert!(
-            idle_mutants_tree(checkout.path(), false).is_empty(),
-            "a push is testing in it"
-        );
-        drop(held);
-        assert_eq!(
-            idle_mutants_tree(checkout.path(), true),
-            ["Mutants tree: Would delete 1 build no current build uses (2.0 GB)."]
-        );
-        assert_eq!(
-            idle_mutants_tree(checkout.path(), false),
-            ["Mutants tree: Deleted 1 build no current build uses (2.0 GB)."]
-        );
-        assert!(idle_mutants_tree(checkout.path(), false).is_empty());
-        assert!(object.exists(), "only the replaced builds");
     }
 
     #[test]

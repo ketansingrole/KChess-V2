@@ -4,7 +4,7 @@ Run `cargo xtask check-fast` while editing. It checks format and lints for the w
 the tests of every package with changes since `main` (committed, staged, unstaged or new) and of
 every workspace package that depends on one of them (a vendored crate under `vendor/` tests the
 members that build it). A change to `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, Cargo's
-configuration (`.cargo/` except `mutants.toml`), `.config/nextest.toml` or the macOS test
+configuration (`.cargo/`), `.config/nextest.toml` or the macOS test
 runner (`tooling/macos-dev-runner.sh`) runs every test; one to `rustfmt.toml` or `clippy.toml` runs
 the format and lints. Tests run under cargo-nextest when it is installed (`.config/nextest.toml`), as in
 CI: all test binaries at once, each test in its own process, a hung test killed and named after
@@ -33,11 +33,7 @@ over twice the last's. A GitHub macOS runner draws no frames, so CI cannot run i
 `cargo xtask install-hooks` points Git at `.githooks`. Its pre-push hook runs the full
 `cargo xtask check` when a push updates `main`, and refuses if the pushed commit is not HEAD or
 the working tree has uncommitted or untracked files, since `check` would test those instead. A
-push of another branch runs `cargo xtask mutants` on the lines new since that branch's last push
-(the app's left out, as in CI), in the checkout's own built tree (`.data/mutants-tree`), and refuses
-while a mutant survives; it skips a push that is not a
-clean HEAD, or when cargo-mutants is not installed. Skip either only on purpose:
-`KCHESS_SKIP_PRE_PUSH=1 git push …`.
+push of another branch runs nothing. Skip it only on purpose: `KCHESS_SKIP_PRE_PUSH=1 git push …`.
 
 Code reaches `main` through a pull request, whose CI (below) tests it before it lands; run
 `check-fast` before opening it. GitHub's rulesets
@@ -115,7 +111,3 @@ reduced motion, so dialogs and popovers are at rest when a test clicks them.
 - `fuzz/` holds cargo-fuzz targets for PGN, FEN, UCI output, online events and the game tree,
   over the typed rules; `check` builds them when the rules change, and
   `.github/workflows/fuzz.yml` runs them.
-- Mutation testing (`cargo mutants -p <package>`, `docs/mutation-testing.md`) shows code no test
-  pins; `.github/workflows/mutants.yml` runs it in shards, weekly for the rules and by hand for
-  any member. A missed mutant is a test to
-  write, or an equivalent mutant to exclude in `.cargo/mutants.toml` with its reason.

@@ -5,7 +5,6 @@ use kchess_hack as _;
 
 mod app;
 mod app_icon;
-mod app_mutants;
 mod bench;
 #[cfg(test)]
 mod boundaries;
@@ -22,8 +21,6 @@ mod hack;
 mod icons;
 mod licenses;
 mod members;
-mod mutants;
-mod mutants_tree;
 mod package;
 mod pinned;
 mod pins;
@@ -150,7 +147,6 @@ const COMMANDS: &[Command] = &[
             "[--dry-run]",
             "Delete what the build folder keeps of builds no current one uses, and on macOS the \
              object files no program uses (`check`, `check-fast` and `app` do it first), then \
-             those of the checkout's mutants tree (the pre-push hook's, which sweeps it too), then \
              the build folders of other worktrees nobody is building in: merged into main and idle \
              2 h, idle 3 days, or any while under 50 GB is free; refuses below 15 GB free; \
              --dry-run says how much would go. CARGO_TARGET_DIR picks the build",
@@ -158,30 +154,10 @@ const COMMANDS: &[Command] = &[
         run: |rest| sweep::build_folder(has_flag(rest, "--dry-run")),
     },
     Command {
-        name: "mutants",
-        forms: &[
-            (
-                "[--plan|--warm] [--app] [--base <ref>|--all] [--in-place] [-- <cargo-mutants arguments>]",
-                "Mutation testing of the lines changed since main (or <ref>), the app's left out \
-             unless --app; fails when a mutant survives (docs/mutation-testing.md); with --plan, \
-             only count them and print CI's shards; --warm builds what the mutants build on; --all \
-             every file; --in-place mutates the checkout itself",
-            ),
-            (
-                "--app-plan --base <ref> | --app-shard <k>",
-                "The weekly run of the app's mutants on the lines changed since <ref>: --app-plan \
-             measures which tests run each mutant's lines and plans the shards (GitHub outputs); \
-             --app-shard tests shard <k>'s mutants with those tests alone, in the checkout",
-            ),
-        ],
-        run: mutants::run,
-    },
-    Command {
         name: "pre-push",
         forms: &[(
             "",
-            "The Git pre-push hook (.githooks/pre-push): `check` before a push to main, the new \
-             lines' mutants before a branch push",
+            "The Git pre-push hook (.githooks/pre-push): `check` before a push to main",
         )],
         run: |_| check::pre_push(),
     },
