@@ -4,18 +4,18 @@
 //! A Chess.com player's card is the same, built from the games synced here: Chess.com keeps no
 //! profile KChess asks for.
 
-use crate::loading::Epoch;
+use crate::loading::{Loading, failure};
 use crate::widgets::KeyboardFocus as _;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::calls;
 use kchess_contracts::check::{GameAccount, Username};
 use kchess_contracts::types::{
     GameLibraryOverview, GamePage, GamePageQuery, InsightsQuery, LichessGame, LichessUser,
     RatingSeries, UserPerf,
 };
+use kchess_contracts::{CoreError, calls};
 
 use crate::core::AppCore;
 use crate::rating_history::RatingHistory;
@@ -82,9 +82,9 @@ pub struct LichessActivity {
     /// `gameLibraryOverview`: wins, losses and draws by account.
     overview: Option<GameLibraryOverview>,
     recent: Vec<LichessGame>,
-    /// The saved games have been read once for this account, so an empty list means none.
-    loaded: bool,
-    epoch: Epoch,
+    /// The read of what is kept here: an empty list means none only once it has answered, and
+    /// its failure shows in place of the games. The profile's answer counts while it is current.
+    games: Loading,
     /// A sync ran when the accounts last changed: its end brings the new games.
     syncing: bool,
     _accounts: Subscription,
@@ -109,8 +109,7 @@ impl LichessActivity {
                 .new(|cx| RatingHistory::new(LICHESS_HINT, window, cx).without_mode_picker()),
             overview: None,
             recent: Vec::new(),
-            loaded: false,
-            epoch: Epoch::default(),
+            games: Loading::default(),
             syncing: accounts.read(cx).working(),
             _accounts,
         }
@@ -118,7 +117,10 @@ impl LichessActivity {
 
     /// "No synced games yet": only once the saved games are known to be none, not while they load.
     pub(crate) fn shows_empty(&self) -> bool {
-        self.loaded && self.recent.is_empty()
+        !self.account.is_empty()
+            && !self.games.busy()
+            && self.games.error().is_none()
+            && self.recent.is_empty()
     }
 
     /// Show `account`, or read its profile and game history again.
@@ -133,9 +135,8 @@ impl LichessActivity {
                 history.set(Vec::new(), Vec::new(), cx)
             });
             self.recent.clear();
-            self.loaded = false;
         }
-        let epoch = self.epoch.start();
+        let turn = self.games.start();
         let core = cx.global::<AppCore>().clone();
         let overview = core.request(calls::GameLibraryOverview {});
         let recent = core.request(calls::GamePage {
@@ -163,15 +164,19 @@ impl LichessActivity {
             cx.spawn(async move |this, cx| {
                 let (overview, recent, fallback, speeds) =
                     (overview.await, recent.await, fallback.await, speeds.await);
-                let _ = this.update(cx, |this, cx| {
-                    if !this.epoch.is_current(epoch) {
+                this.update(cx, |this, cx| {
+                    if !this.games.is_current(turn) {
                         return;
                     }
+                    let speeds = speeds
+                        .map_err(|cause| failure("home-activity", &cause))
+                        .ok();
                     if let Ok(fallback) = &fallback {
-                        this.profile = local_profile(fallback, speeds.as_ref().ok());
+                        this.profile = local_profile(fallback, speeds.as_ref());
                     }
-                    this.show_local(overview.ok(), recent.ok(), fallback.ok(), cx);
-                });
+                    this.show_local(turn, overview, recent, fallback, cx);
+                })
+                .ok();
             })
             .detach();
             return;
@@ -188,22 +193,28 @@ impl LichessActivity {
             // What was saved last time paints first.
             let saved = saved.await;
             let local = (overview.await, recent.await, fallback.await);
-            let current = |this: &mut Self| this.epoch.is_current(epoch);
-            let _ = this.update(cx, |this, cx| {
+            let current = |this: &mut Self| this.games.is_current(turn);
+            this.update(cx, |this, cx| {
                 if !current(this) {
                     return;
                 }
-                if let Ok(saved) = saved {
-                    this.profile = saved.profile.unwrap_or_default();
-                    this.history.update(cx, |history, cx| {
-                        history.set_official(saved.rating_history.unwrap_or_default(), cx)
-                    });
+                match saved {
+                    Ok(saved) => {
+                        this.profile = saved.profile.unwrap_or_default();
+                        this.history.update(cx, |history, cx| {
+                            history.set_official(saved.rating_history.unwrap_or_default(), cx)
+                        });
+                    }
+                    Err(cause) => {
+                        failure("home-activity", &cause);
+                    }
                 }
                 let (overview, recent, fallback) = local;
-                this.show_local(overview.ok(), recent.ok(), fallback.ok(), cx);
-            });
+                this.show_local(turn, overview, recent, fallback, cx);
+            })
+            .ok();
             let (profile, history) = (profile.await, history.await);
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !current(this) {
                     return;
                 }
@@ -220,29 +231,40 @@ impl LichessActivity {
                     ),
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
 
-    /// What is kept here: the record by account, the latest games and the history from games.
+    /// What is kept here, read for `turn`: the record by account, the latest games and the history
+    /// from games. A failed read of the games shows in their place; each failure is logged.
     fn show_local(
         &mut self,
-        overview: Option<GameLibraryOverview>,
-        recent: Option<GamePage>,
-        fallback: Option<Vec<RatingSeries>>,
+        turn: crate::loading::Turn,
+        overview: Result<GameLibraryOverview, CoreError>,
+        recent: Result<GamePage, CoreError>,
+        fallback: Result<Vec<RatingSeries>, CoreError>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(overview) = overview {
-            self.overview = Some(overview);
+        match overview {
+            Ok(overview) => self.overview = Some(overview),
+            Err(cause) => {
+                failure("home-activity", &cause);
+            }
         }
-        if let Some(recent) = recent {
+        if self.games.settle(turn, "home-activity", &recent)
+            && let Ok(recent) = recent
+        {
             self.recent = recent.games;
         }
-        self.loaded = true;
-        if let Some(fallback) = fallback {
-            self.history
-                .update(cx, |history, cx| history.set_fallback(fallback, cx));
+        match fallback {
+            Ok(fallback) => self
+                .history
+                .update(cx, |history, cx| history.set_fallback(fallback, cx)),
+            Err(cause) => {
+                failure("home-activity", &cause);
+            }
         }
         cx.notify();
     }
@@ -533,6 +555,14 @@ impl Render for LichessActivity {
                         )
                     }),
             )
+            .children(self.games.error().cloned().map(|error| {
+                div()
+                    .id("home-lichess-error")
+                    .py(px(24.))
+                    .text_size(px(13.))
+                    .text_color(palette.error)
+                    .child(error)
+            }))
             .when(self.shows_empty(), |card| {
                 card.child(
                     widgets::empty_state(icon("history"), "No synced games yet", None, &palette)
@@ -667,5 +697,27 @@ mod tests {
         app.wait_for("the saved games to be read", |_, cx| {
             activity.read(cx).shows_empty()
         });
+    }
+
+    /// A read of the games that fails shows its failure, not "No synced games yet" with a sync
+    /// that cannot help: the failure used to be dropped, and the empty state shown in its place.
+    #[gpui_kit::test]
+    fn a_failed_read_shows_its_failure_not_an_empty_list(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = Started::new(cx);
+        let activity = app.with_window(|window, cx| {
+            let activity = cx.new(|cx| LichessActivity::new(window, cx));
+            // A name the core refuses: every read of its games fails.
+            activity.update(cx, |activity, cx| activity.load("not a name!", cx));
+            activity
+        });
+        app.wait_for("the reads to answer", |_, cx| {
+            !activity.read(cx).games.busy()
+        });
+        let activity = app.with_window(|_, cx| {
+            let activity = activity.read(cx);
+            (activity.shows_empty(), activity.games.error().cloned())
+        });
+        assert!(!activity.0, "no empty state for a read that failed");
+        assert!(activity.1.is_some(), "the failure is shown");
     }
 }
