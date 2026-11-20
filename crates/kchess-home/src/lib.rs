@@ -61,6 +61,9 @@ const COLUMN_GAP: Pixels = px(24.);
 pub struct HomePage {
     /// The computer game left unfinished, and how Home names it.
     continue_game: Option<(Unfinished, ComputerSession)>,
+    /// The latest read of the unfinished game: the reads overlap (the page shown, another window
+    /// saving), and an earlier one answering last must not bring back what a later one replaced.
+    continue_read: loading::Epoch,
     /// The position on the board, and what it was drawn from.
     board: Option<(String, Entity<ChessBoard>)>,
     /// The last game's opening, by the game and its length, worked out once.
@@ -200,6 +203,7 @@ impl HomePage {
         };
         let mut page = HomePage {
             continue_game: None,
+            continue_read: loading::Epoch::default(),
             board: None,
             last_opening: None,
             activity: None,
@@ -318,32 +322,45 @@ impl HomePage {
 
     /// Read the unfinished computer game again.
     fn refresh_continue(&mut self, cx: &mut Context<Self>) {
+        let turn = self.continue_read.start();
         let session = cx.global::<AppCore>().request(calls::Session {
             kind: kchess_contracts::types::SessionKind::Computer,
         });
         cx.spawn(async move |this, cx| {
             let session = session.await;
-            let _ = this.update(cx, |this, cx| {
-                match session {
-                    Ok(session) => {
-                        this.continue_game = match session {
-                            Some(SessionDocument::Computer(session)) => {
-                                continue_line(&session).map(|line| (line, session))
-                            }
-                            _ => None,
-                        };
-                    }
-                    // The card stays as it was; a failed read is not the game being over.
-                    Err(cause) => crate::log::write(
-                        kchess_contracts::Level::Warn,
-                        "library",
-                        &format!("Reading the unfinished game failed: {}", cause.message),
-                    ),
-                }
-                cx.notify();
-            });
+            this.update(cx, |this, cx| this.adopt_continue(turn, session, cx))
+                .ok();
         })
         .detach();
+    }
+
+    /// The answer to the read `turn`: the card follows it only while no later read was sent.
+    fn adopt_continue(
+        &mut self,
+        turn: loading::Turn,
+        session: Result<Option<SessionDocument>, kchess_contracts::CoreError>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.continue_read.is_current(turn) {
+            return;
+        }
+        match session {
+            Ok(session) => {
+                self.continue_game = match session {
+                    Some(SessionDocument::Computer(session)) => {
+                        continue_line(&session).map(|line| (line, session))
+                    }
+                    _ => None,
+                };
+            }
+            // The card stays as it was; a failed read is not the game being over.
+            Err(cause) => crate::log::write(
+                kchess_contracts::Level::Warn,
+                "library",
+                &format!("Reading the unfinished game failed: {}", cause.message),
+            ),
+        }
+        cx.notify();
     }
 }
 
@@ -1003,6 +1020,41 @@ mod tests {
                 "{width}px fits {per_row} tiles"
             );
         }
+    }
+
+    /// Home reads the unfinished game when it is shown and again when another window saves one;
+    /// the first read answering last (the Linux CI run of 2026-11-20) took the saved game's card
+    /// away. Only the latest read's answer counts.
+    #[gpui_kit::test]
+    fn an_earlier_read_answering_last_keeps_the_unfinished_game(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        use kchess_contracts::types::SessionDocument;
+        let host = kchess_domain::games::Host {
+            now: 0.,
+            allowed: true,
+            ready: false,
+        };
+        let saved = serde_json::from_value(json!({ "moves": ["e2e4", "e7e5"], "level": "club" }))
+            .expect("a saved game");
+        let game = kchess_domain::games::computer::ComputerGame::resume(Some(saved), &host)
+            .expect("a game");
+        let mut app = kchess_board::testing::Started::new(cx);
+        let page = app.with_window(|window, cx| {
+            crate::played::init(&Default::default(), cx);
+            cx.new(|cx| super::HomePage::new(window, cx))
+        });
+        // The read the page sent as it opened is older still, and counts no more than the first.
+        let unfinished = app.with_window(|_, cx| {
+            page.update(cx, |page, cx| {
+                let first = page.continue_read.start();
+                let second = page.continue_read.start();
+                let saved = SessionDocument::Computer(game.session(0.));
+                page.adopt_continue(second, Ok(Some(saved)), cx);
+                page.adopt_continue(first, Ok(None), cx);
+                page.continue_game.is_some()
+            })
+        });
+        assert!(unfinished, "the saved game's card stays");
     }
 
     /// The unfinished game's card counts from where it started: a Crazyhouse game from the
