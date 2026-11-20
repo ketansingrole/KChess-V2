@@ -51,6 +51,15 @@ enum Write {
 impl Global for ViewPreferences {}
 
 impl ViewPreferences {
+    /// The preferences this start read from the core.
+    fn read(values: Map<String, Value>) -> ViewPreferences {
+        ViewPreferences {
+            used: !values.is_empty(),
+            values,
+            ..ViewPreferences::default()
+        }
+    }
+
     /// The core refused the latest write of `key`: the shown value is not what the profile keeps.
     fn unsaved(&self, key: &str) -> bool {
         self.failed
@@ -221,12 +230,10 @@ pub fn init(cx: &mut App) {
         ))
         .detach();
     cx.set_global(ViewPreferences {
-        used: !values.is_empty(),
-        values,
         failed,
         writes: Some(writes),
         sending,
-        ..ViewPreferences::default()
+        ..ViewPreferences::read(values)
     });
     crate::quit::on_quit(cx, |cx| {
         cx.try_global::<ViewPreferences>()
@@ -531,6 +538,21 @@ mod tests {
         draw(cx);
         assert_eq!(renders.get(), before, "a kept preference redrew");
         assert_eq!(cx.update(|cx| get(cx, "kchess:test-place", 0)), 3);
+    }
+
+    /// A profile counts as used from what this start read, not from what it saved since (the
+    /// window's place, kept as it opens, made a new profile look used and show release notes).
+    #[gpui_kit::test]
+    fn a_profile_is_used_by_what_this_start_read(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(ViewPreferences::read(Map::new()));
+            keep(cx, "kchess:test-place", 1);
+            assert!(!used(cx));
+            let saved = Map::from_iter([("kchess:tab".to_string(), json!("games"))]);
+            cx.set_global(ViewPreferences::read(saved));
+            assert!(used(cx));
+            assert_eq!(get(cx, "kchess:tab", String::new()), "games");
+        });
     }
 
     /// An earlier release's file becomes the preference, wins over one saved before it, and is
