@@ -125,7 +125,7 @@ impl<'ast> Visit<'ast> for Lints {
         if is_test(&item.attrs) {
             return;
         }
-        let view = item.trait_.as_ref().and_then(|(_, path, _)| {
+        let view = item.trait_.as_ref().and_then(|(path, _)| {
             let last = path.segments.last()?;
             (last.ident == "Render" || last.ident == "RenderOnce").then_some(())
         });

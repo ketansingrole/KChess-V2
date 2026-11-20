@@ -72,7 +72,7 @@ sha2 = { version = "0.11" }
 simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
 stable_deref_trait = { version = "1", default-features = false, features = ["alloc"] }
-syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "fold", "full", "visit"] }
 tinystr = { version = "0.8", default-features = false, features = ["alloc", "zerovec"] }
 tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 uuid = { version = "1", features = ["serde", "v4"] }
@@ -142,7 +142,7 @@ rustix = { version = "1", features = ["event", "net", "pipe", "process", "shm", 
 smallvec = { version = "1", default-features = false, features = ["write"] }
 socket2 = { version = "0.6", default-features = false, features = ["all"] }
 subtle = { version = "2" }
-syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", default-features = false, features = ["visit-mut"] }
 tracing = { version = "0.1", features = ["log"] }
 uuid = { version = "1", default-features = false, features = ["v5"] }
 zbus = { version = "5" }
