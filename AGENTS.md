@@ -237,6 +237,10 @@ before, `// gpui-lints: allow(<lint>) <reason>`.
   the background with its output in a file, and read the result when it finishes. Never wait in
   a loop (`sleep`, `until grep …; do sleep`, `while pgrep`): the tool reports when a background
   command ends, and `gh run watch` in the background reports when a CI run ends.
+- Every hang has a deadline. A command `cargo xtask` runs is stopped once it prints nothing for 20
+  minutes (`KCHESS_QUIET_MINUTES` for a step known to be quieter), its downloads give up on a
+  server that stops sending, and each CI job has a `timeout-minutes` about twice its slowest
+  green run. A new step or job comes with its limit.
 - The development shell is zsh on macOS. Quote globs and `grep --include` patterns (an unmatched
   glob is an error in zsh), and do not call `timeout`, which macOS lacks: use the tool's own
   timeout or run the command in the background.
