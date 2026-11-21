@@ -691,9 +691,9 @@ fn stray_corners(files: &[(String, String)]) -> Vec<String> {
 }
 
 /// Each file drawing a large ticking time without tabular figures, whose digits then shift
-/// sideways on every tick. The clocks of Puzzle Rush, timed practice runs and Over the board draw
-/// through `widgets::timer`; the title bar's "Updating N%" is anchored on the right, so a
-/// proportional figure moved the button's left edge with every percent.
+/// sideways on every tick. The clocks of Puzzle Rush, timed practice runs and Over the board's
+/// chess clock draw through `widgets::timer`; the title bar's "Updating N%" is anchored on the
+/// right, so a proportional figure moved the button's left edge with every percent.
 fn proportional_timers(files: &[(String, String)]) -> Vec<String> {
     let text_of = |wanted: &str| {
         files
@@ -704,7 +704,7 @@ fn proportional_timers(files: &[(String, String)]) -> Vec<String> {
     let mut found: Vec<String> = [
         "crates/kchess-puzzles/src/rush.rs",
         "crates/kchess-practice/src/run.rs",
-        "crates/kchess-local/src/lib.rs",
+        "crates/kchess-local/src/clock.rs",
     ]
     .iter()
     .filter(|path| !text_of(path).contains("widgets::timer("))
@@ -792,7 +792,7 @@ fn a_clock_without_tabular_figures_is_found() {
     let files = [
         file("crates/kchess-puzzles/src/rush.rs", "widgets::timer(text)"),
         file("crates/kchess-practice/src/run.rs", "div().child(text)"),
-        file("crates/kchess-local/src/lib.rs", "widgets::timer(text)"),
+        file("crates/kchess-local/src/clock.rs", "widgets::timer(text)"),
         file(
             "apps/gpui/src/pages/settings/updates.rs",
             "fn title_bar_button() {\n    label(percent)\n}\n",
