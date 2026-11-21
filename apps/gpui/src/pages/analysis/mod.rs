@@ -343,6 +343,8 @@ pub struct AnalysisPage {
     tried_labels: Vec<Subscription>,
     /// The tried moves already labelled, by path.
     tried_done: Vec<String>,
+    /// Moves played without their sound: all but the last of an engine line played at once.
+    quiet_moves: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -600,6 +602,7 @@ impl AnalysisPage {
             voice: VoiceMoves::new(crate::voice::VoiceSource::Analysis, cx),
             tried_labels: Vec::new(),
             tried_done: Vec::new(),
+            quiet_moves: false,
             _subscriptions: subscriptions,
         };
         page.redraw(cx);
@@ -759,6 +762,9 @@ impl AnalysisPage {
         match self.root.add_move(&self.path, uci) {
             Some(next) => {
                 self.path = next;
+                if !self.quiet_moves {
+                    self.move_sound(cx);
+                }
                 self.changed(cx);
                 true
             }
@@ -769,9 +775,31 @@ impl AnalysisPage {
         }
     }
 
+    /// Show the position at `path`.
+    ///
+    /// Which moves sound, as on Lichess's analysis board: a move played here (board, typed,
+    /// spoken, explorer, engine, in `play_move`) and a step one move forward, by → or the wheel,
+    /// "next", Shift → or a click on the next move in the list. Stepping back, jumping further
+    /// (start, end, a move elsewhere in the list, the review's graph), loading a game, undo and
+    /// deleting are silent, so no step plays a clip for a move it did not just show being made.
     fn go_to(&mut self, path: &str, cx: &mut Context<Self>) {
-        self.path = self.root.existing_path(path);
+        let next = self.root.existing_path(path);
+        let forward = moves_of(&next)
+            .split_last()
+            .is_some_and(|(_, before)| *before == *moves_of(&self.path));
+        self.path = next;
+        if forward {
+            self.move_sound(cx);
+        }
         self.changed(cx);
+    }
+
+    /// The clip for the move that led to the position shown: a capture's or a quiet move's.
+    fn move_sound(&self, cx: &mut Context<Self>) {
+        let san = &self.node().san;
+        if !san.is_empty() {
+            crate::sound::move_sound(san, cx);
+        }
     }
 
     fn back(&mut self, cx: &mut Context<Self>) {
@@ -976,8 +1004,10 @@ impl AnalysisPage {
     /// Load a line from the starting position, opened at its end (an opening's Analyse).
     pub fn load_line(&mut self, moves: &[String], cx: &mut Context<Self>) {
         let pgn = kchess_domain::pgn::pgn_from_uci(moves);
+        // Straight to its end, not by `go_to`: a loaded line of one move is not a move played.
         if self.load_pgn(&pgn, cx) {
-            self.go_to_end(cx);
+            self.path = self.root.line_end("");
+            self.changed(cx);
         }
     }
 
