@@ -11,7 +11,7 @@ use kchess_domain::variant::Setup;
 
 use super::control::Control;
 use super::{Entry, Heard, VoiceEvent};
-use kchess_contracts::types::VoiceUpdate;
+use kchess_contracts::types::{VoiceOutcome, VoiceSource, VoiceUpdate};
 use kchess_domain::voice::SpokenMove;
 use kchess_ui::icon;
 
@@ -51,7 +51,7 @@ const CHOICE_IDS: usize = 10;
 
 /// A board's voice input: on or off, the choice waiting, and what was last said.
 pub struct VoiceMoves {
-    pub source: &'static str,
+    pub source: VoiceSource,
     /// On or off, and the answer to the last phrase.
     pub control: Control,
     pub choices: Vec<Choice>,
@@ -91,7 +91,7 @@ fn meant<'a>(before: &[String], line: &'a [String]) -> Option<&'a str> {
 }
 
 impl VoiceMoves {
-    pub fn new(source: &'static str, cx: &mut App) -> VoiceMoves {
+    pub fn new(source: VoiceSource, cx: &mut App) -> VoiceMoves {
         VoiceMoves {
             source,
             control: Control::new(true, cx),
@@ -112,7 +112,7 @@ impl VoiceMoves {
 
     /// Voice on or off for this board.
     pub fn toggle(&mut self, on: bool, grammar: Vec<String>, active: bool, cx: &mut App) {
-        self.settle("abandoned", None, cx);
+        self.settle(VoiceOutcome::Abandoned, None, cx);
         self.choices.clear();
         self.control.toggle(on, grammar, active, cx);
     }
@@ -131,7 +131,7 @@ impl VoiceMoves {
         if context != self.context {
             self.context = context.to_string();
             if !self.choices.is_empty() {
-                self.settle("abandoned", None, cx);
+                self.settle(VoiceOutcome::Abandoned, None, cx);
                 self.choices.clear();
                 self.control.feedback = None;
             }
@@ -151,7 +151,7 @@ impl VoiceMoves {
     fn record(
         &mut self,
         heard: &Heard,
-        outcome: &str,
+        outcome: VoiceOutcome,
         parsed: Option<&str>,
         fen: &str,
         track: bool,
@@ -175,22 +175,25 @@ impl VoiceMoves {
             }
             self.position_entries.push(entry.clone());
         }
-        if outcome == "invalid" || outcome == "unclear" {
+        if matches!(outcome, VoiceOutcome::Invalid | VoiceOutcome::Unclear) {
             self.last_miss = Some(entry.clone());
         }
         Some(entry)
     }
 
     /// Close the choice waiting with how it ended.
-    fn settle(&mut self, outcome: &str, expected: Option<&str>, cx: &App) {
+    fn settle(&mut self, outcome: VoiceOutcome, expected: Option<&str>, cx: &App) {
         let Some(attempt) = self.pending.take() else {
             return;
         };
-        if !matches!(outcome, "played" | "confirmed" | "picked") {
+        if !matches!(
+            outcome,
+            VoiceOutcome::Played | VoiceOutcome::Confirmed | VoiceOutcome::Picked
+        ) {
             self.last_miss = Some(attempt.clone());
         }
         let update = VoiceUpdate {
-            outcome: super::wire(outcome),
+            outcome: Some(outcome),
             expected: expected.map(str::to_string),
         };
         super::amend(attempt, update, cx);
@@ -217,7 +220,7 @@ impl VoiceMoves {
     /// Heard but too unsure (or only noise) to act on; `taking` as for `hear`.
     pub fn missed(&mut self, heard: &Heard, fen: &str, taking: bool, cx: &mut App) {
         if self.control.enabled {
-            self.record(heard, "unclear", None, fen, taking, cx);
+            self.record(heard, VoiceOutcome::Unclear, None, fen, taking, cx);
         }
     }
 
@@ -243,21 +246,28 @@ impl VoiceMoves {
         self.control.heard = Some(heard.text.clone().into());
         if let Some(reply) = command(&heard.text) {
             let outcome = if reply.understood {
-                "command"
+                VoiceOutcome::Command
             } else {
-                "invalid"
+                VoiceOutcome::Invalid
             };
             self.record(heard, outcome, Some(&reply.said), &fen, false, cx);
             // Drop a pending move now, so that the command's own answer stays on screen.
             if !self.choices.is_empty() {
-                self.settle("abandoned", None, cx);
+                self.settle(VoiceOutcome::Abandoned, None, cx);
             }
             self.choices.clear();
             self.control.feedback = Some(reply.feedback.into());
             return Action::Nothing;
         }
         if !taking {
-            self.record(heard, "invalid", Some("not your move"), &fen, false, cx);
+            self.record(
+                heard,
+                VoiceOutcome::Invalid,
+                Some("not your move"),
+                &fen,
+                false,
+                cx,
+            );
             self.control.feedback = idle.map(|idle| SharedString::from(idle.to_string()));
             return Action::Nothing;
         }
@@ -268,7 +278,7 @@ impl VoiceMoves {
         {
             self.record(
                 heard,
-                "command",
+                VoiceOutcome::Command,
                 Some(&format!("#{number}")),
                 &fen,
                 true,
@@ -279,7 +289,7 @@ impl VoiceMoves {
                 .get(usize::from(number).saturating_sub(1))
                 .cloned()
             {
-                Some(choice) => self.choose(choice, "confirmed", cx),
+                Some(choice) => self.choose(choice, VoiceOutcome::Confirmed, cx),
                 None => {
                     self.control.feedback = Some("Choose one of the numbered moves".into());
                     Action::Nothing
@@ -289,16 +299,23 @@ impl VoiceMoves {
         let parsed = spoken_move(&heard.text, setup);
         match parsed {
             SpokenMove::Cancel if !heard.unclear => {
-                self.record(heard, "command", Some("cancel"), &fen, true, cx);
+                self.record(heard, VoiceOutcome::Command, Some("cancel"), &fen, true, cx);
                 self.cancel(cx);
                 Action::Nothing
             }
             SpokenMove::Confirm if !heard.unclear => {
-                self.record(heard, "command", Some("confirm"), &fen, true, cx);
+                self.record(
+                    heard,
+                    VoiceOutcome::Command,
+                    Some("confirm"),
+                    &fen,
+                    true,
+                    cx,
+                );
                 match self.choices.as_slice() {
                     [only] => {
                         let only = only.clone();
-                        self.choose(only, "confirmed", cx)
+                        self.choose(only, VoiceOutcome::Confirmed, cx)
                     }
                     _ => {
                         self.control.feedback = Some("Say a move, or choose its number".into());
@@ -319,7 +336,11 @@ impl VoiceMoves {
             _ => {
                 self.record(
                     heard,
-                    if heard.unclear { "unclear" } else { "invalid" },
+                    if heard.unclear {
+                        VoiceOutcome::Unclear
+                    } else {
+                        VoiceOutcome::Invalid
+                    },
                     None,
                     &fen,
                     true,
@@ -358,26 +379,26 @@ impl VoiceMoves {
             let pending = pending.clone();
             self.record(
                 heard,
-                "command",
+                VoiceOutcome::Command,
                 Some(&format!("repeat {sans}")),
                 fen,
                 true,
                 cx,
             );
-            return self.choose(pending, "confirmed", cx);
+            return self.choose(pending, VoiceOutcome::Confirmed, cx);
         }
         if !self.choices.is_empty() {
-            self.settle("replaced", None, cx);
+            self.settle(VoiceOutcome::Replaced, None, cx);
         }
         let confirm = crate::settings::frontend(cx).voice_confirm_moves;
         if let [only] = offered.as_slice()
             && (immediate || (!confirm && !heard.unclear))
         {
-            self.record(heard, "played", Some(&sans), fen, true, cx);
+            self.record(heard, VoiceOutcome::Played, Some(&sans), fen, true, cx);
             let only = only.clone();
-            return self.choose(only, "played", cx);
+            return self.choose(only, VoiceOutcome::Played, cx);
         }
-        self.pending = self.record(heard, "pending", Some(&sans), fen, true, cx);
+        self.pending = self.record(heard, VoiceOutcome::Pending, Some(&sans), fen, true, cx);
         self.control.feedback = Some(
             match offered.as_slice() {
                 [only] if heard.unclear => {
@@ -395,7 +416,7 @@ impl VoiceMoves {
         Action::Nothing
     }
 
-    fn choose(&mut self, choice: Choice, outcome: &str, cx: &App) -> Action {
+    fn choose(&mut self, choice: Choice, outcome: VoiceOutcome, cx: &App) -> Action {
         // Settled before the move: the board's change abandons any choice still waiting.
         self.settle(outcome, Some(&choice.san), cx);
         self.choices.clear();
@@ -448,13 +469,13 @@ impl VoiceMoves {
             .find(|choice| choice.uci == uci)
             .cloned()
         {
-            Some(choice) => self.choose(choice, "picked", cx),
+            Some(choice) => self.choose(choice, VoiceOutcome::Picked, cx),
             None => Action::Nothing,
         }
     }
 
     pub fn cancel(&mut self, cx: &App) {
-        self.settle("cancelled", None, cx);
+        self.settle(VoiceOutcome::Cancelled, None, cx);
         self.choices.clear();
         self.control.feedback = Some("Move cancelled".into());
     }

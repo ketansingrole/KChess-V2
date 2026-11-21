@@ -263,7 +263,7 @@ impl ComputerPage {
             error: None,
             pending: None,
             history: None,
-            voice: crate::voice::moves::VoiceMoves::new("computer", cx),
+            voice: crate::voice::moves::VoiceMoves::new(crate::voice::VoiceSource::Computer, cx),
             asked: None,
             flipped: false,
             layout: PlayLayout::default(),

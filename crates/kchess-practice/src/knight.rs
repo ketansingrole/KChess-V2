@@ -16,7 +16,7 @@ use super::run::{self, Drill, DrillRun, Stage};
 use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
 use crate::theme::Palette;
 use crate::voice::control::{BarSpec, Control, DrillLog};
-use crate::voice::{Attempt, VoiceEvent};
+use crate::voice::{Attempt, VoiceEvent, VoiceOutcome, VoiceSource};
 use crate::widgets::{self, Tone};
 use kchess_games::random_unit;
 use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
@@ -242,9 +242,12 @@ impl KnightPaths {
         };
         let asked = format!("{}:{}", self.round, self.jumps);
         let goal = self.goal.clone();
-        let log = |this: &mut Self, outcome: &str, parsed: Option<&str>, cx: &mut Context<Self>| {
+        let log = |this: &mut Self,
+                   outcome: VoiceOutcome,
+                   parsed: Option<&str>,
+                   cx: &mut Context<Self>| {
             let attempt = Attempt {
-                source: "knightPath",
+                source: VoiceSource::KnightPath,
                 heard,
                 outcome,
                 parsed,
@@ -254,7 +257,7 @@ impl KnightPaths {
             this.voice_log.log(&attempt, &asked, cx);
         };
         if missed {
-            return log(self, "unclear", None, cx);
+            return log(self, VoiceOutcome::Unclear, None, cx);
         }
         if self.knight == self.goal {
             return;
@@ -262,15 +265,15 @@ impl KnightPaths {
         let square = kchess_domain::voice::spoken_square(&heard.text);
         let feedback = match square {
             None => {
-                log(self, "invalid", None, cx);
+                log(self, VoiceOutcome::Invalid, None, cx);
                 "Say a square, such as “F three” or “Foxtrot three”".to_string()
             }
             Some(square) if !knight_moves(&self.knight).contains(&square) => {
-                log(self, "invalid", Some(&square), cx);
+                log(self, VoiceOutcome::Invalid, Some(&square), cx);
                 format!("{square} · not a knight jump from {}", self.knight)
             }
             Some(square) => {
-                log(self, "played", Some(&square), cx);
+                log(self, VoiceOutcome::Played, Some(&square), cx);
                 self.jump(&square, cx);
                 square
             }

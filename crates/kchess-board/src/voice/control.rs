@@ -157,8 +157,10 @@ impl DrillLog {
             .filter(|(question, _)| question == asked)
             .map(|(_, entry)| entry.clone());
         let entry = super::log(attempt, retry, cx);
-        if !matches!(attempt.outcome, "correct" | "played")
-            && let Some(entry) = entry
+        if !matches!(
+            attempt.outcome,
+            super::VoiceOutcome::Correct | super::VoiceOutcome::Played
+        ) && let Some(entry) = entry
         {
             self.last_miss = Some((asked.to_string(), entry));
         }

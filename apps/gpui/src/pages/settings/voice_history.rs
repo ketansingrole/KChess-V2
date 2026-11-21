@@ -12,15 +12,13 @@ use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::check::VoiceLimit;
-use kchess_contracts::types::VoiceAttempt;
+use kchess_contracts::types::{VoiceAttempt, VoiceOutcome};
 
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Look};
 
-const SUCCESS: [&str; 4] = ["played", "confirmed", "picked", "correct"];
-const MISS: [&str; 5] = ["invalid", "unclear", "wrong", "cancelled", "replaced"];
 /// Entries read, and shown at first and per Show more.
 const LIMIT: usize = 2000;
 const SHOWN: usize = 40;
@@ -33,14 +31,14 @@ pub struct Word {
 }
 
 /// One logged phrase (`VoiceAttempt`).
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
     pub id: f64,
     pub at: f64,
     pub heard: String,
     pub confidence: f64,
     pub words: Vec<Word>,
-    pub outcome: String,
+    pub outcome: VoiceOutcome,
     pub parsed: Option<String>,
     pub expected: Option<String>,
     pub retry_of: Option<f64>,
@@ -62,7 +60,7 @@ impl From<VoiceAttempt> for Entry {
                     conf: word.conf,
                 })
                 .collect(),
-            outcome: input.outcome.as_str().to_string(),
+            outcome: input.outcome,
             parsed: input.parsed,
             expected: input.expected,
             retry_of: input.retry_of.map(|id| id as f64),
@@ -70,30 +68,45 @@ impl From<VoiceAttempt> for Entry {
     }
 }
 
-fn outcome_label(outcome: &str) -> &'static str {
+/// A phrase that did what was meant.
+fn succeeded(outcome: VoiceOutcome) -> bool {
+    use VoiceOutcome::*;
+    matches!(outcome, Played | Confirmed | Picked | Correct)
+}
+
+/// A phrase that missed what was meant. Pending, abandoned and command phrases neither
+/// succeeded nor missed.
+fn missed(outcome: VoiceOutcome) -> bool {
+    use VoiceOutcome::*;
+    matches!(outcome, Invalid | Unclear | Wrong | Cancelled | Replaced)
+}
+
+fn outcome_label(outcome: VoiceOutcome) -> &'static str {
     match outcome {
-        "played" => "Played",
-        "pending" => "Waiting",
-        "confirmed" => "Confirmed",
-        "picked" => "Picked",
-        "cancelled" => "Cancelled",
-        "replaced" => "Said again",
-        "abandoned" => "Moved by hand",
-        "invalid" => "No match",
-        "unclear" => "Unclear",
-        "command" => "Command",
-        "correct" => "Correct",
-        "wrong" => "Wrong square",
-        _ => "—",
+        VoiceOutcome::Played => "Played",
+        VoiceOutcome::Pending => "Waiting",
+        VoiceOutcome::Confirmed => "Confirmed",
+        VoiceOutcome::Picked => "Picked",
+        VoiceOutcome::Cancelled => "Cancelled",
+        VoiceOutcome::Replaced => "Said again",
+        VoiceOutcome::Abandoned => "Moved by hand",
+        VoiceOutcome::Invalid => "No match",
+        VoiceOutcome::Unclear => "Unclear",
+        VoiceOutcome::Command => "Command",
+        VoiceOutcome::Correct => "Correct",
+        VoiceOutcome::Wrong => "Wrong square",
     }
 }
 
-fn outcome_look(outcome: &str) -> Look {
-    if SUCCESS.contains(&outcome) {
+fn outcome_look(outcome: VoiceOutcome) -> Look {
+    if succeeded(outcome) {
         Look::Success
-    } else if matches!(outcome, "unclear" | "cancelled" | "replaced") {
+    } else if matches!(
+        outcome,
+        VoiceOutcome::Unclear | VoiceOutcome::Cancelled | VoiceOutcome::Replaced
+    ) {
         Look::Warning
-    } else if MISS.contains(&outcome) {
+    } else if missed(outcome) {
         Look::Error
     } else {
         Look::NeutralSoft
@@ -130,13 +143,11 @@ pub struct Stats {
 pub fn stats(entries: &[Entry]) -> Stats {
     let counted: Vec<&Entry> = entries
         .iter()
-        .filter(|entry| {
-            SUCCESS.contains(&entry.outcome.as_str()) || MISS.contains(&entry.outcome.as_str())
-        })
+        .filter(|entry| succeeded(entry.outcome) || missed(entry.outcome))
         .collect();
     let success = counted
         .iter()
-        .filter(|entry| SUCCESS.contains(&entry.outcome.as_str()))
+        .filter(|entry| succeeded(entry.outcome))
         .count();
     Stats {
         phrases: entries.len(),
@@ -151,7 +162,7 @@ pub fn stats(entries: &[Entry]) -> Stats {
             .count(),
         unclear: entries
             .iter()
-            .filter(|entry| entry.outcome == "unclear")
+            .filter(|entry| entry.outcome == VoiceOutcome::Unclear)
             .count(),
         noise: entries
             .iter()
@@ -185,7 +196,7 @@ pub fn mishearings(entries: &[Entry]) -> Vec<(String, String, usize)> {
         let Some(meant) = &entry.expected else {
             continue;
         };
-        if !MISS.contains(&entry.outcome.as_str()) {
+        if !missed(entry.outcome) {
             continue;
         }
         match groups
@@ -537,8 +548,8 @@ impl Render for VoiceHistory {
                     .into_any_element(),
                 h_flex()
                     .child(widgets::badge(
-                        outcome_label(&entry.outcome),
-                        outcome_look(&entry.outcome),
+                        outcome_label(entry.outcome),
+                        outcome_look(entry.outcome),
                         &palette,
                     ))
                     .into_any_element(),
@@ -584,12 +595,17 @@ impl Render for VoiceHistory {
 
 #[cfg(test)]
 mod tests {
-    use super::{Entry, Word, mishearings, stats, weak_words};
+    use super::{Entry, VoiceOutcome, Word, mishearings, stats, weak_words};
 
     fn entry(heard: &str, outcome: &str, expected: Option<&str>, words: &[(&str, f64)]) -> Entry {
         Entry {
+            id: 0.,
+            at: 0.,
             heard: heard.into(),
-            outcome: outcome.into(),
+            confidence: 0.,
+            outcome: VoiceOutcome::from_key(outcome).expect("an outcome"),
+            parsed: None,
+            retry_of: None,
             expected: expected.map(String::from),
             words: words
                 .iter()
@@ -598,7 +614,6 @@ mod tests {
                     conf: *conf,
                 })
                 .collect(),
-            ..Entry::default()
         }
     }
 

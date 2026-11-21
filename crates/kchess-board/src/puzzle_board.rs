@@ -162,7 +162,7 @@ impl PuzzleBoard {
             retry: true,
             frozen: false,
             reply_delay: REPLY_DELAY,
-            voice: VoiceMoves::new("puzzles", cx),
+            voice: VoiceMoves::new(crate::voice::VoiceSource::Puzzles, cx),
             next: false,
             generation: Epoch::default(),
             timers: Vec::new(),

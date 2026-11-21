@@ -351,7 +351,7 @@ impl LocalPage {
             clock_history: None,
             clock_inputs,
             turned: std::collections::HashMap::new(),
-            voice: crate::voice::moves::VoiceMoves::new("local", cx),
+            voice: crate::voice::moves::VoiceMoves::new(crate::voice::VoiceSource::Local, cx),
             clock_layout,
             ticker: None,
             low_time: Default::default(),

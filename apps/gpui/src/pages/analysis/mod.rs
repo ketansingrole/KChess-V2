@@ -597,7 +597,7 @@ impl AnalysisPage {
             saver: SessionSaver::start(SessionKind::Analysis, &[], window, cx),
             wheel: Default::default(),
             focus: cx.focus_handle(),
-            voice: VoiceMoves::new("analysis", cx),
+            voice: VoiceMoves::new(crate::voice::VoiceSource::Analysis, cx),
             tried_labels: Vec::new(),
             tried_done: Vec::new(),
             _subscriptions: subscriptions,

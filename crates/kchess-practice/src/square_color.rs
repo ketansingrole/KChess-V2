@@ -14,7 +14,7 @@ use super::coordinates::random_square;
 use super::run::{self, Drill, DrillRun, Stage, Tally};
 use crate::theme::{Palette, radii, tint};
 use crate::voice::control::{BarSpec, Control, DrillLog};
-use crate::voice::{Attempt, VoiceEvent};
+use crate::voice::{Attempt, VoiceEvent, VoiceOutcome, VoiceSource};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
@@ -96,13 +96,13 @@ impl SquareColors {
             .into_iter()
             .find(|color| !missed && words.contains(color));
         let outcome = match color {
-            _ if missed => "unclear",
-            None => "invalid",
-            Some(color) if color == expected => "correct",
-            Some(_) => "wrong",
+            _ if missed => VoiceOutcome::Unclear,
+            None => VoiceOutcome::Invalid,
+            Some(color) if color == expected => VoiceOutcome::Correct,
+            Some(_) => VoiceOutcome::Wrong,
         };
         let attempt = Attempt {
-            source: "squareColor",
+            source: VoiceSource::SquareColor,
             heard,
             outcome,
             parsed: color,
@@ -119,7 +119,7 @@ impl SquareColors {
             return;
         };
         self.answer(color, cx);
-        self.voice.feedback = Some(format!("{color} · {outcome}").into());
+        self.voice.feedback = Some(format!("{color} · {}", outcome.as_str()).into());
     }
 
     fn start(&mut self, cx: &mut Context<Self>) {
