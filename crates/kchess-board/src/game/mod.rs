@@ -200,6 +200,22 @@ fn chess960_castling(fen: &str) -> bool {
     })
 }
 
+/// A variant's name ("King of the Hill") from its Lichess key ("kingOfTheHill"); the key itself
+/// for one KChess does not know.
+pub fn variant_label(key: &str) -> &str {
+    Variant::from_key(key).map_or(key, |variant| variant.label())
+}
+
+/// What a game page names its start by: the variant ("Crazyhouse"), or "From position" for
+/// standard chess from another position; nothing for the ordinary game.
+pub fn setup_label(setup: &Setup) -> Option<&'static str> {
+    if setup.variant == Variant::Standard {
+        (setup.fen != STANDARD_FEN).then_some("From position")
+    } else {
+        Some(setup.variant.label())
+    }
+}
+
 #[cfg(test)]
 mod pgn_tests {
     use super::{pgn_analysable, pgn_variant};
@@ -276,22 +292,6 @@ mod setup_tests {
             setup_from_fen(&fen).variant,
             kchess_domain::variant::Variant::Chess960
         );
-    }
-}
-
-/// A variant's name ("King of the Hill") from its Lichess key ("kingOfTheHill"); the key itself
-/// for one KChess does not know.
-pub fn variant_label(key: &str) -> &str {
-    Variant::from_key(key).map_or(key, |variant| variant.label())
-}
-
-/// What a game page names its start by: the variant ("Crazyhouse"), or "From position" for
-/// standard chess from another position; nothing for the ordinary game.
-pub fn setup_label(setup: &Setup) -> Option<&'static str> {
-    if setup.variant == Variant::Standard {
-        (setup.fen != STANDARD_FEN).then_some("From position")
-    } else {
-        Some(setup.variant.label())
     }
 }
 

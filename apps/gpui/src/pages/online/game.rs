@@ -1248,29 +1248,6 @@ fn analyse(window: &mut Window, cx: &mut App) {
     );
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{ping_points, ping_stats, signal_from_latency};
-
-    #[test]
-    fn the_ping_summary_gives_median_and_spread() {
-        assert_eq!(ping_stats(&[]), None);
-        assert_eq!(ping_stats(&[80., 120., 101.]), Some((101., 100., 120.)));
-        let quality: Vec<usize> = [149., 150., 299., 300., 499., 500.]
-            .into_iter()
-            .map(signal_from_latency)
-            .collect();
-        assert_eq!(quality, vec![4, 3, 3, 2, 2, 1]);
-    }
-
-    #[test]
-    fn the_graph_needs_two_round_trips_and_scales_to_at_least_200_ms() {
-        assert!(ping_points(&[50.]).is_empty());
-        assert_eq!(ping_points(&[0., 100.]), vec![(0., 1.), (1., 0.5)]);
-        assert_eq!(ping_points(&[400., 200.]), vec![(0., 0.), (1., 0.5)]);
-    }
-}
-
 /// Why the game's connection is down, from its phase and the kind of failure the core reported.
 #[derive(Clone, Copy, PartialEq)]
 enum Failure {
@@ -1305,5 +1282,28 @@ fn connection_failure(online: &OnlineState) -> Failure {
         (_, Some(ErrorKind::Refused | ErrorKind::NotFound)) => Failure::Refused,
         (_, Some(ErrorKind::Elsewhere)) => Failure::Elsewhere,
         _ => Failure::Interrupted,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ping_points, ping_stats, signal_from_latency};
+
+    #[test]
+    fn the_ping_summary_gives_median_and_spread() {
+        assert_eq!(ping_stats(&[]), None);
+        assert_eq!(ping_stats(&[80., 120., 101.]), Some((101., 100., 120.)));
+        let quality: Vec<usize> = [149., 150., 299., 300., 499., 500.]
+            .into_iter()
+            .map(signal_from_latency)
+            .collect();
+        assert_eq!(quality, vec![4, 3, 3, 2, 2, 1]);
+    }
+
+    #[test]
+    fn the_graph_needs_two_round_trips_and_scales_to_at_least_200_ms() {
+        assert!(ping_points(&[50.]).is_empty());
+        assert_eq!(ping_points(&[0., 100.]), vec![(0., 1.), (1., 0.5)]);
+        assert_eq!(ping_points(&[400., 200.]), vec![(0., 0.), (1., 0.5)]);
     }
 }
