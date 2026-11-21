@@ -352,48 +352,49 @@ impl Render for ComputerPage {
                 cx,
             ))
             .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap(px(8.))
+                div()
                     .pt(px(12.))
                     .border_t_1()
                     .border_color(palette.border)
-                    .child(
-                        Button::new("takeback")
-                            .outline()
-                            .flex_1()
-                            .when(narrow, |button| button.min_w(relative(0.45)))
-                            .icon(icon("undo-2"))
-                            .label("Take back")
-                            .disabled(!self.can_takeback())
-                            .on_click(cx.listener(|this, _, _, cx| this.takeback(cx))),
-                    )
-                    .when(in_progress, |row| {
-                        row.child(
-                            Button::new("resign")
-                                .outline()
-                                .flex_1()
-                                .when(narrow, |button| button.min_w(relative(0.45)))
-                                .icon(icon("flag"))
-                                .label("Resign")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.ask(Question::Resign, window, cx)
-                                })),
-                        )
-                    })
-                    .child(
-                        Button::new("new-game")
-                            .when(result.is_some(), |button| button.primary())
-                            .when(result.is_none(), |button| button.outline())
-                            .flex_1()
-                            .when(narrow, |button| button.min_w(relative(0.45)))
-                            .icon(icon("rotate-ccw"))
-                            .label("New game")
-                            .tooltip_with_action("New game", &crate::menu::New, None)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.ask(Question::NewGame, window, cx)
-                            })),
-                    ),
+                    .child(widgets::panel_actions(
+                        narrow,
+                        [
+                            Some(
+                                Button::new("takeback")
+                                    .outline()
+                                    .w_full()
+                                    .icon(icon("undo-2"))
+                                    .label("Take back")
+                                    .disabled(!self.can_takeback())
+                                    .on_click(cx.listener(|this, _, _, cx| this.takeback(cx))),
+                            ),
+                            in_progress.then(|| {
+                                Button::new("resign")
+                                    .outline()
+                                    .w_full()
+                                    .icon(icon("flag"))
+                                    .label("Resign")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.ask(Question::Resign, window, cx)
+                                    }))
+                            }),
+                            Some(
+                                Button::new("new-game")
+                                    .when(result.is_some(), |button| button.primary())
+                                    .when(result.is_none(), |button| button.outline())
+                                    .w_full()
+                                    .icon(icon("rotate-ccw"))
+                                    .label("New game")
+                                    .tooltip_with_action("New game", &crate::menu::New, None)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.ask(Question::NewGame, window, cx)
+                                    })),
+                            ),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .map(|button| button.into_any_element().into()),
+                    )),
             );
 
         let page = self
