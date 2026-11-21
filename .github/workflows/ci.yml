@@ -118,7 +118,14 @@ jobs:
           fi
           echo "Code changed: $code"
           echo "code=$code" >> "$GITHUB_OUTPUT"
+          # A release commit: one that changes the version, or a push to main whose version has no
+          # tag yet, which may still be the one tagged. 2026.11.8's release-verify fix merged after
+          # its version change, skipped packaging, and release-verify refused it.
+          version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)"
           if [ -n "$BASE" ] && git diff "$BASE" HEAD -- Cargo.toml | grep -q '^+version = '; then
+            release=true
+          elif [ "$EVENT" = push ] && [ "$GITHUB_REF" = refs/heads/main ] && [ -n "$version" ] &&
+            ! git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
             release=true
           else
             release=false

@@ -755,3 +755,99 @@ fn bash_steps_are_found_with_their_shell() {
     let windows = "jobs:\n  a:\n    runs-on: windows-latest\n    steps:\n      - run: Get-Item x\n      - shell: bash\n        run: echo bash\n";
     assert_eq!(bash_steps(windows), vec![(7, "echo bash".to_string())]);
 }
+
+/// What CI's `changes` job decides for a commit: its `docs` step's script from ci.yml, run in
+/// `repo` for `event` on `reference` from `base`, with xtask's `scope` answering `code=true`.
+#[cfg(unix)]
+fn release_decision(repo: &std::path::Path, event: &str, reference: &str, base: &str) -> String {
+    let text =
+        std::fs::read_to_string(crate::util::root().join(".github/workflows/ci.yml")).unwrap();
+    let workflow = &yaml_rust2::YamlLoader::load_from_str(&text).unwrap()[0];
+    let script = workflow["jobs"]["changes"]["steps"]
+        .as_vec()
+        .unwrap()
+        .iter()
+        .find(|step| step["id"].as_str() == Some("docs"))
+        .and_then(|step| step["run"].as_str())
+        .unwrap();
+    let xtask = repo.join("target/debug/xtask");
+    std::fs::create_dir_all(xtask.parent().unwrap()).unwrap();
+    std::fs::write(&xtask, "#!/bin/sh\necho code=true\necho packaging=false\n").unwrap();
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(&xtask, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let outputs = repo.join("outputs");
+    std::fs::write(&outputs, "").unwrap();
+    let pr_base = if event == "pull_request" { base } else { "" };
+    let out = std::process::Command::new("bash")
+        .args(["-e", "-c", script])
+        .current_dir(repo)
+        .env("BASE", base)
+        .env("PR_BASE", pr_base)
+        .env("EVENT", event)
+        .env("GITHUB_REF", reference)
+        .env("GITHUB_OUTPUT", &outputs)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::read_to_string(&outputs)
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix("release="))
+        .unwrap()
+        .to_string()
+}
+
+/// A push to main packages as a release while its version has no tag: 2026.11.8's
+/// release-verify fix merged after the version change, CI skipped its packaging, and
+/// release-verify refused the only commit that had the fix.
+#[cfg(unix)]
+#[test]
+fn a_push_of_an_untagged_version_is_a_release_commit() {
+    let repo = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| crate::util::git(repo.path(), args, &[0]).unwrap();
+    let manifest = |version: &str| {
+        let text = format!("[workspace.package]\nversion = \"{version}\"\n\n[workspace]\n");
+        std::fs::write(repo.path().join("Cargo.toml"), text).unwrap();
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["config", "user.email", "ci@example.com"]);
+    git(&["config", "user.name", "CI"]);
+    manifest("2026.11.7");
+    git(&["add", "Cargo.toml"]);
+    git(&["commit", "-q", "-m", "2026.11.7"]);
+    git(&["tag", "v2026.11.7"]);
+    let released = git(&["rev-parse", "HEAD"]).trim().to_string();
+    manifest("2026.11.8");
+    git(&["commit", "-q", "-am", "Release 2026.11.8"]);
+    let bump = git(&["rev-parse", "HEAD"]).trim().to_string();
+    std::fs::write(repo.path().join("fix.rs"), "").unwrap();
+    git(&["add", "fix.rs"]);
+    git(&["commit", "-q", "-m", "A fix after the version change"]);
+    let main = "refs/heads/main";
+    // The version change, pushed or in its pull request.
+    assert_eq!(
+        release_decision(repo.path(), "push", main, &released),
+        "true"
+    );
+    assert_eq!(
+        release_decision(repo.path(), "pull_request", "refs/pull/1/merge", &released),
+        "true"
+    );
+    // A later push while 2026.11.8 has no tag; not its pull request, nor another branch.
+    assert_eq!(release_decision(repo.path(), "push", main, &bump), "true");
+    assert_eq!(
+        release_decision(repo.path(), "pull_request", "refs/pull/2/merge", &bump),
+        "false"
+    );
+    assert_eq!(
+        release_decision(repo.path(), "push", "refs/heads/other", &bump),
+        "false"
+    );
+    // Once tagged, a push to main is not a release commit.
+    git(&["tag", "v2026.11.8", &bump]);
+    assert_eq!(release_decision(repo.path(), "push", main, &bump), "false");
+}
