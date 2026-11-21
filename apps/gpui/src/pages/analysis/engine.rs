@@ -28,6 +28,11 @@ impl AnalysisPage {
         cx.global::<OnlineHandle>().0.read(cx).pause()
     }
 
+    /// The engine can analyse, as the core last said.
+    pub(super) fn engine_ready(&self) -> bool {
+        self.engine_ready == Some(true)
+    }
+
     /// Start following the board with the engine (the page is shown).
     pub fn attach(&mut self, cx: &mut Context<Self>) {
         if self.attached {
@@ -40,7 +45,7 @@ impl AnalysisPage {
         cx.spawn(async move |this, cx| {
             let status = status.await.warn_on_err();
             let _ = this.update(cx, |this, cx| {
-                this.engine_ready = status.as_ref().is_some_and(|status| status.ready);
+                this.engine_ready = Some(status.as_ref().is_some_and(|status| status.ready));
                 let identity = status.and_then(|status| status.identity);
                 if identity != this.engine_identity {
                     // Another engine: what the old one said is no longer this one's.
@@ -85,7 +90,7 @@ impl AnalysisPage {
         let infinite = crate::prefs::get(cx, INFINITE, false);
         let position = self.position();
         if !engine_on
-            || !self.engine_ready
+            || !self.engine_ready()
             || position.is_none()
             || game_over(position.as_ref()).is_some()
             || !Self::assistance_allowed(cx)
@@ -284,7 +289,7 @@ impl AnalysisPage {
 
     /// Without the local engine, the cloud's lines drive the bar, arrows and line list.
     pub(super) fn using_cloud(&self, cx: &App) -> bool {
-        (!Self::engine_on(cx) || !self.engine_ready)
+        (!Self::engine_on(cx) || !self.engine_ready())
             && self.threat_position().is_none()
             && !self.cloud_lines(cx).is_empty()
     }
@@ -350,8 +355,10 @@ impl AnalysisPage {
                 (cloud.knodes as f64 / 1000.).round()
             );
         }
-        if !self.engine_ready {
-            return "Stockfish not found".into();
+        match self.engine_ready {
+            None => return String::new(),
+            Some(false) => return "Stockfish not found".into(),
+            Some(true) => {}
         }
         if let Some(error) = &self.search.error {
             return error.clone();
@@ -587,7 +594,7 @@ impl AnalysisPage {
                 Switch::new("engine-on")
                     .large()
                     .checked(engine_on)
-                    .disabled(!self.engine_ready || !allowed)
+                    .disabled(!self.engine_ready() || !allowed)
                     .accessibility_label("Engine analysis")
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_engine(cx))),
             )
@@ -708,7 +715,7 @@ impl AnalysisPage {
                 .child(icon("cloud").size(px(12.)))
                 .child(text)
         });
-        let body: Option<AnyElement> = if !self.engine_ready && !using_cloud {
+        let body: Option<AnyElement> = if self.engine_ready == Some(false) && !using_cloud {
             Some(
                 h_flex()
                     .gap(px(4.))

@@ -701,21 +701,18 @@ impl Render for InsightsPage {
             });
         let report = self.report.clone();
         let total = report.as_ref().map_or(0., |report| report.total as f64);
-        let header = h_flex()
-            .items_start()
-            .justify_between()
-            .flex_wrap()
+        // The filters keep the top line, over the headline: beside it, they went under it once
+        // it loaded wide, and back up when a filter matched nothing, under the pointer that chose
+        // it. Filters wait for games to filter.
+        let header = v_flex()
             .gap(px(16.))
-            .child(
-                div().children(
-                    report
-                        .as_ref()
-                        .filter(|_| total > 0. && self.loading.error().is_none())
-                        .map(|report| headline(report, &palette)),
-                ),
-            )
-            // Filters wait for games to filter.
-            .when(!names.is_empty(), |header| header.child(filters));
+            .when(!names.is_empty(), |header| header.child(filters))
+            .children(
+                report
+                    .as_ref()
+                    .filter(|_| total > 0. && self.loading.error().is_none())
+                    .map(|report| headline(report, &palette)),
+            );
         let body: AnyElement = if names.is_empty() {
             widgets::card(&palette)
                 .child(

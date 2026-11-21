@@ -759,7 +759,7 @@ impl AnalysisPage {
         let queued =
             self.review.requested == key && progress.is_none() && !complete && failure.is_none();
         // A Lichess game can be reviewed from Lichess's analysis even without a local engine.
-        let can_review = self.engine_ready
+        let can_review = self.engine_ready()
             || self
                 .review
                 .origin
@@ -925,12 +925,16 @@ impl AnalysisPage {
                     .map(|text| note(text, false)),
             )
             .when(self.practice.is_none(), |panel| panel.children(chart))
-            .when(review.is_none() && !can_review, |panel| {
-                panel.child(note(
-                    "Set up Stockfish in Settings to review games".into(),
-                    false,
-                ))
-            })
+            // Not while the engine's status is still asked.
+            .when(
+                review.is_none() && !can_review && self.engine_ready.is_some(),
+                |panel| {
+                    panel.child(note(
+                        "Set up Stockfish in Settings to review games".into(),
+                        false,
+                    ))
+                },
+            )
             .into_any_element()
     }
 

@@ -379,15 +379,71 @@ fn first_frame(app: &mut Harness, page: Page) -> BTreeMap<String, Point<Pixels>>
         .expect("the main window is open")
 }
 
+/// The pages whose first frame is checked: not Settings, which opens as a dialog and slides in,
+/// nor Puzzles. Its tabs, above its board, take two lines in a narrow window and one in a wide
+/// one, and nothing but laying them out says which: its board keeps its inset from the page as it
+/// last measured, or before that the page's whole height, a few pixels off for one frame.
+fn checked_pages() -> Vec<Page> {
+    Page::all()
+        .filter(|&page| !matches!(page, Page::Settings | Page::Puzzles))
+        .collect()
+}
+
+/// Where the elements of each page's first frame have moved to once the page has settled.
+fn moved_after_first_frame(app: &mut Harness, page: Page, moved: &mut Vec<String>) {
+    let first = first_frame(app, page);
+    app.settle();
+    let settled = app.with_window(|window, _| drawn(window));
+    let label = page.info().label;
+    let viewport = app.with_window(|window, _| window.viewport_size());
+    moved.extend(first.iter().filter_map(|(path, origin)| {
+        let to = settled.get(path).filter(|to| *to != origin)?;
+        let id: String = path.chars().rev().take(60).collect::<String>();
+        let id: String = id.chars().rev().collect();
+        Some(format!(
+            "{label} at {}×{}: {origin:?} → {to:?} …{id}",
+            viewport.width, viewport.height
+        ))
+    }));
+}
+
+/// Open every page for the first time at `width`×`height`, its data loading as it shows.
+fn first_openings_hold_still(cx: &mut gpui_kit::TestAppContext, (width, height): (f32, f32)) {
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    app.cx
+        .simulate_window_resize(app.window, size(px(width), px(height)));
+    app.settle();
+    let mut moved = Vec::new();
+    // Home is open from the start.
+    for page in checked_pages() {
+        if page != Page::Dashboard {
+            moved_after_first_frame(&mut app, page, &mut moved);
+        }
+    }
+    assert!(
+        moved.is_empty(),
+        "moved after their first frame:\n  {}",
+        moved.join("\n  ")
+    );
+}
+
+/// A page's first frame shows what it does not know yet in the place it will have: Analysis
+/// board said "Set up Stockfish" until the engine answered, then the engine's lines pushed its
+/// tabs 84px down; Insights' filters went under its headline once it loaded.
+#[gpui_kit::test]
+fn a_page_holds_still_as_it_first_loads_in_a_wide_window(cx: &mut gpui_kit::TestAppContext) {
+    first_openings_hold_still(cx, SIZES[2]);
+}
+
+#[gpui_kit::test]
+fn a_page_holds_still_as_it_first_loads_in_a_narrow_window(cx: &mut gpui_kit::TestAppContext) {
+    first_openings_hold_still(cx, SIZES[0]);
+}
+
 #[gpui_kit::test]
 fn a_page_opens_laid_out_for_the_window_it_opens_in(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _lichess) = Harness::signed_in_showcase(cx);
-    // Settings opens as a dialog, which slides in. Puzzles' tabs, above its board, take two lines
-    // in a narrow window and one in a wide one: its board keeps its inset from the page as it
-    // last measured, a line's height too small for one frame in the wider window.
-    let pages: Vec<Page> = Page::all()
-        .filter(|&page| !matches!(page, Page::Settings | Page::Puzzles))
-        .collect();
+    let pages = checked_pages();
     let mut moved = Vec::new();
     for (was, now) in [(SIZES[0], SIZES[2]), (SIZES[2], SIZES[0])] {
         app.cx
@@ -401,19 +457,7 @@ fn a_page_opens_laid_out_for_the_window_it_opens_in(cx: &mut gpui_kit::TestAppCo
         app.settle();
         // Each page last drawn at the other size, its own measures from then.
         for &page in &pages {
-            let first = first_frame(&mut app, page);
-            app.settle();
-            let settled = app.with_window(|window, _| drawn(window));
-            let label = page.info().label;
-            moved.extend(first.iter().filter_map(|(path, origin)| {
-                let to = settled.get(path).filter(|to| *to != origin)?;
-                let id: String = path.chars().rev().take(60).collect::<String>();
-                let id: String = id.chars().rev().collect();
-                Some(format!(
-                    "{label} at {}×{}: {origin:?} → {to:?} …{id}",
-                    now.0, now.1
-                ))
-            }));
+            moved_after_first_frame(&mut app, page, &mut moved);
         }
     }
     assert!(
