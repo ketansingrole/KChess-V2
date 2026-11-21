@@ -4,7 +4,7 @@
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::types::{ActivityDay, ActivityItem, TimelineEntry};
+use kchess_contracts::types::{ActivityDay, ActivityItem, ActivityKind, TimelineEntry};
 
 use crate::assets::icon;
 use crate::pages::players::player_link;
@@ -85,20 +85,19 @@ fn timeline_groups_on(entries: &[TimelineEntry], today: jiff::civil::Date) -> Ve
     groups
 }
 
-fn glyph(kind: &str) -> &'static str {
+fn glyph(kind: ActivityKind) -> &'static str {
     match kind {
-        "games" => "swords",
-        "puzzles" => "puzzle",
-        "tournament" => "trophy",
-        "follow" => "user-plus",
-        "study" => "book-open",
-        "team" => "users",
-        "post" => "message-square",
-        "simul" => "layout-grid",
-        "patron" => "heart",
-        "stream" => "radio",
-        "correspondence" => "mail",
-        _ => "dot",
+        ActivityKind::Games => "swords",
+        ActivityKind::Puzzles => "puzzle",
+        ActivityKind::Tournament => "trophy",
+        ActivityKind::Follow => "user-plus",
+        ActivityKind::Study => "book-open",
+        ActivityKind::Team => "users",
+        ActivityKind::Post => "message-square",
+        ActivityKind::Simul => "layout-grid",
+        ActivityKind::Patron => "heart",
+        ActivityKind::Stream => "radio",
+        ActivityKind::Correspondence => "mail",
     }
 }
 
@@ -110,7 +109,7 @@ fn line(id: (&'static str, usize), item: &ActivityItem, palette: &Palette) -> Di
         .as_deref()
         .and_then(|name| text.find(name).map(|at| (name.to_string(), at)));
     let row = h_flex().flex_1().min_w_0().gap(px(8.)).items_start().child(
-        icon(glyph(&item.kind))
+        icon(glyph(item.kind))
             .size(px(14.))
             .mt(px(2.))
             .flex_none()

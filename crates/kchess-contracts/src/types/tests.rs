@@ -208,3 +208,32 @@ fn an_ongoing_game_without_playable_is_playable() {
     .unwrap();
     assert!(game.playable);
 }
+
+/// An activity line's kind is the name the core always wrote, and only those names: the
+/// app picks each one's icon by its kind, so a name it does not know is refused here
+/// rather than shown with none.
+#[test]
+fn an_activity_line_keeps_its_kind_s_name() {
+    let text = r#"{"kind":"correspondence","text":"Played 1 move in 1 correspondence game"}"#;
+    let item: ActivityItem = serde_json::from_str(text).unwrap();
+    assert_eq!(item.kind, ActivityKind::Correspondence);
+    assert_eq!(serde_json::to_string(&item).unwrap(), text);
+    let names: Vec<_> = ActivityKind::ALL.iter().map(|kind| kind.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "games",
+            "puzzles",
+            "tournament",
+            "follow",
+            "study",
+            "team",
+            "post",
+            "simul",
+            "patron",
+            "stream",
+            "correspondence"
+        ]
+    );
+    assert!(serde_json::from_str::<ActivityItem>(r#"{"kind":"other","text":"x"}"#).is_err());
+}

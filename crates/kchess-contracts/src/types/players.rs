@@ -370,13 +370,28 @@ pub struct PlayerSuggestion {
     pub online: Option<bool>,
 }
 
-/// One line of a player's activity or of a timeline, ready to show: `kind` picks the icon
-/// (`games`, `puzzles`, `tournament`, `follow`, `study`, `team`, `post`, `simul`, `patron`,
-/// `stream`, `correspondence`, `other`).
+union!(
+    /// What a line of a player's activity is about, which picks its icon.
+    ActivityKind {
+        Games = "games",
+        Puzzles = "puzzles",
+        Tournament = "tournament",
+        Follow = "follow",
+        Study = "study",
+        Team = "team",
+        Post = "post",
+        Simul = "simul",
+        Patron = "patron",
+        Stream = "stream",
+        Correspondence = "correspondence",
+    }
+);
+
+/// One line of a player's activity or of a timeline, ready to show.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityItem {
-    pub kind: String,
+    pub kind: ActivityKind,
     pub text: String,
     /// A player the line is about, for a profile link.
     #[serde(default, skip_serializing_if = "Option::is_none")]
