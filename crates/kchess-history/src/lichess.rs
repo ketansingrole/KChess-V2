@@ -693,6 +693,9 @@ impl HistoryPage {
             })
             .child(div().flex_1())
             .child(sync);
+        // Nothing to page until the first page comes: under the loading line, the pager went
+        // down the page with the games.
+        let paged = !tab.loading_first_page() && tab.loading.error().is_none();
         let body = if tab.loading_first_page() {
             div()
                 .p(px(24.))
@@ -791,7 +794,12 @@ impl HistoryPage {
         v_flex()
             .gap(px(16.))
             .child(toolbar)
-            .child(widgets::card(palette).p(px(12.)).child(body).child(pager))
+            .child(
+                widgets::card(palette)
+                    .p(px(12.))
+                    .child(body)
+                    .when(paged, |card| card.child(pager)),
+            )
             .into_any_element()
     }
 

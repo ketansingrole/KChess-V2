@@ -9,6 +9,7 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{ActivityMax, Username};
 use kchess_contracts::types::{
@@ -191,6 +192,9 @@ fn played_text(at: f64, now: &jiff::ZonedDateTime) -> String {
 pub struct PuzzleHistory {
     /// `puzzleProgress`: today's and all-time totals and the attempts kept here.
     progress: PuzzleProgress,
+    /// The core has answered for the progress once. Until then the page is its loading line:
+    /// drawn before it, the list said "No puzzles yet" and the totals pushed it down on arrival.
+    progress_known: bool,
     /// `puzzleActivity`: what Lichess recorded for the account.
     activity: Vec<PuzzleActivityEntry>,
     pub(crate) account: String,
@@ -233,6 +237,7 @@ impl PuzzleHistory {
             ];
         PuzzleHistory {
             progress: PuzzleProgress::default(),
+            progress_known: false,
             activity: Vec::new(),
             account: String::new(),
             loading: Loading::default(),
@@ -251,9 +256,19 @@ impl PuzzleHistory {
         let progress = cx.global::<AppCore>().request(calls::PuzzleProgress {
             query: PuzzleProgressQuery { today, limit: 200 },
         });
-        crate::loading::fetch(cx, "puzzles", progress, |this, progress, _| {
-            this.progress = progress;
-        });
+        cx.spawn(async move |this, cx| {
+            // A failure leaves the totals as they were, logged, and the page shown.
+            let progress = progress.await.warn_on_err();
+            this.update(cx, |this, cx| {
+                if let Some(progress) = progress {
+                    this.progress = progress;
+                }
+                this.progress_known = true;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         if account != self.account {
             self.account = account;
             self.activity.clear();
@@ -376,6 +391,19 @@ impl PuzzleHistory {
 impl Render for PuzzleHistory {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
+        let page = div()
+            .id("puzzle-history")
+            .test_support()
+            .size_full()
+            .overflow_y_scroll();
+        if !self.progress_known {
+            return page.child(
+                div()
+                    .px(kchess_nav::play_layout::side_padding(window))
+                    .pt(px(20.))
+                    .child(crate::widgets::loading("Loading puzzles…", &palette)),
+            );
+        }
         let filter = crate::prefs::get::<String>(cx, FILTER, "all".into());
         let all_rows = rows_of(&self.progress.recent, &self.activity);
         let any = !all_rows.is_empty();
@@ -632,27 +660,22 @@ impl Render for PuzzleHistory {
                         .into_any_element()
                 })
         };
-        div()
-            .id("puzzle-history")
-            .test_support()
-            .size_full()
-            .overflow_y_scroll()
-            .child(
-                v_flex()
-                    .gap(px(16.))
-                    .px(kchess_nav::play_layout::side_padding(window))
-                    .pt(px(20.))
-                    .pb(kchess_nav::play_layout::PAGE_BOTTOM)
-                    .children(self.summary(&palette))
-                    .child(
-                        widgets::card(&palette)
-                            .relative()
-                            .child(self.area.probe(cx))
-                            .child(header)
-                            .children(notes)
-                            .child(body),
-                    ),
-            )
+        page.child(
+            v_flex()
+                .gap(px(16.))
+                .px(kchess_nav::play_layout::side_padding(window))
+                .pt(px(20.))
+                .pb(kchess_nav::play_layout::PAGE_BOTTOM)
+                .children(self.summary(&palette))
+                .child(
+                    widgets::card(&palette)
+                        .relative()
+                        .child(self.area.probe(cx))
+                        .child(header)
+                        .children(notes)
+                        .child(body),
+                ),
+        )
     }
 }
 
