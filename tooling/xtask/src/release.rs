@@ -263,6 +263,18 @@ pub fn verify_release() -> Result {
     Ok(())
 }
 
+/// The CI jobs that run only on main's nightly run (`if:` requires `github.event_name ==
+/// 'schedule'`), so a push run always skips them: the package caches and the scheduled report.
+/// Once they were added, every release commit's CI skipped them and `release-verify` refused it
+/// (2026.11.8, 2026-11-21).
+const NIGHTLY_ONLY: [&str; 2] = ["package-cache", "report"];
+
+/// Whether CI job `name` (a matrix job's `name (<os>)` included) runs only nightly.
+fn nightly_only(name: &str) -> bool {
+    let job = name.split(" (").next().unwrap_or(name);
+    NIGHTLY_ONLY.contains(&job)
+}
+
 /// Whether CI's push run (`id\tstatus\tconclusion`) and its jobs (`conclusion\tname` lines) clear
 /// `commit` for release.
 pub fn ci_verdict(commit: &str, run: &str, jobs: &str) -> Result {
@@ -283,7 +295,9 @@ pub fn ci_verdict(commit: &str, run: &str, jobs: &str) -> Result {
     let not_run: Vec<&str> = jobs
         .lines()
         .filter_map(|line| line.split_once('\t'))
-        .filter(|(conclusion, _)| *conclusion != "success")
+        .filter(|(conclusion, name)| {
+            *conclusion != "success" && !(*conclusion == "skipped" && nightly_only(name))
+        })
         .map(|(_, name)| name)
         .collect();
     if !not_run.is_empty() {
@@ -531,6 +545,36 @@ mod tests {
             refused.contains("snap, package (macos-latest)"),
             "{refused}"
         );
+        // A push run skips the nightly-only jobs; they still count when they fail.
+        let pushed = format!("{jobs}skipped\tpackage-cache\nskipped\treport\n");
+        assert!(ci_verdict("abc", "1\tcompleted\tsuccess", &pushed).is_ok());
+        let failed = format!("{jobs}failure\tpackage-cache (macos-latest)\n");
+        assert!(ci_verdict("abc", "1\tcompleted\tsuccess", &failed).is_err());
+    }
+
+    /// `NIGHTLY_ONLY` is exactly the jobs whose `if:` in ci.yml requires a scheduled run.
+    #[test]
+    fn the_nightly_only_jobs_are_cis() {
+        let workflow = std::fs::read_to_string(root().join(".github/workflows/ci.yml")).unwrap();
+        let mut job = "";
+        let mut nightly = Vec::new();
+        for line in workflow.lines().skip_while(|line| *line != "jobs:") {
+            if let Some(name) = line.strip_prefix("  ").and_then(|l| l.strip_suffix(':')) {
+                if !name.starts_with(' ') && !name.starts_with('#') {
+                    job = name;
+                }
+            } else if let Some(condition) = line.strip_prefix("    if: ") {
+                if condition.contains("github.event_name == 'schedule'")
+                    && !condition.contains("||")
+                {
+                    nightly.push(job);
+                }
+            }
+        }
+        nightly.sort_unstable();
+        let mut listed = NIGHTLY_ONLY.to_vec();
+        listed.sort_unstable();
+        assert_eq!(nightly, listed);
     }
 
     #[test]
