@@ -5,6 +5,7 @@
 use crate::loading::Epoch;
 use std::time::Duration;
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 use kchess_contracts::types::{Puzzle, PuzzleWrongMove};
@@ -741,6 +742,8 @@ impl Render for PuzzleBoard {
                 .child(widgets::input_row(entry, voice))
         };
         column
+            .id("puzzle-column")
+            .test_support()
             .w_full()
             .children(voice_line)
             .children(self.move_box.message(&palette))

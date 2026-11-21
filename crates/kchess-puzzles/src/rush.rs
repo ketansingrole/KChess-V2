@@ -672,6 +672,8 @@ impl PuzzleRush {
             .map(|config| config.title.clone())
             .unwrap_or_default();
         let mut panel = widgets::side_panel(palette)
+            .id("rush-panel")
+            .test_support()
             .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)

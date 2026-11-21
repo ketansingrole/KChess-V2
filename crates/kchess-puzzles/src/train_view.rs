@@ -442,6 +442,8 @@ impl PuzzlesPage {
         let rating_text =
             rating_text.or_else(|| sending.then(|| ("Sending to Lichess…".to_string(), false)));
         let panel = widgets::side_panel(palette)
+            .id("train-panel")
+            .test_support()
             .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)

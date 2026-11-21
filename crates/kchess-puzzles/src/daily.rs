@@ -2,6 +2,7 @@
 //! own board, with the status panel the Train tab uses. A later UTC day brings the next one.
 //! A lichess.org/training link opens its puzzle here instead, until Today's puzzle.
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::v_flex;
@@ -246,6 +247,8 @@ impl Render for DailyPuzzle {
                 .into_any_element()
         };
         let panel = widgets::side_panel(&palette)
+            .id("daily-panel")
+            .test_support()
             .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
