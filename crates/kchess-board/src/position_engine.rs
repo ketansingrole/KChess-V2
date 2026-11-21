@@ -34,26 +34,31 @@ fn context_of(request: &AnalysisRequest) -> String {
 
 /// Stop `client`'s search, the last one a view started (none: it started none, and has nothing to
 /// stop); `release` lets the engine go too, where a pause keeps it warm. A newer search of the
-/// window, from this view or another, carries on. A failure is only logged, under `source`.
-pub fn stop_analysis(client: Option<u64>, release: bool, source: &'static str, cx: &mut App) {
+/// window, from this view or another, carries on. A failure is only logged, under `source`. The
+/// task ends once the core has run the stop; a view detaches it, since the core tells a late stop
+/// from one in time by its client id.
+pub fn stop_analysis(
+    client: Option<u64>,
+    release: bool,
+    source: &'static str,
+    cx: &mut App,
+) -> Task<()> {
     let Some(client) = client else {
-        return;
+        return Task::ready(());
     };
     let stop = cx.global::<AppCore>().request(calls::StopAnalysis {
         kill: release.then_some(true),
         client: Some(kchess_contracts::check::Bounded(client)),
     });
-    cx.background_executor()
-        .spawn(async move {
-            if let Err(cause) = stop.await {
-                crate::log::write(
-                    Level::Warn,
-                    source,
-                    &format!("stopping analysis failed: {}", cause.message),
-                );
-            }
-        })
-        .detach();
+    cx.background_executor().spawn(async move {
+        if let Err(cause) = stop.await {
+            crate::log::write(
+                Level::Warn,
+                source,
+                &format!("stopping analysis failed: {}", cause.message),
+            );
+        }
+    })
 }
 
 /// What a search's failed start shows: nothing for a cancellation (another window took the
@@ -148,7 +153,7 @@ impl PositionEngine {
     pub fn stop<V: 'static>(&mut self, release: bool, cx: &mut Context<V>) {
         self.forget(None);
         self._start = None;
-        stop_analysis(self.started, release, "position-engine", cx);
+        stop_analysis(self.started, release, "position-engine", cx).detach();
     }
 
     /// What was asked for and heard goes, `request` is asked for under a new client id (its
@@ -406,9 +411,24 @@ mod tests {
         assert_eq!(started, Some(client_id), "the search is sent as its client");
         assert!(busy);
 
-        // A stop for a search whose start the core has not run yet: that start is refused.
+        // A stop for a search whose start the core has not run yet: that start is refused. The
+        // core runs calls in any order, so the start goes once the stop has been answered; a
+        // start sent beside it ran first on macOS CI (2026-11-21) and was rightly accepted.
         let client = next_client();
-        app.with_window(|_, cx| stop_analysis(Some(client), false, "test", cx));
+        let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done = Arc::clone(&stopped);
+        app.with_window(|_, cx| {
+            let stop = stop_analysis(Some(client), false, "test", cx);
+            cx.background_executor()
+                .spawn(async move {
+                    stop.await;
+                    done.store(true, std::sync::atomic::Ordering::Release);
+                })
+                .detach();
+        });
+        app.wait_for("the stop's answer", |_, _| {
+            stopped.load(std::sync::atomic::Ordering::Acquire)
+        });
         let refused: Arc<Mutex<Option<Result<u64, CoreError>>>> = Arc::default();
         let answer = Arc::clone(&refused);
         app.with_window(|_, cx| {

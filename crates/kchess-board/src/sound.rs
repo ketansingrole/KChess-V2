@@ -1,15 +1,20 @@
 //! Move and game sounds: the move, capture,
 //! low-time and notification clips. A sound thread owns the
-//! output device, opened at the first sound, and decodes each clip once.
+//! output device, opened at the first sound and again after its stream ends, and decodes each
+//! clip once.
 
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::io::Cursor;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
+use cpal::traits::{DeviceTrait as _, HostTrait as _};
 use gpui_kit::{App, Global};
 use kchess_contracts::Level;
 use rodio::buffer::SamplesBuffer;
-use rodio::{Decoder, MixerDeviceSink, Source as _};
+use rodio::{Decoder, DeviceSinkBuilder, DeviceSinkError, MixerDeviceSink, Source as _};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Sound {
@@ -40,29 +45,12 @@ pub fn init(cx: &mut App) {
     let started = std::thread::Builder::new()
         .name("kchess-sound".into())
         .spawn(move || {
-            let mut device: Option<MixerDeviceSink> = None;
+            let mut output = Output::default();
             let mut clips: HashMap<Sound, SamplesBuffer> = HashMap::new();
-            let mut failed = false;
             while let Ok((sound, volume)) = queue.recv() {
-                if device.is_none() {
-                    match rodio::DeviceSinkBuilder::open_default_sink() {
-                        Ok(mut opened) => {
-                            opened.log_on_drop(false);
-                            device = Some(opened);
-                        }
-                        // Sound is optional: say so once, and try again at the next sound.
-                        Err(cause) if !failed => {
-                            failed = true;
-                            crate::log::write(
-                                Level::Warn,
-                                "sound",
-                                &format!("opening the sound device failed: {cause}"),
-                            );
-                            continue;
-                        }
-                        Err(_) => continue,
-                    }
-                }
+                let Some(device) = output.ready(open_default) else {
+                    continue;
+                };
                 let clip = match clips.get(&sound) {
                     Some(clip) => clip.clone(),
                     None => match decode(sound) {
@@ -70,9 +58,7 @@ pub fn init(cx: &mut App) {
                         None => continue,
                     },
                 };
-                if let Some(device) = &device {
-                    device.mixer().add(clip.amplify(volume));
-                }
+                device.mixer().add(clip.amplify(volume));
             }
         });
     match started {
@@ -83,6 +69,112 @@ pub fn init(cx: &mut App) {
             &format!("the sound thread could not start: {cause}"),
         ),
     }
+}
+
+/// The device the clips play on, and whether its stream has ended.
+///
+/// A stream ends for good when its device goes away or, on Windows, whenever the default output
+/// changes (a Bluetooth speaker reconnecting, another device chosen): the stream never follows
+/// it. The next sound then opens the default device again instead of mixing into a dead stream.
+struct Output<D> {
+    device: Option<(D, Arc<AtomicBool>)>,
+    /// Opening failed since the last success; said once, tried again at each sound.
+    failed: bool,
+}
+
+impl<D> Default for Output<D> {
+    fn default() -> Self {
+        Self {
+            device: None,
+            failed: false,
+        }
+    }
+}
+
+impl<D> Output<D> {
+    /// The device to play on, opened with `open` when there is none or its stream ended. `open`
+    /// gets the flag its stream's errors set through [`stream_error`].
+    fn ready<E: Display>(
+        &mut self,
+        open: impl FnOnce(Arc<AtomicBool>) -> Result<D, E>,
+    ) -> Option<&D> {
+        if self
+            .device
+            .as_ref()
+            .is_some_and(|(_, ended)| ended.load(Ordering::Acquire))
+        {
+            self.device = None;
+        }
+        if self.device.is_none() {
+            let ended = Arc::new(AtomicBool::new(false));
+            match open(ended.clone()) {
+                Ok(device) => {
+                    self.failed = false;
+                    self.device = Some((device, ended));
+                }
+                // Sound is optional: say so once, and try again at the next sound.
+                Err(cause) => {
+                    if !self.failed {
+                        self.failed = true;
+                        crate::log::write(
+                            Level::Warn,
+                            "sound",
+                            &format!("opening the sound device failed: {cause}"),
+                        );
+                    }
+                    return None;
+                }
+            }
+        }
+        self.device.as_ref().map(|(device, _)| device)
+    }
+}
+
+/// A stream's error: one that stops it marks it ended (said once); a glitch or a reroute the
+/// stream survives changes nothing.
+fn stream_error(ended: &AtomicBool, cause: &cpal::Error) {
+    use cpal::ErrorKind;
+    if matches!(
+        cause.kind(),
+        ErrorKind::Xrun | ErrorKind::DeviceChanged | ErrorKind::RealtimeDenied
+    ) {
+        return;
+    }
+    if !ended.swap(true, Ordering::AcqRel) {
+        crate::log::write(
+            Level::Warn,
+            "sound",
+            &format!("the sound device stopped, opening it again at the next sound: {cause}"),
+        );
+    }
+}
+
+/// The default output device, or failing that the first other one that opens (as
+/// `DeviceSinkBuilder::open_default_sink`), with its stream's errors reported to `ended`.
+fn open_default(ended: Arc<AtomicBool>) -> Result<MixerDeviceSink, DeviceSinkError> {
+    let on_error = move |cause: cpal::Error| stream_error(&ended, &cause);
+    let open = |builder: DeviceSinkBuilder| {
+        builder
+            .with_error_callback(on_error.clone())
+            .open_sink_or_fallback()
+    };
+    let mut opened = DeviceSinkBuilder::from_default_device()
+        .and_then(open)
+        .or_else(|first| {
+            let Ok(devices) = cpal::default_host().output_devices() else {
+                return Err(first);
+            };
+            devices
+                .filter(|device| {
+                    device
+                        .description()
+                        .is_ok_and(|about| about.driver().is_some_and(|driver| driver != "null"))
+                })
+                .find_map(|device| DeviceSinkBuilder::from_device(device).and_then(open).ok())
+                .ok_or(first)
+        })?;
+    opened.log_on_drop(false);
+    Ok(opened)
 }
 
 fn decode(sound: Sound) -> Option<SamplesBuffer> {
@@ -164,6 +256,73 @@ mod tests {
                 [Sound::Capture, Sound::LowTime]
             ));
         });
+    }
+
+    /// Opens device number `next`, keeping each one's ended flag for the test to fire.
+    fn open_counting<'a>(
+        next: &'a mut u32,
+        flags: &'a mut Vec<Arc<AtomicBool>>,
+    ) -> impl FnOnce(Arc<AtomicBool>) -> Result<u32, &'static str> + 'a {
+        move |ended| {
+            *next += 1;
+            flags.push(ended);
+            Ok(*next)
+        }
+    }
+
+    /// Windows' default output changed (a Bluetooth speaker reconnected) and ended the stream:
+    /// the next move opened the device again instead of playing into the dead stream for good.
+    #[test]
+    fn a_stream_that_ended_is_opened_again_at_the_next_sound() {
+        let (mut next, mut flags) = (0, Vec::new());
+        let mut output = Output::default();
+        assert_eq!(output.ready(open_counting(&mut next, &mut flags)), Some(&1));
+        assert_eq!(output.ready(open_counting(&mut next, &mut flags)), Some(&1));
+
+        stream_error(
+            &flags[0],
+            &cpal::Error::new(cpal::ErrorKind::StreamInvalidated),
+        );
+        assert_eq!(output.ready(open_counting(&mut next, &mut flags)), Some(&2));
+        assert_eq!(output.ready(open_counting(&mut next, &mut flags)), Some(&2));
+
+        stream_error(
+            &flags[1],
+            &cpal::Error::new(cpal::ErrorKind::DeviceNotAvailable),
+        );
+        assert_eq!(output.ready(open_counting(&mut next, &mut flags)), Some(&3));
+    }
+
+    /// A glitch, a reroute the stream follows, or a refused priority leaves the stream playing.
+    #[test]
+    fn a_stream_that_survives_its_error_is_kept() {
+        let (mut next, mut flags) = (0, Vec::new());
+        let mut output = Output::default();
+        output.ready(open_counting(&mut next, &mut flags));
+        for kind in [
+            cpal::ErrorKind::Xrun,
+            cpal::ErrorKind::DeviceChanged,
+            cpal::ErrorKind::RealtimeDenied,
+        ] {
+            stream_error(&flags[0], &cpal::Error::new(kind));
+        }
+        assert_eq!(output.ready(open_counting(&mut next, &mut flags)), Some(&1));
+    }
+
+    /// No device yet (none plugged in): each sound tries again, and plays once one opens.
+    #[test]
+    fn a_device_that_failed_to_open_is_tried_at_each_sound() {
+        let mut output = Output::<u32>::default();
+        let mut tries = 0;
+        for _ in 0..2 {
+            let missing = output.ready(|_| {
+                tries += 1;
+                Err("no device")
+            });
+            assert_eq!(missing, None);
+        }
+        assert_eq!(output.ready(|_| Ok::<_, &str>(7)), Some(&7));
+        assert_eq!(tries, 2);
     }
 
     #[test]
