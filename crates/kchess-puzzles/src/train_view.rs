@@ -361,7 +361,7 @@ impl PuzzlesPage {
                 .p(px(24.))
                 .border_1()
                 .border_color(palette.border)
-                .rounded(radii::XL)
+                .rounded(radii::BOX)
                 .bg(palette.elevated)
                 .child(self.render_placeholder(cx, palette))
                 .into_any_element()

@@ -458,7 +458,7 @@ impl Render for LichessActivity {
                     .gap(px(2.))
                     .px(px(16.))
                     .py(px(14.))
-                    .rounded(radii::XL)
+                    .rounded(radii::BOX)
                     .border_1()
                     .bg(palette.elevated)
                     .border_color(if chosen {

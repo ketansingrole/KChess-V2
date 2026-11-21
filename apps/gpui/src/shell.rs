@@ -329,7 +329,7 @@ fn drop_zone(palette: &Palette) -> impl IntoElement {
         .child(
             v_flex()
                 .flex_1()
-                .rounded(crate::theme::radii::XL)
+                .rounded(crate::theme::radii::BOX)
                 .border_2()
                 .border_dashed()
                 .border_color(palette.primary)

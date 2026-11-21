@@ -220,7 +220,7 @@ impl ChessBoard {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(radii::XL)
+                .rounded(radii::BOARD)
                 .bg(hsla(0., 0., 0., 0.5))
                 .on_mouse_down(
                     MouseButton::Left,
@@ -235,7 +235,7 @@ impl ChessBoard {
                         .flex()
                         .gap(px(8.))
                         .p(px(8.))
-                        .rounded(radii::XL)
+                        .rounded(radii::BOX)
                         .bg(elevated)
                         .border_1()
                         .border_color(border)
@@ -251,8 +251,8 @@ impl ChessBoard {
                                     .when(index == marked, |choice| choice.aria_active_descendant())
                                     .size(px(60.))
                                     .p(px(4.))
-                                    // Concentric with the picker's corners, 8px further out.
-                                    .rounded(radii::SM)
+                                    // A step under the picker, whose corner sits 8px further out.
+                                    .rounded(radii::SMALL)
                                     .bg(background)
                                     .border_1()
                                     .border_color(border)

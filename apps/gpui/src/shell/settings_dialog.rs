@@ -161,7 +161,7 @@ impl Workspace {
                     .aria_label("Settings")
                     .w(width)
                     .h(height)
-                    .rounded(crate::theme::radii::XL)
+                    .rounded(crate::theme::radii::BOX)
                     .border_1()
                     .border_color(palette.border)
                     .bg(cx.theme().background)

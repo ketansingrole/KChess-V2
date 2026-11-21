@@ -88,7 +88,7 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
         .overflow_hidden()
         .border_1()
         .border_color(palette.border)
-        .rounded(radii::XL)
+        .rounded(radii::BOX)
         .bg(palette.elevated)
         .child(
             div()
@@ -102,7 +102,7 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
                 .items_center()
                 .justify_center()
                 // Inside the card's border; GPUI does not clip to the card's rounded corners.
-                .rounded_t(radii::XL - px(1.))
+                .rounded_t(radii::BOX - px(1.))
                 .bg(palette.bg)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| open(window, cx))

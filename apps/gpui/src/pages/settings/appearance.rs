@@ -12,7 +12,7 @@ fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
     let side = picture_width(width) / 2.;
     // Each square takes the preview's outer corners: GPUI clips to rectangles, not rounded ones.
     let square = |piece: Piece, color: u32, first: bool| {
-        crate::widgets::bar_segment(div(), (first, !first), radii::SM)
+        crate::widgets::bar_segment(div(), (first, !first), radii::BOX)
             .size(side)
             .bg(rgb(color))
             .child(
@@ -22,7 +22,7 @@ fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
             )
     };
     h_flex()
-        .rounded(radii::SM)
+        .rounded(radii::BOX)
         .overflow_hidden()
         .child(square(
             Piece {
@@ -45,7 +45,7 @@ fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
 fn board_swatch(image: &str, width: Pixels) -> impl IntoElement {
     img(SharedString::from(format!("boards/{image}")))
         .size(picture_width(width))
-        .rounded(radii::SM)
+        .rounded(radii::BOX)
         .object_fit(ObjectFit::Cover)
 }
 

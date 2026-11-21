@@ -731,7 +731,7 @@ impl WatchPage {
                     .gap(px(4.))
                     .p(px(8.))
                     .w(px(190.))
-                    .rounded(radii::LG)
+                    .rounded(radii::BOX)
                     .border_1()
                     .border_color(palette.border)
                     .bg(palette.elevated)
@@ -913,7 +913,7 @@ impl WatchPage {
                                 .keyboard_focus(palette.primary)
                                 .aria_label(item.tour_name.clone())
                                 .w(px(260.))
-                                .rounded(radii::XL)
+                                .rounded(radii::BOX)
                                 .overflow_hidden()
                                 .border_1()
                                 .border_color(palette.border)
@@ -935,13 +935,13 @@ impl WatchPage {
                                         .items_center()
                                         .justify_center()
                                         .overflow_hidden()
-                                        .rounded_t(radii::XL - px(1.))
+                                        .rounded_t(radii::BOX - px(1.))
                                         .bg(palette.accented)
                                         .map(|area| match cover {
                                             Some(cover) => area.child(
                                                 img(cover)
                                                     .size_full()
-                                                    .rounded_t(radii::XL - px(1.))
+                                                    .rounded_t(radii::BOX - px(1.))
                                                     .object_fit(ObjectFit::Cover),
                                             ),
                                             None => area.child(
