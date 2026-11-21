@@ -1427,3 +1427,40 @@ fn move_box() {
         crate::profile::TEST_DATA_DIR.set(None);
     }
 }
+
+/// Voice turned on beside the move box, on a machine with no speech model (its error and Try
+/// again under the board), at the two wider sizes: `KCHESS_SCREENSHOTS=<dir> cargo test -p
+/// kchess-gpui e2e::screens::voice_on -- --ignored` writes `<dir>/voice/<width>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn voice_on() {
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("voice");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (width, height) in &SIZES[1..] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), *width, *height);
+        cx.update(|cx| crate::settings::change(cx, |s| s.frontend.appearance = Appearance::Dark));
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Computer, window, cx)
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.update_window(window, |_, window, cx| {
+            window.click(("computer-voice", 0usize), cx)
+        })
+        .expect("the window");
+        for _ in 0..5 {
+            settle(&mut cx, window);
+        }
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("{width}.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::quit::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}

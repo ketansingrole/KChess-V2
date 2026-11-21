@@ -804,7 +804,10 @@ impl Render for EditorPage {
             .child(self.render_spares(bottom, &set, board_size, cx, &palette))
             // Voice sits at the end of its row.
             .child(
-                h_flex().justify_end().child(
+                // At the row's start, as the trainers place it: the line that appears once
+                // voice is on grows away from the button, where at the end it pushed the button
+                // across the row.
+                h_flex().child(
                     self.voice.bar(
                         cx.entity().downgrade(),
                         |this: &mut Self| &mut this.voice,

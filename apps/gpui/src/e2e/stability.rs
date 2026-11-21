@@ -125,3 +125,45 @@ fn the_engine_line_holds_still_as_its_search_ends(cx: &mut gpui_kit::TestAppCont
     app.wait_for("the search to end", searching(false));
     assert_eq!(places(&mut app, &ids)[0].origin, during[0].origin);
 }
+
+/// Turn voice on and off on `page`, its Voice button holding its place under the pointer while
+/// the bar fills in beside it (here with the error a test machine's missing speech model gives,
+/// and Try again).
+fn voice_holds_still(app: &mut Harness, page: &str, bar: &'static str) {
+    let button: ElementId = (bar, 0usize).into();
+    for (width, height) in &SIZES[1..] {
+        app.cx
+            .simulate_window_resize(app.window, size(px(*width), px(*height)));
+        app.open(page);
+        app.settle();
+        let ids = [button.clone()];
+        let off = places(app, &ids);
+        app.click(button.clone());
+        app.find((bar, 2usize));
+        app.settle();
+        assert_eq!(
+            places(app, &ids),
+            off,
+            "{page}'s Voice moved once on at {width}×{height}"
+        );
+        app.click(button.clone());
+        app.settle();
+        assert_eq!(
+            places(app, &ids),
+            off,
+            "{page}'s Voice moved once off at {width}×{height}"
+        );
+    }
+}
+
+#[gpui_kit::test]
+fn the_voice_button_holds_still_beside_the_move_box(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    voice_holds_still(&mut app, "Play with computer", "computer-voice");
+}
+
+#[gpui_kit::test]
+fn the_voice_button_holds_still_under_the_board_editor(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    voice_holds_still(&mut app, "Board editor", "editor-voice");
+}
