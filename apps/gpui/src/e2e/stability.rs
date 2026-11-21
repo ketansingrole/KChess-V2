@@ -232,3 +232,32 @@ fn the_studies_tabs_hold_still_as_you_switch(cx: &mut gpui_kit::TestAppContext) 
         );
     }
 }
+
+/// The analysis board's moves hold still as you step off the start position and back: the
+/// opening's name above them came only once there was one, a line down.
+#[gpui_kit::test]
+fn the_analysis_moves_hold_still_off_the_start(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let (width, height) = SIZES[2];
+    app.cx
+        .simulate_window_resize(app.window, size(px(width), px(height)));
+    app.open("Analysis board");
+    app.find("chess-board");
+    super::analysis::import(&mut app, "1. e4 e5 2. Nf3");
+    let ids: Vec<ElementId> = ["tree-e2e4", "tree-e2e4 e7e5", "tree-e2e4 e7e5 g1f3"]
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    app.find(ids[0].clone());
+    app.settle();
+    let before = places(&mut app, &ids);
+    for step in ["analysis-forward", "analysis-end", "analysis-start"] {
+        app.click(step);
+        app.settle();
+        assert_eq!(
+            places(&mut app, &ids),
+            before,
+            "the moves moved after {step}"
+        );
+    }
+}

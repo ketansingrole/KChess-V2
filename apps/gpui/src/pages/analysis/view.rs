@@ -81,26 +81,39 @@ impl AnalysisPage {
         let mut pieces = Vec::new();
         view.line(&self.root, "", None, 0, &mut pieces);
         v_flex()
-            .children(self.opening(cx).map(|opening| {
-                div()
-                    .id("analysis-opening")
-                    .test_support()
-                    .px(px(4.))
-                    .text_size(px(12.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(palette.text_muted)
-                    .aria_label(opening.clone())
-                    .child(opening)
-            }))
+            // The opening's line is kept, blank at the start or out of book, and one line high:
+            // shown only once named, it pushed the moves under the pointer down a line as you
+            // stepped off the start and up again as you went back.
+            .when(self.names_openings(cx), |list| {
+                let opening = self.opening(cx);
+                list.child(
+                    div()
+                        .id("analysis-opening")
+                        .test_support()
+                        .px(px(4.))
+                        .text_size(px(12.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(palette.text_muted)
+                        .truncate()
+                        .map(|line| match opening {
+                            Some(opening) => line.aria_label(opening.clone()).child(opening),
+                            // A blank keeps the line as high as a named one.
+                            None => line.child("\u{a0}"),
+                        }),
+                )
+            })
             .child(flow(pieces).text_size(px(13.)).line_height(relative(1.9)))
             .into_any_element()
     }
 
-    /// The opening the moves up to the one shown reached, as the game pages name it:
-    /// only in standard chess, and while Settings show opening names.
+    /// Whether the move list names openings: in standard chess, while Settings show their names.
+    fn names_openings(&self, cx: &App) -> bool {
+        crate::settings::frontend(cx).show_opening_name && self.root.variant() == Variant::Standard
+    }
+
+    /// The opening the moves up to the one shown reached, as the game pages name it.
     fn opening(&self, cx: &App) -> Option<String> {
-        let shown = crate::settings::frontend(cx).show_opening_name;
-        if !shown || self.root.variant() != Variant::Standard {
+        if !self.names_openings(cx) {
             return None;
         }
         let moves = moves_of(&self.path);

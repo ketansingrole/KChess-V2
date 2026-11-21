@@ -342,10 +342,13 @@ fn edits_are_undone_and_redone(cx: &mut gpui_kit::TestAppContext) {
     import(&mut app, "1. e4 e5 2. Nf3 (2. Bc4) *");
     let undo = |app: &mut Harness| app.press("secondary-z");
     let redo = |app: &mut Harness| app.press("shift-secondary-z");
-    // The import is where the history starts.
+    // The import is where the history starts: Undo does nothing, and the menu stays open
+    // until Escape (a click meant for the moves under it chose one of its items instead).
     app.click("analysis-more");
     app.click_label("Undo");
     app.find("tree-e2e4 e7e5 g1f3");
+    app.press("escape");
+    app.wait_gone("popup-menu");
 
     // A comment, typed letter by letter, is one step.
     app.click("tree-e2e4 e7e5");
