@@ -4,8 +4,9 @@
 //!
 //! Read from the syntax, not the types: Zed's lints run inside rustc on a pinned nightly with its
 //! private crates, which would build the whole workspace a second time in CI. A view's `render` is
-//! known by its trait (`impl Render for …`, `impl RenderOnce for …`), and what a closure or an
-//! async block in it does runs later, so it is left alone, as GPUI allows.
+//! known by its trait (`impl Render for …`, `impl RenderOnce for …`), and the parts it draws
+//! through by their name (`fn render_moves`, in any other impl); what a closure or an async block
+//! in them does runs later, so it is left alone, as GPUI allows.
 //!
 //! - `notify_in_render`: `cx.notify()` in `render` asks for another frame every frame.
 //! - `update_in_render`: `entity.update(cx, …)` in `render` changes state while drawing it.
@@ -164,11 +165,14 @@ impl<'ast> Visit<'ast> for Lints {
             let last = path.segments.last()?;
             (last.ident == "Render" || last.ident == "RenderOnce").then_some(())
         });
-        if view.is_some() {
-            for inner in &item.items {
-                if let syn::ImplItem::Fn(function) = inner
-                    && function.sig.ident == "render"
-                {
+        for inner in &item.items {
+            if let syn::ImplItem::Fn(function) = inner {
+                let name = function.sig.ident.to_string();
+                let draws = match view {
+                    Some(()) => name == "render",
+                    None => name.starts_with("render_"),
+                };
+                if draws {
                     let mut render = InRender { lints: self };
                     render.visit_block(&function.block);
                 }
@@ -947,6 +951,29 @@ impl Render for Home {
                 ("assign_in_render", 7),
                 ("assign_in_render", 9)
             ]
+        );
+    }
+
+    #[test]
+    fn the_parts_render_draws_through_are_read_as_render() {
+        let text = r#"
+impl Rush {
+    fn render_stage(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let storm = self.stats.update(cx, |stats, cx| stats.storm_panel(cx));
+        self.drawn = true;
+        div().child(storm).into_any_element()
+    }
+
+    fn start(&mut self, cx: &mut Context<Self>) {
+        self.stats.update(cx, |stats, cx| stats.reset(cx));
+        self.drawn = false;
+        cx.notify();
+    }
+}
+"#;
+        assert_eq!(
+            lints_of(text),
+            [("update_in_render", 4), ("assign_in_render", 5)]
         );
     }
 

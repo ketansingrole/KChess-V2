@@ -885,9 +885,7 @@ impl PuzzleRush {
         let palette = *cx.global::<Palette>();
         match self.stage {
             Stage::Menu | Stage::Loading => {
-                let storm = self
-                    .stats
-                    .update(cx, |stats, cx| stats.storm_panel(cx, &palette));
+                let storm = PuzzleStats::storm_panel(&self.stats, cx, &palette);
                 self.render_menu(storm, window, cx, &palette)
             }
             Stage::Running | Stage::Over => self.render_run(window, cx, &palette),

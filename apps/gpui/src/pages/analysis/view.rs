@@ -413,6 +413,7 @@ impl AnalysisPage {
                     None => {
                         let (fen, opened) = (self.node().fen.clone(), !self.explorer_open);
                         let variant = self.root.variant();
+                        // gpui-lints: allow(update_in_render) shown only while the tool, a live game's pause and practice allow, which other views change; `show` returns at once on the position it has
                         self.explorer.update(cx, |explorer, cx| {
                             explorer.show(variant, &fen, None, opened, cx)
                         });
@@ -427,6 +428,7 @@ impl AnalysisPage {
                 }
             }
         };
+        // gpui-lints: allow(assign_in_render) whether the explorer was drawn last frame: `show` above looks it up afresh once opened
         self.explorer_open = tool == Tool::Explorer;
         // A click in the panel gives the keys back to the board, before a text field in it
         // (a comment, the explorer's player) takes them for itself.

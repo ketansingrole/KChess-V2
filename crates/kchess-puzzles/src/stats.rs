@@ -763,9 +763,12 @@ impl Render for PuzzleStats {
 }
 
 impl PuzzleStats {
-    /// Storm stats for the Rush tab: Connect without an account, then the results.
-    pub fn storm_panel(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
-        if self.account.is_empty() {
+    /// Storm stats for the Rush tab: Connect without an account, then the results. Read from
+    /// `stats` while Rush draws, so nothing here changes it.
+    pub fn storm_panel(stats: &Entity<Self>, cx: &App, palette: &Palette) -> AnyElement {
+        let this = stats.read(cx);
+        if this.account.is_empty() {
+            let stats = stats.clone();
             return widgets::card(palette)
                 .gap(px(12.))
                 .child(widgets::heading("Your results on Lichess", palette))
@@ -782,13 +785,15 @@ impl PuzzleStats {
                                 .primary()
                                 .icon(icon("log-in"))
                                 .label("Connect Lichess")
-                                .on_click(cx.listener(|_, _, _, cx| cx.emit(StatsEvent::Connect))),
+                                .on_click(move |_, _, cx| {
+                                    stats.update(cx, |_, cx| cx.emit(StatsEvent::Connect))
+                                }),
                         ),
                     ),
                 )
                 .into_any_element();
         }
-        if self.loading.busy() && self.storm.is_none() {
+        if this.loading.busy() && this.storm.is_none() {
             return widgets::card(palette)
                 .gap(px(12.))
                 .child(widgets::heading("Your results on Lichess", palette))
@@ -796,8 +801,8 @@ impl PuzzleStats {
                 .into_any_element();
         }
         storm_card(
-            &self.storm.clone().unwrap_or_default(),
-            &self.profile,
+            &this.storm.clone().unwrap_or_default(),
+            &this.profile,
             palette,
         )
         .into_any_element()
