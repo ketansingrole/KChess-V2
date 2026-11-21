@@ -1081,7 +1081,7 @@ impl AnalysisPage {
                             .min_w(px(30.))
                             .px(px(6.))
                             .py(px(1.))
-                            .rounded(radii::XS)
+                            .rounded(radii::SMALL)
                             .flex()
                             .justify_center()
                             .when(count > 0, |button| {
@@ -1192,7 +1192,7 @@ pub(super) fn eval_chart(
         .aria_label("Evaluation chart")
         .w_full()
         .h(px(64.))
-        .rounded(radii::SM)
+        .rounded(radii::BOX)
         .overflow_hidden()
         .cursor_pointer()
         .on_click(move |event, _, cx| {
@@ -1210,7 +1210,7 @@ pub(super) fn eval_chart(
                 move |bounds, _, _| measured.set(bounds),
                 move |bounds, (), window, _| {
                     // GPUI clips the canvas to a rectangle, so the chart rounds its own corners.
-                    let corner = radii::SM;
+                    let corner = radii::BOX;
                     window.paint_quad(fill(bounds, rgb(0x403d39)).corner_radii(corner));
                     if count < 2 {
                         return;

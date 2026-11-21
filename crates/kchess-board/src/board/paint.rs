@@ -31,17 +31,8 @@ pub(super) fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Win
             Color::Black => (7 - file, rank),
         }
     };
-    // A corner square's fill takes the board's rounded corner: GPUI does not clip to it.
-    let rounded = |square: Square| -> Corners<Pixels> {
-        let (column, row) = place(square);
-        let corner = |at: bool| if at { radii::BOARD.min(side) } else { px(0.) };
-        Corners {
-            top_left: corner(column == 0 && row == 0),
-            top_right: corner(column == 7 && row == 0),
-            bottom_right: corner(column == 7 && row == 7),
-            bottom_left: corner(column == 0 && row == 7),
-        }
-    };
+    // A corner square's fill takes the board's own corner: GPUI does not clip to it.
+    let rounded = |square: Square| square_corners(place(square), side, &frame.state.corners);
     let at = |square: Square| -> Bounds<Pixels> {
         let (column, row) = place(square);
         Bounds::new(
@@ -282,6 +273,22 @@ fn paint_arrow(
     }
 }
 
+/// The corners of the square at `(column, row)` (from the top left as drawn), `side` wide, on a
+/// board rounded by `board`: a corner square takes the board's corner there, the rest are square.
+fn square_corners(
+    (column, row): (u32, u32),
+    side: Pixels,
+    board: &Corners<Pixels>,
+) -> Corners<Pixels> {
+    let corner = |at: bool, radius: Pixels| if at { radius.min(side) } else { px(0.) };
+    Corners {
+        top_left: corner(column == 0 && row == 0, board.top_left),
+        top_right: corner(column == 7 && row == 0, board.top_right),
+        bottom_right: corner(column == 7 && row == 7, board.bottom_right),
+        bottom_left: corner(column == 0 && row == 7, board.bottom_left),
+    }
+}
+
 /// Chessground's mark on a square the piece can take: the corners outside a circle, but for one
 /// on the board's rounded corner (`board`), which would stand out past it.
 fn paint_corners(window: &mut Window, cell: Bounds<Pixels>, board: Corners<Pixels>, color: Rgba) {
@@ -427,5 +434,38 @@ mod check_tests {
         assert!(steps.windows(2).all(|pair| pair[1] <= pair[0] + 1e-4));
         // The faded edge reaches past the square's sides (40px) into its corners, as on Lichess.
         assert!(gone > 40.);
+    }
+}
+
+#[cfg(test)]
+mod corner_tests {
+    use super::{Corners, radii, square_corners};
+    use gpui_kit::px;
+
+    /// Regression: a board flush in a study card's picture rounded all four corner squares by
+    /// the board's own radius, so its top corners missed the card's outline and its bottom ones
+    /// curved away from the card's text. Each corner square takes the board's corner there.
+    #[test]
+    fn corner_squares_follow_the_boards_corners() {
+        let side = px(40.);
+        let card = kchess_ui::widgets::card_picture_corners();
+        let top_left = square_corners((0, 0), side, &card);
+        assert_eq!(top_left.top_left, radii::BOX - px(1.));
+        assert_eq!(top_left.bottom_left, px(0.));
+        assert_eq!(
+            square_corners((7, 0), side, &card).top_right,
+            card.top_right
+        );
+        assert_eq!(square_corners((0, 7), side, &card), Corners::default());
+        assert_eq!(square_corners((7, 7), side, &card), Corners::default());
+        assert_eq!(square_corners((3, 0), side, &card), Corners::default());
+
+        let board = Corners::all(radii::BOARD);
+        assert_eq!(
+            square_corners((0, 7), side, &board).bottom_left,
+            radii::BOARD
+        );
+        // Never rounder than the square is wide.
+        assert_eq!(square_corners((0, 0), px(4.), &board).top_left, px(4.),);
     }
 }

@@ -3,16 +3,16 @@
 
 use super::*;
 
-/// The inner width of a picker of `width`: its padding and border.
-fn picture_width(width: Pixels) -> Pixels {
-    width - px(12.)
+/// The width of the picture in an option of `width`, inside its border and padding.
+pub(super) fn picture_width(width: Pixels) -> Pixels {
+    width - rows::OPTION_INSET * 2.
 }
 
 fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
     let side = picture_width(width) / 2.;
     // Each square takes the preview's outer corners: GPUI clips to rectangles, not rounded ones.
     let square = |piece: Piece, color: u32, first: bool| {
-        crate::widgets::bar_segment(div(), (first, !first), radii::SM)
+        crate::widgets::bar_segment(div(), (first, !first), radii::SMALL)
             .size(side)
             .bg(rgb(color))
             .child(
@@ -22,7 +22,7 @@ fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
             )
     };
     h_flex()
-        .rounded(radii::SM)
+        .rounded(radii::SMALL)
         .overflow_hidden()
         .child(square(
             Piece {
@@ -45,12 +45,13 @@ fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
 fn board_swatch(image: &str, width: Pixels) -> impl IntoElement {
     img(SharedString::from(format!("boards/{image}")))
         .size(picture_width(width))
-        .rounded(radii::SM)
+        .rounded(radii::SMALL)
         .object_fit(ObjectFit::Cover)
 }
 
-/// The theme's background, a raised card, its text and primary colors. A scale
-/// model of a page, so its corners are scaled down with it rather than taken from `radii`.
+/// The theme's background, a raised card, its text and primary colors. Its frame is rounded as
+/// the other pictures are; inside, a scale model of a page, so its corners are scaled down with
+/// it rather than taken from `radii`.
 fn theme_preview(theme: &str, custom: &[AppTheme], dark: bool, width: Pixels) -> impl IntoElement {
     let colors = crate::theme::colors(theme, custom, dark);
     let color = |name: &str| {
@@ -67,7 +68,7 @@ fn theme_preview(theme: &str, custom: &[AppTheme], dark: bool, width: Pixels) ->
         .h(width * 10. / 16.)
         .items_end()
         .p(px(6.))
-        .rounded(px(6.))
+        .rounded(radii::SMALL)
         .border_1()
         .border_color(color("--ui-border"))
         .bg(color("--ui-bg"))
@@ -76,7 +77,7 @@ fn theme_preview(theme: &str, custom: &[AppTheme], dark: bool, width: Pixels) ->
                 .w(card_width)
                 .gap(px(4.))
                 .p(px(4.))
-                .rounded(px(4.))
+                .rounded(px(2.))
                 .bg(color("--ui-bg-elevated"))
                 .child(
                     div()

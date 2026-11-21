@@ -10,24 +10,20 @@ use kchess_contracts::types::{AppTheme, Appearance, ThemePalette};
 use kchess_domain::theme;
 use serde_json::{Map, Value, json};
 
-/// Corner radii: one scale for every rounded box, so neighbouring surfaces agree. A box nested in
-/// another takes a step down the scale (about the outer radius less the gap between them), so
+/// Corner radii, Lichess's two (`$box-radius-size` at its default roundness, and half of it):
+/// every box, the board included, takes the same corner, so neighbouring surfaces agree. A box
+/// hugging another a few pixels out (a frame, a border's inner edge) adds or takes that gap, so
 /// their corners stay concentric.
 pub mod radii {
     use gpui_kit::{Pixels, px};
 
-    /// Badges, swatches, small chips such as a move in the tree.
-    pub const XS: Pixels = px(4.);
-    /// Controls: buttons, tabs in a segmented row, tags, tooltips (GPUI Kit's `radius`).
-    pub const SM: Pixels = px(6.);
-    /// Inputs, list rows, segmented rows, menus and dialogs (GPUI Kit's `radius.lg`).
-    pub const MD: Pixels = px(8.);
-    /// Boxes inside a card: lists, banners, icon tiles.
-    pub const LG: Pixels = px(10.);
-    /// Cards, side panels and page tiles.
-    pub const XL: Pixels = px(14.);
-    /// The board: Lichess's 8px, tight enough that the corner coordinates stay inside it.
-    pub const BOARD: Pixels = px(8.);
+    /// Small things: moves in the tree, badges, swatches, chips, bar ends.
+    pub const SMALL: Pixels = px(4.);
+    /// Everything else: buttons, tabs, inputs, rows, menus, tooltips, dialogs, cards and panels
+    /// (GPUI Kit's `radius` and `radius.lg`).
+    pub const BOX: Pixels = px(8.);
+    /// The board, rounded as every box is, which keeps the corner coordinates inside it.
+    pub const BOARD: Pixels = BOX;
 }
 
 /// The default theme's id: no palette, KChess's own colors.
@@ -257,8 +253,8 @@ pub fn apply(window: &mut Window, cx: &mut App, choice: &ThemeChoice) {
 /// dialog hard to tell from a board or list under it.
 pub const OVERLAY: [&str; 2] = ["#00000059", "#00000099"];
 
-/// GPUI Kit's theme for KChess's `resolved` colors: the kit's keys, the dialog overlay, controls
-/// rounded to `radii::SM` and dialogs to `radii::MD` (whole pixels, as the kit reads them).
+/// GPUI Kit's theme for KChess's `resolved` colors: the kit's keys, the dialog overlay, and every
+/// control and dialog rounded to `radii::BOX` (whole pixels, as the kit reads them).
 fn kit_config(resolved: &Map<String, Value>, dark: bool) -> serde_json::Result<ThemeConfig> {
     let mut colors = Map::new();
     for (key, name) in KEYS {
@@ -270,8 +266,8 @@ fn kit_config(resolved: &Map<String, Value>, dark: bool) -> serde_json::Result<T
     serde_json::from_value(json!({
         "name": "KChess",
         "mode": if dark { "dark" } else { "light" },
-        "radius": f32::from(radii::SM) as usize,
-        "radius.lg": f32::from(radii::MD) as usize,
+        "radius": f32::from(radii::BOX) as usize,
+        "radius.lg": f32::from(radii::BOX) as usize,
         "shadow": false,
         "colors": colors,
     }))

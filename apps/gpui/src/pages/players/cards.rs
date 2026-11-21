@@ -330,7 +330,7 @@ impl PlayersPage {
                     .gap(px(8.))
                     .px(px(12.))
                     .py(px(8.))
-                    .rounded(radii::MD)
+                    .rounded(radii::BOX)
                     .bg(palette.elevated)
                     .text_size(px(13.))
                     .child(icon("scale").size(px(16.)))
