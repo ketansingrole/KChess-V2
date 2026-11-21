@@ -1,6 +1,7 @@
 //! Endgame drills: endgames you must convert (or hold) against Stockfish at
 //! full strength, from positions checked to be won or drawn. Results are runs the core keeps.
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -426,7 +427,7 @@ impl Render for EndgameDrills {
         let thinking = self.engine.thinking;
         let missing = self.engine.ready == Some(false);
         let your_turn = self.your_turn();
-        let board_size = self.layout.board_size(window);
+        let (board_size, panel_height) = self.layout.board_and_panel(widgets::MOVE_BOX_ROW, window);
         let sans = san_from(&self.drill.fen, &self.moves);
         let (tone, glyph, title, detail) = if missing {
             (
@@ -481,11 +482,12 @@ impl Render for EndgameDrills {
             .collect();
         let page = cx.entity().downgrade();
         let panel = widgets::side_panel(&palette)
-            .h(self.layout.panel_height(board_size))
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)
             .id("endgame-drill-panel")
+            .test_support()
             .overflow_y_scroll()
             .child(
                 h_flex()
@@ -612,6 +614,8 @@ impl Render for EndgameDrills {
             cx,
         );
         let board_column = v_flex()
+            .id("drill-column")
+            .test_support()
             .w(board_size)
             .flex_none()
             .gap(widgets::STACK_GAP)

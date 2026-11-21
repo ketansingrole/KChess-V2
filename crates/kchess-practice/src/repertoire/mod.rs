@@ -16,6 +16,7 @@ use kchess_contracts::types::{
 use std::collections::VecDeque;
 use std::time::Duration;
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::popover::Popover;
@@ -1157,8 +1158,19 @@ impl Render for Repertoire {
         let drills_opening = Self::drills_opening(cx);
         let color = Self::color(cx);
         let your_turn = self.your_turn(cx);
-        let board_size = self.layout.board_size(window);
-        let board_column = v_flex().w(board_size).flex_none().gap(widgets::STACK_GAP);
+        // The board's column: the board and the move box's row, once a line is on the board.
+        let around = if self.at.is_some() {
+            widgets::MOVE_BOX_ROW
+        } else {
+            px(0.)
+        };
+        let (board_size, panel_height) = self.layout.board_and_panel(around, window);
+        let board_column = v_flex()
+            .id("repertoire-column")
+            .test_support()
+            .w(board_size)
+            .flex_none()
+            .gap(widgets::STACK_GAP);
         let board_column = if self.at.is_some() {
             let entry = widgets::move_entry(&self.move_box.input, your_turn, &palette);
             let (voice, voice_line) = board_bar(
@@ -1226,7 +1238,9 @@ impl Render for Repertoire {
                 .join(" ")
         });
         let panel = widgets::side_panel(&palette)
-            .h(self.layout.panel_height(board_size))
+            .id("repertoire-panel")
+            .test_support()
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)

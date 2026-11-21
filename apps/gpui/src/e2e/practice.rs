@@ -659,6 +659,23 @@ fn a_lesson_is_gone_through_by_voice(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
+/// Regression: an Endgames lesson and an endgame drill sized their panel for two player lines,
+/// so it ran 44 px past the move box's row under the board.
+#[gpui_kit::test]
+fn the_endgame_panels_end_with_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
+    app.click("card-checkmate-patterns-2");
+    app.click("training-cp2-balestra");
+    app.find("lesson-panel");
+    super::puzzles::panel_ends_with_column(&mut app, "lesson-panel", "lesson-column");
+    app.click("lesson-back");
+    reveal(&mut app, "endgame-courses", "card-drills");
+    app.click("card-drills");
+    app.find("endgame-drill-panel");
+    super::puzzles::panel_ends_with_column(&mut app, "endgame-drill-panel", "drill-column");
+}
+
 /// Return goes on through a lesson: past a step to read, and past a step once it is passed, but
 /// not while it is being played.
 #[gpui_kit::test]

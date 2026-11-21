@@ -114,7 +114,7 @@ impl PuzzleBoard {
         if self.material {
             px(18.) + px(4.) * 2. + px(36.)
         } else {
-            widgets::STACK_GAP + px(36.)
+            widgets::MOVE_BOX_ROW
         }
     }
 

@@ -902,13 +902,18 @@ fn the_session_holds_still_as_a_rated_result_comes_back(cx: &mut gpui_kit::TestA
 /// At each window wide enough to put the panel beside the board, the panel `id` ends level with
 /// the board's column: the board and the rows around it, the move box last.
 pub(super) fn panel_ends_with_the_board(app: &mut Harness, id: &'static str) {
+    panel_ends_with_column(app, id, "puzzle-column");
+}
+
+/// `panel_ends_with_the_board` for a page whose board's column is `column`.
+pub(super) fn panel_ends_with_column(app: &mut Harness, id: &'static str, column: &'static str) {
     use gpui_kit::{px, size};
     for (width, height) in &super::SIZES[1..] {
         app.cx
             .simulate_window_resize(app.window, size(px(*width), px(*height)));
         app.settle();
         let panel = app.find(id).bounds();
-        let column = app.find("puzzle-column").bounds();
+        let column = app.find(column).bounds();
         assert!(
             (panel.bottom() - column.bottom()).abs() <= px(1.),
             "{id} ends at {:?}, the board's column at {:?}, at {width}×{height}",

@@ -4,6 +4,7 @@
 use kchess_contracts::calls;
 use std::time::Duration;
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -892,6 +893,7 @@ impl EndgameLesson {
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)
             .id("lesson-panel")
+            .test_support()
             .overflow_y_scroll()
             .child(
                 h_flex()
@@ -944,12 +946,15 @@ impl Render for EndgameLesson {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let narrow = self.layout.width(window) <= NARROW;
-        let board_size = if narrow {
-            self.layout.board_size(window)
+        // The board's column: the board and the move box's row, the chapters beside it when wide.
+        let beside = if narrow {
+            px(0.)
         } else {
-            self.layout
-                .board_size_beside(CHAPTERS_WIDTH + LAYOUT_GAP, window)
+            CHAPTERS_WIDTH + LAYOUT_GAP
         };
+        let (board_size, panel_height) =
+            self.layout
+                .board_and_panel_beside(beside, widgets::MOVE_BOX_ROW, window);
         let your_turn = self.your_turn();
         let entry = widgets::move_entry(&self.move_box.input, your_turn, &palette);
         let listening = self.voice_listening();
@@ -970,6 +975,8 @@ impl Render for EndgameLesson {
             cx,
         );
         let board = v_flex()
+            .id("lesson-column")
+            .test_support()
             .w(board_size)
             .flex_none()
             .gap(widgets::STACK_GAP)
@@ -1000,7 +1007,7 @@ impl Render for EndgameLesson {
                 .child(board)
                 .into_any_element()
         };
-        let panel = self.render_panel(self.layout.panel_height(board_size), cx, &palette);
+        let panel = self.render_panel(panel_height, cx, &palette);
         div().size_full().child(self.layout.render(
             "endgame-lesson",
             board_column,

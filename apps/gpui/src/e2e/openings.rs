@@ -269,6 +269,17 @@ fn a_line_is_drilled_by_voice(cx: &mut gpui_kit::TestAppContext) {
     wait_for_status(&mut app, "End of this line");
 }
 
+/// Regression: the repertoire trainer sized its panel for two player lines, so it ran 44 px past
+/// the move box's row under the board.
+#[gpui_kit::test]
+fn the_repertoire_panel_ends_with_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = openings(cx);
+    open_kieseritzky(&mut app);
+    app.click("train-line");
+    app.find(("repertoire-voice", 0usize));
+    super::puzzles::panel_ends_with_column(&mut app, "repertoire-panel", "repertoire-column");
+}
+
 /// The library as the core has it, once the study was saved to it.
 fn loop_until_saved(app: &mut Harness) -> String {
     let core = app
