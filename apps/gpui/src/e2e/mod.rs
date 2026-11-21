@@ -588,6 +588,36 @@ impl Harness {
         self.cx.run_until_parked();
     }
 
+    /// Double-click at a point of the window, as the platform sends it: a press and release, then
+    /// a second of each counted as the second click.
+    pub fn double_click_point(&mut self, position: Point<Pixels>) {
+        self.with_window(|window, cx| {
+            for click_count in [1, 2] {
+                for event in [
+                    MouseDownEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers: Modifiers::default(),
+                        click_count,
+                        first_mouse: false,
+                    }
+                    .to_platform_input(),
+                    MouseUpEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers: Modifiers::default(),
+                        click_count,
+                    }
+                    .to_platform_input(),
+                ] {
+                    window.dispatch_event(event, cx);
+                    draw(window, cx);
+                }
+            }
+        });
+        self.cx.run_until_parked();
+    }
+
     /// Where a square ("e2") is in the window, wherever the board's orientation puts it.
     fn square(&mut self, square: &str, white_at_bottom: bool) -> Point<Pixels> {
         let board = self.find("chess-board").bounds();

@@ -30,6 +30,11 @@ A third, test-only patch adds `Window::window_control_at` (`src/window.rs`), whi
 platform's title-bar hit test does, so the end-to-end tests can check that controls drawn over the
 title bar take their own clicks on Windows.
 
+A test-only patch counts the window's **zoom requests** (`TestWindow::zoom_requests`, read
+through `Window::zoom_requests`): the test platform's `zoom` and `titlebar_double_click` add one
+each instead of panicking or doing nothing, so `e2e::shell` can check that one double click on the
+title bar zooms or restores the window exactly once.
+
 A macOS patch adds `Window::set_traffic_light_centre` (`src/window.rs`, with its
 `PlatformWindow` method in `src/platform.rs`): the traffic lights' middle goes on the line given,
 whatever height the buttons have on that macOS. `vendor/gpui-pre-macos` implements it.
