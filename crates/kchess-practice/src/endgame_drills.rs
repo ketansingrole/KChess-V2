@@ -1,6 +1,7 @@
 //! Endgame drills: endgames you must convert (or hold) against Stockfish at
 //! full strength, from positions checked to be won or drawn. Results are runs the core keeps.
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -17,7 +18,11 @@ use super::run::{self, TrainingItem};
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
+use crate::voice::moves::{
+    Access, BoardBar, Offer, Said, Turn, VoiceMoves, board_bar, offered_grammar,
+};
 use crate::widgets::{self, Tone};
+use kchess_domain::voice::PuzzleCommand;
 use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use kchess_ui::icon;
 
@@ -53,6 +58,8 @@ pub struct EndgameDrills {
     engine: EngineMove,
     board: Entity<ChessBoard>,
     move_box: crate::game::surface::MoveBox,
+    /// Spoken moves, and the drill's Hint and Restart said aloud.
+    voice: VoiceMoves,
     layout: PlayLayout,
     _subscriptions: Vec<Subscription>,
 }
@@ -81,7 +88,12 @@ impl EndgameDrills {
         });
         let (move_box, typed) = crate::game::surface::MoveBox::new(Self::typed_move, window, cx);
         let settings = cx.global::<SettingsHandle>().0.clone();
+        let voice = crate::voice::handle(cx);
         let subscriptions = vec![
+            cx.subscribe(&voice, |this, _, event: &crate::voice::VoiceEvent, cx| {
+                this.voice_heard(event, cx)
+            }),
+            cx.observe(&voice, |_, _, cx| cx.notify()),
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
                 if let BoardEvent::Move(uci) = event {
                     this.on_move(uci, cx);
@@ -102,6 +114,7 @@ impl EndgameDrills {
             engine: EngineMove::default(),
             board,
             move_box,
+            voice: VoiceMoves::new(crate::voice::VoiceSource::Endgames, cx),
             layout: PlayLayout::default(),
             _subscriptions: subscriptions,
         };
@@ -211,6 +224,75 @@ impl EndgameDrills {
         }
     }
 
+    /// Voice listens while the drill waits on you: your move, or the drill over.
+    fn voice_listening(&self) -> bool {
+        self.your_turn() || self.status().over
+    }
+
+    /// The drill's buttons voice can press: Hint, and Restart (“retry”).
+    fn voice_offers(&self) -> Vec<Offer> {
+        let actions = self.actions();
+        vec![
+            Offer::new(
+                PuzzleCommand::Hint,
+                actions.contains(&DrillAction::Hint),
+                "Hint shown",
+                "No hint now",
+            ),
+            Offer::new(
+                PuzzleCommand::Retry,
+                actions.contains(&DrillAction::Restart),
+                "Drill restarted",
+                "Nothing to restart",
+            ),
+        ]
+    }
+
+    /// A spoken move belongs to this drill after these moves; another drops a choice waiting.
+    fn sync_voice(&mut self, cx: &mut Context<Self>) {
+        let context = format!("{}:{}", self.drill.id, self.moves.len());
+        let line = san_from(&self.drill.fen, &self.moves);
+        let (grammar, listening) = (
+            offered_grammar(&self.voice_offers()),
+            self.voice_listening(),
+        );
+        self.voice
+            .sync(&context, Some(line), grammar, listening, cx);
+    }
+
+    fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
+        if !self.voice.owns(event) {
+            return;
+        }
+        let setup = kchess_domain::variant::Setup::standard_at(&self.status().fen);
+        let heard = match event {
+            crate::voice::VoiceEvent::Missed { heard, .. } => {
+                self.voice.missed(heard, &setup.fen, self.your_turn(), cx);
+                return;
+            }
+            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        };
+        let turn = Turn {
+            taking: self.your_turn(),
+            idle: self.status().over.then_some("Say “retry” to play it again"),
+            immediate: false,
+        };
+        let offers = self.voice_offers();
+        match self.voice.hear_offered(&heard, &setup, turn, &offers, cx) {
+            Said::Play(uci) => self.on_move(&uci, cx),
+            Said::Command(PuzzleCommand::Hint) => self.act(DrillAction::Hint, cx),
+            Said::Command(PuzzleCommand::Retry) => self.act(DrillAction::Restart, cx),
+            Said::Command(
+                PuzzleCommand::Next
+                | PuzzleCommand::Back
+                | PuzzleCommand::ShowMove
+                | PuzzleCommand::RestartLine,
+            )
+            | Said::Nothing => {}
+        }
+        cx.notify();
+    }
+
     /// A finished drill is a run: solved or not, and in how many moves.
     fn record(&mut self, cx: &mut Context<Self>) {
         let status = self.status();
@@ -301,6 +383,7 @@ impl EndgameDrills {
     }
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
+        self.sync_voice(cx);
         let status = self.status();
         let fen = status.fen.clone();
         let Some(position) =
@@ -344,7 +427,7 @@ impl Render for EndgameDrills {
         let thinking = self.engine.thinking;
         let missing = self.engine.ready == Some(false);
         let your_turn = self.your_turn();
-        let board_size = self.layout.board_size(window);
+        let (board_size, panel_height) = self.layout.board_and_panel(widgets::MOVE_BOX_ROW, window);
         let sans = san_from(&self.drill.fen, &self.moves);
         let (tone, glyph, title, detail) = if missing {
             (
@@ -399,11 +482,12 @@ impl Render for EndgameDrills {
             .collect();
         let page = cx.entity().downgrade();
         let panel = widgets::side_panel(&palette)
-            .h(self.layout.panel_height(board_size))
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)
             .id("endgame-drill-panel")
+            .test_support()
             .overflow_y_scroll()
             .child(
                 h_flex()
@@ -512,12 +596,33 @@ impl Render for EndgameDrills {
                 },
                 &palette,
             ));
+        let entry = widgets::move_entry(&self.move_box.input, your_turn, &palette);
+        let (voice, voice_line) = board_bar(
+            &self.voice,
+            cx.entity().downgrade(),
+            Access {
+                write: |this: &mut Self| &mut this.voice,
+                play: |this: &mut Self, uci, _, cx| this.on_move(uci, cx),
+            },
+            BoardBar {
+                id: "drill-voice",
+                hint: "Say “E four”, “hint” or “retry”",
+                active: self.voice_listening(),
+                listening: self.voice_listening(),
+                grammar: offered_grammar(&self.voice_offers()),
+            },
+            cx,
+        );
         let board_column = v_flex()
+            .id("drill-column")
+            .test_support()
             .w(board_size)
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(crate::board::cached(&self.board))
-            .child(self.move_box.lone(your_turn, &palette));
+            .child(widgets::input_row(entry, voice))
+            .children(voice_line)
+            .children(self.move_box.message(&palette));
         div().size_full().child(self.layout.render(
             "endgame-drills",
             board_column,

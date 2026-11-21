@@ -6,6 +6,8 @@ use super::*;
 pub const PLAYER_LINE: Pixels = px(36.);
 /// The gap between the player lines and the board.
 pub const STACK_GAP: Pixels = px(8.);
+/// What the move box's row under a board takes in the board's column: the gap and its line.
+pub const MOVE_BOX_ROW: Pixels = px(8. + 36.);
 
 /// Figures of one width, so clocks and move numbers hold still.
 pub fn tabular() -> FontFeatures {
