@@ -160,6 +160,35 @@ fn the_microphone_access_buttons_stay_in_the_minimum_window_before_the_system_as
     );
 }
 
+/// With the microphone allowed, Privacy settings opened a Windows page that lists no switch of
+/// KChess's own, so players looked there for KChess and found nothing. Blocked, it stays.
+#[gpui_kit::test]
+fn privacy_settings_shows_only_while_the_microphone_is_not_allowed(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use crate::microphone::{Access, Host};
+    let mut app = Harness::start(cx);
+    for (access, shown) in [(Access::Granted, false), (Access::Denied, true)] {
+        app.set_microphone(Host {
+            access,
+            from_terminal: false,
+            privacy_settings: Host::TEST.privacy_settings,
+        });
+        app.with_window(|window, cx| {
+            crate::shell::open_settings(crate::pages::settings::Section::Voice, window, cx)
+        });
+        app.settle();
+        let controls = app.with_window(|window, _| in_front(window.elements()));
+        assert_eq!(
+            controls
+                .iter()
+                .any(|e| e.visible() && e.label() == Some("Privacy settings")),
+            shown,
+            "Privacy settings with the microphone {access:?}"
+        );
+    }
+}
+
 fn check(page: &str, width: f32, elements: &[ElementSnapshot], findings: &mut Findings) {
     let controls: Vec<&ElementSnapshot> = elements
         .iter()
