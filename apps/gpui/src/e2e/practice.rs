@@ -11,7 +11,7 @@ fn practice(cx: &mut gpui_kit::TestAppContext) -> Harness {
 }
 
 /// Open a tab of the page.
-fn tab(app: &mut Harness, tab: crate::pages::practice::Tab) {
+pub(super) fn tab(app: &mut Harness, tab: crate::pages::practice::Tab) {
     app.click(super::tab("practice-tabs", tab));
     assert_eq!(
         app.find(super::tab("practice-tabs", tab)).selected(),
@@ -30,7 +30,7 @@ fn wait_for_label(app: &mut Harness, id: &'static str, label: &str) {
 }
 
 /// Scroll `list` until `id` is in view.
-fn reveal(app: &mut Harness, list: &'static str, id: &'static str) {
+pub(super) fn reveal(app: &mut Harness, list: &'static str, id: &'static str) {
     use gpui_kit::test::TestWindowExt as _;
     for _ in 0..30 {
         if app.shows(id) {
@@ -713,6 +713,70 @@ fn next_said_goes_on_to_the_next_due_mistake(cx: &mut gpui_kit::TestAppContext) 
     });
 }
 
+/// An Endgames lesson is gone through by voice: a spoken mate is played as a typed one, and
+/// “next”, “retry” and “back” do what Next, Retry and the previous step's button do.
+#[gpui_kit::test]
+fn a_lesson_is_gone_through_by_voice(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
+    app.click("card-checkmate-patterns-2");
+    app.click("training-cp2-balestra");
+    app.find("lesson-next");
+    let lesson = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).endgame_lesson(cx))
+            .expect("the lesson")
+    });
+    let say = |app: &mut Harness, text: &str| {
+        app.cx
+            .update(|cx| lesson.update(cx, |lesson, cx| lesson.hear(text, cx)));
+        app.cx.run_until_parked();
+    };
+    // The step to read goes on to the one to play.
+    say(&mut app, "next");
+    assert_eq!(app.status(), "Your turn");
+    app.find("lesson-previous");
+    // A wrong move is refused as a dragged one is.
+    say(&mut app, "bishop c four");
+    say(&mut app, "confirm");
+    wait_for_label(&mut app, "status-banner", "Not the move — try again");
+    say(&mut app, "bishop b five");
+    say(&mut app, "confirm");
+    wait_for_label(&mut app, "status-banner", "Checkmate");
+    say(&mut app, "retry");
+    assert_eq!(app.status(), "Your turn");
+    say(&mut app, "back");
+    app.wait_gone("lesson-previous");
+    say(&mut app, "next");
+    say(&mut app, "bishop b five");
+    say(&mut app, "confirm");
+    wait_for_label(&mut app, "status-banner", "Checkmate");
+    say(&mut app, "next");
+    app.wait_for("the next chapter", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("status-banner")
+            .is_none_or(|banner| banner.label() != Some("Checkmate"))
+    });
+}
+
+/// Regression: an Endgames lesson and an endgame drill sized their panel for two player lines,
+/// so it ran 44 px past the move box's row under the board.
+#[gpui_kit::test]
+fn the_endgame_panels_end_with_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
+    app.click("card-checkmate-patterns-2");
+    app.click("training-cp2-balestra");
+    app.find("lesson-panel");
+    super::puzzles::panel_ends_with_column(&mut app, "lesson-panel", "lesson-column");
+    app.click("lesson-back");
+    reveal(&mut app, "endgame-courses", "card-drills");
+    app.click("card-drills");
+    app.find("endgame-drill-panel");
+    super::puzzles::panel_ends_with_column(&mut app, "endgame-drill-panel", "drill-column");
+}
+
 /// Return goes on through a lesson: past a step to read, and past a step once it is passed, but
 /// not while it is being played.
 #[gpui_kit::test]
@@ -1043,13 +1107,13 @@ fn drills_changed_in_another_window_show_here_too(cx: &mut gpui_kit::TestAppCont
 /// board, and the panel ends with that row in Find and Name the square alike.
 #[gpui_kit::test]
 fn the_drill_panels_end_with_the_board(cx: &mut gpui_kit::TestAppContext) {
-    use super::puzzles::panel_ends_with;
+    use super::puzzles::panel_ends_with_column;
     let mut app = practice(cx);
-    panel_ends_with(&mut app, "coordinates-panel", "coordinates-column");
+    panel_ends_with_column(&mut app, "coordinates-panel", "coordinates-column");
     app.click(("coordinates-mode", 1usize));
-    panel_ends_with(&mut app, "coordinates-panel", "coordinates-column");
+    panel_ends_with_column(&mut app, "coordinates-panel", "coordinates-column");
     tab(&mut app, crate::pages::practice::Tab::Knight);
-    panel_ends_with(&mut app, "knight-panel", "knight-column");
+    panel_ends_with_column(&mut app, "knight-panel", "knight-column");
 }
 
 /// Regression: Guess the move sized its panel for two player lines, so it ran 44 px past the move
@@ -1058,7 +1122,7 @@ fn the_drill_panels_end_with_the_board(cx: &mut gpui_kit::TestAppContext) {
 fn the_guess_panel_ends_with_the_board(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
     guess_game(&mut app, "1. e4 e5 2. Nf3 Nc6 *");
-    super::puzzles::panel_ends_with(&mut app, "guess-panel", "guess-column");
+    super::puzzles::panel_ends_with_column(&mut app, "guess-panel", "guess-column");
 }
 
 /// Regression: Your mistakes sized its panel for two player lines its puzzle board doesn't have,

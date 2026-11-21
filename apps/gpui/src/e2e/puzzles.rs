@@ -460,6 +460,9 @@ fn next_said_goes_on_to_the_next_puzzle(cx: &mut gpui_kit::TestAppContext) {
             .as_deref(),
         Some("Finish this puzzle first")
     );
+    // “hint” shows the piece to move, as Hint does.
+    say(&mut app, "hint");
+    assert!(app.cx.update(|cx| board.read(cx).hinted()));
     say(&mut app, "queen takes f seven");
     say(&mut app, "confirm");
     app.wait_for("the puzzle to be solved", |window, _| {
@@ -899,12 +902,11 @@ fn the_session_holds_still_as_a_rated_result_comes_back(cx: &mut gpui_kit::TestA
 /// At each window wide enough to put the panel beside the board, the panel `id` ends level with
 /// the board's column: the board and the rows around it, the move box last.
 pub(super) fn panel_ends_with_the_board(app: &mut Harness, id: &'static str) {
-    panel_ends_with(app, id, "puzzle-column");
+    panel_ends_with_column(app, id, "puzzle-column");
 }
 
-/// At each window wide enough to put the panel beside the board, the panel `id` ends level with
-/// the board's column `column`.
-pub(super) fn panel_ends_with(app: &mut Harness, id: &'static str, column: &'static str) {
+/// `panel_ends_with_the_board` for a page whose board's column is `column`.
+pub(super) fn panel_ends_with_column(app: &mut Harness, id: &'static str, column: &'static str) {
     use gpui_kit::{px, size};
     for (width, height) in &super::SIZES[1..] {
         app.cx

@@ -223,6 +223,11 @@ impl PracticePage {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn endgame_lesson(&self, cx: &App) -> Option<Entity<endgame_lesson::EndgameLesson>> {
+        self.lesson(cx)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn guess(&self) -> Option<Entity<guess::GuessMoves>> {
         self.guess.clone()
     }

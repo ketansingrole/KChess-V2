@@ -11,6 +11,8 @@ wire_enum!(#[doc = "Where a spoken phrase was said."] VoiceSource, VOICE_SOURCES
     Editor = "editor",
     Local = "local",
     Puzzles = "puzzles",
+    Endgames = "endgames",
+    Repertoire = "repertoire",
     Guess = "guess",
 });
 

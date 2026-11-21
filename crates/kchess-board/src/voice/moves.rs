@@ -12,7 +12,7 @@ use kchess_domain::variant::Setup;
 use super::control::Control;
 use super::{Entry, Heard, VoiceEvent};
 use kchess_contracts::types::{VoiceOutcome, VoiceSource, VoiceUpdate};
-use kchess_domain::voice::SpokenMove;
+use kchess_domain::voice::{PuzzleCommand, SpokenMove};
 use kchess_ui::icon;
 
 /// What a page made of a phrase it took as a command.
@@ -44,6 +44,47 @@ pub struct Turn<'a> {
 pub enum Action {
     Nothing,
     Play(String),
+}
+
+/// A training board command a page has a button for, and what voice answers to it.
+pub struct Offer {
+    pub command: PuzzleCommand,
+    /// Its button would do something now.
+    pub now: bool,
+    /// What voice answers when it is done, and when its button would do nothing.
+    pub done: &'static str,
+    pub not_now: &'static str,
+}
+
+impl Offer {
+    pub fn new(
+        command: PuzzleCommand,
+        now: bool,
+        done: &'static str,
+        not_now: &'static str,
+    ) -> Offer {
+        Offer {
+            command,
+            now,
+            done,
+            not_now,
+        }
+    }
+}
+
+/// What a training page should do with a phrase.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Said {
+    Nothing,
+    Play(String),
+    /// Run what the command's button runs.
+    Command(PuzzleCommand),
+}
+
+/// Moves and the phrases of the commands a page offers: what its board listens for.
+pub fn offered_grammar(offers: &[Offer]) -> Vec<String> {
+    let commands: Vec<PuzzleCommand> = offers.iter().map(|offer| offer.command).collect();
+    kchess_domain::voice::commands_grammar(&commands)
 }
 
 /// Where the choices' element ids start in the bar (`voice_bar` numbers its own from 0).
@@ -356,6 +397,33 @@ impl VoiceMoves {
                 );
                 Action::Nothing
             }
+        }
+    }
+
+    /// A phrase on a training board: one of the commands `offers` (as its button, when it does
+    /// something now), else as `hear` takes it.
+    pub fn hear_offered(
+        &mut self,
+        heard: &Heard,
+        setup: &Setup,
+        turn: Turn,
+        offers: &[Offer],
+        cx: &mut App,
+    ) -> Said {
+        let mut chosen = None;
+        let command = |text: &str| {
+            let command = kchess_domain::voice::puzzle_command(text)?;
+            let offer = offers.iter().find(|offer| offer.command == command)?;
+            chosen = offer.now.then_some(command);
+            Some(Reply {
+                said: command.as_str().into(),
+                feedback: if offer.now { offer.done } else { offer.not_now }.into(),
+                understood: offer.now,
+            })
+        };
+        match self.hear(heard, setup, turn, command, cx) {
+            Action::Play(uci) => Said::Play(uci),
+            Action::Nothing => chosen.map_or(Said::Nothing, Said::Command),
         }
     }
 
