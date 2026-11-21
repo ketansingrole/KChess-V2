@@ -379,7 +379,7 @@ impl Render for ComputerPage {
                                     .when(result.is_some(), |button| button.primary())
                                     .when(result.is_none(), |button| button.outline())
                                     .w_full()
-                                    .icon(icon("rotate-ccw"))
+                                    .icon(icon("plus"))
                                     .label("New game")
                                     .tooltip_with_action("New game", &crate::menu::New, None)
                                     .on_click(cx.listener(|this, _, window, cx| {

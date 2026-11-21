@@ -1297,7 +1297,7 @@ impl Render for Repertoire {
                         actions.child(
                             Button::new("save-opening")
                                 .ghost()
-                                .icon(icon("save"))
+                                .icon(icon("book-plus"))
                                 .label("Save as study")
                                 .loading(self.saving)
                                 .disabled(self.drill.is_none())

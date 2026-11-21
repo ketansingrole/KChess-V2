@@ -100,7 +100,7 @@ impl Render for MessageDialog {
                             Button::new("message-reconnect")
                                 .small()
                                 .outline()
-                                .icon(icon("link"))
+                                .icon(icon("log-in"))
                                 .label("Reconnect")
                                 .on_click(|_, window, cx| {
                                     window.close_dialog(cx);
