@@ -65,13 +65,15 @@ pub fn new_tab(
         state.set_selected_value(&SharedString::from(NEW_STUDY), window, cx)
     });
     let account_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
-    let subscriptions = vec![cx.subscribe(
+    let subscriptions = vec![cx.subscribe_in(
         &account_select,
-        |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
+        window,
+        |this, _, event: &SelectEvent<Vec<Choice>>, window, cx| {
             if let SelectEvent::Confirm(Some(value)) = event {
                 this.lichess.account = value.to_string();
                 this.lichess.message.clear();
-                this.load_lichess(false, cx);
+                this.sync_targets(window, cx);
+                this.load_lichess(false, window, cx);
             }
         },
     )];
@@ -96,7 +98,12 @@ impl StudiesPage {
     }
 
     /// The account's studies, unless fetched (or failed) a moment ago.
-    pub(super) fn load_lichess(&mut self, force: bool, cx: &mut Context<Self>) {
+    pub(super) fn load_lichess(
+        &mut self,
+        force: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let account = self.lichess.account.clone();
         if account.is_empty() {
             return;
@@ -119,9 +126,9 @@ impl StudiesPage {
         let studies = cx.global::<AppCore>().request(calls::LichessStudies {
             account: Username(account),
         });
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let result = studies.await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 let Some(entry) = this.lichess.entries.get_mut(&key) else {
                     return;
                 };
@@ -135,13 +142,15 @@ impl StudiesPage {
                     }
                     Err(cause) => entry.error = kchess_app::loading::failure("studies", &cause),
                 }
+                this.sync_targets(window, cx);
                 cx.notify();
             });
         })
         .detach();
     }
 
-    /// The account the tab shows follows the one playing online.
+    /// The account the tab shows follows the one playing online. Done as the accounts change,
+    /// never while drawing: each Select told its items asks for its page to be drawn again.
     pub(super) fn sync_lichess_account(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let accounts = crate::accounts::handle(cx);
         let (connected, active) = {
@@ -168,6 +177,14 @@ impl StudiesPage {
         // Accounts that are gone take their lists with them.
         let kept: Vec<String> = connected.iter().map(|name| name.to_lowercase()).collect();
         self.lichess.entries.retain(|key, _| kept.contains(key));
+        self.sync_targets(window, cx);
+        if crate::prefs::get::<String>(cx, super::TAB, "device".into()) == "lichess" {
+            self.load_lichess(false, window, cx);
+        }
+    }
+
+    /// Where Send can go: a new study, or one of the account's studies, once they have come.
+    fn sync_targets(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut targets = vec![Choice::new(NEW_STUDY, "A new private study")];
         if let Some(items) = self.entry().and_then(|entry| entry.items.clone()) {
             targets.extend(
@@ -409,7 +426,7 @@ impl StudiesPage {
                         } else {
                             format!("Added “{chapter_name}” as a chapter")
                         };
-                        this.load_lichess(true, cx);
+                        this.load_lichess(true, window, cx);
                     }
                     Err(cause) => window.push_notification(
                         Notification::error(kchess_app::loading::failure("studies", &cause))
@@ -430,10 +447,6 @@ impl StudiesPage {
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> AnyElement {
-        self.sync_lichess_account(window, cx);
-        if self.entry().is_none() {
-            self.load_lichess(false, cx);
-        }
         let entry = self.entry().cloned().unwrap_or_default();
         let several = crate::accounts::handle(cx).read(cx).connected().len() > 1;
         let status = if !self.lichess.message.is_empty() {
@@ -500,7 +513,9 @@ impl StudiesPage {
                     .icon(icon("refresh-cw"))
                     .label("Refresh")
                     .loading(entry.loading)
-                    .on_click(cx.listener(|this, _, _, cx| this.load_lichess(true, cx))),
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.load_lichess(true, window, cx)),
+                    ),
             )
             .child(div().flex_1())
             .child(send);
@@ -620,7 +635,11 @@ mod tests {
             crate::studies::init(&Default::default(), cx);
             cx.new(|cx| StudiesPage::new(window, cx))
         });
-        app.with_window(|_, cx| page.update(cx, |page, _| page.lichess.account = "alice".into()));
+        // Connected as the pages read it, so the page shows it.
+        app.with_account("alice", true);
+        app.wait_for("the account shown", |_, cx| {
+            page.read(cx).lichess.account == "alice"
+        });
         (app, server, page)
     }
 
@@ -629,9 +648,9 @@ mod tests {
     #[gpui_kit::test]
     fn an_accounts_studies_load_and_ask_to_reconnect(cx: &mut gpui_kit::TestAppContext) {
         let (mut app, _server, page) = started(cx);
-        app.with_window(|_, cx| {
+        app.with_window(|window, cx| {
             page.update(cx, |page, cx| {
-                page.load_lichess(true, cx);
+                page.load_lichess(true, window, cx);
                 assert!(
                     page.entry().is_some_and(|entry| entry.loading),
                     "asked, not yet answered"

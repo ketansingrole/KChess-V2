@@ -151,7 +151,9 @@ before, `// gpui-lints: allow(<lint>) <reason>`.
 - `render` only reads. Never `cx.notify()`, `entity.update(…)` or `self.field = …` directly in
   `render`: it asks for another frame every frame, or changes state while drawing it. Change
   state in the handler or task that learned of the change, and `cx.notify()` there; a closure
-  built in `render` (`cx.listener(…)`, `on_click`) runs later and may.
+  built in `render` (`cx.listener(…)`, `on_click`) runs later and may. A helper that `render`
+  calls is held to it too: `e2e::stability`'s `nothing_notifies_while_drawing_*` draw every page
+  and name the line of any view notified while drawing (a Select told its items, say).
 - The main thread never waits. A call to the disk, a process, the clipboard or the core in a
   frame or handler blocks every window: run it with `cx.background_spawn` and adopt the answer in a
   `cx.spawn`. A wait that must stay on the main thread is marked `slow_calls::call` (GUARDRAILS.md).

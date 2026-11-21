@@ -174,7 +174,14 @@ impl StudiesPage {
                 cx.notify();
             }),
             cx.observe(&library, |_, _, cx| cx.notify()),
-            cx.observe(&crate::accounts::handle(cx), |_, _, cx| cx.notify()),
+            cx.observe_in(
+                &crate::accounts::handle(cx),
+                window,
+                |this, _, window, cx| {
+                    this.sync_lichess_account(window, cx);
+                    cx.notify();
+                },
+            ),
         ];
         subscriptions.extend(lichess_subscriptions);
         let clock = crate::timer::redraw_every(CLOCK, cx);
@@ -193,14 +200,14 @@ impl StudiesPage {
             _clock: clock,
             _subscriptions: subscriptions,
         };
-        page.shown(cx);
+        page.sync_lichess_account(window, cx);
         page
     }
 
     /// The page was opened: the Lichess tab's list, when it is the one shown.
-    pub fn shown(&mut self, cx: &mut Context<Self>) {
+    pub fn shown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if crate::prefs::get::<String>(cx, TAB, "device".into()) == "lichess" {
-            self.load_lichess(false, cx);
+            self.load_lichess(false, window, cx);
         }
     }
 
@@ -211,7 +218,7 @@ impl StudiesPage {
     /// Show the Lichess tab, as its pill does.
     pub fn show_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         crate::prefs::set(cx, TAB, "lichess");
-        self.load_lichess(false, cx);
+        self.load_lichess(false, window, cx);
         window.refresh();
     }
 
@@ -864,8 +871,9 @@ impl Render for StudiesPage {
                                         if index == 1 { "lichess" } else { "device" },
                                     );
                                     if index == 1 {
-                                        let _ = page
-                                            .update(cx, |page, cx| page.load_lichess(false, cx));
+                                        let _ = page.update(cx, |page, cx| {
+                                            page.load_lichess(false, window, cx)
+                                        });
                                     }
                                     window.refresh();
                                 }
@@ -928,8 +936,8 @@ impl PageView for StudiesPage {
         StudiesPage::new(window, cx)
     }
 
-    fn shown(this: &Entity<Self>, _again: bool, _window: &mut Window, cx: &mut App) {
-        this.update(cx, |studies, cx| studies.shown(cx));
+    fn shown(this: &Entity<Self>, _again: bool, window: &mut Window, cx: &mut App) {
+        this.update(cx, |studies, cx| studies.shown(window, cx));
     }
 
     fn search_fields(&self) -> Vec<Entity<InputState>> {
