@@ -10,9 +10,11 @@ use kchess_contracts::types::AlertOwner;
 use kchess_contracts::{CoreEvent, HostReply};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::Poll;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
@@ -94,6 +96,9 @@ pub struct Core {
     /// Held by the import as it runs on its own task: an import started again after its caller
     /// went away waits for the first to finish.
     pub(crate) migrating: Arc<tokio::sync::Mutex<()>>,
+    /// Taken by each call until its method has started: calls start in the order they came,
+    /// even those that waited for the import together (the lock is first come, first served).
+    turns: AsyncMutex<()>,
     /// The close in progress, shared by every `close` call.
     pub(crate) closing: OnceCell<()>,
     /// Ids for the managed engine requests the facade starts.
@@ -127,7 +132,7 @@ pub(crate) struct LocationOverride {
 async fn caught_as(
     connection: u64,
     method: &str,
-    call: impl std::future::Future<Output = Result<Value>>,
+    call: impl Future<Output = Result<Value>>,
 ) -> Result<Value> {
     crate::tasks::caught(crate::connection::scope(connection, call))
         .await
@@ -245,6 +250,7 @@ impl Core {
             tracker: TaskTracker::new(),
             migrated: OnceCell::new(),
             migrating: Arc::new(tokio::sync::Mutex::new(())),
+            turns: AsyncMutex::new(()),
             closing: OnceCell::new(),
             requests: AtomicU64::new(0),
             claim,
@@ -367,13 +373,22 @@ impl Core {
         // Tracked before the closed check: closing waits for every call that got this far.
         let _in_flight = self.tracker.token();
         self.refuse_closed()?;
+        let turn = self.turns.lock().await;
         // An earlier release's profile is imported before anything reads the store.
         self.ensure_migrated().await?;
         if !self.closed.load(Ordering::SeqCst) {
             self.start();
         }
         // Boxed: the method table is one large future, too big to lay out on a worker's stack.
-        Box::pin(kchess_contracts::core_api::dispatch(self, method, args)).await
+        let mut call = Box::pin(kchess_contracts::core_api::dispatch(self, method, args));
+        // The method takes effect up to its first wait (a write joins the store's queue, a stop
+        // stops) before the next call's turn.
+        let first = std::future::poll_fn(|cx| Poll::Ready(call.as_mut().poll(cx))).await;
+        drop(turn);
+        match first {
+            Poll::Ready(answer) => answer,
+            Poll::Pending => call.await,
+        }
     }
 
     /// Tests only: a call of client `connection` that panics, as a defect would.
