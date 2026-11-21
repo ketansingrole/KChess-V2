@@ -829,7 +829,7 @@ impl Render for StudiesPage {
             window.viewport_size().width - px(400.)
         };
         let body = if tab == "lichess" {
-            self.render_lichess(width, window, cx, &palette)
+            self.render_lichess(width, cx, &palette)
         } else {
             self.render_device(width, window, cx, &palette)
         };

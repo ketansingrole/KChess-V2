@@ -443,7 +443,6 @@ impl StudiesPage {
     pub(super) fn render_lichess(
         &mut self,
         width: Pixels,
-        window: &mut Window,
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> AnyElement {
