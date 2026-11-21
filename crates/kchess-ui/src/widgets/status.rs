@@ -135,7 +135,7 @@ impl RenderOnce for StatusBanner {
                     .min_h(px(56.))
                     .px(px(12.))
                     .py(px(8.))
-                    .rounded(radii::LG)
+                    .rounded(radii::BOX)
                     .text_size(px(13.))
                     .bg(background)
             })

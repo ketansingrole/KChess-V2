@@ -593,3 +593,18 @@ fn a_switch_resets_to_its_default(cx: &mut gpui_kit::TestAppContext) {
     app.wait_for_saved("notifySound", json!(false));
     app.wait_gone("reset-notifySound");
 }
+
+/// Regression: the Appearance pickers scrolled straight to the dialog's bottom edge, and GPUI
+/// clips to a rectangle, so cards and labels were drawn over its rounded corners. The page ends
+/// a corner's height above the dialog's outer edge.
+#[gpui_kit::test]
+fn the_settings_page_ends_above_the_dialogs_rounded_corners(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Appearance");
+    let dialog = app.find(super::SETTINGS_SHOWN).bounds();
+    let page = app.find("settings-page").bounds();
+    assert!(
+        page.bottom() <= dialog.bottom() - crate::theme::radii::BOX,
+        "the page ({page:?}) reaches into the dialog's ({dialog:?}) rounded corners",
+    );
+}

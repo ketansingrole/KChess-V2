@@ -338,7 +338,7 @@ impl AnalysisPage {
                             row.child(
                                 div()
                                     .px(px(4.))
-                                    .rounded(radii::XS)
+                                    .rounded(radii::SMALL)
                                     .bg(palette.accented)
                                     .text_size(px(11.))
                                     .text_color(palette.text_muted)

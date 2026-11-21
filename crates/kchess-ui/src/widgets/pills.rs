@@ -159,7 +159,7 @@ fn pill_row(
         .flex_wrap()
         .p(px(2.))
         .gap(px(4.))
-        .rounded(radii::MD)
+        .rounded(radii::BOX)
         .border_1()
         .border_color(palette.border)
         .bg(palette.bg)
@@ -179,7 +179,7 @@ fn pill_row(
                 .gap(px(if compact { 6. } else { 8. }))
                 .h(px(if compact { 24. } else { 26. }))
                 .px(px(if compact { 8. } else { 12. }))
-                .rounded(radii::SM)
+                .rounded(radii::BOX)
                 .text_size(px(if compact { 12. } else { 14. }))
                 .font_weight(FontWeight::MEDIUM)
                 .when(chosen, |tab| {
@@ -201,7 +201,7 @@ fn pill_row(
                 .children(tab.badge.map(|badge| {
                     div()
                         .px(px(4.))
-                        .rounded(radii::XS)
+                        .rounded(radii::SMALL)
                         .text_size(px(11.))
                         .line_height(px(16.))
                         .when(chosen, |badge| {

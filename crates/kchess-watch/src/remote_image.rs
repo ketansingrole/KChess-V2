@@ -1,19 +1,26 @@
-//! Pictures Lichess serves for the app to show, such as a broadcast's cover. Only Lichess's own image hosts are asked
-//! (`lichess.org`, `image.lichess1.org`); each picture is bounded in size,
-//! read once and kept for the session. A picture that cannot be had leaves its placeholder.
-//! Every picture is read on one background runtime through one client, so the covers of a page
-//! share a connection (over HTTP/2, one for all of them) instead of a handshake each.
+//! Pictures Lichess serves for the app to show, such as a broadcast's cover. Only Lichess's own
+//! hosts are asked (`lichess.org`, `image.lichess.org` and the older `image.lichess1.org`, which
+//! sends to it), and a redirect is followed only between them; each picture is bounded in size,
+//! read once and kept for the session. A picture that cannot be had leaves its placeholder, and
+//! why is logged. Every picture is read on one background runtime through one client, so the
+//! covers of a page share a connection (over HTTP/2, one for all of them) instead of a handshake
+//! each. With a local stand-in for Lichess (`TestLichessOrigin`) the same addresses are read there.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use gpui_kit::*;
+use kchess_app::core::TestLichessOrigin;
+use kchess_app::log::ResultExt as _;
+use reqwest::Url;
 
 /// The hosts pictures may come from.
-const HOSTS: [&str; 2] = ["lichess.org", "image.lichess1.org"];
+const HOSTS: [&str; 3] = ["lichess.org", "image.lichess.org", "image.lichess1.org"];
 /// A cover is a few hundred kilobytes; anything far larger is not one.
 const MAX_BYTES: usize = 4 * 1024 * 1024;
+/// Redirects followed for one picture: the old host sends to the new one, once.
+const MAX_REDIRECTS: usize = 3;
 
 enum State {
     Loading,
@@ -39,14 +46,26 @@ pub fn handle(cx: &mut App) -> Entity<RemoteImages> {
     cx.global::<RemoteImagesHandle>().0.clone()
 }
 
-/// Whether `url` is an https address on one of Lichess's image hosts.
-fn allowed(url: &str) -> bool {
-    let Ok(parsed) = reqwest::Url::parse(url) else {
-        return false;
+/// Whether `url` is an https address on one of Lichess's hosts.
+fn allowed(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.port().is_none()
+        && url.host_str().is_some_and(|host| HOSTS.contains(&host))
+}
+
+/// Where `url` is read: itself, or its path and query at the stand-in `origin`. A run pointed
+/// at Lichess itself (`KCHESS_E2E_LICHESS=https://lichess.org`) reads its pictures where they are.
+fn routed(url: &Url, origin: Option<&str>) -> Result<Url, String> {
+    let Some(origin) = origin else {
+        return Ok(url.clone());
     };
-    parsed.scheme() == "https"
-        && parsed.port().is_none()
-        && parsed.host_str().is_some_and(|host| HOSTS.contains(&host))
+    let mut at = Url::parse(origin).map_err(|error| format!("the stand-in {origin}: {error}"))?;
+    if allowed(&at) {
+        return Ok(url.clone());
+    }
+    at.set_path(url.path());
+    at.set_query(url.query());
+    Ok(at)
 }
 
 /// The picture's format from its first bytes; only the formats a cover comes in.
@@ -79,7 +98,7 @@ fn client_builder() -> reqwest::ClientBuilder {
         .user_agent(kchess_contracts::USER_AGENT)
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(20))
-        // A redirect could lead off Lichess's hosts.
+        // `fetch` follows a redirect itself, only to Lichess's hosts.
         .redirect(reqwest::redirect::Policy::none())
 }
 
@@ -111,22 +130,61 @@ fn client() -> Option<&'static reqwest::Client> {
         .as_ref()
 }
 
-async fn fetch(client: &reqwest::Client, url: String) -> Option<Vec<u8>> {
-    let mut response = client.get(url).send().await.ok()?.error_for_status().ok()?;
-    if response
-        .content_length()
-        .is_some_and(|length| length as usize > MAX_BYTES)
-    {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.ok()? {
-        bytes.extend_from_slice(&chunk);
-        if bytes.len() > MAX_BYTES {
-            return None;
+/// The picture at `url` (on Lichess's hosts) and its format, read at the stand-in `origin` when
+/// there is one; or why it cannot be had.
+async fn fetch(
+    client: &reqwest::Client,
+    mut url: Url,
+    origin: Option<String>,
+) -> Result<(ImageFormat, Vec<u8>), String> {
+    for _ in 0..=MAX_REDIRECTS {
+        let mut response = client
+            .get(routed(&url, origin.as_deref())?)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?;
+        let status = response.status();
+        let kind = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|kind| kind.to_str().ok())
+            .unwrap_or("no type")
+            .to_string();
+        if status.is_redirection() {
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|location| location.to_str().ok())
+                .ok_or_else(|| format!("{status} with nowhere to go"))?;
+            let next = url
+                .join(location)
+                .map_err(|error| format!("{status} to {location}: {error}"))?;
+            if !allowed(&next) {
+                return Err(format!("{status} to {next}, off Lichess's hosts"));
+            }
+            url = next;
+            continue;
         }
+        if !status.is_success() {
+            return Err(format!("{status} ({kind})"));
+        }
+        if response
+            .content_length()
+            .is_some_and(|length| length as usize > MAX_BYTES)
+        {
+            return Err(format!("over {MAX_BYTES} bytes"));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+            bytes.extend_from_slice(&chunk);
+            if bytes.len() > MAX_BYTES {
+                return Err(format!("over {MAX_BYTES} bytes"));
+            }
+        }
+        let format = format_of(&bytes).ok_or_else(|| format!("not a picture ({kind})"))?;
+        return Ok((format, bytes));
     }
-    Some(bytes)
+    Err(format!("more than {MAX_REDIRECTS} redirects"))
 }
 
 impl RemoteImages {
@@ -137,42 +195,70 @@ impl RemoteImages {
             Some(_) => return None,
             None => {}
         }
-        if !allowed(url) {
+        let Some(address) = Url::parse(url).ok().filter(allowed) else {
             self.images.insert(url.to_string(), State::Failed);
             return None;
-        }
+        };
         self.images.insert(url.to_string(), State::Loading);
+        let origin = cx
+            .try_global::<TestLichessOrigin>()
+            .map(|origin| origin.0.clone());
         let (done, answer) = futures::channel::oneshot::channel();
-        let address = url.to_string();
         match (runtime(), client()) {
             (Some(runtime), Some(client)) => {
                 runtime.spawn(async move {
-                    let _ = done.send(fetch(client, address).await);
+                    // The page may have closed; nobody is waiting for the picture then.
+                    done.send(fetch(client, address, origin).await).ok();
                 });
             }
             _ => {
-                let _ = done.send(None);
+                done.send(Err("no runtime to read pictures on".into())).ok();
             }
         }
         let url = url.to_string();
         cx.spawn(async move |this, cx| {
-            let bytes = answer.await.ok().flatten();
-            let _ = this.update(cx, |images, cx| {
-                let state = bytes
-                    .and_then(|bytes| Some(Image::from_bytes(format_of(&bytes)?, bytes)))
-                    .map_or(State::Failed, |image| State::Ready(Arc::new(image)));
+            let read = answer
+                .await
+                .unwrap_or_else(|_| Err("the read was dropped".into()))
+                .map_err(|why| format!("The picture {url} could not be had: {why}"));
+            this.update(cx, |images, cx| {
+                let state = read.warn_on_err().map_or(State::Failed, |(format, bytes)| {
+                    State::Ready(Arc::new(Image::from_bytes(format, bytes)))
+                });
                 images.images.insert(url, state);
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
         None
     }
 }
 
+/// What the page's tests read of the pictures.
+#[cfg(test)]
+pub mod probe {
+    use super::{RemoteImages, State};
+
+    /// Whether the picture at `url` has arrived.
+    pub(crate) fn arrived(images: &RemoteImages, url: &str) -> bool {
+        matches!(images.images.get(url), Some(State::Ready(_)))
+    }
+
+    /// Whether the picture at `url` could not be had.
+    pub(crate) fn failed(images: &RemoteImages, url: &str) -> bool {
+        matches!(images.images.get(url), Some(State::Failed))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{allowed, client_builder, fetch, format_of, runtime};
+    use super::{client_builder, fetch, format_of, runtime};
+    use reqwest::Url;
+
+    fn allowed(url: &str) -> bool {
+        Url::parse(url).is_ok_and(|url| super::allowed(&url))
+    }
     use gpui_kit::ImageFormat;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -183,11 +269,26 @@ mod tests {
         assert!(allowed(
             "https://image.lichess1.org/display?h=400&op=thumbnail&path=relay.jpg"
         ));
+        assert!(allowed(
+            "https://image.lichess.org/display?fmt=webp&h=400&op=thumbnail&path=relay.webp"
+        ));
         assert!(allowed("https://lichess.org/assets/cover.png"));
         assert!(!allowed("http://image.lichess1.org/cover.jpg"));
         assert!(!allowed("https://image.lichess1.org.example.com/cover.jpg"));
         assert!(!allowed("https://lichess.org:8443/cover.jpg"));
         assert!(!allowed("file:///etc/passwd"));
+    }
+
+    #[test]
+    fn a_stand_in_reads_the_pictures_unless_it_is_lichess() {
+        let cover = Url::parse("https://image.lichess.org/display?path=a.webp").unwrap();
+        let read = |origin| super::routed(&cover, origin).unwrap().to_string();
+        assert_eq!(read(None), cover.as_str());
+        assert_eq!(read(Some("https://lichess.org")), cover.as_str());
+        assert_eq!(
+            read(Some("http://127.0.0.1:9")),
+            "http://127.0.0.1:9/display?path=a.webp"
+        );
     }
 
     #[test]
@@ -239,13 +340,14 @@ mod tests {
         let client: &'static reqwest::Client =
             Box::leak(Box::new(client_builder().no_proxy().build().unwrap()));
         for cover in 0..5 {
-            let url = format!("{base}/cover-{cover}.png");
+            let url = Url::parse(&format!("https://image.lichess.org/cover-{cover}.png")).unwrap();
             let (done, answer) = std::sync::mpsc::channel();
+            let origin = Some(base.clone());
             runtime.spawn(async move {
-                let _ = done.send(fetch(client, url).await);
+                done.send(fetch(client, url, origin).await).ok();
             });
-            let bytes = answer.recv().unwrap().expect("picture");
-            assert_eq!(format_of(&bytes), Some(ImageFormat::Png));
+            let (format, _) = answer.recv().unwrap().expect("picture");
+            assert_eq!(format, ImageFormat::Png);
         }
         // A client per picture opened one connection each, every time (5). The pool can still
         // open a second when a request starts before the last answer's connection is back in it

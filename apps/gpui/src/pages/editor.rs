@@ -667,7 +667,7 @@ impl EditorPage {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(radii::MD)
+                .rounded(radii::BOX)
                 .text_color(if selected {
                     palette.text
                 } else {
@@ -707,7 +707,7 @@ impl EditorPage {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(radii::MD)
+                .rounded(radii::BOX)
                 .cursor_pointer()
                 .map(|spare| chosen(spare, selected, palette))
                 .tooltip(move |window, cx| {
@@ -734,7 +734,7 @@ impl EditorPage {
                         .w(across * 0.86)
                         .h(cell * 0.86)
                         .justify_center()
-                        .rounded(radii::SM)
+                        .rounded(radii::BOX)
                         .bg(rgb(0xf0d9b5))
                         .child(img(image).size(cell * 0.86)),
                 )
@@ -743,7 +743,7 @@ impl EditorPage {
         h_flex()
             .gap(px(4.))
             .p(px(4.))
-            .rounded(radii::LG)
+            .rounded(radii::BOX)
             .border_1()
             .border_color(palette.border)
             .bg(palette.elevated)

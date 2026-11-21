@@ -15,7 +15,7 @@ impl AnalysisPage {
             .flex_none()
             .gap(px(4.))
             .p(px(2.))
-            .rounded(radii::MD)
+            .rounded(radii::BOX)
             .border_1()
             .border_color(palette.border)
             .bg(palette.bg)
@@ -33,7 +33,7 @@ impl AnalysisPage {
                     .gap(px(8.))
                     .px(px(8.))
                     .py(px(4.))
-                    .rounded(radii::SM)
+                    .rounded(radii::BOX)
                     .text_size(px(13.))
                     .font_weight(FontWeight::MEDIUM)
                     .cursor_pointer()
@@ -356,7 +356,7 @@ impl AnalysisPage {
                         .p(px(8.))
                         .border_1()
                         .border_color(palette.border)
-                        .rounded(radii::LG)
+                        .rounded(radii::BOX)
                         .bg(palette.bg)
                         // Away from any move, the list's menu copies the game.
                         .context_menu({
