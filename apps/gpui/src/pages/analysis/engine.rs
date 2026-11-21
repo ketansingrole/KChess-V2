@@ -313,9 +313,14 @@ impl AnalysisPage {
     }
 
     /// Play an engine line up to (and including) the move clicked.
+    /// Only its last move sounds: the line is played at once, not a burst of clips.
     pub(super) fn play_line(&mut self, pv: &[String], up_to: usize, cx: &mut Context<Self>) {
-        for uci in pv.iter().take(up_to + 1) {
-            if !self.play(uci, cx) {
+        let line = &pv[..pv.len().min(up_to + 1)];
+        for (index, uci) in line.iter().enumerate() {
+            self.quiet_moves = index + 1 < line.len();
+            let kept = self.play(uci, cx);
+            self.quiet_moves = false;
+            if !kept {
                 break;
             }
         }

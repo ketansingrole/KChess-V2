@@ -84,6 +84,37 @@ fn moves_played_on_the_board_fill_the_move_list(cx: &mut gpui_kit::TestAppContex
     assert_eq!(selected(&mut app, "e2e4"), Some(false));
 }
 
+/// The analysis board played no sound at all. A move played on it sounds, a capture as a
+/// capture, and so does a step one move forward; loading a game, stepping back and jumping along
+/// the moves stay silent.
+#[gpui_kit::test]
+fn moves_played_and_stepped_forward_sound(cx: &mut gpui_kit::TestAppContext) {
+    use crate::sound::{Played, Sound};
+    let mut app = analysis(cx);
+    app.cx.update(|cx| cx.set_global(Played::default()));
+    let silent: [Sound; 0] = [];
+    let heard =
+        |app: &mut Harness| app.cx.update(|cx| std::mem::take(&mut cx.global_mut::<Played>().0));
+
+    import(&mut app, "1. e4 d5 *");
+    assert_eq!(heard(&mut app), silent);
+    app.press("right");
+    assert_eq!(selected(&mut app, "e2e4"), Some(true));
+    assert_eq!(heard(&mut app), [Sound::Move]);
+    app.click("tree-e2e4 d7d5");
+    assert_eq!(heard(&mut app), [Sound::Move]);
+    app.drag_square("e4", "d5", true);
+    assert_eq!(selected(&mut app, "e2e4 d7d5 e4d5"), Some(true));
+    assert_eq!(heard(&mut app), [Sound::Capture]);
+
+    app.press("left");
+    app.press("home");
+    app.press("end");
+    app.click("tree-e2e4");
+    assert_eq!(selected(&mut app, "e2e4"), Some(true));
+    assert_eq!(heard(&mut app), silent);
+}
+
 #[gpui_kit::test]
 fn typed_moves_are_stepped_through_with_the_controls(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
