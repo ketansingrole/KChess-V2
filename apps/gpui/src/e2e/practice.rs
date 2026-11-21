@@ -117,6 +117,107 @@ fn a_coordinates_run_keeps_one_flash_timer(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(timers, 2, "the clock and the last flash");
 }
 
+/// The Coordinates drill on screen.
+fn coordinates(
+    app: &mut Harness,
+) -> gpui_kit::Entity<crate::pages::practice::coordinates::Coordinates> {
+    app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).coordinates())
+            .expect("the coordinates drill")
+    })
+}
+
+/// The square Name the square asks for, ringed on the board.
+fn asked(app: &mut Harness) -> String {
+    let drill = coordinates(app);
+    app.cx
+        .update(|cx| drill.read(cx).target_for_test().to_string())
+}
+
+/// Regression: a key typed in Name the square's box reached the page's keys too, so each square
+/// was answered twice, the second time against the next square asked.
+#[gpui_kit::test]
+fn a_square_typed_in_the_box_answers_once(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    app.click(("coordinates-mode", 1usize));
+    app.click("coordinates-start");
+    app.click_label("Type the square");
+    let target = asked(&mut app);
+    for key in target.chars() {
+        app.press(&key.to_string());
+    }
+    wait_for_label(&mut app, "run-score", "1");
+    app.click("coordinates-end");
+    assert_eq!(app.status(), "1 correct · 100% accuracy");
+}
+
+/// Name the square takes a square said aloud, and a voice run keeps its own best.
+#[gpui_kit::test]
+fn a_spoken_square_answers_in_name_the_square(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    app.click(("coordinates-mode", 1usize));
+    app.find(("coordinates-voice", 0usize));
+    app.click("coordinates-start");
+    let target = asked(&mut app);
+    let spoken = format!("{} {}", &target[..1], &target[1..]);
+    let drill = coordinates(&mut app);
+    app.cx
+        .update(|cx| drill.update(cx, |drill, cx| drill.hear_for_test(&spoken, cx)));
+    wait_for_label(&mut app, "run-score", "1");
+    // Find the square has no Voice to answer with.
+    app.click("coordinates-end");
+    app.click(("coordinates-mode", 0usize));
+    assert!(!app.shows(("coordinates-voice", 0usize)));
+}
+
+/// Knight paths takes the square to jump to typed in the box under the board, as a click
+/// would, and refuses one that is no knight jump.
+#[gpui_kit::test]
+fn a_typed_square_jumps_the_knight(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Knight);
+    app.click("knight-start");
+    let drill = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).knight())
+            .expect("the knight drill")
+    });
+    let (from, goal) = app.cx.update(|cx| {
+        let drill = drill.read(cx);
+        (
+            drill.knight_for_test().to_string(),
+            drill.goal_for_test().to_string(),
+        )
+    });
+    let square: shakmaty::Square = from.parse().expect("a square");
+    let jumps: Vec<String> = shakmaty::attacks::knight_attacks(square)
+        .into_iter()
+        .map(|square| square.to_string())
+        .collect();
+    let to = jumps
+        .iter()
+        .find(|to| **to != goal)
+        .expect("a jump")
+        .clone();
+    // A square two files over and on the same rank is never a knight jump.
+    let file = (square.file() as i32 + if (square.file() as i32) < 4 { 2 } else { -2 }) as u32;
+    let refused = shakmaty::Square::from_coords(shakmaty::File::new(file), square.rank());
+    app.click_label("Type the square");
+    for key in refused.to_string().chars() {
+        app.press(&key.to_string());
+    }
+    let knight = |app: &mut Harness| {
+        app.cx
+            .update(|cx| drill.read(cx).knight_for_test().to_string())
+    };
+    assert_eq!(knight(&mut app), from);
+    for key in to.chars() {
+        app.press(&key.to_string());
+    }
+    assert_eq!(knight(&mut app), to);
+}
+
 #[gpui_kit::test]
 fn a_coordinates_run_can_be_limited_to_some_files_and_ranks(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
@@ -742,6 +843,36 @@ fn a_pasted_game_is_guessed_through_and_scored(cx: &mut gpui_kit::TestAppContext
     app.find("guess-start");
 }
 
+/// Start guessing `pgn` as White, pasted in.
+pub(super) fn guess_game(app: &mut Harness, pgn: &str) {
+    tab(app, crate::pages::practice::Tab::Guess);
+    app.click_label("Game PGN");
+    app.type_text(pgn);
+    app.click("guess-start");
+    app.find("chess-board");
+}
+
+/// A move said aloud is a guess, as one typed or played on the board, with Voice beside the
+/// move box as on the game pages.
+#[gpui_kit::test]
+fn a_spoken_move_makes_a_guess(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    guess_game(&mut app, "1. e4 e5 2. Nf3 Nc6 *");
+    app.find(("guess-voice", 0usize));
+    let guess = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).guess())
+            .expect("the guess drill")
+    });
+    // Settings ask to confirm a spoken move, as in a game.
+    for text in ["e four", "confirm"] {
+        app.cx
+            .update(|cx| guess.update(cx, |guess, cx| guess.hear_for_test(text, cx)));
+    }
+    wait_for_label(&mut app, "status-banner", "e4 ✓");
+    app.wait_for_moves(&["e4", "e5"]);
+}
+
 /// A game opened for guessing elsewhere (the Masters explorer) lands on the tab, as the side asked
 /// for, and a PGN that is not a game is refused.
 #[gpui_kit::test]
@@ -969,6 +1100,29 @@ fn drills_changed_in_another_window_show_here_too(cx: &mut gpui_kit::TestAppCont
     app.find("practice-due");
     app.changed_elsewhere(&[kchess_contracts::types::ProfileArea::Drills]);
     app.wait_gone("practice-due");
+}
+
+/// Regression: Knight paths sized its panel for two player lines its board doesn't have, so it ran
+/// 88 px past the board; Coordinates and Knight paths now have the square box's row under the
+/// board, and the panel ends with that row in Find and Name the square alike.
+#[gpui_kit::test]
+fn the_drill_panels_end_with_the_board(cx: &mut gpui_kit::TestAppContext) {
+    use super::puzzles::panel_ends_with_column;
+    let mut app = practice(cx);
+    panel_ends_with_column(&mut app, "coordinates-panel", "coordinates-column");
+    app.click(("coordinates-mode", 1usize));
+    panel_ends_with_column(&mut app, "coordinates-panel", "coordinates-column");
+    tab(&mut app, crate::pages::practice::Tab::Knight);
+    panel_ends_with_column(&mut app, "knight-panel", "knight-column");
+}
+
+/// Regression: Guess the move sized its panel for two player lines, so it ran 44 px past the move
+/// box's row under the board.
+#[gpui_kit::test]
+fn the_guess_panel_ends_with_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    guess_game(&mut app, "1. e4 e5 2. Nf3 Nc6 *");
+    super::puzzles::panel_ends_with_column(&mut app, "guess-panel", "guess-column");
 }
 
 /// Regression: Your mistakes sized its panel for two player lines its puzzle board doesn't have,
