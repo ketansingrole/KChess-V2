@@ -571,6 +571,7 @@ impl StudiesPage {
                         .primary()
                         .small()
                         .icon(icon("upload"))
+                        // gpui-lints: allow(icon_per_label) uploads the study to Lichess, not a message
                         .label("Send")
                         .loading(busy)
                         .disabled(busy)

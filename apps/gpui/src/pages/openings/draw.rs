@@ -29,6 +29,7 @@ impl OpeningsPage {
                 .h(px(28.))
                 .w_full()
                 .icon(icon("graduation-cap"))
+                // gpui-lints: allow(icon_per_label) trains the opening; Train on Puzzles starts puzzles
                 .label("Train")
                 .accessibility_label(format!("Train {}", item.name))
                 .on_click(move |_, window, cx| {

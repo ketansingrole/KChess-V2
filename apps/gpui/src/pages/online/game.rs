@@ -685,6 +685,7 @@ impl OnlinePage {
                     Button::new("online-reconnect")
                         .primary()
                         .icon(icon("refresh-cw"))
+                        // gpui-lints: allow(icon_per_label) reconnects the game, not the account
                         .label("Reconnect")
                         .loading(online.busy)
                         .on_click(|_, _, cx| {

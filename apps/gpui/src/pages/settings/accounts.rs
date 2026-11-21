@@ -353,6 +353,7 @@ impl SettingsPage {
                             .when(players.is_empty(), |button| button.primary())
                             .when(!players.is_empty(), |button| button.outline())
                             .icon(icon("plus"))
+                            // gpui-lints: allow(icon_per_label) adds the Chess.com account whose games it syncs
                             .label("Sync games")
                             .tooltip("Downloads the player's public Chess.com games")
                             .loading(syncing && typed)
