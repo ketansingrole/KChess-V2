@@ -125,3 +125,88 @@ fn the_engine_line_holds_still_as_its_search_ends(cx: &mut gpui_kit::TestAppCont
     app.wait_for("the search to end", searching(false));
     assert_eq!(places(&mut app, &ids)[0].origin, during[0].origin);
 }
+
+/// Turn voice on and off on `page`, its Voice button holding its place under the pointer while
+/// the bar fills in beside it (here with the error a test machine's missing speech model gives,
+/// and Try again).
+fn voice_holds_still(app: &mut Harness, page: &str, bar: &'static str) {
+    let button: ElementId = (bar, 0usize).into();
+    for (width, height) in &SIZES[1..] {
+        app.cx
+            .simulate_window_resize(app.window, size(px(*width), px(*height)));
+        app.open(page);
+        app.settle();
+        let ids = [button.clone()];
+        let off = places(app, &ids);
+        app.click(button.clone());
+        app.find((bar, 2usize));
+        app.settle();
+        assert_eq!(
+            places(app, &ids),
+            off,
+            "{page}'s Voice moved once on at {width}×{height}"
+        );
+        app.click(button.clone());
+        app.settle();
+        assert_eq!(
+            places(app, &ids),
+            off,
+            "{page}'s Voice moved once off at {width}×{height}"
+        );
+    }
+}
+
+#[gpui_kit::test]
+fn the_voice_button_holds_still_beside_the_move_box(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    voice_holds_still(&mut app, "Play with computer", "computer-voice");
+}
+
+#[gpui_kit::test]
+fn the_voice_button_holds_still_under_the_board_editor(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    voice_holds_still(&mut app, "Board editor", "editor-voice");
+}
+
+/// Choosing a spare piece in the Board editor leaves the row where it was.
+#[gpui_kit::test]
+fn the_board_editors_spare_pieces_hold_still_as_one_is_chosen(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Board editor");
+    app.find("chess-board");
+    let ids: Vec<ElementId> = ["King", "Queen", "Rook", "Bishop", "Knight", "Pawn"]
+        .iter()
+        .map(|role| format!("spare-White-{role}").into())
+        .collect();
+    let before = places(&mut app, &ids);
+    for id in &ids {
+        app.click(id.clone());
+        app.settle();
+        assert_eq!(
+            places(&mut app, &ids),
+            before,
+            "the spare pieces moved choosing {id:?}"
+        );
+    }
+}
+
+/// Choosing a piece set in Settings leaves every option where it was.
+#[gpui_kit::test]
+fn choosing_a_piece_set_leaves_the_options_in_place(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Appearance");
+    let ids: Vec<ElementId> = ["cburnett", "merida", "pixel"]
+        .iter()
+        .map(|set| format!("piece-set-{set}").into())
+        .collect();
+    let before = places(&mut app, &ids);
+    for id in ids.iter().rev() {
+        app.click(id.clone());
+        app.settle();
+        assert_eq!(
+            places(&mut app, &ids),
+            before,
+            "the options moved choosing {id:?}"
+        );
+    }
+}

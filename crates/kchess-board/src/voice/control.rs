@@ -128,6 +128,7 @@ impl Control {
                 heard: self.heard.clone(),
                 extra: Vec::new(),
                 inline: true,
+                end: false,
             },
             move |on, _, cx| {
                 let grammar = grammar.clone();

@@ -547,6 +547,7 @@ pub fn board_bar<V: 'static>(
         heard,
         extra,
         inline: false,
+        end: true,
     };
     let line = super::bar::voice_line(&bar, cx);
     let controls = super::voice_bar(
