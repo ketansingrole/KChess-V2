@@ -48,7 +48,9 @@ pub fn default_settings() -> Result<Settings, String> {
             sound_enabled: true,
             sound_volume: DEFAULT_SOUND_VOLUME,
             premove: true,
-            promotion: PromotionMode::Ask,
+            // As on Lichess: a premove cannot stop to ask, so it becomes a queen; a move made on
+            // your turn still asks.
+            promotion: PromotionMode::Premove,
             show_legal_moves: true,
             notifications_enabled: true,
             notify_active: false,

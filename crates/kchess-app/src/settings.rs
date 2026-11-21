@@ -3,7 +3,7 @@
 //! saves wait for a pause in editing and are written one at a time.
 
 use crate::log::ResultExt as _;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
@@ -18,6 +18,10 @@ use crate::quit::BoxedSave;
 
 /// How long edits settle before they are saved.
 const SAVE_DELAY: Duration = Duration::from_millis(400);
+
+/// How long further changes to the same settings count as one change that Undo takes back
+/// whole (a slider dragged, choices tried in turn): about as long as the Undo notice shows.
+const EDIT_WINDOW: Duration = Duration::from_secs(5);
 
 /// The settings and the user's own themes, as last read from the core.
 pub struct AppSettings {
@@ -39,7 +43,45 @@ pub struct AppSettings {
     save_soon: Option<Task<()>>,
     writes: mpsc::UnboundedSender<Write>,
     reads: Reads,
+    /// The person's latest change, which Undo takes back, and how many changes were recorded.
+    last_edit: Option<Edit>,
+    edits: u64,
 }
+
+/// A change a person made to their settings, which Undo takes back.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Edit {
+    /// Counts the changes, so the notice of an older one cannot take back a newer one.
+    pub id: u64,
+    /// The settings it changed, each with its value before and after.
+    pub changes: Vec<Change>,
+    /// When it was last changed.
+    at: Instant,
+}
+
+/// One setting an edit changed, by its stored name (`soundVolume`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Change {
+    pub key: String,
+    pub before: Value,
+    pub after: Value,
+}
+
+impl Edit {
+    fn same_settings(&self, changes: &[Change]) -> bool {
+        self.changes.len() == changes.len()
+            && self
+                .changes
+                .iter()
+                .zip(changes)
+                .all(|(this, other)| this.key == other.key)
+    }
+}
+
+/// Sent when a person changes a setting (`change`): the change Undo would take back.
+pub struct SettingsEdited(pub Edit);
+
+impl EventEmitter<SettingsEdited> for AppSettings {}
 
 enum Write {
     /// The settings shown, and those they were edited from: only what changed is written.
@@ -78,6 +120,8 @@ pub fn init_for_tests(cx: &mut App) -> Entity<AppSettings> {
         save_soon: None,
         writes,
         reads: Reads::default(),
+        last_edit: None,
+        edits: 0,
     });
     cx.set_global(SettingsHandle(entity.clone()));
     entity
@@ -121,6 +165,8 @@ pub fn init(settings: Settings, cx: &mut App) {
         save_soon: None,
         writes,
         reads: Reads::default(),
+        last_edit: None,
+        edits: 0,
     });
     write_in_order(entity.downgrade(), queue, cx);
     crate::quit::on_quit(cx, {
@@ -290,6 +336,62 @@ impl AppSettings {
         if self.settings == before {
             return;
         }
+        let edit = self.record(
+            changes(&before, &self.settings),
+            cx.background_executor().now(),
+        );
+        cx.emit(SettingsEdited(edit));
+        self.edited(cx);
+    }
+
+    /// Take back the change `id` (`undo`): each setting it changed that still shows what it
+    /// set goes back to what it was; a setting changed since, here or in another window, stays.
+    fn undo(&mut self, id: u64, cx: &mut gpui_kit::Context<Self>) {
+        let Some(edit) = self.last_edit.take_if(|edit| edit.id == id) else {
+            return;
+        };
+        let restored = restored(&self.settings, &edit.changes);
+        if restored != self.settings {
+            self.settings = restored;
+            self.edited(cx);
+        }
+    }
+
+    /// Note the person's change: one more change to the same settings soon after the last
+    /// joins it, so Undo goes back to before the first; any other is a change of its own.
+    fn record(&mut self, changes: Vec<Change>, now: Instant) -> Edit {
+        self.edits += 1;
+        let joined = self.last_edit.take().and_then(|last| {
+            if !last.same_settings(&changes) || now.duration_since(last.at) >= EDIT_WINDOW {
+                return None;
+            }
+            let joined: Vec<Change> = last
+                .changes
+                .into_iter()
+                .zip(&changes)
+                .map(|(first, next)| Change {
+                    after: next.after.clone(),
+                    ..first
+                })
+                .collect();
+            // Back where it started (a switch turned on and off again): that is a change of
+            // its own, which Undo takes back.
+            joined
+                .iter()
+                .any(|change| change.before != change.after)
+                .then_some(joined)
+        });
+        let edit = Edit {
+            id: self.edits,
+            changes: joined.unwrap_or(changes),
+            at: now,
+        };
+        self.last_edit = Some(edit.clone());
+        edit
+    }
+
+    /// The settings shown changed: the views redraw and it is saved after a pause.
+    fn edited(&mut self, cx: &mut gpui_kit::Context<Self>) {
         self.dirty = true;
         cx.emit(SettingsChanged);
         cx.notify();
@@ -366,6 +468,35 @@ fn adopt(shown: &Settings, stored: &Settings, next: &Settings) -> Settings {
     serde_json::from_value(Value::Object(merged)).unwrap_or_else(|_| shown.clone())
 }
 
+/// Each setting `after` holds differently from `before`, by its stored name, in stored order.
+pub fn changes(before: &Settings, after: &Settings) -> Vec<Change> {
+    let (Ok(Value::Object(before)), Ok(Value::Object(after))) =
+        (serde_json::to_value(before), serde_json::to_value(after))
+    else {
+        return Vec::new();
+    };
+    after
+        .into_iter()
+        .filter_map(|(key, after)| {
+            let before = before.get(&key).cloned().unwrap_or(Value::Null);
+            (before != after).then_some(Change { key, before, after })
+        })
+        .collect()
+}
+
+/// `settings` with each of `changes` taken back where it still holds its `after` value.
+fn restored(settings: &Settings, changes: &[Change]) -> Settings {
+    let Ok(Value::Object(mut shown)) = serde_json::to_value(settings) else {
+        return settings.clone();
+    };
+    for change in changes {
+        if shown.get(&change.key) == Some(&change.after) {
+            shown.insert(change.key.clone(), change.before.clone());
+        }
+    }
+    serde_json::from_value(Value::Object(shown)).unwrap_or_else(|_| settings.clone())
+}
+
 /// The app's own preferences, as shown now.
 pub fn frontend(cx: &App) -> &kchess_contracts::types::FrontendPreferences {
     &cx.global::<SettingsHandle>().0.read(cx).settings.frontend
@@ -377,6 +508,13 @@ pub fn change(cx: &mut App, change: impl FnOnce(&mut Settings) + 'static) {
     handle.update(cx, |settings, cx| settings.update(change, cx));
 }
 
+/// Take back the person's change `id` (the Undo of its notice), unless they changed settings
+/// again since; it saves itself.
+pub fn undo(cx: &mut App, id: u64) {
+    let handle = cx.global::<SettingsHandle>().0.clone();
+    handle.update(cx, |settings, cx| settings.undo(id, cx));
+}
+
 /// Save waiting edits now; done once the core has them (before asking it about what they set).
 pub fn flush(cx: &mut App) -> BoxedSave {
     let handle = cx.global::<SettingsHandle>().0.clone();
@@ -385,11 +523,12 @@ pub fn flush(cx: &mut App) -> BoxedSave {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppSettings, Write, adopt, defaults, rebased};
+    use super::{AppSettings, EDIT_WINDOW, Write, adopt, changes, defaults, rebased, restored};
     use crate::core::Reads;
     use futures::channel::mpsc;
     use kchess_contracts::types::Settings;
     use serde_json::Value;
+    use std::time::{Duration, Instant};
 
     #[gpui_kit::test]
     fn tests_get_the_default_settings_without_a_core(cx: &mut gpui_kit::TestAppContext) {
@@ -418,6 +557,8 @@ mod tests {
             save_soon: None,
             writes,
             reads: Reads::default(),
+            last_edit: None,
+            edits: 0,
         }
     }
 
@@ -521,5 +662,76 @@ mod tests {
         let rebased = adopt(&shown, &sent, &stored);
         assert_eq!(rebased.frontend.sound_volume, 0.8, "not written back");
         assert!(rebased.frontend.zen_mode, "the later edit stays");
+    }
+
+    /// Record a change to `this` made by `change` at `at`, as `update` does.
+    fn change(
+        this: &mut AppSettings,
+        at: Instant,
+        change: impl FnOnce(&mut Settings),
+    ) -> super::Edit {
+        let before = this.settings.clone();
+        change(&mut this.settings);
+        this.record(changes(&before, &this.settings), at)
+    }
+
+    /// A volume dragged from 0.7 to 0.3 is one change: Undo goes back to 0.7.
+    #[test]
+    fn changes_to_one_setting_soon_after_each_other_are_one_edit() {
+        let (writes, _queue) = mpsc::unbounded();
+        let mut this = settings(writes);
+        let start = Instant::now();
+        let first = change(&mut this, start, |s| s.frontend.sound_volume = 0.5);
+        let last = change(&mut this, start + Duration::from_secs(1), |s| {
+            s.frontend.sound_volume = 0.3
+        });
+        assert_ne!(first.id, last.id, "the newer notice replaces the older");
+        assert_eq!(last.changes.len(), 1);
+        assert_eq!(last.changes[0].key, "soundVolume");
+        assert_eq!(last.changes[0].before, serde_json::json!(0.7));
+        assert_eq!(last.changes[0].after, serde_json::json!(0.3));
+    }
+
+    #[test]
+    fn a_change_after_a_pause_or_to_another_setting_is_an_edit_of_its_own() {
+        let (writes, _queue) = mpsc::unbounded();
+        let mut this = settings(writes);
+        let start = Instant::now();
+        change(&mut this, start, |s| s.frontend.sound_volume = 0.5);
+        let later = change(&mut this, start + EDIT_WINDOW, |s| {
+            s.frontend.sound_volume = 0.3
+        });
+        assert_eq!(later.changes[0].before, serde_json::json!(0.5));
+        let other = change(&mut this, start + EDIT_WINDOW, |s| {
+            s.frontend.zen_mode = true
+        });
+        assert_eq!(other.changes.len(), 1);
+        assert_eq!(other.changes[0].key, "zenMode");
+    }
+
+    /// A switch turned on and straight off again: Undo turns it back on, not nothing.
+    #[test]
+    fn a_setting_changed_back_is_an_edit_undo_takes_back() {
+        let (writes, _queue) = mpsc::unbounded();
+        let mut this = settings(writes);
+        let start = Instant::now();
+        change(&mut this, start, |s| s.frontend.zen_mode = true);
+        let back = change(&mut this, start, |s| s.frontend.zen_mode = false);
+        assert_eq!(back.changes[0].before, serde_json::json!(true));
+        assert_eq!(back.changes[0].after, serde_json::json!(false));
+    }
+
+    #[test]
+    fn undo_keeps_a_setting_changed_since() {
+        let stored = defaults();
+        let mut changed = stored.clone();
+        changed.frontend.sound_volume = 0.2;
+        changed.frontend.zen_mode = true;
+        let edit = changes(&stored, &changed);
+        // Another window set the volume meanwhile.
+        changed.frontend.sound_volume = 0.9;
+        let undone = restored(&changed, &edit);
+        assert_eq!(undone.frontend.zen_mode, stored.frontend.zen_mode);
+        assert_eq!(undone.frontend.sound_volume, 0.9);
     }
 }

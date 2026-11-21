@@ -542,6 +542,35 @@ fn the_engine_settings_stay_inside_their_popover(cx: &mut gpui_kit::TestAppConte
     }
 }
 
+/// A switch in the engine settings brings up an Undo that turns it back, kept by the profile.
+#[gpui_kit::test]
+fn an_engine_setting_changed_in_its_popover_can_be_undone(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    app.click_label("Engine settings");
+    // The popover's switch is found by its name, which its row's title shares.
+    let switch = |app: &mut Harness| {
+        let mut found = None;
+        app.wait_for("the Infinite analysis switch", |window, _| {
+            found = window
+                .find_all_by_label("Infinite analysis")
+                .into_iter()
+                .find(|element| element.visible() && element.checked().is_some());
+            found.is_some()
+        });
+        found.expect("found")
+    };
+    let infinite = |app: &mut Harness| switch(app).checked();
+    assert_eq!(infinite(&mut app), Some(false));
+    let at = switch(&mut app).bounds().center();
+    app.click_point(at);
+    app.wait_for_view_preference("kchess:analysis-infinite", serde_json::json!(true));
+    app.click(crate::setting_notice::UNDO);
+    app.wait_for_view_preference("kchess:analysis-infinite", serde_json::json!(false));
+    // A press on the notice is outside the popover, which closes.
+    app.click_label("Engine settings");
+    assert_eq!(infinite(&mut app), Some(false));
+}
+
 #[gpui_kit::test]
 fn the_board_can_be_flipped_and_still_takes_moves(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);

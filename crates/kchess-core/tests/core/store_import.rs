@@ -105,7 +105,7 @@ fn the_json_backup_is_taken_with_its_tokens_and_both_files_are_archived() {
         .expect("getSettings");
     assert_eq!(settings["appearance"], json!("dark"));
     assert_eq!(settings["boardTheme"], json!("green"));
-    assert_eq!(settings["promotion"], json!("ask"));
+    assert_eq!(settings["promotion"], json!("premove"));
     assert_eq!(settings["soundVolume"], json!(0.8));
 
     let data = store

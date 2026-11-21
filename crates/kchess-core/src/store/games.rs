@@ -1141,6 +1141,8 @@ mod tests {
         assert!(!defaults.frontend.puzzle_auto_next);
         // A correspondence move cannot be taken back, so it waits for Confirm, as on Lichess.
         assert!(defaults.frontend.confirm_correspondence);
+        // A premove cannot stop to ask which piece, so it becomes a queen, as on Lichess.
+        assert_eq!(defaults.frontend.promotion, PromotionMode::Premove);
     }
 
     #[test]
@@ -1153,7 +1155,7 @@ mod tests {
         .unwrap();
         let settings = read_settings(&db).unwrap().unwrap();
         assert_eq!(settings.frontend.coordinates, CoordinateMode::Inside);
-        assert_eq!(settings.frontend.promotion, PromotionMode::Ask);
+        assert_eq!(settings.frontend.promotion, PromotionMode::Premove);
         assert_eq!(settings.frontend.piece_animation, PieceAnimation::Normal);
         assert_eq!(settings.core.review_auto, ReviewAuto::Recent);
         assert_eq!(settings.frontend.sound_volume, 0.8);
