@@ -4,6 +4,7 @@
 mod accounts;
 mod ai;
 mod data;
+pub(crate) mod defaults;
 mod engine;
 mod offline;
 mod toggles;
@@ -329,9 +330,27 @@ impl SettingsPage {
                             .get(row - 1)
                             .map_or(Setting::Auto, |p| Setting::Percent(*p)),
                     };
+                    let before = crate::interface_zoom::setting(cx);
+                    if before == setting {
+                        return;
+                    }
                     choose(setting, window, cx);
                     this.zoom_shown = None;
                     cx.notify();
+                    let page = cx.entity().downgrade();
+                    crate::setting_notice::offer(
+                        "Interface size changed",
+                        move |window, cx| {
+                            choose(before, window, cx);
+                            // The list shows the size again (`sync_zoom`).
+                            let _ = page.update(cx, |this, cx| {
+                                this.zoom_shown = None;
+                                cx.notify();
+                            });
+                        },
+                        window,
+                        cx,
+                    );
                 },
             ),
             // Back from System Settings: the microphone permission may have changed there.

@@ -15,7 +15,7 @@ use crate::assets::icon;
 use crate::pages::settings::Section;
 use crate::pages::{ActionRole, NavGroup, Page, PageCommand, Pages};
 use crate::part::Part;
-use crate::settings::{SettingsChanged, SettingsHandle};
+use crate::settings::{SettingsChanged, SettingsEdited, SettingsHandle};
 use crate::theme::Palette;
 
 mod settings_dialog;
@@ -619,6 +619,16 @@ impl Workspace {
                     // Views read settings while rendering without observing them (the board's
                     // theme and pieces); refreshing redraws cached views too.
                     window.refresh();
+                },
+            ),
+            // A change the person made shows its Undo in the window they made it in.
+            cx.subscribe_in(
+                &settings,
+                window,
+                |_, _, edited: &SettingsEdited, window, cx| {
+                    if window.is_window_active() {
+                        crate::setting_notice::edited(&edited.0, window, cx);
+                    }
                 },
             ),
             crate::window_state::track(window, cx),

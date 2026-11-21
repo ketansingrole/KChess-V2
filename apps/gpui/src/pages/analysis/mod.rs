@@ -477,15 +477,29 @@ impl AnalysisPage {
             ),
             cx.observe(&crate::voice::handle(cx), |_, _, cx| cx.notify()),
             typed,
-            cx.subscribe(
+            cx.subscribe_in(
                 &lines_choice,
-                |this, state, _: &SelectEvent<Vec<SharedString>>, cx| {
+                window,
+                |this, state, _: &SelectEvent<Vec<SharedString>>, window, cx| {
                     let row = state
                         .read(cx)
                         .selected_index(cx)
                         .map_or(2, |index| index.row);
+                    let before = prefs_lines(cx);
+                    if before == row + 1 {
+                        return;
+                    }
                     crate::prefs::set(cx, ENGINE_LINES, row + 1);
                     this.engine_changed(cx);
+                    let page = cx.entity().downgrade();
+                    crate::setting_notice::offer(
+                        "Engine lines changed",
+                        move |window, cx| {
+                            let _ = page.update(cx, |page, cx| page.set_lines(before, window, cx));
+                        },
+                        window,
+                        cx,
+                    );
                 },
             ),
             cx.subscribe(&settings, |this, _, _: &SettingsChanged, cx| {
