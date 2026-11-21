@@ -114,7 +114,12 @@ The goal is to keep **exactly one core per profile** and let **any number of cli
     `kchess-contracts/src/host.rs`).
   - `welcome` / `refuse` (service): the connection id, or why not (see
     [Version check](#version-check)).
-  - `call`: `{ id, method, args }`, exactly what `Core::call` takes today.
+  - `call`: `{ id, method, args }`, exactly what `Core::call` takes today. Calls start in the
+    order a client made them, then run side by side: the client sends each as it is made, the
+    service starts each method in frame order before it spawns the rest of it
+    (`kchess_core::tasks::started`), and the core takes calls in turn up to their first wait
+    (`Core::call_unscoped`). So a stop made before a start stops what came first, and two writes
+    land in the order they were made. An embedded core keeps the same order (`embedded.rs`).
   - `result`: `{ id, value }` or `{ id, error }`, with the core's `CoreError` message unchanged.
   - `cancel`: `{ id }`. Cancellation must reach the work (the repository rule for `UciController`
     and `RequestScope`), so the service maps it to the task's cancellation, not to dropping the
@@ -227,7 +232,7 @@ Some methods hold one caller's activity, and today replace the previous one:
   started it. The engine scheduler gives its whole thread budget to one lease at a time
   (`EngineContext::lease`), so the newest request wins: starting an analysis interrupts any other
   window's (a final `interrupted` update), and that window restarts it when the person returns to
-  it. A window's `stopAnalysis` stops only its own. The core runs a window's calls in any order,
+  it. A window's `stopAnalysis` stops only its own. Its calls start in order but run side by side,
   so a window numbers its searches (`clientId`, rising) and names the one a stop ends: a stop or a
   start that arrives after a newer search of that window changes nothing, and a start whose stop
   already ran is refused as aborted.

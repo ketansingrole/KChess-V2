@@ -397,6 +397,27 @@ async fn a_dropped_call_stops_its_work_in_the_core() {
     service.abort();
 }
 
+/// A window's calls take effect in the order it made them. Each was sent only once its task
+/// first ran, and the core started each on whichever worker took it, so a stop made before a
+/// start could stop nothing (main, 2026-11-21) and of two writes the first could land last.
+#[tokio::test(flavor = "multi_thread")]
+async fn calls_take_effect_in_the_order_a_window_made_them() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (gpui, _events) = connect(profile.path(), "gpui").await;
+    let writes: Vec<_> = (0..200)
+        .map(|n| {
+            tokio::spawn(gpui.call("setViewPreference", vec![json!("kchess:order"), json!(n)]))
+        })
+        .collect();
+    for write in writes {
+        write.await.expect("ran").expect("written");
+    }
+    let preferences = gpui.call("viewPreferences", vec![]).await.expect("read");
+    assert_eq!(preferences["kchess:order"], json!(199));
+    service.abort();
+}
+
 /// A client may cancel a call it made: the call stops and is answered as cancelled.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cancelled_call_is_answered_as_cancelled() {
