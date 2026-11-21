@@ -442,3 +442,39 @@ fn escape_goes_back_to_all_openings(cx: &mut gpui_kit::TestAppContext) {
     app.wait_gone("opening-title");
     app.click_label("Search openings");
 }
+
+/// With no account the explorer offers Connect Lichess where it is, and looks the line up once
+/// one is connected: it said to connect one in Settings, and went on saying so once one was.
+#[gpui_kit::test]
+fn the_explorer_offers_connect_lichess_and_looks_up_once_connected(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use crate::pages::openings::OpeningsPage;
+    let mut app = openings(cx);
+    // 1. d4 d5, where the stand-in Lichess's 1. e4 is a move White can play.
+    app.with_window(|window, cx| {
+        crate::shell::view::<OpeningsPage>(cx)
+            .expect("the page")
+            .update(cx, |page, cx| {
+                page.show_line(Some(vec!["d2d4".into(), "d7d5".into()]), window, cx)
+            })
+    });
+    app.find("explorer-connect");
+    assert!(!app.shows("explorer-retry"));
+    let _lichess = app.connect("alice", false);
+    app.find(("explorer-tile", 0usize));
+    assert!(!app.shows("explorer-signed-out"));
+}
+
+/// A lookup that fails offers Try again beside why: the grid had no way to ask again but to
+/// choose its database once more. (The stand-in Lichess answers 1. e4, which the Kieseritzky
+/// Gambit's position cannot play.)
+#[gpui_kit::test]
+fn a_failed_lookup_offers_try_again(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Openings");
+    open_kieseritzky(&mut app);
+    app.click("explorer-retry");
+    app.find("explorer-retry");
+    assert!(!app.shows("explorer-connect"));
+}
