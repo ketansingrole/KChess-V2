@@ -317,7 +317,7 @@ fn crazyhouse() {
                     variant: kchess_domain::variant::Variant::Crazyhouse,
                     fen: fen.into(),
                 };
-                local.replace_game(setup, serde_json::Value::Null, window, cx);
+                local.replace_game(setup, None, window, cx);
                 for uci in [
                     "e2e4", "d7d5", "e4d5", "d8d5", "b1c3", "d5a5", "f1b5", "c7c6", "b5c6",
                 ] {
@@ -860,10 +860,12 @@ fn low_clock() {
             let local = crate::shell::view::<LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 let setup = kchess_domain::variant::Setup::standard();
-                let clock = serde_json::json!({
-                    "white": { "minutes": 0.15, "increment": 0 },
-                    "black": { "minutes": 0.15, "increment": 0 },
-                });
+                let clock = Some(kchess_domain::games::local::LocalClock::even(
+                    kchess_domain::games::Clock {
+                        minutes: 0.15,
+                        increment: 0.,
+                    },
+                ));
                 local.replace_game(setup, clock, window, cx);
                 local.play("e2e4", cx);
             });
@@ -902,10 +904,12 @@ fn over_the_board() {
             let local = crate::shell::view::<LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 let setup = kchess_domain::variant::Setup::standard();
-                let clock = serde_json::json!({
-                    "white": { "minutes": 5, "increment": 3 },
-                    "black": { "minutes": 5, "increment": 3 },
-                });
+                let clock = Some(kchess_domain::games::local::LocalClock::even(
+                    kchess_domain::games::Clock {
+                        minutes: 5.,
+                        increment: 3.,
+                    },
+                ));
                 local.replace_game(setup, clock, window, cx);
                 local.play("e2e4", cx);
                 local.play("e7e5", cx);

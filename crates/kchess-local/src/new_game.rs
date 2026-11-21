@@ -3,7 +3,7 @@
 use super::*;
 
 /// Starts the game the form chose, from its setup and clock.
-type StartGame = Box<dyn Fn(Setup, Value, &mut Window, &mut App)>;
+type StartGame = Box<dyn Fn(Setup, Option<LocalClock>, &mut Window, &mut App)>;
 
 /// The new-game form (`New game over the board`): the variant, its start, the clock and odds.
 pub(super) struct NewGame {
@@ -19,7 +19,7 @@ pub(super) struct NewGame {
 impl NewGame {
     pub(super) fn new(
         current: &Setup,
-        on_start: impl Fn(Setup, Value, &mut Window, &mut App) + 'static,
+        on_start: impl Fn(Setup, Option<LocalClock>, &mut Window, &mut App) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> NewGame {
@@ -165,16 +165,13 @@ impl NewGame {
     }
 
     /// The chosen clock: equal times unless Black's minutes give odds.
-    fn clock(&self, cx: &App) -> Value {
+    fn clock(&self, cx: &App) -> Option<LocalClock> {
         let row = self
             .clock
             .read(cx)
             .selected_index(cx)
             .map_or(0, |index| index.row);
-        let Some((minutes, increment)) = crate::game::CLOCKS.get(row).and_then(|(_, clock)| *clock)
-        else {
-            return Value::Null;
-        };
+        let (minutes, increment) = crate::game::CLOCKS.get(row).and_then(|(_, clock)| *clock)?;
         let odds = self
             .odds
             .read(cx)
@@ -183,9 +180,12 @@ impl NewGame {
             .parse::<f64>()
             .ok()
             .filter(|m| *m >= 1.);
-        json!({
-            "white": { "minutes": minutes, "increment": increment },
-            "black": { "minutes": odds.unwrap_or(minutes), "increment": increment },
+        Some(LocalClock {
+            white: Clock { minutes, increment },
+            black: Clock {
+                minutes: odds.unwrap_or(minutes),
+                increment,
+            },
         })
     }
 }

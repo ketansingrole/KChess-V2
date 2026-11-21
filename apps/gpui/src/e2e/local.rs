@@ -38,10 +38,12 @@ fn a_timed_games_clock_runs_for_the_side_to_move(cx: &mut gpui_kit::TestAppConte
         let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
             let setup = kchess_domain::variant::Setup::standard();
-            let clock = serde_json::json!({
-                "white": { "minutes": 5, "increment": 0 },
-                "black": { "minutes": 5, "increment": 0 },
-            });
+            let clock = Some(kchess_domain::games::local::LocalClock::even(
+                kchess_domain::games::Clock {
+                    minutes: 5.,
+                    increment: 0.,
+                },
+            ));
             local.replace_game(setup, clock, window, cx);
             local.play("e2e4", cx);
         });
@@ -64,6 +66,28 @@ fn a_timed_games_clock_runs_for_the_side_to_move(cx: &mut gpui_kit::TestAppConte
     assert_eq!(app.moves(), ["e4"]);
 }
 
+/// The new-game form starts the game on the clock chosen, Black's minutes as the odds give them.
+#[gpui_kit::test]
+fn a_new_game_starts_on_the_clock_and_odds_chosen(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = board(cx);
+    app.click("local-new");
+    app.click_label("Clock");
+    app.press("down");
+    app.press("enter");
+    app.click_label("Black's minutes (odds)");
+    app.type_text("5");
+    app.click("start-local");
+    app.wait_gone("start-local");
+    let label = |app: &mut Harness, face: usize| {
+        app.find(("local-clock", face))
+            .label()
+            .map(str::to_string)
+            .unwrap_or_default()
+    };
+    assert_eq!(label(&mut app, 0), "White clock, 3:00");
+    assert_eq!(label(&mut app, 1), "Black clock, 5:00");
+}
+
 const SCHOLARS_MATE: [&str; 7] = ["e4", "e5", "Qh5", "Nc6", "Bc4", "Nf6", "Qxf7#"];
 
 #[gpui_kit::test]
@@ -76,10 +100,12 @@ fn an_empty_move_list_mentions_the_clock_only_in_a_timed_game(cx: &mut gpui_kit:
         let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
             let setup = kchess_domain::variant::Setup::standard();
-            let clock = serde_json::json!({
-                "white": { "minutes": 5, "increment": 0 },
-                "black": { "minutes": 5, "increment": 0 },
-            });
+            let clock = Some(kchess_domain::games::local::LocalClock::even(
+                kchess_domain::games::Clock {
+                    minutes: 5.,
+                    increment: 0.,
+                },
+            ));
             local.replace_game(setup, clock, window, cx);
         });
     });
@@ -499,7 +525,7 @@ fn a_crazyhouse_capture_can_be_dropped_back(cx: &mut gpui_kit::TestAppContext) {
                 variant: kchess_domain::variant::Variant::Crazyhouse,
                 fen: fen.into(),
             };
-            local.replace_game(setup, serde_json::Value::Null, window, cx);
+            local.replace_game(setup, None, window, cx);
         });
     });
     type_moves(&mut app, &["e4", "d5", "exd5", "Qxd5"]);
@@ -579,7 +605,7 @@ fn a_chess960_game_can_be_taken_to_the_analysis_board(cx: &mut gpui_kit::TestApp
                 variant: kchess_domain::variant::Variant::Chess960,
                 fen: fen.into(),
             };
-            local.replace_game(setup, serde_json::Value::Null, window, cx);
+            local.replace_game(setup, None, window, cx);
         });
     });
     type_moves(&mut app, &["O-O-O", "e5"]);
@@ -662,10 +688,12 @@ fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
         local.update(cx, |local, cx| {
             let setup = kchess_domain::variant::Setup::standard();
             // Three seconds each: the warning comes under two.
-            let clock = serde_json::json!({
-                "white": { "minutes": 0.05, "increment": 0 },
-                "black": { "minutes": 0.05, "increment": 0 },
-            });
+            let clock = Some(kchess_domain::games::local::LocalClock::even(
+                kchess_domain::games::Clock {
+                    minutes: 0.05,
+                    increment: 0.,
+                },
+            ));
             local.replace_game(setup, clock, window, cx);
             local.play("e2e4", cx);
         });

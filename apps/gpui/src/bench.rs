@@ -190,10 +190,12 @@ fn set_up(scenario: Scenario, window: &mut Window, cx: &mut App) {
                     SessionSaver::when_read(
                         local,
                         |local, window, cx| {
-                            let clock = json!({
-                                "white": { "minutes": 5, "increment": 3 },
-                                "black": { "minutes": 5, "increment": 3 },
-                            });
+                            let clock = Some(kchess_domain::games::local::LocalClock::even(
+                                kchess_domain::games::Clock {
+                                    minutes: 5.,
+                                    increment: 3.,
+                                },
+                            ));
                             let setup = kchess_domain::variant::Setup {
                                 variant: kchess_domain::variant::Variant::Standard,
                                 fen: START_FEN.to_string(),

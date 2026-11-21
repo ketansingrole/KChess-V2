@@ -475,6 +475,34 @@ fn game_options_play_the_side_picked(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
+/// The clock picked in Game options is the game's clock, and the dialog opens on it again.
+#[gpui_kit::test]
+fn game_options_play_the_clock_picked(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestQueryExt as _;
+    let clock = |window: &mut gpui_kit::Window| {
+        window
+            .try_find_by_label("Clock")
+            .and_then(|select| select.value().map(str::to_string))
+    };
+    let mut app = computer(cx);
+    app.click("game-options");
+    app.wait_for("the dialog with no clock", |window, _| {
+        clock(window).as_deref() == Some("No clock")
+    });
+    app.click_label("Clock");
+    app.press("down");
+    app.press("enter");
+    app.wait_for("3+2 picked", |window, _| {
+        clock(window).as_deref() == Some("3+2")
+    });
+    app.click("start-game");
+    app.wait_gone("start-game");
+    app.click("game-options");
+    app.wait_for("the dialog on 3+2", |window, _| {
+        clock(window).as_deref() == Some("3+2")
+    });
+}
+
 /// Game options start a game in another variant, which the engine plays by its rules: the
 /// variant's start, and the computer's move from it.
 #[gpui_kit::test]

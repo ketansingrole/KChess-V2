@@ -24,7 +24,6 @@ use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::types::{HistoryKind, SessionDocument, SessionKind, Sessions};
 use kchess_domain::games::archive::Identity;
-use serde_json::json;
 use shakmaty::Color;
 
 use crate::assets::icon;
@@ -681,7 +680,7 @@ impl ComputerPage {
     fn open_options(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = Current {
             setup: self.game.setup().clone(),
-            clock: json!(self.game.clock()),
+            clock: self.game.clock(),
             color: self.user_color(),
             level: self.game.level().to_string(),
         };
@@ -715,7 +714,7 @@ impl ComputerPage {
             move |this, window, cx| {
                 let chosen = Chosen {
                     setup,
-                    clock: json!(this.game.clock()),
+                    clock: this.game.clock(),
                     color,
                     level: this.game.level().to_string(),
                 };
@@ -745,7 +744,7 @@ impl ComputerPage {
             move |this, window, cx| {
                 let chosen = Chosen {
                     setup: Setup::standard(),
-                    clock: json!(this.game.clock()),
+                    clock: this.game.clock(),
                     color,
                     level,
                 };
@@ -773,9 +772,7 @@ impl ComputerPage {
         self.reset_archive(cx);
         let host = self.host();
         let setup = chosen.setup;
-        let effects = serde_json::from_value(chosen.clock)
-            .map_err(|error| format!("the chosen game: {error}"))
-            .and_then(|clock| self.game.start(Some(setup), Some(clock), &host));
+        let effects = self.game.start(Some(setup), Some(chosen.clock), &host);
         self.perform(effects, cx);
         self.select_level(window, cx);
         self.changed(cx);

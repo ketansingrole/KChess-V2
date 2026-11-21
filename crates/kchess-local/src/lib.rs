@@ -61,7 +61,7 @@ use kchess_contracts::types::{HistoryKind, SessionDocument, SessionKind, Session
 use kchess_domain::games::Outcome;
 use kchess_domain::games::archive::Snapshot;
 use kchess_domain::games::otb_clock::{Config, OtbClock, Side};
-use serde_json::{Value, json};
+use serde_json::json;
 use shakmaty::Color;
 
 use crate::board::{BoardEvent, ChessBoard};
@@ -75,7 +75,8 @@ use crate::played::PlayedHandle;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
 use crate::widgets::{KeyboardFocus as _, Side as PieceSide, Tone};
-use kchess_domain::games::local::{self, LocalGame};
+use kchess_domain::games::Clock;
+use kchess_domain::games::local::{self, LocalClock, LocalGame};
 use kchess_nav::part::Part;
 use kchess_nav::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout, panel_style};
 use kchess_ui::icon;
@@ -640,7 +641,7 @@ impl LocalPage {
 
     /// A new game starts: the one before keeps its place in history and this one gets its own.
     /// After a saved game that could not be read, this one is the players' to keep.
-    fn start(&mut self, setup: Setup, clock: Value, cx: &mut Context<Self>) {
+    fn start(&mut self, setup: Setup, clock: Option<LocalClock>, cx: &mut Context<Self>) {
         self.saver.open();
         let (source, has_play) = (self.game.archive_snapshot(), self.has_play());
         match &mut self.history {
@@ -656,9 +657,7 @@ impl LocalPage {
                 ))
             }
         }
-        let started = serde_json::from_value(clock)
-            .map_err(|error| format!("the chosen game: {error}"))
-            .and_then(|clock| self.game.start(setup, clock, self.now()));
+        let started = self.game.start(setup, clock, self.now());
         if let Err(cause) = started {
             crate::log::write(Level::Warn, "local", &cause);
         }
@@ -737,7 +736,7 @@ impl LocalPage {
     /// A game over the board from a position (the board editor's, the analysis board's), untimed.
     pub fn start_from(&mut self, setup: Setup, window: &mut Window, cx: &mut Context<Self>) {
         crate::prefs::set(cx, MODE_KEY, Mode::Board);
-        self.replace_game(setup, Value::Null, window, cx);
+        self.replace_game(setup, None, window, cx);
     }
 
     /// Start a game, asking first when one on the board is still being played: once the saved
@@ -745,7 +744,7 @@ impl LocalPage {
     pub fn replace_game(
         &mut self,
         setup: Setup,
-        clock: Value,
+        clock: Option<LocalClock>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -760,7 +759,7 @@ impl LocalPage {
     fn confirm_new_game(
         &mut self,
         setup: Setup,
-        clock: Value,
+        clock: Option<LocalClock>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -778,7 +777,7 @@ impl LocalPage {
                 .cancel_text("Cancel")
                 .show_cancel(true)
                 .on_ok(move |_, _, cx| {
-                    let (setup, clock) = (chosen.0.clone(), chosen.1.clone());
+                    let (setup, clock) = (chosen.0.clone(), chosen.1);
                     let _ = page.update(cx, |page, cx| page.start(setup, clock, cx));
                     true
                 })
