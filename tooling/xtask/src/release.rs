@@ -563,12 +563,11 @@ mod tests {
                 if !name.starts_with(' ') && !name.starts_with('#') {
                     job = name;
                 }
-            } else if let Some(condition) = line.strip_prefix("    if: ") {
-                if condition.contains("github.event_name == 'schedule'")
-                    && !condition.contains("||")
-                {
-                    nightly.push(job);
-                }
+            } else if let Some(condition) = line.strip_prefix("    if: ")
+                && condition.contains("github.event_name == 'schedule'")
+                && !condition.contains("||")
+            {
+                nightly.push(job);
             }
         }
         nightly.sort_unstable();
