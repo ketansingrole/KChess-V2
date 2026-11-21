@@ -552,6 +552,121 @@ fn a_tab_holds_still_as_it_first_opens_in_a_narrow_window(cx: &mut gpui_kit::Tes
     first_tabs_hold_still(cx, SIZES[0]);
 }
 
+/// The views notified while the window drew its next frame, each once, with where from.
+fn notified_while_drawing(app: &mut Harness, what: &str, found: &mut Vec<String>) {
+    app.settle();
+    let notified = app
+        .cx
+        .update_window(app.window, |_, window, cx| {
+            super::draw(window, cx);
+            window.views_notified_while_drawing()
+        })
+        .expect("the main window is open");
+    for (_, from) in notified {
+        let line = format!("{what}:\n    {from}");
+        if !found.contains(&line) {
+            found.push(line);
+        }
+    }
+}
+
+/// Every page and each of its tabs at `width`×`height`, and each Settings section with
+/// `settings` (its sections are listed only in a wide window).
+fn nothing_notifies_while_drawing(
+    cx: &mut gpui_kit::TestAppContext,
+    (width, height): (f32, f32),
+    settings: bool,
+) {
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    app.cx
+        .simulate_window_resize(app.window, size(px(width), px(height)));
+    app.with_window(|window, _| window.record_views_notified_while_drawing(true));
+    let mut found = Vec::new();
+    for page in Page::all().filter(|&page| page != Page::Settings) {
+        let label = page.info().label;
+        app.with_window(|window, cx| crate::shell::open(page, window, cx));
+        notified_while_drawing(&mut app, label, &mut found);
+        for (id, name) in page_tabs(&mut app) {
+            if app.cx.update(|cx| crate::shell::current_page(cx)) != Some(page) {
+                app.with_window(|window, cx| crate::shell::open(page, window, cx));
+                app.settle();
+            }
+            if app.with_window(|window, _| window.try_find(id.clone()).is_none()) {
+                continue;
+            }
+            app.with_window(|window, cx| window.click(id.clone(), cx));
+            notified_while_drawing(&mut app, &format!("{label}'s {name} tab"), &mut found);
+        }
+    }
+    for section in crate::pages::settings::Section::ALL
+        .into_iter()
+        .filter(|_| settings)
+    {
+        app.open_settings(section.label());
+        notified_while_drawing(
+            &mut app,
+            &format!("Settings › {}", section.label()),
+            &mut found,
+        );
+    }
+    assert!(
+        found.is_empty(),
+        "drawn again in the next frame, as a frame notified them:\n  {}",
+        found.join("\n  ")
+    );
+}
+
+/// A window records the views notified while it draws only once a test asks, at most eight a
+/// frame: resolving every notification's stack in every test took the app's tests on Windows
+/// 10 to 25 s each, and the job ran out of its hour (CI, 2026-11-22).
+#[gpui_kit::test]
+fn a_window_records_what_notifies_while_drawing_only_when_asked(cx: &mut gpui_kit::TestAppContext) {
+    struct NotifiesWhileDrawing;
+    impl gpui_kit::Render for NotifiesWhileDrawing {
+        fn render(
+            &mut self,
+            _: &mut Window,
+            cx: &mut gpui_kit::Context<Self>,
+        ) -> impl gpui_kit::IntoElement {
+            for _ in 0..10 {
+                // gpui-lints: allow(notify_in_render) the fault this test records
+                cx.notify();
+            }
+            gpui_kit::div()
+        }
+    }
+    let window: gpui_kit::AnyWindowHandle = cx.add_window(|_, _| NotifiesWhileDrawing).into();
+    let drawn = |cx: &mut gpui_kit::TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            super::draw(window, cx);
+            window.views_notified_while_drawing()
+        })
+        .expect("the window is open")
+    };
+    assert!(drawn(cx).is_empty(), "recorded without being asked");
+    cx.update_window(window, |_, window, _| {
+        window.record_views_notified_while_drawing(true)
+    })
+    .expect("the window is open");
+    let notified = drawn(cx);
+    assert_eq!(notified.len(), 8);
+    assert!(notified[0].1.contains("stability"), "{}", notified[0].1);
+}
+
+/// `render` only reads: a view it notifies (a Select told its items, a cached state set) is
+/// drawn again in the next frame with every view around it, so its page is laid out anew each
+/// frame, scrolling included. Studies' Lichess tab told its two Selects their accounts and
+/// studies in every frame.
+#[gpui_kit::test]
+fn nothing_notifies_while_drawing_in_a_wide_window(cx: &mut gpui_kit::TestAppContext) {
+    nothing_notifies_while_drawing(cx, SIZES[2], true);
+}
+
+#[gpui_kit::test]
+fn nothing_notifies_while_drawing_in_a_narrow_window(cx: &mut gpui_kit::TestAppContext) {
+    nothing_notifies_while_drawing(cx, SIZES[0], false);
+}
+
 /// A dialog's error shows beside its buttons: on a line of its own above them it grew the
 /// dialog, which stays centred, and the button just pressed moved under the pointer as the
 /// error came.

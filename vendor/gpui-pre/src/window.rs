@@ -132,6 +132,14 @@ struct WindowInvalidatorInner {
     #[cfg(feature = "profiler")]
     pub frame_dirty: FrameDirtyAccumulator,
     pub platform_waker: Option<Rc<dyn Fn()>>,
+    /// KChess patch: each view notified while the window drew, with the stack it was notified
+    /// from, unresolved, while a test records them (`record_notified_while_drawing`). Resolving
+    /// every notification's frames in every test took the app's tests on Windows 10 to 25 s
+    /// each, and the job ran out of its hour.
+    #[cfg(any(test, feature = "test-support"))]
+    pub notified_while_drawing: Vec<(EntityId, std::backtrace::Backtrace)>,
+    #[cfg(any(test, feature = "test-support"))]
+    pub record_notified_while_drawing: bool,
 }
 
 /// Per-frame invalidation bookkeeping, drained at draw time and emitted to the
@@ -144,6 +152,36 @@ struct WindowInvalidatorInner {
 struct FrameDirtyAccumulator {
     dirty_at: Option<Instant>,
     invalidations: u64,
+}
+
+/// KChess patch: where the app's own code is in the backtrace here: its frames outside GPUI, the
+/// crates it uses and the standard library, as `function (file:line)`.
+#[cfg(any(test, feature = "test-support"))]
+fn notified_from(trace: &std::backtrace::Backtrace) -> String {
+    let trace = trace.to_string();
+    let lines: Vec<&str> = trace.lines().map(str::trim).collect();
+    let mut frames = Vec::new();
+    for pair in lines.windows(2) {
+        let (function, place) = (pair[0], pair[1]);
+        let Some(place) = place.strip_prefix("at ") else {
+            continue;
+        };
+        if function.starts_with("at ")
+            || ["/vendor/", "/.cargo/", "/rustc/", "/library/"]
+                .iter()
+                .any(|outside| place.contains(outside))
+        {
+            continue;
+        }
+        let function = function.split_once(": ").map_or(function, |(_, name)| name);
+        let file = place.rsplit_once("/crates/").or_else(|| place.rsplit_once("/apps/"));
+        let file = file.map_or(place, |(_, file)| file);
+        frames.push(format!("{function} ({file})"));
+        if frames.len() == 4 {
+            break;
+        }
+    }
+    frames.join("\n    ")
 }
 
 #[derive(Clone)]
@@ -164,6 +202,10 @@ impl WindowInvalidator {
                 #[cfg(feature = "profiler")]
                 frame_dirty: FrameDirtyAccumulator::default(),
                 platform_waker: None,
+                #[cfg(any(test, feature = "test-support"))]
+                notified_while_drawing: Vec::new(),
+                #[cfg(any(test, feature = "test-support"))]
+                record_notified_while_drawing: false,
             })),
         }
     }
@@ -191,6 +233,13 @@ impl WindowInvalidator {
             }
             true
         } else {
+            // The first few of a frame are enough to name what notified.
+            #[cfg(any(test, feature = "test-support"))]
+            if inner.record_notified_while_drawing && inner.notified_while_drawing.len() < 8 {
+                inner
+                    .notified_while_drawing
+                    .push((entity, std::backtrace::Backtrace::force_capture()));
+            }
             false
         }
     }
@@ -259,6 +308,20 @@ impl WindowInvalidator {
     #[cfg(feature = "profiler")]
     fn take_frame_dirty(&self) -> FrameDirtyAccumulator {
         mem::take(&mut self.inner.borrow_mut().frame_dirty)
+    }
+
+    /// KChess patch: the views notified during the last draw, and forget them.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn take_notified_while_drawing(&self) -> Vec<(EntityId, std::backtrace::Backtrace)> {
+        mem::take(&mut self.inner.borrow_mut().notified_while_drawing)
+    }
+
+    /// KChess patch: record the views notified while drawing from now on (or stop).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn record_notified_while_drawing(&self, record: bool) {
+        let mut inner = self.inner.borrow_mut();
+        inner.record_notified_while_drawing = record;
+        inner.notified_while_drawing.clear();
     }
 
     pub fn take_views(&self) -> FxHashSet<EntityId> {
@@ -3287,6 +3350,26 @@ impl Window {
         self.platform_window.window_controls()
     }
 
+    /// KChess patch: the views notified while this window last drew, each with the app's frames
+    /// that notified it, and forget them. A view notified while drawing is drawn again in the
+    /// next frame, with every view it is in: a cached page is rendered anew each frame.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn views_notified_while_drawing(&self) -> Vec<(EntityId, String)> {
+        self.invalidator
+            .take_notified_while_drawing()
+            .into_iter()
+            .map(|(entity, trace)| (entity, notified_from(&trace)))
+            .collect()
+    }
+
+    /// KChess patch: have this window record the views notified while it draws, for
+    /// `views_notified_while_drawing`. Off unless a test asks: capturing every notification's
+    /// stack slowed every test on Windows.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn record_views_notified_while_drawing(&self, record: bool) {
+        self.invalidator.record_notified_while_drawing(record);
+    }
+
     /// KChess patch: the title-bar area the platform's hit test finds at `position`, so tests can
     /// see what only Windows acts on: a press on a drag area never reaches the window as a click.
     #[cfg(any(test, feature = "test-support"))]
@@ -3736,6 +3819,8 @@ impl Window {
             self.refresh();
         }
         self.invalidate_entities();
+        #[cfg(any(test, feature = "test-support"))]
+        self.invalidator.take_notified_while_drawing();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);

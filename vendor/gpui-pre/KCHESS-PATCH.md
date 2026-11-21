@@ -35,6 +35,15 @@ through `Window::zoom_requests`): the test platform's `zoom` and `titlebar_doubl
 each instead of panicking or doing nothing, so `e2e::shell` can check that one double click on the
 title bar zooms or restores the window exactly once.
 
+A test-only patch lists the views **notified while the window drew**
+(`Window::views_notified_while_drawing`, `src/window.rs`), each with the app's own frames that
+notified it. GPUI draws such a view again in the next frame, with every view it is in, so a page
+whose `render` notifies is never reused from its cache. `e2e::stability` draws every page, tab and
+Settings section and requires the list to be empty. A window records them only once a test asks
+(`Window::record_views_notified_while_drawing`), the first eight of a frame, and resolves their
+frames only when they are read: resolved for every notification in every test, the app's tests
+took 10 to 25 s each on Windows, where symbols are slow to look up, and ran out of the job's hour.
+
 A macOS patch adds `Window::set_traffic_light_centre` (`src/window.rs`, with its
 `PlatformWindow` method in `src/platform.rs`): the traffic lights' middle goes on the line given,
 whatever height the buttons have on that macOS. `vendor/gpui-pre-macos` implements it.
