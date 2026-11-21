@@ -233,7 +233,7 @@ impl Core {
     pub(crate) fn assistance_allowed(&self, gate: Assist) -> Result<()> {
         match self.services.online().assistance() {
             Assistance::Allowed => Ok(()),
-            why => Err(CoreError::new(gate.refusal(why))),
+            why => Err(gate.refused(why)),
         }
     }
 

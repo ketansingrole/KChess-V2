@@ -122,7 +122,8 @@ mod tests {
                 "noEngine",
                 "conflict",
                 "elsewhere",
-                "noPuzzleDatabase"
+                "noPuzzleDatabase",
+                "withheld"
             ]
         );
         for &kind in ErrorKind::ALL {
