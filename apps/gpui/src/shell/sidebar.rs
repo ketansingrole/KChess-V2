@@ -348,7 +348,6 @@ impl Workspace {
                 button.custom(open_sidebar(cx)).selected(true).toggled(true)
             })
             .when(open, |button| button.w(px(32.)).flex_none())
-            .accessibility_label("Settings")
             .on_click(cx.listener(move |this, _, window, cx| {
                 let page = if in_settings {
                     this.back
@@ -536,6 +535,7 @@ fn footer_button(
 ) -> Button {
     Button::new(id)
         .custom(ghost_sidebar(cx))
+        .accessibility_label(label.clone())
         .w_full()
         .px(px(6.))
         .child(

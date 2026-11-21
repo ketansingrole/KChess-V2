@@ -21,6 +21,9 @@
 //! - `small_target`: a GPUI Kit button made `.xsmall()` is 20 px tall, under the 24 px a target
 //!   needs (WCAG 2.5.8) and the layout audit holds; it only fails there in a state the audit
 //!   draws. Use `.small()`, or `widgets::text_button` (xsmall with a 24 px `min_h`).
+//! - `unnamed_button`: a GPUI Kit button with neither `.label` nor `.accessibility_label` has no
+//!   name for a screen reader, whatever it draws: text as a child names nothing, and a tooltip
+//!   only describes. `widgets::trailing_icon` names one whose icon follows its text.
 //!
 //! A line that must stay says why on the line before: `// gpui-lints: allow(<lint>) <reason>`.
 
@@ -116,9 +119,8 @@ fn line(span: Span) -> usize {
 #[derive(Default)]
 struct Lints {
     found: Vec<Finding>,
-    /// The `.xsmall()` calls already judged, from the whole chain they are in: the chain's
-    /// shorter tails are visited after it, and would miss a `min_h` that follows.
-    sized: std::collections::HashSet<(usize, usize)>,
+    /// The links of the button chains already judged (`button`), by where their method is.
+    judged: std::collections::HashSet<(usize, usize)>,
 }
 
 impl Lints {
@@ -173,8 +175,23 @@ impl<'ast> Visit<'ast> for Lints {
         visit::visit_item_impl(self, item);
     }
 
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        // `widgets::trailing_icon(button, label, glyph)` names the button it is given.
+        if let syn::Expr::Path(path) = &*call.func
+            && path
+                .path
+                .segments
+                .last()
+                .is_some_and(|last| last.ident == "trailing_icon")
+            && let Some(syn::Expr::MethodCall(button)) = call.args.first()
+        {
+            self.button(button, true);
+        }
+        visit::visit_expr_call(self, call);
+    }
+
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
-        self.small_target(call);
+        self.button(call, false);
         if is_update(call)
             && let Some(syn::Expr::Closure(closure)) = call.args.iter().nth(1)
         {
@@ -218,9 +235,11 @@ impl<'ast> Visit<'ast> for Lints {
 }
 
 impl Lints {
-    /// A kit button's `.xsmall()` in the chain `call` ends, without a `min_h` that keeps it a
-    /// 24 px target.
-    fn small_target(&mut self, call: &syn::ExprMethodCall) {
+    /// The kit button `call`'s chain builds, judged once, from the whole chain: its shorter tails
+    /// are visited after it, and would miss a `min_h` or a `label` that follows. An `.xsmall()`
+    /// without a `min_h` that keeps it a 24 px target, and no name anywhere in the chain (its
+    /// `when` closures too) unless the call it is given to names it (`named`).
+    fn button(&mut self, call: &syn::ExprMethodCall, named: bool) {
         let mut methods = Vec::new();
         let mut link = call;
         let root = loop {
@@ -235,10 +254,16 @@ impl Lints {
                 if path.path.segments.len() >= 2
                     && path.path.segments.iter().rev().nth(1).is_some_and(|s| s.ident == "Button")
                     && path.path.segments.last().is_some_and(|s| s.ident == "new")));
-        let kept = methods.iter().any(|method| *method == "min_h");
-        for method in methods.iter().filter(|method| **method == "xsmall") {
+        let mut first = false;
+        for method in &methods {
             let start = method.span().start();
-            if self.sized.insert((start.line, start.column)) && is_button && !kept {
+            first |= self.judged.insert((start.line, start.column));
+        }
+        if !is_button || !first {
+            return;
+        }
+        if !methods.iter().any(|method| *method == "min_h") {
+            for method in methods.iter().filter(|method| **method == "xsmall") {
                 self.report(
                     method.span(),
                     "small_target",
@@ -246,6 +271,16 @@ impl Lints {
                      `.small()`, or `widgets::text_button` for one that reads as text",
                 );
             }
+        }
+        let mut name = Named(named);
+        name.visit_expr_method_call(call);
+        if !name.0 {
+            self.report(
+                root.span(),
+                "unnamed_button",
+                "a kit button with no `.label` or `.accessibility_label` has no name for a screen \
+                 reader (a child's text names nothing): add one, or use `widgets::trailing_icon`",
+            );
         }
     }
 
@@ -284,6 +319,16 @@ impl Lints {
                  (`load`, `settle`, `failed`) or `loading::failure(area, &cause)`, which log it",
             );
         }
+    }
+}
+
+/// Whether a button chain names its button anywhere: `.label(…)`, `.accessibility_label(…)`.
+struct Named(bool);
+
+impl<'ast> Visit<'ast> for Named {
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        self.0 |= call.method == "label" || call.method == "accessibility_label";
+        visit::visit_expr_method_call(self, call);
     }
 }
 
@@ -863,13 +908,14 @@ impl Render for Board {
 fn row(cx: &mut App) -> Div {
     div()
         .child(Button::new("train").ghost().xsmall().label("Train"))
-        .child(Button::new("more").xsmall().text().min_h(px(24.)))
+        .child(Button::new("more").xsmall().text().min_h(px(24.)).label("More"))
         .child(Input::new(&field).xsmall())
         .child(gpui_kit::component::button::Button::new(("accept", 1))
             .when(on, |button| button.primary())
-            .xsmall())
-        .child(Button::new("go").small())
-        .children(vec![Button::new("confirm").xsmall(), Button::new("cancel").small()])
+            .xsmall()
+            .label("Accept"))
+        .child(Button::new("go").small().label("Go"))
+        .children(vec![Button::new("ok").xsmall().label("OK"), Button::new("no").label("No")])
 }
 "#;
         assert_eq!(
@@ -877,8 +923,27 @@ fn row(cx: &mut App) -> Div {
             [
                 ("small_target", 4),
                 ("small_target", 9),
-                ("small_target", 11)
+                ("small_target", 12)
             ]
+        );
+    }
+
+    #[test]
+    fn a_kit_button_without_a_name_is_found() {
+        let text = r#"
+fn row(cx: &mut App) -> Div {
+    div()
+        .child(Button::new("next").outline().child(h_flex().child("Next")))
+        .child(Button::new("flip").icon(icon("flip")).tooltip("Flip"))
+        .child(Button::new("play").when(on, |button| button.label("Play")))
+        .child(Button::new("go").icon(icon("go")).accessibility_label("Go").small())
+        .child(widgets::text_button("all").label("View all"))
+        .child(widgets::trailing_icon(Button::new("on").outline(), "Next", "arrow-right"))
+}
+"#;
+        assert_eq!(
+            lints_of(text),
+            [("unnamed_button", 4), ("unnamed_button", 5)]
         );
     }
 

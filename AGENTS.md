@@ -168,6 +168,9 @@ before, `// gpui-lints: allow(<lint>) <reason>`.
   outside one goes through `loading::failure`.
 - A kit button is at least `.small()` (24 px): `.xsmall()` is 20 px, too small a target, and
   `cargo xtask lints` refuses it (`small_target`); `widgets::text_button` is the one that reads as text.
+- A kit button is named by `.label` or `.accessibility_label`; text drawn as its child names nothing,
+  and the lints refuse a button with neither (`unnamed_button`). `widgets::trailing_icon` names one
+  whose icon follows its text.
 - Strings that never change are `SharedString::new_static("…")` or `&'static str`, not
   `"…".into()` or `format!` in `render`.
 - Tests drive time with GPUI's executor (`cx.background_executor().timer(…)`, `run_until_parked`),
