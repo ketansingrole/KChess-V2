@@ -111,25 +111,58 @@ impl Control {
         spec: BarSpec,
         cx: &App,
     ) -> AnyElement {
+        let (bar, grammar) = self.spec(spec, true, cx);
+        Self::draw(bar, grammar, page, control, cx)
+    }
+
+    /// The bar at the end of the move box's row under the board, as on the game pages, and its
+    /// line on a row of its own below, while it has something to say.
+    pub fn board_bar<V: 'static>(
+        &self,
+        page: WeakEntity<V>,
+        control: fn(&mut V) -> &mut Control,
+        spec: BarSpec,
+        cx: &App,
+    ) -> (AnyElement, Option<AnyElement>) {
+        let (bar, grammar) = self.spec(spec, false, cx);
+        let line = super::bar::voice_line(&bar, cx);
+        (Self::draw(bar, grammar, page, control, cx), line)
+    }
+
+    /// The bar `spec` asks for: its line in the bar (`inline`), or under the board with the
+    /// button at the row's end.
+    fn spec(&self, spec: BarSpec, inline: bool, cx: &App) -> (super::bar::Bar, Vec<String>) {
         let BarSpec {
             id,
             hint,
             active,
             grammar,
         } = spec;
+        let bar = super::bar::Bar {
+            id,
+            owner: self.owner,
+            enabled: self.is_on(cx),
+            active,
+            hint: hint.into(),
+            feedback: self.feedback.clone(),
+            heard: self.heard.clone(),
+            extra: Vec::new(),
+            inline,
+            end: !inline,
+        };
+        (bar, grammar)
+    }
+
+    fn draw<V: 'static>(
+        bar: super::bar::Bar,
+        grammar: Vec<String>,
+        page: WeakEntity<V>,
+        control: fn(&mut V) -> &mut Control,
+        cx: &App,
+    ) -> AnyElement {
+        let active = bar.active;
         super::voice_bar(
-            super::bar::Bar {
-                id,
-                owner: self.owner,
-                enabled: self.is_on(cx),
-                active,
-                hint: hint.into(),
-                feedback: self.feedback.clone(),
-                heard: self.heard.clone(),
-                extra: Vec::new(),
-                inline: true,
-                end: false,
-            },
+            bar,
             move |on, _, cx| {
                 let grammar = grammar.clone();
                 let _ = page.update(cx, |this, cx| {

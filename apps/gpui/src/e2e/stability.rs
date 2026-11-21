@@ -133,12 +133,13 @@ fn the_engine_line_holds_still_as_its_search_ends(cx: &mut gpui_kit::TestAppCont
 /// Turn voice on and off on `page`, its Voice button holding its place under the pointer while
 /// the bar fills in beside it (here with the error a test machine's missing speech model gives,
 /// and Try again).
-fn voice_holds_still(app: &mut Harness, page: &str, bar: &'static str) {
+fn voice_holds_still(app: &mut Harness, page: &str, bar: &'static str, then: fn(&mut Harness)) {
     let button: ElementId = (bar, 0usize).into();
     for (width, height) in &SIZES[1..] {
         app.cx
             .simulate_window_resize(app.window, size(px(*width), px(*height)));
         app.open(page);
+        then(app);
         app.settle();
         let ids = [button.clone()];
         let off = places(app, &ids);
@@ -163,13 +164,27 @@ fn voice_holds_still(app: &mut Harness, page: &str, bar: &'static str) {
 #[gpui_kit::test]
 fn the_voice_button_holds_still_beside_the_move_box(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    voice_holds_still(&mut app, "Play with computer", "computer-voice");
+    voice_holds_still(&mut app, "Play with computer", "computer-voice", |_| {});
 }
 
 #[gpui_kit::test]
 fn the_voice_button_holds_still_under_the_board_editor(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    voice_holds_still(&mut app, "Board editor", "editor-voice");
+    voice_holds_still(&mut app, "Board editor", "editor-voice", |_| {});
+}
+
+/// The drills with a board have Voice in the row under it, as the game pages do.
+#[gpui_kit::test]
+fn the_voice_button_holds_still_on_every_drill(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::practice::Tab;
+    let mut app = Harness::start(cx);
+    voice_holds_still(&mut app, "Practice", "coordinates-voice", |app| {
+        app.click(super::tab("practice-tabs", Tab::Coordinates));
+        app.click(("coordinates-mode", 1usize))
+    });
+    voice_holds_still(&mut app, "Practice", "knight-voice", |app| {
+        app.click(super::tab("practice-tabs", Tab::Knight))
+    });
 }
 
 /// Choosing a spare piece in the Board editor leaves the row where it was.
