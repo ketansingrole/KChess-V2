@@ -85,6 +85,23 @@ fn a_search_finds_an_opening_and_its_moves_can_be_stepped_back(cx: &mut gpui_kit
     assert!(!app.shows(format!("result-{KIESERITZKY}")));
 }
 
+/// A move typed that the line's position cannot take was dropped without a word: the box under
+/// the board says so, as it does on every board.
+#[gpui_kit::test]
+fn a_typed_move_the_position_cannot_take_is_refused_with_a_word(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = openings(cx);
+    open_kieseritzky(&mut app);
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("Ka8");
+    app.press("enter");
+    assert_eq!(
+        app.find("move-box-message").label(),
+        Some("Enter a legal move, such as Nf3 or g1f3")
+    );
+    assert_eq!(app.find(("opening-move", 8usize)).label(), Some("Ne5"));
+    assert!(!app.shows(("opening-move", 9usize)));
+}
+
 #[gpui_kit::test]
 fn the_openings_just_seen_are_listed_and_kept(cx: &mut gpui_kit::TestAppContext) {
     let mut app = openings(cx);

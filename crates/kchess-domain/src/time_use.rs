@@ -8,8 +8,17 @@ use crate::review::phase_starts;
 use crate::rules;
 use shakmaty::Position as _;
 
-/// The opening, the middlegame and the endgame.
-pub const PHASES: [&str; 3] = ["opening", "middlegame", "endgame"];
+crate::union!(
+    /// A part of the game the clock is told apart by.
+    Phase {
+        Opening = "opening",
+        Middlegame = "middlegame",
+        Endgame = "endgame",
+    }
+);
+
+/// The opening, the middlegame and the endgame, in game order.
+pub const PHASES: [Phase; 3] = [Phase::Opening, Phase::Middlegame, Phase::Endgame];
 
 /// A game's clock, move by move.
 #[derive(Debug, Clone, PartialEq)]

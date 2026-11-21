@@ -24,7 +24,6 @@ use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::types::{HistoryKind, SessionDocument, SessionKind, Sessions};
 use kchess_domain::games::archive::Identity;
-use serde_json::json;
 use shakmaty::Color;
 
 use crate::assets::icon;
@@ -36,7 +35,6 @@ use crate::game::played::PlayedGame;
 use crate::game::session::{Resumes, SessionSaver};
 use crate::game::surface::{self, Faces, MoveBox, Steps};
 use crate::game::view;
-use crate::pages::computer_options::{Chosen, Current, GameOptions};
 use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
 use crate::played::PlayedHandle;
 use crate::settings::SettingsHandle;
@@ -44,6 +42,11 @@ use crate::theme::{Palette, radii};
 use crate::widgets::{self, Side, Tone};
 use kchess_domain::games::Host;
 use kchess_domain::games::computer::{self, ComputerGame, Effect, SearchRequest};
+use options::{Chosen, Current, GameOptions};
+
+mod draw;
+pub mod options;
+mod voice;
 
 /// The engine as last checked.
 #[derive(Clone, Copy, PartialEq)]
@@ -259,7 +262,7 @@ impl ComputerPage {
             error: None,
             pending: None,
             history: None,
-            voice: crate::voice::moves::VoiceMoves::new("computer", cx),
+            voice: crate::voice::moves::VoiceMoves::new(crate::voice::VoiceSource::Computer, cx),
             asked: None,
             flipped: false,
             layout: PlayLayout::default(),
@@ -470,9 +473,8 @@ impl ComputerPage {
             return;
         }
         let position = self.position_at(self.ply());
-        match self.moves.take(position.as_ref(), window, cx) {
-            Some(uci) => self.play(&uci, cx),
-            None => cx.notify(),
+        if let Some(uci) = self.moves.take(position.as_ref(), window, cx) {
+            self.play(&uci, cx);
         }
     }
 
@@ -678,8 +680,8 @@ impl ComputerPage {
     fn open_options(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = Current {
             setup: self.game.setup().clone(),
-            clock: json!(self.game.clock()),
-            color: kchess_domain::color::name(self.user_color()).to_string(),
+            clock: self.game.clock(),
+            color: self.user_color(),
             level: self.game.level().to_string(),
         };
         let page = cx.entity().downgrade();
@@ -695,7 +697,7 @@ impl ComputerPage {
                 cx,
             )
         });
-        crate::pages::computer_options::open(options, window, cx);
+        options::open(options, window, cx);
     }
 
     /// Play Stockfish from a position (the board editor's, the analysis board's), as the side to
@@ -712,8 +714,8 @@ impl ComputerPage {
             move |this, window, cx| {
                 let chosen = Chosen {
                     setup,
-                    clock: json!(this.game.clock()),
-                    color: kchess_domain::color::name(color),
+                    clock: this.game.clock(),
+                    color,
                     level: this.game.level().to_string(),
                 };
                 this.start_chosen(chosen, window, cx);
@@ -742,8 +744,8 @@ impl ComputerPage {
             move |this, window, cx| {
                 let chosen = Chosen {
                     setup: Setup::standard(),
-                    clock: json!(this.game.clock()),
-                    color: kchess_domain::color::name(color),
+                    clock: this.game.clock(),
+                    color,
                     level,
                 };
                 this.start_chosen(chosen, window, cx);
@@ -765,18 +767,12 @@ impl ComputerPage {
 
     fn begin(&mut self, chosen: Chosen, window: &mut Window, cx: &mut Context<Self>) {
         self.game.set_level(&chosen.level);
-        self.game.set_color(if chosen.color == "black" {
-            Color::Black
-        } else {
-            Color::White
-        });
+        self.game.set_color(chosen.color);
         self.flipped = false;
         self.reset_archive(cx);
         let host = self.host();
         let setup = chosen.setup;
-        let effects = serde_json::from_value(chosen.clock)
-            .map_err(|error| format!("the chosen game: {error}"))
-            .and_then(|clock| self.game.start(Some(setup), Some(clock), &host));
+        let effects = self.game.start(Some(setup), Some(chosen.clock), &host);
         self.perform(effects, cx);
         self.select_level(window, cx);
         self.changed(cx);
@@ -926,159 +922,6 @@ impl ComputerPage {
         self.sync_voice(cx);
     }
 
-    /// Spoken moves are taken on your turn; commands whenever Stockfish is there to play.
-    fn voice_taking(&self) -> bool {
-        self.interactive() && !self.thinking() && self.asked.is_none()
-    }
-
-    fn voice_listening(&self) -> bool {
-        self.voice_taking() || self.engine == Engine::Ready
-    }
-
-    fn sync_voice(&mut self, cx: &mut Context<Self>) {
-        let context = format!(
-            "{}:{}:{}",
-            self.user_color() == Color::White,
-            self.moves().join(" "),
-            self.asked.is_some()
-        );
-        let listening = self.voice_listening();
-        self.voice.sync(
-            &context,
-            Some(self.sans()),
-            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Game).to_vec(),
-            listening,
-            cx,
-        );
-    }
-
-    /// What voice input says while no move is taken.
-    fn voice_idle(&self) -> &'static str {
-        if self.game.result().is_some() {
-            "The game is over. Say “new game” to play again."
-        } else if self.ply() != self.moves().len() {
-            "Go to the last move to keep playing"
-        } else {
-            "Wait for Stockfish, then say your move"
-        }
-    }
-
-    fn voice_heard(
-        &mut self,
-        event: &crate::voice::VoiceEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.voice.owns(event) {
-            return;
-        }
-        let setup = self
-            .position_at(self.moves().len())
-            .map(|position| Setup {
-                variant: self.game.setup().variant,
-                fen: kchess_domain::rules::make_fen(&position),
-            })
-            .unwrap_or_else(|| Setup::standard_at(""));
-        let fen = setup.fen.clone();
-        let heard = match event {
-            crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice.missed(heard, &fen, self.voice_taking(), cx);
-                return;
-            }
-            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
-        };
-        let taking = self.voice_taking();
-        let idle = self.voice_idle();
-        let asked = self.asked;
-        let mut run: Option<Deferred> = None;
-        let action = {
-            let command = |text: &str| -> Option<crate::voice::moves::Reply> {
-                let reply = |said: &str, feedback: &str| crate::voice::moves::Reply {
-                    said: said.into(),
-                    feedback: feedback.into(),
-                    understood: true,
-                };
-                if let Some(question) = asked {
-                    let answer = crate::voice::moves::spoken_move(text, &setup);
-                    return Some(match answer {
-                        kchess_domain::voice::SpokenMove::Confirm => {
-                            run = Some(Box::new(move |this, window, cx| {
-                                this.asked = None;
-                                window.close_dialog(cx);
-                                this.answer(question, window, cx);
-                            }));
-                            reply("confirm", "Done")
-                        }
-                        kchess_domain::voice::SpokenMove::Cancel => {
-                            run = Some(Box::new(|this, window, cx| {
-                                this.asked = None;
-                                window.close_dialog(cx);
-                                cx.notify();
-                            }));
-                            reply("cancel", "Cancelled")
-                        }
-                        _ => crate::voice::moves::Reply {
-                            said: "expected confirm or cancel".into(),
-                            feedback: "Say “confirm” or “cancel”".into(),
-                            understood: false,
-                        },
-                    });
-                }
-                let command = kchess_domain::voice::game_command(text)?;
-                let (said, question, feedback) = match command {
-                    "takeback" => {
-                        run = Some(Box::new(|this, _, cx| {
-                            if this.can_takeback() {
-                                this.takeback(cx);
-                            }
-                        }));
-                        ("take back", None, "Took back your last move")
-                    }
-                    "newGame" => (
-                        "new game",
-                        Some(Question::NewGame),
-                        "Start a new game? Say “confirm” or “cancel”.",
-                    ),
-                    "resign" => (
-                        "resign",
-                        Some(Question::Resign),
-                        "Resign this game? Say “confirm” or “cancel”.",
-                    ),
-                    "flip" => (
-                        "switch sides",
-                        Some(Question::SwitchSides),
-                        "Switch sides and restart? Say “confirm” or “cancel”.",
-                    ),
-                    _ => return None,
-                };
-                if let Some(question) = question {
-                    run = Some(Box::new(move |this, window, cx| {
-                        this.ask(question, window, cx)
-                    }));
-                }
-                Some(reply(said, feedback))
-            };
-            self.voice.hear(
-                &heard,
-                &setup,
-                crate::voice::moves::Turn {
-                    taking,
-                    idle: Some(idle),
-                    immediate: false,
-                },
-                command,
-                cx,
-            )
-        };
-        if let Some(run) = run {
-            run(self, window, cx);
-        }
-        if let crate::voice::moves::Action::Play(uci) = action {
-            self.play(&uci, cx);
-        }
-        cx.notify();
-    }
-
     fn answer(&mut self, question: Question, window: &mut Window, cx: &mut Context<Self>) {
         match question {
             Question::NewGame => self.new_game(cx),
@@ -1090,124 +933,6 @@ impl ComputerPage {
                 }
             }
         }
-    }
-
-    /// The opening the moves on the board reached, as `(eco, name)`.
-    fn opening(&self) -> Option<(SharedString, SharedString)> {
-        let opening = crate::game::opening_at(self.game.setup(), &self.moves(), self.ply())?;
-        Some((opening.eco.into(), opening.name.into()))
-    }
-
-    fn clock_text(&self, color: Color) -> Option<SharedString> {
-        if !self.game.timed() {
-            return None;
-        }
-        let remaining = self.game.remaining(color, self.host().now);
-        Some(format_clock(remaining).into())
-    }
-
-    fn render_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.engine == Engine::Missing {
-            let checking = self.engine == Engine::Checking;
-            let standard = self.setup_variant().standard_rules();
-            let banner = widgets::StatusBanner::new(
-                Tone::Alert,
-                icon("triangle-alert"),
-                if standard {
-                    "Stockfish not found"
-                } else {
-                    "Fairy-Stockfish not found"
-                }
-                .into(),
-            );
-            // Fairy-Stockfish comes with KChess; Settings cannot install it.
-            let banner = if standard {
-                banner.detail("Install or choose an engine in Settings to play".into())
-            } else {
-                banner
-            };
-            return banner
-                .extra(
-                    h_flex()
-                        .gap(px(12.))
-                        .child(
-                            Button::new("check-engine")
-                                .link()
-                                .xsmall()
-                                .label("Check again")
-                                .loading(checking)
-                                .on_click(cx.listener(|this, _, _, cx| this.check_engine(cx))),
-                        )
-                        .into_any_element(),
-                )
-                .into_any_element();
-        }
-        // The computer waits for a check for a Lichess game that failed: say so, not nothing.
-        let pause = cx
-            .global::<crate::online::OnlineHandle>()
-            .0
-            .read(cx)
-            .pause();
-        if pause == Some(crate::online::Pause::Unverified) && !self.game.over() {
-            return widgets::StatusBanner::new(
-                Tone::Alert,
-                icon("triangle-alert"),
-                crate::online::Pause::Unverified.text().into(),
-            )
-            .extra(crate::online::check_again_button("assistance-check-again").into_any_element())
-            .into_any_element();
-        }
-        if let Some(result) = self.game.result() {
-            let (tone, glyph) = match result.kind {
-                computer::Kind::Win => (Tone::Win, icon("trophy")),
-                computer::Kind::Loss => (Tone::Loss, icon("flag")),
-                computer::Kind::Draw => (Tone::Plain, icon("handshake")),
-            };
-            return widgets::StatusBanner::new(tone, glyph, result.title.into())
-                .announce()
-                .detail(SharedString::from(result.detail))
-                .when_some(
-                    self.can_review().then(|| {
-                        Button::new("review-game")
-                            .outline()
-                            .small()
-                            .label("Review game")
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.review_game(window, cx)),
-                            )
-                            .into_any_element()
-                    }),
-                    |banner, value| banner.extra(value),
-                )
-                .into_any_element();
-        }
-        if self.ply() != self.moves().len() {
-            return widgets::StatusBanner::new(
-                Tone::Plain,
-                icon("history"),
-                "Reviewing an earlier position".into(),
-            )
-            .extra(widgets::back_to_game(cx.listener(|this, _, _, cx| {
-                let last = this.moves().len();
-                this.show_ply(last, cx)
-            })))
-            .into_any_element();
-        }
-        if self.thinking() {
-            return widgets::StatusBanner::turn("Stockfish is thinking…".into()).into_any_element();
-        }
-        let position = self.position_at(self.ply());
-        let turn = position
-            .as_ref()
-            .map_or(Color::White, shakmaty::Position::turn);
-        let check = position.as_ref().is_some_and(shakmaty::Position::is_check);
-        widgets::StatusBanner::turn(if turn == self.user_color() {
-            "Your move".into()
-        } else {
-            "Stockfish's move".into()
-        })
-        .when(check, |banner| banner.detail("Check".into()))
-        .into_any_element()
     }
 }
 
@@ -1238,302 +963,6 @@ fn level_choices(cx: &App) -> (Vec<String>, Vec<SharedString>) {
         })
         .collect();
     (ids, labels)
-}
-
-impl Render for ComputerPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = *cx.global::<Palette>();
-        let board_size = self.layout.board_size(window);
-        let narrow = widgets::is_narrow(self.panel_area.size().width);
-        let user = self.user_color();
-        let position = self.position_at(self.ply());
-        let turn = position
-            .as_ref()
-            .map_or(Color::White, shakmaty::Position::turn);
-        let live = self.game.result().is_none();
-        let sans = self.sans();
-        let moves = self.moves();
-        let ply = self.ply();
-        let interactive = self.interactive();
-        let first = view::first_move(self.game.setup());
-        let in_progress = self.in_progress();
-        let result = self.game.result();
-        let side_of = |color: Color| {
-            if color == Color::White {
-                Side::White
-            } else {
-                Side::Black
-            }
-        };
-        let fen = position
-            .as_ref()
-            .map(kchess_domain::rules::make_fen)
-            .unwrap_or_default();
-        let piece_set = crate::settings::frontend(cx).piece_set.clone();
-        // A running clock says whose turn it is; only an untimed game needs the outline.
-        let untimed = !self.game.timed();
-        let computer_line = widgets::player_line(
-            h_flex()
-                .min_w_0()
-                .gap(px(8.))
-                .child(widgets::avatar(
-                    icon("cpu"),
-                    side_of(!user),
-                    live && turn != user && untimed,
-                    &palette,
-                ))
-                .child("Stockfish")
-                .child(
-                    h_flex()
-                        .w(px(196.))
-                        .min_w_0()
-                        .pl(px(8.))
-                        .gap(px(4.))
-                        .rounded(radii::SM)
-                        .bg(palette.elevated)
-                        .text_color(palette.highlighted)
-                        .font_weight(FontWeight::NORMAL)
-                        .child(icon("gauge").size(px(14.)).text_color(palette.text_muted))
-                        .child(
-                            div().flex_1().min_w_0().child(
-                                Select::new(&self.level)
-                                    .small()
-                                    .appearance(false)
-                                    // Wider than its trigger: every level's name and rating
-                                    // in full ("International Master · ~2400").
-                                    .menu_width(px(260.))
-                                    .accessibility_label("Difficulty"),
-                            ),
-                        ),
-                )
-                .children(widgets::material(
-                    &fen,
-                    user != Color::White,
-                    &piece_set,
-                    &palette,
-                )),
-            None,
-            self.clock_text(!user).map(|text| {
-                widgets::clock(text, live && turn != user && !untimed, &palette).into_any_element()
-            }),
-        );
-        let entry = widgets::move_entry(&self.moves.input, interactive, &palette);
-        let (voice, voice_line) = crate::voice::moves::board_bar(
-            &self.voice,
-            cx.entity().downgrade(),
-            crate::voice::moves::Access {
-                write: |this: &mut Self| &mut this.voice,
-                play: |this: &mut Self, uci, _, cx| this.play(uci, cx),
-            },
-            crate::voice::moves::BoardBar {
-                id: "computer-voice",
-                hint: "Say “E four”, “Knight F three”, or “take back”",
-                active: self.voice_taking(),
-                listening: self.voice_listening(),
-                grammar: kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Game)
-                    .to_vec(),
-            },
-            cx,
-        );
-        let you_line = widgets::player_line(
-            h_flex()
-                .gap(px(8.))
-                .child(widgets::avatar(
-                    icon("user"),
-                    side_of(user),
-                    live && turn == user && untimed,
-                    &palette,
-                ))
-                .child("You")
-                .children(widgets::material(
-                    &fen,
-                    user == Color::White,
-                    &piece_set,
-                    &palette,
-                )),
-            Some(widgets::move_row(entry, voice)),
-            self.clock_text(user).map(|text| {
-                widgets::clock(text, live && turn == user && !untimed, &palette).into_any_element()
-            }),
-        );
-        // The lines stay with their sides when the board turns.
-        let (top, bottom) = if self.flipped {
-            (you_line, computer_line)
-        } else {
-            (computer_line, you_line)
-        };
-        let board_column = v_flex()
-            .w(board_size)
-            .flex_none()
-            .gap(widgets::STACK_GAP)
-            .child(top)
-            .child(surface::wheel(
-                div().child(crate::board::cached(&self.board)),
-                cx,
-            ))
-            .child(bottom)
-            .children(voice_line)
-            .children(self.moves.message(&palette));
-
-        let page = cx.entity().downgrade();
-        let select = move |ply: usize, _: &mut Window, cx: &mut App| {
-            let _ = page.update(cx, |page, cx| page.show_ply(ply, cx));
-        };
-        let other = if user == Color::White {
-            "black"
-        } else {
-            "white"
-        };
-        let flip_page = cx.entity().downgrade();
-        let flip: widgets::ClickHandler = Box::new(move |_, window, cx| {
-            let _ = flip_page.update(cx, |page, cx| page.ask(Question::SwitchSides, window, cx));
-        });
-        let clock_label = self
-            .game
-            .clock()
-            .map(|clock| widgets::time_control(clock.minutes, clock.increment));
-        let frontend = crate::settings::frontend(cx);
-        let zen = frontend.zen_mode;
-        let show_opening = frontend.show_opening_name && self.setup_variant() == Variant::Standard;
-        let setup_label = crate::game::setup_label(self.game.setup());
-        let opening = show_opening.then(|| self.opening()).flatten();
-        let panel = widgets::side_panel(&palette)
-            .relative()
-            .child(self.panel_area.probe(cx))
-            .h(self.layout.panel_height(board_size))
-            .flex_1()
-            .min_w(PANEL_MIN)
-            .max_w(if zen { PANEL_ZEN } else { PANEL_MAX })
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap(px(8.))
-                    .text_size(px(12.))
-                    .text_color(palette.text_muted)
-                    .children(
-                        setup_label.map(|label| div().font_weight(FontWeight::MEDIUM).child(label)),
-                    )
-                    .children(clock_label)
-                    .child(div().flex_1())
-                    .child(
-                        Button::new("game-options")
-                            .ghost()
-                            .small()
-                            .icon(icon("settings-2"))
-                            .label("Game options")
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.open_options(window, cx)),
-                            ),
-                    )
-                    .when(!zen, |row| {
-                        row.child(crate::export::export_menu(
-                            "computer-export",
-                            &self.exporter,
-                            self.game_export(),
-                            Anchor::TopRight,
-                            true,
-                            cx,
-                        ))
-                    })
-                    .child(widgets::view_toggles(cx)),
-            )
-            .child(self.render_banner(cx))
-            .children(self.errors(cx).into_iter().map(|error| {
-                div()
-                    .text_size(px(12.))
-                    .text_color(palette.error)
-                    .child(error)
-            }))
-            .child(widgets::section_title(
-                "Moves",
-                opening.map(|(eco, name)| format!("{eco} {name}")),
-                &palette,
-            ))
-            .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
-                "computer-moves",
-                widgets::MoveSheet {
-                    sans: &sans,
-                    shown: ply,
-                    first,
-                },
-                "No moves yet".into(),
-                select.clone(),
-                crate::notation::figurine(cx),
-                &palette,
-            )))
-            .child(widgets::move_controls(
-                ply,
-                moves.len(),
-                select,
-                widgets::TurnButton::Named(format!("Switch sides (play {other})").into(), flip),
-                cx,
-            ))
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap(px(8.))
-                    .pt(px(12.))
-                    .border_t_1()
-                    .border_color(palette.border)
-                    .child(
-                        Button::new("takeback")
-                            .outline()
-                            .flex_1()
-                            .when(narrow, |button| button.min_w(relative(0.45)))
-                            .icon(icon("undo-2"))
-                            .label("Take back")
-                            .disabled(!self.can_takeback())
-                            .on_click(cx.listener(|this, _, _, cx| this.takeback(cx))),
-                    )
-                    .when(in_progress, |row| {
-                        row.child(
-                            Button::new("resign")
-                                .outline()
-                                .flex_1()
-                                .when(narrow, |button| button.min_w(relative(0.45)))
-                                .icon(icon("flag"))
-                                .label("Resign")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.ask(Question::Resign, window, cx)
-                                })),
-                        )
-                    })
-                    .child(
-                        Button::new("new-game")
-                            .when(result.is_some(), |button| button.primary())
-                            .when(result.is_none(), |button| button.outline())
-                            .flex_1()
-                            .when(narrow, |button| button.min_w(relative(0.45)))
-                            .icon(icon("rotate-ccw"))
-                            .label("New game")
-                            .tooltip_with_action("New game", &crate::menu::New, None)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.ask(Question::NewGame, window, cx)
-                            })),
-                    ),
-            );
-
-        let page = self
-            .layout
-            .render("computer-page", board_column, panel, window, cx)
-            // ⌘Z outside the move box takes back, as the button does.
-            .on_action(
-                cx.listener(|this, _: &Undo, window, cx| this.act(Action::TakeBack, window, cx)),
-            );
-        surface::keys(page, &self.focus, cx)
-    }
-}
-
-impl ComputerPage {
-    /// What went wrong that the player should know: the engine's failure, the saved game that
-    /// could not be read, a save that failed.
-    fn errors(&self, cx: &App) -> Vec<SharedString> {
-        self.error
-            .clone()
-            .into_iter()
-            .chain(self.saver.problems(cx))
-            .collect()
-    }
 }
 
 impl crate::pages::PageAction for Action {

@@ -18,7 +18,7 @@ use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
 use crate::game::STANDARD_FEN;
 use crate::theme::Palette;
 use crate::voice::control::{BarSpec, Control, DrillLog};
-use crate::voice::{Attempt, VoiceEvent};
+use crate::voice::{Attempt, VoiceEvent, VoiceOutcome, VoiceSource};
 use crate::widgets::{self, Pill, Tone};
 use kchess_games::random_unit;
 use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
@@ -316,13 +316,13 @@ impl Coordinates {
             .then(|| kchess_domain::voice::spoken_square(&heard.text))
             .flatten();
         let outcome = match &square {
-            _ if missed => "unclear",
-            None => "invalid",
-            Some(square) if *square == target => "correct",
-            Some(_) => "wrong",
+            _ if missed => VoiceOutcome::Unclear,
+            None => VoiceOutcome::Invalid,
+            Some(square) if *square == target => VoiceOutcome::Correct,
+            Some(_) => VoiceOutcome::Wrong,
         };
         let attempt = Attempt {
-            source: "coordinates",
+            source: VoiceSource::Coordinates,
             heard,
             outcome,
             parsed: square.as_deref(),

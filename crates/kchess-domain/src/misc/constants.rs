@@ -94,6 +94,8 @@ crate::union!(
         Conflict = "conflict",
         /// The game is being played from another device, which Lichess gave its one stream to.
         Elsewhere = "elsewhere",
+        /// The puzzle database is not downloaded: download it to train on its puzzles.
+        NoPuzzleDatabase = "noPuzzleDatabase",
     }
 );
 crate::union!(

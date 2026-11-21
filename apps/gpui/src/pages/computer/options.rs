@@ -8,13 +8,14 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, IndexPath, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use shakmaty::Color;
 
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::game::chess960;
 use crate::theme::Palette;
 use crate::widgets;
+use kchess_domain::games::Clock;
 use kchess_domain::variant::{Setup, Variant};
 
 const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -37,8 +38,8 @@ fn fairy_variants() -> impl Iterator<Item = Variant> {
 /// What the dialog starts: the setup, the clock, the player's side and Stockfish's level.
 pub struct Chosen {
     pub setup: Setup,
-    pub clock: Value,
-    pub color: &'static str,
+    pub clock: Option<Clock>,
+    pub color: Color,
     pub level: String,
 }
 
@@ -64,8 +65,8 @@ type OnStart = Box<dyn Fn(Chosen, &mut Window, &mut App)>;
 /// The current game's options, to open on.
 pub struct Current {
     pub setup: Setup,
-    pub clock: Value,
-    pub color: String,
+    pub clock: Option<Clock>,
+    pub color: Color,
     pub level: String,
 }
 
@@ -127,19 +128,9 @@ impl GameOptions {
             }
             input
         });
-        let clock_text = current.clock.as_object().map(|clock| {
-            format!(
-                "{}+{}",
-                clock
-                    .get("minutes")
-                    .and_then(Value::as_f64)
-                    .unwrap_or_default(),
-                clock
-                    .get("increment")
-                    .and_then(Value::as_f64)
-                    .unwrap_or_default()
-            )
-        });
+        let clock_text = current
+            .clock
+            .map(|clock| format!("{}+{}", clock.minutes, clock.increment));
         let clock_row = crate::game::CLOCKS
             .iter()
             .position(|(label, _)| Some(*label) == clock_text.as_deref())
@@ -158,7 +149,7 @@ impl GameOptions {
         let color = cx.new(|cx| {
             SelectState::new(
                 vec!["White".into(), "Black".into()],
-                Some(IndexPath::new(usize::from(current.color == "black"))),
+                Some(IndexPath::new(usize::from(current.color == Color::Black))),
                 window,
                 cx,
             )
@@ -312,17 +303,14 @@ impl GameOptions {
         let clock = crate::game::CLOCKS
             .get(row(&self.clock))
             .and_then(|(_, clock)| *clock)
-            .map_or(
-                Value::Null,
-                |(minutes, increment)| json!({ "minutes": minutes, "increment": increment }),
-            );
+            .map(|(minutes, increment)| Clock { minutes, increment });
         Chosen {
             setup,
             clock,
             color: if row(&self.color) == 1 {
-                "black"
+                Color::Black
             } else {
-                "white"
+                Color::White
             },
             level: self
                 .levels

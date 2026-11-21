@@ -16,11 +16,11 @@ use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use kchess_app::log::ResultExt as _;
 use kchess_contracts::check::{GameId, PresenceUsers, Uci, Username, Validate};
 use kchess_contracts::types::{Assistance, Lane, OnlineConnection, OnlinePhase};
+use kchess_contracts::types::{ChallengeColor, OnlineAction, OnlineOptions};
 use kchess_contracts::types::{
     ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, LobbyState, NotificationKind,
     OngoingGame, PresenceReport,
 };
-use kchess_contracts::types::{OnlineAction, OnlineOptions};
 use kchess_contracts::{CoreError, ErrorKind, Level};
 use kchess_domain::online_game::model::{
     Call, ChatEntry, Ctx, Effect, GamePhase, Model, Op, Outcome, Rematch, Reply, View,
@@ -32,6 +32,11 @@ use serde_json::{Value, json};
 
 use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::game::surface::Faces;
+
+mod assistance;
+mod challenges;
+pub use assistance::*;
+pub use challenges::*;
 
 /// Lichess's view of both players' connections, asked this often during a real-time game.
 pub const PRESENCE_EVERY: Duration = Duration::from_secs(5);
@@ -55,8 +60,7 @@ pub struct Form {
     pub minutes: f64,
     pub increment: f64,
     pub target: String,
-    /// `random`, `white` or `black`.
-    pub color: String,
+    pub color: ChallengeColor,
     pub rated: bool,
     pub variant: Variant,
     pub correspondence: bool,
@@ -69,7 +73,7 @@ impl Default for Form {
             minutes: 15.,
             increment: 10.,
             target: String::new(),
-            color: "random".into(),
+            color: ChallengeColor::Random,
             rated: false,
             variant: Variant::Standard,
             correspondence: false,
@@ -82,24 +86,6 @@ impl Default for Form {
 pub fn now() -> f64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.
-}
-
-/// A challenge's clock as its card and notice name it: "5+3", "2 days per move", "No clock".
-pub fn describe_control(control: &ChallengeTimeControl) -> String {
-    match control {
-        ChallengeTimeControl::Clock { limit, increment } => crate::widgets::time_control(
-            limit.as_f64().unwrap_or_default() / 60.,
-            increment.as_f64().unwrap_or_default(),
-        ),
-        ChallengeTimeControl::Correspondence { days } => {
-            let days = days.as_f64().unwrap_or_default();
-            format!(
-                "{days} {} per move",
-                if days == 1. { "day" } else { "days" }
-            )
-        }
-        ChallengeTimeControl::Unlimited => "No clock".into(),
-    }
 }
 
 fn log(message: &str) {
@@ -169,105 +155,11 @@ pub struct OnlineState {
     _recheck: Option<Task<()>>,
 }
 
-/// Why engine help is held back now (`OnlineState::pause`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Pause {
-    /// Lichess is being asked for a game in progress.
-    Checking,
-    /// Lichess could not be asked, or did not answer: offered again (`check_again`).
-    Unverified,
-    /// A live game is being played, looked for, or not yet seen to end.
-    LiveGame,
-}
-
-impl Pause {
-    pub fn text(self) -> &'static str {
-        match self {
-            Pause::Checking => "Checking Lichess for a game in progress…",
-            Pause::Unverified => "Couldn't check Lichess for a game in progress",
-            Pause::LiveGame => "Paused during your Lichess game",
-        }
-    }
-}
-
-/// The first wait before a failed check for a game in progress is tried again, and the longest.
-const RECHECK_FIRST: Duration = Duration::from_secs(15);
-const RECHECK_MAX: Duration = Duration::from_secs(5 * 60);
-
 impl OnlineState {
     /// The core session whose reports the board follows.
     #[cfg(test)]
     pub fn state_epoch(&self) -> f64 {
         self.model.state_epoch
-    }
-
-    /// The engine may help: no live game, none still being looked for, and the core lends it.
-    /// (The app's phase alone took a failed check for a game as all clear, while the core kept
-    /// refusing every engine call.)
-    pub fn assistance_allowed(&self) -> bool {
-        matches!(self.phase, Phase::Idle | Phase::Finished)
-            && self.assistance == Assistance::Allowed
-    }
-
-    /// Why engine help is held back, if it is.
-    pub fn pause(&self) -> Option<Pause> {
-        if self.assistance_allowed() {
-            return None;
-        }
-        let checking = self.phase == Phase::Checking
-            || self
-                .model
-                .online_connection
-                .as_ref()
-                .is_some_and(OnlineConnection::checking);
-        Some(if checking {
-            Pause::Checking
-        } else if matches!(self.phase, Phase::Idle | Phase::Finished)
-            && self.assistance == Assistance::Unverified
-        {
-            Pause::Unverified
-        } else {
-            Pause::LiveGame
-        })
-    }
-
-    /// Ask the core what help it lends now, unless it reports a change first.
-    fn read_assistance(&mut self, cx: &mut Context<Self>) {
-        let seen = self.assistance_reports;
-        let status = cx.global::<AppCore>().request(calls::AssistanceStatus {});
-        cx.spawn(async move |this, cx| match status.await {
-            Ok(assistance) => {
-                this.update(cx, |state, cx| {
-                    if state.assistance_reports == seen {
-                        state.assistance = assistance;
-                        cx.notify();
-                    }
-                })
-                .ok();
-            }
-            Err(cause) => log(&format!("reading engine help failed: {}", cause.message)),
-        })
-        .detach();
-    }
-
-    /// A check for a game in progress failed: try again later, longer each time. A refused login
-    /// waits for the account to be connected again, which checks again itself.
-    fn schedule_recheck(&mut self, cx: &mut Context<Self>) {
-        let refused = self
-            .model
-            .online_connection
-            .as_ref()
-            .is_some_and(|connection| connection.phase == OnlinePhase::AuthRequired);
-        if refused {
-            self._recheck = None;
-            return;
-        }
-        let wait = self.recheck_after;
-        self.recheck_after = (wait * 2).min(RECHECK_MAX);
-        self._recheck = Some(cx.spawn(async move |_, cx| {
-            cx.background_executor().timer(wait).await;
-            cx.update(check_again);
-        }));
     }
 
     /// A game of the account's is using the connection.
@@ -619,7 +511,7 @@ impl OnlineState {
         form.minutes = minutes;
         form.increment = increment;
         form.rated = rated;
-        form.color = "random".into();
+        form.color = ChallengeColor::Random;
         form.target.clear();
         form.correspondence = false;
         self.start(None, cx);
@@ -715,7 +607,7 @@ impl OnlineState {
             minutes: options.minutes?,
             increment: options.increment.unwrap_or_default(),
             target: String::new(),
-            color: "random".into(),
+            color: ChallengeColor::Random,
             rated: options.rated,
             variant: options.variant.unwrap_or_default(),
             correspondence: false,
@@ -886,187 +778,6 @@ impl OnlineState {
         .detach();
     }
 
-    /* ── Challenges and games in progress ── */
-
-    pub fn refresh_ongoing(&mut self, cx: &mut Context<Self>) {
-        // A newer request either way: an answer still on its way (a poll overtaken by a change,
-        // or from before signing out) must not bring back older games, or their notifications.
-        if crate::accounts::handle(cx).read(cx).connected().is_empty() {
-            self.ongoing_loading.stop();
-            self.ongoing.clear();
-            cx.notify();
-            return;
-        }
-        let turn = self.ongoing_loading.start();
-        let call = cx.global::<AppCore>().request(calls::OngoingGames {});
-        cx.spawn(async move |this, cx| {
-            let answer = call.await;
-            let _ = this.update(cx, |this, cx| {
-                if !this.ongoing_loading.settle(turn, "online-game", &answer) {
-                    return;
-                }
-                if let Ok(games) = answer {
-                    for game in &games {
-                        let id = game.game_id.clone();
-                        let mine = game.is_my_turn;
-                        let before = this.turns.get(&id).copied();
-                        if is_your_move_now(game, before, this.id()) {
-                            crate::notifications::your_move(game, cx);
-                        }
-                        this.turns.insert(id, mine);
-                    }
-                    this.ongoing = games;
-                }
-                this.ongoing_loaded = true;
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// The account whose event stream stays open while idle: one taking part in a tournament,
-    /// else the active one when challenges are wanted.
-    pub fn stay_connected(&mut self, cx: &mut Context<Self>) {
-        let wanted = cx
-            .try_global::<crate::settings::SettingsHandle>()
-            .is_none_or(|settings| settings.0.read(cx).settings.core.receive_challenges);
-        let joined = cx.global::<AppCore>().request(calls::JoinedTournaments {});
-        let active = crate::accounts::handle(cx)
-            .read(cx)
-            .active(cx)
-            .unwrap_or_default();
-        let core = cx.global::<AppCore>().clone();
-        cx.spawn(async move |this, cx| {
-            // Unknown tournaments leave the stream as it is: read as none, a player's tournament
-            // stream would close.
-            let Some(joined) = joined.await.warn_on_err() else {
-                return;
-            };
-            let now = kchess_games::now_ms();
-            let current: Vec<_> = joined.iter().filter(|entry| entry.until > now).collect();
-            let participant = current
-                .iter()
-                .find(|entry| entry.account == active)
-                .or(current.last())
-                .map(|entry| entry.account.clone());
-            let account = participant.unwrap_or(if wanted { active } else { String::new() });
-            if let Err(cause) = core
-                .request(calls::StayConnected {
-                    account: OptionalAccount(account.clone()),
-                })
-                .await
-            {
-                log(&format!("staying connected failed: {}", cause.message));
-            }
-            if account.is_empty() {
-                let _ = this.update(cx, |this, cx| {
-                    this.lobby = None;
-                    cx.notify();
-                });
-            }
-        })
-        .detach();
-    }
-
-    fn load_challenges(&mut self, cx: &mut Context<Self>) {
-        let call = cx.global::<AppCore>().request(calls::Challenges {});
-        cx.spawn(async move |this, cx| {
-            if let Some(list) = call.await.warn_on_err() {
-                let _ = this.update(cx, |this, cx| {
-                    this.challenges = list;
-                    cx.notify();
-                });
-            }
-        })
-        .detach();
-    }
-
-    fn challenge_act(
-        &mut self,
-        id: String,
-        call: impl Future<Output = Result<(), CoreError>> + 'static,
-        cx: &mut Context<Self>,
-    ) -> Task<bool> {
-        self.busy_challenge = id;
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let answer = call.await;
-            this.update(cx, |this, cx| {
-                this.busy_challenge.clear();
-                cx.notify();
-                match answer {
-                    Ok(_) => true,
-                    Err(cause) => {
-                        notice(cx, kchess_app::loading::failure("online-game", &cause));
-                        false
-                    }
-                }
-            })
-            .unwrap_or(false)
-        })
-    }
-
-    /// Accept a challenge: a live one opens on the board; a correspondence one joins the games.
-    pub fn accept(&mut self, challenge: &ChallengeInfo, cx: &mut Context<Self>) -> Task<bool> {
-        let id = challenge.id.clone();
-        let live = matches!(challenge.time_control, ChallengeTimeControl::Clock { .. });
-        if live {
-            self.prepare_for_game(&challenge.account, &id);
-        }
-        let opponent = challenge.opponent.name.clone();
-        let call = cx.global::<AppCore>().request(calls::AcceptChallenge {
-            id: GameId(id.clone()),
-        });
-        let done = self.challenge_act(id, call, cx);
-        cx.spawn(async move |this, cx| {
-            let done = done.await;
-            if done && !live {
-                let _ = this.update(cx, |this, cx| {
-                    notice(
-                        cx,
-                        format!("Accepted. Your game against {opponent} is under Correspondence."),
-                    );
-                    this.refresh_ongoing(cx);
-                });
-            }
-            done && live
-        })
-    }
-
-    pub fn decline(
-        &mut self,
-        challenge: &ChallengeInfo,
-        reason: DeclineReason,
-        cx: &mut Context<Self>,
-    ) {
-        let id = challenge.id.clone();
-        let call = cx.global::<AppCore>().request(calls::DeclineChallenge {
-            id: GameId(id.clone()),
-            reason,
-        });
-        self.challenge_act(id, call, cx).detach();
-    }
-
-    pub fn withdraw(&mut self, challenge: &ChallengeInfo, cx: &mut Context<Self>) {
-        let id = challenge.id.clone();
-        let call = cx.global::<AppCore>().request(calls::CancelChallenge {
-            id: GameId(id.clone()),
-        });
-        self.challenge_act(id, call, cx).detach();
-    }
-
-    /// The opponent's rematch offer for the game just finished.
-    pub fn rematch_offer(&self) -> Option<ChallengeInfo> {
-        let last = self.model.last_game.as_ref()?.id.as_str();
-        self.challenges
-            .iter()
-            .find(|c| {
-                c.direction == kchess_contracts::types::ChallengeDirection::In
-                    && c.rematch_of.as_deref() == Some(last)
-            })
-            .cloned()
-    }
-
     fn receive(&mut self, event: &CoreEvent, cx: &mut Context<Self>) {
         match event {
             CoreEvent::OnlineEvent(payload) => {
@@ -1148,23 +859,6 @@ impl OnlineState {
             }
             _ => {}
         }
-    }
-
-    fn start_polling_ongoing(&mut self, cx: &mut Context<Self>) {
-        let minutes = cx
-            .try_global::<crate::settings::SettingsHandle>()
-            .map_or(5., |settings| {
-                settings.0.read(cx).settings.core.correspondence_poll
-            });
-        if minutes <= 0. {
-            self._ongoing_poll = None;
-            return;
-        }
-        let every = Duration::from_secs_f64(minutes.max(1.) * 60.);
-        self._ongoing_poll = Some(crate::timer::every(every, cx, |this, cx| {
-            this.refresh_ongoing(cx);
-            true
-        }));
     }
 }
 
@@ -1280,39 +974,6 @@ pub fn init(cx: &mut App) {
     resume(state, cx);
 }
 
-/// Ask Lichess again for a game in progress after a check that failed (its Check again button,
-/// the retry timer, the network's return): the core lends engine help only once one answers.
-pub fn check_again(cx: &mut App) {
-    let Some(state) = cx
-        .try_global::<OnlineHandle>()
-        .map(|handle| handle.0.clone())
-    else {
-        return;
-    };
-    let failed = state.update(cx, |state, cx| {
-        if state.pause() != Some(Pause::Unverified) {
-            return false;
-        }
-        state._recheck = None;
-        state.transition(Model::checking, None, cx);
-        true
-    });
-    if failed {
-        resume(state, cx);
-    }
-}
-
-/// The Check again link shown where a failed check holds engine help back.
-pub fn check_again_button(id: &'static str) -> gpui_kit::component::button::Button {
-    use gpui_kit::component::Sizable as _;
-    use gpui_kit::component::button::{Button, ButtonVariants as _};
-    Button::new(id)
-        .link()
-        .xsmall()
-        .label("Check again")
-        .on_click(|_, _, cx| check_again(cx))
-}
-
 /// An account was connected: its game and its event stream, as at startup. A game on the board
 /// stays; the connection follows it.
 pub fn account_connected(cx: &mut App) {
@@ -1420,376 +1081,5 @@ fn reply<T: 'static>(
     call.map(|answer| answer.map(read)).boxed_local()
 }
 
-/// A challenge's notification: who sent it, then its clock, variant and whether it is rated
-/// ("Alice (1800) challenges you", "5+3 · Standard · Rated").
-pub fn challenge_alert(challenge: &ChallengeInfo) -> (String, String) {
-    let opponent = &challenge.opponent;
-    let name = &opponent.name;
-    let title = match opponent
-        .rating
-        .as_ref()
-        .and_then(serde_json::Number::as_f64)
-    {
-        Some(rating) => format!("{name} ({rating}) challenges you"),
-        None => format!("{name} challenges you"),
-    };
-    let variant = &challenge.variant_name;
-    let rated = if challenge.rated { "Rated" } else { "Casual" };
-    let control = describe_control(&challenge.time_control);
-    (title, format!("{control} · {variant} · {rated}"))
-}
-
 #[cfg(test)]
-mod tests {
-    use super::describe_control;
-    use kchess_board::testing::Started;
-
-    /// A board page's app with the live game of its own, its Lichess at `origin`.
-    fn started(cx: &mut gpui_kit::TestAppContext, origin: Option<String>) -> Started {
-        let mut app = Started::bare(cx, origin);
-        app.with_window(|_, cx| super::init(cx));
-        app
-    }
-    use kchess_contracts::types::ChallengeTimeControl;
-    use serde_json::Number;
-
-    fn clock(limit: u64, increment: u64) -> ChallengeTimeControl {
-        ChallengeTimeControl::Clock {
-            limit: Number::from(limit),
-            increment: Number::from(increment),
-        }
-    }
-
-    #[test]
-    fn controls_read_like_lichess() {
-        assert_eq!(describe_control(&clock(300, 3)), "5+3");
-        assert_eq!(describe_control(&clock(90, 0)), "1.5+0");
-        let days = ChallengeTimeControl::Correspondence {
-            days: Number::from(1),
-        };
-        assert_eq!(describe_control(&days), "1 day per move");
-        assert_eq!(
-            describe_control(&ChallengeTimeControl::Unlimited),
-            "No clock"
-        );
-    }
-
-    /// A resume is counted as it starts, so an answer to an earlier one is known for stale.
-    #[gpui_kit::test]
-    fn each_resume_is_counted_as_it_starts(cx: &mut gpui_kit::TestAppContext) {
-        let mut app = started(cx, None);
-        let online = app.with_window(|_, cx| super::handle(cx));
-        let before = app.with_window(|_, cx| online.read(cx).resumes);
-        app.with_window(|_, cx| super::resume_quietly(online.clone(), true, cx));
-        app.with_window(|_, cx| super::resume(online.clone(), cx));
-        assert_eq!(app.with_window(|_, cx| online.read(cx).resumes), before + 2);
-    }
-
-    /// A game being played redraws its clocks as they tick, and nothing else does.
-    #[gpui_kit::test]
-    fn a_game_being_played_redraws_as_its_clocks_tick(cx: &mut gpui_kit::TestAppContext) {
-        use kchess_domain::online_game::model::GamePhase;
-        let mut app = started(cx, None);
-        let online = app.with_window(|_, cx| super::handle(cx));
-        let redraws = std::rc::Rc::new(std::cell::Cell::new(0));
-        let _watch = app.with_window(|_, cx| {
-            let redraws = redraws.clone();
-            cx.observe(&online, move |_, _| redraws.set(redraws.get() + 1))
-        });
-        app.with_window(|_, cx| online.update(cx, |online, cx| online.tick(cx)));
-        app.cx().run_until_parked();
-        let idle = redraws.get();
-        app.with_window(|_, cx| {
-            online.update(cx, |online, cx| online.set_phase(GamePhase::Playing, cx))
-        });
-        app.cx().run_until_parked();
-        let before = redraws.get();
-        app.with_window(|_, cx| online.update(cx, |online, cx| online.tick(cx)));
-        app.cx().run_until_parked();
-        assert_eq!((idle, redraws.get()), (0, before + 1));
-    }
-
-    /// How long the core may take to answer a status read, which it answers at once: a read
-    /// that never lands fails the test promptly instead of hanging until the runner's timeout.
-    const ANSWER: std::time::Duration = std::time::Duration::from_secs(10);
-
-    /// The board's online state once its startup check has ended and the core lends help.
-    fn settled(app: &mut Started) -> gpui_kit::Entity<super::OnlineState> {
-        app.wait_for_engine_help();
-        app.with_window(|_, cx| super::handle(cx))
-    }
-
-    /// A connection report in `phase`, for the state to hold.
-    fn connection(
-        lane: &str,
-        phase: &str,
-    ) -> kchess_domain::online_game::connection::OnlineConnection {
-        serde_json::from_value(serde_json::json!({
-            "session": 1, "account": "me", "gameId": "", "lane": lane, "phase": phase,
-        }))
-        .expect("a connection report")
-    }
-
-    #[test]
-    fn each_pause_says_why() {
-        use super::Pause;
-        assert_eq!(
-            Pause::Checking.text(),
-            "Checking Lichess for a game in progress…"
-        );
-        assert_eq!(
-            Pause::Unverified.text(),
-            "Couldn't check Lichess for a game in progress"
-        );
-        assert_eq!(Pause::LiveGame.text(), "Paused during your Lichess game");
-    }
-
-    /// Engine help needs both: no game of the account's on the board, and the core lending it. A
-    /// check that failed is told apart from a check under way and from a live game, which is
-    /// what decides whether Check again is offered.
-    #[gpui_kit::test]
-    fn engine_help_follows_both_the_board_and_the_core(cx: &mut gpui_kit::TestAppContext) {
-        use super::{Pause, Phase};
-        use kchess_contracts::types::Assistance;
-        let mut app = started(cx, None);
-        let online = settled(&mut app);
-        let all = [
-            Phase::Checking,
-            Phase::Idle,
-            Phase::Seeking,
-            Phase::Playing,
-            Phase::Finished,
-            Phase::Disconnected,
-        ];
-        let lent = [
-            Assistance::Allowed,
-            Assistance::Unverified,
-            Assistance::LiveGame,
-        ];
-        let seen = app.with_window(|_, cx| {
-            online.update(cx, |state, _| {
-                let mut seen = Vec::new();
-                for phase in all {
-                    for assistance in lent {
-                        state.phase = phase;
-                        state.assistance = assistance;
-                        seen.push((phase, assistance, state.assistance_allowed(), state.pause()));
-                    }
-                }
-                // The core reporting its check of the game lane counts as checking, whatever the
-                // board's phase.
-                state.phase = Phase::Idle;
-                state.assistance = Assistance::Unverified;
-                state.model.online_connection = Some(connection("game", "checking"));
-                let reported = state.pause();
-                state.model.online_connection = Some(connection("events", "checking"));
-                let other_lane = state.pause();
-                state.model.online_connection = None;
-                (seen, reported, other_lane)
-            })
-        });
-        let (seen, reported, other_lane) = seen;
-        let expected = |phase: Phase, assistance: Assistance| match (phase, assistance) {
-            (Phase::Idle | Phase::Finished, Assistance::Allowed) => (true, None),
-            (Phase::Checking, _) => (false, Some(Pause::Checking)),
-            (Phase::Idle | Phase::Finished, Assistance::Unverified) => {
-                (false, Some(Pause::Unverified))
-            }
-            _ => (false, Some(Pause::LiveGame)),
-        };
-        for (phase, assistance, allowed, pause) in seen {
-            assert_eq!(
-                (allowed, pause),
-                expected(phase, assistance),
-                "{phase:?} with the core's {assistance:?}"
-            );
-        }
-        assert_eq!(reported, Some(Pause::Checking));
-        assert_eq!(other_lane, Some(Pause::Unverified));
-    }
-
-    /// Each change the core reports is taken and counted, so a status read asked before it is
-    /// known for stale; a read with nothing reported since sets the state to the core's.
-    #[gpui_kit::test]
-    fn the_cores_lock_is_followed(cx: &mut gpui_kit::TestAppContext) {
-        use kchess_contracts::events::CoreEvent;
-        use kchess_contracts::types::Assistance;
-        let mut app = started(cx, None);
-        let online = settled(&mut app);
-        let (before, after, taken) = app.with_window(|_, cx| {
-            online.update(cx, |state, cx| {
-                let before = state.assistance_reports;
-                state.receive(&CoreEvent::Assistance(Assistance::LiveGame), cx);
-                (before, state.assistance_reports, state.assistance)
-            })
-        });
-        assert_eq!((after, taken), (before + 1, Assistance::LiveGame));
-        // The core still lends help (nothing changed there): reading it corrects the state.
-        app.with_window(|_, cx| online.update(cx, |state, cx| state.read_assistance(cx)));
-        app.wait_within(ANSWER, "the core's answer", |_, cx| {
-            online.read(cx).assistance == Assistance::Allowed
-        });
-    }
-
-    /// A failed check is tried again later, twice as late each time up to five minutes; not
-    /// while Lichess refuses the login, which connecting the account again checks itself.
-    #[gpui_kit::test]
-    fn a_failed_check_is_retried_later_each_time(cx: &mut gpui_kit::TestAppContext) {
-        use std::time::Duration;
-        let mut app = started(cx, None);
-        let online = settled(&mut app);
-        let waits = app.with_window(|_, cx| {
-            online.update(cx, |state, cx| {
-                state.recheck_after = super::RECHECK_FIRST;
-                state._recheck = None;
-                state.schedule_recheck(cx);
-                let first = (state.recheck_after, state._recheck.is_some());
-                state.recheck_after = Duration::from_secs(4 * 60);
-                state.schedule_recheck(cx);
-                let capped = state.recheck_after;
-                state.recheck_after = super::RECHECK_FIRST;
-                state.model.online_connection = Some(connection("events", "auth-required"));
-                state.schedule_recheck(cx);
-                let refused = (state.recheck_after, state._recheck.is_some());
-                state.model.online_connection = None;
-                (first, capped, refused)
-            })
-        });
-        assert_eq!(
-            waits,
-            (
-                (Duration::from_secs(30), true),
-                Duration::from_secs(5 * 60),
-                (Duration::from_secs(15), false),
-            )
-        );
-    }
-
-    /// Check again asks Lichess once more after a failed check, and only then.
-    #[gpui_kit::test]
-    fn check_again_follows_only_a_failed_check(cx: &mut gpui_kit::TestAppContext) {
-        use super::Phase;
-        use kchess_contracts::types::Assistance;
-        let mut app = started(cx, None);
-        let online = settled(&mut app);
-        let asked = |app: &mut Started, assistance: Assistance| {
-            app.with_window(|_, cx| {
-                let before = online.update(cx, |state, _| {
-                    state.model.online_connection = None;
-                    state.phase = Phase::Idle;
-                    state.assistance = assistance;
-                    state.resumes
-                });
-                super::check_again(cx);
-                let state = online.read(cx);
-                (state.resumes - before, state.pause())
-            })
-        };
-        assert_eq!(asked(&mut app, Assistance::Allowed), (0, None));
-        assert_eq!(
-            asked(&mut app, Assistance::Unverified),
-            (1, Some(super::Pause::Checking))
-        );
-    }
-
-    /// Signing out while the games in progress loaded kept that request current: its answer
-    /// brought the account's games back, and an earlier failure stayed on the empty list.
-    #[gpui_kit::test]
-    fn games_in_progress_from_before_signing_out_do_not_come_back(
-        cx: &mut gpui_kit::TestAppContext,
-    ) {
-        let mut app = started(cx, None);
-        let (stale, error) = app.with_window(|_, cx| {
-            super::handle(cx).update(cx, |online, cx| {
-                online.ongoing_loading.show_error("Lichess did not answer");
-                let asked = online.ongoing_loading.current();
-                // No account is connected in a fresh profile.
-                online.refresh_ongoing(cx);
-                (
-                    online.ongoing_loading.is_current(asked),
-                    online.ongoing_loading.error().cloned(),
-                )
-            })
-        });
-        assert!(!stale);
-        assert_eq!(error, None);
-    }
-
-    fn ongoing(id: &str, speed: &str, my_turn: bool) -> kchess_contracts::types::OngoingGame {
-        serde_json::from_value(serde_json::json!({
-            "gameId": id,
-            "account": "alice",
-            "opponent": { "name": "bob" },
-            "fen": "8/8/8/8/8/8/8/8 w - - 0 1",
-            "isMyTurn": my_turn,
-            "variant": "standard",
-            "speed": speed,
-            "rated": false,
-        }))
-        .expect("an ongoing game")
-    }
-
-    /// A correspondence game announces the player's move only when it just turned to them, in a
-    /// game not being played in the window: each other case stays quiet.
-    #[test]
-    fn only_a_correspondence_game_that_just_turned_to_you_is_your_move() {
-        let game = ongoing("abc", "correspondence", true);
-        assert!(super::is_your_move_now(&game, Some(false), "other"));
-        // Not correspondence.
-        assert!(!super::is_your_move_now(
-            &ongoing("abc", "blitz", true),
-            Some(false),
-            "other"
-        ));
-        // Still the opponent's turn.
-        assert!(!super::is_your_move_now(
-            &ongoing("abc", "correspondence", false),
-            Some(false),
-            "other"
-        ));
-        // Already the player's move when last seen, or never seen.
-        assert!(!super::is_your_move_now(&game, Some(true), "other"));
-        assert!(!super::is_your_move_now(&game, None, "other"));
-        // The game open in the window needs no announcement.
-        assert!(!super::is_your_move_now(&game, Some(false), "abc"));
-    }
-
-    /// Asking for the games in progress with an account connected marks the list as read once the
-    /// current request's answer lands, failed or not.
-    #[gpui_kit::test]
-    fn the_current_answer_for_games_in_progress_lands(cx: &mut gpui_kit::TestAppContext) {
-        let server = kchess_testkit::Server::start(|_, out| {
-            kchess_testkit::respond(out, 500, "text/plain", b"")
-        })
-        .expect("a stand-in Lichess");
-        let mut app = started(cx, Some(server.base().to_string()));
-        app.with_account("alice", true);
-        app.with_window(|_, cx| {
-            super::handle(cx).update(cx, |online, cx| {
-                assert!(!online.ongoing_loaded);
-                online.refresh_ongoing(cx);
-            });
-        });
-        app.wait_for("the answer to land", |_, cx| {
-            super::handle(cx).read(cx).ongoing_loaded
-        });
-    }
-
-    /// Starting a game asks the core at once: the state is busy until its answer comes.
-    #[gpui_kit::test]
-    fn starting_a_game_is_busy_until_the_core_answers(cx: &mut gpui_kit::TestAppContext) {
-        let server = kchess_testkit::Server::start(|_, out| {
-            kchess_testkit::respond(out, 500, "text/plain", b"")
-        })
-        .expect("a stand-in Lichess");
-        let mut app = started(cx, Some(server.base().to_string()));
-        let busy = app.with_window(|_, cx| {
-            super::handle(cx).update(cx, |online, cx| {
-                online.start(None, cx);
-                online.busy
-            })
-        });
-        assert!(busy);
-        app.wait_for("the start to end", |_, cx| !super::handle(cx).read(cx).busy);
-    }
-}
+mod tests;

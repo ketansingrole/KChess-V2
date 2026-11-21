@@ -26,7 +26,7 @@ use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_domain::training::openings::{self, ExplorerMove};
 use kchess_domain::training::repetition;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, json};
 use shakmaty::Color;
 
 use super::run;
@@ -219,6 +219,17 @@ pub enum RepertoireAction {
     Save,
 }
 
+/// What the trees are built from: the study as last edited, its chapter, the side and the
+/// opening.
+#[derive(Clone, PartialEq)]
+struct Choices {
+    edited: Option<serde_json::Number>,
+    study: String,
+    chapter: String,
+    color: Color,
+    opening: Option<OpeningChoice>,
+}
+
 pub struct Repertoire {
     studies: Vec<Study>,
     misses: RepertoireMisses,
@@ -232,7 +243,7 @@ pub struct Repertoire {
     reviewing: bool,
     /// An opening's drill tree, and the opening and side it was built for.
     drill: Option<TreeNode>,
-    drill_for: Option<Value>,
+    drill_for: Option<(Option<OpeningChoice>, Color)>,
     preparing: bool,
     note: String,
     drill_task: Option<Task<()>>,
@@ -254,7 +265,7 @@ pub struct Repertoire {
     /// The selects' items are rebuilt on the next frame, where there is a window.
     stale_selects: bool,
     /// The choices the trees were built for: another page (Openings' Train) may change them.
-    built_for: Value,
+    built_for: Option<Choices>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -315,8 +326,10 @@ impl Repertoire {
             cx.observe(&cx.global::<StudyHandle>().0.clone(), |this, _, cx| {
                 this.studies = Self::studies_of(cx);
                 this.stale_selects = true;
+                this.follow_choices(cx);
                 cx.notify();
             }),
+            cx.observe_global::<crate::prefs::ViewPreferences>(|this, cx| this.follow_choices(cx)),
             // The board follows blindfold mode.
             cx.subscribe(&settings, |this, _, _: &SettingsChanged, cx| {
                 this.redraw(cx)
@@ -349,12 +362,19 @@ impl Repertoire {
             study_select,
             chapter_select,
             stale_selects: true,
-            built_for: Value::Null,
+            built_for: None,
             _subscriptions: subscriptions,
         };
         drill.load_misses(cx);
         drill.rebuild(cx);
         drill
+    }
+
+    /// The opening whose drill tree is built, when one is drilled.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn drilled_opening(&self) -> Option<&str> {
+        let (opening, _) = self.drill_for.as_ref()?;
+        opening.as_ref().map(|opening| opening.name.as_str())
     }
 
     /// How many repertoires have missed moves.
@@ -443,30 +463,37 @@ impl Repertoire {
         }
     }
 
-    fn choices(cx: &App) -> Value {
-        let edited = cx
-            .global::<StudyHandle>()
-            .0
-            .read(cx)
-            .study(&Self::study_id(cx))
-            .map(|study| study.updated_at.clone());
-        json!([
-            edited,
-            Self::study_id(cx),
-            crate::prefs::get::<String>(cx, CHAPTER, ALL_CHAPTERS.into()),
-            kchess_domain::color::name(Self::color(cx)),
-            Self::opening(cx).map(|opening| json!(opening)),
-        ])
+    fn choices(cx: &App) -> Choices {
+        let study = Self::study_id(cx);
+        Choices {
+            edited: cx
+                .global::<StudyHandle>()
+                .0
+                .read(cx)
+                .study(&study)
+                .map(|study| study.updated_at.clone()),
+            study,
+            chapter: crate::prefs::get::<String>(cx, CHAPTER, ALL_CHAPTERS.into()),
+            color: Self::color(cx),
+            opening: Self::opening(cx),
+        }
+    }
+
+    /// The trees follow choices made elsewhere (Openings' Train, a study edited), when they
+    /// change rather than when the page is next drawn.
+    fn follow_choices(&mut self, cx: &mut Context<Self>) {
+        if self.built_for.as_ref() != Some(&Self::choices(cx)) {
+            self.stale_selects = true;
+            self.rebuild(cx);
+            cx.notify();
+        }
     }
 
     /// The trees for what is chosen, the opening's built first when it changed; then a new line.
     fn rebuild(&mut self, cx: &mut Context<Self>) {
-        self.built_for = Self::choices(cx);
+        self.built_for = Some(Self::choices(cx));
         if Self::drills_opening(cx) {
-            let wanted = json!([
-                Self::opening(cx).map(|o| json!(o)),
-                kchess_domain::color::name(Self::color(cx))
-            ]);
+            let wanted = (Self::opening(cx), Self::color(cx));
             if self.drill_for.as_ref() != Some(&wanted) {
                 self.drill_for = Some(wanted);
                 self.build_drill(cx);
@@ -1154,10 +1181,6 @@ impl Repertoire {
 
 impl Render for Repertoire {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.built_for != Self::choices(cx) {
-            self.stale_selects = true;
-            self.rebuild(cx);
-        }
         if std::mem::take(&mut self.stale_selects) {
             self.refresh_selects(window, cx);
         }
@@ -1183,11 +1206,7 @@ impl Render for Repertoire {
         let board_column = if self.at.is_some() {
             board_column
                 .child(crate::board::cached(&self.board))
-                .child(widgets::lone_entry(widgets::move_entry(
-                    &self.move_box.input,
-                    your_turn,
-                    &palette,
-                )))
+                .child(self.move_box.lone(your_turn, &palette))
         } else if !(drills_opening && self.preparing) {
             board_column.child(widgets::card(&palette).child(Self::empty(
                 "Choose a repertoire",

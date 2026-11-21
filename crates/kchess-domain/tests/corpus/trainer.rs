@@ -3,10 +3,11 @@
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
+use kchess_domain::misc::constants::ErrorKind;
 use kchess_domain::position;
 use kchess_domain::trainer::analysis_tree::{self as tree, MoveInput, Score};
 use kchess_domain::trainer::puzzle_session::{
-    self as session, Answer, Detail, PuzzleSession, Reply, Resume, Selection, Step,
+    self as session, Answer, Detail, Failure, PuzzleSession, Reply, Resume, Selection, Step,
 };
 
 use super::{Out, arg};
@@ -81,7 +82,13 @@ fn reply(arg: &Map<String, Value>) -> Result<Reply, String> {
         .and_then(Value::as_object)
         .ok_or("outcome must be an object")?;
     if let Some(text) = outcome.get("error") {
-        return Ok(Err(text.as_str().unwrap_or_default().to_string()));
+        let message = text.as_str().unwrap_or_default().to_string();
+        // The recorded suites told a missing puzzle database by the core's words, which carry
+        // their kind now.
+        let kind = message
+            .contains("Download the puzzle database")
+            .then_some(ErrorKind::NoPuzzleDatabase);
+        return Ok(Err(Failure { message, kind }));
     }
     let ok = outcome.get("ok").unwrap_or(&Value::Null);
     let number = |value: Option<&Value>| value.and_then(Value::as_f64);

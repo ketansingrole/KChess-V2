@@ -13,7 +13,7 @@ use rusqlite::{Connection, OptionalExtension, Statement, ToSql, params};
 use serde::{Deserialize, Serialize};
 
 use crate::store::sql::{Sql as _, transaction};
-use kchess_contracts::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, ErrorKind, Result};
 use kchess_domain::variant::Variant;
 use kchess_domain::{position, rules};
 
@@ -190,6 +190,7 @@ fn require_installed(db: &Connection) -> Result<()> {
         CoreError::new(
             "Download the puzzle database first (Settings → Offline downloads, or the Rush tab).",
         )
+        .with_kind(ErrorKind::NoPuzzleDatabase)
     })
 }
 
@@ -689,6 +690,8 @@ mod tests {
             error.message,
             "Download the puzzle database first (Settings → Offline downloads, or the Rush tab)."
         );
+        // A frontend tells it by its kind, not its words.
+        assert_eq!(error.kind, Some(ErrorKind::NoPuzzleDatabase));
     }
 
     #[test]

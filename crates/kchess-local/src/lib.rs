@@ -18,6 +18,11 @@ use kchess_nav::page::PageView;
 use kchess_nav::page::{PageKey, page_key};
 use std::time::Instant;
 
+mod draw;
+mod new_game;
+use draw::*;
+use new_game::*;
+
 /// What the chess clock's keys do.
 #[derive(Clone, Copy)]
 pub enum ClockKey {
@@ -56,7 +61,7 @@ use kchess_contracts::types::{HistoryKind, SessionDocument, SessionKind, Session
 use kchess_domain::games::Outcome;
 use kchess_domain::games::archive::Snapshot;
 use kchess_domain::games::otb_clock::{Config, OtbClock, Side};
-use serde_json::{Value, json};
+use serde_json::json;
 use shakmaty::Color;
 
 use crate::board::{BoardEvent, ChessBoard};
@@ -70,7 +75,8 @@ use crate::played::PlayedHandle;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
 use crate::widgets::{KeyboardFocus as _, Side as PieceSide, Tone};
-use kchess_domain::games::local::{self, LocalGame};
+use kchess_domain::games::Clock;
+use kchess_domain::games::local::{self, LocalClock, LocalGame};
 use kchess_nav::part::Part;
 use kchess_nav::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout, panel_style};
 use kchess_ui::icon;
@@ -346,7 +352,7 @@ impl LocalPage {
             clock_history: None,
             clock_inputs,
             turned: std::collections::HashMap::new(),
-            voice: crate::voice::moves::VoiceMoves::new("local", cx),
+            voice: crate::voice::moves::VoiceMoves::new(crate::voice::VoiceSource::Local, cx),
             clock_layout,
             ticker: None,
             low_time: Default::default(),
@@ -524,9 +530,8 @@ impl LocalPage {
             return;
         }
         let position = view::position_at(self.setup(), &self.moves(), self.moves().len());
-        match self.moves.take(position.as_ref(), window, cx) {
-            Some(uci) => self.play(&uci, cx),
-            None => cx.notify(),
+        if let Some(uci) = self.moves.take(position.as_ref(), window, cx) {
+            self.play(&uci, cx);
         }
     }
 
@@ -636,7 +641,7 @@ impl LocalPage {
 
     /// A new game starts: the one before keeps its place in history and this one gets its own.
     /// After a saved game that could not be read, this one is the players' to keep.
-    fn start(&mut self, setup: Setup, clock: Value, cx: &mut Context<Self>) {
+    fn start(&mut self, setup: Setup, clock: Option<LocalClock>, cx: &mut Context<Self>) {
         self.saver.open();
         let (source, has_play) = (self.game.archive_snapshot(), self.has_play());
         match &mut self.history {
@@ -652,9 +657,7 @@ impl LocalPage {
                 ))
             }
         }
-        let started = serde_json::from_value(clock)
-            .map_err(|error| format!("the chosen game: {error}"))
-            .and_then(|clock| self.game.start(setup, clock, self.now()));
+        let started = self.game.start(setup, clock, self.now());
         if let Err(cause) = started {
             crate::log::write(Level::Warn, "local", &cause);
         }
@@ -733,7 +736,7 @@ impl LocalPage {
     /// A game over the board from a position (the board editor's, the analysis board's), untimed.
     pub fn start_from(&mut self, setup: Setup, window: &mut Window, cx: &mut Context<Self>) {
         crate::prefs::set(cx, MODE_KEY, Mode::Board);
-        self.replace_game(setup, Value::Null, window, cx);
+        self.replace_game(setup, None, window, cx);
     }
 
     /// Start a game, asking first when one on the board is still being played: once the saved
@@ -741,7 +744,7 @@ impl LocalPage {
     pub fn replace_game(
         &mut self,
         setup: Setup,
-        clock: Value,
+        clock: Option<LocalClock>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -756,7 +759,7 @@ impl LocalPage {
     fn confirm_new_game(
         &mut self,
         setup: Setup,
-        clock: Value,
+        clock: Option<LocalClock>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -774,7 +777,7 @@ impl LocalPage {
                 .cancel_text("Cancel")
                 .show_cancel(true)
                 .on_ok(move |_, _, cx| {
-                    let (setup, clock) = (chosen.0.clone(), chosen.1.clone());
+                    let (setup, clock) = (chosen.0.clone(), chosen.1);
                     let _ = page.update(cx, |page, cx| page.start(setup, clock, cx));
                     true
                 })
@@ -1245,462 +1248,6 @@ impl LocalPage {
     }
 }
 
-/// The row above the page that holds the mode tabs, and its gap to the board: the board is
-/// sized to leave room for it.
-const MODE_BAR: Pixels = px(48.);
-/// The gap between the two clock faces.
-const FACE_GAP: Pixels = px(16.);
-
-/// "Shared board" and "Chess clock", above the page in both modes, so switching moves nothing but
-/// what is in the board's place.
-fn mode_tabs(mode: Mode, palette: &Palette, cx: &mut Context<LocalPage>) -> Div {
-    let page = cx.entity().downgrade();
-    div().h(MODE_BAR).child(widgets::pills(
-        "local-mode",
-        [("users-round", "Shared board"), ("timer", "Chess clock")]
-            .into_iter()
-            .map(|(glyph, label)| widgets::Pill {
-                icon: Some(icon(glyph)),
-                label: label.into(),
-                badge: None,
-                disabled: false,
-            })
-            .collect(),
-        usize::from(mode == Mode::Clock),
-        move |index, _, cx| {
-            let mode = if index == 1 { Mode::Clock } else { Mode::Board };
-            crate::prefs::set(cx, MODE_KEY, mode);
-            let _ = page.update(cx, |page, cx| page.after_change(cx));
-        },
-        false,
-        palette,
-    ))
-}
-
-impl Render for LocalPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = *cx.global::<Palette>();
-        if self.mode(cx) == Mode::Clock {
-            let clock = self.render_clock(&palette, window, cx);
-            return surface::keys(div().size_full(), &self.focus, cx)
-                .on_key_down(cx.listener(Self::clock_key))
-                .child(clock)
-                .into_any_element();
-        }
-        let board_size = self.board_size(window);
-        let moves = self.moves();
-        let shown = self.shown_ply();
-        let live = self.game.result().is_none();
-        let orientation = self.orientation(cx);
-        let display = view::position_at(self.setup(), &moves, shown);
-        let display_turn = view::turn(display.as_ref());
-        let frontend = crate::settings::frontend(cx).clone();
-        let fen = display
-            .as_ref()
-            .map(kchess_domain::rules::make_fen)
-            .unwrap_or_default();
-        let (timed, paused) = (self.game.timed(), self.game.paused());
-        self.faces_active = [Color::White, Color::Black]
-            .map(|color| live && display_turn == color && timed && !paused);
-        let mut pockets = [
-            crate::board::pocket(&self.board, Color::White, cx),
-            crate::board::pocket(&self.board, Color::Black, cx),
-        ];
-        let mut line =
-            |color: Color, middle: Option<AnyElement>| {
-                let name = if color == Color::White {
-                    "White"
-                } else {
-                    "Black"
-                };
-                let active = live && display_turn == color;
-                widgets::player_line(
-                    h_flex()
-                        .gap(px(8.))
-                        .child(widgets::avatar(
-                            icon("user"),
-                            if color == Color::White {
-                                PieceSide::White
-                            } else {
-                                PieceSide::Black
-                            },
-                            active,
-                            &palette,
-                        ))
-                        .child(name)
-                        .children(pockets[usize::from(color == Color::Black)].take().or_else(
-                            || {
-                                widgets::material(
-                                    &fen,
-                                    color == Color::White,
-                                    &frontend.piece_set,
-                                    &palette,
-                                )
-                            },
-                        )),
-                    middle,
-                    timed.then(|| self.faces[face(color)].clone().into_any_element()),
-                )
-            };
-        let interactive = self.interactive();
-        let entry = widgets::move_entry(&self.moves.input, interactive, &palette);
-        let (voice, voice_line) = crate::voice::moves::board_bar(
-            &self.voice,
-            cx.entity().downgrade(),
-            crate::voice::moves::Access {
-                write: |this: &mut Self| &mut this.voice,
-                play: |this: &mut Self, uci, _, cx| this.play(uci, cx),
-            },
-            crate::voice::moves::BoardBar {
-                id: "local-voice",
-                hint: "Either player can say “E four” or “Knight F three”",
-                active: self.voice_taking(),
-                listening: self.voice_taking(),
-                grammar: kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Move)
-                    .to_vec(),
-            },
-            cx,
-        );
-        let board_column = v_flex()
-            .w(board_size)
-            .flex_none()
-            .gap(widgets::STACK_GAP)
-            .child(line(!orientation, None))
-            .child(crate::board::cached(&self.board))
-            .child(line(orientation, Some(widgets::move_row(entry, voice))))
-            .children(voice_line)
-            .children(self.moves.message(&palette))
-            .children(self.saver.problems(cx).into_iter().map(|error| {
-                div()
-                    .text_size(px(12.))
-                    .text_color(palette.error)
-                    .child(error)
-            }));
-        let board_column = surface::wheel(board_column, cx);
-
-        let panel = if self.layout.is_stacked() {
-            self.render_panel(window, cx)
-        } else {
-            let max_width = if frontend.zen_mode {
-                PANEL_ZEN
-            } else {
-                PANEL_MAX
-            };
-            self.panel
-                .clone()
-                .cached(panel_style(
-                    self.layout.panel_height_px(board_size),
-                    max_width,
-                ))
-                .into_any_element()
-        };
-        let tabs = mode_tabs(Mode::Board, &palette, cx).into_any_element();
-        let page = self
-            .layout
-            .render_under("local-page", tabs, board_column, panel, window, cx)
-            // ⌘Z outside the move box takes back, as the button does.
-            .on_action(
-                cx.listener(|this, _: &Undo, window, cx| this.act(Action::TakeBack, window, cx)),
-            );
-        surface::keys(page, &self.focus, cx).into_any_element()
-    }
-}
-
-impl LocalPage {
-    /// The board's side, under the mode tabs.
-    fn board_size(&self, window: &Window) -> Pixels {
-        self.layout.board_size_in(px(0.), MODE_BAR, window)
-    }
-
-    /// The panel beside (or under) the board: the game's setup and status, its moves and the
-    /// actions. Beside the board it is the page's `Part`, kept while only a clock face redraws.
-    fn render_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let palette = *cx.global::<Palette>();
-        let board_size = self.board_size(window);
-        let narrow = widgets::is_narrow(self.panel_area.size().width);
-        let moves = self.moves();
-        let sans = view::sans(self.setup(), &moves);
-        let shown = self.shown_ply();
-        let over = self.game.over();
-        let result = self.game.result();
-        let display = view::position_at(self.setup(), &moves, shown);
-        let frontend = crate::settings::frontend(cx).clone();
-        let (timed, paused) = (self.game.timed(), self.game.paused());
-        let variant_label = crate::game::setup_label(self.setup());
-        let clock_label = self.game.clock().map(|clock| {
-            let mut label = widgets::time_control(clock.white.minutes, clock.white.increment);
-            if clock.black.minutes != clock.white.minutes {
-                label.push_str(&format!(
-                    " (Black {} min)",
-                    widgets::clock_minutes(clock.black.minutes)
-                ));
-            }
-            label
-        });
-        let banner = match &result {
-            Some(result) => {
-                let winner = result.winner;
-                widgets::StatusBanner::new(
-                    if winner.is_some() {
-                        Tone::Win
-                    } else {
-                        Tone::Plain
-                    },
-                    if winner.is_some() {
-                        icon("trophy")
-                    } else {
-                        icon("handshake")
-                    },
-                    match winner {
-                        Some(Color::White) => "White wins".into(),
-                        Some(Color::Black) => "Black wins".into(),
-                        None => "Draw".into(),
-                    },
-                )
-                .announce()
-                .detail(SharedString::from(result.reason.clone()))
-            }
-            None if !self.at_live() => widgets::StatusBanner::new(
-                Tone::Plain,
-                icon("history"),
-                "Reviewing an earlier position".into(),
-            )
-            .extra(widgets::back_to_game(cx.listener(|this, _, _, cx| {
-                let last = this.moves().len();
-                this.show_ply(last, cx)
-            }))),
-            None => {
-                let check = display.as_ref().is_some_and(shakmaty::Position::is_check);
-                let detail = if timed && paused && !moves.is_empty() {
-                    Some("Clock paused".into())
-                } else if check {
-                    Some("Check".into())
-                } else {
-                    None
-                };
-                widgets::StatusBanner::turn(
-                    format!(
-                        "{} to move",
-                        if self.turn() == Color::White {
-                            "White"
-                        } else {
-                            "Black"
-                        }
-                    )
-                    .into(),
-                )
-                .when_some(detail, |banner, value| banner.detail(value))
-            }
-        };
-        let opening = (frontend.show_opening_name && self.setup().variant == Variant::Standard)
-            .then(|| {
-                let opening = crate::game::opening_at(self.setup(), &moves, shown)?;
-                Some((opening.eco, opening.name))
-            });
-        let page = cx.entity().downgrade();
-        let select = move |ply: usize, _: &mut Window, cx: &mut App| {
-            let _ = page.update(cx, |page, cx| page.show_ply(ply, cx));
-        };
-        let flip_page = cx.entity().downgrade();
-        let flip: widgets::ClickHandler = Box::new(move |_, _, cx| {
-            let _ = flip_page.update(cx, |page, cx| page.flip(cx));
-        });
-        let auto_flip = self.auto_flip(cx);
-        let in_progress = !over && !moves.is_empty();
-        widgets::side_panel(&palette)
-            .relative()
-            .child(self.panel_area.probe(cx))
-            .h(self.layout.panel_height(board_size))
-            .flex_1()
-            .min_w(PANEL_MIN)
-            .max_w(if frontend.zen_mode {
-                PANEL_ZEN
-            } else {
-                PANEL_MAX
-            })
-            .child(
-                h_flex()
-                    .gap(px(8.))
-                    .flex_wrap()
-                    .text_size(px(12.))
-                    .text_color(palette.text_muted)
-                    .children(
-                        variant_label
-                            .map(|label| div().font_weight(FontWeight::MEDIUM).child(label)),
-                    )
-                    .children(clock_label)
-                    .child(div().flex_1())
-                    .child({
-                        let page = cx.entity().downgrade();
-                        widgets::labelled_switch(
-                            "auto-flip",
-                            "Flip after each move",
-                            auto_flip,
-                            false,
-                            move |on, _, cx| {
-                                let _ = page.update(cx, |this, cx| this.set_auto_flip(*on, cx));
-                            },
-                        )
-                        .text_size(px(12.))
-                    })
-                    .child(widgets::view_toggles(cx)),
-            )
-            .child(banner)
-            .child(widgets::section_title(
-                "Moves",
-                opening.flatten().map(|(eco, name)| format!("{eco} {name}")),
-                &palette,
-            ))
-            .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
-                "local-moves",
-                widgets::MoveSheet {
-                    sans: &sans,
-                    shown,
-                    first: view::first_move(self.setup()),
-                },
-                if !timed {
-                    "No moves yet".into()
-                } else {
-                    "The first move starts the clock".into()
-                },
-                select.clone(),
-                crate::notation::figurine(cx),
-                &palette,
-            )))
-            .child(widgets::move_controls(
-                shown,
-                moves.len(),
-                select,
-                widgets::TurnButton::Flip(flip),
-                cx,
-            ))
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap(px(8.))
-                    .pt(px(14.))
-                    .border_t_1()
-                    .border_color(palette.border)
-                    .child(
-                        Button::new("local-takeback")
-                            .outline()
-                            .flex_1()
-                            .when(narrow, |button| button.min_w(relative(0.45)))
-                            .icon(icon("undo-2"))
-                            .label("Take back")
-                            .disabled(moves.is_empty() || self.timed_out())
-                            .on_click(cx.listener(|this, _, _, cx| this.takeback(cx))),
-                    )
-                    .when(timed && !over, |row| {
-                        row.child(
-                            Button::new("local-pause")
-                                .outline()
-                                .flex_1()
-                                .when(narrow, |button| button.min_w(relative(0.45)))
-                                .icon(if paused { icon("play") } else { icon("pause") })
-                                .label(if paused { "Resume" } else { "Pause" })
-                                .disabled(moves.is_empty())
-                                .on_click(cx.listener(|this, _, _, cx| this.toggle_pause(cx))),
-                        )
-                    })
-                    .when(in_progress, |row| {
-                        row.child(
-                            Button::new("local-draw")
-                                .outline()
-                                .flex_1()
-                                .when(narrow, |button| button.min_w(relative(0.45)))
-                                .icon(icon("handshake"))
-                                .label("Draw")
-                                .on_click(cx.listener(|this, _, _, cx| this.agree_draw(cx))),
-                        )
-                        .child(
-                            Button::new("local-resign")
-                                .outline()
-                                .danger()
-                                .flex_1()
-                                .when(narrow, |button| button.min_w(relative(0.45)))
-                                .icon(icon("flag"))
-                                .label("Resign")
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.ask_resign(window, cx)),
-                                ),
-                        )
-                    })
-                    .child(
-                        Button::new("local-new")
-                            .primary()
-                            .flex_1()
-                            .when(narrow, |button| button.min_w(relative(0.45)))
-                            .icon(icon("plus"))
-                            .label("New game")
-                            .tooltip_with_action("New game", &kchess_nav::page::New, None)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.open_new_game(window, cx)),
-                            ),
-                    ),
-            )
-            .when(!frontend.zen_mode, |panel| {
-                // Copy PGN, Export and Analyse share the row.
-                panel.child(widgets::panel_actions(
-                    narrow,
-                    [
-                        Button::new("copy-pgn")
-                            .ghost()
-                            .small()
-                            .w_full()
-                            .icon(icon("copy"))
-                            .label("Copy PGN")
-                            .disabled(moves.is_empty())
-                            .on_click(cx.listener(|this, _, window, cx| this.copy_pgn(window, cx)))
-                            .into_any_element()
-                            .into(),
-                        crate::export::export_menu(
-                            "local-export",
-                            &self.exporter,
-                            self.played_game(cx),
-                            Anchor::BottomCenter,
-                            false,
-                            cx,
-                        )
-                        .into_any_element()
-                        .into(),
-                    ]
-                    .into_iter()
-                    .chain([Button::new("local-analyse")
-                        .ghost()
-                        .small()
-                        .w_full()
-                        .icon(icon("microscope"))
-                        .label("Analyse")
-                        .disabled(moves.is_empty())
-                        .on_click(cx.listener(|this, _, window, cx| this.analyse(window, cx)))
-                        .into_any_element()
-                        .into()]),
-                ))
-            })
-            .into_any_element()
-    }
-
-    /// A player's clock beside their name: its own `Part`, which a tick redraws.
-    fn render_clock_face(&mut self, color: Color, cx: &mut Context<Self>) -> AnyElement {
-        let palette = *cx.global::<Palette>();
-        let text = clock_face(self.game.remaining(color, self.now()));
-        let label = format!(
-            "{} clock, {text}",
-            if color == Color::White {
-                "White"
-            } else {
-                "Black"
-            }
-        );
-        widgets::clock(text.into(), self.faces_active[face(color)], &palette)
-            .id(("local-clock", face(color)))
-            .test_support()
-            .aria_label(label)
-            .into_any_element()
-    }
-}
-
 impl LocalPage {
     /// Run an action as its button does, if it is still allowed.
     pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
@@ -1728,329 +1275,12 @@ impl LocalPage {
     }
 }
 
-/// Starts the game the form chose, from its setup and clock.
-type StartGame = Box<dyn Fn(Setup, Value, &mut Window, &mut App)>;
-
-/// The new-game form (`New game over the board`): the variant, its start, the clock and odds.
-struct NewGame {
-    variant: Entity<SelectState<Vec<SharedString>>>,
-    number: Entity<InputState>,
-    fen: Entity<InputState>,
-    clock: Entity<SelectState<Vec<SharedString>>>,
-    odds: Entity<InputState>,
-    on_start: StartGame,
-    _subscriptions: Vec<Subscription>,
-}
-
-impl NewGame {
-    fn new(
-        current: &Setup,
-        on_start: impl Fn(Setup, Value, &mut Window, &mut App) + 'static,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> NewGame {
-        // The form opens on the game being played: its variant, its Chess960 number, or the
-        // position it started from.
-        let current_variant = current.variant;
-        let current_fen = current.fen.clone();
-        let row = Variant::ALL
-            .iter()
-            .position(|variant| *variant == current_variant)
-            .unwrap_or(0);
-        let variant = cx.new(|cx| {
-            SelectState::new(
-                Variant::ALL
-                    .iter()
-                    .map(|variant| SharedString::from(variant.label()))
-                    .collect(),
-                Some(IndexPath::new(row)),
-                window,
-                cx,
-            )
-        });
-        let current_number = (current_variant == Variant::Chess960)
-            .then(|| (0..960).find(|&n| chess960(n) == current_fen))
-            .flatten();
-        let number = cx.new(|cx| {
-            let mut input = InputState::new(window, cx);
-            let n = current_number
-                .or_else(|| crate::game::drawn(kchess_games::random_chess960()))
-                .unwrap_or(518);
-            input.set_value(n.to_string(), window, cx);
-            input
-        });
-        let usual = match current_variant {
-            Variant::Chess960 => None,
-            variant => Some(variant.default_fen()),
-        };
-        let fen = cx.new(|cx| {
-            let label = format!("{} start", current_variant.label());
-            let mut input = InputState::new(window, cx).placeholder(label);
-            if usual.as_ref().is_some_and(|usual| *usual != current_fen) {
-                input.set_value(current_fen.clone(), window, cx);
-            }
-            input
-        });
-        let clock = cx.new(|cx| {
-            SelectState::new(
-                crate::game::CLOCKS
-                    .iter()
-                    .map(|(label, _)| SharedString::from(*label))
-                    .collect(),
-                Some(IndexPath::new(0)),
-                window,
-                cx,
-            )
-        });
-        let odds = cx.new(|cx| InputState::new(window, cx));
-        let refresh = |_: &mut NewGame,
-                       _: Entity<InputState>,
-                       _: &InputEvent,
-                       cx: &mut Context<NewGame>| cx.notify();
-        let subscriptions = vec![
-            cx.subscribe(&number, refresh),
-            cx.subscribe(&fen, refresh),
-            cx.subscribe(&odds, refresh),
-            // The FEN's placeholder names the start it replaces: "Crazyhouse start".
-            cx.subscribe_in(
-                &variant,
-                window,
-                |this, _, _: &SelectEvent<Vec<SharedString>>, window, cx| {
-                    let label = format!("{} start", this.chosen_variant(cx).label());
-                    this.fen
-                        .update(cx, |input, cx| input.set_placeholder(label, window, cx));
-                    cx.notify()
-                },
-            ),
-            cx.subscribe(&clock, |_, _, _: &SelectEvent<Vec<SharedString>>, cx| {
-                cx.notify()
-            }),
-        ];
-        NewGame {
-            variant,
-            number,
-            fen,
-            clock,
-            odds,
-            on_start: Box::new(on_start),
-            _subscriptions: subscriptions,
-        }
-    }
-
-    fn chosen_variant(&self, cx: &App) -> Variant {
-        let row = self
-            .variant
-            .read(cx)
-            .selected_index(cx)
-            .map_or(0, |index| index.row);
-        Variant::ALL.get(row).copied().unwrap_or_default()
-    }
-
-    fn number960(&self, cx: &App) -> Option<i64> {
-        self.number
-            .read(cx)
-            .value()
-            .trim()
-            .parse::<i64>()
-            .ok()
-            .filter(|n| (0..=959).contains(n))
-    }
-
-    fn fen_problem(&self, cx: &App) -> Option<SharedString> {
-        let text = self.fen.read(cx).value().trim().to_string();
-        let variant = self.chosen_variant(cx);
-        if variant == Variant::Chess960 || text.is_empty() {
-            return None;
-        }
-        crate::game::setup_problem(variant, &text).map(SharedString::from)
-    }
-
-    /// The chosen start, or `None` while the form has a problem.
-    fn setup(&self, cx: &App) -> Option<Setup> {
-        let variant = self.chosen_variant(cx);
-        if variant == Variant::Chess960 {
-            return self.number960(cx).map(|n| Setup {
-                variant,
-                fen: chess960(n),
-            });
-        }
-        let text = self.fen.read(cx).value().trim().to_string();
-        if variant == Variant::Standard && !text.is_empty() {
-            return self
-                .fen_problem(cx)
-                .is_none()
-                .then(|| crate::game::setup_from_fen(&text));
-        }
-        if !text.is_empty() {
-            return self
-                .fen_problem(cx)
-                .is_none()
-                .then_some(Setup { variant, fen: text });
-        }
-        Some(Setup::of(variant))
-    }
-
-    /// The chosen clock: equal times unless Black's minutes give odds.
-    fn clock(&self, cx: &App) -> Value {
-        let row = self
-            .clock
-            .read(cx)
-            .selected_index(cx)
-            .map_or(0, |index| index.row);
-        let Some((minutes, increment)) = crate::game::CLOCKS.get(row).and_then(|(_, clock)| *clock)
-        else {
-            return Value::Null;
-        };
-        let odds = self
-            .odds
-            .read(cx)
-            .value()
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|m| *m >= 1.);
-        json!({
-            "white": { "minutes": minutes, "increment": increment },
-            "black": { "minutes": odds.unwrap_or(minutes), "increment": increment },
-        })
-    }
-}
-
-impl Render for NewGame {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = *cx.global::<Palette>();
-        let variant = self.chosen_variant(cx);
-        let hint = Some(variant.hint().to_string());
-        let setup = self.setup(cx);
-        let no_clock = self
-            .clock
-            .read(cx)
-            .selected_index(cx)
-            .is_none_or(|index| index.row == 0);
-        v_flex()
-            .gap(px(16.))
-            .child(
-                widgets::field(
-                    "Variant",
-                    Select::new(&self.variant).accessibility_label("Choose a variant"),
-                    None,
-                    &palette,
-                )
-                .children(hint.map(|hint| {
-                    div()
-                        .text_size(px(13.))
-                        .text_color(palette.text_muted)
-                        .child(hint)
-                })),
-            )
-            .when(variant == Variant::Chess960, |form| {
-                form.child(
-                    h_flex()
-                        .items_end()
-                        .gap(px(8.))
-                        .child(
-                            widgets::field(
-                                "Position number (0–959)",
-                                Input::new(&self.number).aria_label("Position number (0–959)"),
-                                self.number960(cx)
-                                    .is_none()
-                                    .then(|| "Enter a number from 0 to 959".into()),
-                                &palette,
-                            )
-                            .flex_1(),
-                        )
-                        .child(
-                            Button::new("random-960")
-                                .outline()
-                                .icon(icon("shuffle"))
-                                .label("Random")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    let Some(n) =
-                                        crate::game::drawn(kchess_games::random_chess960())
-                                    else {
-                                        return;
-                                    };
-                                    this.number.update(cx, |input, cx| {
-                                        input.set_value(n.to_string(), window, cx)
-                                    });
-                                    cx.notify();
-                                })),
-                        ),
-                )
-            })
-            .when(variant != Variant::Chess960, |form| {
-                form.child(widgets::field(
-                    "Start from a FEN (optional)",
-                    Input::new(&self.fen).aria_label("Start from a FEN (optional)"),
-                    self.fen_problem(cx),
-                    &palette,
-                ))
-            })
-            .child(
-                h_flex()
-                    .gap(px(12.))
-                    .items_start()
-                    .child(
-                        widgets::field(
-                            "Clock",
-                            Select::new(&self.clock).accessibility_label("Clock"),
-                            None,
-                            &palette,
-                        )
-                        .flex_1(),
-                    )
-                    .child(
-                        widgets::field(
-                            "Black's minutes (odds)",
-                            Input::new(&self.odds)
-                                .aria_label("Black's minutes (odds)")
-                                .disabled(no_clock),
-                            None,
-                            &palette,
-                        )
-                        .child(
-                            div()
-                                .text_size(px(13.))
-                                .text_color(palette.text_muted)
-                                .child("Leave empty for equal time"),
-                        )
-                        .flex_1(),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(
-                        Button::new("cancel-local")
-                            .ghost()
-                            .label("Cancel")
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    )
-                    .child(
-                        Button::new("start-local")
-                            .primary()
-                            .label("Start")
-                            .disabled(setup.is_none())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                let Some(setup) = this.setup(cx) else {
-                                    return;
-                                };
-                                let clock = this.clock(cx);
-                                window.close_dialog(cx);
-                                (this.on_start)(setup, clock, window, cx);
-                            })),
-                    ),
-            )
-    }
-}
-
-/// A clock face's text, as the page shows it.
 /// White's or Black's place in `LocalPage::faces`.
 fn face(color: Color) -> usize {
     usize::from(color == Color::Black)
 }
 
+/// A clock face's text, as the page shows it.
 fn clock_face(millis: f64) -> String {
     format_clock(millis)
 }

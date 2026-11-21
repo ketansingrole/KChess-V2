@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use super::puzzle_progress::{Outcome, Verdict, classify, moves};
 use crate::js;
+use crate::misc::constants::ErrorKind;
 use crate::training::puzzle::Puzzle;
 
 const OFFLINE_TEXT: &str = "You’re offline. Choose Downloaded to use puzzles on this device, or reconnect for online puzzles.";
@@ -68,12 +69,27 @@ pub struct Report {
     pub failed: Option<String>,
 }
 
+crate::union!(
+    /// Where the session stands: nothing asked yet, a puzzle on its way or shown, none left for the
+    /// choice, no downloaded puzzles, rated puzzles without an account, an account to connect
+    /// again, or a failed load (`State::train_error` says why).
+    Phase {
+        Idle = "idle",
+        Loading = "loading",
+        Ready = "ready",
+        Exhausted = "exhausted",
+        NoDatabase = "nodb",
+        NoAccount = "noaccount",
+        Reconnect = "reconnect",
+        Error = "error",
+    }
+);
+
 /// What the page shows of the session.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct State {
-    /// `idle`, `loading`, `ready`, `exhausted`, `nodb`, `noaccount`, `reconnect` or `error`.
-    pub phase: String,
+    pub phase: Phase,
     #[serde(default)]
     pub current: Option<Puzzle>,
     pub puzzle_key: u64,
@@ -147,12 +163,22 @@ struct Internal {
     attempt: Option<Attempt>,
 }
 
+crate::union!(
+    /// Which call a reply answers: a downloaded puzzle, a Lichess puzzle, a practice puzzle drawn
+    /// again without the account, or a result sent to Lichess.
+    Stage {
+        Offline = "offline",
+        Draw = "draw",
+        Anonymous = "anonymous",
+        Solve = "solve",
+    }
+);
+
 /// Carried by a host call and handed back with its reply.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Resume {
-    /// `offline` (local puzzle), `draw` (Lichess puzzle), `anonymous` (practice retry), `solve`.
-    stage: String,
+    stage: Stage,
     generation: u64,
     #[serde(default)]
     version: u64,
@@ -267,7 +293,7 @@ fn offset(difficulty: &str) -> f64 {
 
 fn initial_state() -> State {
     State {
-        phase: "idle".into(),
+        phase: Phase::Idle,
         current: None,
         puzzle_key: 0,
         is_retry: false,
@@ -297,9 +323,9 @@ fn draw_args(account: &str, selection: &Selection) -> Request {
     })
 }
 
-fn resume(stage: &str, generation: u64, selection: &Selection) -> Resume {
+fn resume(stage: Stage, generation: u64, selection: &Selection) -> Resume {
     Resume {
-        stage: stage.into(),
+        stage,
         generation,
         version: 0,
         key: 0,
@@ -327,14 +353,21 @@ pub enum Answer {
 }
 
 /// A reply's outcome: the answer or the failure's message.
-pub type Reply = Result<Answer, String>;
+pub type Reply = Result<Answer, Failure>;
+
+/// A call that failed: what to show, and what kind of failure the core said it is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Failure {
+    pub message: String,
+    pub kind: Option<ErrorKind>,
+}
 
 impl Session<'_> {
     fn invalidate(&mut self) {
         self.end_attempt();
         self.internal.load_gen += 1;
         self.internal.attempt = None;
-        self.state.phase = "idle".into();
+        self.state.phase = Phase::Idle;
     }
 
     /// Show `puzzle` as a new attempt; `retry` (tried again from the history) is logged, not
@@ -357,7 +390,7 @@ impl Session<'_> {
             wrong_moves: Vec::new(),
             verdict: None,
         });
-        self.state.phase = "ready".into();
+        self.state.phase = Phase::Ready;
     }
 
     fn retry(&mut self, puzzle: Puzzle, selection: &Selection) {
@@ -370,18 +403,18 @@ impl Session<'_> {
     /// No puzzle left for the theme and difficulty, on Lichess or in the local database: an
     /// expected state with its own phase (the page offers other choices), not a failure.
     fn exhausted(&mut self) {
-        self.state.phase = "exhausted".into();
+        self.state.phase = Phase::Exhausted;
     }
 
-    /// A failed load: offline without the database is a distinct phase; everything else shows
-    /// the message.
-    fn fail(&mut self, selection: &Selection, text: &str) {
+    /// A failed load: offline without the database is a distinct phase, told by its kind;
+    /// everything else shows the message.
+    fn fail(&mut self, selection: &Selection, message: &str, kind: Option<ErrorKind>) {
         self.warn = true;
-        if selection.mode == "offline" && text.contains("Download the puzzle database") {
-            self.state.phase = "nodb".into();
+        if selection.mode == "offline" && kind == Some(ErrorKind::NoPuzzleDatabase) {
+            self.state.phase = Phase::NoDatabase;
         } else {
-            self.state.train_error = text.into();
-            self.state.phase = "error".into();
+            self.state.train_error = message.into();
+            self.state.phase = Phase::Error;
         }
     }
 
@@ -389,7 +422,7 @@ impl Session<'_> {
         self.end_attempt();
         self.internal.load_gen += 1;
         let generation = self.internal.load_gen;
-        self.state.phase = "loading".into();
+        self.state.phase = Phase::Loading;
         self.state.train_error = String::new();
         self.state.last_report = None;
         self.state.is_retry = false;
@@ -402,21 +435,21 @@ impl Session<'_> {
                     max_rating: centre + 150.0,
                     count: 1,
                 }),
-                resume: resume("offline", generation, selection),
+                resume: resume(Stage::Offline, generation, selection),
             });
             return;
         }
         if selection.mode == "rated" && selection.account.is_empty() {
-            self.state.phase = "noaccount".into();
+            self.state.phase = Phase::NoAccount;
             return;
         }
         if !online {
-            self.fail(selection, OFFLINE_TEXT);
+            self.fail(selection, OFFLINE_TEXT, Some(ErrorKind::Offline));
             return;
         }
         self.call = Some(Call {
             request: draw_args(&selection.account, selection),
-            resume: resume("draw", generation, selection),
+            resume: resume(Stage::Draw, generation, selection),
         });
     }
 
@@ -428,25 +461,25 @@ impl Session<'_> {
         let selection = token.selection.clone();
         let answer = match reply {
             Ok(answer) => answer,
-            Err(text) => return self.fail(&selection, &text),
+            Err(failure) => return self.fail(&selection, &failure.message, failure.kind),
         };
-        match token.stage.as_str() {
-            "offline" => match answer {
+        match token.stage {
+            Stage::Offline => match answer {
                 Answer::Local(mut puzzles) if !puzzles.is_empty() => {
                     self.show(puzzles.swap_remove(0), &selection, false)
                 }
                 _ => self.exhausted(),
             },
-            "draw" => {
+            Stage::Draw => {
                 if answer == Answer::NeedsReconnect {
                     if selection.mode == "rated" {
-                        self.state.phase = "reconnect".into();
+                        self.state.phase = Phase::Reconnect;
                         return;
                     }
                     // Practice does not need the permission: take a puzzle without the account.
                     self.call = Some(Call {
                         request: draw_args("", &selection),
-                        resume: resume("anonymous", token.generation, &selection),
+                        resume: resume(Stage::Anonymous, token.generation, &selection),
                     });
                     return;
                 }
@@ -461,7 +494,9 @@ impl Session<'_> {
                     None => self.exhausted(),
                 }
             }
-            _ => {
+            // A result's reply settles a report (`report_settled`), not a load.
+            Stage::Solve => {}
+            Stage::Anonymous => {
                 if answer == Answer::NeedsReconnect {
                     return;
                 }
@@ -484,7 +519,7 @@ impl Session<'_> {
     /// A player move of the shown puzzle: the first try at each move of the solution is its score,
     /// and a wrong one is kept as played (`uci`, when the board says).
     fn played(&mut self, index: usize, correct: bool, uci: Option<&str>) {
-        if self.state.phase != "ready" || index >= MAX_TRIES {
+        if self.state.phase != Phase::Ready || index >= MAX_TRIES {
             return;
         }
         let Some(attempt) = self.internal.attempt.as_mut() else {
@@ -557,7 +592,7 @@ impl Session<'_> {
         let (Some(puzzle), Some(started)) = (puzzle, attempt) else {
             return;
         };
-        if self.state.phase != "ready"
+        if self.state.phase != Phase::Ready
             || self.state.attempt_outcome.is_some()
             || started.account != selection.account
             || started.mode != selection.mode
@@ -588,7 +623,7 @@ impl Session<'_> {
             win,
             rated: counts_for_rating(&started.mode, detail.hinted),
         };
-        let mut token = resume("solve", self.internal.load_gen, selection);
+        let mut token = resume(Stage::Solve, self.internal.load_gen, selection);
         token.version = self.internal.session_version;
         token.key = started.key;
         token.win = win;
@@ -618,12 +653,12 @@ impl Session<'_> {
         let win = token.win;
         let answer = match reply {
             Ok(answer) => answer,
-            Err(text) => {
+            Err(failure) => {
                 self.warn = true;
                 self.state.last_report = Some(Report {
                     win,
                     rating_diff: None,
-                    failed: Some(text),
+                    failed: Some(failure.message),
                 });
                 return;
             }
@@ -632,7 +667,7 @@ impl Session<'_> {
         if answer == Answer::NeedsReconnect {
             // Practice goes on without the account; only rated puzzles need it back.
             if rated {
-                self.state.phase = "reconnect".into();
+                self.state.phase = Phase::Reconnect;
             }
             self.state.last_report = Some(Report {
                 win,
@@ -694,8 +729,8 @@ impl PuzzleSession {
         &self.state
     }
 
-    pub fn phase(&self) -> &str {
-        &self.state.phase
+    pub fn phase(&self) -> Phase {
+        self.state.phase
     }
 
     /// The puzzle shown, if any.
@@ -849,15 +884,60 @@ mod tests {
         assert_eq!(session.current(), None);
         let first = session.puzzle_key();
         session.show(puzzle("one"), &selection(), "");
-        assert_eq!(session.phase(), "ready");
+        assert_eq!(session.phase(), Phase::Ready);
         assert_eq!(session.current().map(|p| p.id.as_str()), Some("one"));
         session.show(puzzle("two"), &selection(), "");
         assert_eq!(session.current().map(|p| p.id.as_str()), Some("two"));
         assert_eq!(session.puzzle_key(), first + 2);
         let call = session.load_begin(&selection(), true, "").call.unwrap();
-        assert_eq!(session.phase(), "loading");
+        assert_eq!(session.phase(), Phase::Loading);
         session.load_settled(call.resume, Ok(Answer::Local(Vec::new())), &selection(), "");
-        assert_eq!(session.phase(), "exhausted");
+        assert_eq!(session.phase(), Phase::Exhausted);
+    }
+
+    /// Without the downloaded puzzles the Train tab offers the download: told by the failure's
+    /// kind, so the core can word its message as it likes, and a message alone that reads like
+    /// it is just a failure.
+    #[test]
+    fn a_missing_database_is_told_by_its_kind_not_its_words() {
+        let failed = |message: &str, kind| {
+            let mut session = PuzzleSession::new();
+            let call = session.load_begin(&selection(), true, "").call.unwrap();
+            let failure = Failure {
+                message: message.into(),
+                kind,
+            };
+            session.load_settled(call.resume, Err(failure), &selection(), "");
+            session.phase()
+        };
+        let missing = Some(ErrorKind::NoPuzzleDatabase);
+        assert_eq!(failed("No puzzles here yet.", missing), Phase::NoDatabase);
+        assert_eq!(
+            failed("Download the puzzle database first.", None),
+            Phase::Error
+        );
+    }
+
+    /// Each call's stage keeps its name on the wire, and a result's reply handed to a load leaves
+    /// the puzzle alone: it used to fall through to the practice-retry path and show a puzzle.
+    #[test]
+    fn a_reply_settles_only_the_call_of_its_stage() {
+        let names = [Stage::Offline, Stage::Draw, Stage::Anonymous, Stage::Solve].map(|stage| {
+            serde_json::to_value(resume(stage, 0, &selection())).unwrap()["stage"].clone()
+        });
+        assert_eq!(
+            names,
+            ["offline", "draw", "anonymous", "solve"].map(|name| json!(name))
+        );
+        let mut session = PuzzleSession::new();
+        session.show(puzzle("shown"), &selection(), "");
+        let token = resume(Stage::Solve, session.internal.load_gen, &selection());
+        let drawn = Answer::Drawn {
+            puzzle: Some(puzzle("other")),
+            rating: None,
+        };
+        session.load_settled(token, Ok(drawn), &selection(), "");
+        assert_eq!(session.current().map(|p| p.id.as_str()), Some("shown"));
     }
 
     #[test]
@@ -887,7 +967,7 @@ mod tests {
         assert_eq!(tries(&session), 0);
         session.played(0, true, None);
         assert_eq!(tries(&session), 1);
-        session.state.phase = "exhausted".into();
+        session.state.phase = Phase::Exhausted;
         session.played(1, false, Some("e2e4"));
         assert_eq!(tries(&session), 1);
     }

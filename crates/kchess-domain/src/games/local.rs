@@ -21,6 +21,14 @@ pub struct LocalClock {
 }
 
 impl LocalClock {
+    /// The same clock for both sides.
+    pub fn even(clock: Clock) -> LocalClock {
+        LocalClock {
+            white: clock,
+            black: clock,
+        }
+    }
+
     pub fn side(&self, color: Color) -> Clock {
         match color {
             Color::White => self.white,

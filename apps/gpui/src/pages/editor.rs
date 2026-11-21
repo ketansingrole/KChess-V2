@@ -27,7 +27,7 @@ use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii, tint};
 use crate::voice::control::{BarSpec, Control};
-use crate::voice::{Attempt, VoiceEvent};
+use crate::voice::{Attempt, VoiceEvent, VoiceOutcome, VoiceSource};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill, Tone};
 use kchess_domain::editor::{self, EditorSetup};
@@ -551,9 +551,9 @@ impl EditorPage {
         let heard = match event {
             VoiceEvent::Missed { heard, .. } => {
                 let attempt = Attempt {
-                    source: "editor",
+                    source: VoiceSource::Editor,
                     heard,
-                    outcome: "unclear",
+                    outcome: VoiceOutcome::Unclear,
                     parsed: None,
                     expected: None,
                     fen: None,
@@ -567,14 +567,14 @@ impl EditorPage {
         let fen = self.problem().is_none().then(|| self.fen());
         let parsed = action.as_ref().map(|action| json!(action).to_string());
         let attempt = Attempt {
-            source: "editor",
+            source: VoiceSource::Editor,
             heard,
             outcome: if action.is_some() {
-                "command"
+                VoiceOutcome::Command
             } else if heard.unclear {
-                "unclear"
+                VoiceOutcome::Unclear
             } else {
-                "invalid"
+                VoiceOutcome::Invalid
             },
             parsed: parsed.as_deref(),
             expected: None,

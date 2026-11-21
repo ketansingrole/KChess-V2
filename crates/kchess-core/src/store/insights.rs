@@ -509,7 +509,7 @@ impl Clocks {
             .enumerate()
             .filter(|&(phase, _)| self.phase_moves[phase] > 0)
             .map(|(phase, name)| PhaseTime {
-                phase: (*name).to_string(),
+                phase: *name,
                 moves: self.phase_moves[phase],
                 seconds: self.phase_seconds[phase] / self.phase_moves[phase] as f64,
                 share: (total > 0.0).then(|| 100.0 * self.phase_seconds[phase] / total),

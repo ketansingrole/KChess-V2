@@ -14,8 +14,8 @@ use futures::{FutureExt as _, StreamExt as _};
 use gpui_kit::*;
 use kchess_contracts::check::VoiceId;
 use kchess_contracts::types::{VoiceAttemptInput, VoiceUpdate, VoiceWord};
+pub use kchess_contracts::types::{VoiceOutcome, VoiceSource};
 use kchess_contracts::voice as model;
-use serde_json::Value;
 
 use crate::core::AppCore;
 
@@ -636,9 +636,9 @@ pub type Entry = Shared<Task<Option<i64>>>;
 
 /// A phrase for the voice history (`VoiceAttemptInput`).
 pub struct Attempt<'a> {
-    pub source: &'a str,
+    pub source: VoiceSource,
     pub heard: &'a Heard,
-    pub outcome: &'a str,
+    pub outcome: VoiceOutcome,
     pub parsed: Option<&'a str>,
     /// What was meant, when the page knows (a drill's question).
     pub expected: Option<&'a str>,
@@ -659,19 +659,8 @@ pub fn log(attempt: &Attempt, retry: Option<Entry>, cx: &App) -> Option<Entry> {
         return None;
     }
     let heard = attempt.heard;
-    let (Some(source), Some(outcome)) = (wire(attempt.source), wire(attempt.outcome)) else {
-        crate::log::write(
-            kchess_contracts::Level::Warn,
-            "voice-log",
-            &format!(
-                "a voice attempt has no such source or outcome: {} {}",
-                attempt.source, attempt.outcome
-            ),
-        );
-        return None;
-    };
     let mut record = VoiceAttemptInput {
-        source,
+        source: attempt.source,
         heard: heard.raw.chars().take(200).collect(),
         confidence: (heard.confidence.clamp(0., 1.) * 1000.).round() / 1000.,
         words: heard
@@ -683,7 +672,7 @@ pub fn log(attempt: &Attempt, retry: Option<Entry>, cx: &App) -> Option<Entry> {
                 conf: word.conf.clamp(0., 1.),
             })
             .collect(),
-        outcome,
+        outcome: attempt.outcome,
         parsed: attempt
             .parsed
             .map(|parsed| parsed.chars().take(120).collect()),
@@ -725,11 +714,6 @@ pub fn log(attempt: &Attempt, retry: Option<Entry>, cx: &App) -> Option<Entry> {
         .spawn(entry.clone().map(|_| ()))
         .detach();
     Some(entry)
-}
-
-/// A wire name as its contract type (`played` as `VoiceOutcome::Played`).
-pub fn wire<T: serde::de::DeserializeOwned>(name: &str) -> Option<T> {
-    serde_json::from_value(Value::String(name.to_string())).ok()
 }
 
 /// A saved phrase's new outcome or meant move.

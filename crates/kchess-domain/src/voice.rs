@@ -28,33 +28,54 @@ const CANCEL_WORDS: [&str; 2] = ["cancel", "no"];
 /// Filler that may accompany a confirmation: “yes play”, “confirm move”.
 const CONFIRM_FILLER: [&str; 2] = ["play", "move"];
 const REMOVE_WORDS: [&str; 4] = ["remove", "clear", "delete", "empty"];
-const GAME_COMMANDS: [(&str, &str); 6] = [
-    ("take back", "takeback"),
-    ("undo", "takeback"),
-    ("new game", "newGame"),
-    ("resign", "resign"),
-    ("flip board", "flip"),
-    ("switch sides", "flip"),
+crate::union!(
+    /// A game command said aloud.
+    GameCommand {
+        Takeback = "takeback",
+        NewGame = "newGame",
+        Resign = "resign",
+        Flip = "flip",
+    }
+);
+crate::union!(
+    /// An analysis board command said aloud.
+    AnalysisCommand {
+        Back = "back",
+        Forward = "forward",
+        Start = "start",
+        End = "end",
+        Best = "best",
+        Flip = "flip",
+        Engine = "engine",
+    }
+);
+const GAME_COMMANDS: [(&str, GameCommand); 6] = [
+    ("take back", GameCommand::Takeback),
+    ("undo", GameCommand::Takeback),
+    ("new game", GameCommand::NewGame),
+    ("resign", GameCommand::Resign),
+    ("flip board", GameCommand::Flip),
+    ("switch sides", GameCommand::Flip),
 ];
-const ANALYSIS_COMMANDS: [(&str, &str); 18] = [
-    ("back", "back"),
-    ("go back", "back"),
-    ("previous", "back"),
-    ("undo", "back"),
-    ("take back", "back"),
-    ("forward", "forward"),
-    ("next", "forward"),
-    ("go forward", "forward"),
-    ("first move", "start"),
-    ("go to start", "start"),
-    ("last move", "end"),
-    ("go to end", "end"),
-    ("best move", "best"),
-    ("play best move", "best"),
-    ("flip board", "flip"),
-    ("toggle engine", "engine"),
-    ("engine on", "engine"),
-    ("engine off", "engine"),
+const ANALYSIS_COMMANDS: [(&str, AnalysisCommand); 18] = [
+    ("back", AnalysisCommand::Back),
+    ("go back", AnalysisCommand::Back),
+    ("previous", AnalysisCommand::Back),
+    ("undo", AnalysisCommand::Back),
+    ("take back", AnalysisCommand::Back),
+    ("forward", AnalysisCommand::Forward),
+    ("next", AnalysisCommand::Forward),
+    ("go forward", AnalysisCommand::Forward),
+    ("first move", AnalysisCommand::Start),
+    ("go to start", AnalysisCommand::Start),
+    ("last move", AnalysisCommand::End),
+    ("go to end", AnalysisCommand::End),
+    ("best move", AnalysisCommand::Best),
+    ("play best move", AnalysisCommand::Best),
+    ("flip board", AnalysisCommand::Flip),
+    ("toggle engine", AnalysisCommand::Engine),
+    ("engine on", AnalysisCommand::Engine),
+    ("engine off", AnalysisCommand::Engine),
 ];
 /// What a finished puzzle takes besides moves.
 const PUZZLE_COMMANDS: [(&str, &str); 2] = [("next", "next"), ("next puzzle", "next")];
@@ -314,8 +335,8 @@ fn tokens(text: &str) -> Vec<String> {
 
 /* ── Commands and choices ── */
 
-/// A game command said aloud: `takeback`, `newGame`, `resign` or `flip`.
-pub fn game_command(text: &str) -> Option<&'static str> {
+/// A game command said aloud.
+pub fn game_command(text: &str) -> Option<GameCommand> {
     let mut key = phrase(&split_words(text));
     if key == "takeback" {
         key = "take back".into();
@@ -326,9 +347,8 @@ pub fn game_command(text: &str) -> Option<&'static str> {
         .map(|(_, command)| *command)
 }
 
-/// An analysis board command said aloud: `back`, `forward`, `start`, `end`, `best`, `flip` or
-/// `engine`.
-pub fn analysis_command(text: &str) -> Option<&'static str> {
+/// An analysis board command said aloud.
+pub fn analysis_command(text: &str) -> Option<AnalysisCommand> {
     let mut key = phrase(&split_words(text));
     if key == "takeback" {
         key = "take back".into();

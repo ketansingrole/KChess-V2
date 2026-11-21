@@ -121,7 +121,8 @@ mod tests {
                 "unavailable",
                 "noEngine",
                 "conflict",
-                "elsewhere"
+                "elsewhere",
+                "noPuzzleDatabase"
             ]
         );
         for &kind in ErrorKind::ALL {

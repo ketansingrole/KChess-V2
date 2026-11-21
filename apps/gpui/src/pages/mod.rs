@@ -3,7 +3,6 @@
 
 pub mod analysis;
 pub mod computer;
-pub mod computer_options;
 pub mod editor;
 pub mod friends;
 pub use kchess_history as history;

@@ -317,7 +317,7 @@ fn crazyhouse() {
                     variant: kchess_domain::variant::Variant::Crazyhouse,
                     fen: fen.into(),
                 };
-                local.replace_game(setup, serde_json::Value::Null, window, cx);
+                local.replace_game(setup, None, window, cx);
                 for uci in [
                     "e2e4", "d7d5", "e4d5", "d8d5", "b1c3", "d5a5", "f1b5", "c7c6", "b5c6",
                 ] {
@@ -860,10 +860,12 @@ fn low_clock() {
             let local = crate::shell::view::<LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 let setup = kchess_domain::variant::Setup::standard();
-                let clock = serde_json::json!({
-                    "white": { "minutes": 0.15, "increment": 0 },
-                    "black": { "minutes": 0.15, "increment": 0 },
-                });
+                let clock = Some(kchess_domain::games::local::LocalClock::even(
+                    kchess_domain::games::Clock {
+                        minutes: 0.15,
+                        increment: 0.,
+                    },
+                ));
                 local.replace_game(setup, clock, window, cx);
                 local.play("e2e4", cx);
             });
@@ -902,10 +904,12 @@ fn over_the_board() {
             let local = crate::shell::view::<LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 let setup = kchess_domain::variant::Setup::standard();
-                let clock = serde_json::json!({
-                    "white": { "minutes": 5, "increment": 3 },
-                    "black": { "minutes": 5, "increment": 3 },
-                });
+                let clock = Some(kchess_domain::games::local::LocalClock::even(
+                    kchess_domain::games::Clock {
+                        minutes: 5.,
+                        increment: 3.,
+                    },
+                ));
                 local.replace_game(setup, clock, window, cx);
                 local.play("e2e4", cx);
                 local.play("e7e5", cx);
@@ -1314,4 +1318,74 @@ fn settle(cx: &mut HeadlessAppContext, window: AnyWindowHandle) {
     }
     cx.update_window(window, |_, window, cx| window.render_frame(cx))
         .expect("the window");
+}
+
+/// The move box saying it cannot play a typed move, under the Openings board, wide and at the
+/// minimum size: `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::move_box --
+/// --ignored` writes `<dir>/move-box/<width>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn move_box() {
+    use gpui_kit::test::TestWindowExt as _;
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("move-box");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (width, height) in [(1320., 880.), SIZES[0]] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), width, height);
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Openings, window, cx);
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.update_window(window, |_, window, cx| {
+            let page =
+                crate::shell::view::<crate::pages::openings::OpeningsPage>(cx).expect("the page");
+            page.update(cx, |page, cx| {
+                page.show_line(Some(vec!["e2e4".into(), "e7e5".into()]), window, cx);
+            });
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.update_window(window, |_, window, cx| {
+            let field = window
+                .try_find_by_label("Enter a chess move in SAN or UCI")
+                .expect("the move box");
+            use gpui_kit::{InputEvent as _, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent};
+            let position = field.bounds().center();
+            for event in [
+                MouseDownEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+                MouseUpEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                }
+                .to_platform_input(),
+            ] {
+                window.dispatch_event(event, cx);
+                super::draw(window, cx);
+            }
+            window.input("Ka8", cx);
+            window.press("enter", cx);
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("{width}.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::quit::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
 }

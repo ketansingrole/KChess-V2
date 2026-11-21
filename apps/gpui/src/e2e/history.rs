@@ -375,7 +375,7 @@ fn a_crazyhouse_game_shows_its_pockets(cx: &mut gpui_kit::TestAppContext) {
                 variant: kchess_domain::variant::Variant::Crazyhouse,
                 fen: fen.into(),
             };
-            local.replace_game(setup, serde_json::Value::Null, window, cx);
+            local.replace_game(setup, None, window, cx);
         });
     });
     let moves = ["e4", "d5", "exd5", "Qxd5"];

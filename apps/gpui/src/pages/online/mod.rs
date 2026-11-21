@@ -19,7 +19,7 @@ use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
-use kchess_contracts::types::ChatRoom;
+use kchess_contracts::types::{ChallengeColor, ChatRoom};
 use kchess_domain::misc::constants::CORRESPONDENCE_DAYS;
 use kchess_domain::records::time_control::{
     can_direct_challenge, can_play_online, perf_for, total_seconds,
@@ -269,7 +269,7 @@ impl OnlinePage {
                 form.increment = 0.;
             }
             form.correspondence = false;
-            form.color = "random".into();
+            form.color = ChallengeColor::Random;
             form.target = username.clone();
             cx.notify();
         });
@@ -634,12 +634,11 @@ impl OnlinePage {
                         (Some(icon("circle")), "White".into()),
                         (Some(icon("circle-dot")), "Black".into()),
                     ],
-                    match form.color.as_str() {
-                        "white" => 1,
-                        "black" => 2,
-                        _ => 0,
-                    },
-                    |form, index| form.color = ["random", "white", "black"][index].into(),
+                    ChallengeColor::ALL
+                        .iter()
+                        .position(|color| *color == form.color)
+                        .unwrap_or_default(),
+                    |form, index| form.color = ChallengeColor::ALL[index],
                 )
                 .into_any_element(),
             ))

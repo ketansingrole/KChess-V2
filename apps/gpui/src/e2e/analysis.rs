@@ -571,6 +571,80 @@ fn an_engine_setting_changed_in_its_popover_can_be_undone(cx: &mut gpui_kit::Tes
     assert_eq!(infinite(&mut app), Some(false));
 }
 
+/// Each command said on the analysis board does what its words say.
+#[gpui_kit::test]
+fn commands_said_aloud_step_flip_and_switch_the_engine(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::analysis::AnalysisPage;
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 2. Nf3 *");
+    let page = app.with_window(|_, cx| crate::shell::view::<AnalysisPage>(cx).expect("the page"));
+    let say = |app: &mut Harness, text: &str| {
+        app.cx
+            .update(|cx| page.update(cx, |page, cx| page.hear_for_test(text, cx)));
+        app.cx.run_until_parked();
+    };
+    say(&mut app, "last move");
+    assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
+    say(&mut app, "go back");
+    assert_eq!(selected(&mut app, "e2e4 e7e5"), Some(true));
+    say(&mut app, "go to start");
+    assert_eq!(selected(&mut app, "e2e4"), Some(false));
+    say(&mut app, "next");
+    assert_eq!(selected(&mut app, "e2e4"), Some(true));
+    say(&mut app, "flip board");
+    let orientation = app.cx.update(|cx| page.read(cx).orientation_for_test());
+    assert_eq!(orientation, shakmaty::Color::Black);
+    let engine = app.cx.update(|cx| AnalysisPage::engine_on(cx));
+    say(&mut app, "toggle engine");
+    assert_eq!(app.cx.update(|cx| AnalysisPage::engine_on(cx)), !engine);
+}
+
+/// A move and a command said on the board reach the voice history as said there, with what
+/// became of each.
+#[gpui_kit::test]
+fn phrases_said_on_the_board_reach_the_voice_history(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::analysis::AnalysisPage;
+    use kchess_contracts::check::VoiceLimit;
+    use kchess_contracts::types::{VoiceOutcome, VoiceSource};
+    let mut app = analysis(cx);
+    app.cx
+        .update(|cx| crate::settings::change(cx, |s| s.core.voice_history = true));
+    let page = app.with_window(|_, cx| crate::shell::view::<AnalysisPage>(cx).expect("the page"));
+    for text in ["e four", "flip board"] {
+        app.cx
+            .update(|cx| page.update(cx, |page, cx| page.hear_for_test(text, cx)));
+        app.cx.run_until_parked();
+    }
+    assert_eq!(selected(&mut app, "e2e4"), Some(true));
+    // Each phrase reaches the core on its own thread, after the page has moved on: wait for both
+    // (macOS CI, 2026-11-21: read with the second still on its way).
+    let started = std::time::Instant::now();
+    let mut logged = loop {
+        let logged = app.request(kchess_contracts::calls::VoiceHistory {
+            limit: VoiceLimit(10),
+        });
+        if logged.len() >= 2 || started.elapsed() > super::TIMEOUT {
+            break logged;
+        }
+        app.tick();
+    };
+    logged.sort_by_key(|attempt| attempt.id);
+    let logged: Vec<_> = logged
+        .iter()
+        .map(|attempt| {
+            let input = &attempt.input;
+            (input.source, input.outcome, input.parsed.as_deref())
+        })
+        .collect();
+    assert_eq!(
+        logged,
+        [
+            (VoiceSource::Analysis, VoiceOutcome::Played, Some("e4")),
+            (VoiceSource::Analysis, VoiceOutcome::Command, Some("flip")),
+        ]
+    );
+}
+
 #[gpui_kit::test]
 fn the_board_can_be_flipped_and_still_takes_moves(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);

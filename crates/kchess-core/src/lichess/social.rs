@@ -11,9 +11,9 @@ use super::accounts::{
 use super::client::Lane;
 use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
 use kchess_contracts::types::{
-    ActivityDay, ActivityItem, ImportedGame, LeaderboardEntry, LichessGame, LichessRelation,
-    LichessUser, PerfType, PlayerSuggestion, RatingChange, RelationAction, TimelineEntry,
-    UsageKind,
+    ActivityDay, ActivityItem, ActivityKind, ImportedGame, LeaderboardEntry, LichessGame,
+    LichessRelation, LichessUser, PerfType, PlayerSuggestion, RatingChange, RelationAction,
+    TimelineEntry, UsageKind,
 };
 use kchess_domain::records::RATING_DISPLAY_NAMES;
 
@@ -257,9 +257,9 @@ fn plural(n: u64, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
-fn item(kind: &str, text: String) -> ActivityItem {
+fn item(kind: ActivityKind, text: String) -> ActivityItem {
     ActivityItem {
-        kind: kind.to_string(),
+        kind,
         text,
         username: None,
         game_id: None,
@@ -347,7 +347,7 @@ fn game_items(day: &Value, items: &mut Vec<ActivityItem>) {
             items.push(ActivityItem {
                 rating: rating_change(&score["rp"]),
                 ..item(
-                    "games",
+                    ActivityKind::Games,
                     format!(
                         "Played {}: {}",
                         plural(n, &format!("{name} game"), &format!("{name} games")),
@@ -376,7 +376,7 @@ fn puzzle_items(day: &Value, items: &mut Vec<ActivityItem>) {
             }
             items.push(ActivityItem {
                 rating: rating_change(&puzzles["rp"]),
-                ..item("puzzles", text)
+                ..item(ActivityKind::Puzzles, text)
             });
         }
     }
@@ -388,7 +388,7 @@ fn puzzle_items(day: &Value, items: &mut Vec<ActivityItem>) {
         let runs = count(&day[key]["runs"]);
         if runs > 0 {
             items.push(item(
-                "puzzles",
+                ActivityKind::Puzzles,
                 format!(
                     "Played {name}: {}, best {}",
                     plural(runs, "run", "runs"),
@@ -413,13 +413,13 @@ fn event_items(day: &Value, items: &mut Vec<ActivityItem>) {
             " · {}",
             plural(count(&best["nbGames"]), "game", "games")
         ));
-        items.push(item("tournament", text));
+        items.push(item(ActivityKind::Tournament, text));
     }
     let moves = &day["correspondenceMoves"];
     if count(&moves["nb"]) > 0 {
         let games = moves["games"].as_array().map_or(0, Vec::len) as u64;
         items.push(item(
-            "correspondence",
+            ActivityKind::Correspondence,
             format!(
                 "Played {} in {}",
                 plural(count(&moves["nb"]), "move", "moves"),
@@ -432,7 +432,7 @@ fn event_items(day: &Value, items: &mut Vec<ActivityItem>) {
             let score = score_text(&ended["score"]);
             if !score.is_empty() {
                 items.push(item(
-                    "correspondence",
+                    ActivityKind::Correspondence,
                     format!("Finished correspondence games: {score}"),
                 ));
             }
@@ -446,7 +446,7 @@ fn follow_items(day: &Value, items: &mut Vec<ActivityItem>) {
         .max(day["follows"]["in"]["ids"].as_array().map_or(0, Vec::len) as u64);
     if gained > 0 {
         items.push(item(
-            "follow",
+            ActivityKind::Follow,
             format!("Gained {}", plural(gained, "follower", "followers")),
         ));
     }
@@ -458,7 +458,7 @@ fn follow_items(day: &Value, items: &mut Vec<ActivityItem>) {
         if let Some(name) = text_of(id) {
             items.push(ActivityItem {
                 username: Some(name.clone()),
-                ..item("follow", format!("Started following {name}"))
+                ..item(ActivityKind::Follow, format!("Started following {name}"))
             });
         }
     }
@@ -468,32 +468,38 @@ fn follow_items(day: &Value, items: &mut Vec<ActivityItem>) {
 fn community_items(day: &Value, items: &mut Vec<ActivityItem>) {
     for study in day["studies"].as_array().into_iter().flatten() {
         if let Some(name) = text_of(&study["name"]) {
-            items.push(item("study", format!("Created the study {name}")));
+            items.push(item(
+                ActivityKind::Study,
+                format!("Created the study {name}"),
+            ));
         }
     }
     for team in day["teams"].as_array().into_iter().flatten() {
         if let Some(name) = text_of(&team["name"]) {
-            items.push(item("team", format!("Joined the team {name}")));
+            items.push(item(ActivityKind::Team, format!("Joined the team {name}")));
         }
     }
     for topic in day["posts"].as_array().into_iter().flatten() {
         if let Some(name) = text_of(&topic["topicName"]) {
-            items.push(item("post", format!("Posted in {name}")));
+            items.push(item(ActivityKind::Post, format!("Posted in {name}")));
         }
     }
     for simul in day["simuls"].as_array().into_iter().flatten() {
         if let Some(name) = text_of(&simul["name"]) {
-            items.push(item("simul", format!("Took part in the simul {name}")));
+            items.push(item(
+                ActivityKind::Simul,
+                format!("Took part in the simul {name}"),
+            ));
         }
     }
     for practice in day["practice"].as_array().into_iter().flatten() {
         if let Some(name) = text_of(&practice["name"]) {
-            items.push(item("puzzles", format!("Practised {name}")));
+            items.push(item(ActivityKind::Puzzles, format!("Practised {name}")));
         }
     }
     if let Some(months) = day["patron"]["months"].as_u64() {
         items.push(item(
-            "patron",
+            ActivityKind::Patron,
             format!(
                 "Supported Lichess for {}",
                 plural(months, "month", "months")
@@ -501,7 +507,10 @@ fn community_items(day: &Value, items: &mut Vec<ActivityItem>) {
         ));
     }
     if day["stream"].as_bool() == Some(true) {
-        items.push(item("stream", "Streamed on Lichess".to_string()));
+        items.push(item(
+            ActivityKind::Stream,
+            "Streamed on Lichess".to_string(),
+        ));
     }
 }
 

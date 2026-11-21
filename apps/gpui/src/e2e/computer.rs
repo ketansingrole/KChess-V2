@@ -195,6 +195,39 @@ fn resigning_asks_first_then_ends_the_game(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.shows("resign"), "a finished game cannot be resigned");
 }
 
+/// The game's commands said aloud: “take back” takes your move back, and “resign” asks first,
+/// as its button does, then ends the game on “confirm”.
+#[gpui_kit::test]
+fn commands_said_aloud_take_back_and_resign(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::computer::ComputerPage;
+    let mut app = computer(cx);
+    let page = app.with_window(|_, cx| crate::shell::view::<ComputerPage>(cx).expect("the page"));
+    let say = |app: &mut Harness, text: &str| {
+        app.with_window(|window, cx| {
+            page.update(cx, |page, cx| page.hear_for_test(text, window, cx))
+        });
+    };
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.wait_for_moves(&["e4"]);
+    say(&mut app, "take back");
+    app.wait_for_moves(&[]);
+
+    app.click_square("d2", true);
+    app.click_square("d4", true);
+    app.wait_for_moves(&["d4"]);
+    say(&mut app, "resign");
+    app.find("cancel");
+    say(&mut app, "cancel");
+    app.wait_gone("cancel");
+    assert!(app.shows("resign"), "cancelling kept the game going");
+    say(&mut app, "resign");
+    app.find("cancel");
+    say(&mut app, "confirm");
+    app.wait_gone("resign");
+    assert!(!app.status().is_empty(), "the result is shown");
+}
+
 #[gpui_kit::test]
 fn new_game_asks_first_then_clears_the_board(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
@@ -410,6 +443,64 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
     });
     assert!(typed(&mut app).is_none_or(|value| value.is_empty()));
     assert!(app.enabled("start-game"));
+}
+
+/// The side picked in Game options is the one you play, and the dialog opens on it again.
+#[gpui_kit::test]
+fn game_options_play_the_side_picked(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestQueryExt as _;
+    let side = |window: &mut gpui_kit::Window| {
+        window
+            .try_find_by_label("You play")
+            .and_then(|select| select.value().map(str::to_string))
+    };
+    let mut app = computer(cx);
+    app.click("game-options");
+    app.wait_for("the dialog on White", |window, _| {
+        side(window).as_deref() == Some("White")
+    });
+    app.click_label("You play");
+    app.press("down");
+    app.press("enter");
+    app.wait_for("Black picked", |window, _| {
+        side(window).as_deref() == Some("Black")
+    });
+    app.click("start-game");
+    app.wait_gone("start-game");
+    // The computer, White, moves first.
+    app.wait_for_moves(&["e4"]);
+    app.click("game-options");
+    app.wait_for("the dialog on Black", |window, _| {
+        side(window).as_deref() == Some("Black")
+    });
+}
+
+/// The clock picked in Game options is the game's clock, and the dialog opens on it again.
+#[gpui_kit::test]
+fn game_options_play_the_clock_picked(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestQueryExt as _;
+    let clock = |window: &mut gpui_kit::Window| {
+        window
+            .try_find_by_label("Clock")
+            .and_then(|select| select.value().map(str::to_string))
+    };
+    let mut app = computer(cx);
+    app.click("game-options");
+    app.wait_for("the dialog with no clock", |window, _| {
+        clock(window).as_deref() == Some("No clock")
+    });
+    app.click_label("Clock");
+    app.press("down");
+    app.press("enter");
+    app.wait_for("3+2 picked", |window, _| {
+        clock(window).as_deref() == Some("3+2")
+    });
+    app.click("start-game");
+    app.wait_gone("start-game");
+    app.click("game-options");
+    app.wait_for("the dialog on 3+2", |window, _| {
+        clock(window).as_deref() == Some("3+2")
+    });
 }
 
 /// Game options start a game in another variant, which the engine plays by its rules: the

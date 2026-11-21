@@ -1342,6 +1342,72 @@ impl Render for ImportStudy {
     }
 }
 
+/// The Studies page's header actions.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Action {
+    New,
+    Import,
+}
+
+impl kchess_nav::page::PageAction for Action {
+    fn info(&self) -> kchess_nav::page::ActionInfo {
+        use kchess_nav::page::{ActionInfo, ActionRole};
+        match self {
+            Action::New => ActionInfo::new("studies:new", "New study", "plus", "create chapter")
+                .role(ActionRole::New),
+            Action::Import => ActionInfo::new(
+                "studies:import",
+                "Import PGN",
+                "import",
+                "paste games study",
+            ),
+        }
+    }
+}
+
+impl PageView for StudiesPage {
+    const INFO: kchess_nav::page::PageInfo = kchess_nav::page::PageInfo {
+        page: kchess_nav::page::Page::Studies,
+        label: "Studies",
+        short: "Studies",
+        icon: "library-big",
+        group: Some(kchess_nav::page::NavGroup::Review),
+        keywords: "pgn chapters notes",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        StudiesPage::new(window, cx)
+    }
+
+    fn shown(this: &Entity<Self>, _again: bool, _window: &mut Window, cx: &mut App) {
+        this.update(cx, |studies, cx| studies.shown(cx));
+    }
+
+    fn search_fields(&self) -> Vec<Entity<InputState>> {
+        vec![self.search.clone()]
+    }
+
+    fn actions(&self, _: &App) -> Vec<Action> {
+        vec![Action::New, Action::Import]
+    }
+
+    fn act(_this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        match action {
+            Action::New => StudiesPage::create(window, cx),
+            Action::Import => StudiesPage::open_import(window, cx),
+        }
+    }
+}
+
+/// Studies at its Lichess tab: the connected account's own studies.
+pub fn open_lichess(window: &mut Window, cx: &mut App) {
+    kchess_nav::shell::show::<StudiesPage>(window, cx, |studies, window, cx| {
+        studies.show_lichess(window, cx)
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1492,70 +1558,4 @@ mod tests {
         );
         assert!(import_chapters("[Variant \"Chess960\"]\n[FEN \"bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1\"]\n\n1. e4 *").is_ok());
     }
-}
-
-/// The Studies page's header actions.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Action {
-    New,
-    Import,
-}
-
-impl kchess_nav::page::PageAction for Action {
-    fn info(&self) -> kchess_nav::page::ActionInfo {
-        use kchess_nav::page::{ActionInfo, ActionRole};
-        match self {
-            Action::New => ActionInfo::new("studies:new", "New study", "plus", "create chapter")
-                .role(ActionRole::New),
-            Action::Import => ActionInfo::new(
-                "studies:import",
-                "Import PGN",
-                "import",
-                "paste games study",
-            ),
-        }
-    }
-}
-
-impl PageView for StudiesPage {
-    const INFO: kchess_nav::page::PageInfo = kchess_nav::page::PageInfo {
-        page: kchess_nav::page::Page::Studies,
-        label: "Studies",
-        short: "Studies",
-        icon: "library-big",
-        group: Some(kchess_nav::page::NavGroup::Review),
-        keywords: "pgn chapters notes",
-    };
-
-    type Action = Action;
-
-    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        StudiesPage::new(window, cx)
-    }
-
-    fn shown(this: &Entity<Self>, _again: bool, _window: &mut Window, cx: &mut App) {
-        this.update(cx, |studies, cx| studies.shown(cx));
-    }
-
-    fn search_fields(&self) -> Vec<Entity<InputState>> {
-        vec![self.search.clone()]
-    }
-
-    fn actions(&self, _: &App) -> Vec<Action> {
-        vec![Action::New, Action::Import]
-    }
-
-    fn act(_this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
-        match action {
-            Action::New => StudiesPage::create(window, cx),
-            Action::Import => StudiesPage::open_import(window, cx),
-        }
-    }
-}
-
-/// Studies at its Lichess tab: the connected account's own studies.
-pub fn open_lichess(window: &mut Window, cx: &mut App) {
-    kchess_nav::shell::show::<StudiesPage>(window, cx, |studies, window, cx| {
-        studies.show_lichess(window, cx)
-    });
 }
