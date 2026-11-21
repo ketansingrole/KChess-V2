@@ -185,7 +185,7 @@ impl OnlinePage {
                 .right(px(16.))
                 .bottom_0()
                 .w(px(320.))
-                .rounded_t(radii::XL)
+                .rounded_t(radii::BOX)
                 .border_1()
                 .border_color(palette.border)
                 .bg(palette.elevated)

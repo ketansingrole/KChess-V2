@@ -702,7 +702,7 @@ impl EndgameLesson {
             .p(px(12.))
             .border_1()
             .border_color(palette.border)
-            .rounded(radii::XL)
+            .rounded(radii::BOX)
             .bg(palette.elevated)
             .child(
                 h_flex()

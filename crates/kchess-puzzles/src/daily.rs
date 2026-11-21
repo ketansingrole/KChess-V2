@@ -243,7 +243,7 @@ impl Render for DailyPuzzle {
                 .p(px(24.))
                 .border_1()
                 .border_color(palette.border)
-                .rounded(radii::XL)
+                .rounded(radii::BOX)
                 .bg(palette.elevated)
                 .child(content)
                 .into_any_element()

@@ -12,7 +12,7 @@ pub fn side_panel(palette: &Palette) -> Div {
         .gap(px(12.))
         .border_1()
         .border_color(palette.border)
-        .rounded(radii::XL)
+        .rounded(radii::BOX)
         .bg(palette.elevated)
 }
 
@@ -157,7 +157,7 @@ pub fn bar_segment(segment: Div, (first, last): (bool, bool), radius: Pixels) ->
 pub fn card(palette: &Palette) -> Div {
     v_flex()
         .p(px(20.))
-        .rounded(radii::XL)
+        .rounded(radii::BOX)
         .border_1()
         .border_color(palette.border)
         .bg(palette.elevated)

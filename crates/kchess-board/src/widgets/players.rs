@@ -54,7 +54,7 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
         .relative()
         .flex_none()
         .size(px(30.))
-        .rounded(radii::MD)
+        .rounded(radii::BOX)
         .bg(palette.accented)
         .text_color(palette.toned)
         .flex()
@@ -68,7 +68,7 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
                     .top(px(-2.))
                     .left(px(-2.))
                     .size(px(34.))
-                    .rounded(radii::LG)
+                    .rounded(radii::BOX)
                     .border_2()
                     .border_color(palette.primary),
             )
@@ -102,7 +102,7 @@ pub fn clock(text: SharedString, active: bool, palette: &Palette) -> Div {
         .min_w(px(72.))
         .px(px(8.))
         .py(px(4.))
-        .rounded(radii::MD)
+        .rounded(radii::BOX)
         // Centred in its 72px: a short time ("5:00") right-aligned left a gap on its left. Its
         // tabular digits keep it still as it counts down.
         .text_center()

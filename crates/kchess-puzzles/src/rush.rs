@@ -492,7 +492,7 @@ impl PuzzleRush {
                     .gap(px(2.))
                     .px(px(12.))
                     .py(px(8.))
-                    .rounded(radii::LG)
+                    .rounded(radii::BOX)
                     .border_1()
                     .text_size(px(13.))
                     .cursor_pointer()
