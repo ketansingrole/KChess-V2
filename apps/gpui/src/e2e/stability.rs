@@ -312,3 +312,43 @@ fn the_home_rating_chart_keeps_its_height_as_points_come(cx: &mut gpui_kit::Test
         .expect("the window");
     assert_eq!(under(&mut app), empty);
 }
+
+/// An opening's explorer holds still as its description and popularity come from the web: they
+/// came above it, pushing down the next move you were about to click (and up again at the next).
+#[gpui_kit::test]
+fn the_openings_explorer_holds_still_as_the_line_is_described(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::openings::OpeningsPage;
+    use kchess_contracts::types::{DescriptionBlock, OpeningDescription, PopularityMonth};
+    let mut app = Harness::start(cx);
+    app.open("Openings");
+    super::openings::open_kieseritzky(&mut app);
+    let ids: [ElementId; 1] = [("explorer-kind", 0usize).into()];
+    app.find(ids[0].clone());
+    app.settle();
+    let before = places(&mut app, &ids);
+    let description = OpeningDescription {
+        title: "Kieseritzky Gambit".into(),
+        url: "https://en.wikibooks.org/wiki/Chess_Opening_Theory".into(),
+        blocks: (0..4)
+            .map(|block| DescriptionBlock {
+                heading: false,
+                text: format!("Paragraph {block} about the gambit's ideas and its history."),
+            })
+            .collect(),
+        fetched_at: 0,
+    };
+    let months: Vec<PopularityMonth> = (1..=12)
+        .map(|month| PopularityMonth {
+            month: format!("2025-{month:02}"),
+            share: 0.1,
+            games: 100,
+        })
+        .collect();
+    app.cx.update(|cx| {
+        crate::shell::view::<OpeningsPage>(cx)
+            .expect("the page")
+            .update(cx, |page, cx| page.arrive(description, &months, cx));
+    });
+    app.settle();
+    assert_eq!(places(&mut app, &ids), before, "the explorer moved");
+}
