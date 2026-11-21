@@ -4,14 +4,13 @@
 
 use std::collections::HashSet;
 
-use gpui_kit::component::{Disableable as _, h_flex, v_flex};
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::collections::BTreeMap;
 
 use kchess_contracts::types::{RatingSeries, UserPerf};
 
-use crate::assets::icon;
 use crate::chart::{ChartDate, LineChart, Series};
 use crate::rating_history::{DAY_MS, Retry, chart_dates, has_points, rating_domain, series_points};
 use crate::theme::{Palette, radii};
@@ -422,21 +421,18 @@ impl Render for RatingSpeeds {
                         Some((text, retry)) => (text.clone(), Some(retry.clone())),
                         None => ("No rated games yet".into(), None),
                     };
-                    card.child(
-                        h_flex()
-                            .flex_wrap()
-                            .gap(px(8.))
+                    card.child(match retry {
+                        Some(retry) => crate::widgets::retry_line(
+                            "rating-speeds-retry",
+                            text,
+                            palette.text_muted,
+                            move |_, window, cx| retry(window, cx),
+                        ),
+                        None => div()
                             .text_size(px(13.))
                             .text_color(palette.text_muted)
-                            .child(text)
-                            .children(retry.map(|retry| {
-                                crate::widgets::text_button("rating-speeds-retry")
-                                    .icon(icon("rotate-cw"))
-                                    .label("Try again")
-                                    .disabled(!crate::network::online(cx))
-                                    .on_click(move |_, window, cx| retry(window, cx))
-                            })),
-                    )
+                            .child(text),
+                    })
                 } else if shown == 0 {
                     card.child(empty("Pick a speed to show"))
                 } else if !enough {
@@ -462,6 +458,37 @@ mod tests {
             slot: 1,
             points: points.to_vec(),
         }
+    }
+
+    /// Lichess's withheld history says so in the card with the Try again every Players card
+    /// shows on a failed load, and it asks again, online or not.
+    #[gpui_kit::test]
+    fn a_withheld_history_is_asked_for_again(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        use gpui_kit::test::TestWindowExt as _;
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let mut app = crate::e2e::Harness::start(cx);
+        app.set_online(false);
+        let asked = Rc::new(Cell::new(0));
+        let window = app.cx.add_window({
+            let asked = asked.clone();
+            move |_, cx| {
+                let mut chart = super::RatingSpeeds::new("", cx);
+                chart.withheld = Some((
+                    "Lichess sent no rating history".into(),
+                    Rc::new(move |_, _| asked.set(asked.get() + 1)),
+                ));
+                chart
+            }
+        });
+        app.cx
+            .update_window(window.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.click("rating-speeds-retry", cx);
+            })
+            .expect("the window");
+        assert_eq!(asked.get(), 1);
     }
 
     #[test]
