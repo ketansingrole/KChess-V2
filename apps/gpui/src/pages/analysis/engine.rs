@@ -442,15 +442,15 @@ impl AnalysisPage {
                 let (on_infinite, on_arrows, on_threat) =
                     (page.clone(), page.clone(), page.clone());
                 let threat = page.upgrade().is_some_and(|page| page.read(cx).threat);
+                // As in Settings: the title and hint take what the switch leaves, so a long hint
+                // wraps inside the popover instead of running past its edge.
                 let described = |title: &'static str, hint: Option<&'static str>| {
-                    v_flex()
-                        .child(div().text_size(px(14.)).child(title))
-                        .children(hint.map(|hint| {
-                            div()
-                                .text_size(px(12.))
-                                .text_color(palette.text_muted)
-                                .child(hint)
-                        }))
+                    crate::widgets::setting_info(
+                        title,
+                        hint.map(SharedString::new_static),
+                        &palette,
+                    )
+                    .flex_1()
                 };
                 v_flex()
                     .w(px(260.))

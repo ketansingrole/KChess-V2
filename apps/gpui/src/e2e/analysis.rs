@@ -507,6 +507,41 @@ fn the_engine_can_be_switched_off_and_on(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(app.find("engine-on").checked(), Some(true));
 }
 
+/// Show threat's hint, "The opponent's best move if it were their turn (X)", once ran past the
+/// engine settings popover's right edge, cut off: its column took the hint's width rather than
+/// what the switch left it.
+#[gpui_kit::test]
+fn the_engine_settings_stay_inside_their_popover(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    app.click_label("Engine settings");
+    let mut edge = None;
+    app.wait_for("the engine settings", |window, _| {
+        edge = window
+            .try_find_by_label("Engine lines")
+            .map(|lines| lines.bounds().right());
+        edge.is_some()
+    });
+    let edge = edge.expect("found");
+    for title in [
+        "Infinite analysis",
+        "Show engine arrows",
+        "Show threat",
+        "Lichess cloud evaluation",
+    ] {
+        let right = app
+            .find(gpui_kit::ElementId::NamedChild(
+                std::sync::Arc::new("setting-title".into()),
+                title.into(),
+            ))
+            .bounds()
+            .right();
+        assert!(
+            right <= edge + gpui_kit::px(0.5),
+            "{title} ends at {right:?}, past the popover's {edge:?}"
+        );
+    }
+}
+
 #[gpui_kit::test]
 fn the_board_can_be_flipped_and_still_takes_moves(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
