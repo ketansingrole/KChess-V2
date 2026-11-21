@@ -58,6 +58,40 @@ pub const COORDINATES: [(CoordinateMode, &str); 3] = [
     (CoordinateMode::None, "Hidden"),
 ];
 
+/// How fast pieces move, as Settings offers it.
+const ANIMATIONS: [(PieceAnimation, &str); 4] = [
+    (PieceAnimation::None, "Off"),
+    (PieceAnimation::Fast, "Fast"),
+    (PieceAnimation::Normal, "Normal"),
+    (PieceAnimation::Slow, "Slow"),
+];
+
+/// How moves name their pieces.
+const NOTATIONS: [(bool, &str); 2] = [(false, "Letters"), (true, "Symbols")];
+
+/// What a promoting pawn becomes.
+const PROMOTIONS: [(PromotionMode, &str); 3] = [
+    (PromotionMode::Ask, "Ask me"),
+    (PromotionMode::Queen, "Always queen"),
+    (PromotionMode::Premove, "Queen when premoving"),
+];
+
+/// A segmented choice's items, from its values and names.
+fn items<T: Copy, const N: usize>(
+    named: &[(T, &'static str); N],
+) -> [(T, &'static str, Option<Icon>); N] {
+    named.map(|(value, name)| (value, name, None))
+}
+
+/// The name of `value` among `named` (a choice's default, as its reset names it).
+fn name_of<T: PartialEq>(named: &[(T, &'static str)], value: T) -> SharedString {
+    named
+        .iter()
+        .find(|(of, _)| *of == value)
+        .map(|(_, name)| SharedString::new_static(name))
+        .unwrap_or_default()
+}
+
 /// How the interface size changes anywhere: "⌘ + and ⌘ − adjust it anywhere."
 fn zoom_hint(cx: &App) -> String {
     let (Some(bigger), Some(smaller)) = (
@@ -205,7 +239,6 @@ pub struct SettingsPage {
     /// The models and choices the pickers show.
     ai_shown: Option<ai::Shown>,
     ladder: Vec<Rung>,
-    default_levels: Vec<EngineLevel>,
     /// The engine the core finds, and whether it is being downloaded or deleted.
     engine: Option<EngineStatus>,
     engine_busy: bool,
@@ -429,14 +462,6 @@ impl SettingsPage {
                 crate::log::write(Level::Warn, "settings", &cause);
                 Vec::new()
             });
-        let default_levels = engine_levels::default_levels()
-            .iter()
-            .map(|id| level_id(id))
-            .collect::<Result<_, String>>()
-            .unwrap_or_else(|cause| {
-                crate::log::write(Level::Warn, "settings", &cause);
-                Vec::new()
-            });
         SettingsPage {
             section: Section::Appearance,
             area: Measured::default(),
@@ -450,7 +475,6 @@ impl SettingsPage {
             ai_effort,
             ai_shown: None,
             ladder,
-            default_levels,
             engine: None,
             engine_busy: false,
             test_note: None,
@@ -609,6 +633,7 @@ impl SettingsPage {
             narrow: self.narrow(),
             reveal: self.reveal.as_ref().map(Reveal::mark),
             rows: Vec::new(),
+            shown: std::cell::OnceCell::new(),
         }
     }
 }
@@ -731,6 +756,8 @@ struct Rows {
     /// The row being revealed, lit when it is added.
     reveal: Option<RowMark>,
     rows: Vec<AnyElement>,
+    /// The settings as shown, read once for the rows' reset buttons.
+    shown: std::cell::OnceCell<defaults::Shown>,
 }
 
 impl Rows {
@@ -743,16 +770,32 @@ impl Rows {
         self.rows.push(row);
     }
 
-    /// A setting row: the title and its hint on the left, the control at the right edge.
+    /// The reset button of the row titled `title`, while its setting differs from its default.
+    fn reset(&self, title: &str, reset: Option<defaults::Reset<'_>>) -> Option<AnyElement> {
+        let reset = reset?;
+        self.shown
+            .get_or_init(|| defaults::Shown::of(reset.settings))
+            .reset(title, reset)
+    }
+
+    /// A setting row: the title and its hint on the left, the control at the right edge, then
+    /// its reset (`defaults::Reset`) while the setting differs from its default.
     fn row(
         self,
         title: impl Into<SharedString>,
         hint: Option<SharedString>,
         control: impl IntoElement,
+        reset: Option<defaults::Reset<'_>>,
         palette: &Palette,
     ) -> Rows {
         let title = title.into();
-        self.row_with(&title.clone(), info(title, hint, palette), control, palette)
+        self.row_with(
+            &title.clone(),
+            info(title, hint, palette),
+            control,
+            reset,
+            palette,
+        )
     }
 
     /// A row whose title column says more than a title and a hint (a level meter).
@@ -761,16 +804,23 @@ impl Rows {
         title: &str,
         info: Div,
         control: impl IntoElement,
+        reset: Option<defaults::Reset<'_>>,
         palette: &Palette,
     ) -> Rows {
+        let reset = self.reset(title, reset);
         let row = if self.narrow {
             v_flex()
                 .gap(px(8.))
-                .child(info)
+                .child(
+                    h_flex()
+                        .gap(px(8.))
+                        .child(info.flex_1())
+                        .child(widgets::setting_reset(reset)),
+                )
                 .child(div().max_w_full().child(control))
                 .into_any_element()
         } else {
-            widgets::setting_row(info.min_w(px(200.)), control).into_any_element()
+            widgets::resettable_row(info.min_w(px(200.)), control, reset).into_any_element()
         };
         self.push(title, row, palette);
         self
@@ -797,27 +847,37 @@ impl Rows {
                     crate::settings::change(cx, move |settings| set(settings, checked));
                 }),
         );
+        let reset = self.reset(toggle.title, defaults::Reset::toggle(toggle, settings));
         // A switch is small enough to stay beside its title in the narrowest window.
-        let row = widgets::setting_row(
+        let row = widgets::resettable_row(
             info(toggle.title, toggle.hint.map(SharedString::from), palette).min_w_0(),
             control,
+            reset,
         )
         .into_any_element();
         self.push(toggle.title, row, palette);
         self
     }
 
-    /// A control that needs the full width goes under its title.
+    /// A control that needs the full width goes under its title, and its reset at the end of the
+    /// title's line.
     fn stacked(
         mut self,
         title: &'static str,
         hint: Option<&'static str>,
         control: impl IntoElement,
+        reset: Option<defaults::Reset<'_>>,
         palette: &Palette,
     ) -> Rows {
+        let reset = self.reset(title, reset);
         let row = v_flex()
             .gap(px(8.))
-            .child(info(title, hint.map(SharedString::from), palette))
+            .child(
+                h_flex()
+                    .gap(px(8.))
+                    .child(info(title, hint.map(SharedString::from), palette).flex_1())
+                    .child(widgets::setting_reset(reset)),
+            )
             .child(control)
             .into_any_element();
         self.push(title, row, palette);
@@ -1124,6 +1184,7 @@ impl SettingsPage {
                 .into_any_element()
             })
             .collect();
+        let appearances = APPEARANCES.map(|(value, name, _)| (value, name));
         self.rows()
             .row(
                 "Theme",
@@ -1135,6 +1196,9 @@ impl SettingsPage {
                     |s, value| s.frontend.appearance = value,
                     palette,
                 ),
+                Some(defaults::Reset::new("appearance", settings, move |d| {
+                    name_of(&appearances, d.frontend.appearance)
+                })),
                 palette,
             )
             .row(
@@ -1143,6 +1207,7 @@ impl SettingsPage {
                 widgets::setting_field(
                     Select::new(&self.zoom).accessibility_label("Interface size"),
                 ),
+                None,
                 palette,
             )
             .row(
@@ -1150,11 +1215,14 @@ impl SettingsPage {
                 None,
                 choice(
                     "coordinates",
-                    &COORDINATES.map(|(mode, label)| (mode, label, None)),
+                    &items(&COORDINATES),
                     frontend.coordinates,
                     |s, value| s.frontend.coordinates = value,
                     palette,
                 ),
+                Some(defaults::Reset::new("coordinates", settings, |d| {
+                    name_of(&COORDINATES, d.frontend.coordinates)
+                })),
                 palette,
             )
             .row(
@@ -1162,16 +1230,14 @@ impl SettingsPage {
                 None,
                 choice(
                     "animation",
-                    &[
-                        (PieceAnimation::None, "Off", None),
-                        (PieceAnimation::Fast, "Fast", None),
-                        (PieceAnimation::Normal, "Normal", None),
-                        (PieceAnimation::Slow, "Slow", None),
-                    ],
+                    &items(&ANIMATIONS),
                     frontend.piece_animation,
                     |s, value| s.frontend.piece_animation = value,
                     palette,
                 ),
+                Some(defaults::Reset::new("pieceAnimation", settings, |d| {
+                    name_of(&ANIMATIONS, d.frontend.piece_animation)
+                })),
                 palette,
             )
             .row(
@@ -1179,15 +1245,42 @@ impl SettingsPage {
                 None,
                 choice(
                     "notation",
-                    &[(false, "Letters", None), (true, "Symbols", None)],
+                    &items(&NOTATIONS),
                     frontend.figurine_notation,
                     |s, value| s.frontend.figurine_notation = value,
                     palette,
                 ),
+                Some(defaults::Reset::new("figurineNotation", settings, |d| {
+                    name_of(&NOTATIONS, d.frontend.figurine_notation)
+                })),
                 palette,
             )
-            .stacked("Piece set", None, grid(count, pieces), palette)
-            .stacked("Board theme", None, grid(count, boards), palette)
+            .stacked(
+                "Piece set",
+                None,
+                grid(count, pieces),
+                Some(defaults::Reset::new("pieceSet", settings, |d| {
+                    looks::piece_sets()
+                        .iter()
+                        .find(|set| set.id == d.frontend.piece_set)
+                        .map(|set| SharedString::from(set.name.clone()))
+                        .unwrap_or_default()
+                })),
+                palette,
+            )
+            .stacked(
+                "Board theme",
+                None,
+                grid(count, boards),
+                Some(defaults::Reset::new("boardTheme", settings, |d| {
+                    looks::boards()
+                        .iter()
+                        .find(|board| board.id == d.frontend.board_theme)
+                        .map(|board| SharedString::from(board.name.clone()))
+                        .unwrap_or_default()
+                })),
+                palette,
+            )
             .card(palette)
     }
 
@@ -1275,6 +1368,19 @@ impl SettingsPage {
                     .text_color(palette.warning)
                     .child(format!("• {problem}"))
             }));
+        let appearances = APPEARANCES.map(|(value, name, _)| (value, name));
+        let names: Vec<(String, SharedString)> = themes
+            .iter()
+            .map(|theme| (theme.id.clone(), theme.name.clone().into()))
+            .collect();
+        let theme_name = move |id: &str| {
+            names
+                .iter()
+                .find(|(of, _)| of == id)
+                .map(|(_, name)| name.clone())
+                .unwrap_or_default()
+        };
+        let dark_name = theme_name.clone();
         self.rows()
             .row(
                 "Appearance",
@@ -1286,11 +1392,30 @@ impl SettingsPage {
                     |s, value| s.frontend.appearance = value,
                     palette,
                 ),
+                Some(defaults::Reset::new("appearance", settings, move |d| {
+                    name_of(&appearances, d.frontend.appearance)
+                })),
                 palette,
             )
-            .stacked("Light mode theme", None, picker(false), palette)
-            .stacked("Dark mode theme", None, picker(true), palette)
-            .stacked("Your own themes", None, own, palette)
+            .stacked(
+                "Light mode theme",
+                None,
+                picker(false),
+                Some(defaults::Reset::new("lightTheme", settings, move |d| {
+                    theme_name(&d.frontend.light_theme)
+                })),
+                palette,
+            )
+            .stacked(
+                "Dark mode theme",
+                None,
+                picker(true),
+                Some(defaults::Reset::new("darkTheme", settings, move |d| {
+                    dark_name(&d.frontend.dark_theme)
+                })),
+                palette,
+            )
+            .stacked("Your own themes", None, own, None, palette)
             .card(palette)
     }
 
@@ -1342,18 +1467,6 @@ impl SettingsPage {
                             });
                         })
                 }));
-        let defaults = self.default_levels.clone();
-        let reset = h_flex().child(
-            Button::new("levels-default")
-                .ghost()
-                .icon(icon("rotate-ccw"))
-                .label("Reset to default")
-                .disabled(levels == self.default_levels)
-                .on_click(move |_, _, cx| {
-                    let defaults = defaults.clone();
-                    crate::settings::change(cx, move |s| s.core.engine_levels = defaults);
-                }),
-        );
         let mut rows = self
             .rows()
             .switch("legal-moves", settings, true, palette)
@@ -1364,21 +1477,23 @@ impl SettingsPage {
                 None,
                 choice(
                     "promotion",
-                    &[
-                        (PromotionMode::Ask, "Ask me", None),
-                        (PromotionMode::Queen, "Always queen", None),
-                        (PromotionMode::Premove, "Queen when premoving", None),
-                    ],
+                    &items(&PROMOTIONS),
                     frontend.promotion,
                     |s, value| s.frontend.promotion = value,
                     palette,
                 ),
+                Some(defaults::Reset::new("promotion", settings, |d| {
+                    name_of(&PROMOTIONS, d.frontend.promotion)
+                })),
                 palette,
             )
             .stacked(
                 "Computer levels",
                 Some("Approximate engine ratings"),
-                v_flex().gap(px(8.)).child(checkboxes).child(reset),
+                checkboxes,
+                Some(defaults::Reset::new("engineLevels", settings, |d| {
+                    format!("{} levels", d.core.engine_levels.len()).into()
+                })),
                 palette,
             );
         for id in ["opening-names", "blindfold", "zen-mode", "puzzle-next"] {
@@ -1410,6 +1525,9 @@ impl SettingsPage {
                 widgets::setting_field(
                     Select::new(&self.poll).accessibility_label("Check correspondence games"),
                 ),
+                Some(defaults::Reset::new("correspondencePoll", settings, |d| {
+                    name_of(&POLL, d.core.correspondence_poll)
+                })),
                 palette,
             )
             .card(palette)
@@ -1433,6 +1551,9 @@ impl SettingsPage {
                         .disabled(!frontend.sound_enabled)
                         .accessibility_label("Volume"),
                 ),
+                Some(defaults::Reset::new("soundVolume", settings, |d| {
+                    format!("{}%", (d.frontend.sound_volume * 100.).round()).into()
+                })),
                 palette,
             )
             .card(palette)
@@ -1535,6 +1656,7 @@ impl SettingsPage {
                         .disabled(self.test_pending)
                         .on_click(cx.listener(|this, _, _, cx| this.send_test(cx))),
                 ),
+            None,
             palette,
         )
         .card(palette)

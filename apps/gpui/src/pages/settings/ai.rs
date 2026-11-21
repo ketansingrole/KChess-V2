@@ -121,7 +121,9 @@ impl SettingsPage {
             _ if connected => "Connected".into(),
             _ => "Explain mistakes and puzzles with your Plus or Pro plan".into(),
         };
-        let rows = self.rows().row("ChatGPT", Some(hint), account, palette);
+        let rows = self
+            .rows()
+            .row("ChatGPT", Some(hint), account, None, palette);
         if !connected {
             return rows.card(palette);
         }
@@ -129,6 +131,7 @@ impl SettingsPage {
             "Model",
             None,
             crate::widgets::setting_field(Select::new(&self.ai_model).accessibility_label("Model")),
+            None,
             palette,
         )
         .row(
@@ -139,6 +142,7 @@ impl SettingsPage {
                     .accessibility_label("Effort")
                     .disabled(refused),
             ),
+            None,
             palette,
         )
         .card(palette)

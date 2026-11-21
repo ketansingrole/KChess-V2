@@ -3320,6 +3320,14 @@ impl Window {
         self.platform_window.set_traffic_light_position(position);
     }
 
+    /// KChess patch: places the macOS traffic lights `centre.x` in from the window's left edge,
+    /// their middle `centre.y` below its top. The platform centres them by the buttons' own
+    /// height, which differs between macOS releases, on every layout pass.
+    #[cfg(target_os = "macos")]
+    pub fn set_traffic_light_centre(&self, centre: Point<Pixels>) {
+        self.platform_window.set_traffic_light_centre(centre);
+    }
+
     /// Sets the application identifier.
     pub fn set_app_id(&mut self, app_id: &str) {
         self.platform_window.set_app_id(app_id);

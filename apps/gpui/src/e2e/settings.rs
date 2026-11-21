@@ -549,3 +549,47 @@ fn restore_defaults_puts_a_category_back_and_undo_returns_it(cx: &mut gpui_kit::
     app.wait_for_saved("promotion", json!("ask"));
     assert!(app.shows("restore-defaults"));
 }
+
+/// A changed setting's row shows a reset that names the default: it puts the default back,
+/// saved, and Undo brings the person's choice again. A row at its default shows none.
+#[gpui_kit::test]
+fn a_row_resets_its_setting_and_undo_returns_it(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Gameplay");
+    assert!(
+        !app.shows("reset-promotion"),
+        "a new profile is at its defaults"
+    );
+    app.click(("promotion", 0usize));
+    app.wait_for_saved("promotion", json!("ask"));
+    assert_eq!(
+        app.find("reset-promotion").label(),
+        Some("Reset Pawn promotion to default: Queen when premoving")
+    );
+    assert!(!app.shows("reset-premove"), "{}", app.paths());
+    app.click("reset-promotion");
+    assert_eq!(app.find(("promotion", 2usize)).selected(), Some(true));
+    app.wait_for_saved("promotion", json!("premove"));
+    app.wait_gone("reset-promotion");
+    app.click(crate::setting_notice::UNDO);
+    assert_eq!(app.find(("promotion", 0usize)).selected(), Some(true));
+    app.wait_for_saved("promotion", json!("ask"));
+    assert!(app.shows("reset-promotion"));
+}
+
+/// A switch turned away from its default resets to it, the other switches showing no reset.
+#[gpui_kit::test]
+fn a_switch_resets_to_its_default(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Notifications");
+    app.click("notify-sound");
+    assert_eq!(
+        app.find("reset-notifySound").label(),
+        Some("Reset System sound to default: Off")
+    );
+    assert!(!app.shows("reset-notificationsEnabled"));
+    app.click("reset-notifySound");
+    assert_eq!(app.find("notify-sound").checked(), Some(false));
+    app.wait_for_saved("notifySound", json!(false));
+    app.wait_gone("reset-notifySound");
+}

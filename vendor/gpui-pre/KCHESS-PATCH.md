@@ -35,6 +35,10 @@ through `Window::zoom_requests`): the test platform's `zoom` and `titlebar_doubl
 each instead of panicking or doing nothing, so `e2e::shell` can check that one double click on the
 title bar zooms or restores the window exactly once.
 
+A macOS patch adds `Window::set_traffic_light_centre` (`src/window.rs`, with its
+`PlatformWindow` method in `src/platform.rs`): the traffic lights' middle goes on the line given,
+whatever height the buttons have on that macOS. `vendor/gpui-pre-macos` implements it.
+
 A fourth patch makes a reused view keep its **title-bar areas** (`Window::reuse_paint`, with
 `PaintIndex::window_control_hitboxes_index`). Upstream replayed everything else a view paints but
 not these, so a frame that reused the top bar left Windows with no drag area or window buttons

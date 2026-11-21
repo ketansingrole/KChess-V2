@@ -414,6 +414,7 @@ impl SettingsPage {
                         .loading(self.exporting)
                         .on_click(cx.listener(|this, _, _, cx| this.export_diagnostics(cx))),
                 ),
+                None,
                 palette,
             )
             .card(palette);

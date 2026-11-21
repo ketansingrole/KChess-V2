@@ -7,6 +7,8 @@
 use std::path::Path;
 
 use gpui_kit::*;
+#[cfg(target_os = "macos")]
+use kchess_nav::shell::TOPBAR_HEIGHT;
 use serde_json::{Value, json};
 
 /// The view preference holding a chosen percent; Auto when it is missing.
@@ -19,14 +21,9 @@ pub const PERCENTS: [u16; 13] = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 20
 /// The workspace a 100% interface is designed for, in the display's own points.
 const DESIGN_LONG_SIDE: f32 = 2560.;
 const DESIGN_SHORT_SIDE: f32 = 1360.;
-/// The top bar's height at 100%, which the macOS traffic lights centre on (`TOPBAR_HEIGHT`).
-#[cfg(target_os = "macos")]
-const TOPBAR: f32 = 52.;
-/// Where the traffic lights sit: 12pt in, their frame 5pt above the top bar's middle.
+/// Where the traffic lights sit: 12pt in, beside the sidebar toggle.
 #[cfg(target_os = "macos")]
 const TRAFFIC_LIGHT_X: f32 = 12.;
-#[cfg(target_os = "macos")]
-const TRAFFIC_LIGHT_ABOVE_MIDDLE: f32 = 5.;
 
 /// `auto`, or one of `PERCENTS`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,16 +112,14 @@ pub fn apply(window: &mut Window, cx: &App) {
     let factor = f32::from(percent(window, cx)) / 100.;
     window.set_zoom(factor);
     #[cfg(target_os = "macos")]
-    window.set_traffic_light_position(traffic_lights(factor));
+    window.set_traffic_light_centre(traffic_lights(factor));
 }
 
-/// Where the traffic lights go in a window zoomed by `factor`: on the top bar's middle.
+/// Where the traffic lights' middle goes in a window zoomed by `factor`: on the top bar's
+/// middle (`TOPBAR_HEIGHT` at 100%). macOS centres them by their own height, which differs between its releases.
 #[cfg(target_os = "macos")]
 fn traffic_lights(factor: f32) -> Point<Pixels> {
-    let y = (TOPBAR * factor / 2. - TRAFFIC_LIGHT_ABOVE_MIDDLE)
-        .round()
-        .max(4.);
-    point(px(TRAFFIC_LIGHT_X), px(y))
+    point(px(TRAFFIC_LIGHT_X), TOPBAR_HEIGHT * factor / 2.)
 }
 
 /// Choose a setting, save it, and zoom `window` (the app's one window) to it.
@@ -165,14 +160,18 @@ mod tests {
         assert_eq!(auto_percent(2560., 1410.), 100);
     }
 
-    /// They once sat 4pt right of and 3pt above where they belong (x12, y21 on screen at 100%).
+    /// They once sat 4pt right of where they belong, and on macOS 27 2pt below the top bar's
+    /// middle: their top was placed for 10pt buttons. Their middle is the top bar's, 12pt in.
     #[cfg(target_os = "macos")]
     #[test]
-    fn traffic_lights_sit_12pt_in_beside_the_toggle() {
-        use gpui_kit::{point, px};
-        assert_eq!(super::traffic_lights(1.), point(px(12.), px(21.)));
-        assert_eq!(super::traffic_lights(2.), point(px(12.), px(47.)));
-        assert_eq!(super::traffic_lights(0.5), point(px(12.), px(8.)));
+    fn traffic_lights_centre_on_the_top_bar_12pt_in() {
+        use gpui_kit::px;
+        for factor in [0.5, 0.76, 1., 1.25, 2.] {
+            let centre = super::traffic_lights(factor);
+            assert_eq!(centre.x, px(12.), "beside the toggle at {factor}");
+            let middle = super::TOPBAR_HEIGHT * factor / 2.;
+            assert_eq!(centre.y, middle, "on the top bar's middle at {factor}");
+        }
     }
 
     #[test]
