@@ -6,6 +6,12 @@ use kchess_delta::{Asset, Version};
 
 use crate::util::{Result, output, root, run, say, version, workspace_version};
 
+/// Every workspace whose Cargo.lock names the workspace crates' versions, so each follows a new
+/// version: the root and the fuzz targets' own (`fuzz/`, which builds on `kchess-domain`). The
+/// fuzz lock once stayed at 2026.11.7 when 2026.11.8 was prepared, and `check` refused it
+/// (2026-11-21).
+const LOCKED: [&str; 2] = ["Cargo.toml", crate::hack::FUZZ];
+
 /// The next release in `(year, month)` after `tags`.
 pub fn next_version(tags: &[&str], year: u32, month: u32) -> Result<Version> {
     let first = Version {
@@ -92,10 +98,21 @@ pub fn next() -> Result {
     let manifest = std::fs::read_to_string(&path).map_err(|cause| cause.to_string())?;
     std::fs::write(&path, with_version(&manifest, &next)?).map_err(|cause| cause.to_string())?;
     std::fs::write(&notes_path, notes).map_err(|cause| cause.to_string())?;
-    // The workspace crates' versions in Cargo.lock follow.
-    run("cargo", &["update", "--workspace", "--offline"])?;
+    // The workspace crates' versions in every lock follow.
+    for manifest in LOCKED {
+        run(
+            "cargo",
+            &[
+                "update",
+                "--workspace",
+                "--offline",
+                "--manifest-path",
+                manifest,
+            ],
+        )?;
+    }
     say(&format!(
-        "Cargo.toml is now {next}. Review and stage Cargo.toml, Cargo.lock and {NOTES}, run `cargo xtask check`,\n\
+        "Cargo.toml is now {next}. Review and stage Cargo.toml, Cargo.lock, fuzz/Cargo.lock and {NOTES}, run `cargo xtask check`,\n\
          then commit the release change to main. The tag must be v{next}, pointing at that commit on\n\
          origin/main with green CI. Pushing the tag creates a draft release; publishing is separate."
     ));
@@ -431,6 +448,20 @@ pub fn download_snap() -> Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `release-version` updates every tracked Cargo.lock: it once left `fuzz/Cargo.lock` behind.
+    #[test]
+    fn a_new_version_updates_every_lock() {
+        let tracked = output("git", &["ls-files", "*Cargo.lock"]).unwrap();
+        let mut locks: Vec<&str> = tracked.lines().collect();
+        locks.sort_unstable();
+        let mut updated: Vec<String> = LOCKED
+            .iter()
+            .map(|manifest| manifest.replace("Cargo.toml", "Cargo.lock"))
+            .collect();
+        updated.sort_unstable();
+        assert_eq!(locks, updated);
+    }
 
     /// A Windows checkout with `core.autocrlf` has Cargo.lock in CRLF, and `check` refused it.
     #[test]

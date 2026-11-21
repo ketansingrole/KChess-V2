@@ -10,9 +10,9 @@ keeps the version valid semver. The release is the Cargo workspace version. Foll
 prepare the version change:
 
 ```bash
-cargo xtask release-version   # fetches origin's tags; updates Cargo.toml, Cargo.lock and WHATS_NEW.md
+cargo xtask release-version   # fetches origin's tags; updates Cargo.toml, both Cargo.locks and WHATS_NEW.md
 cargo xtask check
-git add Cargo.toml Cargo.lock apps/gpui/WHATS_NEW.md
+git add Cargo.toml Cargo.lock fuzz/Cargo.lock apps/gpui/WHATS_NEW.md
 git commit -m "Release <version>"
 ```
 
@@ -72,7 +72,7 @@ creating/pushing a tag or publishing a release.
   Do not use ordinary `v1.2.3`, date/day tags, prerelease suffixes, or guess a counter.
 - Use `cargo xtask release-version`. It must successfully fetch tags from `origin` first.
   If fetching fails, restore access and retry; do not select a version from stale tags.
-  Commit `Cargo.toml` and `Cargo.lock`; the lockfile must match the workspace version.
+  Commit `Cargo.toml`, `Cargo.lock` and `fuzz/Cargo.lock`; the lockfiles must match the workspace version.
 - The release's notes are `apps/gpui/WHATS_NEW.md`'s `## Unreleased` items, which
   `release-version` turns into `## <version> (<date>)` and refuses to release without. The app
   shows them once after the update (Settings → Updates → What's new keeps them), and the draft

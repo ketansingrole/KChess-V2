@@ -18,7 +18,7 @@ const DEPENDABOT: &str = ".github/dependabot.yml";
 /// The fuzz targets' own workspace (`fuzz/`): it depends on `kchess-domain`, and so on the hack,
 /// but Dependabot updates only the root's lock, so its lock missed each package the hack gained
 /// (byteorder on 2026-11-18, socket2 on 11-20) and `check` refused it.
-const FUZZ: &str = "fuzz/Cargo.toml";
+pub const FUZZ: &str = "fuzz/Cargo.toml";
 
 /// Whether `check` reads `file`: the hack's settings, Dependabot's hold list, and the manifests
 /// and lock it is written from.
