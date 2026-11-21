@@ -4356,7 +4356,6 @@ name = "kchess-cli"
 version = "2026.11.8"
 dependencies = [
  "kchess-contracts",
- "kchess-core",
  "kchess-domain",
  "kchess-games",
  "kchess-hack",
@@ -4471,8 +4470,6 @@ dependencies = [
  "kchess-contracts",
  "kchess-domain",
  "kchess-hack",
- "serde",
- "serde_json",
  "shakmaty",
 ]
 
@@ -4484,10 +4481,8 @@ dependencies = [
  "dirs 7.0.0",
  "embed-resource",
  "futures",
- "getrandom 0.4.3",
  "gpui-kit",
  "gpui-pre-apple",
- "image",
  "jiff",
  "kchess-app",
  "kchess-board",
@@ -4515,7 +4510,6 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "reqwest",
- "resvg 0.50.0",
  "ring",
  "rusqlite",
  "rust-embed",
@@ -4735,7 +4729,6 @@ dependencies = [
  "kchess-hack",
  "kchess-host",
  "kchess-testkit",
- "serde",
  "serde_json",
  "tempfile",
  "tokio",

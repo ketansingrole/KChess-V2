@@ -16,7 +16,6 @@ kchess-client.workspace = true
 kchess-contracts.workspace = true
 kchess-core.workspace = true
 kchess-host.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "process", "net", "signal"] }
 kchess-hack = { version = "0.1", path = "../kchess-hack" }

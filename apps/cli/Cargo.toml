@@ -12,7 +12,6 @@ name = "kchess-cli"
 path = "src/main.rs"
 
 [dependencies]
-kchess-core.workspace = true
 kchess-host.workspace = true
 kchess-contracts.workspace = true
 kchess-domain.workspace = true

@@ -51,8 +51,8 @@ const RULES: [Rule; 2] = [
           `kchess_core` (tooling/xtask/src/boundaries.rs)",
         allowed: &[
             // Starting the core (embedded or through the service) and answering its host requests.
+            // The command line starts it through `kchess-service` and names it nowhere.
             "apps/gpui/src/core.rs",
-            "apps/cli/src/core.rs",
         ],
     },
     Rule {
