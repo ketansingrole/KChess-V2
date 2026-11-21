@@ -12,6 +12,8 @@ mod check;
 mod ci_times;
 mod deb;
 mod deltas;
+#[cfg(test)]
+mod dependencies;
 mod electron_step;
 mod engines;
 mod fairy;
