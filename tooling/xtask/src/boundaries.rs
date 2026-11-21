@@ -62,7 +62,7 @@ const RULES: [Rule; 2] = [
         allowed: &[
             // The update feed and installers: the app replaces itself, which a core it may be
             // sharing with other windows cannot do for it. No login is sent.
-            "apps/gpui/src/updates.rs",
+            "apps/gpui/src/updates/download.rs",
             // Pictures Lichess serves (broadcast covers), from its image hosts only, drawn by the
             // app straight from the bytes. No login is sent.
             "crates/kchess-watch/src/remote_image.rs",
