@@ -180,7 +180,12 @@ impl LocalPage {
     ) -> AnyElement {
         let palette = *cx.global::<Palette>();
         let board_size = self.board_size(window);
-        let narrow = widgets::is_narrow(self.panel_area.size().width);
+        let max_width = if crate::settings::frontend(cx).zen_mode {
+            PANEL_ZEN
+        } else {
+            PANEL_MAX
+        };
+        let narrow = widgets::is_narrow(self.layout.panel_width(board_size, max_width, window));
         let moves = self.moves();
         let sans = view::sans(self.setup(), &moves);
         let shown = self.shown_ply();
@@ -269,15 +274,10 @@ impl LocalPage {
         let in_progress = !over && !moves.is_empty();
         widgets::side_panel(&palette)
             .relative()
-            .child(self.panel_area.probe(cx))
             .h(self.layout.panel_height(board_size))
             .flex_1()
             .min_w(PANEL_MIN)
-            .max_w(if frontend.zen_mode {
-                PANEL_ZEN
-            } else {
-                PANEL_MAX
-            })
+            .max_w(max_width)
             .child(
                 h_flex()
                     .gap(px(8.))

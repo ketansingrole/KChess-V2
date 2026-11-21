@@ -170,7 +170,7 @@ impl OpeningsPage {
         };
         let folded = fold(&self.query);
         let words: Vec<&str> = folded.split_whitespace().collect();
-        let mut body = v_flex().gap(px(24.)).w_full().max_w(px(1100.)).child(
+        let mut body = v_flex().gap(px(24.)).w_full().max_w(BROWSER_MAX).child(
             Input::new(&self.search)
                 .prefix(icon("search"))
                 .aria_label("Search openings"),
@@ -243,12 +243,7 @@ impl OpeningsPage {
             );
             return body.into_any_element();
         }
-        let width = self.area.size().width;
-        let width = if width > px(0.) {
-            width.min(px(1100.))
-        } else {
-            window.viewport_size().width - px(400.)
-        };
+        let width = crate::play_layout::column_width(window, BROWSER_MAX, self.area.size().width);
         let recent: Vec<Entry> = Self::recent(cx)
             .iter()
             .filter_map(|choice| entry(&choice.moves, Some(&choice.name)))
