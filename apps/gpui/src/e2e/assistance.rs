@@ -136,6 +136,8 @@ fn a_refusal_names_the_check_not_a_live_game(cx: &mut gpui_kit::TestAppContext) 
             options: None,
         })
         .expect_err("refused while unverified");
+    // Told by its kind, so a lookup refused for it is made again once help is lent.
+    assert_eq!(refused.kind, Some(kchess_contracts::ErrorKind::Withheld));
     assert_eq!(
         refused.message,
         "Engine assistance is unavailable until your Lichess game status is verified."

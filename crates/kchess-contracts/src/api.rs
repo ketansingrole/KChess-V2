@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use kchess_domain::misc::value::J;
 
-use crate::error::CoreError;
+use crate::error::{CoreError, ErrorKind};
 use crate::types::{Assistance, ProfileArea};
 
 /// One core method as a typed call.
@@ -76,6 +76,12 @@ pub enum Assist {
 }
 
 impl Assist {
+    /// The method's refusal while help is not lent for `why`: its reason, and the kind that
+    /// tells a caller to ask again once help is lent.
+    pub fn refused(self, why: Assistance) -> CoreError {
+        CoreError::new(self.refusal(why)).with_kind(ErrorKind::Withheld)
+    }
+
     /// Why the method is refused while help is not lent for `why`.
     pub fn refusal(self, why: Assistance) -> &'static str {
         let unverified = why == Assistance::Unverified;
@@ -336,7 +342,7 @@ macro_rules! core_api {
                         $(
                             let why = api.assistance();
                             if why != Assistance::Allowed {
-                                return Err(CoreError::new(Assist::$gate.refusal(why)));
+                                return Err(Assist::$gate.refused(why));
                             }
                         )?
                         // Boxed: the futures of all the methods would make this one too large
@@ -345,7 +351,7 @@ macro_rules! core_api {
                         $(
                             let why = api.assistance();
                             if why != Assistance::Allowed {
-                                return Err(CoreError::new(Assist::$gate.refusal(why)));
+                                return Err(Assist::$gate.refused(why));
                             }
                         )?
                         $(api.changed(&[$(ProfileArea::$written),*]);)?
