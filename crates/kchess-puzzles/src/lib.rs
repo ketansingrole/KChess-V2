@@ -46,9 +46,17 @@ use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
 use kchess_ui::icon;
 mod daily;
 mod history;
+mod panel;
 mod rush;
 pub use rush::RushAction;
 mod stats;
+mod themes;
+mod train;
+mod train_view;
+
+use panel::status_panel;
+use themes::*;
+use train::{Settle, as_contract, train_theme};
 
 use crate::widgets::Pressable as _;
 use crate::widgets::{Choice, Pill, Tone};
@@ -142,93 +150,6 @@ fn mode_hint(mode: &str) -> &'static str {
         "rated" => "Results affect your Lichess rating",
         _ => "Lichess puzzles, unrated",
     }
-}
-
-pub(crate) use kchess_domain::puzzle::Theme;
-
-fn theme_groups() -> Vec<kchess_domain::puzzle::ThemeGroup> {
-    kchess_domain::puzzle::theme_groups().to_vec()
-}
-
-fn mix() -> Theme {
-    Theme {
-        key: "mix".into(),
-        name: "Healthy mix".into(),
-    }
-}
-
-fn themes() -> Vec<Theme> {
-    std::iter::once(mix())
-        .chain(theme_groups().into_iter().flat_map(|group| group.themes))
-        .collect()
-}
-
-type ThemeChoices = SearchableVec<SearchableGroup<Choice>>;
-
-/// The mix (and an opening chosen for puzzles), then every theme under its group.
-fn theme_choices(cx: &App) -> ThemeChoices {
-    let mut first = vec![mix()];
-    if let Some(opening) = crate::prefs::get::<Option<OpeningAngle>>(cx, OPENING, None) {
-        first.push(Theme {
-            key: opening.key,
-            name: opening.name,
-        });
-    }
-    let choices = |themes: Vec<Theme>| {
-        themes
-            .into_iter()
-            .map(|theme| Choice::new(theme.key, theme.name))
-    };
-    SearchableVec::new(
-        std::iter::once(SearchableGroup::new("").items(choices(first)))
-            .chain(
-                theme_groups()
-                    .into_iter()
-                    .map(|group| SearchableGroup::new(group.label).items(choices(group.themes))),
-            )
-            .collect::<Vec<_>>(),
-    )
-}
-
-/// An opening chosen for puzzles.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct OpeningAngle {
-    key: String,
-    name: String,
-}
-
-/// The themes, and after the mix the opening an opening page chose puzzles of.
-fn theme_items(cx: &App) -> Vec<Theme> {
-    let mut list = themes();
-    if let Some(opening) = crate::prefs::get::<Option<OpeningAngle>>(cx, OPENING, None) {
-        list.insert(
-            1,
-            Theme {
-                key: opening.key,
-                name: opening.name,
-            },
-        );
-    }
-    list
-}
-
-/// The name Lichess gives a theme key; unknown keys split into words.
-fn theme_name(key: &str, themes: &[Theme]) -> String {
-    if let Some(theme) = themes.iter().find(|theme| theme.key == key) {
-        return theme.name.clone();
-    }
-    let mut name = String::new();
-    for (index, letter) in key.chars().enumerate() {
-        if index == 0 {
-            name.extend(letter.to_uppercase());
-        } else {
-            if letter.is_uppercase() {
-                name.push(' ');
-            }
-            name.push(letter);
-        }
-    }
-    name
 }
 
 /// What the puzzle panel's buttons do, for Quick Pick to offer the same.
@@ -480,1228 +401,6 @@ impl PuzzlesPage {
         })
         .detach();
     }
-
-    /* ── The session ──────────────────────────────────────────────────── */
-
-    fn mode(cx: &App) -> String {
-        crate::prefs::get::<String>(cx, MODE, "practice".into())
-    }
-
-    /// The account picker lists the connected accounts, with the one rated puzzles go to.
-    fn sync_accounts(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let choices: Vec<Choice> = self
-            .accounts(cx)
-            .into_iter()
-            .map(|name| Choice::new(name.clone(), format!("@{name}")))
-            .collect();
-        let account = SharedString::from(self.account(cx));
-        self.account_select.update(cx, |state, cx| {
-            state.set_items(choices, window, cx);
-            state.set_selected_value(&account, window, cx);
-        });
-    }
-
-    /// The connected accounts.
-    fn accounts(&self, cx: &App) -> Vec<String> {
-        crate::accounts::handle(cx).read(cx).connected()
-    }
-
-    /// The connected account rated puzzles go to.
-    fn account(&self, cx: &App) -> String {
-        let preferred = crate::prefs::get::<String>(cx, ACCOUNT, String::new());
-        let connected = self.accounts(cx);
-        let accounts: Vec<ListedAccount> = connected
-            .iter()
-            .map(|username| ListedAccount {
-                username: Some(username),
-                connected: true,
-            })
-            .collect();
-        connected_account_index(&accounts, Some(&preferred))
-            .and_then(|index| connected.get(index).cloned())
-            .unwrap_or_default()
-    }
-
-    fn selection(&self, cx: &App) -> Selection {
-        Selection {
-            account: self.account(cx),
-            angle: crate::prefs::get::<String>(cx, ANGLE, "mix".into()),
-            difficulty: crate::prefs::get::<String>(cx, DIFFICULTY, "normal".into()),
-            color: crate::prefs::get::<String>(cx, COLOR, "random".into()),
-            mode: Self::mode(cx),
-        }
-    }
-
-    fn load_next(&mut self, cx: &mut Context<Self>) {
-        let step = self
-            .session
-            .load_begin(&self.selection(cx), true, &local_day());
-        self.follow(step, Settle::Load, cx);
-        self.sync_board(cx);
-    }
-
-    /// Run the steps' host calls in order until one asks for nothing more.
-    fn follow(&mut self, step: Step, settle: Settle, cx: &mut Context<Self>) {
-        if let Some(record) = step.record {
-            self.record(record, cx);
-        }
-        let Some(call) = step.call else {
-            return;
-        };
-        let (method, request) = puzzle_request(cx.global::<AppCore>(), &call.request);
-        cx.spawn(async move |this, cx| {
-            let reply = request.await.map_err(|cause| {
-                crate::log::write(
-                    Level::Warn,
-                    "puzzles",
-                    &format!("{method} failed: {}", cause.message),
-                );
-                cause.message
-            });
-            let _ = this.update(cx, |this, cx| {
-                let selection = this.selection(cx);
-                let next = settle.apply(&mut this.session, call.resume, reply, &selection);
-                this.follow(next, settle, cx);
-                this.sync_board(cx);
-            });
-        })
-        .detach();
-    }
-}
-
-/// A core call's answer, on its way.
-type Sent = std::pin::Pin<
-    Box<dyn std::future::Future<Output = Result<Answer, kchess_contracts::CoreError>>>,
->;
-
-/// The session's value as the contract's type of it, read by the contract's own check as the
-/// core reads what is sent to it (a whole rating written `1500.0` is the integer 1500).
-fn as_contract<T: kchess_contracts::check::Validate>(
-    value: &impl serde::Serialize,
-) -> Result<T, kchess_contracts::CoreError> {
-    let value = serde_json::to_value(value)
-        .map_err(|cause| kchess_contracts::CoreError::new(cause.to_string()))?;
-    T::validate(kchess_domain::misc::value::J::from(&value))
-        .map_err(kchess_contracts::CoreError::new)
-}
-
-/// A call sent, its answer as the session reads it.
-fn answer<C: kchess_contracts::calls::CoreCall + Send + 'static>(
-    core: &AppCore,
-    call: Result<C, kchess_contracts::CoreError>,
-    read: fn(C::Answer) -> Answer,
-) -> Sent
-where
-    C::Answer: Send,
-{
-    let sent = call.map(|call| core.request(call));
-    Box::pin(async move { sent?.await.map(read) })
-}
-
-/// Lichess's answer, or that the account must be reconnected.
-fn lichess<T>(reply: kchess_contracts::types::Reply<T>, read: impl FnOnce(T) -> Answer) -> Answer {
-    match reply {
-        kchess_contracts::types::Reply::Done(answer) => read(answer),
-        kchess_contracts::types::Reply::NeedsReconnect => Answer::NeedsReconnect,
-    }
-}
-
-/// A puzzle step's core call, sent, and its method's name.
-fn puzzle_request(core: &AppCore, request: &Request) -> (&'static str, Sent) {
-    use kchess_contracts::calls::CoreCall;
-    match request {
-        Request::LocalPuzzles(query) => (
-            calls::LocalPuzzles::METHOD,
-            answer(
-                core,
-                as_contract(query).map(|query| calls::LocalPuzzles { query }),
-                Answer::Local,
-            ),
-        ),
-        Request::PuzzleNext(draw) => (
-            calls::PuzzleNext::METHOD,
-            answer(
-                core,
-                as_contract(draw).map(|request| calls::PuzzleNext { request }),
-                |reply| {
-                    lichess(reply, |draw| Answer::Drawn {
-                        puzzle: draw.puzzle,
-                        rating: draw.glicko.and_then(|glicko| glicko.rating),
-                    })
-                },
-            ),
-        ),
-        Request::PuzzleSolve(solve) => (
-            calls::PuzzleSolve::METHOD,
-            answer(
-                core,
-                as_contract(solve).map(|request| calls::PuzzleSolve { request }),
-                |reply| {
-                    lichess(reply, |solved| Answer::Solved {
-                        rating_diff: solved.rating_diff.flatten().map(|diff| diff as f64),
-                    })
-                },
-            ),
-        ),
-    }
-}
-
-impl PuzzlesPage {
-    /// Keep an attempt in the local log; a failed write never interrupts training.
-    fn record(&mut self, attempt: Value, cx: &mut Context<Self>) {
-        let save = as_contract(&attempt).map(|attempt| {
-            cx.global::<AppCore>()
-                .request(calls::RecordPuzzleAttempt { attempt })
-        });
-        cx.spawn(async move |this, cx| match async { save?.await }.await {
-            Ok(progress) => {
-                let _ = this.update(cx, |this, cx| {
-                    this.progress = progress;
-                    cx.notify();
-                });
-            }
-            Err(cause) => crate::log::write(
-                Level::Warn,
-                "puzzles",
-                &format!("recording the attempt failed: {}", cause.message),
-            ),
-        })
-        .detach();
-    }
-
-    fn report(&mut self, win: bool, detail: Detail, cx: &mut Context<Self>) {
-        let step = self
-            .session
-            .report_begin(win, Some(detail), &self.selection(cx));
-        self.follow(step, Settle::Report, cx);
-    }
-
-    /* ── The board ────────────────────────────────────────────────────── */
-
-    /// A new puzzle (a new key) starts the board afresh.
-    fn sync_board(&mut self, cx: &mut Context<Self>) {
-        let ready = self.session.phase() == "ready";
-        let key = self.session.puzzle_key();
-        let shown = self.puzzle.read(cx).puzzle().is_some();
-        match self.session.current().cloned() {
-            Some(puzzle) if ready && (!shown || key != self.shown_key) => {
-                self.shown_key = key;
-                let outcome = self.session.state().attempt_outcome;
-                self.puzzle
-                    .update(cx, |board, cx| board.start(puzzle, outcome, cx));
-            }
-            _ if !ready => self.puzzle.update(cx, |board, cx| board.clear(cx)),
-            _ => {}
-        }
-        cx.notify();
-    }
-
-    /// The puzzle is over: count and log it, and go on to the next one after a solve when asked.
-    fn done(&mut self, cx: &mut Context<Self>) {
-        let step = self.session.end(&local_day());
-        self.follow(step, Settle::Load, cx);
-        let solved = self.puzzle.read(cx).status() == PuzzleStatus::Solved;
-        let auto_next = crate::settings::frontend(cx).puzzle_auto_next;
-        if solved && auto_next {
-            let key = self.session.puzzle_key();
-            // An earlier puzzle's countdown has nothing left to do (it was replaced): dropped,
-            // not kept with every puzzle solved since the page opened.
-            self.timers.clear();
-            self.timers.push(cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(AUTO_NEXT_DELAY).await;
-                let _ = this.update(cx, |this, cx| {
-                    // Moving on by hand, or changing what to train, already replaced the puzzle.
-                    if this.session.puzzle_key() == key && this.session.phase() == "ready" {
-                        this.load_next(cx);
-                    }
-                });
-            }));
-        }
-    }
-
-    /// The Lichess stats view, made when first needed (the Stats tab, and Rush's results).
-    fn stats_view(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<stats::PuzzleStats> {
-        if let Some(stats) = &self.stats {
-            return stats.clone();
-        }
-        let themes = self.theme_list.clone();
-        let stats = cx.new(|cx| stats::PuzzleStats::new(themes, window, cx));
-        self._subscriptions.push(cx.subscribe_in(
-            &stats,
-            window,
-            |this, view, event: &stats::StatsEvent, window, cx| match event {
-                stats::StatsEvent::Train(key) => {
-                    let key = key.clone();
-                    this.train_theme(&key, window, cx);
-                }
-                stats::StatsEvent::Connect | stats::StatsEvent::Reconnect => {
-                    crate::accounts::handle(cx)
-                        .update(cx, |accounts, cx| accounts.connect(window, cx));
-                }
-                stats::StatsEvent::Account(name) => {
-                    crate::prefs::set(cx, ACCOUNT, name.clone());
-                    this.sync_accounts(window, cx);
-                    let (account, accounts) = (this.account(cx), this.accounts(cx));
-                    view.update(cx, |stats, cx| stats.shown(account, accounts, window, cx));
-                    this.load_next(cx);
-                }
-            },
-        ));
-        self.stats = Some(stats.clone());
-        stats
-    }
-
-    /// `retry`: play an earlier puzzle again on the Train tab (unrated, not counted).
-    pub(crate) fn retry(&mut self, puzzle: Puzzle, cx: &mut Context<Self>) {
-        Tab::Train.store(cx);
-        let step = self
-            .session
-            .retry(puzzle, &self.selection(cx), &local_day());
-        self.follow(step, Settle::Load, cx);
-        self.sync_board(cx);
-        cx.notify();
-    }
-
-    /// Train any theme from the downloaded puzzles.
-    fn use_downloaded(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        Tab::Train.store(cx);
-        crate::prefs::set(cx, MODE, "offline");
-        self.choose_angle("mix", window, cx);
-    }
-
-    fn choose_mode(&mut self, mode: &'static str, cx: &mut Context<Self>) {
-        crate::prefs::set(cx, MODE, mode);
-        self.load_next(cx);
-    }
-
-    /// Train another theme, as choosing it in the select does.
-    fn choose_angle(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        crate::prefs::set(cx, ANGLE, key);
-        let key = SharedString::from(key.to_string());
-        self.theme_select.update(cx, |state, cx| {
-            state.set_selected_value(&key, window, cx);
-            if state.selected_value() != Some(&key) {
-                state.set_selected_index(Some(IndexPath::default()), window, cx);
-            }
-        });
-        self.load_next(cx);
-    }
-
-    /// Train a theme from another tab or a finished puzzle's themes: back on Train, with it chosen.
-    pub(crate) fn train_theme(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        Tab::Train.store(cx);
-        self.choose_angle(key, window, cx);
-    }
-
-    fn choose_difficulty(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        crate::prefs::set(cx, DIFFICULTY, key);
-        let index = DIFFICULTIES
-            .iter()
-            .position(|(value, _)| *value == key)
-            .unwrap_or(2);
-        self.difficulty_select.update(cx, |state, cx| {
-            state.set_selected_index(Some(IndexPath::new(index)), window, cx)
-        });
-        self.load_next(cx);
-    }
-
-    /// Remember the opening an opening page asked for puzzles of, as the theme to
-    /// train; a page made after this starts with it.
-    pub fn choose_opening(key: &str, name: &str, cx: &mut App) {
-        crate::prefs::set(
-            cx,
-            OPENING,
-            OpeningAngle {
-                key: key.to_string(),
-                name: name.to_string(),
-            },
-        );
-        crate::prefs::set(cx, ANGLE, key);
-        Tab::Train.store(cx);
-    }
-
-    /// The opening chosen with [`Self::choose_opening`], on a page made before it.
-    pub fn opening_chosen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.theme_list = theme_items(cx);
-        let choices = theme_choices(cx);
-        self.theme_select
-            .update(cx, |state, cx| state.set_items(choices, window, cx));
-        let angle = crate::prefs::get::<String>(cx, ANGLE, "mix".into());
-        self.choose_angle(&angle, window, cx);
-    }
-
-    fn reset_session(&mut self, cx: &mut Context<Self>) {
-        let step = self.session.reset_session();
-        self.follow(step, Settle::Load, cx);
-        cx.notify();
-    }
-}
-
-/// Train a theme on the Puzzles page, after the click that asked for it.
-fn train_theme(key: String, window: &mut Window, cx: &mut App) {
-    window.defer(cx, move |window, cx| {
-        if let Some(page) = kchess_nav::shell::view::<PuzzlesPage>(cx) {
-            page.update(cx, |page, cx| page.train_theme(&key, window, cx));
-        }
-    });
-}
-
-/// What to do, how it went, and the buttons that help.
-/// What the status panel's Next button does.
-pub(crate) type NextPuzzle = Box<dyn Fn(&mut Window, &mut App)>;
-
-/// The puzzle's idea, shown with the hint.
-fn clue(puzzle: &Puzzle) -> Option<AnyElement> {
-    let clue = kchess_domain::coach::puzzle_clue(&puzzle.fen, &puzzle.solution)?;
-    Some(div().text_size(px(13.)).child(clue).into_any_element())
-}
-
-/// Whether a coach may speak: outside help on a puzzle that counts for a rating is cheating, so a
-/// rated attempt has none until it is over.
-fn coach_allowed(rated: bool, status: PuzzleStatus) -> bool {
-    !rated || status.is_over()
-}
-
-/// What a coach can add: a nudge while solving, why a wrong move fails, why the solution works.
-fn coach_block(
-    board_entity: &Entity<PuzzleBoard>,
-    puzzle: &Puzzle,
-    status: PuzzleStatus,
-    playing: bool,
-    rated: bool,
-    cx: &App,
-    palette: &Palette,
-) -> Option<AnyElement> {
-    if !coach_allowed(rated, status) {
-        return None;
-    }
-    let shown = board_entity.read(cx);
-    let on_board = shown.puzzle()?;
-    let solution = &puzzle.solution;
-    // While solving, from where the board stands: a long puzzle may be several moves in.
-    let current = (
-        on_board.fen().to_string(),
-        solution.get(on_board.index()..)?.to_vec(),
-    );
-    let whole = (puzzle.fen.clone(), solution.clone());
-    let merged = |(fen, moves): &(String, Vec<String>), kind, played: Option<&str>| AiRequest {
-        kind,
-        fen: fen.clone(),
-        played: played.map(str::to_string),
-        moves: moves.clone(),
-        best: Vec::new(),
-        refutation: Vec::new(),
-        mate_before: None,
-        mate_after: None,
-    };
-    let (id, label, request, on_answer): (_, _, _, Option<crate::ai::OnAnswer>) =
-        if let (true, Some(wrong)) = (playing, shown.last_wrong()) {
-            (
-                "puzzle-wrong",
-                "Why not?",
-                merged(&current, AiKind::Wrong, Some(wrong)),
-                None,
-            )
-        } else if playing {
-            let board = board_entity.downgrade();
-            let nudged: crate::ai::OnAnswer = std::rc::Rc::new(move |cx| {
-                let _ = board.update(cx, |board, _| board.nudged());
-            });
-            (
-                "puzzle-nudge",
-                "Nudge · not counted",
-                merged(&current, AiKind::Nudge, None),
-                Some(nudged),
-            )
-        } else if status.is_over() {
-            (
-                "puzzle-why",
-                "Explain",
-                merged(&whole, AiKind::Solution, None),
-                None,
-            )
-        } else {
-            return None;
-        };
-    crate::ai::explain_block(
-        id,
-        label,
-        shown.explainer(),
-        request,
-        shown.orientation(),
-        on_answer,
-        cx,
-        palette,
-    )
-}
-
-pub(crate) fn status_panel(
-    board_entity: &Entity<PuzzleBoard>,
-    themes: &[Theme],
-    next: Option<NextPuzzle>,
-    rated: bool,
-    cx: &App,
-    palette: &Palette,
-) -> AnyElement {
-    let shown = board_entity.read(cx);
-    let Some(board) = shown.puzzle() else {
-        return div().into_any_element();
-    };
-    let puzzle = board.puzzle.clone();
-    let player = board.player_color();
-    let status = shown.status();
-    let (outcome, feedback, waiting, hinted) = (
-        shown.outcome(),
-        shown.feedback(),
-        shown.waiting(),
-        shown.hinted(),
-    );
-    let color = if player == Color::White {
-        "white"
-    } else {
-        "black"
-    };
-    let (tone, glyph, title) = match status {
-        PuzzleStatus::Revealed => (
-            Tone::Loss,
-            icon("eye"),
-            "Solution shown — not counted as solved".to_string(),
-        ),
-        PuzzleStatus::Solved if outcome == Some(true) => {
-            (Tone::Win, icon("trophy"), "Puzzle solved".to_string())
-        }
-        PuzzleStatus::Solved => (
-            Tone::Plain,
-            icon("check"),
-            if shown.was_nudged() {
-                "Solved with a nudge — not counted".to_string()
-            } else {
-                "Solved after a mistake — not counted".to_string()
-            },
-        ),
-        PuzzleStatus::Failed => (
-            Tone::Loss,
-            icon("x"),
-            "Not the move — puzzle over".to_string(),
-        ),
-        _ if feedback == Feedback::Wrong => (
-            Tone::Loss,
-            icon("x"),
-            "That’s not the move — try again".to_string(),
-        ),
-        _ if waiting => (Tone::Plain, icon("hourglass"), "Good move…".to_string()),
-        _ => (
-            Tone::Plain,
-            icon("mouse-pointer-click"),
-            format!("Find the best move for {color}"),
-        ),
-    };
-    let playing = status == PuzzleStatus::Playing;
-    let finished = status.is_over();
-    let facts = finished.then(|| {
-        v_flex()
-            .gap(px(8.))
-            .text_size(px(13.))
-            .child(
-                h_flex()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .w(px(64.))
-                            .text_color(palette.text_muted)
-                            .child("Rating"),
-                    )
-                    .child(format!("{}", puzzle.rating)),
-            )
-            .child(
-                h_flex()
-                    .items_start()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .w(px(64.))
-                            .text_color(palette.text_muted)
-                            .child("Themes"),
-                    )
-                    .child(h_flex().flex_1().flex_wrap().gap(px(4.)).children(
-                        puzzle.themes.iter().map(String::as_str).enumerate().map(
-                            |(index, theme)| {
-                                let name = theme_name(theme, themes);
-                                // A theme Train offers is a way to train it, as on Lichess.
-                                let trainable = themes.iter().any(|known| known.key == theme);
-                                let key = theme.to_string();
-                                div()
-                                    .id(("puzzle-theme", index))
-                                    .test_support()
-                                    .px(px(6.))
-                                    .py(px(1.))
-                                    .rounded(radii::SM)
-                                    .border_1()
-                                    .border_color(palette.border_accented)
-                                    .bg(palette.elevated)
-                                    .text_size(px(12.))
-                                    .when(trainable, |pill| {
-                                        pill.role(gpui_kit::Role::Button)
-                                            .aria_label(format!("Train {name}"))
-                                            .cursor_pointer()
-                                            .pressable(palette)
-                                            .on_click(move |_, window, cx| {
-                                                train_theme(key.clone(), window, cx)
-                                            })
-                                    })
-                                    .child(name)
-                            },
-                        ),
-                    )),
-            )
-    });
-    v_flex()
-        .gap(px(12.))
-        .child(widgets::StatusBanner::new(tone, glyph, title.into()).announce())
-        .children(hinted.then(|| clue(&puzzle)).flatten())
-        .when(rated && playing && shown.hint_used(), |panel| {
-            panel.child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(palette.text_muted)
-                    .child("Unrated: a hint was used"),
-            )
-        })
-        .children(coach_block(
-            board_entity,
-            &puzzle,
-            status,
-            playing,
-            rated,
-            cx,
-            palette,
-        ))
-        // Hint, Solution, Flip and Next share the row; once the puzzle is over,
-        // Hint and Solution give way to the analysis board, its wrong tries as side lines.
-        .child(widgets::panel_actions(
-            false,
-            (if finished {
-                let (studied, wrong) = (puzzle.clone(), shown.wrong_moves().to_vec());
-                vec![
-                    Button::new("puzzle-analyse")
-                        .w_full()
-                        .outline()
-                        .icon(icon("microscope"))
-                        .label("Analyse")
-                        .tooltip("Analysis board")
-                        .on_click(move |_, window, cx| {
-                            kchess_board::analysis::open(
-                                kchess_board::analysis::Open::Puzzle {
-                                    puzzle: studied.clone(),
-                                    wrong_moves: wrong.clone(),
-                                },
-                                window,
-                                cx,
-                            )
-                        })
-                        .into_any_element()
-                        .into(),
-                ]
-            } else {
-                vec![
-                    Button::new("puzzle-hint")
-                        .w_full()
-                        .when(hinted, |button| button.primary())
-                        .when(!hinted, |button| button.outline())
-                        .icon(icon("lightbulb"))
-                        .label("Hint")
-                        .when(rated, |button| button.tooltip("Makes this puzzle unrated"))
-                        .disabled(!playing)
-                        .on_click({
-                            let board = board_entity.downgrade();
-                            move |_, _, cx| {
-                                let _ = board.update(cx, |board, cx| board.hint(cx));
-                            }
-                        })
-                        .into_any_element()
-                        .into(),
-                    Button::new("puzzle-solution")
-                        .w_full()
-                        .outline()
-                        .icon(icon("eye"))
-                        .label("Solution")
-                        .disabled(!playing)
-                        .on_click({
-                            let board = board_entity.downgrade();
-                            move |_, _, cx| {
-                                let _ = board.update(cx, |board, cx| board.show_solution(cx));
-                            }
-                        })
-                        .into_any_element()
-                        .into(),
-                ]
-            })
-            .into_iter()
-            .chain([widgets::fit(
-                Button::new("puzzle-flip")
-                    .ghost()
-                    .icon(icon("arrow-up-down"))
-                    .tooltip(kchess_board::flip_label(cx))
-                    .accessibility_label("Flip board")
-                    .on_click({
-                        let board = board_entity.downgrade();
-                        move |_, _, cx| {
-                            let _ = board.update(cx, |board, cx| board.flip(cx));
-                        }
-                    }),
-            )])
-            .chain(next.map(|next| {
-                Button::new("puzzle-next")
-                    .w_full()
-                    .when(finished, |button| button.primary())
-                    .when(!finished, |button| button.outline())
-                    .child(
-                        h_flex()
-                            .gap(px(8.))
-                            .child("Next")
-                            .child(icon("arrow-right").size(px(14.))),
-                    )
-                    .on_click(move |_, window, cx| next(window, cx))
-                    .into_any_element()
-                    .into()
-            })),
-        ))
-        .children(facts)
-        .into_any_element()
-}
-
-/* ── Rendering ────────────────────────────────────────────────────────── */
-
-impl PuzzlesPage {
-    /// What stands in for the board while there is no puzzle to play.
-    fn render_placeholder(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
-        let empty = |glyph: Icon, title: String, description: Option<String>| {
-            widgets::empty_state(glyph, title, description.map(SharedString::from), palette)
-        };
-        let online = crate::network::online(cx);
-        let other = |cx: &mut Context<Self>| {
-            let (label, mode) = if online {
-                ("Practice instead", "practice")
-            } else {
-                ("Use downloaded puzzles", "offline")
-            };
-            Button::new("other-mode")
-                .outline()
-                .label(label)
-                .on_click(cx.listener(move |this, _, _, cx| this.choose_mode(mode, cx)))
-        };
-        let connect = |id: &'static str, label: &'static str, cx: &mut Context<Self>| {
-            Button::new(id)
-                .primary()
-                .icon(icon("log-in"))
-                .label(label)
-                .disabled(!online || crate::accounts::handle(cx).read(cx).busy)
-                .on_click(cx.listener(|_, _, window, cx| {
-                    crate::accounts::handle(cx)
-                        .update(cx, |accounts, cx| accounts.connect(window, cx));
-                }))
-        };
-        let actions = |id, label, cx: &mut Context<Self>| {
-            h_flex()
-                .gap(px(8.))
-                .child(connect(id, label, cx))
-                .child(other(cx))
-        };
-        let content: AnyElement = match self.session.phase() {
-            "noaccount" => empty(
-                icon("user-round-plus"),
-                "Connect a Lichess account for rated puzzles".into(),
-                Some("Connect Lichess or switch to Practice".into()),
-            )
-            .child(actions("connect-lichess", "Connect Lichess", cx))
-            .into_any_element(),
-            "reconnect" => empty(
-                icon("key-round"),
-                "Lichess needs your permission for puzzles".into(),
-                Some(format!(
-                    "Sign in to @{} on lichess.org, then reconnect to enable rated puzzles",
-                    self.account(cx)
-                )),
-            )
-            .child(actions("reconnect-lichess", "Reconnect", cx))
-            .into_any_element(),
-            "nodb" => crate::puzzle_db::card(false, cx, palette).into_any_element(),
-            "exhausted" => {
-                let difficulty = crate::prefs::get::<String>(cx, DIFFICULTY, "normal".into());
-                let label = DIFFICULTIES
-                    .iter()
-                    .find(|(key, _)| *key == difficulty)
-                    .map_or("Normal", |(_, label)| label);
-                let index = DIFFICULTIES
-                    .iter()
-                    .position(|(key, _)| *key == difficulty)
-                    .unwrap_or(2);
-                let angle = crate::prefs::get::<String>(cx, ANGLE, "mix".into());
-                let mode = Self::mode(cx);
-                let mut actions: Vec<Button> = Vec::new();
-                if index > 0 {
-                    let (key, easier) = DIFFICULTIES[index - 1];
-                    actions.push(
-                        Button::new("try-easier")
-                            .icon(icon("chevrons-down"))
-                            .label(format!("Try {easier}"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.choose_difficulty(key, window, cx)
-                            })),
-                    );
-                }
-                if angle != "mix" {
-                    actions.push(
-                        Button::new("try-mix")
-                            .icon(icon("shuffle"))
-                            .label("Try Healthy mix")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.choose_angle("mix", window, cx)
-                            })),
-                    );
-                }
-                if mode != "offline" {
-                    actions.push(
-                        Button::new("try-offline")
-                            .icon(icon("hard-drive"))
-                            .label("Use downloaded puzzles")
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.choose_mode("offline", cx)),
-                            ),
-                    );
-                }
-                let actions: Vec<Button> = actions
-                    .into_iter()
-                    .enumerate()
-                    .map(|(order, action)| {
-                        if order == 0 {
-                            action.primary()
-                        } else {
-                            action.outline()
-                        }
-                    })
-                    .collect();
-                empty(
-                    icon("puzzle"),
-                    format!("No more {label} puzzles for this theme"),
-                    None,
-                )
-                .child(
-                    h_flex()
-                        .gap(px(8.))
-                        .flex_wrap()
-                        .justify_center()
-                        .children(actions),
-                )
-                .into_any_element()
-            }
-            "error" => empty(
-                icon("triangle-alert"),
-                "Couldn’t get a puzzle".into(),
-                Some(self.session.state().train_error.clone()),
-            )
-            .child(
-                h_flex()
-                    .gap(px(8.))
-                    .child(
-                        crate::widgets::try_again("try-again")
-                            .on_click(cx.listener(|this, _, _, cx| this.load_next(cx))),
-                    )
-                    .when(Self::mode(cx) != "offline", |row| {
-                        row.child(
-                            Button::new("error-offline")
-                                .outline()
-                                .label("Use downloaded puzzles")
-                                .on_click(
-                                    cx.listener(|this, _, _, cx| this.choose_mode("offline", cx)),
-                                ),
-                        )
-                    }),
-            )
-            .into_any_element(),
-            _ => h_flex()
-                .gap(px(8.))
-                .text_color(palette.text_muted)
-                .child(crate::widgets::spinner(px(16.)))
-                .child("Finding a puzzle…")
-                .into_any_element(),
-        };
-        content
-    }
-
-    /// The session's tally, the day streak and the latest attempts.
-    fn render_session(&self, cx: &mut Context<Self>, palette: &Palette) -> impl IntoElement {
-        let tally = &self.session.state().session;
-        let parts = [
-            (tally.solved, "solved", palette.success, true),
-            (tally.hinted, "with hint", palette.success, false),
-            (tally.partial, "partial", palette.info, false),
-            (tally.missed, "missed", palette.error, true),
-            (tally.revealed, "revealed", palette.text, false),
-        ];
-        let tried = tally.moves_tried;
-        let rating = self.session.state().rating;
-        let day_streak = f64::from(self.progress.day_streak);
-        let mut line = h_flex()
-            .flex_wrap()
-            .gap_x(px(12.))
-            .gap_y(px(4.))
-            .text_size(px(13.))
-            .text_color(palette.text_muted);
-        for (value, label, tone, always) in parts {
-            if always || value > 0. {
-                line = line.child(
-                    h_flex()
-                        .gap(px(4.))
-                        .child(
-                            div()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(tone)
-                                .child(format!("{value}")),
-                        )
-                        .child(label),
-                );
-            }
-        }
-        if tried > 0. {
-            line = line.child(
-                h_flex()
-                    .child(
-                        div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(palette.text)
-                            .child(format!("{}", tally.moves_found)),
-                    )
-                    .child(format!("/{tried} moves right")),
-            );
-        }
-        if let Some(rating) = rating.filter(|_| Self::mode(cx) == "rated") {
-            let change = tally.rating_change;
-            line = line.child(format!(
-                "rating {rating}{}",
-                if change != 0. {
-                    format!(" ({}{change})", if change > 0. { "+" } else { "" })
-                } else {
-                    String::new()
-                }
-            ));
-        }
-        line = line.child(
-            h_flex()
-                .ml_auto()
-                .gap(px(8.))
-                .when(day_streak >= 2., |row| {
-                    row.child(
-                        h_flex()
-                            .gap(px(2.))
-                            .text_color(palette.warning)
-                            .child(icon("flame").size(px(14.)))
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(palette.text)
-                                    .child(format!("{day_streak}")),
-                            ),
-                    )
-                })
-                .child(
-                    Button::new("puzzle-reset")
-                        .ghost()
-                        .small()
-                        .label("Reset")
-                        .on_click(cx.listener(|this, _, _, cx| this.reset_session(cx))),
-                ),
-        );
-        // The latest attempts, oldest first, so the newest sits at the end of the strip.
-        let recent: Vec<PuzzleAttempt> = self.progress.recent.iter().rev().cloned().collect();
-        let strip = (!recent.is_empty()).then(|| {
-            h_flex().flex_wrap().gap(px(4.)).mt(px(8.)).children(
-                recent.into_iter().enumerate().map(|(index, attempt)| {
-                    let (glyph, fg, bg) = match attempt.outcome {
-                        PuzzleAttemptOutcome::Solved => {
-                            (icon("check"), palette.success, tint(palette.success, 10.))
-                        }
-                        PuzzleAttemptOutcome::Hinted => {
-                            (icon("lightbulb"), palette.success, palette.bg)
-                        }
-                        PuzzleAttemptOutcome::Partial => (
-                            icon("chart-no-axes-column"),
-                            palette.info,
-                            tint(palette.info, 10.),
-                        ),
-                        PuzzleAttemptOutcome::Revealed => {
-                            (icon("eye"), palette.toned, palette.elevated)
-                        }
-                        PuzzleAttemptOutcome::Missed => {
-                            (icon("x"), palette.error, tint(palette.error, 10.))
-                        }
-                    };
-                    let label = format!(
-                        "{}, {}/{} moves{}, rated {}",
-                        match attempt.outcome {
-                            PuzzleAttemptOutcome::Solved => "Solved",
-                            PuzzleAttemptOutcome::Hinted => "With hint",
-                            PuzzleAttemptOutcome::Partial => "Partial",
-                            PuzzleAttemptOutcome::Revealed => "Revealed",
-                            PuzzleAttemptOutcome::Missed => "Missed",
-                        },
-                        attempt.found,
-                        attempt.total,
-                        match attempt.wrong {
-                            0 => String::new(),
-                            wrong => format!(" · {wrong} wrong"),
-                        },
-                        attempt.puzzle.rating
-                    );
-                    let (puzzle, wrong) = (
-                        attempt.puzzle.clone(),
-                        attempt.wrong_moves.clone().unwrap_or_default(),
-                    );
-                    let page = cx.entity().downgrade();
-                    // Try it again, or study it on the board.
-                    Button::new(("attempt", index))
-                        .custom(
-                            ButtonCustomVariant::new(cx)
-                                .color(bg)
-                                .foreground(fg)
-                                .hover(tint(fg, 22.))
-                                .active(tint(fg, 30.)),
-                        )
-                        .size(px(24.))
-                        .p_0()
-                        .border_1()
-                        .border_color(tint(fg, 40.))
-                        .tooltip(label.clone())
-                        .accessibility_label(label)
-                        .child(glyph.size(px(14.)))
-                        .dropdown_menu(move |menu, _, _| {
-                            let (puzzle, wrong, page) =
-                                (puzzle.clone(), wrong.clone(), page.clone());
-                            let studied = puzzle.clone();
-                            menu.item(
-                                PopupMenuItem::new("Try again")
-                                    .icon(icon("rotate-ccw"))
-                                    .on_click(move |_, _, cx| {
-                                        let _ = page
-                                            .update(cx, |page, cx| page.retry(puzzle.clone(), cx));
-                                    }),
-                            )
-                            .item(
-                                PopupMenuItem::new("Analysis board")
-                                    .icon(icon("microscope"))
-                                    .on_click(move |_, window, cx| {
-                                        kchess_board::analysis::open(
-                                            kchess_board::analysis::Open::Puzzle {
-                                                puzzle: studied.clone(),
-                                                wrong_moves: wrong.clone(),
-                                            },
-                                            window,
-                                            cx,
-                                        )
-                                    }),
-                            )
-                        })
-                }),
-            )
-        });
-        v_flex().child(line).children(strip)
-    }
-
-    fn render_train(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        palette: &Palette,
-    ) -> AnyElement {
-        let around = self.puzzle.read(cx).around();
-        let board_size = self
-            .layout
-            .board_size_around(px(0.), px(0.), around, window);
-        let mode = Self::mode(cx);
-        let ready = self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == "ready";
-        let board_column = if ready {
-            div()
-                .w(board_size)
-                .flex_none()
-                .child(self.puzzle.clone())
-                .into_any_element()
-        } else {
-            v_flex()
-                .w(board_size)
-                .h(board_size)
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .p(px(24.))
-                .border_1()
-                .border_color(palette.border)
-                .rounded(radii::XL)
-                .bg(palette.elevated)
-                .child(self.render_placeholder(cx, palette))
-                .into_any_element()
-        };
-        let field = |label: &'static str, control: AnyElement| {
-            v_flex()
-                .gap(px(8.))
-                .child(
-                    div()
-                        .text_size(px(14.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(palette.highlighted)
-                        .child(label),
-                )
-                .child(control)
-        };
-        let page = cx.entity().downgrade();
-        let mode_tabs = widgets::pills(
-            "puzzle-mode",
-            MODES
-                .iter()
-                .map(|(key, label)| Pill {
-                    icon: Some(match *key {
-                        "practice" => icon("dumbbell"),
-                        "offline" => icon("hard-drive"),
-                        _ => icon("cloud-upload"),
-                    }),
-                    label: (*label).into(),
-                    badge: None,
-                    disabled: false,
-                })
-                .collect(),
-            MODES.iter().position(|(key, _)| *key == mode).unwrap_or(0),
-            move |index, _, cx| {
-                let _ = page.update(cx, |page, cx| page.choose_mode(MODES[index].0, cx));
-            },
-            false,
-            palette,
-        );
-        let is_retry = self.session.state().is_retry;
-        let account = self.account(cx);
-        let source = if is_retry {
-            Some("Retry · unrated".to_string())
-        } else if mode == "rated" {
-            Some(if account.is_empty() {
-                "Rated".to_string()
-            } else {
-                format!("Rated · @{account}")
-            })
-        } else {
-            None
-        };
-        let rating_text = self.session.state().last_report.as_ref().map(|report| {
-            if let Some(failed) = &report.failed {
-                (failed.clone(), true)
-            } else if let Some(diff) = report.rating_diff {
-                let rating = self
-                    .session
-                    .state()
-                    .rating
-                    .map(|rating| format!(" → {rating}"))
-                    .unwrap_or_default();
-                (
-                    format!(
-                        "Lichess puzzle rating {}{diff}{rating}",
-                        if diff >= 0. { "+" } else { "" }
-                    ),
-                    false,
-                )
-            } else {
-                ("Sent to Lichess".to_string(), false)
-            }
-        });
-        let panel = widgets::side_panel(palette)
-            .h(self.layout.fixed(board_size + around))
-            .flex_1()
-            .min_w(PANEL_MIN)
-            .max_w(PANEL_MAX)
-            .gap(px(14.))
-            .child(field("Mode", mode_tabs.into_any_element()))
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(palette.text_muted)
-                    .child(match &source {
-                        Some(source) => source.clone(),
-                        None => mode_hint(&mode).to_string(),
-                    }),
-            )
-            .when(mode == "rated" && self.accounts(cx).len() > 1, |panel| {
-                panel.child(field(
-                    "Account",
-                    Select::new(&self.account_select)
-                        .small()
-                        .icon(icon("user"))
-                        .accessibility_label("Account")
-                        .into_any_element(),
-                ))
-            })
-            .child(field(
-                "Theme",
-                Select::new(&self.theme_select)
-                    .small()
-                    .accessibility_label("Theme")
-                    .into_any_element(),
-            ))
-            .child(
-                h_flex()
-                    .gap(px(8.))
-                    .child(
-                        div().flex_1().child(field(
-                            "Difficulty",
-                            Select::new(&self.difficulty_select)
-                                .small()
-                                .accessibility_label("Difficulty")
-                                .into_any_element(),
-                        )),
-                    )
-                    .child(
-                        div().flex_1().child(field(
-                            "Play as",
-                            Select::new(&self.color_select)
-                                .small()
-                                .disabled(mode == "offline")
-                                .accessibility_label("Play as")
-                                .into_any_element(),
-                        )),
-                    ),
-            )
-            .when(ready, |panel| {
-                panel
-                    .child(div().h(px(1.)).bg(palette.border))
-                    .child(status_panel(
-                        &self.puzzle,
-                        &self.theme_list,
-                        Some(Box::new({
-                            let page = cx.entity().downgrade();
-                            move |_, cx| {
-                                let _ = page.update(cx, |page, cx| page.load_next(cx));
-                            }
-                        })),
-                        mode == "rated" && !is_retry,
-                        cx,
-                        palette,
-                    ))
-                    .children(rating_text.map(|(text, failed)| {
-                        div()
-                            .text_size(px(12.))
-                            .text_color(if failed {
-                                palette.error
-                            } else {
-                                palette.text_muted
-                            })
-                            .child(text)
-                    }))
-            })
-            .child(div().h(px(1.)).bg(palette.border))
-            .child(self.render_session(cx, palette));
-        self.layout
-            .render("puzzle-train", board_column, panel, window, cx)
-            .into_any_element()
-    }
 }
 
 impl PuzzlesPage {
@@ -1811,7 +510,6 @@ impl PuzzlesPage {
         daily
     }
 
-    /// The puzzle board of the tab shown, while it shows a puzzle, and whether it is Train's.
     /// The Train tab's board.
     #[cfg(any(test, feature = "test-support"))]
     pub fn board(&self) -> Entity<PuzzleBoard> {
@@ -1830,6 +528,7 @@ impl PuzzlesPage {
         self.puzzle.read(cx).viewing()
     }
 
+    /// The puzzle board of the tab shown, while it shows a puzzle, and whether it is Train's.
     fn shown_board(&self, cx: &App) -> Option<(Entity<PuzzleBoard>, bool)> {
         match Tab::stored(cx).info().key {
             "train" => (self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == "ready")
@@ -1998,9 +697,122 @@ impl Render for PuzzlesPage {
     }
 }
 
+impl kchess_nav::page::PageAction for Action {
+    fn info(&self) -> kchess_nav::page::ActionInfo {
+        use kchess_nav::page::ActionInfo;
+        let (id, label, glyph, keywords) = match self {
+            Action::Hint => ("hint", "Hint", "lightbulb", "clue help"),
+            Action::Solution => ("solution", "Solution", "eye", "show answer give up"),
+            Action::Flip => return ActionInfo::flip("puzzle:flip"),
+            Action::Analyse => (
+                "analyse",
+                "Analysis board",
+                "microscope",
+                "analyse study review",
+            ),
+            Action::Next => ("next", "Next puzzle", "arrow-right", "another skip"),
+            Action::Rush(action) => match action {
+                RushAction::Start => ("rush-start", "Start run", "play", "storm streak rush begin"),
+                RushAction::Skip => ("rush-skip", "Skip puzzle", "skip-forward", "pass"),
+                RushAction::End => ("rush-end", "End run", "flag", "stop finish quit"),
+                RushAction::Again => ("rush-again", "Play again", "rotate-ccw", "restart retry"),
+                RushAction::Back => ("rush-back", "Back to modes", "arrow-left", "menu"),
+            },
+        };
+        ActionInfo::new(format!("puzzle:{id}"), label, glyph, keywords)
+    }
+}
+
+impl PageView for PuzzlesPage {
+    const INFO: kchess_nav::page::PageInfo = kchess_nav::page::PageInfo {
+        page: kchess_nav::page::Page::Puzzles,
+        label: "Puzzles",
+        short: "Puzzles",
+        icon: "puzzle",
+        group: Some(kchess_nav::page::NavGroup::Train),
+        keywords: "",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        PuzzlesPage::new(window, cx)
+    }
+
+    fn shown(this: &Entity<Self>, _again: bool, window: &mut Window, cx: &mut App) {
+        this.update(cx, |puzzles, cx| puzzles.shown(window, cx));
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        if let Some(rush) = self.shown_rush(cx) {
+            return rush
+                .read(cx)
+                .actions(cx)
+                .into_iter()
+                .map(Action::Rush)
+                .collect();
+        }
+        let Some((board, train)) = self.shown_board(cx) else {
+            return Vec::new();
+        };
+        let mut actions = Vec::new();
+        if board.read(cx).playing() {
+            actions.extend([Action::Hint, Action::Solution]);
+        }
+        actions.push(Action::Flip);
+        if board.read(cx).status().is_over() {
+            actions.push(Action::Analyse);
+        }
+        if train {
+            actions.push(Action::Next);
+        }
+        actions
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| match action {
+            Action::Analyse => page.analyse(window, cx),
+            action => page.act(action, cx),
+        });
+    }
+
+    fn places(_: &App) -> Vec<kchess_nav::page::PageCommand> {
+        kchess_nav::page::tab_places::<Self, Tab>("puzzles", |_, _, _, cx| cx.notify())
+    }
+}
+
+/// Open a Lichess puzzle by its id on Puzzles → Daily.
+/// A Lichess account was signed out: forget the account puzzles were trained on and, with no
+/// account left, the Lichess mode and tab too.
+pub fn signed_out(accounts_left: bool, cx: &mut App) {
+    crate::prefs::forget(cx, ACCOUNT);
+    if !accounts_left {
+        crate::prefs::forget(cx, MODE);
+        crate::prefs::forget(cx, Tab::KEY);
+    }
+}
+
+pub fn open_puzzle(id: String, window: &mut Window, cx: &mut App) {
+    kchess_nav::shell::show::<PuzzlesPage>(window, cx, move |puzzles, window, cx| {
+        puzzles.open_puzzle(id, window, cx)
+    });
+}
+
+/// Puzzles from one opening, by the key Lichess names its puzzles by.
+pub fn open_opening(name: &str, window: &mut Window, cx: &mut App) {
+    let key = kchess_domain::training::openings::opening_key(name);
+    PuzzlesPage::choose_opening(&key, name, cx);
+    // A page made now starts with the opening; one made before is told.
+    if let Some(puzzles) = kchess_nav::shell::view::<PuzzlesPage>(cx) {
+        puzzles.update(cx, |puzzles, cx| puzzles.opening_chosen(window, cx));
+    }
+    kchess_nav::shell::open(kchess_nav::page::Page::Puzzles, window, cx);
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{PuzzleStatus, Tab, as_contract, coach_allowed, theme_groups, theme_name, themes};
+    use super::panel::coach_allowed;
+    use super::{PuzzleStatus, Tab, as_contract, theme_groups, theme_name, themes};
     use crate::widgets::{self, format_bytes};
     use kchess_contracts::types::LocalLadderQuery;
     use kchess_nav::page::PageTab as _;
@@ -2182,139 +994,5 @@ mod tests {
         use kchess_nav::page::PageView as _;
         let places = cx.read(|cx| super::PuzzlesPage::places(cx).len());
         assert_eq!(places, Tab::ALL.len());
-    }
-}
-
-impl kchess_nav::page::PageAction for Action {
-    fn info(&self) -> kchess_nav::page::ActionInfo {
-        use kchess_nav::page::ActionInfo;
-        let (id, label, glyph, keywords) = match self {
-            Action::Hint => ("hint", "Hint", "lightbulb", "clue help"),
-            Action::Solution => ("solution", "Solution", "eye", "show answer give up"),
-            Action::Flip => return ActionInfo::flip("puzzle:flip"),
-            Action::Analyse => (
-                "analyse",
-                "Analysis board",
-                "microscope",
-                "analyse study review",
-            ),
-            Action::Next => ("next", "Next puzzle", "arrow-right", "another skip"),
-            Action::Rush(action) => match action {
-                RushAction::Start => ("rush-start", "Start run", "play", "storm streak rush begin"),
-                RushAction::Skip => ("rush-skip", "Skip puzzle", "skip-forward", "pass"),
-                RushAction::End => ("rush-end", "End run", "flag", "stop finish quit"),
-                RushAction::Again => ("rush-again", "Play again", "rotate-ccw", "restart retry"),
-                RushAction::Back => ("rush-back", "Back to modes", "arrow-left", "menu"),
-            },
-        };
-        ActionInfo::new(format!("puzzle:{id}"), label, glyph, keywords)
-    }
-}
-
-impl PageView for PuzzlesPage {
-    const INFO: kchess_nav::page::PageInfo = kchess_nav::page::PageInfo {
-        page: kchess_nav::page::Page::Puzzles,
-        label: "Puzzles",
-        short: "Puzzles",
-        icon: "puzzle",
-        group: Some(kchess_nav::page::NavGroup::Train),
-        keywords: "",
-    };
-
-    type Action = Action;
-
-    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        PuzzlesPage::new(window, cx)
-    }
-
-    fn shown(this: &Entity<Self>, _again: bool, window: &mut Window, cx: &mut App) {
-        this.update(cx, |puzzles, cx| puzzles.shown(window, cx));
-    }
-
-    fn actions(&self, cx: &App) -> Vec<Action> {
-        if let Some(rush) = self.shown_rush(cx) {
-            return rush
-                .read(cx)
-                .actions(cx)
-                .into_iter()
-                .map(Action::Rush)
-                .collect();
-        }
-        let Some((board, train)) = self.shown_board(cx) else {
-            return Vec::new();
-        };
-        let mut actions = Vec::new();
-        if board.read(cx).playing() {
-            actions.extend([Action::Hint, Action::Solution]);
-        }
-        actions.push(Action::Flip);
-        if board.read(cx).status().is_over() {
-            actions.push(Action::Analyse);
-        }
-        if train {
-            actions.push(Action::Next);
-        }
-        actions
-    }
-
-    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
-        this.update(cx, |page, cx| match action {
-            Action::Analyse => page.analyse(window, cx),
-            action => page.act(action, cx),
-        });
-    }
-
-    fn places(_: &App) -> Vec<kchess_nav::page::PageCommand> {
-        kchess_nav::page::tab_places::<Self, Tab>("puzzles", |_, _, _, cx| cx.notify())
-    }
-}
-
-/// Open a Lichess puzzle by its id on Puzzles → Daily.
-/// A Lichess account was signed out: forget the account puzzles were trained on and, with no
-/// account left, the Lichess mode and tab too.
-pub fn signed_out(accounts_left: bool, cx: &mut App) {
-    crate::prefs::forget(cx, ACCOUNT);
-    if !accounts_left {
-        crate::prefs::forget(cx, MODE);
-        crate::prefs::forget(cx, Tab::KEY);
-    }
-}
-
-pub fn open_puzzle(id: String, window: &mut Window, cx: &mut App) {
-    kchess_nav::shell::show::<PuzzlesPage>(window, cx, move |puzzles, window, cx| {
-        puzzles.open_puzzle(id, window, cx)
-    });
-}
-
-/// Puzzles from one opening, by the key Lichess names its puzzles by.
-pub fn open_opening(name: &str, window: &mut Window, cx: &mut App) {
-    let key = kchess_domain::training::openings::opening_key(name);
-    PuzzlesPage::choose_opening(&key, name, cx);
-    // A page made now starts with the opening; one made before is told.
-    if let Some(puzzles) = kchess_nav::shell::view::<PuzzlesPage>(cx) {
-        puzzles.update(cx, |puzzles, cx| puzzles.opening_chosen(window, cx));
-    }
-    kchess_nav::shell::open(kchess_nav::page::Page::Puzzles, window, cx);
-}
-
-/// Which reply a host call settles: a load, or Lichess's answer to a result.
-#[derive(Clone, Copy)]
-enum Settle {
-    Load,
-    Report,
-}
-
-impl Settle {
-    fn apply(
-        self,
-        session: &mut PuzzleSession,
-        resume: Resume,
-        reply: Reply,
-        selection: &Selection,
-    ) -> Step {
-        match self {
-            Settle::Load => session.load_settled(resume, reply, selection, &local_day()),
-            Settle::Report => session.report_settled(resume, reply, selection),
-        }
     }
 }
