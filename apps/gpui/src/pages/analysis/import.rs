@@ -75,6 +75,7 @@ impl AnalysisPage {
                             .child(
                                 Button::new("import-run")
                                     .primary()
+                                    .icon(icon("import"))
                                     .label("Import")
                                     .loading(importing)
                                     .disabled(text.read(cx).value().trim().is_empty())

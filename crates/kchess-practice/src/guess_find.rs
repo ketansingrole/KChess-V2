@@ -268,6 +268,7 @@ impl GameFinder {
                     .child(
                         Button::new("guess-player-games")
                             .primary()
+                            .icon(icon("search"))
                             .label("Show games")
                             .loading(self.player.is_some() && self.games.is_none())
                             .disabled(!online || !typed)
