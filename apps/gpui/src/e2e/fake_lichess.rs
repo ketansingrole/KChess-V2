@@ -88,6 +88,8 @@ pub struct Session {
     pub fail_check: bool,
     /// The check for a game in progress has been answered.
     pub checked: bool,
+    /// A solved puzzle's result waits while this is set: Lichess still answering.
+    pub hold_solves: bool,
     /// Counts changes: a game stream sends the state again whenever this moves on.
     version: usize,
 }
@@ -553,6 +555,40 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
         if path.to_lowercase() == format!("/api/games/user/{name}") {
             return ndjson_lines(out, &showcase_games(&username));
         }
+    }
+    // The account trains in `TRAINED_THEME` too: a batch of one puzzle, numbered on each draw, and
+    // each solve moves its rating by 7.
+    if path == format!("/api/puzzle/batch/{TRAINED_THEME}") {
+        if request.method == "POST" {
+            while session.lock().hold_solves {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let sent: Value = serde_json::from_str(&request.body).unwrap_or_default();
+            let id = sent["solutions"][0]["id"].clone();
+            return reply(
+                out,
+                &json!({ "rounds": [{ "id": id, "win": true, "ratingDiff": 7 }] }),
+            );
+        }
+        static DRAWN: AtomicUsize = AtomicUsize::new(0);
+        let drawn = DRAWN.fetch_add(1, Ordering::Relaxed);
+        return reply(
+            out,
+            &json!({
+                "puzzles": [{
+                    "game": { "id": LINKED_GAME },
+                    "puzzle": {
+                        "id": format!("KcRa{drawn}"),
+                        "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                        "lastMove": "g8f6",
+                        "solution": ["h5f7"],
+                        "rating": 1100,
+                        "themes": [TRAINED_THEME],
+                    },
+                }],
+                "glicko": { "rating": 1500.0, "deviation": 60.0 },
+            }),
+        );
     }
     match (request.method.as_str(), path) {
         ("GET", "/api/account") => {

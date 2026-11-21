@@ -414,6 +414,13 @@ impl PuzzlesPage {
         } else {
             None
         };
+        // A rated attempt's result goes to Lichess as it ends, and its answer comes a moment
+        // later: its line is there from the end, saying so, rather than arriving under the
+        // puzzle and pushing the session's tally and Reset down.
+        let sending = mode == "rated"
+            && !is_retry
+            && self.session.state().attempt_outcome.is_some()
+            && self.session.state().last_report.is_none();
         let rating_text = self.session.state().last_report.as_ref().map(|report| {
             if let Some(failed) = &report.failed {
                 (failed.clone(), true)
@@ -435,6 +442,8 @@ impl PuzzlesPage {
                 ("Sent to Lichess".to_string(), false)
             }
         });
+        let rating_text =
+            rating_text.or_else(|| sending.then(|| ("Sending to Lichess…".to_string(), false)));
         let panel = widgets::side_panel(palette)
             .h(self.layout.fixed(board_size + around))
             .flex_1()
@@ -509,6 +518,10 @@ impl PuzzlesPage {
                     ))
                     .children(rating_text.map(|(text, failed)| {
                         div()
+                            .id("puzzle-rated")
+                            .test_support()
+                            .role(gpui_kit::Role::Status)
+                            .aria_label(SharedString::from(text.clone()))
                             .text_size(px(12.))
                             .text_color(if failed {
                                 palette.error
