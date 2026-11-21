@@ -19,8 +19,8 @@ use crate::theme::{Palette, radii, tint};
 use crate::voice::moves::{
     Access, BoardBar, Offer, Said, Turn, VoiceMoves, board_bar, offered_grammar,
 };
-use kchess_domain::voice::PuzzleCommand;
 use crate::widgets;
+use kchess_domain::voice::PuzzleCommand;
 
 /// Before the opponent replies, and the solution's pace when it plays itself.
 const REPLY_DELAY: Duration = Duration::from_millis(350);
@@ -599,7 +599,11 @@ impl PuzzleBoard {
             Offer::new(
                 PuzzleCommand::Hint,
                 playing,
-                if self.hinted { "Hint hidden" } else { "Hint shown" },
+                if self.hinted {
+                    "Hint hidden"
+                } else {
+                    "Hint shown"
+                },
                 "No hint now",
             ),
         ]

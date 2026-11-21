@@ -17,9 +17,11 @@ use super::run::{self, TrainingItem};
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
-use crate::voice::moves::{Access, BoardBar, Offer, Said, Turn, VoiceMoves, board_bar, offered_grammar};
-use kchess_domain::voice::PuzzleCommand;
+use crate::voice::moves::{
+    Access, BoardBar, Offer, Said, Turn, VoiceMoves, board_bar, offered_grammar,
+};
 use crate::widgets::{self, Tone};
+use kchess_domain::voice::PuzzleCommand;
 use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use kchess_ui::icon;
 
@@ -249,8 +251,12 @@ impl EndgameDrills {
     fn sync_voice(&mut self, cx: &mut Context<Self>) {
         let context = format!("{}:{}", self.drill.id, self.moves.len());
         let line = san_from(&self.drill.fen, &self.moves);
-        let (grammar, listening) = (offered_grammar(&self.voice_offers()), self.voice_listening());
-        self.voice.sync(&context, Some(line), grammar, listening, cx);
+        let (grammar, listening) = (
+            offered_grammar(&self.voice_offers()),
+            self.voice_listening(),
+        );
+        self.voice
+            .sync(&context, Some(line), grammar, listening, cx);
     }
 
     fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
@@ -593,7 +599,7 @@ impl Render for EndgameDrills {
             BoardBar {
                 id: "drill-voice",
                 hint: "Say “E four”, “hint” or “retry”",
-                active: your_turn,
+                active: self.voice_listening(),
                 listening: self.voice_listening(),
                 grammar: offered_grammar(&self.voice_offers()),
             },

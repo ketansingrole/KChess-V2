@@ -37,10 +37,12 @@ use crate::game::tree::{TreeNode, child_path, comment_text};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::studies::StudyHandle;
 use crate::theme::{Palette, radii};
-use crate::voice::moves::{Access, BoardBar, Offer, Said, Turn, VoiceMoves, board_bar, offered_grammar};
-use kchess_domain::voice::PuzzleCommand;
+use crate::voice::moves::{
+    Access, BoardBar, Offer, Said, Turn, VoiceMoves, board_bar, offered_grammar,
+};
 use crate::widgets::{self, Choice, Pill, Tone};
 use kchess_board::game::OpeningChoice;
+use kchess_domain::voice::PuzzleCommand;
 use kchess_games::random_unit;
 use kchess_nav::page::Page;
 use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};

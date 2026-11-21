@@ -22,10 +22,12 @@ use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard, Circle};
 use crate::core::AppCore;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
-use crate::voice::moves::{Access, BoardBar, Offer, Said, Turn, VoiceMoves, board_bar, offered_grammar};
-use kchess_domain::voice::PuzzleCommand;
+use crate::voice::moves::{
+    Access, BoardBar, Offer, Said, Turn, VoiceMoves, board_bar, offered_grammar,
+};
 use crate::widgets::{self, Tone};
 use kchess_domain::training::endgames::san_from;
+use kchess_domain::voice::PuzzleCommand;
 use kchess_nav::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, PlayLayout};
 use kchess_ui::icon;
 
@@ -458,8 +460,12 @@ impl EndgameLesson {
     fn sync_voice(&mut self, cx: &mut Context<Self>) {
         let context = format!("{}:{}:{}", self.chapter, self.step, self.moves.len());
         let line = san_from(&self.step().fen, &self.moves);
-        let (grammar, listening) = (offered_grammar(&self.voice_offers()), self.voice_listening());
-        self.voice.sync(&context, Some(line), grammar, listening, cx);
+        let (grammar, listening) = (
+            offered_grammar(&self.voice_offers()),
+            self.voice_listening(),
+        );
+        self.voice
+            .sync(&context, Some(line), grammar, listening, cx);
     }
 
     fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
@@ -956,7 +962,7 @@ impl Render for EndgameLesson {
             BoardBar {
                 id: "lesson-voice",
                 hint: "Say “E four”, “hint” or “next”",
-                active: your_turn,
+                active: listening,
                 listening,
                 grammar: offered_grammar(&self.voice_offers()),
             },

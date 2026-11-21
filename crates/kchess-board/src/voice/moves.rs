@@ -57,7 +57,12 @@ pub struct Offer {
 }
 
 impl Offer {
-    pub fn new(command: PuzzleCommand, now: bool, done: &'static str, not_now: &'static str) -> Offer {
+    pub fn new(
+        command: PuzzleCommand,
+        now: bool,
+        done: &'static str,
+        not_now: &'static str,
+    ) -> Offer {
         Offer {
             command,
             now,
