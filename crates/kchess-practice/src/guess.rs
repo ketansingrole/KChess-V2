@@ -1073,7 +1073,10 @@ impl GuessMoves {
         let Some(game) = self.game.clone() else {
             return div().into_any_element();
         };
-        let board_size = self.layout.board_size(window);
+        // The column holds the board and the move box's row.
+        let (board_size, panel_height) = self
+            .layout
+            .board_and_panel(widgets::STACK_GAP + widgets::PLAYER_LINE, window);
         let your_turn = self.your_turn();
         let finished = self.finished();
         let judged: Vec<Judged> = self.guesses.iter().map(|guess| guess.judged).collect();
@@ -1097,6 +1100,8 @@ impl GuessMoves {
             cx,
         );
         let board_column = v_flex()
+            .id("guess-column")
+            .test_support()
             .w(board_size)
             .flex_none()
             .gap(widgets::STACK_GAP)
@@ -1134,7 +1139,9 @@ impl GuessMoves {
             summary.guesses
         );
         let panel = widgets::side_panel(palette)
-            .h(self.layout.panel_height(board_size))
+            .id("guess-panel")
+            .test_support()
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)

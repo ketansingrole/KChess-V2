@@ -1038,6 +1038,29 @@ fn drills_changed_in_another_window_show_here_too(cx: &mut gpui_kit::TestAppCont
     app.wait_gone("practice-due");
 }
 
+/// Regression: Knight paths sized its panel for two player lines its board doesn't have, so it ran
+/// 88 px past the board; Coordinates and Knight paths now have the square box's row under the
+/// board, and the panel ends with that row in Find and Name the square alike.
+#[gpui_kit::test]
+fn the_drill_panels_end_with_the_board(cx: &mut gpui_kit::TestAppContext) {
+    use super::puzzles::panel_ends_with;
+    let mut app = practice(cx);
+    panel_ends_with(&mut app, "coordinates-panel", "coordinates-column");
+    app.click(("coordinates-mode", 1usize));
+    panel_ends_with(&mut app, "coordinates-panel", "coordinates-column");
+    tab(&mut app, crate::pages::practice::Tab::Knight);
+    panel_ends_with(&mut app, "knight-panel", "knight-column");
+}
+
+/// Regression: Guess the move sized its panel for two player lines, so it ran 44 px past the move
+/// box's row under the board.
+#[gpui_kit::test]
+fn the_guess_panel_ends_with_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    guess_game(&mut app, "1. e4 e5 2. Nf3 Nc6 *");
+    super::puzzles::panel_ends_with(&mut app, "guess-panel", "guess-column");
+}
+
 /// Regression: Your mistakes sized its panel for two player lines its puzzle board doesn't have,
 /// so the panel ran 44 px past the move box under the board.
 #[gpui_kit::test]

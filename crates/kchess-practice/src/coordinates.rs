@@ -592,9 +592,7 @@ impl Render for Coordinates {
         let palette = *cx.global::<Palette>();
         let running = self.run.running();
         // No player lines take height: only the row under the board.
-        let board_size =
-            self.layout
-                .board_size_around(px(0.), px(0.), under_board::height(), window);
+        let (board_size, panel_height) = self.layout.board_and_panel(under_board::height(), window);
         // As on Lichess: the square to find over the board, so no row above it takes height.
         let prompt = (running && self.mode == Mode::Find).then(|| {
             v_flex()
@@ -642,6 +640,7 @@ impl Render for Coordinates {
             (under_board::row(None, None, &palette), None)
         };
         let board_column = under_board::column(
+            "coordinates-column",
             board_size,
             div()
                 .relative()
@@ -760,8 +759,9 @@ impl Render for Coordinates {
 
         let mut panel = widgets::side_panel(&palette)
             .id("coordinates-panel")
+            .test_support()
             .overflow_y_scroll()
-            .h(self.layout.fixed(board_size + under_board::height()))
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)

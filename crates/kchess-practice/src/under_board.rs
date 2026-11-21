@@ -97,12 +97,15 @@ pub fn row(
 
 /// The board with the row under it, and the voice line under that while it has something to say.
 pub fn column(
+    id: &'static str,
     board_size: Pixels,
     board: impl IntoElement,
     row: Div,
     voice_line: Option<AnyElement>,
-) -> Div {
+) -> impl IntoElement {
     v_flex()
+        .id(id)
+        .test_support()
         .w(board_size)
         .flex_none()
         .gap(widgets::STACK_GAP)

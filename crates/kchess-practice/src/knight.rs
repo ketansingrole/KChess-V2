@@ -393,12 +393,12 @@ impl Render for KnightPaths {
             self.best,
             if self.best == 1 { "jump" } else { "jumps" }
         );
-        let board_size =
-            self.layout
-                .board_size_around(px(0.), px(0.), under_board::height(), window);
+        let (board_size, panel_height) = self.layout.board_and_panel(under_board::height(), window);
         let length = Self::length(cx);
         let mut panel = widgets::side_panel(&palette)
-            .h(self.layout.fixed(board_size + under_board::height()))
+            .id("knight-panel")
+            .test_support()
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)
@@ -558,6 +558,7 @@ impl Render for KnightPaths {
         let movable = running && self.knight != self.goal;
         let row = under_board::row(Some((&self.square_box, movable)), Some(voice), &palette);
         let board_column = under_board::column(
+            "knight-column",
             board_size,
             crate::board::cached(&self.board),
             row,
