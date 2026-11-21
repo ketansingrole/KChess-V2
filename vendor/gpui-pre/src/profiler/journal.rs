@@ -440,9 +440,10 @@ impl ForegroundRunnableCounter {
     }
 
     fn finished(&self) {
+        // KChess patch: `try_update`, Rust 1.100's name for `fetch_update`.
         let _ = self
             .0
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 count.checked_sub(1)
             });
     }
