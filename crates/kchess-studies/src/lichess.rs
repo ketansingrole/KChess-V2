@@ -450,7 +450,39 @@ impl StudiesPage {
         } else {
             String::new()
         };
+        let busy = self.lichess.busy;
+        // Sending goes in the toolbar, over the list: under it, the list pushed it down as it
+        // loaded, under the pointer.
+        let send = h_flex()
+            .flex_wrap()
+            .gap(px(8.))
+            .items_center()
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(palette.text_muted)
+                    .child("Send the analysis board to"),
+            )
+            .child(
+                div().min_w(px(200.)).child(
+                    Select::new(&self.lichess.target)
+                        .small()
+                        .accessibility_label("Send the analysis board to"),
+                ),
+            )
+            .child(
+                Button::new("lichess-studies-send")
+                    .primary()
+                    .small()
+                    .icon(icon("upload"))
+                    // gpui-lints: allow(icon_per_label) uploads the study to Lichess, not a message
+                    .label("Send")
+                    .loading(busy)
+                    .disabled(busy)
+                    .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
+            );
         let toolbar = h_flex()
+            .flex_wrap()
             .gap(px(8.))
             .when(several, |row| {
                 row.child(
@@ -469,11 +501,12 @@ impl StudiesPage {
                     .label("Refresh")
                     .loading(entry.loading)
                     .on_click(cx.listener(|this, _, _, cx| this.load_lichess(true, cx))),
-            );
+            )
+            .child(div().flex_1())
+            .child(send);
         let items = entry.items.unwrap_or_default();
         let (count, card_width) = widgets::columns(width, CARD_MIN, CARD_GAP);
         let at = now_ms();
-        let busy = self.lichess.busy;
         let cards: Vec<AnyElement> = items
             .iter()
             .map(|item| {
@@ -549,35 +582,6 @@ impl StudiesPage {
                     .children(cards.by_ref().take(count)),
             );
         }
-        let send = widgets::card(palette).child(
-            h_flex()
-                .flex_wrap()
-                .gap(px(8.))
-                .child(
-                    div()
-                        .text_size(px(14.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .child("Send the analysis board to"),
-                )
-                .child(
-                    div().min_w(px(200.)).child(
-                        Select::new(&self.lichess.target)
-                            .small()
-                            .accessibility_label("Send the analysis board to"),
-                    ),
-                )
-                .child(
-                    Button::new("lichess-studies-send")
-                        .primary()
-                        .small()
-                        .icon(icon("upload"))
-                        // gpui-lints: allow(icon_per_label) uploads the study to Lichess, not a message
-                        .label("Send")
-                        .loading(busy)
-                        .disabled(busy)
-                        .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
-                ),
-        );
         v_flex()
             .gap(px(16.))
             .child(toolbar)
@@ -585,7 +589,6 @@ impl StudiesPage {
                 tab.child(div().text_size(px(13.)).child(status))
             })
             .child(v_flex().gap(CARD_GAP).children(rows))
-            .child(send)
             .into_any_element()
     }
 }

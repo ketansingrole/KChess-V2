@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
-use gpui_kit::{AppContext as _, Bounds, ElementId, Pixels, Point, Window, px, size};
+use gpui_kit::{App, AppContext as _, Bounds, ElementId, Pixels, Point, Role, Window, px, size};
 
 use crate::pages::Page;
 
@@ -368,15 +368,43 @@ fn drawn(window: &Window) -> BTreeMap<String, Point<Pixels>> {
         .collect()
 }
 
-/// Open `page` and return its first frame, drawn at once, as a person sees it.
-fn first_frame(app: &mut Harness, page: Page) -> BTreeMap<String, Point<Pixels>> {
+/// Do `act` and return the first frame after it, drawn at once, as a person sees it, before any
+/// frame callback runs.
+fn first_frame(
+    app: &mut Harness,
+    act: impl FnOnce(&mut Window, &mut App),
+) -> BTreeMap<String, Point<Pixels>> {
     app.cx
         .update_window(app.window, |_, window, cx| {
-            crate::shell::open(page, window, cx);
+            act(window, cx);
             super::draw(window, cx);
             drawn(window)
         })
         .expect("the main window is open")
+}
+
+/// Where the elements of `first` have moved to once the window has settled, each named by
+/// `what`.
+fn moved_since(
+    app: &mut Harness,
+    first: &BTreeMap<String, Point<Pixels>>,
+    what: &str,
+) -> Vec<String> {
+    app.settle();
+    let settled = app.with_window(|window, _| drawn(window));
+    let viewport = app.with_window(|window, _| window.viewport_size());
+    first
+        .iter()
+        .filter_map(|(path, origin)| {
+            let to = settled.get(path).filter(|to| *to != origin)?;
+            let id: String = path.chars().rev().take(60).collect::<String>();
+            let id: String = id.chars().rev().collect();
+            Some(format!(
+                "{what} at {}×{}: {origin:?} → {to:?} …{id}",
+                viewport.width, viewport.height
+            ))
+        })
+        .collect()
 }
 
 /// The pages whose first frame is checked: not Settings, which opens as a dialog and slides in,
@@ -391,20 +419,8 @@ fn checked_pages() -> Vec<Page> {
 
 /// Where the elements of each page's first frame have moved to once the page has settled.
 fn moved_after_first_frame(app: &mut Harness, page: Page, moved: &mut Vec<String>) {
-    let first = first_frame(app, page);
-    app.settle();
-    let settled = app.with_window(|window, _| drawn(window));
-    let label = page.info().label;
-    let viewport = app.with_window(|window, _| window.viewport_size());
-    moved.extend(first.iter().filter_map(|(path, origin)| {
-        let to = settled.get(path).filter(|to| *to != origin)?;
-        let id: String = path.chars().rev().take(60).collect::<String>();
-        let id: String = id.chars().rev().collect();
-        Some(format!(
-            "{label} at {}×{}: {origin:?} → {to:?} …{id}",
-            viewport.width, viewport.height
-        ))
-    }));
+    let first = first_frame(app, |window, cx| crate::shell::open(page, window, cx));
+    moved.extend(moved_since(app, &first, page.info().label));
 }
 
 /// Open every page for the first time at `width`×`height`, its data loading as it shows.
@@ -465,4 +481,73 @@ fn a_page_opens_laid_out_for_the_window_it_opens_in(cx: &mut gpui_kit::TestAppCo
         "moved after their first frame:\n  {}",
         moved.join("\n  ")
     );
+}
+
+/// The tabs within each page, other than the sidebar's own: their ids and names.
+fn page_tabs(app: &mut Harness) -> Vec<(ElementId, String)> {
+    app.with_window(|window, _| {
+        let sidebar = window
+            .try_find("sidebar")
+            .map_or(px(0.), |sidebar| sidebar.bounds().right());
+        window
+            .elements()
+            .into_iter()
+            .filter(|e| e.role() == Some(Role::Tab) && e.visible() && e.bounds().left() >= sidebar)
+            .filter_map(|e| {
+                let id = e.path().last()?.clone();
+                Some((id, e.label().unwrap_or_default().to_string()))
+            })
+            .collect()
+    })
+}
+
+/// Open each tab of every page for the first time at `width`×`height`, its data loading as it
+/// shows.
+fn first_tabs_hold_still(cx: &mut gpui_kit::TestAppContext, (width, height): (f32, f32)) {
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    app.cx
+        .simulate_window_resize(app.window, size(px(width), px(height)));
+    let mut moved = Vec::new();
+    let mut opened = 0;
+    for page in Page::all().filter(|&page| page != Page::Settings) {
+        app.with_window(|window, cx| crate::shell::open(page, window, cx));
+        app.settle();
+        for (id, name) in page_tabs(&mut app) {
+            // A tab may have left the page: Analysis board's tabs change with what it shows.
+            if app.cx.update(|cx| crate::shell::current_page(cx)) != Some(page) {
+                app.with_window(|window, cx| crate::shell::open(page, window, cx));
+                app.settle();
+            }
+            if app.with_window(|window, _| window.try_find(id.clone()).is_none()) {
+                continue;
+            }
+            let first = first_frame(&mut app, |window, cx| window.click(id.clone(), cx));
+            moved.extend(moved_since(
+                &mut app,
+                &first,
+                &format!("{}'s {name} tab", page.info().label),
+            ));
+            opened += 1;
+        }
+    }
+    assert!(opened > 20, "only {opened} tabs found");
+    assert!(
+        moved.is_empty(),
+        "moved after their first frame:\n  {}",
+        moved.join("\n  ")
+    );
+}
+
+/// A tab's first frame holds the place of what it is still loading: Puzzles' History said "No
+/// puzzles yet" until its progress came, then its stats pushed it down; Game history's Online
+/// showed its pager over an empty list; Studies' Lichess drew its Send card below the list, which
+/// moved down as the studies came.
+#[gpui_kit::test]
+fn a_tab_holds_still_as_it_first_opens_in_a_wide_window(cx: &mut gpui_kit::TestAppContext) {
+    first_tabs_hold_still(cx, SIZES[2]);
+}
+
+#[gpui_kit::test]
+fn a_tab_holds_still_as_it_first_opens_in_a_narrow_window(cx: &mut gpui_kit::TestAppContext) {
+    first_tabs_hold_still(cx, SIZES[0]);
 }
