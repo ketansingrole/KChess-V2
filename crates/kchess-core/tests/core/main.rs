@@ -55,6 +55,7 @@ mod lichess_store_fake;
 mod lichess_studies;
 mod lichess_tournaments;
 mod lichess_watch;
+mod lichess_watch_tv;
 mod profile_lock;
 mod review_admission;
 mod store_accounts;

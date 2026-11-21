@@ -621,11 +621,12 @@ fn lagging_export(feed_ply: &AtomicUsize, failing: &AtomicU16) -> Reply {
     }
 }
 
-/// Lichess's export trails the TV feed by three plies, so it reaches the position the feed
-/// started from only three moves later. The line-up gave up after its last timed attempt, which
-/// a rapid game's three moves often outlast, and Watch → Rapid stayed on "Loading moves…".
+/// Lichess's export trails the TV feed by three plies, so it reached the position the feed
+/// started from only three moves later, and Watch → Rapid said "Loading moves…" until then: in a
+/// classical game, minutes. The moves the export leaves out are found from the feed's position,
+/// so the first export lines the moves up, and the moves that follow need no other.
 #[tokio::test]
-async fn a_tv_feed_lines_up_its_moves_however_long_the_export_takes_to_catch_up() {
+async fn a_tv_feed_lines_up_its_moves_with_the_first_export_however_far_it_lags() {
     let feed_ply = Arc::new(AtomicUsize::new(3));
     let exports = Arc::new(AtomicUsize::new(0));
     let failing = Arc::new(AtomicU16::new(0));
@@ -653,29 +654,29 @@ async fn a_tv_feed_lines_up_its_moves_however_long_the_export_takes_to_catch_up(
     .await;
     let host = Arc::new(Recording::default());
     let sink = Arc::new(Sink::default());
-    let timing = LineUpTiming {
-        delay: Duration::from_millis(10),
-        attempts: 2,
-    };
-    let spectator = Spectator::with_timing(
+    // The default timing: a timed attempt only five seconds after the first.
+    let spectator = Spectator::new(
         service(&fixture.base, &host),
         Arc::clone(&sink) as Arc<dyn WatchSink>,
-        timing,
     );
     spectator.watch(WatchTarget::Channel("rapid".into()));
     feed_tx
         .send(tv_frame("abcdefghijkl", &fen_after(3)))
         .unwrap();
-    // Every timed attempt finds the export short of anything the feed showed.
-    until("the timed attempts", || exports.load(Ordering::SeqCst) >= 2).await;
-    until("the time control", || {
+    let lined = crate::support::wait_until(Duration::from_secs(4), "the moves", || {
         let frames = sink.frames.lock().unwrap();
-        frames
-            .last()
-            .is_some_and(|frame| frame.speed.as_deref() == Some("rapid"))
+        frames.last().filter(|frame| frame.moves.is_some()).cloned()
     })
     .await;
-    // The players take their time: each move comes after the attempts ran out.
+    assert_eq!(exports.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        lined.moves,
+        Some(line_uci()[..3].iter().map(|m| m.to_string()).collect())
+    );
+    assert_eq!(lined.moves_behind, None);
+    assert_eq!(lined.start_fen.as_deref(), Some(INITIAL));
+    assert_eq!(lined.speed.as_deref(), Some("rapid"));
+    // The moves that follow join the list as they come, with no export.
     for ply in 4..=6 {
         feed_ply.store(ply, Ordering::SeqCst);
         feed_tx.send(feed_move(ply)).unwrap();
@@ -687,19 +688,13 @@ async fn a_tv_feed_lines_up_its_moves_however_long_the_export_takes_to_catch_up(
         })
         .await;
     }
-    until("the lined-up moves", || {
-        let frames = sink.frames.lock().unwrap();
-        frames.last().is_some_and(|frame| frame.moves.is_some())
-    })
-    .await;
-    let lined = sink.frames.lock().unwrap().last().cloned().unwrap();
+    let last = sink.frames.lock().unwrap().last().cloned().unwrap();
     assert_eq!(
-        lined.moves,
+        last.moves,
         Some(line_uci().iter().map(|m| m.to_string()).collect())
     );
-    assert_eq!(lined.start_fen.as_deref(), Some(INITIAL));
-    assert_eq!(position(&lined.fen), position(&fen_after(6)));
-    assert_eq!(lined.moves_error, None);
+    assert_eq!(last.moves_error, None);
+    assert_eq!(exports.load(Ordering::SeqCst), 1);
     spectator.stop();
 }
 

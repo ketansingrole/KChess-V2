@@ -23,8 +23,8 @@ mod listings;
 mod spectator;
 
 pub use feed::{
-    GameDetails, TvGame, align_tv_moves, broadcast_game, display_fen, parse_game_details,
-    parse_tv_game,
+    GameDetails, TvGame, TvMoves, align_tv_moves, broadcast_game, display_fen, parse_game_details,
+    parse_tv_game, tv_moves,
 };
 pub use listings::{broadcast_round, broadcast_summaries, broadcast_tour, broadcasts, tv_channels};
 pub use spectator::Spectator;
