@@ -1,17 +1,18 @@
 //! The registry and the shell as a page reaches them, with stand-in pages and a stand-in shell.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui_kit::{
-    AnyView, App, AppContext as _, Context, FocusHandle, Focusable, IntoElement, Render,
-    TestAppContext, Window, div,
+    AnyView, App, AppContext as _, Bounds, Context, FocusHandle, Focusable, IntoElement,
+    ParentElement as _, Pixels, Render, Styled as _, TestAppContext, Window, canvas, div, px, size,
 };
 
 use crate::page::{
     NavGroup, Page, PageCommand, PageInfo, PageTab, PageView, Registered, TabInfo, register,
     set_registry, tab_places,
 };
+use crate::play_layout::{PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
 use crate::sections::Section;
 use crate::shell::{self, Navigator, Shell};
 use crate::swipe::Direction;
@@ -369,4 +370,70 @@ fn a_watched_restart_comes_back_to_the_page() {
     std::fs::remove_file(&file).ok();
     assert_eq!(noted.ok().as_deref(), Some("Analysis"));
     assert_eq!(remembered, Some(Page::Analysis));
+}
+
+/// A board page's row: a board column and a panel as the game pages size theirs, with what
+/// `panel_width` said of the panel at the last frame and where the panel was drawn.
+struct Row {
+    layout: PlayLayout,
+    max: Pixels,
+    said: Rc<Cell<Pixels>>,
+    drawn: Rc<Cell<Bounds<Pixels>>>,
+}
+
+impl Render for Row {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let board = self.layout.board_size(window);
+        self.said
+            .set(self.layout.panel_width(board, self.max, window));
+        let drawn = Rc::clone(&self.drawn);
+        let panel = div()
+            .relative()
+            .flex_1()
+            .min_w(PANEL_MIN)
+            .max_w(self.max)
+            .h(px(40.))
+            .child(
+                canvas(move |bounds, _, _| drawn.set(bounds), |_, _, _, _| {})
+                    .absolute()
+                    .size_full(),
+            );
+        let column = div().flex_none().w(board).h(board);
+        self.layout.render("row", column, panel, window, cx)
+    }
+}
+
+/// The width a game page decides its panel's layout by is the width the row gives it, beside
+/// the board and under it, with Zen mode's narrower panel too.
+#[gpui_kit::test]
+fn the_panel_is_as_wide_as_its_width_says(cx: &mut TestAppContext) {
+    for max in [PANEL_MAX, PANEL_ZEN] {
+        let said = Rc::new(Cell::new(px(0.)));
+        let drawn = Rc::new(Cell::new(Bounds::default()));
+        let window = cx.add_window(|_, _| Row {
+            layout: PlayLayout::default(),
+            max,
+            said: Rc::clone(&said),
+            drawn: Rc::clone(&drawn),
+        });
+        let sizes = [(500., 700.), (640., 620.), (700., 1000.), (900., 700.)];
+        let wider = [(1024., 768.), (1320., 880.), (1600., 900.), (2200., 1200.)];
+        for (width, height) in sizes.into_iter().chain(wider) {
+            cx.simulate_window_resize(window.into(), size(px(width), px(height)));
+            // The row's own measure is a frame late without a shell.
+            for _ in 0..3 {
+                cx.update_window(window.into(), |_, window, cx| {
+                    window.simulate_next_frame(cx);
+                    window.draw(cx).clear(cx);
+                })
+                .expect("the window is open");
+            }
+            // Layout puts the panel's edges on whole pixels; the side padding is 2.6% of the width.
+            let (said, drawn) = (said.get(), drawn.get().size.width);
+            assert!(
+                (said - drawn).abs() < px(1.),
+                "the panel at {width}×{height}, at most {max:?}: said {said:?}, drawn {drawn:?}"
+            );
+        }
+    }
 }

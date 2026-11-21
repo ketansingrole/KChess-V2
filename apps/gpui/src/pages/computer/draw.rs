@@ -123,7 +123,12 @@ impl Render for ComputerPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let board_size = self.layout.board_size(window);
-        let narrow = widgets::is_narrow(self.panel_area.size().width);
+        let max_width = if crate::settings::frontend(cx).zen_mode {
+            PANEL_ZEN
+        } else {
+            PANEL_MAX
+        };
+        let narrow = widgets::is_narrow(self.layout.panel_width(board_size, max_width, window));
         let user = self.user_color();
         let position = self.position_at(self.ply());
         let turn = position
@@ -278,11 +283,10 @@ impl Render for ComputerPage {
         let opening = show_opening.then(|| self.opening()).flatten();
         let panel = widgets::side_panel(&palette)
             .relative()
-            .child(self.panel_area.probe(cx))
             .h(self.layout.panel_height(board_size))
             .flex_1()
             .min_w(PANEL_MIN)
-            .max_w(if zen { PANEL_ZEN } else { PANEL_MAX })
+            .max_w(max_width)
             .child(
                 h_flex()
                     .flex_wrap()

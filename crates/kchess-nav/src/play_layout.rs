@@ -3,7 +3,8 @@
 //! narrow page (620px or less, or a portrait window up to 900px, which a large interface size
 //! makes common) stacks the panel under the board instead.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::component::{h_flex, v_flex};
@@ -51,16 +52,76 @@ fn whole_squares(side: Pixels, scale: f32) -> Pixels {
     px(square * 8. / scale)
 }
 
+thread_local! {
+    /// Each window's page area at its last layout, as the shell measures it. The shell is drawn
+    /// every frame; a page only while it shows, so its own measures keep the sizes they had when
+    /// it was last shown. Opened again after the window or the sidebar changed, Over the board
+    /// drew its board at 504px under the panel, then at 628px beside it, then the panel's actions
+    /// on one row, before settling: three layouts in three frames.
+    static PAGE_AREAS: RefCell<HashMap<WindowId, Size<Pixels>>> = RefCell::default();
+}
+
+/// Put in the shell's page area, which every page fills, so a page opens laid out for the area
+/// it opens in.
+pub fn page_area_probe() -> impl IntoElement {
+    canvas(
+        |area, window, _| {
+            let id = window.window_handle().window_id();
+            PAGE_AREAS.with_borrow_mut(|areas| areas.insert(id, area.size));
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+}
+
+/// The page area of `window` at its last layout, where a shell measures it.
+pub fn page_area(window: &Window) -> Option<Size<Pixels>> {
+    let id = window.window_handle().window_id();
+    PAGE_AREAS.with_borrow(|areas| areas.get(&id).copied())
+}
+
+/// The width of a page's column, centred inside the page's side padding and at most `max` wide
+/// (Home's cards, the openings browser), from the page area: a page opened again lays out for the
+/// window it opens in. `measured` is the column as it last measured, for a window with no shell;
+/// before either, the window less its padding.
+pub fn column_width(window: &Window, max: Pixels, measured: Pixels) -> Pixels {
+    let page = page_area(window).map(|area| area.width - side_padding(window) * 2.);
+    let width = match page {
+        Some(width) => width,
+        None if measured > px(0.) => measured,
+        None => window.viewport_size().width - side_padding(window) * 2.,
+    };
+    width.min(max)
+}
+
 /// An area measured as it is laid out, so the next frame can size what goes in it.
 #[derive(Default)]
 pub struct Measured {
     bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// The page area when the area was measured, where a shell measures one.
+    page: Rc<Cell<Option<Size<Pixels>>>>,
 }
 
 impl Measured {
     /// The area at the last layout; empty before the first.
     pub fn size(&self) -> Size<Pixels> {
         self.bounds.get().size
+    }
+
+    /// The area now: as it last measured, grown or shrunk by as much as the page area has since.
+    /// A page is drawn only while it shows, so an area measured before it was hidden keeps its
+    /// inset from the page (none for a whole page, a tab bar's height under one); empty before
+    /// the first measure.
+    pub fn size_in(&self, window: &Window) -> Size<Pixels> {
+        let measured = self.size();
+        match (self.page.get(), page_area(window)) {
+            (Some(then), Some(now)) if measured.width > px(0.) => size(
+                (measured.width + now.width - then.width).max(px(0.)),
+                (measured.height + now.height - then.height).max(px(0.)),
+            ),
+            _ => measured,
+        }
     }
 
     /// Where the area was at the last layout, in the window; empty before the first.
@@ -72,9 +133,12 @@ impl Measured {
     /// redraws the view.
     pub fn probe<V: 'static>(&self, cx: &mut Context<V>) -> impl IntoElement + use<V> {
         let bounds = Rc::clone(&self.bounds);
+        let page = Rc::clone(&self.page);
         let entity = cx.entity().downgrade();
         canvas(
             move |area, window, _| {
+                // The shell's page area is laid out before the page in it.
+                page.set(page_area(window));
                 if bounds.get() != area {
                     bounds.set(area);
                     // A notify while drawing schedules no frame: one change of size (a zoom
@@ -122,14 +186,38 @@ impl PlayLayout {
         self.area.probe(cx)
     }
 
+    /// The page's area now, though it was hidden when the window last changed; before its first
+    /// layout, the shell's page area it opens in; empty before either.
+    fn area(&self, window: &Window) -> Size<Pixels> {
+        let area = self.area.size_in(window);
+        if area.width > px(0.) {
+            area
+        } else {
+            page_area(window).unwrap_or(area)
+        }
+    }
+
     /// The page's width at the last layout, or the window's before it.
     pub fn width(&self, window: &Window) -> Pixels {
-        let page = self.area.size();
+        let page = self.area(window);
         if page.width > px(0.) {
             page.width
         } else {
             window.viewport_size().width
         }
+    }
+
+    /// The panel's width beside a board column `column` wide, or under it when stacked, at most
+    /// `max`, as the row lays it out: a page decides what fits in its panel in the frame it
+    /// draws, where the panel's own measure is a frame late (and a page late when it was hidden).
+    /// Call after sizing the board, which decides whether the panel is stacked.
+    pub fn panel_width(&self, column: Pixels, max: Pixels, window: &Window) -> Pixels {
+        let inside = self.width(window) - side_padding(window) * 2.;
+        let room = match self.stacked.get() {
+            Some(stacked) => stacked.min(inside),
+            None => inside - column - LAYOUT_GAP,
+        };
+        room.min(max).max(PANEL_MIN)
     }
 
     /// The board's side with another column of `extra` beside it (a lesson's chapters).
@@ -161,7 +249,7 @@ impl PlayLayout {
         around: Pixels,
         window: &Window,
     ) -> Pixels {
-        let page = self.area.size();
+        let page = self.area(window);
         let page_width = self.width(window);
         let width = page_width - extra_width;
         let height = if page.height > px(0.) {

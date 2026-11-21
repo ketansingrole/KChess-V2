@@ -34,7 +34,7 @@ use crate::widgets::Pressable as _;
 use kchess_domain::games::Host;
 use kchess_domain::games::computer::ComputerGame;
 use kchess_nav::page::Page;
-use kchess_nav::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
+use kchess_nav::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, column_width, side_padding};
 use kchess_ui::icon;
 
 pub mod lichess;
@@ -655,13 +655,8 @@ impl Render for HomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let padding = side_padding(window);
-        // Before the first layout, the window less the sidebar is the guess.
-        let measured = self.area.size().width;
-        let width = if measured > px(0.) {
-            measured - padding * 2.
-        } else {
-            window.viewport_size().width - px(260.)
-        };
+        // The probe fills the column, its padding included.
+        let width = column_width(window, CONTENT_MAX, self.area.size().width - padding * 2.);
         let (stacked, per_row) = arrangement(width);
         let tiles = tiles(per_row, &palette);
 

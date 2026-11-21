@@ -44,6 +44,8 @@ const RECENT_LIMIT: usize = 6;
 const LIMIT: usize = 60;
 const SEARCH_DELAY: Duration = Duration::from_millis(120);
 /// The popular cards' columns.
+/// The browser's widest, centred on a wider page.
+const BROWSER_MAX: Pixels = px(1100.);
 const CARD_MIN: Pixels = px(150.);
 const CARD_GAP: Pixels = px(16.);
 
@@ -474,7 +476,7 @@ impl Render for OpeningsPage {
                         div()
                             .relative()
                             .w_full()
-                            .max_w(px(1100.))
+                            .max_w(BROWSER_MAX)
                             .child(self.area.probe(cx))
                             .child(browser),
                     ),

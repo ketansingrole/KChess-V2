@@ -79,7 +79,7 @@ use crate::widgets::{KeyboardFocus as _, Side as PieceSide, Tone};
 use kchess_domain::games::Clock;
 use kchess_domain::games::local::{self, LocalClock, LocalGame};
 use kchess_nav::part::Part;
-use kchess_nav::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout, panel_style};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout, panel_style};
 use kchess_ui::icon;
 
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -151,8 +151,6 @@ pub struct LocalPage {
     /// What the chess clock's faces showed at the last tick.
     clock_faces: Faces<[String; 2]>,
     layout: PlayLayout,
-    /// The side panel, measured for where its action buttons wrap.
-    panel_area: Measured,
     /// The side panel beside the board, a cached view of its own (`render_panel`).
     panel: Entity<Part<LocalPage>>,
     /// White's and Black's clock faces (`render_clock_face`): a tick redraws only these.
@@ -360,7 +358,6 @@ impl LocalPage {
             clock_ticker: None,
             clock_faces: Faces::default(),
             layout: PlayLayout::default(),
-            panel_area: Measured::default(),
             panel: Part::panel(|this, window, cx| this.render_panel(window, cx), cx),
             faces: [
                 Part::new(|this, _, cx| this.render_clock_face(Color::White, cx), cx),

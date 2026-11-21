@@ -2,8 +2,12 @@
 //! pointer, so the next click lands where the person aimed it (stepping back through a game's
 //! moves, a load finishing, a status line changing).
 
-use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{Bounds, ElementId, Pixels, px, size};
+use std::collections::BTreeMap;
+
+use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
+use gpui_kit::{AppContext as _, Bounds, ElementId, Pixels, Point, Window, px, size};
+
+use crate::pages::Page;
 
 use super::{Harness, SIZES};
 
@@ -351,4 +355,70 @@ fn the_openings_explorer_holds_still_as_the_line_is_described(cx: &mut gpui_kit:
     });
     app.settle();
     assert_eq!(places(&mut app, &ids), before, "the explorer moved");
+}
+
+/// Where each element in the window is drawn, by its path; toasts left out, which slide in over
+/// the page.
+fn drawn(window: &Window) -> BTreeMap<String, Point<Pixels>> {
+    window
+        .elements()
+        .into_iter()
+        .map(|element| (format!("{:?}", element.path()), element.bounds().origin))
+        .filter(|(path, _)| !path.contains("ToastStack"))
+        .collect()
+}
+
+/// Open `page` and return its first frame, drawn at once, as a person sees it.
+fn first_frame(app: &mut Harness, page: Page) -> BTreeMap<String, Point<Pixels>> {
+    app.cx
+        .update_window(app.window, |_, window, cx| {
+            crate::shell::open(page, window, cx);
+            super::draw(window, cx);
+            drawn(window)
+        })
+        .expect("the main window is open")
+}
+
+#[gpui_kit::test]
+fn a_page_opens_laid_out_for_the_window_it_opens_in(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    // Settings opens as a dialog, which slides in. Puzzles' tabs, above its board, take two lines
+    // in a narrow window and one in a wide one: its board keeps its inset from the page as it
+    // last measured, a line's height too small for one frame in the wider window.
+    let pages: Vec<Page> = Page::all()
+        .filter(|&page| !matches!(page, Page::Settings | Page::Puzzles))
+        .collect();
+    let mut moved = Vec::new();
+    for (was, now) in [(SIZES[0], SIZES[2]), (SIZES[2], SIZES[0])] {
+        app.cx
+            .simulate_window_resize(app.window, size(px(was.0), px(was.1)));
+        for &page in &pages {
+            app.with_window(|window, cx| crate::shell::open(page, window, cx));
+            app.settle();
+        }
+        app.cx
+            .simulate_window_resize(app.window, size(px(now.0), px(now.1)));
+        app.settle();
+        // Each page last drawn at the other size, its own measures from then.
+        for &page in &pages {
+            let first = first_frame(&mut app, page);
+            app.settle();
+            let settled = app.with_window(|window, _| drawn(window));
+            let label = page.info().label;
+            moved.extend(first.iter().filter_map(|(path, origin)| {
+                let to = settled.get(path).filter(|to| *to != origin)?;
+                let id: String = path.chars().rev().take(60).collect::<String>();
+                let id: String = id.chars().rev().collect();
+                Some(format!(
+                    "{label} at {}×{}: {origin:?} → {to:?} …{id}",
+                    now.0, now.1
+                ))
+            }));
+        }
+    }
+    assert!(
+        moved.is_empty(),
+        "moved after their first frame:\n  {}",
+        moved.join("\n  ")
+    );
 }

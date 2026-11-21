@@ -35,7 +35,7 @@ use crate::game::played::PlayedGame;
 use crate::game::session::{Resumes, SessionSaver};
 use crate::game::surface::{self, Faces, MoveBox, Steps};
 use crate::game::view;
-use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
+use crate::play_layout::{PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
 use crate::played::PlayedHandle;
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
@@ -111,8 +111,6 @@ pub struct ComputerPage {
     /// The board turned (F) to face the computer's side.
     flipped: bool,
     layout: PlayLayout,
-    /// The side panel, measured for its narrow layout.
-    panel_area: Measured,
     focus: FocusHandle,
     wheel: view::Wheel,
     _subscriptions: Vec<Subscription>,
@@ -266,7 +264,6 @@ impl ComputerPage {
             asked: None,
             flipped: false,
             layout: PlayLayout::default(),
-            panel_area: Measured::default(),
             exporter: cx.new(|_| Exporter::default()),
             focus: cx.focus_handle(),
             wheel: Default::default(),

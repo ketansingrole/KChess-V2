@@ -8,7 +8,7 @@ refuses to release with nothing there.
 
 ## Unreleased
 
-- **Pages that hold still**: the move list, the engine's depth, the Voice button, the Studies tabs, the rating charts and an opening's explorer no longer jump under your pointer as you step through a game or a page loads. Your Lichess games now say whose move it is.
+- **Pages that hold still**: the move list, engine depth, Voice button, Studies tabs, rating charts and opening explorer no longer jump as you step through a game, and pages open without jumping, even after you resize the window. Your Lichess games now say whose move it is.
 - **Fixes**: If a study chapter couldn't be saved when you quit, Retry now saves it. When the opening explorer can't look a position up, it offers Connect Lichess or Try again. Small buttons, such as Accept, Train and Watch, are easier to click. Plus many smaller fixes.
 
 ## 2026.11.8 (2026-11-21)

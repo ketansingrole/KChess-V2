@@ -856,6 +856,9 @@ impl Render for Workspace {
                             .min_h_0()
                             .relative()
                             .overflow_hidden()
+                            // Measured every frame, shown page or not, so a page opens laid out
+                            // for the area it opens in.
+                            .child(kchess_nav::play_layout::page_area_probe())
                             .on_scroll(cx.listener(Self::scrolled))
                             // A PGN or FEN file dropped here opens: on the analysis board, or
                             // as a study when it holds several games.
