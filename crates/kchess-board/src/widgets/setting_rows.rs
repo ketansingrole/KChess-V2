@@ -2,7 +2,6 @@
 
 use super::*;
 
-/// The blindfold and zen mode toggles every game page shows.
 /// A switch with its label beside it: the switch is a 24 px target (WCAG 2.5.8) named by the
 /// label, which takes the row's text size and toggles it too.
 pub fn labelled_switch(

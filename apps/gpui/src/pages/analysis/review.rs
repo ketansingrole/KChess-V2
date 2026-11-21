@@ -31,7 +31,6 @@ use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
 pub use kchess_board::analysis::{Opening, classification_look};
 
-/// What a move's label looks like: its name, glyph and colour.
 /// The NAG of a review's judgment: ?! dubious, ? mistake, ?? blunder.
 fn tried_nag(judgment: Judgment) -> i64 {
     match judgment {

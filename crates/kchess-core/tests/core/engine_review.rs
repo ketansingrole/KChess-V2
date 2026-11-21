@@ -782,7 +782,6 @@ async fn a_computer_move_takes_the_engine_from_a_running_review() {
     rig.reviews.stop_reviews().await;
 }
 
-/// A review of these moves as an earlier session stored it.
 /// A game whose moves were reviewed already, on the analysis board without the game, is linked
 /// to that review instead of being reviewed again.
 #[tokio::test]
@@ -814,6 +813,7 @@ async fn a_game_already_reviewed_without_it_is_linked_to_the_review() {
     rig.reviews.stop_reviews().await;
 }
 
+/// A review of these moves as an earlier session stored it.
 fn stored(list: &[&str], source: kchess_contracts::types::ReviewSource) -> StoredReview {
     StoredReview {
         key: key_of(START, list),

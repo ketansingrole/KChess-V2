@@ -61,7 +61,6 @@ fn list_columns() -> String {
         .join(", ")
 }
 
-/// `DEFAULT_SETTINGS`.
 /// The default settings, as the contracts define them.
 pub fn default_settings() -> Settings {
     // The contracts' defaults read the domain's bundled engine levels, which are known levels.

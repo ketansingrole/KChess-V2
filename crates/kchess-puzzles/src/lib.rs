@@ -787,7 +787,6 @@ impl PageView for PuzzlesPage {
     }
 }
 
-/// Open a Lichess puzzle by its id on Puzzles → Daily.
 /// A Lichess account was signed out: forget the account puzzles were trained on and, with no
 /// account left, the Lichess mode and tab too.
 pub fn signed_out(accounts_left: bool, cx: &mut App) {
@@ -798,6 +797,7 @@ pub fn signed_out(accounts_left: bool, cx: &mut App) {
     }
 }
 
+/// Open a Lichess puzzle by its id on Puzzles → Daily.
 pub fn open_puzzle(id: String, window: &mut Window, cx: &mut App) {
     kchess_nav::shell::show::<PuzzlesPage>(window, cx, move |puzzles, window, cx| {
         puzzles.open_puzzle(id, window, cx)

@@ -28,12 +28,12 @@ fn window(kind: &str) -> Hello {
     }
 }
 
-/// Serves `profile` in this process; resolves when the service stops.
 /// The idle period of the tests that wait for the service to stop. It also bounds how long the
 /// first client may take to connect, since it runs from the service's start: 300 ms was too
 /// short for a loaded runner, whose client then found no service.
 const IDLE: Duration = Duration::from_secs(2);
 
+/// Serves `profile` in this process; resolves when the service stops.
 fn spawn_service(profile: &Path, idle: Duration) -> tokio::task::JoinHandle<Result<(), String>> {
     let options = ServeOptions {
         config: Config::new(profile.to_path_buf()),

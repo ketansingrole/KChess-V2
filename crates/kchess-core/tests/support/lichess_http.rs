@@ -264,10 +264,10 @@ pub fn ndjson(lines: &[Value]) -> String {
     lines.iter().map(|line| format!("{line}\n")).collect()
 }
 
-/// Records every log line and event; answers the core's `host:request`s from `answers`.
 /// Plays the browser for a sign-in: called with the URL the core opens.
 pub type BrowserFn = Box<dyn Fn(String) + Send + Sync>;
 
+/// Records every log line and event; answers the core's `host:request`s from `answers`.
 #[derive(Default)]
 pub struct Recording {
     pub logs: Mutex<Vec<(Level, String, String)>>,

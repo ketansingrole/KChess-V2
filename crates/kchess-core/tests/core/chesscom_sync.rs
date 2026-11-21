@@ -292,7 +292,6 @@ async fn removing_a_player_while_they_are_looked_up_does_not_add_them_back() {
     drop(open);
 }
 
-/// An add the player's removal overtook stores nothing, however late the database admits it.
 /// Regression: a sync whose call was cancelled (a socket client cancelling it or leaving aborts
 /// the call's task) left its entry behind, and every later sync of the player joined that dead
 /// entry and failed at once with "Sync was cancelled." until the player was removed.
