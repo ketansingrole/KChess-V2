@@ -167,3 +167,16 @@ fn only_a_correspondence_speed_is_correspondence() {
     assert!(game("correspondence").correspondence());
     assert!(!game("blitz").correspondence());
 }
+
+/// Lichess asks every API caller to name its program and where to reach it, to tell of a
+/// problem or a breaking change; a bare "KChess" named the program but gave no way back.
+#[test]
+fn the_user_agent_names_kchess_its_version_and_where_to_reach_it() {
+    assert_eq!(
+        kchess_contracts::USER_AGENT,
+        format!(
+            "KChess/{} (+https://github.com/ketansingrole/KChess-V2)",
+            env!("CARGO_PKG_VERSION")
+        )
+    );
+}

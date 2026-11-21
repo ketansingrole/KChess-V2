@@ -1217,6 +1217,10 @@ pub struct WatchFrame {
     /// UCI moves from `startFen`; absent until the TV feed and Lichess's delayed export line up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub moves: Option<Vec<String>>,
+    /// Why a TV game's moves are missing when they will not simply arrive with the next moves:
+    /// Lichess refused its export, or KChess does not play its variant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moves_error: Option<String>,
     /// Games this channel showed earlier in this session, newest first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous: Option<Vec<TvPastGame>>,

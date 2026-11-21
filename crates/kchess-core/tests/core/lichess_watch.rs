@@ -4,6 +4,7 @@
 use crate::fixtures;
 use crate::support::until;
 
+use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -580,6 +581,261 @@ async fn a_tv_feed_adds_its_moves_once_the_delayed_export_lines_up() {
         .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(sink.frames.lock().unwrap().len(), count);
+}
+
+/// The position after the first `ply` moves of `line_uci`, as the TV feed sends it.
+fn fen_after(ply: usize) -> String {
+    let uci: Vec<String> = line_uci()[..ply].iter().map(|m| m.to_string()).collect();
+    replay::replay_setup(Variant::Standard, INITIAL, &uci)
+        .unwrap()
+        .fen
+}
+
+/// The board, side, castling and en passant of a FEN: the feed's frames reset the counters.
+fn position(fen: &str) -> String {
+    fen.split(' ').take(4).collect::<Vec<_>>().join(" ")
+}
+
+fn feed_move(ply: usize) -> String {
+    let record = json!({
+        "t": "fen",
+        "d": { "fen": fen_after(ply), "lm": line_uci()[ply - 1], "wc": 500, "bc": 500 },
+    });
+    format!("{record}\n")
+}
+
+/// Lichess's export of an ongoing game leaves out its last three moves. Answers the export with
+/// the moves up to three plies before the feed's last one, or `failing`'s status while it is set.
+fn lagging_export(feed_ply: &AtomicUsize, failing: &AtomicU16) -> Reply {
+    match failing.load(Ordering::SeqCst) {
+        0 => {
+            let exported = feed_ply.load(Ordering::SeqCst).saturating_sub(3);
+            let game = json!({
+                "variant": "standard", "speed": "rapid", "rated": true, "status": "started",
+                "clock": { "initial": 600, "increment": 0 },
+                "moves": san()[..exported].join(" "),
+            });
+            Reply::Json(200, game.to_string())
+        }
+        status => Reply::Json(status, json!({ "error": "Server error" }).to_string()),
+    }
+}
+
+/// Lichess's export trails the TV feed by three plies, so it reaches the position the feed
+/// started from only three moves later. The line-up gave up after its last timed attempt, which
+/// a rapid game's three moves often outlast, and Watch → Rapid stayed on "Loading moves…".
+#[tokio::test]
+async fn a_tv_feed_lines_up_its_moves_however_long_the_export_takes_to_catch_up() {
+    let feed_ply = Arc::new(AtomicUsize::new(3));
+    let exports = Arc::new(AtomicUsize::new(0));
+    let failing = Arc::new(AtomicU16::new(0));
+    let (feed_tx, feed_rx) = mpsc::unbounded_channel::<String>();
+    let feed_rx = Mutex::new(Some(feed_rx));
+    let fixture = serve({
+        let (feed_ply, exports, failing) = (
+            Arc::clone(&feed_ply),
+            Arc::clone(&exports),
+            Arc::clone(&failing),
+        );
+        move |seen: &Request| match seen.path() {
+            "/api/tv/rapid/feed" => feed_rx
+                .lock()
+                .unwrap()
+                .take()
+                .map_or(Reply::Hang, Reply::Stream),
+            "/api/games/export/_ids" => {
+                exports.fetch_add(1, Ordering::SeqCst);
+                lagging_export(&feed_ply, &failing)
+            }
+            _ => Reply::Hang,
+        }
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let sink = Arc::new(Sink::default());
+    let timing = LineUpTiming {
+        delay: Duration::from_millis(10),
+        attempts: 2,
+    };
+    let spectator = Spectator::with_timing(
+        service(&fixture.base, &host),
+        Arc::clone(&sink) as Arc<dyn WatchSink>,
+        timing,
+    );
+    spectator.watch(WatchTarget::Channel("rapid".into()));
+    feed_tx
+        .send(tv_frame("abcdefghijkl", &fen_after(3)))
+        .unwrap();
+    // Every timed attempt finds the export short of anything the feed showed.
+    until("the timed attempts", || exports.load(Ordering::SeqCst) >= 2).await;
+    until("the time control", || {
+        let frames = sink.frames.lock().unwrap();
+        frames
+            .last()
+            .is_some_and(|frame| frame.speed.as_deref() == Some("rapid"))
+    })
+    .await;
+    // The players take their time: each move comes after the attempts ran out.
+    for ply in 4..=6 {
+        feed_ply.store(ply, Ordering::SeqCst);
+        feed_tx.send(feed_move(ply)).unwrap();
+        until("the move", || {
+            let frames = sink.frames.lock().unwrap();
+            frames
+                .last()
+                .is_some_and(|frame| position(&frame.fen) == position(&fen_after(ply)))
+        })
+        .await;
+    }
+    until("the lined-up moves", || {
+        let frames = sink.frames.lock().unwrap();
+        frames.last().is_some_and(|frame| frame.moves.is_some())
+    })
+    .await;
+    let lined = sink.frames.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(
+        lined.moves,
+        Some(line_uci().iter().map(|m| m.to_string()).collect())
+    );
+    assert_eq!(lined.start_fen.as_deref(), Some(INITIAL));
+    assert_eq!(position(&lined.fen), position(&fen_after(6)));
+    assert_eq!(lined.moves_error, None);
+    spectator.stop();
+}
+
+/// A failed export said nothing: the moves stayed "Loading moves…" with no sign of why. The
+/// failure shows where the moves go, and the next move tries again.
+#[tokio::test]
+async fn a_tv_export_that_fails_says_why_the_moves_are_missing_and_tries_again() {
+    let feed_ply = Arc::new(AtomicUsize::new(3));
+    let failing = Arc::new(AtomicU16::new(500));
+    let (feed_tx, feed_rx) = mpsc::unbounded_channel::<String>();
+    let feed_rx = Mutex::new(Some(feed_rx));
+    let fixture = serve({
+        let (feed_ply, failing) = (Arc::clone(&feed_ply), Arc::clone(&failing));
+        move |seen: &Request| match seen.path() {
+            "/api/tv/rapid/feed" => feed_rx
+                .lock()
+                .unwrap()
+                .take()
+                .map_or(Reply::Hang, Reply::Stream),
+            "/api/games/export/_ids" => lagging_export(&feed_ply, &failing),
+            _ => Reply::Hang,
+        }
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let sink = Arc::new(Sink::default());
+    let timing = LineUpTiming {
+        delay: Duration::from_millis(10),
+        attempts: 2,
+    };
+    let spectator = Spectator::with_timing(
+        service(&fixture.base, &host),
+        Arc::clone(&sink) as Arc<dyn WatchSink>,
+        timing,
+    );
+    spectator.watch(WatchTarget::Channel("rapid".into()));
+    feed_tx
+        .send(tv_frame("abcdefghijkl", &fen_after(3)))
+        .unwrap();
+    until("the export's failure", || {
+        let frames = sink.frames.lock().unwrap();
+        frames
+            .last()
+            .is_some_and(|frame| frame.moves_error.is_some())
+    })
+    .await;
+    let failed = sink.frames.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(failed.moves, None);
+    failing.store(0, Ordering::SeqCst);
+    for ply in 4..=6 {
+        feed_ply.store(ply, Ordering::SeqCst);
+        feed_tx.send(feed_move(ply)).unwrap();
+    }
+    until("the lined-up moves", || {
+        let frames = sink.frames.lock().unwrap();
+        frames.last().is_some_and(|frame| frame.moves.is_some())
+    })
+    .await;
+    let lined = sink.frames.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(lined.moves_error, None);
+    assert_eq!(lined.moves.map(|moves| moves.len()), Some(6));
+    spectator.stop();
+}
+
+/// The TV feed reconnects after a long think and sends the game again. That featured record
+/// started the game over without its moves, which went back to "Loading moves…" until the
+/// export lined up once more, three moves later.
+#[tokio::test]
+async fn a_tv_feed_that_reconnects_keeps_the_moves_of_the_game_it_shows() {
+    let feed_ply = Arc::new(AtomicUsize::new(3));
+    let failing = Arc::new(AtomicU16::new(0));
+    let feeds = Arc::new(Mutex::new(Vec::new()));
+    let fixture = serve({
+        let (feed_ply, failing, feeds) = (
+            Arc::clone(&feed_ply),
+            Arc::clone(&failing),
+            Arc::clone(&feeds),
+        );
+        move |seen: &Request| match seen.path() {
+            "/api/tv/rapid/feed" => {
+                let (tx, rx) = mpsc::unbounded_channel::<String>();
+                let ply = feed_ply.load(Ordering::SeqCst);
+                tx.send(tv_frame("abcdefghijkl", &fen_after(ply))).unwrap();
+                feeds.lock().unwrap().push(tx);
+                Reply::Stream(rx)
+            }
+            "/api/games/export/_ids" => lagging_export(&feed_ply, &failing),
+            _ => Reply::Hang,
+        }
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let sink = Arc::new(Sink::default());
+    let lichess = lichess_service_with_idle(
+        &fixture.base,
+        &host,
+        MemoryStore::with_accounts(&[]),
+        MemoryTokens::with(&[]),
+        Duration::from_millis(300),
+    );
+    let timing = LineUpTiming {
+        delay: Duration::from_millis(10),
+        attempts: 2,
+    };
+    let spectator =
+        Spectator::with_timing(lichess, Arc::clone(&sink) as Arc<dyn WatchSink>, timing);
+    spectator.watch(WatchTarget::Channel("rapid".into()));
+    until("the first feed", || !feeds.lock().unwrap().is_empty()).await;
+    // Ply 3 → 6 on the first connection: the export reaches the feed's start and lines up.
+    for ply in 4..=6 {
+        feed_ply.store(ply, Ordering::SeqCst);
+        let feed = feeds.lock().unwrap().last().cloned().unwrap();
+        feed.send(feed_move(ply)).unwrap();
+    }
+    until("the lined-up moves", || {
+        let frames = sink.frames.lock().unwrap();
+        frames
+            .last()
+            .is_some_and(|frame| frame.moves.as_ref().map(Vec::len) == Some(6))
+    })
+    .await;
+    let lined_at = sink.frames.lock().unwrap().len();
+    // The feed goes quiet past its idle deadline and reconnects to the same position.
+    until("a reconnect", || feeds.lock().unwrap().len() >= 2).await;
+    until("the game sent again", || {
+        sink.frames.lock().unwrap().len() > lined_at
+    })
+    .await;
+    let frames = sink.frames.lock().unwrap()[lined_at..].to_vec();
+    assert!(
+        frames
+            .iter()
+            .all(|frame| frame.moves.as_ref().map(Vec::len) == Some(6)),
+        "the reconnect dropped the moves: {frames:?}"
+    );
+    spectator.stop();
 }
 
 #[tokio::test]
