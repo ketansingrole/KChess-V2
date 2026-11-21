@@ -192,7 +192,7 @@ pub(crate) fn status_panel(
                                     .test_support()
                                     .px(px(6.))
                                     .py(px(1.))
-                                    .rounded(radii::SM)
+                                    .rounded(radii::BOX)
                                     .border_1()
                                     .border_color(palette.border_accented)
                                     .bg(palette.elevated)

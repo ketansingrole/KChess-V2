@@ -98,7 +98,8 @@ pub struct OpeningsPage {
     /// A line was just opened from the list: its page takes the keys from the search field.
     focus_line: bool,
     expanded: HashSet<String>,
-    previews: crate::board::Previews,
+    /// Pictures of openings, by position and whether they sit in a card (or a Recent row).
+    previews: crate::board::Previews<(String, bool)>,
     area: Measured,
     /// The opening shown, when one is: its moves from the starting position.
     line: Option<Vec<String>>,
@@ -204,12 +205,23 @@ impl OpeningsPage {
         }
     }
 
-    /// The preview boards kept, by position.
+    /// The corners of each preview board kept, by position and whether it sits in a card.
     #[cfg(test)]
-    pub(crate) fn kept_previews(&self) -> std::collections::BTreeMap<String, gpui_kit::EntityId> {
+    pub(crate) fn preview_corners(&self, cx: &App) -> Vec<(bool, Corners<Pixels>)> {
         self.previews
             .kept()
-            .map(|(fen, board)| (fen.clone(), board.entity_id()))
+            .map(|((_, in_card), board)| (*in_card, board.read(cx).state().corners))
+            .collect()
+    }
+
+    /// The preview boards kept, by position and whether each sits in a card.
+    #[cfg(test)]
+    pub(crate) fn kept_previews(
+        &self,
+    ) -> std::collections::BTreeMap<(String, bool), gpui_kit::EntityId> {
+        self.previews
+            .kept()
+            .map(|(key, board)| (key.clone(), board.entity_id()))
             .collect()
     }
 
@@ -226,10 +238,20 @@ impl OpeningsPage {
         cx.notify();
     }
 
-    /// A small board picturing a position, made once per position.
-    fn preview(&mut self, fen: &str, cx: &mut Context<Self>) -> Entity<ChessBoard> {
-        let state = || BoardState::preview(fen, Default::default(), Color::White, None);
-        self.previews.board(fen.to_string(), state, cx)
+    /// A small board picturing a position, made once per position and place: flush in a card's
+    /// picture (`in_card`), or in a Recent row, its corners 7px in from the row's (padding and
+    /// border).
+    fn preview(&mut self, fen: &str, in_card: bool, cx: &mut Context<Self>) -> Entity<ChessBoard> {
+        let corners = if in_card {
+            widgets::card_picture_corners()
+        } else {
+            Corners::all(radii::BOX - px(7.))
+        };
+        let state = || BoardState {
+            corners,
+            ..BoardState::preview(fen, Default::default(), Color::White, None)
+        };
+        self.previews.board((fen.to_string(), in_card), state, cx)
     }
 
     fn recent(cx: &App) -> Vec<OpeningChoice> {

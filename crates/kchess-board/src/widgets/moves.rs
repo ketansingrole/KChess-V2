@@ -95,7 +95,7 @@ pub fn moves_list(
                 .px(px(8.))
                 .py(px(4.))
                 .text_center()
-                .rounded(radii::XS)
+                .rounded(radii::SMALL)
                 .cursor_pointer()
                 .when(active, |cell| {
                     cell.bg(tint(palette.primary, 26.))
@@ -247,7 +247,7 @@ pub fn text_entry(
         .h(PLAYER_LINE)
         .border_1()
         .border_color(palette.border)
-        .rounded(radii::MD)
+        .rounded(radii::BOX)
         .bg(palette.bg)
         .when(!enabled, |entry| entry.opacity(0.55))
         .child(

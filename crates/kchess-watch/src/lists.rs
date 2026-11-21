@@ -53,7 +53,7 @@ impl WatchPage {
                             .aria_selected(chosen)
                             .gap(px(12.))
                             .p(px(8.))
-                            .rounded(radii::MD)
+                            .rounded(radii::BOX)
                             .when(chosen, |row| {
                                 row.bg(crate::theme::tint(palette.primary, 14.))
                             })

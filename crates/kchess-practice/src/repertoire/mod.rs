@@ -1316,7 +1316,7 @@ impl Render for Repertoire {
                     .py(px(6.))
                     .border_l_2()
                     .border_color(crate::theme::tint(palette.primary, 50.))
-                    .rounded_r(radii::SM)
+                    .rounded_r(radii::BOX)
                     .bg(palette.elevated)
                     .text_size(px(13.))
                     .text_color(palette.toned)

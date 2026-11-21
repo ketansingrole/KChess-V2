@@ -36,7 +36,7 @@ pub fn eval_bar(line: Option<&EngineLine>, orientation: Color, result: Option<&s
         |_, _, _| {},
         move |bounds, (), window, _| {
             let dark = rgb(0x403d39);
-            window.paint_quad(fill(bounds, dark).corner_radii(radii::XS));
+            window.paint_quad(fill(bounds, dark).corner_radii(radii::SMALL));
             if !known {
                 // Light stripes over the dark bar.
                 let step = 8.;
@@ -46,7 +46,7 @@ pub fn eval_bar(line: Option<&EngineLine>, orientation: Color, result: Option<&s
                 while offset < height {
                     let mut stripe = PathBuilder::fill();
                     // Clear of the rounded ends, which GPUI does not clip to.
-                    let end = radii::XS.as_f32();
+                    let end = radii::SMALL.as_f32();
                     let at = |x: f32, y: f32| {
                         point(
                             bounds.origin.x + px(x),
@@ -74,8 +74,8 @@ pub fn eval_bar(line: Option<&EngineLine>, orientation: Color, result: Option<&s
                         size(bounds.size.width, fill_height),
                     ),
                     Corners {
-                        bottom_left: radii::XS,
-                        bottom_right: radii::XS,
+                        bottom_left: radii::SMALL,
+                        bottom_right: radii::SMALL,
                         ..Corners::default()
                     },
                 )
@@ -83,8 +83,8 @@ pub fn eval_bar(line: Option<&EngineLine>, orientation: Color, result: Option<&s
                 (
                     Bounds::new(bounds.origin, size(bounds.size.width, fill_height)),
                     Corners {
-                        top_left: radii::XS,
-                        top_right: radii::XS,
+                        top_left: radii::SMALL,
+                        top_right: radii::SMALL,
                         ..Corners::default()
                     },
                 )
@@ -163,7 +163,7 @@ pub fn engine_lines(
                             .flex_none()
                             .px(px(6.))
                             .py(px(1.))
-                            .rounded(radii::SM)
+                            .rounded(radii::BOX)
                             .bg(palette.accented)
                             .font_weight(FontWeight::MEDIUM)
                             // The score changes as the search deepens; it holds still in its chip.
@@ -194,7 +194,7 @@ pub fn engine_lines(
                                 .flex_none()
                                 .px(px(2.))
                                 .py(px(1.))
-                                .rounded(radii::XS)
+                                .rounded(radii::SMALL)
                                 .text_color(palette.toned)
                                 .cursor_pointer()
                                 .pressable_fill(tint(palette.primary, 24.), palette)
@@ -235,7 +235,7 @@ pub fn engine_lines(
         .text_size(px(13.))
         .border_1()
         .border_color(palette.border)
-        .rounded(radii::LG)
+        .rounded(radii::BOX)
         .bg(palette.bg)
         .overflow_hidden()
         .children(rows)

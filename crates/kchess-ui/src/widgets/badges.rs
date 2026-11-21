@@ -126,7 +126,7 @@ fn badge_box(look: Look, palette: &Palette) -> Div {
         .gap(px(8.))
         .px(px(8.))
         .py(px(4.))
-        .rounded(radii::SM)
+        .rounded(radii::BOX)
         .bg(bg)
         .text_color(fg)
         .text_size(px(12.))
@@ -213,7 +213,7 @@ pub fn result_row(
             h_flex()
                 .id(SharedString::from(format!("result-row-{label}")))
                 .h(px(8.))
-                .rounded(radii::XS)
+                .rounded(radii::SMALL)
                 .overflow_hidden()
                 .bg(palette.elevated)
                 .when(total > 0., |bar| {
@@ -226,7 +226,7 @@ pub fn result_row(
                         .into_iter()
                         .enumerate()
                         .map(move |(index, (part, color))| {
-                            bar_segment(div(), (index == 0, index + 1 == count), radii::XS)
+                            bar_segment(div(), (index == 0, index + 1 == count), radii::SMALL)
                                 .h_full()
                                 .w(relative((part / total) as f32))
                                 .bg(color)
