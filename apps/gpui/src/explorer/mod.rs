@@ -22,7 +22,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::Level;
+use kchess_contracts::{CoreError, ErrorKind, Level};
 use serde::{Deserialize, Serialize};
 use shakmaty::Color;
 
@@ -121,7 +121,8 @@ pub struct PositionExplorer {
     /// The moves from the starting position to `fen`: each continuation is named after its opening.
     moves: Option<Vec<String>>,
     result: Option<PositionLookup>,
-    error: String,
+    /// The last lookup's failure: with no account it offers Connect Lichess, otherwise Try again.
+    failure: Option<CoreError>,
     busy: bool,
     epoch: Epoch,
     show_filters: bool,
@@ -151,6 +152,16 @@ impl PositionExplorer {
                 .default_value(prefs.since.clone())
         });
         let subscriptions = vec![
+            // Connecting an account answers a lookup that needed one.
+            cx.observe(&crate::accounts::handle(cx), |this, accounts, cx| {
+                let signed_out = this
+                    .failure
+                    .as_ref()
+                    .is_some_and(|failure| failure.kind == Some(ErrorKind::Login));
+                if signed_out && !accounts.read(cx).connected().is_empty() {
+                    this.lookup(None, false, None, cx);
+                }
+            }),
             cx.subscribe_in(
                 &player,
                 window,
@@ -186,7 +197,7 @@ impl PositionExplorer {
             fen: String::new(),
             moves: None,
             result: None,
-            error: String::new(),
+            failure: None,
             busy: false,
             epoch: Epoch::default(),
             show_filters: false,
@@ -302,7 +313,7 @@ impl PositionExplorer {
             if opened
                 && self.following(cx)
                 && self.result.is_none()
-                && self.error.is_empty()
+                && self.failure.is_none()
                 && !self.busy
             {
                 self.lookup(None, false, None, cx);
@@ -314,7 +325,7 @@ impl PositionExplorer {
         self.variant = variant;
         self.epoch.invalidate();
         self.result = None;
-        self.error.clear();
+        self.failure = None;
         self.busy = false;
         self.lookup_task = None;
         if self.following(cx) {
@@ -351,7 +362,7 @@ impl PositionExplorer {
         {
             self.update_prefs(cx, |prefs| prefs.kind = kind);
             self.result = None;
-            self.error.clear();
+            self.failure = None;
         }
         if self.needs_player(cx) {
             // A lookup still on its way for another database must not land here.
@@ -359,7 +370,7 @@ impl PositionExplorer {
             self.lookup_task = None;
             self.busy = false;
             self.result = None;
-            self.error.clear();
+            self.failure = None;
             if asked && let Some(window) = window {
                 self.player.update(cx, |input, cx| input.focus(window, cx));
             }
@@ -374,7 +385,7 @@ impl PositionExplorer {
             options: Some(self.options(&prefs)),
         });
         self.busy = true;
-        self.error.clear();
+        self.failure = None;
         cx.notify();
         self.lookup_task = Some(cx.spawn(async move |this, cx| {
             let outcome = call.await;
@@ -391,11 +402,14 @@ impl PositionExplorer {
                             "position-explorer",
                             &format!("Lookup failed: {}", cause.message),
                         );
-                        this.error = if cause.message.is_empty() {
-                            "Lookup failed. Retry.".into()
+                        this.failure = Some(if cause.message.is_empty() {
+                            CoreError {
+                                message: "Lookup failed.".into(),
+                                ..cause
+                            }
                         } else {
-                            cause.message
-                        };
+                            cause
+                        });
                     }
                 }
                 cx.notify();

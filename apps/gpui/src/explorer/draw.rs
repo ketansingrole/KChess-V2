@@ -261,6 +261,7 @@ impl PositionExplorer {
                     };
                     v_flex()
                         .id(("explorer-tile", index))
+                        .test_support()
                         .role(Role::Button)
                         .keyboard_focus(palette.primary)
                         .w(tile)
@@ -680,14 +681,35 @@ impl Render for PositionExplorer {
                 ))
             })
             .children(status.map(|status| widgets::loading(status, &palette)))
-            .when(!self.error.is_empty(), |explorer| {
-                explorer.child(
-                    div()
+            .children(self.failure.as_ref().map(|failure| {
+                if failure.kind == Some(ErrorKind::Login) {
+                    // The account is the way out, here rather than in Settings.
+                    return h_flex()
+                        .id("explorer-signed-out")
+                        .flex_wrap()
+                        .gap(px(8.))
+                        .text_size(px(13.))
+                        .text_color(palette.text_muted)
+                        .child("No Lichess account connected")
+                        .child(widgets::connect_lichess("explorer-connect", cx).small())
+                        .into_any_element();
+                }
+                // The list has its own Look up beside the switch; the grid only this.
+                if self.layout == Layout::List {
+                    return div()
                         .text_size(px(13.))
                         .text_color(palette.error)
-                        .child(self.error.clone()),
+                        .child(failure.message.clone())
+                        .into_any_element();
+                }
+                widgets::retry_line(
+                    "explorer-retry",
+                    failure.message.clone(),
+                    palette.error,
+                    cx.listener(|this, _, window, cx| this.lookup(None, true, Some(window), cx)),
                 )
-            })
+                .into_any_element()
+            }))
             .children(body)
     }
 }

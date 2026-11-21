@@ -46,6 +46,7 @@ impl PlayersPage {
                     .ghost()
                     .small()
                     .icon(icon("x"))
+                    // gpui-lints: allow(icon_per_label) empties the recent names; Clear elsewhere deletes
                     .label("Clear")
                     .accessibility_label("Clear recent players")
                     .on_click(cx.listener(|_, _, _, cx| {

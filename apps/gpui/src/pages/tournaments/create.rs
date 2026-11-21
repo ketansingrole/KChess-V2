@@ -361,7 +361,7 @@ impl Render for CreateArena {
                                 Button::new("arena-reconnect")
                                     .small()
                                     .outline()
-                                    .icon(icon("link"))
+                                    .icon(icon("log-in"))
                                     .label("Reconnect")
                                     .on_click(|_, window, cx| {
                                         window.close_dialog(cx);

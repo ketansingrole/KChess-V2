@@ -231,7 +231,7 @@ fn refusal_text(problem: AiProblem) -> &'static str {
         AiProblem::Ineligible => "This ChatGPT plan can't be used here.",
         AiProblem::Unsupported => "This model can't answer here.",
         AiProblem::Unverified => "No reliable explanation for this one.",
-        AiProblem::Unavailable => "ChatGPT is unavailable. Try again.",
+        AiProblem::Unavailable => "ChatGPT is unavailable.",
     }
 }
 
@@ -381,14 +381,21 @@ pub fn explain_block(
                         .into_any_element(),
                 ),
                 AiProblem::Limit => Some(manage_usage("ai-limit-usage").into_any_element()),
-                AiProblem::Unavailable => Some(
-                    Button::new("ai-retry")
-                        .outline()
-                        .small()
-                        .label("Try again")
-                        .on_click(ask)
+                // Try again goes beside what went wrong, as on every card that failed to load.
+                AiProblem::Unavailable => {
+                    return Some(
+                        panel(
+                            crate::widgets::retry_line(
+                                "ai-retry",
+                                refusal_text(problem),
+                                palette.text,
+                                ask,
+                            )
+                            .into_any_element(),
+                        )
                         .into_any_element(),
-                ),
+                    );
+                }
                 _ => None,
             };
             panel(div().child(refusal_text(problem)).into_any_element())
@@ -428,6 +435,20 @@ mod tests {
                 vec!["e2e4".into(), "e7e5".into()],
             ]
         );
+    }
+
+    /// A refusal says what went wrong and leaves its action to its button: "ChatGPT is
+    /// unavailable. Try again." stood over a Try again.
+    #[test]
+    fn a_refusal_leaves_its_action_to_its_button() {
+        use kchess_contracts::types::AiProblem;
+        for (problem, action) in [
+            (AiProblem::Connect, "Continue with ChatGPT"),
+            (AiProblem::Limit, "Manage usage"),
+            (AiProblem::Unavailable, "Try again"),
+        ] {
+            assert!(!super::refusal_text(problem).contains(action), "{action}");
+        }
     }
 
     fn started_ai(cx: &mut gpui_kit::TestAppContext) -> crate::testing::Started {

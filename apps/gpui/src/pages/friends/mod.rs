@@ -701,7 +701,7 @@ impl Render for FriendsPage {
             .child(
                 Button::new("friends-follow")
                     .primary()
-                    .icon(icon("plus"))
+                    .icon(icon("user-plus"))
                     .label("Follow player")
                     .tooltip(match accounts.active(cx) {
                         Some(account) if has_connected => {

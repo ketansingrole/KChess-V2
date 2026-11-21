@@ -726,17 +726,6 @@ impl WatchPage {
         if self.tv_unreachable() {
             return notices;
         }
-        if let Some(error) = &self.error {
-            notices.push(
-                div()
-                    .id("watch-error")
-                    .test_support()
-                    .text_size(px(13.))
-                    .text_color(palette.error)
-                    .child(error.clone())
-                    .into_any_element(),
-            );
-        }
         // A finished game's feed ends with it: there is nothing to retry.
         let over = self.live.frame.as_ref().is_some_and(|frame| frame.finished);
         // A retry helps a feed that dropped, not one Lichess refused or has no game for.
@@ -748,20 +737,37 @@ impl WatchPage {
             Some(WatchPhase::Ended) => !over,
             _ => false,
         };
-        if let (true, Some(target)) = (failed, self.target.clone()) {
-            notices.push(
+        let retry = self.target.clone().filter(|_| failed).map(|target| {
+            cx.listener(move |this, _: &ClickEvent, _, cx| this.watch(target.clone(), cx))
+        });
+        // Try again goes beside what went wrong, as on every card that failed to load.
+        match (self.error.clone(), retry) {
+            (Some(error), Some(retry)) => notices.push(
+                widgets::retry_line("watch-retry", error, palette.error, retry)
+                    .id("watch-error")
+                    .test_support()
+                    .into_any_element(),
+            ),
+            (Some(error), None) => notices.push(
+                div()
+                    .id("watch-error")
+                    .test_support()
+                    .text_size(px(13.))
+                    .text_color(palette.error)
+                    .child(error)
+                    .into_any_element(),
+            ),
+            (None, Some(retry)) => notices.push(
                 h_flex()
                     .child(
-                        Button::new("watch-retry")
-                            .small()
-                            .outline()
+                        widgets::text_button("watch-retry")
+                            .icon(icon("rotate-cw"))
                             .label("Try again")
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.watch(target.clone(), cx)),
-                            ),
+                            .on_click(retry),
                     )
                     .into_any_element(),
-            );
+            ),
+            (None, None) => {}
         }
         notices
     }
@@ -1129,6 +1135,39 @@ mod tests {
             _ => kchess_testkit::respond(out, 500, "text/plain", b""),
         })
         .expect("a stand-in Lichess")
+    }
+
+    /// A feed that dropped offers Try again beside what went wrong, as every card that failed to
+    /// load does: it stood alone under the message, a bordered button of its own.
+    #[gpui_kit::test]
+    fn a_dropped_feed_offers_try_again_beside_why(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        use gpui_kit::test::TestWindowExt as _;
+        let mut app = kchess_board::testing::Started::new(cx);
+        let window = app.cx().add_window(WatchPage::new);
+        window
+            .update(app.cx(), |page, _, cx| {
+                page.tab = Tab::Friends;
+                page.target = Some(super::Target::Game("g1".into()));
+                page.phase = Some(super::WatchPhase::Error);
+                page.error = Some("The game's feed stopped.".into());
+                cx.notify();
+            })
+            .expect("the window");
+        let (message, retry) = app
+            .cx()
+            .update_window(window.into(), |_, window, cx| {
+                window.render_frame(cx);
+                (
+                    window.find("watch-error").bounds(),
+                    window.find("watch-retry").bounds(),
+                )
+            })
+            .expect("the window");
+        assert!(
+            retry.top() >= message.top() && retry.bottom() <= message.bottom(),
+            "Try again {retry:?} is not on the message's line {message:?}"
+        );
     }
 
     /// When the core cannot list TV's channels, the TV tab shows why and the failure is logged.

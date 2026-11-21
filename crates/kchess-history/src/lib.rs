@@ -579,7 +579,7 @@ impl HistoryPage {
                 .child(
                     Button::new("bookmarks-reconnect")
                         .small()
-                        .icon(icon("link"))
+                        .icon(icon("log-in"))
                         .label("Reconnect")
                         .on_click(|_, window, cx| {
                             crate::accounts::handle(cx)

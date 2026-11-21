@@ -610,7 +610,7 @@ impl TournamentsPage {
                         Button::new("tournaments-reconnect")
                             .small()
                             .outline()
-                            .icon(icon("link"))
+                            .icon(icon("log-in"))
                             .label("Reconnect")
                             .on_click(|_, window, cx| {
                                 crate::accounts::handle(cx)

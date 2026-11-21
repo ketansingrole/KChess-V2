@@ -30,6 +30,9 @@
 //! - `loading_grows`: a GPUI Kit button with `.loading(…)` and no `.icon(…)` grows by a spinner
 //!   while it is busy, moving what is beside it (Cancel beside Import, a dialog's whole footer).
 //!   With an icon, the spinner takes the icon's place: give it one.
+//! - `icon_per_label`: one label, one icon, across the app: Follow player was a plus on one page
+//!   and a person-plus on another, Reconnect a link on four and a sign-in arrow on two. A label
+//!   that names a different action on one page says so on the line before (`allow`).
 //!
 //! A line that must stay says why on the line before: `// gpui-lints: allow(<lint>) <reason>`.
 
@@ -73,23 +76,75 @@ const BLOCKING_METHODS: [&str; 7] = [
 ];
 
 /// Every finding in `text`, a file of the app's sources; tests and test modules are left out.
+#[cfg(test)]
 fn lint(text: &str) -> std::result::Result<Vec<Finding>, String> {
+    read(text).map(|(found, _)| found)
+}
+
+/// `lint`'s findings, and the labelled buttons `icon_per_label` compares across files.
+fn read(text: &str) -> std::result::Result<(Vec<Finding>, Vec<Labelled>), String> {
     let file = syn::parse_file(text).map_err(|cause| cause.to_string())?;
     let mut lints = Lints::default();
     lints.visit_file(&file);
     let lines: Vec<&str> = text.lines().collect();
-    let allowed = |finding: &Finding| {
-        let marker = format!("gpui-lints: allow({})", finding.lint);
-        (finding.line >= 2)
-            .then(|| lines.get(finding.line - 2))
+    let allowed = |line: usize, lint: &str| {
+        let marker = format!("gpui-lints: allow({lint})");
+        (line >= 2)
+            .then(|| lines.get(line - 2))
             .flatten()
             .is_some_and(|before| before.contains(&marker))
     };
-    Ok(lints
+    let found = lints
         .found
         .into_iter()
-        .filter(|finding| !allowed(finding))
-        .collect())
+        .filter(|finding| !allowed(finding.line, finding.lint))
+        .collect();
+    let labelled = lints
+        .labelled
+        .into_iter()
+        .filter(|button| !allowed(button.line, "icon_per_label"))
+        .collect();
+    Ok((found, labelled))
+}
+
+/// The string a literal expression writes (`"Reconnect"`).
+fn literal(expr: &syn::Expr) -> Option<String> {
+    match expr {
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(text),
+            ..
+        }) => Some(text.value()),
+        _ => None,
+    }
+}
+
+/// Each label drawn with more than one icon, at every place it is: `icon_per_label`.
+fn mixed_icons(buttons: &[(String, Labelled)]) -> Vec<String> {
+    let mut by_label: std::collections::BTreeMap<&str, Vec<&(String, Labelled)>> =
+        std::collections::BTreeMap::new();
+    for button in buttons {
+        by_label.entry(&button.1.label).or_default().push(button);
+    }
+    let mut found = Vec::new();
+    for (label, places) in by_label {
+        let icons: std::collections::BTreeSet<&str> = places
+            .iter()
+            .map(|(_, button)| button.icon.as_str())
+            .collect();
+        if icons.len() < 2 {
+            continue;
+        }
+        let all = icons.into_iter().collect::<Vec<_>>().join("`, `");
+        for (path, button) in places {
+            found.push(format!(
+                "{path}:{}: icon_per_label: `{label}` is drawn with `{}` here, and across the app \
+                 with `{all}`: one action, one icon (a different action says why on the line \
+                 before, `// gpui-lints: allow(icon_per_label) <reason>`)",
+                button.line, button.icon
+            ));
+        }
+    }
+    found
 }
 
 fn is_test(attrs: &[syn::Attribute]) -> bool {
@@ -127,6 +182,16 @@ struct Lints {
     found: Vec<Finding>,
     /// The links of the button chains already judged (`button`), by where their method is.
     judged: std::collections::HashSet<(usize, usize)>,
+    /// The kit buttons whose label and icon are both written out, for `icon_per_label`.
+    labelled: Vec<Labelled>,
+}
+
+/// A kit button's label and its icon's name, where the label is.
+#[derive(Debug, Clone, PartialEq)]
+struct Labelled {
+    label: String,
+    icon: String,
+    line: usize,
 }
 
 impl Lints {
@@ -251,9 +316,11 @@ impl Lints {
     /// with no icon for its spinner to stand in.
     fn button(&mut self, call: &syn::ExprMethodCall, named: bool) {
         let mut methods = Vec::new();
+        let mut links = Vec::new();
         let mut link = call;
         let root = loop {
             methods.push(&link.method);
+            links.push(link);
             match &*link.receiver {
                 syn::Expr::MethodCall(inner) => link = inner,
                 other => break other,
@@ -271,6 +338,29 @@ impl Lints {
         }
         if !is_button || !first {
             return;
+        }
+        let label = links
+            .iter()
+            .find(|link| link.method == "label")
+            .and_then(|link| Some((link.method.span(), literal(link.args.first()?)?)));
+        let glyph = links
+            .iter()
+            .find(|link| link.method == "icon")
+            .and_then(|link| match link.args.first()? {
+                syn::Expr::Call(icon)
+                    if matches!(&*icon.func, syn::Expr::Path(path)
+                    if path.path.segments.last().is_some_and(|last| last.ident == "icon")) =>
+                {
+                    literal(icon.args.first()?)
+                }
+                _ => None,
+            });
+        if let (Some((span, label)), Some(icon)) = (label, glyph) {
+            self.labelled.push(Labelled {
+                label,
+                icon,
+                line: line(span),
+            });
         }
         if !methods.iter().any(|method| *method == "min_h") {
             for method in methods.iter().filter(|method| **method == "xsmall") {
@@ -888,8 +978,10 @@ pub fn check(repo: &Path) -> Result {
         crate::util::sources_under(repo, dir, &mut files)?;
     }
     let mut found = Vec::new();
+    let mut labelled = Vec::new();
     for (path, text) in files.iter().filter(|(path, _)| !is_test_file(path)) {
-        let findings = lint(text).map_err(|cause| format!("{path}: {cause}"))?;
+        let (findings, buttons) = read(text).map_err(|cause| format!("{path}: {cause}"))?;
+        labelled.extend(buttons.into_iter().map(|button| (path.clone(), button)));
         found.extend(findings.into_iter().map(|finding| {
             format!(
                 "{path}:{}: {}: {}",
@@ -897,6 +989,7 @@ pub fn check(repo: &Path) -> Result {
             )
         }));
     }
+    found.extend(mixed_icons(&labelled));
     if found.is_empty() {
         return Ok(());
     }
@@ -1079,6 +1172,48 @@ fn footer(busy: bool) -> Div {
 }
 "#;
         assert_eq!(lints_of(text), [("loading_grows", 4)]);
+    }
+
+    /// Follow player was a plus on Friends and a person-plus on Players.
+    #[test]
+    fn a_label_drawn_with_two_icons_is_found_in_every_place() {
+        let friends = r#"
+fn header() -> Div {
+    div().child(Button::new("follow").icon(icon("plus")).label("Follow player"))
+}
+"#;
+        let players = r#"
+fn card() -> Div {
+    div()
+        .child(Button::new("follow").outline().icon(icon("user-plus")).label("Follow player"))
+        .child(Button::new("save").icon(icon("save")).label(text))
+        .child(Button::new("go").label("Go"))
+        // gpui-lints: allow(icon_per_label) removes the list, not the history
+        .child(Button::new("clear").icon(icon("x")).label(
+            "Clear",
+        ))
+}
+"#;
+        let history = r#"
+fn bar() -> Div {
+    div().child(Button::new("clear").icon(icon("trash-2")).label("Clear"))
+}
+"#;
+        let mut buttons = Vec::new();
+        for (path, text) in [
+            ("friends.rs", friends),
+            ("players.rs", players),
+            ("history.rs", history),
+        ] {
+            let (_, found) = read(text).expect("the snippet parses");
+            buttons.extend(found.into_iter().map(|button| (path.to_string(), button)));
+        }
+        let found = mixed_icons(&buttons);
+        let places: Vec<&str> = found
+            .iter()
+            .map(|finding| finding.split(": icon_per_label").next().unwrap_or_default())
+            .collect();
+        assert_eq!(places, ["friends.rs:3", "players.rs:4"], "{found:#?}");
     }
 
     #[test]
