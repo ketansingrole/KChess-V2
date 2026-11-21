@@ -475,3 +475,77 @@ fn an_engine_changed_in_another_window_is_read_again(cx: &mut gpui_kit::TestAppC
         settings()(cx).is_some_and(|page| page.read(cx).engine_status().is_some())
     });
 }
+
+/// A change brings up a notice whose Undo puts the setting back as it was, saved.
+#[gpui_kit::test]
+fn undo_takes_back_a_settings_change(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Sound");
+    app.click("sound");
+    app.wait_for_saved("soundEnabled", json!(false));
+    assert!(app.shows(crate::setting_notice::UNDO), "{}", app.paths());
+    app.click(crate::setting_notice::UNDO);
+    assert_eq!(app.find("sound").checked(), Some(true));
+    app.wait_for_saved("soundEnabled", json!(true));
+}
+
+/// Changes soon after each other to one setting are one change: Undo goes back to before the
+/// first, and a later change to another setting is not taken back with it.
+#[gpui_kit::test]
+fn undo_goes_back_to_before_a_run_of_changes(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Gameplay");
+    let (ask, queen) = (("promotion", 0usize), ("promotion", 1usize));
+    let first = app.saved_settings()["promotion"].clone();
+    app.click(ask);
+    app.click(queen);
+    app.wait_for_saved("promotion", json!("queen"));
+    app.click(crate::setting_notice::UNDO);
+    app.wait_for_saved("promotion", first);
+    assert!(!app.shows(crate::setting_notice::UNDO));
+}
+
+/// A new profile promotes a premoved pawn to a queen, as Lichess does, and asks otherwise.
+#[gpui_kit::test]
+fn a_new_profile_queens_premoves_and_asks_otherwise(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    assert_eq!(app.saved_settings()["promotion"], json!("premove"));
+    app.open_settings("Gameplay");
+    let premove = ("promotion", 2usize);
+    assert_eq!(app.find(premove).label(), Some("Queen when premoving"));
+    assert_eq!(app.find(premove).selected(), Some(true));
+}
+
+/// A profile that chose Ask before the default changed keeps asking.
+#[gpui_kit::test]
+fn a_stored_promotion_choice_outlives_the_new_default(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Gameplay");
+    app.click(("promotion", 0usize));
+    app.wait_for_saved("promotion", json!("ask"));
+    let mut app = app.restart();
+    assert_eq!(app.saved_settings()["promotion"], json!("ask"));
+}
+
+/// Restore defaults shows while a category differs from a new profile: it puts the category's
+/// settings back, and Undo brings the person's own again.
+#[gpui_kit::test]
+fn restore_defaults_puts_a_category_back_and_undo_returns_it(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Gameplay");
+    assert!(
+        !app.shows("restore-defaults"),
+        "a new profile is at its defaults"
+    );
+    app.click("premove");
+    app.click(("promotion", 0usize));
+    app.wait_for_saved("promotion", json!("ask"));
+    app.click("restore-defaults");
+    assert_eq!(app.find("premove").checked(), Some(true));
+    app.wait_for_saved("promotion", json!("premove"));
+    app.wait_gone("restore-defaults");
+    app.click(crate::setting_notice::UNDO);
+    assert_eq!(app.find("premove").checked(), Some(false));
+    app.wait_for_saved("promotion", json!("ask"));
+    assert!(app.shows("restore-defaults"));
+}

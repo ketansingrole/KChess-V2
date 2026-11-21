@@ -30,6 +30,7 @@ mod online;
 mod pages;
 mod palette;
 mod profile;
+mod setting_notice;
 mod shell;
 mod shortcuts;
 mod startup;

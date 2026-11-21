@@ -465,10 +465,26 @@ impl AnalysisPage {
                                     .checked(infinite)
                                     .disabled(!engine_on)
                                     .accessibility_label("Infinite analysis")
-                                    .on_click(move |on, _, cx| {
-                                        crate::prefs::set(cx, INFINITE, *on);
-                                        let _ = on_infinite
-                                            .update(cx, |page, cx| page.engine_changed(cx));
+                                    .on_click(move |on, window, cx| {
+                                        let on = *on;
+                                        let set = {
+                                            let page = on_infinite.clone();
+                                            move |on: bool, cx: &mut App| {
+                                                crate::prefs::set(cx, INFINITE, on);
+                                                let _ = page
+                                                    .update(cx, |page, cx| page.engine_changed(cx));
+                                            }
+                                        };
+                                        set(on, cx);
+                                        crate::setting_notice::offer(
+                                            crate::setting_notice::switched(
+                                                "Infinite analysis",
+                                                on,
+                                            ),
+                                            move |_, cx| set(!on, cx),
+                                            window,
+                                            cx,
+                                        );
                                     }),
                             )
                             .child(described(
@@ -485,9 +501,22 @@ impl AnalysisPage {
                                     .checked(arrows)
                                     .disabled(!engine_on)
                                     .accessibility_label("Show engine arrows")
-                                    .on_click(move |on, _, cx| {
-                                        crate::prefs::set(cx, ARROWS, *on);
-                                        let _ = on_arrows.update(cx, |page, cx| page.redraw(cx));
+                                    .on_click(move |on, window, cx| {
+                                        let on = *on;
+                                        let set = {
+                                            let page = on_arrows.clone();
+                                            move |on: bool, cx: &mut App| {
+                                                crate::prefs::set(cx, ARROWS, on);
+                                                let _ = page.update(cx, |page, cx| page.redraw(cx));
+                                            }
+                                        };
+                                        set(on, cx);
+                                        crate::setting_notice::offer(
+                                            crate::setting_notice::switched("Engine arrows", on),
+                                            move |_, cx| set(!on, cx),
+                                            window,
+                                            cx,
+                                        );
                                     }),
                             )
                             .child(described("Show engine arrows", None)),
@@ -722,6 +751,17 @@ impl AnalysisPage {
             .child(head)
             .children(cloud_line)
             .children(body)
+    }
+}
+
+impl AnalysisPage {
+    /// Show `count` engine lines (the Undo of a change in the engine settings).
+    pub(super) fn set_lines(&mut self, count: usize, window: &mut Window, cx: &mut Context<Self>) {
+        crate::prefs::set(cx, ENGINE_LINES, count);
+        self.lines_choice.update(cx, |choice, cx| {
+            choice.set_selected_index(Some(IndexPath::new(count - 1)), window, cx);
+        });
+        self.engine_changed(cx);
     }
 }
 
