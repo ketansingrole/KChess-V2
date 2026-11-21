@@ -674,13 +674,7 @@ impl EditorPage {
                     palette.text_muted
                 })
                 .cursor_pointer()
-                .when(selected, |spare| {
-                    spare
-                        .bg(tint(palette.primary, 30.))
-                        .border_2()
-                        .border_color(palette.primary)
-                })
-                .when(!selected, |spare| spare.pressable(palette))
+                .map(|spare| chosen(spare, selected, palette))
                 .tooltip(move |window, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(label).build(window, cx)
                 })
@@ -715,13 +709,7 @@ impl EditorPage {
                 .justify_center()
                 .rounded(radii::MD)
                 .cursor_pointer()
-                .when(selected, |spare| {
-                    spare
-                        .bg(tint(palette.primary, 30.))
-                        .border_2()
-                        .border_color(palette.primary)
-                })
-                .when(!selected, |spare| spare.pressable(palette))
+                .map(|spare| chosen(spare, selected, palette))
                 .tooltip(move |window, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(label.clone()).build(window, cx)
                 })
@@ -774,6 +762,19 @@ impl EditorPage {
                 "Remove pieces",
                 cx,
             ))
+    }
+}
+
+/// A spare piece's or tool's cell, lit while it is the one chosen. Every cell has the border, clear
+/// but on the chosen one: the chosen one's alone made it 4 px wider and slid the row under the
+/// pointer that chose it.
+fn chosen<E: StatefulInteractiveElement + Styled>(cell: E, selected: bool, palette: &Palette) -> E {
+    let cell = cell.border_2().border_color(transparent_black());
+    if selected {
+        cell.bg(tint(palette.primary, 30.))
+            .border_color(palette.primary)
+    } else {
+        cell.pressable(palette)
     }
 }
 

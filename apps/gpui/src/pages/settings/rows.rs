@@ -338,11 +338,14 @@ pub(super) fn option(
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
         .when(chosen, |option| {
+            // The thicker border takes its extra pixel from the padding, so the chosen option is
+            // the size of the others and its picture where it was: with 2 px less padding it
+            // was 2 px shorter, and choosing one nudged the grid under the pointer.
             option
                 .border_2()
                 .border_color(palette.primary)
-                .py(px(4.))
-                .px(px(4.))
+                .py(px(5.))
+                .px(px(3.))
                 .text_color(palette.highlighted)
         })
         .when(!chosen, |option| {

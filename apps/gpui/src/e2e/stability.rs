@@ -167,3 +167,46 @@ fn the_voice_button_holds_still_under_the_board_editor(cx: &mut gpui_kit::TestAp
     let mut app = Harness::start(cx);
     voice_holds_still(&mut app, "Board editor", "editor-voice");
 }
+
+/// Choosing a spare piece in the Board editor leaves the row where it was.
+#[gpui_kit::test]
+fn the_board_editors_spare_pieces_hold_still_as_one_is_chosen(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Board editor");
+    app.find("chess-board");
+    let ids: Vec<ElementId> = ["King", "Queen", "Rook", "Bishop", "Knight", "Pawn"]
+        .iter()
+        .map(|role| format!("spare-White-{role}").into())
+        .collect();
+    let before = places(&mut app, &ids);
+    for id in &ids {
+        app.click(id.clone());
+        app.settle();
+        assert_eq!(
+            places(&mut app, &ids),
+            before,
+            "the spare pieces moved choosing {id:?}"
+        );
+    }
+}
+
+/// Choosing a piece set in Settings leaves every option where it was.
+#[gpui_kit::test]
+fn choosing_a_piece_set_leaves_the_options_in_place(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Appearance");
+    let ids: Vec<ElementId> = ["cburnett", "merida", "pixel"]
+        .iter()
+        .map(|set| format!("piece-set-{set}").into())
+        .collect();
+    let before = places(&mut app, &ids);
+    for id in ids.iter().rev() {
+        app.click(id.clone());
+        app.settle();
+        assert_eq!(
+            places(&mut app, &ids),
+            before,
+            "the options moved choosing {id:?}"
+        );
+    }
+}
