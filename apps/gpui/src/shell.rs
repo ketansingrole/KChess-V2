@@ -596,6 +596,11 @@ impl Workspace {
             self.sections.to_top();
         }
         self.pages.choose(page, window, cx);
+        let title = window_title(page);
+        if title != self.title {
+            window.set_window_title(&title);
+            self.title = title;
+        }
         if page == Page::Settings
             && let Some(settings) = self.pages.get::<crate::pages::settings::SettingsPage>()
         {
@@ -830,11 +835,6 @@ fn working(cx: &App) -> bool {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.fit_window(window);
-        let title = window_title(self.pages.current());
-        if title != self.title {
-            window.set_window_title(&title);
-            self.title = title;
-        }
         // Zen mode on a game page leaves the board and its panel.
         let zen = crate::settings::frontend(cx).zen_mode && self.pages.zen(cx);
         h_flex()

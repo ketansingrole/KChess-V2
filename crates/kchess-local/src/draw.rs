@@ -58,6 +58,7 @@ impl Render for LocalPage {
             .map(kchess_domain::rules::make_fen)
             .unwrap_or_default();
         let (timed, paused) = (self.game.timed(), self.game.paused());
+        // gpui-lints: allow(assign_in_render) a tick redraws only the clock faces, which read this
         self.faces_active = [Color::White, Color::Black]
             .map(|color| live && display_turn == color && timed && !paused);
         let mut pockets = [

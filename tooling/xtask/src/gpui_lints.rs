@@ -9,6 +9,8 @@
 //!
 //! - `notify_in_render`: `cx.notify()` in `render` asks for another frame every frame.
 //! - `update_in_render`: `entity.update(cx, …)` in `render` changes state while drawing it.
+//! - `assign_in_render`: `self.field = …` in `render` changes the view's own state while drawing
+//!   it: Home once made a new board there whenever a key it formatted every frame changed.
 //! - `blocking_in_render`: the disk, a process or a sleep in `render` stops every window.
 //! - `reentrant_update`: `x.update(cx, |…| x.update(…))` borrows the entity twice: GPUI panics.
 //! - `unlogged_failure`: a failure's message reaches the page (`Err(cause) => this.error =
@@ -736,6 +738,32 @@ impl<'ast> Visit<'ast> for InRender<'_> {
         }
     }
 
+    fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
+        self.assigned(&assign.left);
+        visit::visit_expr_assign(self, assign);
+    }
+
+    fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
+        use syn::BinOp::*;
+        let assigns = matches!(
+            binary.op,
+            AddAssign(_)
+                | SubAssign(_)
+                | MulAssign(_)
+                | DivAssign(_)
+                | RemAssign(_)
+                | BitXorAssign(_)
+                | BitAndAssign(_)
+                | BitOrAssign(_)
+                | ShlAssign(_)
+                | ShrAssign(_)
+        );
+        if assigns {
+            self.assigned(&binary.left);
+        }
+        visit::visit_expr_binary(self, binary);
+    }
+
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         let method = call.method.to_string();
         if method == "notify" && call.args.is_empty() {
@@ -790,6 +818,31 @@ impl<'ast> Visit<'ast> for InRender<'_> {
             }
         }
         visit::visit_expr_call(self, call);
+    }
+}
+
+impl InRender<'_> {
+    /// `self.field = …` (or `+=`, or into a field of a field): the view's state changed while
+    /// drawing it.
+    fn assigned(&mut self, place: &syn::Expr) {
+        let mut root = place;
+        loop {
+            root = match root {
+                syn::Expr::Field(field) => &field.base,
+                syn::Expr::Paren(paren) => &paren.expr,
+                _ => break,
+            };
+        }
+        let of_self = matches!(root, syn::Expr::Path(path) if path.path.is_ident("self"));
+        if of_self && !std::ptr::eq(root, place) {
+            self.lints.report(
+                place.span(),
+                "assign_in_render",
+                "`render` changes the view's state while drawing it: change it where its inputs \
+                 change (the handler, task or subscription that learned of it), and let `render` \
+                 read it",
+            );
+        }
     }
 }
 
@@ -862,6 +915,38 @@ impl Render for Board {
         assert_eq!(
             lints_of(text),
             [("notify_in_render", 4), ("update_in_render", 5)]
+        );
+    }
+
+    #[test]
+    fn a_field_set_in_render_is_found_outside_its_closures() {
+        let text = r#"
+impl Render for Home {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut shown = 0;
+        shown = 1;
+        self.board = Some(cx.new(|_| ChessBoard::new()));
+        self.cache.key += 1;
+        if self.board.is_none() {
+            (self.opening) = None;
+        }
+        let later = cx.listener(|this, _, _, cx| {
+            this.flipped = true;
+            self.flipped = true;
+        });
+        // gpui-lints: allow(assign_in_render) a tick reads it
+        self.faces = [true, false];
+        div().on_click(later)
+    }
+}
+"#;
+        assert_eq!(
+            lints_of(text),
+            [
+                ("assign_in_render", 6),
+                ("assign_in_render", 7),
+                ("assign_in_render", 9)
+            ]
         );
     }
 

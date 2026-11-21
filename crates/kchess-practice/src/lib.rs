@@ -378,6 +378,7 @@ impl Render for PracticePage {
             &palette,
         );
         let body = self.body(tab, window, cx);
+        // gpui-lints: allow(assign_in_render) a shared view preference picks the tab; `body` asks what it last drew
         self.shown_tab = Some(tab);
         v_flex()
             .size_full()
