@@ -70,6 +70,11 @@ pub struct FriendsPage {
     /// When every profile was last asked for.
     profiles_asked: Option<std::time::Instant>,
     status: HashMap<String, UserPresence>,
+    /// The list's order, by presence as it was when the page opened (or when presence first
+    /// came): later presence shows in place. Resorted on every poll, a friend starting a game
+    /// swapped rows with the one under the pointer, Challenge and all. None until presence is
+    /// known.
+    order: Option<Vec<String>>,
     loading: bool,
     /// `gameLibraryOverview().versus`: the connected accounts' record against each player.
     versus: BTreeMap<String, GameRecord>,
@@ -94,6 +99,15 @@ impl Focusable for FriendsPage {
 
 fn key(name: &str) -> String {
     name.to_lowercase()
+}
+
+/// Who can be watched (0) or challenged (1) right now, before everyone else (2).
+fn rank(name: &str, status: &HashMap<String, UserPresence>) -> u8 {
+    match status.get(&key(name)) {
+        Some(presence) if presence.playing => 0,
+        Some(presence) if presence.online => 1,
+        _ => 2,
+    }
 }
 
 /// "5 min ago", for last seen and last synced.
@@ -132,11 +146,12 @@ impl FriendsPage {
             this.refresh_status(cx);
             true
         });
-        let mut page = FriendsPage {
+        FriendsPage {
             input,
             profiles: HashMap::new(),
             profiles_asked: None,
             status: HashMap::new(),
+            order: None,
             loading: false,
             versus: BTreeMap::new(),
             followed: 0,
@@ -147,9 +162,7 @@ impl FriendsPage {
             focus: cx.focus_handle(),
             _poll: poll,
             _subscriptions: subscriptions,
-        };
-        page.shown(cx);
-        page
+        }
     }
 
     fn friends(cx: &App) -> Vec<Account> {
@@ -158,6 +171,11 @@ impl FriendsPage {
 
     /// The page was shown: usage, profiles and presence afresh.
     pub fn shown(&mut self, cx: &mut Context<Self>) {
+        // Opening the page sorts it again, by the presence known now.
+        self.order = None;
+        if !self.status.is_empty() {
+            self.sort(cx);
+        }
         crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.refresh(cx));
         self.load_profiles(cx);
         self.refresh_status(cx);
@@ -278,12 +296,31 @@ impl FriendsPage {
             let presence = core.request(calls::Presence {
                 usernames: PresenceUsers(chunk.to_vec()),
             });
-            crate::loading::fetch(cx, "friends", presence, |this, report, _| {
-                for (name, presence) in report.users {
-                    this.status.insert(key(&name), presence);
-                }
+            crate::loading::fetch(cx, "friends", presence, |this, report, cx| {
+                this.presence_arrived(report.users, cx);
             });
         }
+    }
+
+    /// Who is online and playing, as Lichess says: the list is sorted by it the first time.
+    pub(crate) fn presence_arrived(
+        &mut self,
+        users: impl IntoIterator<Item = (String, UserPresence)>,
+        cx: &mut Context<Self>,
+    ) {
+        for (name, presence) in users {
+            self.status.insert(key(&name), presence);
+        }
+        if self.order.is_none() {
+            self.sort(cx);
+        }
+    }
+
+    /// Set the list's order: who can be watched or challenged now first.
+    fn sort(&mut self, cx: &App) {
+        let mut friends = Self::friends(cx);
+        friends.sort_by_key(|friend| rank(&friend.username, &self.status));
+        self.order = Some(friends.iter().map(|friend| key(&friend.username)).collect());
     }
 
     /// Follow the player typed and download their games.
@@ -461,6 +498,7 @@ impl FriendsPage {
                                     .child(
                                         div()
                                             .id(("friend-name", index))
+                                            .test_support()
                                             .role(Role::Link)
                                             .keyboard_focus(palette.primary)
                                             .aria_label(format!("@{name}"))
@@ -654,19 +692,21 @@ impl Render for FriendsPage {
         let handle = cx.global::<AccountsHandle>().0.clone();
         let accounts = handle.read(cx);
         let mut friends = accounts.tracked();
-        let rank = |friend: &Account, status: &HashMap<String, UserPresence>| {
-            let presence = status.get(&key(&friend.username));
-            match presence {
-                Some(presence) if presence.playing => 0,
-                Some(presence) if presence.online => 1,
-                _ => 2,
-            }
-        };
-        // Who can be watched or challenged right now comes first.
-        friends.sort_by_key(|friend| rank(friend, &self.status));
+        // In the order set (`order`); someone followed since, after, by presence.
+        friends.sort_by_key(|friend| {
+            let name = key(&friend.username);
+            let at = self
+                .order
+                .as_ref()
+                .and_then(|order| order.iter().position(|kept| *kept == name));
+            (
+                at.unwrap_or(usize::MAX),
+                rank(&friend.username, &self.status),
+            )
+        });
         let online_count = friends
             .iter()
-            .filter(|friend| rank(friend, &self.status) < 2)
+            .filter(|friend| rank(&friend.username, &self.status) < 2)
             .count();
         let (stored, downloaded) = friends
             .iter()
@@ -910,6 +950,13 @@ impl PageView for FriendsPage {
 
     fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
         FriendsPage::new(window, cx)
+    }
+
+    /// Each visit, not only the first: the list is sorted again and its presence asked afresh.
+    fn shown(this: &Entity<Self>, again: bool, _window: &mut Window, cx: &mut App) {
+        if !again {
+            this.update(cx, |friends, cx| friends.shown(cx));
+        }
     }
 
     fn actions(&self, cx: &App) -> Vec<Action> {
