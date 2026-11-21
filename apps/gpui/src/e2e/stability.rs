@@ -580,6 +580,7 @@ fn nothing_notifies_while_drawing(
     let (mut app, _lichess) = Harness::signed_in_showcase(cx);
     app.cx
         .simulate_window_resize(app.window, size(px(width), px(height)));
+    app.with_window(|window, _| window.record_views_notified_while_drawing(true));
     let mut found = Vec::new();
     for page in Page::all().filter(|&page| page != Page::Settings) {
         let label = page.info().label;
@@ -613,6 +614,43 @@ fn nothing_notifies_while_drawing(
         "drawn again in the next frame, as a frame notified them:\n  {}",
         found.join("\n  ")
     );
+}
+
+/// A window records the views notified while it draws only once a test asks, at most eight a
+/// frame: resolving every notification's stack in every test took the app's tests on Windows
+/// 10 to 25 s each, and the job ran out of its hour (CI, 2026-11-22).
+#[gpui_kit::test]
+fn a_window_records_what_notifies_while_drawing_only_when_asked(cx: &mut gpui_kit::TestAppContext) {
+    struct NotifiesWhileDrawing;
+    impl gpui_kit::Render for NotifiesWhileDrawing {
+        fn render(
+            &mut self,
+            _: &mut Window,
+            cx: &mut gpui_kit::Context<Self>,
+        ) -> impl gpui_kit::IntoElement {
+            for _ in 0..10 {
+                // gpui-lints: allow(notify_in_render) the fault this test records
+                cx.notify();
+            }
+            gpui_kit::div()
+        }
+    }
+    let window: gpui_kit::AnyWindowHandle = cx.add_window(|_, _| NotifiesWhileDrawing).into();
+    let drawn = |cx: &mut gpui_kit::TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            super::draw(window, cx);
+            window.views_notified_while_drawing()
+        })
+        .expect("the window is open")
+    };
+    assert!(drawn(cx).is_empty(), "recorded without being asked");
+    cx.update_window(window, |_, window, _| {
+        window.record_views_notified_while_drawing(true)
+    })
+    .expect("the window is open");
+    let notified = drawn(cx);
+    assert_eq!(notified.len(), 8);
+    assert!(notified[0].1.contains("stability"), "{}", notified[0].1);
 }
 
 /// `render` only reads: a view it notifies (a Select told its items, a cached state set) is
