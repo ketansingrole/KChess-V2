@@ -21,3 +21,18 @@ mod tests;
 pub use moves::*;
 pub use players::*;
 pub use setting_rows::*;
+
+/// Connect Lichess, wherever a page needs an account: it signs in in the browser, and spins,
+/// unavailable, while a sign-in runs.
+pub fn connect_lichess(id: impl Into<ElementId>, cx: &App) -> Button {
+    let busy = kchess_app::accounts::handle(cx).read(cx).busy;
+    Button::new(id)
+        .primary()
+        .icon(icon("log-in"))
+        .label("Connect Lichess")
+        .loading(busy)
+        .disabled(busy)
+        .on_click(|_, window, cx| {
+            kchess_app::accounts::handle(cx).update(cx, |accounts, cx| accounts.connect(window, cx))
+        })
+}

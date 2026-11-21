@@ -777,33 +777,27 @@ impl Render for OnlinePage {
         let body: AnyElement = if !connected {
             widgets::card(&palette)
                 .child(
-                    widgets::empty_state(icon("globe"), "Connect Lichess to play", None, &palette)
-                        .child(
-                            h_flex()
-                                .justify_center()
-                                .gap(px(8.))
-                                .mt(px(8.))
-                                .child(
-                                    Button::new("online-connect")
-                                        .primary()
-                                        .icon(icon("log-in"))
-                                        .label("Connect Lichess")
-                                        .on_click(|_, window, cx| {
-                                            crate::accounts::handle(cx)
-                                                .update(cx, |accounts, cx| {
-                                                    accounts.connect(window, cx)
-                                                })
-                                        }),
-                                )
-                                .child(
-                                    Button::new("online-computer")
-                                        .outline()
-                                        .label("Play the computer")
-                                        .on_click(|_, window, cx| {
-                                            crate::shell::open(Page::Computer, window, cx)
-                                        }),
-                                ),
-                        ),
+                    widgets::empty_state(
+                        icon("globe"),
+                        "No Lichess account connected",
+                        None,
+                        &palette,
+                    )
+                    .child(
+                        h_flex()
+                            .justify_center()
+                            .gap(px(8.))
+                            .mt(px(8.))
+                            .child(widgets::connect_lichess("online-connect", cx))
+                            .child(
+                                Button::new("online-computer")
+                                    .outline()
+                                    .label("Play the computer")
+                                    .on_click(|_, window, cx| {
+                                        crate::shell::open(Page::Computer, window, cx)
+                                    }),
+                            ),
+                    ),
                 )
                 .into_any_element()
         } else if online.phase == Phase::Seeking {

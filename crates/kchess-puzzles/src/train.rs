@@ -262,7 +262,7 @@ impl PuzzlesPage {
                     let key = key.clone();
                     this.train_theme(&key, window, cx);
                 }
-                stats::StatsEvent::Connect | stats::StatsEvent::Reconnect => {
+                stats::StatsEvent::Reconnect => {
                     crate::accounts::handle(cx)
                         .update(cx, |accounts, cx| accounts.connect(window, cx));
                 }

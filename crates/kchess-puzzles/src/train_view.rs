@@ -21,15 +21,11 @@ impl PuzzlesPage {
                 .on_click(cx.listener(move |this, _, _, cx| this.choose_mode(mode, cx)))
         };
         let connect = |id: &'static str, label: &'static str, cx: &mut Context<Self>| {
-            Button::new(id)
-                .primary()
-                .icon(icon("log-in"))
+            let busy = crate::accounts::handle(cx).read(cx).busy;
+            // Signing in needs Lichess: offline, the downloaded puzzles stand beside it.
+            widgets::connect_lichess(id, cx)
                 .label(label)
-                .disabled(!online || crate::accounts::handle(cx).read(cx).busy)
-                .on_click(cx.listener(|_, _, window, cx| {
-                    crate::accounts::handle(cx)
-                        .update(cx, |accounts, cx| accounts.connect(window, cx));
-                }))
+                .disabled(!online || busy)
         };
         let actions = |id, label, cx: &mut Context<Self>| {
             h_flex()
@@ -40,8 +36,8 @@ impl PuzzlesPage {
         let content: AnyElement = match self.session.phase() {
             Phase::NoAccount => empty(
                 icon("user-round-plus"),
-                "Connect a Lichess account for rated puzzles".into(),
-                Some("Connect Lichess or switch to Practice".into()),
+                "Rated puzzles need a Lichess account".into(),
+                None,
             )
             .child(actions("connect-lichess", "Connect Lichess", cx))
             .into_any_element(),
