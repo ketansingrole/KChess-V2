@@ -275,6 +275,177 @@ impl HomePage {
         cx.notify();
     }
 
+    /// The board you left (or last played), what it is, and what to do with it.
+    fn now_card(
+        &self,
+        latest: Option<&PlayedGame>,
+        stacked: bool,
+        palette: &Palette,
+        cx: &App,
+    ) -> Div {
+        let board = self.board.as_ref().map(|(_, board)| board.clone());
+        // What the board shows: its title, the line under it, and the game it opens.
+        let (title, detail, opens) = match (&self.continue_game, latest) {
+            (Some((game, _)), _) => (
+                Some(game.opponent.clone()),
+                // Beside the smaller board, a line each.
+                Some(if stacked {
+                    v_flex().children(game.state.clone()).into_any_element()
+                } else {
+                    widgets::dotted(game.state.clone()).into_any_element()
+                }),
+                None,
+            ),
+            // The last game, as its row in Recent games says it: who won, and against whom; and
+            // the opening it was.
+            (None, Some(game)) => {
+                // A variant game is named by its variant, as its row is; a standard one by its
+                // opening, while opening names are shown.
+                let opening = variant_of(game).or_else(|| {
+                    self.last_opening
+                        .as_ref()
+                        .and_then(|(_, name)| name.clone())
+                        .filter(|_| kchess_history::opening_names_shown(cx))
+                });
+                (
+                    Some((kchess_history::opponent(game), None)),
+                    Some(
+                        v_flex()
+                            .gap(px(6.))
+                            .child(
+                                h_flex()
+                                    .gap(px(8.))
+                                    .child(kchess_history::badge(game.outcome(), None, palette))
+                                    .child(short_date(game.started_at)),
+                            )
+                            .children(opening.map(|opening| {
+                                div()
+                                    .id("home-opening")
+                                    .test_support()
+                                    .truncate()
+                                    .aria_label(opening.clone())
+                                    .child(opening)
+                            }))
+                            .into_any_element(),
+                    ),
+                    Some(game.id.clone()),
+                )
+            }
+            (None, None) => (None, None, None),
+        };
+        let unfinished = self.continue_game.is_some();
+        let side_length = if stacked { BOARD_SMALL } else { BOARD };
+        let board_label = title.as_ref().map_or_else(
+            || "Play the computer".into(),
+            |(name, strength)| match strength {
+                Some(strength) => format!("{name} · {strength}"),
+                None => name.clone(),
+            },
+        );
+        let board_game = opens.clone();
+        let board_view = div()
+            .id("home-board")
+            .role(Role::Button)
+            .keyboard_focus(palette.primary)
+            .aria_label(board_label)
+            .size(side_length)
+            .flex_none()
+            .cursor_pointer()
+            .pressable_fade(0.92)
+            .on_click(move |_, window, cx| match &board_game {
+                Some(id) => kchess_history::open_game(id, window, cx),
+                None => kchess_nav::shell::open(Page::Computer, window, cx),
+            })
+            .children(board);
+        let primary = Button::new(if unfinished {
+            "home-continue"
+        } else {
+            "home-play"
+        })
+        .primary()
+        .icon(icon(if unfinished { "play" } else { "bot" }))
+        .label(if unfinished {
+            "Continue"
+        } else {
+            "Play the computer"
+        })
+        .on_click(|_, window, cx| kchess_nav::shell::open(Page::Computer, window, cx));
+        let review = opens.map(|id| {
+            Button::new("home-review")
+                .outline()
+                .label("Review")
+                .on_click(move |_, window, cx| kchess_history::open_game(&id, window, cx))
+        });
+        let has_about = title.is_some();
+        let about = v_flex()
+            .min_w_0()
+            .gap(px(2.))
+            // The strength follows the name, muted, and drops to the next line whole.
+            .children(title.map(|(name, strength)| {
+                h_flex()
+                    .flex_wrap()
+                    .items_baseline()
+                    .gap_x(px(6.))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(palette.highlighted)
+                            .child(name),
+                    )
+                    .children(strength.map(|strength| {
+                        div()
+                            .whitespace_nowrap()
+                            .text_color(palette.text_muted)
+                            .child(strength)
+                    }))
+            }))
+            .children(detail.map(|detail| {
+                div()
+                    .mt(px(2.))
+                    .text_size(px(13.))
+                    .text_color(palette.text_muted)
+                    .child(detail)
+            }));
+        // Side by side under the board; stacked beside the smaller one.
+        let actions = if stacked {
+            v_flex()
+                // A button's width, not the card's, in a wide window.
+                .w_full()
+                .max_w(px(320.))
+                .gap(px(8.))
+                .child(primary.w_full())
+                .children(review.map(|review| review.w_full()))
+        } else {
+            h_flex()
+                .gap(px(8.))
+                .child(div().flex_1().child(primary.w_full()))
+                .children(review)
+        };
+        let now = widgets::card(palette).p(px(16.)).flex_none();
+        if stacked {
+            now.child(
+                h_flex().items_start().gap(px(16.)).child(board_view).child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .self_stretch()
+                        .gap(px(14.))
+                        // With nothing to name, the action stands level with the board's middle.
+                        .when(!has_about, |side| side.justify_center())
+                        .when(has_about, |side| side.child(about).child(div().flex_1()))
+                        .child(actions),
+                ),
+            )
+        } else {
+            now.w(side_length + px(34.))
+                .gap(px(14.))
+                .child(board_view)
+                .when(has_about, |card| card.child(about))
+                .child(div().flex_1())
+                .child(actions)
+        }
+    }
+
     /// What the board's card shows, worked out when the unfinished game is read and when the
     /// played games change, not while drawing: the board, with the game you left, else the last
     /// one you finished (seen from your side), else the starting position; and the last game's
@@ -493,341 +664,18 @@ impl Render for HomePage {
             window.viewport_size().width - px(260.)
         };
         let (stacked, per_row) = arrangement(width);
-        let tiles = [
-            tile(
-                "home-puzzles",
-                icon("puzzle"),
-                "Puzzles",
-                Page::Puzzles,
-                &palette,
-            )
-            .into_any_element(),
-            tile(
-                "home-analysis",
-                icon("microscope"),
-                "Analysis board",
-                Page::Analysis,
-                &palette,
-            )
-            .into_any_element(),
-            tile(
-                "home-local",
-                icon("swords"),
-                "Over the board",
-                Page::Local,
-                &palette,
-            )
-            .into_any_element(),
-            tile(
-                "home-online",
-                icon("globe-2"),
-                "Play on Lichess",
-                Page::Online,
-                &palette,
-            )
-            .into_any_element(),
-        ];
-        let mut tiles = tiles.into_iter().peekable();
-        let mut rows = Vec::new();
-        while tiles.peek().is_some() {
-            rows.push(h_flex().gap(GAP).children(tiles.by_ref().take(per_row)));
-        }
-        let tiles = v_flex().gap(GAP).children(rows);
+        let tiles = tiles(per_row, &palette);
 
         let mut games = self.with_recent(cx, <[PlayedGame]>::to_vec);
-        let latest = games.first().cloned();
-        let board = self.board.as_ref().map(|(_, board)| board.clone());
-        let names = |game: &PlayedGame| format!("{} vs {}", game.white, game.black);
-        // What the board shows: its title, the line under it, and the game it opens.
-        let (title, detail, opens) = match (&self.continue_game, &latest) {
-            (Some((game, _)), _) => (
-                Some(game.opponent.clone()),
-                // Beside the smaller board, a line each.
-                Some(if stacked {
-                    v_flex().children(game.state.clone()).into_any_element()
-                } else {
-                    widgets::dotted(game.state.clone()).into_any_element()
-                }),
-                None,
-            ),
-            // The last game, as its row in Recent games says it: who won, and against whom; and
-            // the opening it was.
-            (None, Some(game)) => {
-                // A variant game is named by its variant, as its row is; a standard one by its
-                // opening, while opening names are shown.
-                let opening = variant_of(game).or_else(|| {
-                    self.last_opening
-                        .as_ref()
-                        .and_then(|(_, name)| name.clone())
-                        .filter(|_| kchess_history::opening_names_shown(cx))
-                });
-                (
-                    Some((kchess_history::opponent(game), None)),
-                    Some(
-                        v_flex()
-                            .gap(px(6.))
-                            .child(
-                                h_flex()
-                                    .gap(px(8.))
-                                    .child(kchess_history::badge(game.outcome(), None, &palette))
-                                    .child(short_date(game.started_at)),
-                            )
-                            .children(opening.map(|opening| {
-                                div()
-                                    .id("home-opening")
-                                    .test_support()
-                                    .truncate()
-                                    .aria_label(opening.clone())
-                                    .child(opening)
-                            }))
-                            .into_any_element(),
-                    ),
-                    Some(game.id.clone()),
-                )
-            }
-            (None, None) => (None, None, None),
-        };
-        let unfinished = self.continue_game.is_some();
-        let side_length = if stacked { BOARD_SMALL } else { BOARD };
-        let board_label = title.as_ref().map_or_else(
-            || "Play the computer".into(),
-            |(name, strength)| match strength {
-                Some(strength) => format!("{name} · {strength}"),
-                None => name.clone(),
-            },
-        );
-        let board_game = opens.clone();
-        let board_view = div()
-            .id("home-board")
-            .role(Role::Button)
-            .keyboard_focus(palette.primary)
-            .aria_label(board_label)
-            .size(side_length)
-            .flex_none()
-            .cursor_pointer()
-            .pressable_fade(0.92)
-            .on_click(move |_, window, cx| match &board_game {
-                Some(id) => kchess_history::open_game(id, window, cx),
-                None => kchess_nav::shell::open(Page::Computer, window, cx),
-            })
-            .children(board);
-        let primary = Button::new(if unfinished {
-            "home-continue"
-        } else {
-            "home-play"
-        })
-        .primary()
-        .icon(icon(if unfinished { "play" } else { "bot" }))
-        .label(if unfinished {
-            "Continue"
-        } else {
-            "Play the computer"
-        })
-        .on_click(|_, window, cx| kchess_nav::shell::open(Page::Computer, window, cx));
-        let review = opens.map(|id| {
-            Button::new("home-review")
-                .outline()
-                .label("Review")
-                .on_click(move |_, window, cx| kchess_history::open_game(&id, window, cx))
-        });
-        let has_about = title.is_some();
-        let about = v_flex()
-            .min_w_0()
-            .gap(px(2.))
-            // The strength follows the name, muted, and drops to the next line whole.
-            .children(title.map(|(name, strength)| {
-                h_flex()
-                    .flex_wrap()
-                    .items_baseline()
-                    .gap_x(px(6.))
-                    .child(
-                        div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(palette.highlighted)
-                            .child(name),
-                    )
-                    .children(strength.map(|strength| {
-                        div()
-                            .whitespace_nowrap()
-                            .text_color(palette.text_muted)
-                            .child(strength)
-                    }))
-            }))
-            .children(detail.map(|detail| {
-                div()
-                    .mt(px(2.))
-                    .text_size(px(13.))
-                    .text_color(palette.text_muted)
-                    .child(detail)
-            }));
-        // Side by side under the board; stacked beside the smaller one.
-        let actions = if stacked {
-            v_flex()
-                // A button's width, not the card's, in a wide window.
-                .w_full()
-                .max_w(px(320.))
-                .gap(px(8.))
-                .child(primary.w_full())
-                .children(review.map(|review| review.w_full()))
-        } else {
-            h_flex()
-                .gap(px(8.))
-                .child(div().flex_1().child(primary.w_full()))
-                .children(review)
-        };
-        // The board you left (or last played), what it is, and what to do with it.
-        let now = widgets::card(&palette).p(px(16.)).flex_none();
-        let now = if stacked {
-            now.child(
-                h_flex().items_start().gap(px(16.)).child(board_view).child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .self_stretch()
-                        .gap(px(14.))
-                        // With nothing to name, the action stands level with the board's middle.
-                        .when(!has_about, |side| side.justify_center())
-                        .when(has_about, |side| side.child(about).child(div().flex_1()))
-                        .child(actions),
-                ),
-            )
-        } else {
-            now.w(side_length + px(34.))
-                .gap(px(14.))
-                .child(board_view)
-                .when(has_about, |card| card.child(about))
-                .child(div().flex_1())
-                .child(actions)
-        };
-
+        let now = self.now_card(games.first(), stacked, &palette, cx);
         games.truncate(RECENT);
         // Before the first game there is nothing to list: the board's card already starts one.
         let has_games = !games.is_empty();
-        let recent = widgets::card(&palette)
-            .flex_1()
-            .min_w_0()
-            .gap(px(4.))
-            .child(
-                h_flex()
-                    .justify_between()
-                    .mb(px(4.))
-                    .child(widgets::heading("Recent games", &palette))
-                    .child(view_all("home-view-all").on_click(|_, window, cx| {
-                        kchess_nav::shell::open(Page::History, window, cx)
-                    })),
-            )
-            .child(
-                v_flex()
-                    .mx(px(-12.))
-                    .children(games.into_iter().enumerate().map(|(index, game)| {
-                        let id = game.id.clone();
-                        h_flex()
-                            .id(("home-game", index))
-                            .test_support()
-                            .role(Role::Button)
-                            .keyboard_focus(palette.primary)
-                            .aria_label(match variant_of(&game) {
-                                Some(variant) => format!("{}, {variant}", names(&game)),
-                                None => names(&game),
-                            })
-                            .gap(px(12.))
-                            .px(px(12.))
-                            .py(px(8.))
-                            .rounded(radii::MD)
-                            .text_size(px(13.))
-                            .cursor_pointer()
-                            .pressable(&palette)
-                            .on_click(move |_, window, cx| {
-                                kchess_history::open_game(&id, window, cx)
-                            })
-                            .child(
-                                div()
-                                    .id(("home-game-outcome", index))
-                                    .test_support()
-                                    .flex_none()
-                                    .child(kchess_history::badge(
-                                        game.outcome(),
-                                        Some(kchess_history::BADGE_WIDTH),
-                                        &palette,
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(kchess_history::opponent(&game)),
-                            )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_right()
-                                    .text_color(palette.text_muted)
-                                    .child({
-                                        let count = kchess_history::move_count(game.moves.len());
-                                        match variant_of(&game) {
-                                            Some(variant) => format!("{variant} · {count}"),
-                                            None => count,
-                                        }
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .w(px(52.))
-                                    .flex_none()
-                                    .text_right()
-                                    .text_color(palette.text_muted)
-                                    .child(short_date(game.started_at)),
-                            )
-                    })),
-            );
+        let recent = recent_card(games, &palette);
         // A connected account's (or Chess.com player's) activity follows; until then, one line to
         // connect it.
         let activity = self.activity.as_ref().map(|(_, view)| view.clone());
-        let connect = activity.is_none().then(|| {
-            widgets::card(&palette).py(px(16.)).child(
-                h_flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(px(16.))
-                    .child(
-                        div()
-                            .flex_none()
-                            .size(px(36.))
-                            .rounded(radii::LG)
-                            .bg(palette.accented)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(icon("chart-line").size(px(18.)).text_color(palette.toned)),
-                    )
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w(px(200.))
-                            .child(widgets::heading("Lichess", &palette))
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .text_color(palette.text_muted)
-                                    .child("Your ratings and games"),
-                            ),
-                    )
-                    .child(
-                        Button::new("home-connect")
-                            .outline()
-                            .icon(icon("log-in"))
-                            .label("Connect Lichess")
-                            .loading(busy)
-                            .disabled(busy)
-                            .on_click(|_, window, cx| {
-                                crate::accounts::handle(cx)
-                                    .update(cx, |accounts, cx| accounts.connect(window, cx))
-                            }),
-                    ),
-            )
-        });
+        let connect = activity.is_none().then(|| connect_card(busy, &palette));
         let starts = v_flex()
             .flex_1()
             .min_w_0()
@@ -870,6 +718,179 @@ impl Render for HomePage {
                     .children(activity),
             )
     }
+}
+
+/// The places to start, `per_row` abreast.
+fn tiles(per_row: usize, palette: &Palette) -> Div {
+    let tiles = [
+        tile(
+            "home-puzzles",
+            icon("puzzle"),
+            "Puzzles",
+            Page::Puzzles,
+            palette,
+        )
+        .into_any_element(),
+        tile(
+            "home-analysis",
+            icon("microscope"),
+            "Analysis board",
+            Page::Analysis,
+            palette,
+        )
+        .into_any_element(),
+        tile(
+            "home-local",
+            icon("swords"),
+            "Over the board",
+            Page::Local,
+            palette,
+        )
+        .into_any_element(),
+        tile(
+            "home-online",
+            icon("globe-2"),
+            "Play on Lichess",
+            Page::Online,
+            palette,
+        )
+        .into_any_element(),
+    ];
+    let mut tiles = tiles.into_iter().peekable();
+    let mut rows = Vec::new();
+    while tiles.peek().is_some() {
+        rows.push(h_flex().gap(GAP).children(tiles.by_ref().take(per_row)));
+    }
+    v_flex().gap(GAP).children(rows)
+}
+
+/// The last games played, each opening in Game history.
+fn recent_card(games: Vec<PlayedGame>, palette: &Palette) -> Div {
+    let names = |game: &PlayedGame| format!("{} vs {}", game.white, game.black);
+    widgets::card(palette)
+        .flex_1()
+        .min_w_0()
+        .gap(px(4.))
+        .child(
+            h_flex()
+                .justify_between()
+                .mb(px(4.))
+                .child(widgets::heading("Recent games", palette))
+                .child(
+                    view_all("home-view-all").on_click(|_, window, cx| {
+                        kchess_nav::shell::open(Page::History, window, cx)
+                    }),
+                ),
+        )
+        .child(
+            v_flex()
+                .mx(px(-12.))
+                .children(games.into_iter().enumerate().map(|(index, game)| {
+                    let id = game.id.clone();
+                    h_flex()
+                        .id(("home-game", index))
+                        .test_support()
+                        .role(Role::Button)
+                        .keyboard_focus(palette.primary)
+                        .aria_label(match variant_of(&game) {
+                            Some(variant) => format!("{}, {variant}", names(&game)),
+                            None => names(&game),
+                        })
+                        .gap(px(12.))
+                        .px(px(12.))
+                        .py(px(8.))
+                        .rounded(radii::MD)
+                        .text_size(px(13.))
+                        .cursor_pointer()
+                        .pressable(palette)
+                        .on_click(move |_, window, cx| kchess_history::open_game(&id, window, cx))
+                        .child(
+                            div()
+                                .id(("home-game-outcome", index))
+                                .test_support()
+                                .flex_none()
+                                .child(kchess_history::badge(
+                                    game.outcome(),
+                                    Some(kchess_history::BADGE_WIDTH),
+                                    palette,
+                                )),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(kchess_history::opponent(&game)),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_right()
+                                .text_color(palette.text_muted)
+                                .child({
+                                    let count = kchess_history::move_count(game.moves.len());
+                                    match variant_of(&game) {
+                                        Some(variant) => format!("{variant} · {count}"),
+                                        None => count,
+                                    }
+                                }),
+                        )
+                        .child(
+                            div()
+                                .w(px(52.))
+                                .flex_none()
+                                .text_right()
+                                .text_color(palette.text_muted)
+                                .child(short_date(game.started_at)),
+                        )
+                })),
+        )
+}
+
+/// One line to connect a Lichess account, until one is.
+fn connect_card(busy: bool, palette: &Palette) -> Div {
+    widgets::card(palette).py(px(16.)).child(
+        h_flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(16.))
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(36.))
+                    .rounded(radii::LG)
+                    .bg(palette.accented)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("chart-line").size(px(18.)).text_color(palette.toned)),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w(px(200.))
+                    .child(widgets::heading("Lichess", palette))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(palette.text_muted)
+                            .child("Your ratings and games"),
+                    ),
+            )
+            .child(
+                Button::new("home-connect")
+                    .outline()
+                    .icon(icon("log-in"))
+                    .label("Connect Lichess")
+                    .loading(busy)
+                    .disabled(busy)
+                    .on_click(|_, window, cx| {
+                        crate::accounts::handle(cx)
+                            .update(cx, |accounts, cx| accounts.connect(window, cx))
+                    }),
+            ),
+    )
 }
 
 impl kchess_nav::page::PageAction for Action {
