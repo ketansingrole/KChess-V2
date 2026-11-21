@@ -97,7 +97,7 @@ impl OnlineState {
         .detach();
     }
 
-    pub(super) fn challenge_act(
+    fn challenge_act(
         &mut self,
         id: String,
         call: impl Future<Output = Result<(), CoreError>> + 'static,

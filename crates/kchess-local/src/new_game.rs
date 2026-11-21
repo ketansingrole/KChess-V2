@@ -3,17 +3,17 @@
 use super::*;
 
 /// Starts the game the form chose, from its setup and clock.
-pub(super) type StartGame = Box<dyn Fn(Setup, Value, &mut Window, &mut App)>;
+type StartGame = Box<dyn Fn(Setup, Value, &mut Window, &mut App)>;
 
 /// The new-game form (`New game over the board`): the variant, its start, the clock and odds.
 pub(super) struct NewGame {
-    pub(super) variant: Entity<SelectState<Vec<SharedString>>>,
-    pub(super) number: Entity<InputState>,
-    pub(super) fen: Entity<InputState>,
-    pub(super) clock: Entity<SelectState<Vec<SharedString>>>,
-    pub(super) odds: Entity<InputState>,
-    pub(super) on_start: StartGame,
-    pub(super) _subscriptions: Vec<Subscription>,
+    variant: Entity<SelectState<Vec<SharedString>>>,
+    number: Entity<InputState>,
+    fen: Entity<InputState>,
+    clock: Entity<SelectState<Vec<SharedString>>>,
+    odds: Entity<InputState>,
+    on_start: StartGame,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl NewGame {
@@ -111,7 +111,7 @@ impl NewGame {
         }
     }
 
-    pub(super) fn chosen_variant(&self, cx: &App) -> Variant {
+    fn chosen_variant(&self, cx: &App) -> Variant {
         let row = self
             .variant
             .read(cx)
@@ -120,7 +120,7 @@ impl NewGame {
         Variant::ALL.get(row).copied().unwrap_or_default()
     }
 
-    pub(super) fn number960(&self, cx: &App) -> Option<i64> {
+    fn number960(&self, cx: &App) -> Option<i64> {
         self.number
             .read(cx)
             .value()
@@ -130,7 +130,7 @@ impl NewGame {
             .filter(|n| (0..=959).contains(n))
     }
 
-    pub(super) fn fen_problem(&self, cx: &App) -> Option<SharedString> {
+    fn fen_problem(&self, cx: &App) -> Option<SharedString> {
         let text = self.fen.read(cx).value().trim().to_string();
         let variant = self.chosen_variant(cx);
         if variant == Variant::Chess960 || text.is_empty() {
@@ -140,7 +140,7 @@ impl NewGame {
     }
 
     /// The chosen start, or `None` while the form has a problem.
-    pub(super) fn setup(&self, cx: &App) -> Option<Setup> {
+    fn setup(&self, cx: &App) -> Option<Setup> {
         let variant = self.chosen_variant(cx);
         if variant == Variant::Chess960 {
             return self.number960(cx).map(|n| Setup {
@@ -165,7 +165,7 @@ impl NewGame {
     }
 
     /// The chosen clock: equal times unless Black's minutes give odds.
-    pub(super) fn clock(&self, cx: &App) -> Value {
+    fn clock(&self, cx: &App) -> Value {
         let row = self
             .clock
             .read(cx)

@@ -4,11 +4,11 @@
 use super::*;
 
 /// The inner width of a picker of `width`: its padding and border.
-pub(super) fn picture_width(width: Pixels) -> Pixels {
+fn picture_width(width: Pixels) -> Pixels {
     width - px(12.)
 }
 
-pub(super) fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
+fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
     let side = picture_width(width) / 2.;
     // Each square takes the preview's outer corners: GPUI clips to rectangles, not rounded ones.
     let square = |piece: Piece, color: u32, first: bool| {
@@ -42,7 +42,7 @@ pub(super) fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
         ))
 }
 
-pub(super) fn board_swatch(image: &str, width: Pixels) -> impl IntoElement {
+fn board_swatch(image: &str, width: Pixels) -> impl IntoElement {
     img(SharedString::from(format!("boards/{image}")))
         .size(picture_width(width))
         .rounded(radii::SM)
@@ -51,12 +51,7 @@ pub(super) fn board_swatch(image: &str, width: Pixels) -> impl IntoElement {
 
 /// The theme's background, a raised card, its text and primary colors. A scale
 /// model of a page, so its corners are scaled down with it rather than taken from `radii`.
-pub(super) fn theme_preview(
-    theme: &str,
-    custom: &[AppTheme],
-    dark: bool,
-    width: Pixels,
-) -> impl IntoElement {
+fn theme_preview(theme: &str, custom: &[AppTheme], dark: bool, width: Pixels) -> impl IntoElement {
     let colors = crate::theme::colors(theme, custom, dark);
     let color = |name: &str| {
         colors
@@ -126,7 +121,7 @@ pub(super) fn theme_list(custom: &[AppTheme]) -> Vec<AppTheme> {
     themes
 }
 
-pub(super) fn appearance_items() -> [(Appearance, &'static str, Option<Icon>); 3] {
+fn appearance_items() -> [(Appearance, &'static str, Option<Icon>); 3] {
     APPEARANCES.map(|(appearance, label, glyph)| (appearance, label, Some(icon(glyph))))
 }
 

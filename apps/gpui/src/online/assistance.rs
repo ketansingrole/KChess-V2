@@ -26,7 +26,7 @@ impl Pause {
 
 /// The first wait before a failed check for a game in progress is tried again, and the longest.
 pub(super) const RECHECK_FIRST: Duration = Duration::from_secs(15);
-pub(super) const RECHECK_MAX: Duration = Duration::from_secs(5 * 60);
+const RECHECK_MAX: Duration = Duration::from_secs(5 * 60);
 
 impl OnlineState {
     /// The engine may help: no live game, none still being looked for, and the core lends it.

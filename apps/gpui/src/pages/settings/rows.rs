@@ -63,13 +63,13 @@ pub(super) fn pin_scroll(
 #[derive(Clone)]
 pub(super) struct RowMark {
     pub(super) title: &'static str,
-    pub(super) pin: std::rc::Rc<std::cell::Cell<Pin>>,
-    pub(super) scroll: ScrollHandle,
+    pin: std::rc::Rc<std::cell::Cell<Pin>>,
+    scroll: ScrollHandle,
 }
 
 impl RowMark {
     /// The row lit, with a probe that scrolls the page to it on its first frame.
-    pub(super) fn light(&self, row: AnyElement, palette: &Palette) -> AnyElement {
+    fn light(&self, row: AnyElement, palette: &Palette) -> AnyElement {
         let (pin, scroll) = (self.pin.clone(), self.scroll.clone());
         let probe = canvas(
             move |bounds, window, _| {
@@ -131,7 +131,7 @@ pub(super) struct Rows {
 
 impl Rows {
     /// Add a row titled `title`, lit if it is the one being revealed.
-    pub(super) fn push(&mut self, title: &str, row: AnyElement, palette: &Palette) {
+    fn push(&mut self, title: &str, row: AnyElement, palette: &Palette) {
         let row = match &self.reveal {
             Some(mark) if mark.title == title => mark.light(row, palette),
             _ => row,
@@ -140,11 +140,7 @@ impl Rows {
     }
 
     /// The reset button of the row titled `title`, while its setting differs from its default.
-    pub(super) fn reset(
-        &self,
-        title: &str,
-        reset: Option<defaults::Reset<'_>>,
-    ) -> Option<AnyElement> {
+    fn reset(&self, title: &str, reset: Option<defaults::Reset<'_>>) -> Option<AnyElement> {
         let reset = reset?;
         self.shown
             .get_or_init(|| defaults::Shown::of(reset.settings))

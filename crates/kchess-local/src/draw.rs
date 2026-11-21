@@ -5,7 +5,7 @@ use super::*;
 
 /// The row above the page that holds the mode tabs, and its gap to the board: the board is
 /// sized to leave room for it.
-pub(super) const MODE_BAR: Pixels = px(48.);
+const MODE_BAR: Pixels = px(48.);
 /// The gap between the two clock faces.
 pub(super) const FACE_GAP: Pixels = px(16.);
 
