@@ -93,7 +93,7 @@ fn creating_an_arena_asks_for_an_account_and_can_be_declined(cx: &mut gpui_kit::
 }
 
 #[gpui_kit::test]
-fn watch_shows_its_feed_failing_and_the_following_and_broadcast_tabs(
+fn watch_shows_its_feed_failing_and_the_following_and_broadcasts(
     cx: &mut gpui_kit::TestAppContext,
 ) {
     let mut app = open(cx, "Watch", true);
@@ -131,8 +131,13 @@ fn watch_shows_its_feed_failing_and_the_following_and_broadcast_tabs(
         .selected(),
         Some(true)
     );
-    assert!(app.enabled("broadcasts-retry"));
-    // TV's failure stays on TV: Broadcasts says only its own.
+    // Lichess's listing, live first, each card with its cover.
+    app.find(("broadcast-card", 1usize));
+    assert!(!app.shows("broadcasts-retry"));
+    app.wait_for("the covers", |_, cx| {
+        crate::pages::watch::covers_shown(cx) >= 2
+    });
+    // TV's failure stays on TV.
     assert!(!app.shows("watch-error"));
 
     app.click(super::tab("watch-tabs", crate::pages::watch::Tab::Tv));

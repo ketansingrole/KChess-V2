@@ -1073,6 +1073,12 @@ pub fn open_broadcast(link: crate::game::BroadcastLink, window: &mut Window, cx:
     });
 }
 
+/// How many broadcast covers have arrived, for the end-to-end tests.
+#[cfg(any(test, feature = "test-support"))]
+pub fn covers_shown(cx: &mut App) -> usize {
+    remote_image::handle(cx).read(cx).arrived_count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CHANNEL_KEY, Tab, WatchPage};
