@@ -93,13 +93,13 @@ pub fn record(
     now: f64,
 ) -> Result<Vec<NotificationEntry>> {
     change(host, db, now, |entries| {
-        if let Some(key) = &input.key {
-            if let Some(at) = entries.iter().position(|e| e.key.as_ref() == Some(key)) {
-                if entries[at].says(&input) {
-                    return;
-                }
-                entries.remove(at);
+        if let Some(key) = &input.key
+            && let Some(at) = entries.iter().position(|e| e.key.as_ref() == Some(key))
+        {
+            if entries[at].says(&input) {
+                return;
             }
+            entries.remove(at);
         }
         entries.insert(
             0,
