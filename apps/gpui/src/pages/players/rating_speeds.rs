@@ -147,7 +147,12 @@ pub struct RatingSpeeds {
     games_hint: SharedString,
     /// Said, with a way to ask again, when Lichess sent nothing to chart.
     withheld: Option<(SharedString, Retry)>,
+    /// The player's history has come (`set`): until then the chart's place says it is loading.
+    loaded: bool,
 }
+
+/// The chart's height, which its place keeps in every state.
+const CHART_HEIGHT: Pixels = px(260.);
 
 impl RatingSpeeds {
     pub fn new(games_hint: impl Into<SharedString>, cx: &mut Context<Self>) -> RatingSpeeds {
@@ -157,9 +162,10 @@ impl RatingSpeeds {
             current: BTreeMap::new(),
             hidden: HashSet::new(),
             range: "All",
-            chart: cx.new(|_| LineChart::new(px(260.), |rating| format!("{}", rating.round()))),
+            chart: cx.new(|_| LineChart::new(CHART_HEIGHT, |rating| format!("{}", rating.round()))),
             games_hint: games_hint.into(),
             withheld: None,
+            loaded: false,
         }
     }
 
@@ -173,8 +179,16 @@ impl RatingSpeeds {
     ) {
         self.official = official;
         self.fallback = fallback;
+        self.loaded = true;
         self.hidden.clear();
         self.draw(cx);
+    }
+
+    /// Another player is looked up: their history is on its way.
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.set(Vec::new(), Vec::new(), cx);
+        self.loaded = false;
+        self.withheld = None;
     }
 
     pub fn set_current(&mut self, current: BTreeMap<String, UserPerf>, cx: &mut Context<Self>) {
@@ -393,16 +407,21 @@ impl Render for RatingSpeeds {
             true,
             &palette,
         );
-        let empty = |text: &'static str| {
+        // Every state takes the chart's height: the card held "No rated games yet" in one line
+        // while the history loaded, then grew by the chart and pushed the cards under it down.
+        let area = |child: AnyElement| {
             div()
-                .h(px(260.))
+                .id("rating-speeds-area")
+                .test_support()
+                .h(CHART_HEIGHT)
                 .flex()
                 .items_center()
                 .justify_center()
                 .text_size(px(13.))
                 .text_color(palette.text_muted)
-                .child(text)
+                .child(child)
         };
+        let empty = |text: SharedString| area(text.into_any_element());
         v_flex()
             .gap(px(12.))
             .child(widgets::heading("Rating history", &palette))
@@ -416,31 +435,35 @@ impl Render for RatingSpeeds {
                     .child(ranges),
             )
             .map(|card| {
-                if all.is_empty() {
-                    let (text, retry) = match &self.withheld {
-                        Some((text, retry)) => (text.clone(), Some(retry.clone())),
-                        None => ("No rated games yet".into(), None),
-                    };
-                    card.child(match retry {
-                        Some(retry) => crate::widgets::retry_line(
-                            "rating-speeds-retry",
-                            text,
-                            palette.text_muted,
-                            move |_, window, cx| retry(window, cx),
-                        ),
-                        None => div()
-                            .text_size(px(13.))
-                            .text_color(palette.text_muted)
-                            .child(text),
+                if !self.loaded {
+                    card.child(area(
+                        widgets::loading("Loading…", &palette).into_any_element(),
+                    ))
+                } else if all.is_empty() {
+                    card.child(match &self.withheld {
+                        Some((text, retry)) => {
+                            let retry = retry.clone();
+                            area(
+                                crate::widgets::retry_line(
+                                    "rating-speeds-retry",
+                                    text.clone(),
+                                    palette.text_muted,
+                                    move |_, window, cx| retry(window, cx),
+                                )
+                                .into_any_element(),
+                            )
+                        }
+                        None => empty("No rated games yet".into()),
                     })
                 } else if shown == 0 {
-                    card.child(empty("Pick a speed to show"))
+                    card.child(empty("Pick a speed to show".into()))
                 } else if !enough {
-                    card.child(empty("Not enough rated games in this range"))
+                    card.child(empty("Not enough rated games in this range".into()))
                 } else {
-                    card.child(self.chart.clone()).when(from_games, |card| {
-                        card.child(widgets::hint(self.games_hint.clone(), &palette))
-                    })
+                    card.child(area(self.chart.clone().into_any_element()))
+                        .when(from_games, |card| {
+                            card.child(widgets::hint(self.games_hint.clone(), &palette))
+                        })
                 }
             })
     }
@@ -475,6 +498,7 @@ mod tests {
             let asked = asked.clone();
             move |_, cx| {
                 let mut chart = super::RatingSpeeds::new("", cx);
+                chart.loaded = true;
                 chart.withheld = Some((
                     "Lichess sent no rating history".into(),
                     Rc::new(move |_, _| asked.set(asked.get() + 1)),
@@ -489,6 +513,51 @@ mod tests {
             })
             .expect("the window");
         assert_eq!(asked.get(), 1);
+    }
+
+    /// The chart's place is the chart's height whatever it holds: loading, no games, nothing
+    /// Lichess would send, the chart. It said "No rated games yet" in one line while the history
+    /// loaded, then grew by the chart and pushed the profile's cards under it down.
+    #[gpui_kit::test]
+    fn the_rating_chart_keeps_its_place_as_it_loads(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        use gpui_kit::test::TestWindowExt as _;
+        use std::rc::Rc;
+        let mut app = crate::e2e::Harness::start(cx);
+        let window = app.cx.add_window(|_, cx| super::RatingSpeeds::new("", cx));
+        let height = |app: &mut crate::e2e::Harness| {
+            app.cx
+                .update_window(window.into(), |_, window, cx| {
+                    window.render_frame(cx);
+                    window.find("rating-speeds-area").bounds().size.height
+                })
+                .expect("the window")
+        };
+        let set = |app: &mut crate::e2e::Harness, official: Vec<RatingSeries>| {
+            window
+                .update(&mut app.cx, |chart, _, cx| {
+                    chart.set(official, Vec::new(), cx)
+                })
+                .expect("the window");
+        };
+        let loading = height(&mut app);
+        set(&mut app, Vec::new());
+        let none = height(&mut app);
+        window
+            .update(&mut app.cx, |chart, _, cx| {
+                chart.set_withheld(Some(("Withheld".into(), Rc::new(|_, _| {}))), cx)
+            })
+            .expect("the window");
+        let withheld = height(&mut app);
+        set(
+            &mut app,
+            vec![RatingSeries {
+                name: "Blitz".into(),
+                points: vec![[2026, 0, 1, 1500], [2026, 0, 5, 1510]],
+            }],
+        );
+        let chart = height(&mut app);
+        assert_eq!([loading, none, withheld], [chart; 3]);
     }
 
     #[test]

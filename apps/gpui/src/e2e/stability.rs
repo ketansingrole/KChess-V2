@@ -261,3 +261,54 @@ fn the_analysis_moves_hold_still_off_the_start(cx: &mut gpui_kit::TestAppContext
         );
     }
 }
+
+/// Home's Lichess rating chart is one height with points and without: the card grew by the
+/// chart (and the change under its heading) as the history came, and shrank again for a mode or
+/// range with no points, moving what is under it.
+#[gpui_kit::test]
+fn the_home_rating_chart_keeps_its_height_as_points_come(cx: &mut gpui_kit::TestAppContext) {
+    use crate::rating_history::RatingHistory;
+    use gpui_kit::component::v_flex;
+    use gpui_kit::test::TestSupportExt as _;
+    use gpui_kit::{
+        AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+        Render, Styled as _, Window, div,
+    };
+    use kchess_contracts::types::RatingSeries;
+    /// The chart with something under it.
+    struct Card(Entity<RatingHistory>);
+    impl Render for Card {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            v_flex()
+                .child(self.0.clone())
+                .child(div().id("under-the-chart").test_support().h(px(10.)))
+        }
+    }
+    let mut app = Harness::start(cx);
+    let window = app.cx.add_window(|window, cx| {
+        Card(cx.new(|cx| RatingHistory::new("", window, cx).without_mode_picker()))
+    });
+    let under = |app: &mut Harness| {
+        app.cx
+            .update_window(window.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.find("under-the-chart").bounds().origin.y
+            })
+            .expect("the window")
+    };
+    let empty = under(&mut app);
+    window
+        .update(&mut app.cx, |card, _, cx| {
+            card.0.update(cx, |chart, cx| {
+                chart.set_official(
+                    vec![RatingSeries {
+                        name: "Blitz".into(),
+                        points: vec![[2026, 10, 1, 1500], [2026, 10, 15, 1540]],
+                    }],
+                    cx,
+                )
+            })
+        })
+        .expect("the window");
+    assert_eq!(under(&mut app), empty);
+}

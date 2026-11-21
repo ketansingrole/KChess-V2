@@ -199,7 +199,7 @@ impl RatingHistory {
             mode: "blitz".into(),
             mode_picker: true,
             range: "All",
-            chart: cx.new(|_| LineChart::new(px(240.), |rating| format!("{}", rating.round()))),
+            chart: cx.new(|_| LineChart::new(CHART_HEIGHT, |rating| format!("{}", rating.round()))),
             mode_select,
             range_select,
             games_hint: games_hint.into(),
@@ -334,6 +334,8 @@ impl Render for RatingHistory {
         let values = self.values();
         let change = (values.len() >= 2).then(|| values[values.len() - 1] - values[0]);
         v_flex()
+            .id("rating-history")
+            .test_support()
             .gap(px(8.))
             .child(
                 h_flex()
@@ -356,27 +358,18 @@ impl Render for RatingHistory {
                                 },
                                 &palette,
                             ))
-                            .children(change.map(|change| {
+                            // The change's line is kept without points, so the heading's row
+                            // stays one height as they come.
+                            .child(
                                 h_flex()
+                                    .h(px(18.))
                                     .gap(px(4.))
                                     .text_size(px(12.))
                                     .text_color(palette.text_muted)
-                                    .child(format!("{} now ·", values[values.len() - 1]))
-                                    .child(
-                                        div()
-                                            .text_color(if change >= 0. {
-                                                palette.success
-                                            } else {
-                                                palette.error
-                                            })
-                                            .child(if change >= 0. {
-                                                format!("+{change}")
-                                            } else {
-                                                format!("{change}")
-                                            }),
-                                    )
-                                    .child("over range")
-                            })),
+                                    .children(change.into_iter().flat_map(|change| {
+                                        change_line(change, values[values.len() - 1], &palette)
+                                    })),
+                            ),
                     )
                     // Each only as wide as its choice and chevron.
                     .child(
@@ -407,19 +400,56 @@ impl Render for RatingHistory {
                             ),
                     ),
             )
-            .when(values.len() >= 2, |card| card.child(self.chart.clone()))
+            // The chart's place keeps its height without points: the card grew by the chart as
+            // the history came, and shrank again for a mode or range with none.
+            .child(
+                div()
+                    .id("rating-history-area")
+                    .test_support()
+                    .h(CHART_HEIGHT)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .map(|area| {
+                        if values.len() >= 2 {
+                            area.child(self.chart.clone())
+                        } else {
+                            area.child(widgets::empty_state(
+                                icon("chart-line"),
+                                "No rating points",
+                                Some("Try another mode or date range".into()),
+                                &palette,
+                            ))
+                        }
+                    }),
+            )
             .when(values.len() >= 2 && self.chart_from_games(), |card| {
                 card.child(widgets::hint(self.games_hint.clone(), &palette))
             })
-            .when(values.len() < 2, |card| {
-                card.child(widgets::empty_state(
-                    icon("chart-line"),
-                    "No rating points",
-                    Some("Try another mode or date range".into()),
-                    &palette,
-                ))
-            })
     }
+}
+
+/// The chart's height, which its place keeps without points too.
+const CHART_HEIGHT: Pixels = px(240.);
+
+/// "1712 now · +40 over range", the change colored by its sign.
+fn change_line(change: f64, now: f64, palette: &Palette) -> [AnyElement; 3] {
+    [
+        div().child(format!("{now} now ·")).into_any_element(),
+        div()
+            .text_color(if change >= 0. {
+                palette.success
+            } else {
+                palette.error
+            })
+            .child(if change >= 0. {
+                format!("+{change}")
+            } else {
+                format!("{change}")
+            })
+            .into_any_element(),
+        div().child("over range").into_any_element(),
+    ]
 }
 
 #[cfg(test)]
