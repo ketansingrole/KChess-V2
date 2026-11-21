@@ -603,3 +603,32 @@ fn f_turns_the_board_on_every_board_page(cx: &mut gpui_kit::TestAppContext) {
         assert_eq!(app.white_at_bottom(), before, "{page}");
     }
 }
+
+/// On Windows and Linux the sidebar toggle sat 12px from the window's edge, its icon 6px left of
+/// the column of the navigation's icons below it, open or as the rail. (On macOS it sits beside
+/// the traffic lights instead.)
+#[cfg(not(target_os = "macos"))]
+#[gpui_kit::test]
+fn the_sidebar_toggle_lines_up_with_the_navigation_icons(cx: &mut gpui_kit::TestAppContext) {
+    use crate::shell::{NAV_ICON, NAV_INSET};
+    let mut app = Harness::start(cx);
+    for open in [true, false] {
+        let shown = app.find("sidebar-toggle").label() == Some("Hide sidebar");
+        if shown != open {
+            app.click("sidebar-toggle");
+            // The width eases; the rows hold still once it ends.
+            app.settle();
+        }
+        let toggle = app.find("sidebar-toggle").bounds().center().x;
+        let home = app.find("0-0").bounds();
+        let icon = if open {
+            home.left() + NAV_INSET + NAV_ICON / 2.
+        } else {
+            home.center().x
+        };
+        assert!(
+            (toggle - icon).abs() < gpui_kit::px(0.5),
+            "open: {open}: the toggle's centre is at {toggle:?}, the icons' at {icon:?}"
+        );
+    }
+}

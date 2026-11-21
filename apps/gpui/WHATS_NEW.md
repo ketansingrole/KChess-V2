@@ -8,6 +8,7 @@ refuses to release with nothing there.
 
 ## Unreleased
 
+- **Icons the right size everywhere**: icons now keep the same size whatever your screen and its scaling, so none look too small beside the others on Windows, and the button that shows and hides the sidebar lines up with the icons below it.
 - **Zen mode on more boards**: Z and the Zen button now hide the sidebar in your Lichess games and the practice trainers too, not just against the computer or over the board. Guess the move is now found from Search.
 - **Brilliant moves**: game reviews run on your computer now mark your brilliant moves too.
 - **Say “next” in puzzles**: with voice on, voice keeps listening once you finish a puzzle or a mistake drill, and saying “next” takes you to the next one.
