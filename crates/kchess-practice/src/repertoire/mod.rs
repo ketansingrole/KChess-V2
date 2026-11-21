@@ -708,23 +708,22 @@ impl Repertoire {
         }
     }
 
-    /// The trainer's buttons voice can press: Show move (“hint”) and Restart line (“retry”).
+    /// The trainer's buttons voice can press: Show move (“show move” or “hint”) and Restart
+    /// line (“restart line”, “retry” or “try again”). A line ended goes on to the next by itself,
+    /// so there is no “next”; Forget mistakes and Save as study stay buttons.
     fn voice_offers(&self, cx: &App) -> Vec<Offer> {
         let actions = self.actions(cx);
-        vec![
-            Offer::new(
-                PuzzleCommand::Hint,
-                actions.contains(&RepertoireAction::ShowMove),
-                "Move shown",
-                "No move to show now",
-            ),
-            Offer::new(
-                PuzzleCommand::Retry,
-                actions.contains(&RepertoireAction::Restart),
-                "Line restarted",
-                "Nothing to restart",
-            ),
-        ]
+        let show = actions.contains(&RepertoireAction::ShowMove);
+        let restart = actions.contains(&RepertoireAction::Restart);
+        [PuzzleCommand::ShowMove, PuzzleCommand::Hint]
+            .map(|command| Offer::new(command, show, "Move shown", "No move to show now"))
+            .into_iter()
+            .chain(
+                [PuzzleCommand::RestartLine, PuzzleCommand::Retry].map(|command| {
+                    Offer::new(command, restart, "Line restarted", "Nothing to restart")
+                }),
+            )
+            .collect()
     }
 
     /// A spoken move belongs to this position of the line; another drops a choice waiting.
@@ -760,8 +759,8 @@ impl Repertoire {
         let offers = self.voice_offers(cx);
         match self.voice.hear_offered(&heard, &setup, turn, &offers, cx) {
             Said::Play(uci) => self.play(&uci, cx),
-            Said::Command(PuzzleCommand::Hint) => self.show_answer(cx),
-            Said::Command(PuzzleCommand::Retry) => {
+            Said::Command(PuzzleCommand::ShowMove | PuzzleCommand::Hint) => self.show_answer(cx),
+            Said::Command(PuzzleCommand::RestartLine | PuzzleCommand::Retry) => {
                 self.reviewing = false;
                 self.start_line(cx)
             }
@@ -1171,7 +1170,7 @@ impl Render for Repertoire {
                 },
                 BoardBar {
                     id: "repertoire-voice",
-                    hint: "Say “E four”, “hint” or “retry”",
+                    hint: "Say “E four”, “show move” or “restart line”",
                     active: your_turn,
                     listening: your_turn,
                     grammar: offered_grammar(&self.voice_offers(cx)),

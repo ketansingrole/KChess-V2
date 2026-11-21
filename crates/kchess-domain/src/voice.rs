@@ -88,10 +88,14 @@ crate::union!(
         Hint = "hint",
         /// The previous position.
         Back = "back",
+        /// Show the move to play (the repertoire trainer's Show move).
+        ShowMove = "showMove",
+        /// A line from its start again (the repertoire trainer's Restart line).
+        RestartLine = "restartLine",
     }
 );
 /// What a training board takes besides moves; each page listens for those its buttons offer.
-const PUZZLE_COMMANDS: [(&str, PuzzleCommand); 10] = [
+const PUZZLE_COMMANDS: [(&str, PuzzleCommand); 12] = [
     ("next", PuzzleCommand::Next),
     ("next puzzle", PuzzleCommand::Next),
     ("retry", PuzzleCommand::Retry),
@@ -102,6 +106,8 @@ const PUZZLE_COMMANDS: [(&str, PuzzleCommand); 10] = [
     ("back", PuzzleCommand::Back),
     ("go back", PuzzleCommand::Back),
     ("previous", PuzzleCommand::Back),
+    ("show move", PuzzleCommand::ShowMove),
+    ("restart line", PuzzleCommand::RestartLine),
 ];
 const EDITOR_PHRASE_KEYS: [&str; 15] = [
     "clear board",
@@ -743,6 +749,8 @@ mod tests {
             ("back", PuzzleCommand::Back),
             ("go back", PuzzleCommand::Back),
             ("previous", PuzzleCommand::Back),
+            ("Show move", PuzzleCommand::ShowMove),
+            ("restart line", PuzzleCommand::RestartLine),
         ] {
             assert_eq!(puzzle_command(said), Some(command), "{said}");
         }
@@ -760,6 +768,10 @@ mod tests {
         let drills = commands_grammar(&[PuzzleCommand::Hint, PuzzleCommand::Retry]);
         assert!(has(&drills, "hint") && has(&drills, "try again") && has(&drills, "e four"));
         assert!(!has(&drills, "next") && !has(&drills, "back"));
+        // The repertoire trainer's own buttons are heard only where it offers them.
+        assert!(!has(&drills, "show move") && !has(&drills, "restart line"));
+        let trainer = commands_grammar(&[PuzzleCommand::ShowMove, PuzzleCommand::RestartLine]);
+        assert!(has(&trainer, "show move") && has(&trainer, "restart line"));
         let all = grammar(Grammar::Puzzle);
         for word in ["next", "next puzzle", "retry", "hint", "back", "previous"] {
             assert!(has(all, word), "{word}");

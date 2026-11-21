@@ -652,7 +652,13 @@ impl PuzzleBoard {
             Said::Play(uci) => self.on_move(&uci, cx),
             Said::Command(PuzzleCommand::Hint) => self.hint(cx),
             Said::Command(PuzzleCommand::Next) => cx.emit(PuzzleBoardEvent::Next),
-            Said::Command(PuzzleCommand::Retry | PuzzleCommand::Back) | Said::Nothing => {}
+            Said::Command(
+                PuzzleCommand::Retry
+                | PuzzleCommand::Back
+                | PuzzleCommand::ShowMove
+                | PuzzleCommand::RestartLine,
+            )
+            | Said::Nothing => {}
         }
         cx.notify();
     }

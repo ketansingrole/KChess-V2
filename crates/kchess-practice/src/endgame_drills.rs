@@ -281,7 +281,13 @@ impl EndgameDrills {
             Said::Play(uci) => self.on_move(&uci, cx),
             Said::Command(PuzzleCommand::Hint) => self.act(DrillAction::Hint, cx),
             Said::Command(PuzzleCommand::Retry) => self.act(DrillAction::Restart, cx),
-            Said::Command(PuzzleCommand::Next | PuzzleCommand::Back) | Said::Nothing => {}
+            Said::Command(
+                PuzzleCommand::Next
+                | PuzzleCommand::Back
+                | PuzzleCommand::ShowMove
+                | PuzzleCommand::RestartLine,
+            )
+            | Said::Nothing => {}
         }
         cx.notify();
     }

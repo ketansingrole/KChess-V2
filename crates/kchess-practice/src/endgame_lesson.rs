@@ -499,7 +499,8 @@ impl EndgameLesson {
             Said::Command(PuzzleCommand::Retry) => self.act(LessonAction::Retry, cx),
             Said::Command(PuzzleCommand::Hint) => self.act(LessonAction::Hint, cx),
             Said::Command(PuzzleCommand::Back) => self.act(LessonAction::Previous, cx),
-            Said::Nothing => {}
+            Said::Command(PuzzleCommand::ShowMove | PuzzleCommand::RestartLine) | Said::Nothing => {
+            }
         }
         cx.notify();
     }
