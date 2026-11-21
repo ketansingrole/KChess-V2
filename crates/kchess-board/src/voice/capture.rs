@@ -313,8 +313,79 @@ pub fn level(audio: &[f32]) -> f32 {
     ((db - METER_FLOOR_DB) / (METER_FULL_DB - METER_FLOOR_DB)).clamp(0., 1.)
 }
 
+/// What a microphone test has heard that the player should act on (`heard`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Heard {
+    /// Nothing above a quiet room: unplugged, muted or the wrong input.
+    Nothing,
+    /// Never as loud as speech into a laptop's microphone: the input level is low.
+    Quiet,
+}
+
+/// After `chunks` of about 100 ms whose loudest `level` was `loudest`, what the player should
+/// hear about it. A headset whose input was at its lowest showed a still bar and no word why;
+/// one that sent only -40 dBFS when shouted into filled half the bar, and the recognizer hears it
+/// as quietly.
+pub fn heard(loudest: f32, chunks: usize) -> Option<Heard> {
+    /// The loudest level speech reaches into a working microphone: -36 dBFS.
+    const SPEECH: f32 = 0.6;
+    if chunks >= 30 && loudest <= 0. {
+        Some(Heard::Nothing)
+    } else if chunks >= 50 && loudest < SPEECH {
+        Some(Heard::Quiet)
+    } else {
+        None
+    }
+}
+
+impl Heard {
+    pub fn message(self, device: &str) -> String {
+        let device = if device.is_empty() {
+            "The microphone"
+        } else {
+            device
+        };
+        match self {
+            Heard::Nothing => {
+                format!("No sound from {device}. Check that it’s plugged in and not muted.")
+            }
+            Heard::Quiet => format!(
+                "{device} sounds quiet. Speak up, or raise its input level in your system sound settings."
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{Heard, heard};
+
+    /// A still bar said nothing for a silent input, and half a bar nothing for a quiet one.
+    #[test]
+    fn a_silent_or_quiet_microphone_is_named() {
+        assert_eq!(
+            heard(0., 10),
+            None,
+            "not yet: the player may not have spoken"
+        );
+        assert_eq!(heard(0., 30), Some(Heard::Nothing));
+        // Shouting into the headset that reached -40 dBFS.
+        assert_eq!(heard(0.5, 30), None);
+        assert_eq!(heard(0.5, 50), Some(Heard::Quiet));
+        // Speech into a laptop's microphone, -30 dBFS.
+        assert_eq!(heard(0.75, 50), None);
+        assert!(
+            Heard::Nothing
+                .message("Headset")
+                .starts_with("No sound from Headset.")
+        );
+        assert!(
+            Heard::Quiet
+                .message("")
+                .starts_with("The microphone sounds quiet.")
+        );
+    }
+
     /// A recording the app was started with plays instead of the microphone; none, none.
     #[gpui_kit::test]
     fn the_recording_the_app_set_plays(cx: &mut gpui_kit::TestAppContext) {

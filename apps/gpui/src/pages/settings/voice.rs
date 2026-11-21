@@ -20,6 +20,9 @@ pub(super) struct MicTest {
     _capture: Capture,
     device: String,
     level: f32,
+    /// The loudest level heard, and how many chunks so far (`capture::heard`).
+    loudest: f32,
+    chunks: usize,
     _pump: Task<()>,
 }
 
@@ -38,6 +41,8 @@ impl SettingsPage {
                             .update(cx, |this, cx| {
                                 if let Some(test) = &mut this.mic_test {
                                     test.level = capture::level(&chunk);
+                                    test.loudest = test.loudest.max(test.level);
+                                    test.chunks += 1;
                                     cx.notify();
                                 }
                             })
@@ -51,6 +56,8 @@ impl SettingsPage {
                     device: capture.device.clone(),
                     _capture: capture,
                     level: 0.,
+                    loudest: 0.,
+                    chunks: 0,
                     _pump: pump,
                 });
             }
@@ -107,13 +114,15 @@ impl SettingsPage {
         palette: &Palette,
     ) -> Div {
         let test = self.mic_test.as_ref();
-        let status: Option<SharedString> = match (&self.mic_error, test) {
-            (Some(error), _) => Some(error.clone()),
-            (None, Some(test)) if !test.device.is_empty() => {
+        let heard = test.and_then(|test| capture::heard(test.loudest, test.chunks));
+        let status: Option<SharedString> = match (&self.mic_error, test, heard) {
+            (Some(error), _, _) => Some(error.clone()),
+            (None, Some(test), Some(heard)) => Some(heard.message(&test.device).into()),
+            (None, Some(test), None) if !test.device.is_empty() => {
                 Some(format!("Speak now · {}", test.device).into())
             }
-            (None, Some(_)) => Some("Speak now".into()),
-            (None, None) => None,
+            (None, Some(_), _) => Some(SharedString::new_static("Speak now")),
+            (None, None, _) => None,
         };
         let meter = test.map(|test| {
             div()
@@ -141,6 +150,9 @@ impl SettingsPage {
         };
         let hint = match access {
             Access::Granted => None,
+            Access::Denied if cfg!(target_os = "windows") => Some(
+                "Access was turned off. Turn on microphone access for desktop apps in your privacy settings.",
+            ),
             Access::Denied => {
                 Some("Access was turned off. Allow KChess in your system privacy settings.")
             }
@@ -184,13 +196,20 @@ impl SettingsPage {
                         .on_click(cx.listener(|this, _, _, cx| this.ask_microphone(cx))),
                 )
             })
-            .children(self.mic.privacy_settings.map(|url| {
-                Button::new("voice-privacy")
-                    .ghost()
-                    .icon(icon("settings-2"))
-                    .label("Privacy settings")
-                    .on_click(move |_, _, cx| cx.open_url(url))
-            }));
+            // Allowed, the privacy page has nothing to change: Windows lists no switch of
+            // KChess's own until it has recorded, only the one every desktop app shares.
+            .children(
+                self.mic
+                    .privacy_settings
+                    .filter(|_| access != Access::Granted)
+                    .map(|url| {
+                        Button::new("voice-privacy")
+                            .ghost()
+                            .icon(icon("settings-2"))
+                            .label("Privacy settings")
+                            .on_click(move |_, _, cx| cx.open_url(url))
+                    }),
+            );
         self.rows()
             .row_with("Microphone access", access_info, access_actions, palette)
             .row_with(

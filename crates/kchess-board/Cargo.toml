@@ -47,6 +47,11 @@ objc2 = "0.6"
 objc2-av-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "AVCaptureDevice", "AVMediaFormat"] }
 block2 = "0.6"
 
+# Microphone access status: the privacy switches Windows keeps in the registry (already in
+# Cargo.lock through GPUI).
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-registry = "0.6"
+
 [dev-dependencies]
 # Headless windows for the tests (`#[gpui_kit::test]`).
 gpui-kit = { version = "=0.10.0", features = ["test-support"] }

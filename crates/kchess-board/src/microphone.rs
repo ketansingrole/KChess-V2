@@ -2,8 +2,8 @@
 //! the system's own request for it. On macOS this is AVCaptureDevice's authorization, one of the
 //! two places the app calls a platform API directly (and so an `unsafe` exception, below; the Dock
 //! icon in `dock_icon.rs` is the other).
-//! Elsewhere the system has no such switch the app can read: Linux always records, and Windows
-//! shows its denial when the microphone fails to open.
+//! Windows keeps its switches in the registry (`windows`), and it never asks: a desktop app is
+//! allowed unless one of them is off. Linux always records.
 //!
 //! The app reads all of it through `host`, which a test answers in place of the machine
 //! (`Pinned`): Settings → Voice input showed another state on a Mac than on CI's runners, so a
@@ -14,11 +14,8 @@ use gpui_kit::App;
 /// What the system says about recording (`MicrophoneStatus`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(
-    not(any(target_os = "macos", test)),
-    allow(
-        dead_code,
-        reason = "only macOS reports a refusal before recording starts"
-    )
+    not(any(target_os = "macos", target_os = "windows", test)),
+    allow(dead_code, reason = "Linux reports no refusal before recording starts")
 )]
 pub enum Access {
     Granted,
@@ -162,11 +159,79 @@ fn launched_from_terminal() -> bool {
 fn status() -> Access {
     #[cfg(target_os = "macos")]
     return mac::status();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    return win::status();
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     if cfg!(target_os = "linux") {
         Access::Granted
     } else {
         Access::Unknown
+    }
+}
+
+/// What Windows' three microphone switches add up to, each `Allow`, `Deny` or not set (`None`,
+/// which Windows takes as allowed): `machine` is the device's, which only an administrator turns
+/// on again; `user` is "Microphone access" and `desktop` is "Let desktop apps access your
+/// microphone", the one switch every app installed outside the Store shares. Windows lists no
+/// switch of KChess's own, so the privacy page has nothing more to change while all three allow.
+#[cfg_attr(
+    not(any(target_os = "windows", test)),
+    allow(dead_code, reason = "only Windows keeps these switches")
+)]
+fn windows_access(machine: Option<&str>, user: Option<&str>, desktop: Option<&str>) -> Access {
+    let denies =
+        |value: Option<&str>| value.is_some_and(|value| value.eq_ignore_ascii_case("Deny"));
+    if denies(machine) {
+        Access::Restricted
+    } else if denies(user) || denies(desktop) {
+        Access::Denied
+    } else {
+        Access::Granted
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod win {
+    use windows_registry::{CURRENT_USER, Key, LOCAL_MACHINE};
+
+    use super::Access;
+
+    const MICROPHONE: &str = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
+
+    /// A switch's `Value`; `None` where it was never set (its key or value missing). Any other
+    /// failure to read it is `Err`, and the status is then unknown.
+    fn switch(root: &Key, path: &str) -> windows_registry::Result<Option<String>> {
+        let key = match root.open(path) {
+            Ok(key) => key,
+            Err(error) if error.code().0 == NOT_FOUND => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match key.get_string("Value") {
+            Ok(value) => Ok(Some(value)),
+            Err(error) if error.code().0 == NOT_FOUND => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// ERROR_FILE_NOT_FOUND as an HRESULT: the key or value was never set.
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "an HRESULT is the same bits, signed"
+    )]
+    const NOT_FOUND: i32 = 0x8007_0002_u32 as i32;
+
+    pub fn status() -> Access {
+        let read = || -> windows_registry::Result<Access> {
+            let machine = switch(LOCAL_MACHINE, MICROPHONE)?;
+            let user = switch(CURRENT_USER, MICROPHONE)?;
+            let desktop = switch(CURRENT_USER, &format!(r"{MICROPHONE}\NonPackaged"))?;
+            Ok(super::windows_access(
+                machine.as_deref(),
+                user.as_deref(),
+                desktop.as_deref(),
+            ))
+        };
+        read().unwrap_or(Access::Unknown)
     }
 }
 
@@ -255,5 +320,25 @@ mod tests {
         let (heard, hear) = std::sync::mpsc::channel();
         cx.update(|cx| ask(cx, move |access| heard.send(access).expect("heard")));
         assert!(hear.recv().expect("an answer") == Access::Denied);
+    }
+
+    /// Windows showed "Unknown" with every switch on: the app never read them. Any one off blocks
+    /// the microphone, and a switch never set counts as on, as Windows takes it.
+    #[test]
+    fn windows_switches_add_up_to_the_access_shown() {
+        let (on, off) = (Some("Allow"), Some("Deny"));
+        assert_eq!(windows_access(on, on, on), Access::Granted);
+        assert_eq!(windows_access(None, None, None), Access::Granted);
+        assert_eq!(windows_access(on, off, on), Access::Denied);
+        assert_eq!(windows_access(on, on, off), Access::Denied);
+        assert_eq!(windows_access(off, on, on), Access::Restricted);
+        assert_eq!(windows_access(off, off, off), Access::Restricted);
+    }
+
+    /// This machine's own switches read without failing.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_switches_read_on_this_machine() {
+        assert_ne!(super::win::status(), Access::Unknown);
     }
 }
