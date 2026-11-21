@@ -2,7 +2,6 @@
 //! the games in progress and the totals.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::Input;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -153,10 +152,8 @@ impl TournamentsPage {
                     .when(account.is_some(), |row| {
                         row.child(
                             div().w(px(180.)).child(
-                                Input::new(&self.password)
-                                    .mask_toggle()
-                                    .small()
-                                    .aria_label("Tournament entry code"),
+                                widgets::secret_input(&self.password, "Tournament entry code", cx)
+                                    .small(),
                             ),
                         )
                     })

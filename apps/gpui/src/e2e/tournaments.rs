@@ -1,6 +1,6 @@
 //! A Lichess tournament, signed in to the stand-in Lichess.
 
-use gpui_kit::test::TestWindowExt as _;
+use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
 
 use super::Harness;
 use super::fake_lichess::ARENA;
@@ -29,6 +29,25 @@ fn return_in_the_entry_code_joins(cx: &mut gpui_kit::TestAppContext) {
             .iter()
             .any(|write| write.starts_with(&joined) && write.contains("password=open-sesame"))
     });
+}
+
+/// The entry code's eye button shows the code and hides it again, and is a full-size target
+/// (GPUI Kit's own reveal button is 12 px).
+#[gpui_kit::test]
+fn the_entry_code_shows_and_hides(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _) = Harness::signed_in(cx, false);
+    app.with_window(|window, cx| crate::pages::tournaments::open_tournament(ARENA, window, cx));
+    app.find("tournament-join");
+    let role = |app: &mut Harness| {
+        app.with_window(|window, _| window.find_by_label("Tournament entry code").role())
+    };
+    assert_eq!(role(&mut app), Some(gpui_kit::Role::PasswordInput));
+    let show = app.with_window(|window, _| window.find_by_label("Show tournament entry code"));
+    assert!(f32::from(show.bounds().size.height) >= 24.);
+    app.click_label("Show tournament entry code");
+    assert_eq!(role(&mut app), Some(gpui_kit::Role::TextInput));
+    app.click_label("Hide tournament entry code");
+    assert_eq!(role(&mut app), Some(gpui_kit::Role::PasswordInput));
 }
 
 /// Escape goes back from an event to the list, as All tournaments does.

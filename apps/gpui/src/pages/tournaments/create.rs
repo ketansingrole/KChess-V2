@@ -311,7 +311,7 @@ impl Render for CreateArena {
             })
             .child(widgets::field(
                 "Entry code",
-                Input::new(&self.password).aria_label("Entry code").mask_toggle(),
+                widgets::secret_input(&self.password, "Entry code", cx),
                 None,
                 &palette,
             ))

@@ -78,7 +78,7 @@ impl Render for NameDialog {
         let empty = self.input.read(cx).value().trim().is_empty();
         v_flex()
             .gap(px(12.))
-            .child(Input::new(&self.input))
+            .child(Input::new(&self.input).aria_label("Name"))
             .children(self.error.clone().map(|error| {
                 div()
                     .text_size(px(14.))

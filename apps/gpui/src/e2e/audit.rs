@@ -485,33 +485,97 @@ fn microphone_states() -> Vec<(crate::microphone::Host, String)> {
 /// every size while it stays open.
 #[gpui_kit::test]
 fn every_dialog_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
-    let mut app = Harness::start(cx);
+    // Signed in, for the dialogs only an account opens.
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
     let mut findings = Findings::default();
     let settle = |app: &mut Harness| {
         app.settle();
     };
-    let dialogs: [(Page, &str, &str); 5] = [
-        (Page::Computer, "game-options", "Game options"),
-        (Page::Local, "local-new", "New game over the board"),
+    let click = |id: &'static str| move |app: &mut Harness| app.click(id);
+    /// What opens a dialog, once its page is shown.
+    type Opener = Box<dyn Fn(&mut Harness)>;
+    let dialogs: [(Page, &str, Opener); 11] = [
+        (
+            Page::Computer,
+            "Game options",
+            Box::new(click("game-options")),
+        ),
+        (
+            Page::Local,
+            "New game over the board",
+            Box::new(click("local-new")),
+        ),
         (
             Page::Analysis,
-            "analysis-import",
             "Import into the analysis board",
+            Box::new(click("analysis-import")),
         ),
-        (Page::Studies, "empty-import", "Import a study"),
-        (Page::Dashboard, "?", "Keyboard shortcuts"),
+        (
+            Page::Analysis,
+            "Save as study",
+            Box::new(click("save-as-study")),
+        ),
+        (
+            Page::Analysis,
+            "Game details",
+            Box::new(|app: &mut Harness| {
+                app.click("study-actions");
+                app.click_label("Game details…");
+            }),
+        ),
+        (
+            Page::Studies,
+            "Import a study",
+            Box::new(click("empty-import")),
+        ),
+        (
+            Page::Dashboard,
+            "Keyboard shortcuts",
+            Box::new(|app: &mut Harness| app.press("?")),
+        ),
+        (
+            Page::Dashboard,
+            "What's new",
+            Box::new(|app: &mut Harness| app.with_window(crate::whats_new::open)),
+        ),
+        (
+            Page::Friends,
+            "Import from Lichess",
+            Box::new(click("friends-import")),
+        ),
+        (
+            Page::Tournaments,
+            "Create an arena",
+            Box::new(click("tournaments-create")),
+        ),
+        (
+            Page::Players,
+            "Message a player",
+            Box::new(|app: &mut Harness| {
+                app.cx.update(|cx| {
+                    let page = crate::shell::view::<crate::pages::players::PlayersPage>(cx)
+                        .expect("the Players page");
+                    page.update(cx, |page, cx| {
+                        page.show_profile(
+                            kchess_contracts::types::LichessUser {
+                                username: "Rival".into(),
+                                ..Default::default()
+                            },
+                            cx,
+                        )
+                    });
+                });
+                app.click("players-message");
+            }),
+        ),
     ];
     let (widest, tallest) = SIZES[SIZES.len() - 1];
-    for (page, opener, label) in dialogs {
+    for (page, label, open) in dialogs {
         app.cx
             .simulate_window_resize(app.window, size(px(widest), px(tallest)));
         app.with_window(|window, cx| crate::shell::open(page, window, cx));
         settle(&mut app);
-        if opener == "?" {
-            app.press("?");
-        } else {
-            app.click(opener);
-        }
+        open(&mut app);
         for (width, height) in SIZES {
             app.cx
                 .simulate_window_resize(app.window, size(px(width), px(height)));
