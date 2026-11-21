@@ -8,6 +8,8 @@ refuses to release with nothing there.
 
 ## Unreleased
 
+- **Fixes**: If a study chapter couldn't be saved when you quit, Retry now saves it instead of showing the same error again. Plus many smaller fixes.
+
 ## 2026.11.8 (2026-11-21)
 
 - **Icons the right size everywhere**: icons now keep the same size whatever your screen and its scaling, so none look too small beside the others on Windows, and the button that shows and hides the sidebar lines up with the icons below it.

@@ -9,14 +9,15 @@ use std::collections::HashMap;
 
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
-use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
+use gpui_kit::{App, AppContext as _, Context, Entity, Global};
 use kchess_contracts::check::PgnText;
 use kchess_contracts::types::{Library, ProfileArea, Study, StudyCommand, StudyCommandResult};
 use kchess_contracts::{CoreError, ErrorKind, Level};
 use serde_json::json;
 
 use crate::core::{Answer, AppCore, Reads};
-use crate::quit::BoxedSave;
+use crate::quit::{BoxedSave, Saved};
+use crate::writer::{Store, Writer};
 
 const CLOSED: &str = "The study library is closed";
 
@@ -30,9 +31,6 @@ enum Write {
         command: StudyCommand,
         reply: Option<oneshot::Sender<Result<StudyCommandResult, CoreError>>>,
     },
-    /// Done once every command before it was answered: with the chapters whose last content save
-    /// failed, if any did.
-    Flushed(oneshot::Sender<crate::quit::Saved>),
     /// The board now shows this chapter with these moves (`None`: the library has no such
     /// chapter). Queued like the saves, so a save sent before it keeps the base it was made on.
     Track {
@@ -55,7 +53,7 @@ pub struct StudyLibrary {
     items: Vec<Study>,
     /// Why the last command failed, until one succeeds; or why the stored studies could not be read.
     pub error: Option<String>,
-    writes: mpsc::UnboundedSender<Write>,
+    writes: Writer<Write>,
     reads: Reads,
 }
 
@@ -69,14 +67,23 @@ impl Global for StudyHandle {}
 pub fn init(library: &Library, cx: &mut App) {
     let items = library.studies.clone();
     let error = library.study_error.clone();
-    let (writes, queue) = mpsc::unbounded();
+    // Each answer, for the library to show.
+    let (answers, answered) = mpsc::unbounded();
+    let core = cx.global::<AppCore>().clone();
+    let saving = Saving {
+        send: Box::new(move |call| Box::pin(core.request(call))),
+        unsaved: HashMap::new(),
+        bases: Bases::new(),
+        answers,
+    };
+    let writes = Writer::start(saving, CLOSED, cx);
     let entity = cx.new(|_| StudyLibrary {
         items,
         error,
         writes,
         reads: Reads::default(),
     });
-    write_in_order(entity.downgrade(), queue, cx);
+    show_answers(&entity, answered, cx);
     crate::quit::on_quit(cx, {
         let entity = entity.clone();
         move |cx| Some(entity.read(cx).flushed())
@@ -143,86 +150,128 @@ fn forget_removed<V>(kept: &mut HashMap<(String, String), V>, study: &str, chapt
     kept.retain(|(id, at), _| id != study || chapter.is_some_and(|chapter| chapter != at));
 }
 
-fn write_in_order(
-    entity: WeakEntity<StudyLibrary>,
-    mut queue: mpsc::UnboundedReceiver<Write>,
+/// The library's commands (`Writer`), each sent with the moves its chapter was based on. A
+/// chapter save the core refused is kept, the newest of each chapter, and tried again before the
+/// app quits, unless a later save of the chapter went through or the board took the chapter
+/// again as the library has it (`Write::Track`).
+struct Saving {
+    send: SendCommand,
+    /// Chapter saves the core refused, with why: their moves are not in the profile (a chapter
+    /// another window changed is not among them: the board keeps its moves as a copy).
+    unsaved: HashMap<(String, String), (StudyCommand, String)>,
+    bases: Bases,
+    answers: mpsc::UnboundedSender<Result<StudyCommandResult, CoreError>>,
+}
+
+/// How the writer reaches the core: `AppCore::request`, or a test's stand-in.
+type SendCommand = Box<
+    dyn Fn(
+            calls::StudyCommand,
+        )
+            -> std::pin::Pin<Box<dyn Future<Output = Result<StudyCommandResult, CoreError>> + Send>>
+        + Send,
+>;
+
+impl Saving {
+    /// Send `command`, note how it went, and answer its caller and the library.
+    async fn run(
+        &mut self,
+        command: StudyCommand,
+        reply: Option<oneshot::Sender<Result<StudyCommandResult, CoreError>>>,
+    ) {
+        let based_on = saved_chapter(&command).and_then(|key| self.bases.get(&key).cloned());
+        let call = calls::StudyCommand {
+            command: command.clone(),
+            incremental: Some(true),
+            based_on: based_on.map(PgnText),
+        };
+        let result = (self.send)(call).await.inspect_err(|cause| {
+            let op = json!(command)["op"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            crate::log::write(
+                Level::Warn,
+                "studies",
+                &format!("saving the study library failed: {op} {}", cause.message),
+            );
+        });
+        if let Some(key) = saved_chapter(&command) {
+            match &result {
+                Err(cause) if !is_stale(cause) => {
+                    // gpui-lints: allow(unlogged_failure) logged above, with its command
+                    let cause = cause.message.clone();
+                    self.unsaved.insert(key, (command.clone(), cause));
+                }
+                _ => {
+                    self.unsaved.remove(&key);
+                }
+            }
+        }
+        // A removed study or chapter has nothing left to save.
+        if result.is_ok()
+            && let Some((study, chapter)) = removed_by(&command)
+        {
+            forget_removed(&mut self.unsaved, study, chapter);
+            forget_removed(&mut self.bases, study, chapter);
+        }
+        if let Ok(result) = &result
+            && let Some((key, pgn)) = written_chapter(&command, result)
+        {
+            self.bases.insert(key, pgn);
+        }
+        // The caller hears first, from here: the UI thread may not run while the app quits.
+        if let Some(reply) = reply {
+            let _ = reply.send(result.clone());
+        }
+        let _ = self.answers.unbounded_send(result);
+    }
+}
+
+impl Store for Saving {
+    type Write = Write;
+
+    async fn write(&mut self, write: Write) {
+        match write {
+            Write::Command { command, reply } => self.run(command, reply).await,
+            Write::Track { key, pgn } => {
+                // The board shows the chapter as the library has it now: a save of it refused
+                // earlier is not what it shows, and would overwrite it.
+                self.unsaved.remove(&key);
+                match pgn {
+                    Some(pgn) => self.bases.insert(key, pgn),
+                    None => self.bases.remove(&key),
+                };
+            }
+        }
+    }
+
+    async fn flush(&mut self, retry: bool) -> Saved {
+        if retry {
+            let again: Vec<StudyCommand> = self
+                .unsaved
+                .drain()
+                .map(|(_, (command, _))| command)
+                .collect();
+            for command in again {
+                self.run(command, None).await;
+            }
+        }
+        match self.unsaved.values().next() {
+            Some((_, cause)) => Err(format!("A study could not be saved: {cause}")),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Show each answer: the studies it names, or why the core refused the command and what the
+/// profile keeps.
+fn show_answers(
+    entity: &Entity<StudyLibrary>,
+    mut answered: mpsc::UnboundedReceiver<Result<StudyCommandResult, CoreError>>,
     cx: &mut App,
 ) {
-    let core = cx.global::<AppCore>().clone();
-    // Each answer, for the library to show.
-    let (answers, mut answered) = mpsc::unbounded::<Result<StudyCommandResult, CoreError>>();
-    cx.background_executor()
-        .spawn(async move {
-            // Chapters whose last content save failed, until one succeeds: their moves are not
-            // in the profile (a chapter another window changed keeps its moves as a copy).
-            let mut unsaved: HashMap<(String, String), String> = HashMap::new();
-            let mut bases = Bases::new();
-            while let Some(write) = queue.next().await {
-                let (command, reply) = match write {
-                    Write::Command { command, reply } => (command, reply),
-                    Write::Track { key, pgn } => {
-                        match pgn {
-                            Some(pgn) => bases.insert(key, pgn),
-                            None => bases.remove(&key),
-                        };
-                        continue;
-                    }
-                    Write::Flushed(done) => {
-                        let _ = done.send(match unsaved.values().next() {
-                            Some(cause) => Err(format!("A study could not be saved: {cause}")),
-                            None => Ok(()),
-                        });
-                        continue;
-                    }
-                };
-                let based_on = saved_chapter(&command).and_then(|key| bases.get(&key).cloned());
-                let call = calls::StudyCommand {
-                    command: command.clone(),
-                    incremental: Some(true),
-                    based_on: based_on.map(PgnText),
-                };
-                let result = core.request(call).await.inspect_err(|cause| {
-                    let op = json!(command)["op"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string();
-                    crate::log::write(
-                        Level::Warn,
-                        "studies",
-                        &format!("saving the study library failed: {op} {}", cause.message),
-                    );
-                });
-                if let Some(key) = saved_chapter(&command) {
-                    match &result {
-                        Err(cause) if !is_stale(cause) => {
-                            // gpui-lints: allow(unlogged_failure) logged above, with its command
-                            unsaved.insert(key, cause.message.clone());
-                        }
-                        _ => {
-                            unsaved.remove(&key);
-                        }
-                    }
-                }
-                // A removed study or chapter has nothing left to save.
-                if result.is_ok()
-                    && let Some((study, chapter)) = removed_by(&command)
-                {
-                    forget_removed(&mut unsaved, study, chapter);
-                    forget_removed(&mut bases, study, chapter);
-                }
-                if let Ok(result) = &result
-                    && let Some((key, pgn)) = written_chapter(&command, result)
-                {
-                    bases.insert(key, pgn);
-                }
-                // The caller hears first, from here: the UI thread may not run while the app quits.
-                if let Some(reply) = reply {
-                    let _ = reply.send(result.clone());
-                }
-                let _ = answers.unbounded_send(result);
-            }
-        })
-        .detach();
+    let entity = entity.downgrade();
     cx.spawn(async move |cx| {
         while let Some(answer) = answered.next().await {
             let _ = entity.update(cx, |this, cx| {
@@ -285,7 +334,7 @@ impl StudyLibrary {
             .and_then(|study| study.chapter(chapter))
             .map(|chapter| chapter.pgn.clone());
         let key = (study.to_string(), chapter.to_string());
-        let _ = self.writes.unbounded_send(Write::Track { key, pgn });
+        self.writes.send(Write::Track { key, pgn });
     }
 
     /// A name no study has yet.
@@ -320,23 +369,22 @@ impl StudyLibrary {
     ) -> impl std::future::Future<Output = Result<StudyCommandResult, CoreError>> + 'static + use<>
     {
         let (reply, answer) = oneshot::channel();
-        let sent = self.writes.unbounded_send(Write::Command {
+        let sent = self.writes.send(Write::Command {
             command,
             reply: Some(reply),
         });
         async move {
-            if sent.is_err() {
+            if !sent {
                 return Err(CoreError::new(CLOSED));
             }
             answer.await.unwrap_or_else(|_| Err(CoreError::new(CLOSED)))
         }
     }
 
-    /// Wait for every command sent so far: with why a chapter's moves are not saved, if any.
+    /// Wait for every command sent so far, the refused chapter saves tried again: with why a
+    /// chapter's moves are still not saved, if any.
     pub fn flushed(&self) -> BoxedSave {
-        let (done, wait) = oneshot::channel();
-        let _ = self.writes.unbounded_send(Write::Flushed(done));
-        Box::pin(async move { wait.await.unwrap_or_else(|_| Err(CLOSED.to_string())) })
+        self.writes.flushed()
     }
 
     /// Show the studies an answer names: all of them, or the changed ones in the library's order.
@@ -357,7 +405,8 @@ impl StudyLibrary {
     /// them): read once this window's commands are answered, and never over a newer answer.
     fn reload(&mut self, cx: &mut Context<Self>) {
         let read = self.reads.start();
-        let sent = self.flushed();
+        // Not retried: a failure's own reload would retry it in a loop.
+        let sent = self.writes.written();
         cx.spawn(async move |this, cx| {
             let _ = sent.await;
             let Ok(library) = this.update(cx, |_, cx| {
@@ -384,10 +433,93 @@ impl StudyLibrary {
 #[cfg(test)]
 mod tests {
     use super::{
-        Bases, StudyLibrary, Write, chapter_items, forget_removed, saved_chapter, written_chapter,
+        Bases, CLOSED, Saving, StudyLibrary, Write, chapter_items, forget_removed, saved_chapter,
+        written_chapter,
     };
+    use crate::writer::{Queued, Writer, write_in_order};
     use futures::channel::mpsc;
+    use futures::executor::LocalPool;
+    use futures::task::LocalSpawnExt as _;
+    use kchess_contracts::CoreError;
     use kchess_contracts::types::{Study, StudyChapter, StudyCommand, StudyCommandResult};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    /// A library whose writer sends to a stand-in core: it refuses every command while `refuse`
+    /// is set, and keeps the PGN of each save it takes. Run its writer on the pool.
+    fn refusing_library(
+        pool: &LocalPool,
+        refuse: &Arc<Mutex<bool>>,
+        saved: &Arc<Mutex<Vec<String>>>,
+    ) -> StudyLibrary {
+        let (refuse, saved) = (Arc::clone(refuse), Arc::clone(saved));
+        let (answers, _answered) = mpsc::unbounded();
+        let saving = Saving {
+            send: Box::new(move |call| {
+                let result = if *refuse.lock().unwrap() {
+                    Err(CoreError::new("disk full"))
+                } else {
+                    if let StudyCommand::Save { pgn, .. } = &call.command {
+                        saved.lock().unwrap().push(pgn.clone());
+                    }
+                    Ok(StudyCommandResult::default())
+                };
+                Box::pin(async move { result })
+            }),
+            unsaved: HashMap::new(),
+            bases: Bases::new(),
+            answers,
+        };
+        let (writes, queue) = Writer::queued(CLOSED);
+        pool.spawner()
+            .spawn_local(write_in_order(saving, queue))
+            .unwrap();
+        StudyLibrary {
+            items: vec![study("a", "A", &[("c", "C", "1. d4 *")])],
+            error: None,
+            writes,
+            reads: Default::default(),
+        }
+    }
+
+    /// Regression: a chapter save the core refused was never sent again. Quitting reported it,
+    /// and Retry in the quit dialog reported it again without sending it, so the moves could
+    /// only be given up. Before quitting it is sent again, and Retry saves it once the core
+    /// takes it.
+    #[test]
+    fn a_refused_chapter_save_is_sent_again_before_quitting() {
+        let mut pool = LocalPool::new();
+        let (refuse, saved) = (Arc::new(Mutex::new(true)), Arc::default());
+        let library = refusing_library(&pool, &refuse, &saved);
+        let save = library.command(chapter_save(Some("a"), Some("c"), "1. e4 *"));
+        assert_eq!(pool.run_until(save), Err("disk full".to_string()));
+        // A read of the profile waits for the writes without retrying them.
+        assert!(pool.run_until(library.writes.written()).is_err());
+        let quit = pool.run_until(library.flushed());
+        assert!(quit.unwrap_err().contains("disk full"));
+
+        *refuse.lock().unwrap() = false;
+        assert_eq!(pool.run_until(library.flushed()), Ok(()));
+        assert_eq!(*saved.lock().unwrap(), ["1. e4 *"]);
+        // Nothing is left to send again.
+        assert_eq!(pool.run_until(library.flushed()), Ok(()));
+        assert_eq!(saved.lock().unwrap().len(), 1);
+    }
+
+    /// A refused chapter save is dropped once the board takes the chapter again as the library
+    /// has it: sent at quit, it would overwrite the moves the board shows.
+    #[test]
+    fn a_refused_save_of_a_chapter_taken_again_is_not_sent() {
+        let mut pool = LocalPool::new();
+        let (refuse, saved) = (Arc::new(Mutex::new(true)), Arc::default());
+        let library = refusing_library(&pool, &refuse, &saved);
+        let save = library.command(chapter_save(Some("a"), Some("c"), "1. e4 *"));
+        assert!(pool.run_until(save).is_err());
+        library.track("a", "c");
+        *refuse.lock().unwrap() = false;
+        assert_eq!(pool.run_until(library.flushed()), Ok(()));
+        assert!(saved.lock().unwrap().is_empty());
+    }
 
     /// A study of these chapters (id, name, PGN).
     fn study(id: &str, name: &str, chapters: &[(&str, &str, &str)]) -> Study {
@@ -428,7 +560,7 @@ mod tests {
 
     #[test]
     fn answers_show_the_changed_studies_in_the_library_order() {
-        let (writes, _queue) = mpsc::unbounded();
+        let (writes, _queue) = Writer::queued(CLOSED);
         let mut library = StudyLibrary {
             items: vec![study("a", "A", &[]), study("b", "B", &[])],
             error: None,
@@ -523,7 +655,7 @@ mod tests {
     /// instead of letting it overwrite the other window's moves.
     #[test]
     fn a_reopened_chapter_takes_its_base_after_the_saves_queued_before() {
-        let (writes, mut queue) = mpsc::unbounded();
+        let (writes, mut queue) = Writer::queued(CLOSED);
         let library = StudyLibrary {
             items: vec![study("a", "A", &[("c", "C", "1. d4 *")])],
             error: None,
@@ -533,11 +665,11 @@ mod tests {
         let save = chapter_save(Some("a"), Some("c"), "1. e4 e5 *");
         drop(library.command(save.clone()));
         library.track("a", "c");
-        let Ok(Write::Command { command, .. }) = queue.try_recv() else {
+        let Ok(Queued::Write(Write::Command { command, .. })) = queue.try_recv() else {
             panic!("the save comes first");
         };
         assert_eq!(command, save);
-        let Ok(Write::Track { key, pgn }) = queue.try_recv() else {
+        let Ok(Queued::Write(Write::Track { key, pgn })) = queue.try_recv() else {
             panic!("then the new base");
         };
         assert_eq!(key, ("a".to_string(), "c".to_string()));

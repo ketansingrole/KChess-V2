@@ -7,8 +7,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use futures::StreamExt as _;
-use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, Global};
 use kchess_contracts::Level;
 use kchess_contracts::check::ViewPreferenceKey;
@@ -19,14 +17,15 @@ use serde_json::{Map, Value, json};
 
 use crate::core::AppCore;
 use crate::quit::{BoxedSave, Saved};
+use crate::writer::{Store, Writer};
 
 #[derive(Default)]
 pub struct ViewPreferences {
     values: Map<String, Value>,
     /// Keys whose latest write the core refused, with that write: retried as the app quits.
     failed: Failed,
-    /// Writes, sent in order by one writer off the UI thread (`write_in_order`).
-    writes: Option<mpsc::UnboundedSender<Write>>,
+    /// Writes, sent in order by one writer off the UI thread (`Writer`).
+    writes: Option<Writer<Write>>,
     /// Writes of each key the core has not answered yet.
     sending: Sending,
     /// Local changes made so far, and the latest one of each key, so an older read never undoes it.
@@ -41,12 +40,8 @@ pub struct ViewPreferences {
 type Failed = Arc<Mutex<HashMap<String, (Value, String)>>>;
 type Sending = Arc<Mutex<HashMap<String, usize>>>;
 
-enum Write {
-    /// Store `key` as `value`; `null` forgets it.
-    Set(String, Value),
-    /// Done once every write before it was answered, and refused ones were tried again.
-    Flushed(oneshot::Sender<Saved>),
-}
+/// Store `key` as `value`; `null` forgets it.
+type Write = (String, Value);
 
 impl Global for ViewPreferences {}
 
@@ -71,9 +66,7 @@ impl ViewPreferences {
         self.changes += 1;
         self.changed_at.insert(key.to_string(), self.changes);
         if let Some(writes) = &self.writes
-            && writes
-                .unbounded_send(Write::Set(key.to_string(), value))
-                .is_ok()
+            && writes.send((key.to_string(), value))
             && let Ok(mut sending) = self.sending.lock()
         {
             *sending.entry(key.to_string()).or_default() += 1;
@@ -110,77 +103,72 @@ impl ViewPreferences {
 
     /// Every write so far reached the profile, or why one did not.
     fn flushed(&self) -> BoxedSave {
-        let (done, wait) = oneshot::channel();
-        let sent = self
-            .writes
-            .as_ref()
-            .is_some_and(|writes| writes.unbounded_send(Write::Flushed(done)).is_ok());
-        Box::pin(async move {
-            if !sent {
-                return Ok(());
-            }
-            wait.await
-                .unwrap_or_else(|_| Err("View preferences are closed".to_string()))
-        })
+        match &self.writes {
+            Some(writes) => writes.flushed(),
+            None => Box::pin(async { Ok(()) }),
+        }
     }
 }
 
-/// Write each preference in order. A refused write is kept until a later write of its key
+/// The preferences' writes (`Writer`): a refused one is kept until a later write of its key
 /// succeeds, and tried again when the app quits, which reports it if it fails again.
-async fn write_in_order<F, Fut>(
-    mut queue: mpsc::UnboundedReceiver<Write>,
+struct Saving<F> {
     failed: Failed,
     sending: Sending,
     save: F,
-) where
-    F: Fn(String, Value) -> Fut,
-    Fut: Future<Output = Result<(), String>>,
-{
-    let record = |key: String, value: Value, result: Result<(), String>| {
-        if let Ok(mut failed) = failed.lock() {
+}
+
+impl<F> Saving<F> {
+    fn record(&self, key: String, value: Value, result: Result<(), String>) {
+        if let Ok(mut failed) = self.failed.lock() {
             match result {
                 Ok(()) => failed.remove(&key),
                 Err(cause) => failed.insert(key, (value, cause)),
             };
         }
-    };
-    while let Some(write) = queue.next().await {
-        match write {
-            Write::Set(key, value) => {
-                let result = save(key.clone(), value.clone()).await;
-                if let Ok(mut sending) = sending.lock()
-                    && let Some(count) = sending.get_mut(&key)
-                {
-                    *count -= 1;
-                    if *count == 0 {
-                        sending.remove(&key);
-                    }
-                }
-                record(key, value, result);
+    }
+}
+
+impl<F, Fut> Store for Saving<F>
+where
+    F: Fn(String, Value) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<(), String>> + Send + 'static,
+{
+    type Write = Write;
+
+    async fn write(&mut self, (key, value): Write) {
+        let result = (self.save)(key.clone(), value.clone()).await;
+        if let Ok(mut sending) = self.sending.lock()
+            && let Some(count) = sending.get_mut(&key)
+        {
+            *count -= 1;
+            if *count == 0 {
+                sending.remove(&key);
             }
-            Write::Flushed(done) => {
-                let retry: Vec<(String, Value)> = failed
-                    .lock()
-                    .map(|failed| {
-                        failed
-                            .iter()
-                            .map(|(key, (value, _))| (key.clone(), value.clone()))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                for (key, value) in retry {
-                    let result = save(key.clone(), value.clone()).await;
-                    record(key, value, result);
-                }
-                let cause = failed
-                    .lock()
-                    .ok()
-                    .and_then(|failed| failed.values().next().map(|(_, cause)| cause.clone()));
-                let _ = done.send(match cause {
-                    Some(cause) => Err(format!("A view preference could not be saved: {cause}")),
-                    None => Ok(()),
-                });
-            }
+        }
+        self.record(key, value, result);
+    }
+
+    async fn flush(&mut self, retry: bool) -> Saved {
+        let again: Vec<Write> = match self.failed.lock() {
+            Ok(failed) if retry => failed
+                .iter()
+                .map(|(key, (value, _))| (key.clone(), value.clone()))
+                .collect(),
+            _ => Vec::new(),
+        };
+        for (key, value) in again {
+            let result = (self.save)(key.clone(), value.clone()).await;
+            self.record(key, value, result);
+        }
+        let cause = self
+            .failed
+            .lock()
+            .ok()
+            .and_then(|failed| failed.values().next().map(|(_, cause)| cause.clone()));
+        match cause {
+            Some(cause) => Err(format!("A view preference could not be saved: {cause}")),
+            None => Ok(()),
         }
     }
 }
@@ -203,32 +191,28 @@ pub fn init(cx: &mut App) {
         }
     };
     let mut prefs = ViewPreferences::read(values);
-    let (writes, queue) = mpsc::unbounded();
-    prefs.writes = Some(writes);
     let core = cx.global::<AppCore>().clone();
-    cx.background_executor()
-        .spawn(write_in_order(
-            queue,
-            Arc::clone(&prefs.failed),
-            Arc::clone(&prefs.sending),
-            move |key, value| {
-                let save = core.request(calls::SetViewPreference {
-                    key: ViewPreferenceKey(key.clone()),
-                    value: (!value.is_null()).then_some(value),
-                });
-                async move {
-                    save.await.map(|_| ()).map_err(|cause| {
-                        crate::log::write(
-                            Level::Warn,
-                            "view-preferences",
-                            &format!("Saving a view preference failed: {key} {}", cause.message),
-                        );
-                        cause.message
-                    })
-                }
-            },
-        ))
-        .detach();
+    let saving = Saving {
+        failed: Arc::clone(&prefs.failed),
+        sending: Arc::clone(&prefs.sending),
+        save: move |key: String, value: Value| {
+            let save = core.request(calls::SetViewPreference {
+                key: ViewPreferenceKey(key.clone()),
+                value: (!value.is_null()).then_some(value),
+            });
+            async move {
+                save.await.map(|_| ()).map_err(|cause| {
+                    crate::log::write(
+                        Level::Warn,
+                        "view-preferences",
+                        &format!("Saving a view preference failed: {key} {}", cause.message),
+                    );
+                    cause.message
+                })
+            }
+        },
+    };
+    prefs.writes = Some(Writer::start(saving, "View preferences are closed", cx));
     cx.set_global(prefs);
     crate::quit::on_quit(cx, |cx| {
         cx.try_global::<ViewPreferences>()
@@ -363,27 +347,27 @@ mod tests {
         let refuse = Arc::new(AtomicBool::new(true));
         let stored = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
         let failed = Failed::default();
-        let (writes, queue) = mpsc::unbounded();
+        let (writes, queue) = Writer::queued("closed");
         let mut pool = LocalPool::new();
+        let saving = Saving {
+            failed: Arc::clone(&failed),
+            sending: Sending::default(),
+            save: {
+                let refuse = Arc::clone(&refuse);
+                let stored = Arc::clone(&stored);
+                move |key, value| {
+                    let result = if refuse.load(Ordering::SeqCst) {
+                        Err("disk full".to_string())
+                    } else {
+                        stored.lock().unwrap().push((key, value));
+                        Ok(())
+                    };
+                    async move { result }
+                }
+            },
+        };
         pool.spawner()
-            .spawn_local(write_in_order(
-                queue,
-                Arc::clone(&failed),
-                Sending::default(),
-                {
-                    let refuse = Arc::clone(&refuse);
-                    let stored = Arc::clone(&stored);
-                    move |key, value| {
-                        let result = if refuse.load(Ordering::SeqCst) {
-                            Err("disk full".to_string())
-                        } else {
-                            stored.lock().unwrap().push((key, value));
-                            Ok(())
-                        };
-                        async move { result }
-                    }
-                },
-            ))
+            .spawn_local(crate::writer::write_in_order(saving, queue))
             .unwrap();
         let mut prefs = ViewPreferences {
             failed: Arc::clone(&failed),
@@ -422,7 +406,7 @@ mod tests {
     /// changed the preference after the read began or has a write still unanswered.
     #[test]
     fn takes_another_apps_preferences_but_keeps_newer_local_changes() {
-        let (writes, _queue) = mpsc::unbounded();
+        let (writes, _queue) = Writer::queued("closed");
         let mut prefs = ViewPreferences {
             writes: Some(writes),
             ..ViewPreferences::default()
