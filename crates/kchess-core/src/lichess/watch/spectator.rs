@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use super::feed::{player_of, position_key, uci_or_none};
@@ -119,17 +120,34 @@ struct Control {
     past: HashMap<String, Vec<TvPastGame>>,
 }
 
+/// What a viewer is told when the featured game is in a variant KChess does not play.
+const UNPLAYABLE: &str = "KChess does not play this variant.";
+
 /// The TV game being followed, with what the feed has shown of it.
 #[derive(Default)]
 struct TvLive {
     current: Option<WatchFrame>,
-    track: Option<Arc<Mutex<TvTrack>>>,
+    follow: Option<Arc<TvFollow>>,
+}
+
+/// What the feed has shown of the featured game, to line it up with Lichess's export.
+#[derive(Default)]
+struct TvFollow {
+    track: Mutex<TvTrack>,
+    /// Rung by each move the feed sends while the line-up runs: the export has one more ply.
+    moved: Notify,
 }
 
 #[derive(Default)]
 struct TvTrack {
+    /// The positions the feed showed, as `position_key`s.
     feed: Vec<String>,
+    /// `live[i]` is the move from `feed[i]` to `feed[i + 1]`, when the feed named it.
     live: Vec<Option<String>>,
+    /// A line-up task is running for this game.
+    lining_up: bool,
+    /// The export is in a variant KChess does not play: there are no moves to line up.
+    unplayable: bool,
 }
 
 struct Inner {
@@ -443,7 +461,48 @@ impl Inner {
                 let game_id = kchess_domain::js::slice_utf16(id, 12).to_string();
                 let white = side("white");
                 let black = side("black");
+                let seconds = |player: &Option<Value>| {
+                    player
+                        .as_ref()
+                        .and_then(|p| p.get("seconds"))
+                        .and_then(Value::as_f64)
+                };
+                let (white_clock, black_clock) = (seconds(&white), seconds(&black));
                 let mut state = lock(live);
+                // The feed has no keep-alive, so it reconnects after a long think and sends its
+                // game again: the game goes on, with its moves and details.
+                if let (Some(mut frame), Some(follow)) =
+                    (state.current.clone(), state.follow.clone())
+                    && frame.game_id == game_id
+                {
+                    let moved = {
+                        let mut track = lock(&follow.track);
+                        let key = position_key(&fen);
+                        let moved = track.feed.last() != Some(&key);
+                        if moved {
+                            track.feed.push(key);
+                            track.live.push(None);
+                        }
+                        moved
+                    };
+                    frame.white_clock = white_clock.or(frame.white_clock);
+                    frame.black_clock = black_clock.or(frame.black_clock);
+                    if moved {
+                        // The moves made while it was away are not named: the list waits for
+                        // the export to pass them.
+                        frame.fen = fen;
+                        frame.last_move = None;
+                        frame.moves = None;
+                    }
+                    state.current = Some(frame.clone());
+                    self.report_connected(session);
+                    self.emit_tv(channel, frame);
+                    drop(state);
+                    if moved {
+                        self.line_up(channel, live, &follow, &game_id, session, token);
+                    }
+                    return Ok(());
+                }
                 if let Some(previous) = state.current.as_ref()
                     && previous.game_id != game_id
                 {
@@ -464,14 +523,8 @@ impl Inner {
                     },
                     fen: fen.clone(),
                     last_move: None,
-                    white_clock: white
-                        .as_ref()
-                        .and_then(|p| p.get("seconds"))
-                        .and_then(Value::as_f64),
-                    black_clock: black
-                        .as_ref()
-                        .and_then(|p| p.get("seconds"))
-                        .and_then(Value::as_f64),
+                    white_clock,
+                    black_clock,
                     // A variant's channel shows that variant; any other (a speed, the best
                     // players, bots) shows standard chess until the export says otherwise.
                     variant: kchess_domain::variant::Variant::from_key(channel)
@@ -486,31 +539,17 @@ impl Inner {
                     finished: false,
                     start_fen: None,
                     moves: None,
+                    moves_error: None,
                     previous: None,
                 };
+                let follow = Arc::new(TvFollow::default());
+                lock(&follow.track).feed.push(position_key(&fen));
                 state.current = Some(frame.clone());
-                let track = Arc::new(Mutex::new(TvTrack {
-                    feed: vec![position_key(&fen)],
-                    live: Vec::new(),
-                }));
-                state.track = Some(Arc::clone(&track));
-                drop(state);
-                self.sink.state(WatchState {
-                    session,
-                    phase: WatchPhase::Connected,
-                    message: None,
-                    kind: None,
-                });
+                state.follow = Some(Arc::clone(&follow));
+                self.report_connected(session);
                 self.emit_tv(channel, frame);
-                let inner = Arc::clone(self);
-                let live = Arc::clone(live);
-                let token = token.clone();
-                let channel = channel.to_string();
-                tokio::spawn(async move {
-                    inner
-                        .line_up(&channel, &live, &track, &game_id, session, &token)
-                        .await;
-                });
+                drop(state);
+                self.line_up(channel, live, &follow, &game_id, session, token);
                 Ok(())
             }
             TvRecord::Fen(data) => {
@@ -519,12 +558,12 @@ impl Inner {
                 };
                 let last_move = uci_or_none(data.lm.as_ref());
                 let mut state = lock(live);
-                let (Some(current), Some(track)) = (state.current.clone(), state.track.clone())
+                let (Some(current), Some(follow)) = (state.current.clone(), state.follow.clone())
                 else {
                     return Ok(());
                 };
                 {
-                    let mut track = lock(&track);
+                    let mut track = lock(&follow.track);
                     track.feed.push(position_key(&fen));
                     track.live.push(last_move.clone());
                 }
@@ -544,101 +583,178 @@ impl Inner {
                     },
                     ..current
                 };
+                let game_id = frame.game_id.clone();
+                let lined_up = frame.moves.is_some();
                 state.current = Some(frame.clone());
-                drop(state);
-                self.sink.state(WatchState {
-                    session,
-                    phase: WatchPhase::Connected,
-                    message: None,
-                    kind: None,
-                });
+                // Sent under the lock, so a line-up's frame never overtakes a newer move.
+                self.report_connected(session);
                 self.emit_tv(channel, frame);
+                drop(state);
+                if !lined_up {
+                    self.line_up(channel, live, &follow, &game_id, session, token);
+                }
                 Ok(())
             }
             TvRecord::Other => Ok(()),
         }
     }
 
-    /// Fills in what the TV feed leaves out: the time control, rated flag and, once Lichess's
-    /// delayed export reaches a position the feed showed, the moves so far. Failures stay quiet.
-    async fn line_up(
+    fn report_connected(&self, session: u64) {
+        self.sink.state(WatchState {
+            session,
+            phase: WatchPhase::Connected,
+            message: None,
+            kind: None,
+        });
+    }
+
+    /// Lines the featured game up with Lichess's export, which leaves out an ongoing game's last
+    /// three moves: it reaches a position the feed showed only three moves after the feed
+    /// started (or reconnected), however long those take. A running line-up tries again now.
+    fn line_up(
         self: &Arc<Self>,
         channel: &str,
         live: &Arc<Mutex<TvLive>>,
-        track: &Arc<Mutex<TvTrack>>,
+        follow: &Arc<TvFollow>,
         game_id: &str,
         session: u64,
         token: &CancellationToken,
     ) {
-        for attempt in 0..self.timing.attempts {
-            if attempt > 0 {
-                tokio::select! {
-                    _ = tokio::time::sleep(self.timing.delay) => {}
-                    _ = token.cancelled() => {}
-                }
+        {
+            let mut track = lock(&follow.track);
+            if track.unplayable {
+                return;
             }
+            if track.lining_up {
+                drop(track);
+                follow.moved.notify_one();
+                return;
+            }
+            track.lining_up = true;
+        }
+        let inner = Arc::clone(self);
+        let (live, follow, token) = (Arc::clone(live), Arc::clone(follow), token.clone());
+        let (channel, game_id) = (channel.to_string(), game_id.to_string());
+        tokio::spawn(async move {
+            inner
+                .lining_up(&channel, &live, &follow, &game_id, session, &token)
+                .await;
+        });
+    }
+
+    /// Fetches the export until it lines up: at once after each move the feed sends, and every
+    /// `timing.delay` for `timing.attempts` tries after the last one. A quiet feed ends the
+    /// tries; its next move starts them again (`line_up`).
+    async fn lining_up(
+        self: &Arc<Self>,
+        channel: &str,
+        live: &Arc<Mutex<TvLive>>,
+        follow: &Arc<TvFollow>,
+        game_id: &str,
+        session: u64,
+        token: &CancellationToken,
+    ) {
+        let mut left = self.timing.attempts;
+        loop {
             if token.is_cancelled() || !self.is_current(session) {
                 return;
             }
-            let game = match self.fetch_tv_game(game_id, token).await {
-                Ok(game) => game,
-                Err(cause) => {
-                    self.lichess.host().log(
-                        Level::Debug,
-                        "spectate",
-                        &format!("TV lineup fetch failed: {game_id} {}", cause.message),
-                    );
-                    continue;
-                }
-            };
+            let seen = lock(&follow.track).feed.len();
+            let fetched = self.fetch_tv_game(game_id, token).await;
             if token.is_cancelled() || !self.is_current(session) {
                 return;
             }
-            let snapshot = {
-                let track = lock(track);
-                (track.feed.clone(), track.live.clone())
-            };
-            let moves = game
-                .setup
-                .as_ref()
-                .and_then(|setup| align_tv_moves(setup, &game.san, &snapshot.0, &snapshot.1));
-            if attempt == 0 || moves.is_some() {
-                self.apply_line_up(channel, live, game_id, &game, moves.as_deref());
+            if let Err(cause) = &fetched {
+                self.lichess.host().log(
+                    Level::Debug,
+                    "spectate",
+                    &format!("TV lineup fetch failed: {game_id} {}", cause.message),
+                );
             }
-            if moves.is_some() || game.setup.is_none() {
+            if self.apply_line_up(channel, live, follow, game_id, fetched) {
                 return;
+            }
+            {
+                // Decided under the track's lock, which a move takes to ask for a line-up: a
+                // move either restarts the tries here or finds no line-up running.
+                let mut track = lock(&follow.track);
+                if track.feed.len() == seen {
+                    left = left.saturating_sub(1);
+                    if left == 0 {
+                        track.lining_up = false;
+                        return;
+                    }
+                } else {
+                    left = self.timing.attempts;
+                }
+            }
+            tokio::select! {
+                () = tokio::time::sleep(self.timing.delay) => {}
+                () = follow.moved.notified() => {}
+                () = token.cancelled() => {}
             }
         }
     }
 
+    /// Adopts an export: the time control and rated flag, and the moves once the export reaches
+    /// a position the feed showed. A failure shows where the moves go. True when there is
+    /// nothing more to wait for: the moves, a variant KChess does not play, or another game.
     fn apply_line_up(
         &self,
         channel: &str,
         live: &Arc<Mutex<TvLive>>,
+        follow: &TvFollow,
         game_id: &str,
-        game: &TvGame,
-        moves: Option<&[String]>,
-    ) {
+        fetched: CoreResult<TvGame>,
+    ) -> bool {
         let mut state = lock(live);
         let Some(current) = state.current.as_mut() else {
-            return;
+            return true;
         };
         if current.game_id != game_id {
-            return;
+            return true;
         }
-        current.rated = game.details.rated;
-        current.speed = game.details.speed.clone();
-        current.clock = game.details.clock;
-        if let Some(setup) = &game.setup {
-            current.variant = setup.variant.key().to_string();
+        let before = current.clone();
+        let mut track = lock(&follow.track);
+        let done = match fetched {
+            Err(cause) => {
+                current.moves_error = Some(said_or(cause, "Lichess did not send the moves."));
+                false
+            }
+            Ok(game) => {
+                current.moves_error = None;
+                current.rated = game.details.rated;
+                current.speed = game.details.speed.clone();
+                current.clock = game.details.clock;
+                match &game.setup {
+                    None => {
+                        track.unplayable = true;
+                        current.moves_error = Some(UNPLAYABLE.to_string());
+                        true
+                    }
+                    Some(setup) => {
+                        current.variant = setup.variant.key().to_string();
+                        // Lined up with the feed as it is now, under the lock its moves take.
+                        let moves = align_tv_moves(setup, &game.san, &track.feed, &track.live);
+                        let lined_up = moves.is_some();
+                        if let Some(moves) = moves {
+                            current.start_fen = Some(setup.fen.clone());
+                            current.moves = Some(moves);
+                        }
+                        lined_up
+                    }
+                }
+            }
+        };
+        if done {
+            track.lining_up = false;
         }
-        if let (Some(setup), Some(moves)) = (&game.setup, moves) {
-            current.start_fen = Some(setup.fen.clone());
-            current.moves = Some(moves.to_vec());
+        drop(track);
+        if *current != before {
+            let frame = current.clone();
+            self.emit_tv(channel, frame);
         }
-        let frame = current.clone();
-        drop(state);
-        self.emit_tv(channel, frame);
+        done
     }
 
     async fn fetch_tv_game(&self, id: &str, token: &CancellationToken) -> CoreResult<TvGame> {
@@ -809,6 +925,7 @@ impl Inner {
                             finished,
                             start_fen: None,
                             moves: None,
+                            moves_error: None,
                             previous: None,
                         });
                     } else if let (Some(fen), Some(previous)) = (fen, current.as_ref()) {

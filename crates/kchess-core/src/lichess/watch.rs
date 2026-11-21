@@ -168,7 +168,8 @@ impl Spectators {
     }
 }
 
-/// How a TV game is lined up with its delayed export (`LINE_UP_DELAY_MS`, `LINE_UP_ATTEMPTS`).
+/// How a TV game is lined up with its delayed export: each move the feed sends fetches the
+/// export at once, then every `delay` for `attempts` tries in all while the feed stays quiet.
 #[derive(Clone, Copy, Debug)]
 pub struct LineUpTiming {
     pub delay: Duration,
@@ -179,7 +180,7 @@ impl Default for LineUpTiming {
     fn default() -> LineUpTiming {
         LineUpTiming {
             delay: Duration::from_secs(5),
-            attempts: 12,
+            attempts: 4,
         }
     }
 }

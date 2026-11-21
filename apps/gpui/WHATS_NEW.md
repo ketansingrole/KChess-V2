@@ -17,7 +17,7 @@ refuses to release with nothing there.
 - **Easier on your battery**: on a laptop running on battery, automatic game reviews now wait for a charger unless Also on battery power is on, and the engine uses fewer cores.
 - **Engine back after a Lichess hiccup**: if KChess can't reach Lichess when it starts, the engine, game review and Play with computer now say so and come back on their own once Lichess answers, instead of staying off until you restart.
 - **A board you can hear**: with a screen reader, each move now says its piece and any check ("Last move knight g1–f3, check"), and the board says the hint or solution it shows, in puzzles, endgames and the opening trainer.
-- **Fixes**: A wrong move in a puzzle goes back, so you can try another right away. Cancel seek no longer goes missing right after you sign in to Lichess. The voice meter moves as you speak. The analysis engine keeps going as you step through moves. Plus many smaller fixes.
+- **Fixes**: A wrong puzzle move goes back, so you can try another. Cancel seek stays after you sign in to Lichess. The voice meter moves as you speak. The analysis engine keeps going as you step through moves. Watch shows the moves of rapid games. Plus many smaller fixes.
 
 ## 2026.11.7 (2026-11-09)
 
