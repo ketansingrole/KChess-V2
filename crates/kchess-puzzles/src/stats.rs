@@ -182,7 +182,7 @@ impl PuzzleStats {
             reconnect: false,
             sort: "weak",
             themes,
-            chart: cx.new(|_| LineChart::new(px(220.), |rating| format!("{}", rating.round()))),
+            chart: cx.new(|_| LineChart::new(CHART_HEIGHT, |rating| format!("{}", rating.round()))),
             days_select,
             sort_select,
             account_select,
@@ -327,6 +327,9 @@ impl PuzzleStats {
             .map_or(0, |series| series.points.len())
     }
 }
+
+/// The rating chart's height, which its place keeps while it loads and without points.
+const CHART_HEIGHT: Pixels = px(220.);
 
 fn stat(
     index: usize,
@@ -613,17 +616,31 @@ impl Render for PuzzleStats {
             .min_w(px(300.))
             .gap(px(8.))
             .child(widgets::heading("Puzzle rating history", &palette))
-            .when(self.point_count() >= 2, |card| {
-                card.child(self.chart.clone())
-            })
-            .when(self.point_count() < 2, |card| {
-                card.child(widgets::empty_state(
-                    icon("chart-line"),
-                    "No rating history yet",
-                    None,
-                    &palette,
-                ))
-            });
+            // The chart's place keeps its height while the history loads and without one: the
+            // card grew by the chart as it came and pushed the themes under it down.
+            .child(
+                div()
+                    .id("puzzle-rating-area")
+                    .test_support()
+                    .h(CHART_HEIGHT)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .map(|area| {
+                        if self.point_count() >= 2 {
+                            area.child(self.chart.clone())
+                        } else if self.loading.busy() {
+                            area.child(widgets::loading("Loading…", &palette))
+                        } else {
+                            area.child(widgets::empty_state(
+                                icon("chart-line"),
+                                "No rating history yet",
+                                None,
+                                &palette,
+                            ))
+                        }
+                    }),
+            );
         let rows = self
             .dashboard
             .as_ref()
@@ -652,6 +669,9 @@ impl Render for PuzzleStats {
                 .text_color(palette.error)
                 .child(error.clone())
                 .into_any_element()
+        } else if self.dashboard.is_none() && self.loading.busy() {
+            // Not "Nothing in this period" while the period's puzzles are on their way.
+            widgets::loading("Loading…", &palette).into_any_element()
         } else if rows.is_empty() {
             widgets::empty_state(
                 icon("puzzle"),
@@ -799,6 +819,48 @@ impl PuzzleStats {
 mod tests {
     use super::theme_rows;
     use serde_json::json;
+
+    /// The rating chart's place is the chart's height while the history loads and once it has
+    /// come: the card held "No rating history yet" until then, then grew by the chart and pushed
+    /// the themes under it down.
+    #[gpui_kit::test]
+    fn the_rating_chart_keeps_its_place_as_it_loads(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        use gpui_kit::test::TestWindowExt as _;
+        use kchess_contracts::types::RatingSeries;
+        let mut app = kchess_board::testing::Started::new(cx);
+        let window = app
+            .cx()
+            .add_window(|window, cx| super::PuzzleStats::new(Vec::new(), window, cx));
+        let height = |app: &mut kchess_board::testing::Started| {
+            app.cx()
+                .update_window(window.into(), |_, window, cx| {
+                    window.render_frame(cx);
+                    window.find("puzzle-rating-area").bounds().size.height
+                })
+                .expect("the window")
+        };
+        let turn = window
+            .update(app.cx(), |stats, _, cx| {
+                stats.account = "alice".into();
+                let turn = stats.loading.start();
+                cx.notify();
+                turn
+            })
+            .expect("the window");
+        let loading = height(&mut app);
+        window
+            .update(app.cx(), |stats, _, cx| {
+                assert!(stats.loading.answered(turn));
+                stats.history = vec![RatingSeries {
+                    name: "Puzzles".into(),
+                    points: vec![[2026, 10, 1, 1500], [2026, 10, 15, 1540]],
+                }];
+                stats.draw(cx);
+            })
+            .expect("the window");
+        assert_eq!(loading, height(&mut app));
+    }
 
     #[test]
     fn themes_sort_by_strength_and_leave_out_the_rarely_tried() {

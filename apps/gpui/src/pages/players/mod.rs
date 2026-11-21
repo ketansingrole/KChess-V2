@@ -382,10 +382,7 @@ impl PlayersPage {
         self.relation = None;
         self.account_epoch.invalidate();
         self.names.clear();
-        self.history.update(cx, |history, cx| {
-            history.set(Vec::new(), Vec::new(), cx);
-            history.set_withheld(None, cx);
-        });
+        self.history.update(cx, |history, cx| history.clear(cx));
         cx.notify();
         let profile = cx.global::<AppCore>().request(calls::Profile {
             username: Username(name.clone()),
