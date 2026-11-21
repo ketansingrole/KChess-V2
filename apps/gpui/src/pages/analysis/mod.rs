@@ -320,7 +320,9 @@ pub struct AnalysisPage {
     import_turn: u64,
     /// Shown while the page is open: the engine follows the board.
     attached: bool,
-    engine_ready: bool,
+    /// Whether the engine can analyse: `None` until the core says, so the page neither offers
+    /// to set Stockfish up nor makes room for nothing while it asks.
+    engine_ready: Option<bool>,
     engine_identity: Option<String>,
     evaluations: HashMap<String, AnalysisUpdate>,
     /// The cache's keys, oldest first.
@@ -586,7 +588,7 @@ impl AnalysisPage {
             importing: None,
             import_turn: 0,
             attached: false,
-            engine_ready: false,
+            engine_ready: None,
             engine_identity: None,
             evaluations: HashMap::new(),
             order: VecDeque::new(),

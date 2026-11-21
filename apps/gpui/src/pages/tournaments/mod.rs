@@ -655,6 +655,20 @@ impl Render for TournamentsPage {
                 h_flex()
                     .gap(px(8.))
                     .items_center()
+                    // First of the controls, so the filter and Create arena keep their places
+                    // when a list that failed to load offers Try again in its place instead.
+                    .when(!showing_event && !failed, |row| {
+                        row.child(
+                            Button::new("tournaments-refresh")
+                                .small()
+                                .outline()
+                                .icon(icon("refresh-cw"))
+                                .label("Refresh")
+                                .loading(self.loading.busy())
+                                .disabled(self.loading.busy())
+                                .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                        )
+                    })
                     .when(!showing_event, |row| {
                         row.child(widgets::pills(
                             "tournaments-filter",
@@ -677,19 +691,6 @@ impl Render for TournamentsPage {
                             true,
                             &palette,
                         ))
-                        // A list that failed to load offers Try again in its place instead.
-                        .when(!failed, |row| {
-                            row.child(
-                                Button::new("tournaments-refresh")
-                                    .small()
-                                    .outline()
-                                    .icon(icon("refresh-cw"))
-                                    .label("Refresh")
-                                    .loading(self.loading.busy())
-                                    .disabled(self.loading.busy())
-                                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-                            )
-                        })
                     })
                     .child(
                         Button::new("tournaments-create")
