@@ -693,20 +693,9 @@ impl Render for HomePage {
                     .justify_between()
                     .mb(px(4.))
                     .child(widgets::heading("Recent games", &palette))
-                    .child(
-                        // The arrow trails the label.
-                        widgets::text_button("home-view-all")
-                            .accessibility_label("View all")
-                            .child(
-                                h_flex()
-                                    .gap(px(4.))
-                                    .child("View all")
-                                    .child(icon("arrow-right").size(px(14.))),
-                            )
-                            .on_click(|_, window, cx| {
-                                kchess_nav::shell::open(Page::History, window, cx)
-                            }),
-                    ),
+                    .child(view_all("home-view-all").on_click(|_, window, cx| {
+                        kchess_nav::shell::open(Page::History, window, cx)
+                    })),
             )
             .child(
                 v_flex()
@@ -909,6 +898,18 @@ impl PageView for HomePage {
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
         this.update(cx, |home, cx| home.act(action, window, cx));
     }
+}
+
+/// A list card's "View all", its arrow trailing the label, named for screen readers as it reads.
+pub(crate) fn view_all(id: impl Into<ElementId>) -> gpui_kit::component::button::Button {
+    widgets::text_button(id)
+        .accessibility_label("View all")
+        .child(
+            h_flex()
+                .gap(px(4.))
+                .child("View all")
+                .child(icon("arrow-right").size(px(14.))),
+        )
 }
 
 #[cfg(test)]

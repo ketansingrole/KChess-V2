@@ -538,21 +538,14 @@ impl Render for LichessActivity {
                     .mb(px(4.))
                     .child(widgets::heading("Games", &palette))
                     .when(!self.recent.is_empty(), |header| {
-                        header.child(
-                            crate::widgets::text_button("home-lichess-all")
-                                .child(
-                                    h_flex()
-                                        .gap(px(4.))
-                                        .child("View all")
-                                        .child(icon("arrow-right").size(px(14.))),
-                                )
-                                .on_click(move |_, window, cx| match &all_source {
-                                    Source::Lichess => kchess_history::open_lichess(window, cx),
-                                    Source::Chesscom(_) => {
-                                        kchess_history::open_account(&all_account, window, cx)
-                                    }
-                                }),
-                        )
+                        header.child(crate::view_all("home-lichess-all").on_click(
+                            move |_, window, cx| match &all_source {
+                                Source::Lichess => kchess_history::open_lichess(window, cx),
+                                Source::Chesscom(_) => {
+                                    kchess_history::open_account(&all_account, window, cx)
+                                }
+                            },
+                        ))
                     }),
             )
             .children(self.games.error().cloned().map(|error| {

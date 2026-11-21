@@ -455,7 +455,7 @@ impl OnlinePage {
                     .child(widgets::heading("Your games", palette))
                     .child(
                         Button::new("ongoing-refresh")
-                            .xsmall()
+                            .small()
                             .ghost()
                             .icon(icon("refresh-cw"))
                             .accessibility_label("Refresh games")

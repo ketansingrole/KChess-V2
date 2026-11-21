@@ -8,7 +8,7 @@ refuses to release with nothing there.
 
 ## Unreleased
 
-- **Fixes**: If a study chapter couldn't be saved when you quit, Retry now saves it instead of showing the same error again. Plus many smaller fixes.
+- **Fixes**: If a study chapter couldn't be saved when you quit, Retry now saves it instead of showing the same error again. Sort themes in Puzzles › Lichess stats stays inside the window. Plus many smaller fixes.
 
 ## 2026.11.8 (2026-11-21)
 
