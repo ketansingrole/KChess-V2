@@ -34,6 +34,9 @@ fn open(cx: &mut App, origin: Option<String>, deliver: bool) -> TestCore {
     let profile = tempfile::tempdir().expect("a profile");
     let runtime = kchess_client::core_runtime().expect("the core's runtime");
     let mut config = kchess_core::Config::new(profile.path().to_path_buf());
+    if let Some(origin) = &origin {
+        cx.set_global(crate::core::TestLichessOrigin(origin.clone()));
+    }
     config.test = origin.map(|origin| kchess_core::TestSwitches {
         lichess_origin: Some(origin),
         ..Default::default()

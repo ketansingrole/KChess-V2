@@ -96,6 +96,9 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
         if let Some(audio) = test.voice_audio.clone() {
             cx.set_global(kchess_board::voice::capture::TestAudio(audio));
         }
+        if let Some(origin) = test.lichess_origin.clone() {
+            cx.set_global(kchess_app::core::TestLichessOrigin(origin));
+        }
         cx.set_global(TestSwitchesGlobal(test));
     }
     let core = AppCore {
