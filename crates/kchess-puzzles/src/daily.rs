@@ -38,11 +38,20 @@ pub struct DailyPuzzle {
     board: Entity<PuzzleBoard>,
     themes: Vec<Theme>,
     layout: PlayLayout,
+    /// Fetches the next day's puzzle once the day the shown one is from ends.
+    rollover: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
 fn utc_day() -> String {
     jiff::Timestamp::now().strftime("%Y-%m-%d").to_string()
+}
+
+/// How long until the UTC day ends, and Lichess has a new puzzle of the day.
+fn until_tomorrow() -> std::time::Duration {
+    const DAY: i64 = 24 * 60 * 60;
+    let into = jiff::Timestamp::now().as_second().rem_euclid(DAY);
+    std::time::Duration::from_secs((DAY - into).unsigned_abs())
 }
 
 impl DailyPuzzle {
@@ -53,7 +62,7 @@ impl DailyPuzzle {
 
     pub fn new(themes: Vec<Theme>, window: &mut Window, cx: &mut Context<Self>) -> DailyPuzzle {
         let board = cx.new(|cx| PuzzleBoard::new(true, window, cx));
-        DailyPuzzle {
+        let mut daily = DailyPuzzle {
             puzzle: None,
             error: None,
             loading: false,
@@ -64,12 +73,16 @@ impl DailyPuzzle {
             board,
             themes,
             layout: PlayLayout::default(),
-        }
+            rollover: None,
+        };
+        daily.load(false, cx);
+        daily
     }
 
-    /// Fetch today's puzzle unless it is already shown (`force` fetches again).
+    /// Fetch today's puzzle unless it is already shown (`force` fetches again): when the view is
+    /// made, when the Puzzles page is shown again, and when the day ends.
     pub fn load(&mut self, force: bool, cx: &mut Context<Self>) {
-        // A failed fetch stays on screen for Try again: the page draws this on every frame.
+        // A failed fetch stays on screen for Try again.
         if self.loading
             || self.linked.is_some()
             || (!force && self.error.is_some())
@@ -83,6 +96,15 @@ impl DailyPuzzle {
         let day = utc_day();
         let daily = cx.global::<AppCore>().request(calls::PuzzleDaily {});
         self.fetch(daily, day, cx);
+    }
+
+    /// Once the day the puzzle is from ends, the next day's.
+    fn next_day(&mut self, cx: &mut Context<Self>) {
+        let wait = until_tomorrow();
+        self.rollover = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            this.update(cx, |this, cx| this.load(false, cx)).ok();
+        }));
     }
 
     /// Show the puzzle a lichess.org/training link names.
@@ -137,7 +159,10 @@ impl DailyPuzzle {
                         this.board
                             .update(cx, |board, cx| board.start(puzzle.clone(), None, cx));
                         this.puzzle = Some(puzzle);
-                        this.day = day;
+                        if !day.is_empty() {
+                            this.day = day;
+                            this.next_day(cx);
+                        }
                     }
                     Err(cause) => {
                         crate::log::write(
@@ -157,7 +182,6 @@ impl DailyPuzzle {
 
 impl Render for DailyPuzzle {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.load(false, cx);
         let palette = *cx.global::<Palette>();
         let board_size = self.layout.board_size(window);
         let board_column = if self.puzzle.is_some() {
@@ -249,5 +273,79 @@ impl Render for DailyPuzzle {
             });
         self.layout
             .render("puzzle-daily", board_column, panel, window, cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use gpui_kit::AppContext as _;
+
+    /// Drawing the puzzle of the day never fetches it: it is fetched when the view is made and
+    /// again when the day ends. Drawing it once fetched it on every frame, and so only when
+    /// something drew: a window left open overnight kept yesterday's.
+    #[gpui_kit::test]
+    fn the_next_days_puzzle_comes_when_the_day_ends_not_when_drawn(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let asked = Arc::new(AtomicUsize::new(0));
+        let server = {
+            let asked = Arc::clone(&asked);
+            kchess_testkit::Server::start(move |request, out| {
+                if request.path() != "/api/puzzle/daily" {
+                    return kchess_testkit::respond(out, 404, "text/plain", b"");
+                }
+                asked.fetch_add(1, Ordering::SeqCst);
+                let puzzle = serde_json::json!({
+                    "game": { "id": "KcGame01" },
+                    "puzzle": {
+                        "id": "KcDay",
+                        "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                        "lastMove": "g8f6",
+                        "solution": ["h5f7"],
+                        "rating": 1100,
+                        "themes": ["mateIn1", "short"],
+                    },
+                });
+                kchess_testkit::respond(out, 200, "application/json", puzzle.to_string().as_bytes())
+            })
+            .expect("a stand-in Lichess")
+        };
+        let mut app =
+            kchess_board::testing::Started::with_lichess(cx, Some(server.base().to_string()));
+        let (window, daily) = app.with_window(|_, cx| {
+            kchess_board::ai::init(cx);
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                cx.new(|cx| super::DailyPuzzle::new(Vec::new(), window, cx))
+            })
+            .expect("a window")
+        });
+        app.wait_for("the puzzle of the day", |_, cx| {
+            daily.read(cx).puzzle.is_some()
+        });
+        assert_eq!(asked.load(Ordering::SeqCst), 1);
+
+        // The puzzle shown is yesterday's; drawing it asks for nothing.
+        app.with_window(|_, cx| daily.update(cx, |daily, _| daily.day = "2000-01-01".into()));
+        for _ in 0..3 {
+            app.cx()
+                .update_window(window, |_, window, _| window.refresh())
+                .expect("the window");
+            app.cx().run_until_parked();
+        }
+        assert_eq!(asked.load(Ordering::SeqCst), 1);
+
+        // The day ends: the next day's is fetched.
+        app.cx()
+            .executor()
+            .advance_clock(super::until_tomorrow() + std::time::Duration::from_secs(1));
+        app.wait_for("the next day's puzzle", |_, _| {
+            asked.load(Ordering::SeqCst) == 2
+        });
+        app.wait_for("the day to follow", |_, cx| {
+            daily.read(cx).day == super::utc_day()
+        });
     }
 }

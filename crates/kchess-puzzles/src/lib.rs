@@ -377,6 +377,10 @@ impl PuzzlesPage {
     pub fn shown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_accounts(window, cx);
         self.show_tab(window, cx);
+        // The puzzle of the day may be yesterday's, if the computer slept through midnight.
+        if let Some(daily) = &self.daily {
+            daily.update(cx, |daily, cx| daily.load(false, cx));
+        }
         let core = cx.global::<AppCore>().clone();
         let puzzle_db = cx.global::<PuzzleDbHandle>().0.clone();
         puzzle_db.update(cx, |db, cx| db.refresh(cx));
