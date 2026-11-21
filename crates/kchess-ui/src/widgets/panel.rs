@@ -37,7 +37,19 @@ pub fn hint(text: impl Into<SharedString>, palette: &Palette) -> Div {
 /// A button that reads as text: small, but still a 24 px target (WCAG 2.5.8),
 /// which its text alone is not.
 pub fn text_button(id: impl Into<ElementId>) -> Button {
+    // gpui-lints: allow(unnamed_button) its callers name it, with a label or `trailing_icon`
     Button::new(id).text().xsmall().min_h(px(24.))
+}
+
+/// `button` reading `label` with `glyph` after it (Next →, View all →), named as it reads: a
+/// kit button's own icon goes before its label, and text drawn as a child names nothing.
+pub fn trailing_icon(button: Button, label: &'static str, glyph: &'static str) -> Button {
+    button.accessibility_label(label).child(
+        h_flex()
+            .gap(px(6.))
+            .child(label)
+            .child(icon(glyph).size(px(14.))),
+    )
 }
 
 /// The way out of a failed load that fills its place: one primary Try again.

@@ -457,7 +457,7 @@ impl WatchPage {
             .trigger(
                 Button::new("broadcast-engine-settings-button")
                     .ghost()
-                    .xsmall()
+                    .small()
                     .icon(icon("settings-2"))
                     .accessibility_label("Broadcast analysis settings"),
             )

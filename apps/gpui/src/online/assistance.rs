@@ -127,7 +127,7 @@ pub fn check_again_button(id: &'static str) -> gpui_kit::component::button::Butt
     use gpui_kit::component::button::{Button, ButtonVariants as _};
     Button::new(id)
         .link()
-        .xsmall()
+        .small()
         .label("Check again")
         .on_click(|_, _, cx| check_again(cx))
 }

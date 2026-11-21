@@ -87,7 +87,7 @@ impl PositionExplorer {
     fn render_filters(&self, prefs: &Prefs, cx: &mut Context<Self>, palette: &Palette) -> Div {
         let toggle = |id: SharedString, label: String, on: bool| {
             Button::new(id)
-                .xsmall()
+                .small()
                 .label(label)
                 .when(on, |button| button.primary())
                 .when(!on, |button| button.ghost())
@@ -170,7 +170,7 @@ impl PositionExplorer {
                     .map(|(index, name)| {
                         let name = name.clone();
                         Button::new(("explorer-account", index))
-                            .xsmall()
+                            .small()
                             .outline()
                             .label(name.clone())
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -464,7 +464,7 @@ impl PositionExplorer {
                             line.child(
                                 Button::new(("explorer-guess", index))
                                     .ghost()
-                                    .xsmall()
+                                    .small()
                                     .icon(icon("target"))
                                     .tooltip("Guess the moves")
                                     .accessibility_label("Guess the moves")
@@ -529,7 +529,7 @@ impl Render for PositionExplorer {
                 |head| {
                     head.child(
                         Button::new("explorer-filters")
-                            .xsmall()
+                            .small()
                             .size(px(24.))
                             .ghost()
                             .icon(icon("sliders-horizontal"))

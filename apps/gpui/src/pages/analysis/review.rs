@@ -802,7 +802,7 @@ impl AnalysisPage {
                 head.child(
                     Button::new("review-stop")
                         .ghost()
-                        .xsmall()
+                        .small()
                         .icon(icon("square"))
                         .label("Stop")
                         .on_click(cx.listener(|this, _, _, cx| this.cancel_review(cx))),
@@ -812,7 +812,7 @@ impl AnalysisPage {
                 head.child(
                     Button::new("review-start")
                         .primary()
-                        .xsmall()
+                        .small()
                         .icon(icon("chart-line"))
                         .label(if review.is_some() && reviewed > 0 {
                             "Finish review"

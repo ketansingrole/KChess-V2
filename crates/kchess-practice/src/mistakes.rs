@@ -557,7 +557,7 @@ impl Mistakes {
                             head.child(
                                 Button::new("mistakes-insights")
                                     .link()
-                                    .xsmall()
+                                    .small()
                                     .icon(icon("chart-pie"))
                                     .label("Insights")
                                     .on_click(|_, window, cx| {
@@ -572,7 +572,7 @@ impl Mistakes {
                         h_flex().child(
                             Button::new("mistakes-all-games")
                                 .link()
-                                .xsmall()
+                                .small()
                                 .label(format!("Show all {} games", self.games.len()))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.show_all = true;

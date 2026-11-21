@@ -900,16 +900,9 @@ impl PageView for HomePage {
     }
 }
 
-/// A list card's "View all", its arrow trailing the label, named for screen readers as it reads.
+/// A list card's "View all", its arrow trailing the label.
 pub(crate) fn view_all(id: impl Into<ElementId>) -> gpui_kit::component::button::Button {
-    widgets::text_button(id)
-        .accessibility_label("View all")
-        .child(
-            h_flex()
-                .gap(px(4.))
-                .child("View all")
-                .child(icon("arrow-right").size(px(14.))),
-        )
+    widgets::trailing_icon(widgets::text_button(id), "View all", "arrow-right")
 }
 
 #[cfg(test)]

@@ -45,7 +45,7 @@ impl ComputerPage {
                         .child(
                             Button::new("check-engine")
                                 .link()
-                                .xsmall()
+                                .small()
                                 .label("Check again")
                                 .loading(checking)
                                 .on_click(cx.listener(|this, _, _, cx| this.check_engine(cx))),

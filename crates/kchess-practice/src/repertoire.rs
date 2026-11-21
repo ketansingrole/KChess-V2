@@ -1226,7 +1226,7 @@ impl Render for Repertoire {
             .trigger(
                 Button::new("repertoire-help-button")
                     .ghost()
-                    .xsmall()
+                    .small()
                     .icon(icon("circle-help"))
                     .accessibility_label("How replies are chosen"),
             )

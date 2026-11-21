@@ -10,14 +10,30 @@ use gpui_kit::{Role, px, size};
 use super::{Harness, SIZES};
 use crate::pages::Page;
 
-const CONTROLS: [Role; 7] = [
+const CONTROLS: [Role; 15] = [
     Role::Button,
     Role::Link,
     Role::Tab,
     Role::TextInput,
+    Role::PasswordInput,
+    Role::MultilineTextInput,
+    Role::SearchInput,
     Role::ComboBox,
     Role::Switch,
     Role::CheckBox,
+    Role::RadioButton,
+    Role::Slider,
+    Role::SpinButton,
+    Role::MenuItem,
+    Role::ListBoxOption,
+];
+
+/// The fields among them: text a person types.
+const FIELDS: [Role; 4] = [
+    Role::TextInput,
+    Role::PasswordInput,
+    Role::MultilineTextInput,
+    Role::SearchInput,
 ];
 
 /// The controls a person can reach: while Settings' dialog is open, only its own, as the page
@@ -225,9 +241,9 @@ fn check(page: &str, width: f32, elements: &[ElementSnapshot], findings: &mut Fi
                 "{page}: {name} is cut off at the side ({bounds:?})"
             ));
         }
-        // A text input's accessible element is its editor's text line, not the box around it
-        // (GPUI Kit 0.9 marks the frame presentational), so only its width says how big it is.
-        let reach = if control.role() == Some(Role::TextInput) {
+        // A field's accessible element is its editor's text line, not the box around it (GPUI
+        // Kit 0.9 marks the frame presentational), so only its width says how big it is.
+        let reach = if control.role().is_some_and(|role| FIELDS.contains(&role)) {
             bounds.size.width
         } else {
             bounds.size.width.min(bounds.size.height)

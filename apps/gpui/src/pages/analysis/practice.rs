@@ -365,7 +365,7 @@ impl AnalysisPage {
             .child(
                 Button::new("stop-practice")
                     .ghost()
-                    .xsmall()
+                    .small()
                     .icon(icon("x"))
                     .tooltip("Stop practice")
                     .accessibility_label("Stop practice")

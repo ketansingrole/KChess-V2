@@ -308,19 +308,17 @@ pub(crate) fn status_panel(
                     }),
             )])
             .chain(next.map(|next| {
-                Button::new("puzzle-next")
-                    .w_full()
-                    .when(finished, |button| button.primary())
-                    .when(!finished, |button| button.outline())
-                    .child(
-                        h_flex()
-                            .gap(px(8.))
-                            .child("Next")
-                            .child(icon("arrow-right").size(px(14.))),
-                    )
-                    .on_click(move |_, window, cx| next(window, cx))
-                    .into_any_element()
-                    .into()
+                widgets::trailing_icon(
+                    Button::new("puzzle-next")
+                        .w_full()
+                        .when(finished, |button| button.primary())
+                        .when(!finished, |button| button.outline()),
+                    "Next",
+                    "arrow-right",
+                )
+                .on_click(move |_, window, cx| next(window, cx))
+                .into_any_element()
+                .into()
             })),
         ))
         .children(facts)

@@ -549,7 +549,7 @@ impl WatchPage {
         let action: Option<AnyElement> = if browsing {
             Some(
                 Button::new("watch-back-live")
-                    .xsmall()
+                    .small()
                     .ghost()
                     .icon(icon("radio"))
                     .label("Back to live")

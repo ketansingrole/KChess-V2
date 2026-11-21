@@ -287,7 +287,8 @@ fn a_checkmate_lesson_takes_back_a_wrong_move_and_accepts_the_mate(
     tab(&mut app, crate::pages::practice::Tab::Endgames);
     app.click("card-checkmate-patterns-2");
     app.click("training-cp2-balestra");
-    app.click("lesson-next");
+    // Found by its name, as a screen reader finds it: the button's text is drawn as a child.
+    app.click_label("Next");
     assert_eq!(app.status(), "Your turn");
     app.drag_square("d3", "c4", true);
     wait_for_label(&mut app, "status-banner", "Not the move — try again");

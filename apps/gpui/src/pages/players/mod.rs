@@ -812,7 +812,7 @@ impl PlayersPage {
             if !recent.is_empty() {
                 let clear = Button::new("players-recent-clear")
                     .ghost()
-                    .xsmall()
+                    .small()
                     .icon(icon("x"))
                     .label("Clear")
                     .accessibility_label("Clear recent players")

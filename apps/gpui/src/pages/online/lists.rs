@@ -222,7 +222,7 @@ impl OnlinePage {
                         )
                         .child(
                             Button::new(("challenge-accept", index))
-                                .xsmall()
+                                .small()
                                 .primary()
                                 .icon(icon("check"))
                                 .label("Accept")
@@ -245,7 +245,7 @@ impl OnlinePage {
                         )
                         .child(
                             Button::new(("challenge-decline", index))
-                                .xsmall()
+                                .small()
                                 .outline()
                                 .icon(icon("x"))
                                 .label("Decline")
@@ -308,7 +308,7 @@ impl OnlinePage {
                             )
                             .child(
                                 Button::new(("challenge-withdraw", index))
-                                    .xsmall()
+                                    .small()
                                     .outline()
                                     .icon(icon("x"))
                                     .label("Withdraw")
@@ -421,7 +421,7 @@ impl OnlinePage {
                     )
                     .child(
                         Button::new(("ongoing-play", index))
-                            .xsmall()
+                            .small()
                             .when(mine && playable, |button| button.primary())
                             .when(!mine || !playable, |button| button.outline())
                             .label(if !playable {

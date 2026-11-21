@@ -657,7 +657,7 @@ impl OpeningsPage {
                 row.child(
                     Button::new(SharedString::from(format!("toggle-{name}")))
                         .ghost()
-                        .xsmall()
+                        .small()
                         .icon(if open {
                             icon("chevron-down")
                         } else {
@@ -1043,7 +1043,7 @@ impl OpeningsPage {
                         h_flex().child(
                             Button::new("description-more")
                                 .link()
-                                .xsmall()
+                                .small()
                                 .label(if self.full_description {
                                     "Less"
                                 } else {
@@ -1110,7 +1110,7 @@ impl OpeningsPage {
                     .child(
                         Button::new("openings-flip")
                             .ghost()
-                            .xsmall()
+                            .small()
                             .icon(icon("arrow-up-down"))
                             .tooltip(crate::menu::flip_label(cx))
                             .accessibility_label("Flip board")

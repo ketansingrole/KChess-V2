@@ -755,20 +755,18 @@ impl EndgameLesson {
                 !self.last_step() || self.chapter + 1 < chapters,
                 |actions| {
                     actions.child(
-                        Button::new("lesson-next")
-                            .when(over && success, |button| button.primary())
-                            .when(!(over && success), |button| button.outline())
-                            .child(
-                                h_flex()
-                                    .gap(px(8.))
-                                    .child(if self.last_step() {
-                                        "Next chapter"
-                                    } else {
-                                        "Next"
-                                    })
-                                    .child(icon("chevron-right").size(px(14.))),
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| this.next(cx))),
+                        widgets::trailing_icon(
+                            Button::new("lesson-next")
+                                .when(over && success, |button| button.primary())
+                                .when(!(over && success), |button| button.outline()),
+                            if self.last_step() {
+                                "Next chapter"
+                            } else {
+                                "Next"
+                            },
+                            "chevron-right",
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.next(cx))),
                     )
                 },
             );
