@@ -163,12 +163,22 @@ struct Internal {
     attempt: Option<Attempt>,
 }
 
+crate::union!(
+    /// Which call a reply answers: a downloaded puzzle, a Lichess puzzle, a practice puzzle drawn
+    /// again without the account, or a result sent to Lichess.
+    Stage {
+        Offline = "offline",
+        Draw = "draw",
+        Anonymous = "anonymous",
+        Solve = "solve",
+    }
+);
+
 /// Carried by a host call and handed back with its reply.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Resume {
-    /// `offline` (local puzzle), `draw` (Lichess puzzle), `anonymous` (practice retry), `solve`.
-    stage: String,
+    stage: Stage,
     generation: u64,
     #[serde(default)]
     version: u64,
@@ -313,9 +323,9 @@ fn draw_args(account: &str, selection: &Selection) -> Request {
     })
 }
 
-fn resume(stage: &str, generation: u64, selection: &Selection) -> Resume {
+fn resume(stage: Stage, generation: u64, selection: &Selection) -> Resume {
     Resume {
-        stage: stage.into(),
+        stage,
         generation,
         version: 0,
         key: 0,
@@ -425,7 +435,7 @@ impl Session<'_> {
                     max_rating: centre + 150.0,
                     count: 1,
                 }),
-                resume: resume("offline", generation, selection),
+                resume: resume(Stage::Offline, generation, selection),
             });
             return;
         }
@@ -439,7 +449,7 @@ impl Session<'_> {
         }
         self.call = Some(Call {
             request: draw_args(&selection.account, selection),
-            resume: resume("draw", generation, selection),
+            resume: resume(Stage::Draw, generation, selection),
         });
     }
 
@@ -453,14 +463,14 @@ impl Session<'_> {
             Ok(answer) => answer,
             Err(failure) => return self.fail(&selection, &failure.message, failure.kind),
         };
-        match token.stage.as_str() {
-            "offline" => match answer {
+        match token.stage {
+            Stage::Offline => match answer {
                 Answer::Local(mut puzzles) if !puzzles.is_empty() => {
                     self.show(puzzles.swap_remove(0), &selection, false)
                 }
                 _ => self.exhausted(),
             },
-            "draw" => {
+            Stage::Draw => {
                 if answer == Answer::NeedsReconnect {
                     if selection.mode == "rated" {
                         self.state.phase = Phase::Reconnect;
@@ -469,7 +479,7 @@ impl Session<'_> {
                     // Practice does not need the permission: take a puzzle without the account.
                     self.call = Some(Call {
                         request: draw_args("", &selection),
-                        resume: resume("anonymous", token.generation, &selection),
+                        resume: resume(Stage::Anonymous, token.generation, &selection),
                     });
                     return;
                 }
@@ -484,7 +494,9 @@ impl Session<'_> {
                     None => self.exhausted(),
                 }
             }
-            _ => {
+            // A result's reply settles a report (`report_settled`), not a load.
+            Stage::Solve => {}
+            Stage::Anonymous => {
                 if answer == Answer::NeedsReconnect {
                     return;
                 }
@@ -611,7 +623,7 @@ impl Session<'_> {
             win,
             rated: counts_for_rating(&started.mode, detail.hinted),
         };
-        let mut token = resume("solve", self.internal.load_gen, selection);
+        let mut token = resume(Stage::Solve, self.internal.load_gen, selection);
         token.version = self.internal.session_version;
         token.key = started.key;
         token.win = win;
@@ -904,6 +916,28 @@ mod tests {
             failed("Download the puzzle database first.", None),
             Phase::Error
         );
+    }
+
+    /// Each call's stage keeps its name on the wire, and a result's reply handed to a load leaves
+    /// the puzzle alone: it used to fall through to the practice-retry path and show a puzzle.
+    #[test]
+    fn a_reply_settles_only_the_call_of_its_stage() {
+        let names = [Stage::Offline, Stage::Draw, Stage::Anonymous, Stage::Solve].map(|stage| {
+            serde_json::to_value(resume(stage, 0, &selection())).unwrap()["stage"].clone()
+        });
+        assert_eq!(
+            names,
+            ["offline", "draw", "anonymous", "solve"].map(|name| json!(name))
+        );
+        let mut session = PuzzleSession::new();
+        session.show(puzzle("shown"), &selection(), "");
+        let token = resume(Stage::Solve, session.internal.load_gen, &selection());
+        let drawn = Answer::Drawn {
+            puzzle: Some(puzzle("other")),
+            rating: None,
+        };
+        session.load_settled(token, Ok(drawn), &selection(), "");
+        assert_eq!(session.current().map(|p| p.id.as_str()), Some("shown"));
     }
 
     #[test]
