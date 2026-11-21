@@ -516,7 +516,7 @@ impl StudiesPage {
                     found: Vec::new(),
                     action: Button::new(SharedString::from(format!("keep-{id}")))
                         .outline()
-                        .xsmall()
+                        .small()
                         .w_full()
                         .icon(icon("download"))
                         .label(if copy.is_some() {

@@ -730,7 +730,7 @@ impl StudiesPage {
         let study = study.clone();
         Button::new(SharedString::from(format!("study-menu-{id}")))
             .ghost()
-            .xsmall()
+            .small()
             .icon(icon("ellipsis-vertical"))
             .accessibility_label(format!("Actions for {name}"))
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
@@ -940,7 +940,7 @@ impl StudiesPage {
                         menu: Some(self.menu(study).into_any_element()),
                         action: Button::new(SharedString::from(format!("upload-{id}")))
                             .outline()
-                            .xsmall()
+                            .small()
                             .w_full()
                             .icon(icon("cloud-upload"))
                             .label(upload_label)

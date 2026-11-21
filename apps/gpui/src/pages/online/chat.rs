@@ -92,7 +92,7 @@ impl OnlinePage {
             .when(open, |head| {
                 head.child(
                     Button::new("chat-spectators")
-                        .xsmall()
+                        .small()
                         .when(spectators, |button| button.primary())
                         .when(!spectators, |button| button.ghost())
                         .icon(icon("users"))
@@ -145,7 +145,7 @@ impl OnlinePage {
                     body.child(h_flex().flex_wrap().gap(px(4.)).children(
                         PRESETS.iter().enumerate().map(|(index, preset)| {
                             Button::new(("chat-preset", index))
-                                .xsmall()
+                                .small()
                                 .ghost()
                                 .label(*preset)
                                 .on_click(cx.listener(move |this, _, window, cx| {

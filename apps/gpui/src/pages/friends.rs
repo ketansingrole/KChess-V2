@@ -558,7 +558,7 @@ impl FriendsPage {
                     .gap(px(4.))
                     .children(playing_id.map(|id| {
                         Button::new(("friend-watch", index))
-                            .xsmall()
+                            .small()
                             .outline()
                             .icon(icon("tv"))
                             .label("Watch")
@@ -568,7 +568,7 @@ impl FriendsPage {
                     }))
                     .child(
                         Button::new(("friend-challenge", index))
-                            .xsmall()
+                            .small()
                             .ghost()
                             .icon(icon("swords"))
                             .label("Challenge")
@@ -578,7 +578,7 @@ impl FriendsPage {
                     )
                     .child(
                         Button::new(("friend-games", index))
-                            .xsmall()
+                            .small()
                             .ghost()
                             .icon(icon("history"))
                             .label("Games")
@@ -589,7 +589,7 @@ impl FriendsPage {
                     )
                     .child(
                         Button::new(("friend-more", index))
-                            .xsmall()
+                            .small()
                             .ghost()
                             .icon(icon("ellipsis"))
                             .accessibility_label("More")

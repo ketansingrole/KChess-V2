@@ -842,7 +842,7 @@ impl WatchPage {
             .child(
                 Button::new("watch-friends-refresh")
                     .ghost()
-                    .xsmall()
+                    .small()
                     .size(px(24.))
                     .icon(icon("refresh-cw"))
                     .accessibility_label("Refresh followed players")
@@ -904,7 +904,7 @@ impl WatchPage {
                             )
                             .child(
                                 Button::new(("watch-friend-game", index))
-                                    .xsmall()
+                                    .small()
                                     .primary()
                                     .label("Watch")
                                     .disabled(game.is_none() || disabled)

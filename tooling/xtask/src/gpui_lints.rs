@@ -18,6 +18,9 @@
 //!   logged (`answer.ok()`, `if let Ok(x) = answer` with no `else`, `let _ = answer.await`, an
 //!   `Err(_)` arm): the page keeps what it showed and nobody learns why. Log it
 //!   (`.warn_on_err()`, `loading::failure`) or show it through `Loading`.
+//! - `small_target`: a GPUI Kit button made `.xsmall()` is 20 px tall, under the 24 px a target
+//!   needs (WCAG 2.5.8) and the layout audit holds; it only fails there in a state the audit
+//!   draws. Use `.small()`, or `widgets::text_button` (xsmall with a 24 px `min_h`).
 //!
 //! A line that must stay says why on the line before: `// gpui-lints: allow(<lint>) <reason>`.
 
@@ -95,6 +98,16 @@ fn is_test(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
+/// The expressions a macro's body lists (`vec![a, b]`, `format!("{}", x)`), which `syn` leaves
+/// as tokens: views build children in `vec![…]`, and a mistake there is the same mistake.
+fn macro_exprs(mac: &syn::Macro) -> Vec<syn::Expr> {
+    use syn::parse::Parser as _;
+    syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated
+        .parse2(mac.tokens.clone())
+        .map(|exprs| exprs.into_iter().collect())
+        .unwrap_or_default()
+}
+
 fn line(span: Span) -> usize {
     span.start().line
 }
@@ -103,6 +116,9 @@ fn line(span: Span) -> usize {
 #[derive(Default)]
 struct Lints {
     found: Vec<Finding>,
+    /// The `.xsmall()` calls already judged, from the whole chain they are in: the chain's
+    /// shorter tails are visited after it, and would miss a `min_h` that follows.
+    sized: std::collections::HashSet<(usize, usize)>,
 }
 
 impl Lints {
@@ -158,6 +174,7 @@ impl<'ast> Visit<'ast> for Lints {
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        self.small_target(call);
         if is_update(call)
             && let Some(syn::Expr::Closure(closure)) = call.args.iter().nth(1)
         {
@@ -181,6 +198,12 @@ impl<'ast> Visit<'ast> for Lints {
         visit::visit_expr_method_call(self, call);
     }
 
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        for expr in macro_exprs(mac) {
+            self.visit_expr(&expr);
+        }
+    }
+
     fn visit_arm(&mut self, arm: &'ast syn::Arm) {
         self.unlogged(&arm.pat, |read| read.visit_expr(&arm.body));
         visit::visit_arm(self, arm);
@@ -195,6 +218,37 @@ impl<'ast> Visit<'ast> for Lints {
 }
 
 impl Lints {
+    /// A kit button's `.xsmall()` in the chain `call` ends, without a `min_h` that keeps it a
+    /// 24 px target.
+    fn small_target(&mut self, call: &syn::ExprMethodCall) {
+        let mut methods = Vec::new();
+        let mut link = call;
+        let root = loop {
+            methods.push(&link.method);
+            match &*link.receiver {
+                syn::Expr::MethodCall(inner) => link = inner,
+                other => break other,
+            }
+        };
+        let is_button = matches!(root, syn::Expr::Call(constructor)
+            if matches!(&*constructor.func, syn::Expr::Path(path)
+                if path.path.segments.len() >= 2
+                    && path.path.segments.iter().rev().nth(1).is_some_and(|s| s.ident == "Button")
+                    && path.path.segments.last().is_some_and(|s| s.ident == "new")));
+        let kept = methods.iter().any(|method| *method == "min_h");
+        for method in methods.iter().filter(|method| **method == "xsmall") {
+            let start = method.span().start();
+            if self.sized.insert((start.line, start.column)) && is_button && !kept {
+                self.report(
+                    method.span(),
+                    "small_target",
+                    "a kit button made `.xsmall()` is 20 px, under the 24 px a target needs: use \
+                     `.small()`, or `widgets::text_button` for one that reads as text",
+                );
+            }
+        }
+    }
+
     /// The core calls' failures `body`, one function's, throws away.
     fn dropped(&mut self, body: &syn::Block) {
         let mut answers = Answers::default();
@@ -631,6 +685,12 @@ impl<'ast> Visit<'ast> for InRender<'_> {
 
     fn visit_item(&mut self, _: &'ast syn::Item) {}
 
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        for expr in macro_exprs(mac) {
+            self.visit_expr(&expr);
+        }
+    }
+
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         let method = call.method.to_string();
         if method == "notify" && call.args.is_empty() {
@@ -793,6 +853,31 @@ impl Render for Board {
                 ("blocking_in_render", 5),
                 ("blocking_in_render", 18),
                 ("blocking_in_render", 19),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_xsmall_kit_button_is_found_unless_it_keeps_24_px() {
+        let text = r#"
+fn row(cx: &mut App) -> Div {
+    div()
+        .child(Button::new("train").ghost().xsmall().label("Train"))
+        .child(Button::new("more").xsmall().text().min_h(px(24.)))
+        .child(Input::new(&field).xsmall())
+        .child(gpui_kit::component::button::Button::new(("accept", 1))
+            .when(on, |button| button.primary())
+            .xsmall())
+        .child(Button::new("go").small())
+        .children(vec![Button::new("confirm").xsmall(), Button::new("cancel").small()])
+}
+"#;
+        assert_eq!(
+            lints_of(text),
+            [
+                ("small_target", 4),
+                ("small_target", 9),
+                ("small_target", 11)
             ]
         );
     }

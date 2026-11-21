@@ -703,7 +703,7 @@ impl Render for PuzzleStats {
                             div().w(px(60.)).flex().justify_end().child(
                                 Button::new(("stats-train", index))
                                     .ghost()
-                                    .xsmall()
+                                    .small()
                                     .label("Train")
                                     .on_click(cx.listener(move |_, _, _, cx| {
                                         cx.emit(StatsEvent::Train(key.clone()))

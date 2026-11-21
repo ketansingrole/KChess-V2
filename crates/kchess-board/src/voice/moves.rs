@@ -440,7 +440,7 @@ impl VoiceMoves {
                 let uci = choice.uci.clone();
                 // The bar's own buttons take the low numbers.
                 Button::new((id, CHOICE_IDS + index))
-                    .xsmall()
+                    .small()
                     .outline()
                     .label(format!("{} · {}", index + 1, choice.san))
                     .on_click(move |_, window, cx| pick(uci.clone(), window, cx))
@@ -450,7 +450,7 @@ impl VoiceMoves {
         if !self.choices.is_empty() {
             buttons.push(
                 Button::new((id, 99usize))
-                    .xsmall()
+                    .small()
                     .ghost()
                     .icon(icon("x"))
                     .accessibility_label("Cancel move")

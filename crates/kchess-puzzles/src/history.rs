@@ -530,7 +530,7 @@ impl Render for PuzzleHistory {
                     .child(
                         Button::new(("puzzle-retry", index))
                             .outline()
-                            .xsmall()
+                            .small()
                             .label("Try again")
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(HistoryEvent::Retry(retry.clone()))
@@ -539,7 +539,7 @@ impl Render for PuzzleHistory {
                     .child(
                         Button::new(("puzzle-analyse", index))
                             .ghost()
-                            .xsmall()
+                            .small()
                             .icon(icon("microscope"))
                             .tooltip("Analysis board")
                             .accessibility_label("Open on the analysis board")
@@ -611,7 +611,7 @@ impl Render for PuzzleHistory {
                     .child(
                         Button::new("puzzle-history-reconnect")
                             .outline()
-                            .xsmall()
+                            .small()
                             .icon(icon("log-in"))
                             .label("Reconnect")
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(HistoryEvent::Reconnect))),

@@ -238,7 +238,7 @@ fn refusal_text(problem: AiProblem) -> &'static str {
 fn manage_usage(id: &'static str) -> Button {
     Button::new(id)
         .ghost()
-        .xsmall()
+        .small()
         .label("Manage usage")
         .on_click(|_, _, cx| cx.open_url(USAGE_SETTINGS))
 }

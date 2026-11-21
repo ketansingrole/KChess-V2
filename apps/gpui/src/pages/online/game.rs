@@ -796,7 +796,7 @@ impl OnlinePage {
                     format!("Play {san}?"),
                     vec![
                         Button::new("move-confirm")
-                            .xsmall()
+                            .small()
                             .primary()
                             .label("Confirm")
                             .tooltip("Return")
@@ -805,7 +805,7 @@ impl OnlinePage {
                             })
                             .into_any_element(),
                         Button::new("move-cancel")
-                            .xsmall()
+                            .small()
                             .outline()
                             .label("Cancel")
                             .tooltip("Esc")
@@ -832,7 +832,7 @@ impl OnlinePage {
         }
         let small = |id: &'static str, label: &'static str, primary: bool, run: OnlineAction| {
             Button::new(id)
-                .xsmall()
+                .small()
                 .when(primary, |button| button.primary())
                 .when(!primary, |button| button.outline())
                 .label(label)
@@ -944,7 +944,7 @@ impl OnlinePage {
                     format!("{} wants a rematch", rematch.opponent.name),
                     vec![
                         Button::new("rematch-accept")
-                            .xsmall()
+                            .small()
                             .primary()
                             .label("Accept")
                             .on_click(move |_, _, cx| {
@@ -954,7 +954,7 @@ impl OnlinePage {
                             })
                             .into_any_element(),
                         Button::new("rematch-decline")
-                            .xsmall()
+                            .small()
                             .outline()
                             .label("Decline")
                             .on_click(move |_, _, cx| {

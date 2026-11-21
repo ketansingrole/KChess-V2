@@ -311,7 +311,7 @@ impl TournamentsPage {
                                 .gap(px(4.))
                                 .child(
                                     Button::new("standings-previous")
-                                        .xsmall()
+                                        .small()
                                         .ghost()
                                         .icon(icon("chevron-left"))
                                         .accessibility_label("Previous page")
@@ -328,7 +328,7 @@ impl TournamentsPage {
                                 )
                                 .child(
                                     Button::new("standings-next")
-                                        .xsmall()
+                                        .small()
                                         .ghost()
                                         .icon(icon("chevron-right"))
                                         .accessibility_label("Next page")

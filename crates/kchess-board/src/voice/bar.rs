@@ -150,7 +150,7 @@ pub fn voice_bar(
                 |row, url| {
                     row.child(
                         Button::new((bar.id, 1usize))
-                            .xsmall()
+                            .small()
                             .outline()
                             .icon(icon("settings-2"))
                             .label("Privacy settings")
@@ -161,7 +161,7 @@ pub fn voice_bar(
             .when(state == State::Error, |row| {
                 row.child(
                     Button::new((bar.id, 2usize))
-                        .xsmall()
+                        .small()
                         .outline()
                         .icon(icon("rotate-ccw"))
                         .label("Try again")
