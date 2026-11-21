@@ -42,11 +42,11 @@ fn piece_preview(set: &str, width: Pixels) -> impl IntoElement {
         ))
 }
 
-fn board_swatch(image: &str, width: Pixels) -> impl IntoElement {
-    img(SharedString::from(format!("boards/{image}")))
+fn board_swatch(surface: &looks::Surface, width: Pixels) -> impl IntoElement {
+    div()
+        .relative()
         .size(picture_width(width))
-        .rounded(radii::SM)
-        .object_fit(ObjectFit::Cover)
+        .child(looks::surface(surface, radii::SM))
 }
 
 /// The theme's background, a raised card, its text and primary colors. A scale
@@ -164,7 +164,7 @@ impl SettingsPage {
                     SharedString::from(format!("board-{}", board.id)),
                     item,
                     frontend.board_theme == board.id,
-                    board_swatch(&board.image, item),
+                    board_swatch(&board.surface, item),
                     board.name.clone(),
                     None,
                     move |cx| {

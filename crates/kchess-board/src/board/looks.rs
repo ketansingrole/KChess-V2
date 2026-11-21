@@ -18,12 +18,137 @@ const LOOKS_JSON: &str = include_str!("../../data/looks.json");
 pub struct BoardLook {
     pub id: String,
     pub name: String,
-    /// The image in `apps/gpui/assets/boards`.
-    pub image: String,
+    /// How its squares are drawn.
+    #[serde(flatten)]
+    pub surface: Surface,
     /// Coordinate labels on dark squares.
     pub coord_white: String,
     /// Coordinate labels on light squares.
     pub coord_black: String,
+}
+
+/// A board's squares: two flat colours the board paints itself, sharp at any size and with no
+/// texture to hold, or a textured image (`apps/gpui/assets/boards`) stretched under it.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Surface {
+    Colors {
+        #[serde(deserialize_with = "hex")]
+        light: u32,
+        #[serde(deserialize_with = "hex")]
+        dark: u32,
+    },
+    Image(String),
+}
+
+fn hex<'de, D: serde::Deserializer<'de>>(from: D) -> Result<u32, D::Error> {
+    let text = String::deserialize(from)?;
+    text.strip_prefix('#')
+        .filter(|digits| digits.len() == 6)
+        .and_then(|digits| u32::from_str_radix(digits, 16).ok())
+        .ok_or_else(|| serde::de::Error::custom(format!("{text} is not #rrggbb")))
+}
+
+impl Surface {
+    /// The image's path among the assets (`boards/wood.jpg`), for a textured board.
+    pub fn image_path(&self) -> Option<String> {
+        match self {
+            Self::Image(image) => Some(format!("boards/{image}")),
+            Self::Colors { .. } => None,
+        }
+    }
+}
+
+/// Whether the square at `column`, `row` from the viewer's top left is dark: the corners at the
+/// viewer's bottom left and top right are, from either side.
+pub fn dark_square(column: u32, row: u32) -> bool {
+    (column + row) % 2 == 1
+}
+
+/// The squares of a drawn board in `bounds`: the light colour over all of it, the dark squares
+/// over that, each corner taking `radius`, so the corners stay concentric with what holds it.
+/// Edges fall on whole device pixels, so no square blurs into its neighbour.
+pub fn paint_squares(
+    bounds: gpui_kit::Bounds<gpui_kit::Pixels>,
+    light: u32,
+    dark: u32,
+    radius: gpui_kit::Pixels,
+    window: &mut gpui_kit::Window,
+) {
+    use gpui_kit::{Corners, fill, point, px, rgb};
+    let radius = radius.min(bounds.size.width / 8.);
+    window.paint_quad(fill(bounds, rgb(light)).corner_radii(radius));
+    let scale = window.scale_factor();
+    let snap = |at: gpui_kit::Pixels| px((f32::from(at) * scale).round() / scale);
+    let edge = |origin: gpui_kit::Pixels, extent: gpui_kit::Pixels, index: u32| {
+        snap(origin + extent * (index as f32 / 8.))
+    };
+    for (column, row, corners) in dark_squares(radius) {
+        let (left, right) = (
+            edge(bounds.origin.x, bounds.size.width, column),
+            edge(bounds.origin.x, bounds.size.width, column + 1),
+        );
+        let (top, bottom) = (
+            edge(bounds.origin.y, bounds.size.height, row),
+            edge(bounds.origin.y, bounds.size.height, row + 1),
+        );
+        let square = gpui_kit::Bounds::from_corners(point(left, top), point(right, bottom));
+        let [top_left, top_right, bottom_right, bottom_left] = corners;
+        window.paint_quad(fill(square, rgb(dark)).corner_radii(Corners {
+            top_left,
+            top_right,
+            bottom_right,
+            bottom_left,
+        }));
+    }
+}
+
+/// A board's squares filling what holds them, their corners rounded to `radius`: drawn in one
+/// paint for a flat board (no layout of its own beyond the one box, nothing to notify), or the
+/// image stretched for a textured one.
+pub fn surface(surface: &Surface, radius: gpui_kit::Pixels) -> gpui_kit::AnyElement {
+    use gpui_kit::{
+        IntoElement as _, ObjectFit, SharedString, Styled as _, StyledImage as _, canvas, img,
+    };
+    match *surface {
+        Surface::Colors { light, dark } => canvas(
+            |_, _, _| {},
+            move |bounds, (), window, _| paint_squares(bounds, light, dark, radius, window),
+        )
+        .absolute()
+        .size_full()
+        .into_any_element(),
+        Surface::Image(ref image) => img(SharedString::from(format!("boards/{image}")))
+            .absolute()
+            .size_full()
+            .object_fit(ObjectFit::Fill)
+            .rounded(radius)
+            .into_any_element(),
+    }
+}
+
+/// The 32 dark squares by column and row, each with the corners it rounds: top left, top right,
+/// bottom right, bottom left.
+pub fn dark_squares(
+    radius: gpui_kit::Pixels,
+) -> impl Iterator<Item = (u32, u32, [gpui_kit::Pixels; 4])> {
+    (0..8u32).flat_map(move |row| {
+        (0..8u32)
+            .filter(move |&column| dark_square(column, row))
+            .map(move |column| {
+                let at = |on: bool| if on { radius } else { gpui_kit::px(0.) };
+                (
+                    column,
+                    row,
+                    [
+                        at(column == 0 && row == 0),
+                        at(column == 7 && row == 0),
+                        at(column == 7 && row == 7),
+                        at(column == 0 && row == 7),
+                    ],
+                )
+            })
+    })
 }
 
 #[derive(Deserialize)]
@@ -336,9 +461,69 @@ mod tests {
             }
         }
         for board in &LOOKS.boards {
-            let path = format!("boards/{}", board.image);
-            assert!(crate::assets::shared(&path).is_some(), "{path}");
+            if let Some(path) = board.surface.image_path() {
+                assert!(crate::assets::shared(&path).is_some(), "{path}");
+            }
         }
+        // Every embedded board image is one a board shows.
+        for path in crate::assets::paths().filter(|path| path.starts_with("boards/")) {
+            assert!(
+                LOOKS
+                    .boards
+                    .iter()
+                    .any(|board| board.surface.image_path().as_deref() == Some(&*path)),
+                "{path} is embedded but no board shows it"
+            );
+        }
+    }
+
+    /// The drawn boards' colours, read from the pixels of the Lichess images they replaced
+    /// (2048² two-colour PNGs; the light square is the top left one).
+    #[test]
+    fn drawn_boards_keep_the_colours_of_their_old_images() {
+        let old_pixels = [
+            ("brown", 0xf0d9b5, 0xb58863),
+            ("blue", 0xdee3e6, 0x8ca2ad),
+            ("green", 0xffffdd, 0x86a666),
+            ("purple", 0x9f90b0, 0x7d4a8d),
+            ("ic", 0xececec, 0xc1c18e),
+        ];
+        for (id, light, dark) in old_pixels {
+            assert_eq!(board(id).surface, Surface::Colors { light, dark }, "{id}");
+        }
+        let drawn = LOOKS
+            .boards
+            .iter()
+            .filter(|board| matches!(board.surface, Surface::Colors { .. }))
+            .count();
+        assert_eq!(drawn, old_pixels.len());
+        // The patterned purple keeps its image.
+        assert_eq!(
+            board("purple-diag").surface.image_path().as_deref(),
+            Some("boards/purple-diag.png")
+        );
+    }
+
+    /// Only the four corner squares are rounded, each on its outer corner: two dark ones here,
+    /// and the light ones by the board's own rounded fill.
+    #[test]
+    fn a_drawn_board_rounds_its_corner_squares() {
+        let radius = gpui_kit::px(8.);
+        let squares: Vec<_> = dark_squares(radius).collect();
+        assert_eq!(squares.len(), 32);
+        let zero = gpui_kit::px(0.);
+        for (column, row, corners) in squares {
+            let expected = match (column, row) {
+                (7, 0) => [zero, radius, zero, zero],
+                (0, 7) => [zero, zero, zero, radius],
+                _ => [zero; 4],
+            };
+            assert_eq!(corners, expected, "{column},{row}");
+        }
+        assert!(
+            !dark_square(0, 0) && !dark_square(7, 7),
+            "the light corners"
+        );
     }
 
     #[test]

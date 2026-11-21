@@ -572,13 +572,7 @@ impl Render for ChessBoard {
                 div()
                     .relative()
                     .size_full()
-                    .child(
-                        img(SharedString::from(format!("boards/{}", look.image)))
-                            .absolute()
-                            .size_full()
-                            .object_fit(ObjectFit::Fill)
-                            .rounded(radii::BOARD),
-                    )
+                    .child(looks::surface(&look.surface, radii::BOARD))
                     .children(check)
                     .child(
                         canvas(
