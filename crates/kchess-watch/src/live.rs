@@ -621,11 +621,7 @@ impl WatchPage {
             .as_ref()
             .map(|setup| view::sans(setup, &moves))
             .unwrap_or_default();
-        let empty = if frame.source != WatchSource::Tv {
-            "Lichess does not send this game’s moves"
-        } else {
-            "Loading moves…"
-        };
+        let empty = moves_placeholder(&frame);
         let page = cx.entity().downgrade();
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
             let _ = page.update(cx, |page, cx| {
@@ -656,7 +652,7 @@ impl WatchPage {
                     shown: self.live.shown_ply(),
                     first: setup.as_ref().map(view::first_move).unwrap_or_default(),
                 },
-                empty.into(),
+                empty,
                 select.clone(),
                 crate::notation::figurine(cx),
                 palette,
@@ -984,6 +980,18 @@ pub enum Action {
     Stop,
 }
 
+/// What the move list says before the moves arrive: Lichess sends no moves for a game watched
+/// by its id, a TV game's come once Lichess's delayed export lines up, unless that failed.
+fn moves_placeholder(frame: &WatchFrame) -> SharedString {
+    if frame.source != WatchSource::Tv {
+        SharedString::new_static("Lichess does not send this game’s moves")
+    } else if let Some(error) = &frame.moves_error {
+        error.clone().into()
+    } else {
+        SharedString::new_static("Loading moves…")
+    }
+}
+
 /// What the board's place says before a game arrives: a failed feed is not still connecting.
 fn placeholder(target: bool, phase: Option<WatchPhase>) -> &'static str {
     match (target, phase) {
@@ -995,7 +1003,9 @@ fn placeholder(target: bool, phase: Option<WatchPhase>) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{info_line, past_result, past_score, placeholder, points, result_line};
+    use super::{
+        info_line, moves_placeholder, past_result, past_score, placeholder, points, result_line,
+    };
     use kchess_contracts::types::{TvPastGame, WatchFrame, WatchPhase};
     use serde_json::json;
     use shakmaty::Color;
@@ -1040,6 +1050,25 @@ mod tests {
             game[key] = value.clone();
         }
         serde_json::from_value(game).expect("a past game")
+    }
+
+    /// A TV game whose export failed said "Loading moves…" for good.
+    #[test]
+    fn a_tv_game_whose_moves_failed_says_why_instead_of_loading() {
+        let tv = |fields: serde_json::Value| {
+            let mut fields = fields;
+            fields["source"] = json!("tv");
+            moves_placeholder(&frame(fields))
+        };
+        assert_eq!(tv(json!({})), "Loading moves…");
+        assert_eq!(
+            tv(json!({ "movesError": "Lichess is not answering." })),
+            "Lichess is not answering."
+        );
+        assert_eq!(
+            moves_placeholder(&frame(json!({}))),
+            "Lichess does not send this game’s moves"
+        );
     }
 
     #[test]
