@@ -339,10 +339,7 @@ impl PuzzlesPage {
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> AnyElement {
-        let around = self.puzzle.read(cx).around();
-        let board_size = self
-            .layout
-            .board_size_around(px(0.), px(0.), around, window);
+        let (board_size, panel_height) = board_and_panel(&self.layout, &self.puzzle, window, cx);
         let mode = Self::mode(cx);
         let ready = self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == Phase::Ready;
         let board_column = if ready {
@@ -445,7 +442,7 @@ impl PuzzlesPage {
         let rating_text =
             rating_text.or_else(|| sending.then(|| ("Sending to Lichess…".to_string(), false)));
         let panel = widgets::side_panel(palette)
-            .h(self.layout.fixed(board_size + around))
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)

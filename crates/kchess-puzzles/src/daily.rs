@@ -10,7 +10,7 @@ use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::types::Puzzle;
 
-use super::{Theme, status_panel};
+use super::{Theme, board_and_panel, status_panel};
 use crate::core::AppCore;
 use crate::puzzle_board::PuzzleBoard;
 use crate::theme::{Palette, radii};
@@ -183,7 +183,7 @@ impl DailyPuzzle {
 impl Render for DailyPuzzle {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let board_size = self.layout.board_size(window);
+        let (board_size, panel_height) = board_and_panel(&self.layout, &self.board, window, cx);
         let board_column = if self.puzzle.is_some() {
             div()
                 .w(board_size)
@@ -246,7 +246,7 @@ impl Render for DailyPuzzle {
                 .into_any_element()
         };
         let panel = widgets::side_panel(&palette)
-            .h(board_size)
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)

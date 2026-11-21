@@ -17,6 +17,7 @@ use kchess_domain::training::data::data;
 use kchess_domain::training::rush::{RushConfig, RushState, combo_progress, format_run_clock};
 use serde_json::{Value, json};
 
+use super::board_and_panel;
 use super::stats::PuzzleStats;
 use crate::core::AppCore;
 use crate::game::puzzle::PuzzleStatus;
@@ -646,7 +647,7 @@ impl PuzzleRush {
         palette: &Palette,
     ) -> AnyElement {
         let config = self.config();
-        let board_size = self.layout.board_size(window);
+        let (board_size, panel_height) = board_and_panel(&self.layout, &self.board, window, cx);
         let state = &self.state;
         let combo_on = config.is_some_and(|config| config.combo);
         let board_column = div()
@@ -671,7 +672,7 @@ impl PuzzleRush {
             .map(|config| config.title.clone())
             .unwrap_or_default();
         let mut panel = widgets::side_panel(palette)
-            .h(board_size)
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)
