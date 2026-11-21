@@ -21,9 +21,21 @@ const CONTROLS: [Role; 7] = [
 ];
 
 /// The controls a person can reach: while Settings' dialog is open, only its own, as the page
-/// under its overlay takes no clicks.
+/// under its overlay takes no clicks. A notice's own Close (GPUI Kit's toast, which shows it
+/// only while the pointer is over the notice, and hides the notice by itself) is not the page's.
 fn in_front(elements: Vec<ElementSnapshot>) -> Vec<ElementSnapshot> {
+    let toasts = gpui_kit::ElementId::from("notification-list");
+    let in_toast = |e: &ElementSnapshot| {
+        e.path().iter().any(|id| match id {
+            gpui_kit::ElementId::NamedInteger(name, _) => {
+                gpui_kit::ElementId::Name(name.clone()) == toasts
+            }
+            _ => false,
+        })
+    };
+    let elements = elements.into_iter().filter(|e| !in_toast(e));
     let dialog = gpui_kit::ElementId::from("settings-dialog");
+    let elements: Vec<ElementSnapshot> = elements.collect();
     if !elements.iter().any(|e| e.path().contains(&dialog)) {
         return elements;
     }
@@ -39,9 +51,8 @@ struct Findings {
     small: Vec<String>,
 }
 
-#[gpui_kit::test]
-fn every_page_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
-    let mut app = Harness::start(cx);
+/// Every page at each of the audit's window sizes, as it opens.
+fn every_page(app: &mut Harness) -> Findings {
     let mut findings = Findings::default();
     let pages: Vec<(Page, &'static str)> =
         Page::all().map(|page| (page, page.info().label)).collect();
@@ -60,6 +71,13 @@ fn every_page_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
             );
         }
     }
+    findings
+}
+
+#[gpui_kit::test]
+fn every_page_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let findings = every_page(&mut app);
     let mut report = String::new();
     for problem in &findings.problems {
         let _ = writeln!(report, "  {problem}");
@@ -281,27 +299,30 @@ fn the_board_editors_actions_stay_in_its_panel(cx: &mut gpui_kit::TestAppContext
 fn every_page_with_content_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     seed(&mut app);
-    let mut findings = Findings::default();
-    let pages: Vec<(Page, &'static str)> =
-        Page::all().map(|page| (page, page.info().label)).collect();
-    for (width, height) in SIZES {
-        app.cx
-            .simulate_window_resize(app.window, size(px(width), px(height)));
-        for &(page, label) in &pages {
-            app.with_window(|window, cx| crate::shell::open(page, window, cx));
-            app.settle();
-            let controls = app.with_window(|window, _| in_front(window.elements()));
-            check(
-                &format!("{label} at {width}×{height}"),
-                width,
-                &controls,
-                &mut findings,
-            );
-        }
-    }
+    let findings = every_page(&mut app);
     assert!(
         findings.problems.is_empty() && findings.small.is_empty(),
         "with content:\n  {}",
+        findings
+            .problems
+            .iter()
+            .chain(&findings.small)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+}
+
+/// The same audit signed in to a Lichess account with ratings, a rating history and synced
+/// games: what only an account shows (Home's ratings, Play on Lichess, Studies' Lichess tab,
+/// Insights) was never looked at.
+#[gpui_kit::test]
+fn every_page_signed_in_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    let findings = every_page(&mut app);
+    assert!(
+        findings.problems.is_empty() && findings.small.is_empty(),
+        "signed in:\n  {}",
         findings
             .problems
             .iter()
@@ -341,7 +362,7 @@ fn every_tab_and_settings_section_lays_out_its_controls(
     cx: &mut gpui_kit::TestAppContext,
     (width, height): (f32, f32),
 ) {
-    let mut app = Harness::start(cx);
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
     let mut findings = Findings::default();
     let settle = |app: &mut Harness| {
         app.settle();
@@ -609,24 +630,7 @@ fn seed(app: &mut Harness) {
 fn every_page_with_the_longest_content_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     seed_longest(&mut app);
-    let mut findings = Findings::default();
-    let pages: Vec<(Page, &'static str)> =
-        Page::all().map(|page| (page, page.info().label)).collect();
-    for (width, height) in SIZES {
-        app.cx
-            .simulate_window_resize(app.window, size(px(width), px(height)));
-        for &(page, label) in &pages {
-            app.with_window(|window, cx| crate::shell::open(page, window, cx));
-            app.settle();
-            let controls = app.with_window(|window, _| in_front(window.elements()));
-            check(
-                &format!("{label} at {width}×{height}"),
-                width,
-                &controls,
-                &mut findings,
-            );
-        }
-    }
+    let findings = every_page(&mut app);
     assert!(
         findings.problems.is_empty(),
         "with the longest content:\n  {}",

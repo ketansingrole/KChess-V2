@@ -721,14 +721,19 @@ impl Render for PuzzleStats {
                 h_flex()
                     .justify_between()
                     .gap(px(8.))
-                    .child(v_flex().child(widgets::heading("Themes", &palette)).child(
-                        widgets::hint(
-                            format!("Where you are strongest and weakest, last {days} days"),
-                            &palette,
-                        ),
-                    ))
+                    // The hint wraps beside the select, which keeps its width.
                     .child(
-                        div().w(px(150.)).child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(widgets::heading("Themes", &palette))
+                            .child(widgets::hint(
+                                format!("Where you are strongest and weakest, last {days} days"),
+                                &palette,
+                            )),
+                    )
+                    .child(
+                        div().w(px(150.)).flex_none().child(
                             Select::new(&self.sort_select)
                                 .small()
                                 .accessibility_label("Sort themes"),
