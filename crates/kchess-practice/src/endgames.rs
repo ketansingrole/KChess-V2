@@ -188,7 +188,7 @@ impl Endgames {
             .p(px(16.))
             .border_1()
             .border_color(palette.border)
-            .rounded(radii::XL)
+            .rounded(radii::BOX)
             .bg(palette.elevated)
             .cursor_pointer()
             .pressable_card(palette)
@@ -201,7 +201,7 @@ impl Endgames {
                     .flex_none()
                     .size(px(40.))
                     .p(px(8.))
-                    .rounded(radii::LG)
+                    .rounded(radii::BOX)
                     .bg(palette.accented)
                     .child(glyph.size(px(24.)).text_color(palette.toned)),
             )

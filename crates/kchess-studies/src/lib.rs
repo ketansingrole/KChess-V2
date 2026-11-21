@@ -226,9 +226,12 @@ impl StudiesPage {
         !crate::accounts::handle(cx).read(cx).connected().is_empty()
     }
 
-    /// A small board picturing a position, made once per position.
+    /// A small board picturing a position in a study's card, made once per position.
     fn preview(&mut self, fen: &str, cx: &mut Context<Self>) -> Entity<ChessBoard> {
-        let state = || BoardState::preview(fen, Default::default(), Color::White, None);
+        let state = || BoardState {
+            corners: widgets::card_picture_corners(),
+            ..BoardState::preview(fen, Default::default(), Color::White, None)
+        };
         self.previews.board(fen.to_string(), state, cx)
     }
 

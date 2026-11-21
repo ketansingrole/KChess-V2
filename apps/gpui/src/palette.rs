@@ -999,7 +999,7 @@ impl Render for CommandPalette {
                                 .gap(px(8.))
                                 .px(px(12.))
                                 .py(px(6.))
-                                .rounded(radii::SM)
+                                .rounded(radii::BOX)
                                 .text_size(px(13.))
                                 .when(chosen, |row| {
                                     row.bg(crate::theme::tint(palette.primary, 12.))
@@ -1159,7 +1159,7 @@ impl Render for CommandPalette {
             .top_0()
             .left_0()
             .right_0()
-            .rounded(radii::MD)
+            .rounded(radii::BOX)
             .border_1()
             .border_color(palette.border_accented)
             .bg(if open && palette.dark {
@@ -1218,7 +1218,7 @@ pub(crate) fn kbd(keys: &str, palette: &Palette) -> impl IntoElement {
                 .min_w(px(20.))
                 .px(px(4.))
                 .justify_center()
-                .rounded(radii::XS)
+                .rounded(radii::SMALL)
                 .border_1()
                 .border_color(palette.border_accented)
                 .bg(palette.bg)

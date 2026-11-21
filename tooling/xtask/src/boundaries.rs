@@ -775,7 +775,7 @@ fn every_corner_in_the_app_comes_from_the_radius_scale() {
 fn a_literal_corner_is_found_outside_the_theme_preview() {
     let files = [file(
         "apps/gpui/src/a.rs",
-        "div().rounded(radii::SM)\ndiv().rounded(px(3.))\nfn theme_preview() {\n    \
+        "div().rounded(radii::BOX)\ndiv().rounded(px(3.))\nfn theme_preview() {\n    \
          div().rounded(px(2.))\n}\n",
     )];
     assert_eq!(stray_corners(&files), ["apps/gpui/src/a.rs:2"]);
