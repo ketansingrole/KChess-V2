@@ -18,7 +18,8 @@ git commit -m "Release <version>"
 
 Merge the reviewed version commit into `main` and wait for green CI. The version change runs CI's
 packages, Snap build and Windows upgrade, which on `main` otherwise run only nightly, when
-packaging may have changed since main last packaged; from a clean checkout of that commit, `cargo xtask release-verify` checks
+packaging may have changed since main last packaged. So does every later push to `main` until its
+version is tagged, so a fix merged after the version change can be the release commit. From a clean checkout of that commit, `cargo xtask release-verify` checks
 the metadata and that its CI ran and passed every job. Then create an annotated tag derived from
 its version and push only that tag, as the [release checklist](#release-checklist) shows. Never reuse or move a release tag. The version helper stops if it cannot refresh remote
 tags; it does not guess using a stale local list.
