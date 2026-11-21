@@ -123,6 +123,42 @@ fn a_local_game_is_played_through_stdin_and_kept_in_the_library() {
     assert!(lines(&status)[0].get("engine").is_some());
 }
 
+/// `notifications` lists what the app kept, newest first, and marks or clears one or all of them.
+#[test]
+fn notifications_are_listed_marked_read_and_cleared() {
+    let profile = tempfile::tempdir().expect("profile");
+    for title in ["Game over", "Your move against Anna"] {
+        let entry = json!([{ "title": title, "link": { "kind": "liveGame" } }]).to_string();
+        let kept = cli(profile.path(), &["call", "recordNotification", &entry], "");
+        assert!(kept.status.success(), "{kept:?}");
+    }
+    let listed = cli(profile.path(), &["notifications"], "");
+    assert!(listed.status.success(), "{listed:?}");
+    let entries = lines(&listed)[0].as_array().expect("a list").clone();
+    let titles: Vec<&Value> = entries.iter().map(|entry| &entry["title"]).collect();
+    assert_eq!(
+        titles,
+        [&json!("Your move against Anna"), &json!("Game over")]
+    );
+    assert!(entries.iter().all(|entry| entry["read"] == json!(false)));
+
+    let newest = entries[0]["id"].as_str().expect("an id");
+    let read = cli(profile.path(), &["notifications", "read", newest], "");
+    let read: Vec<Value> = lines(&read)[0].as_array().expect("a list").clone();
+    assert_eq!(
+        read.iter()
+            .map(|entry| entry["read"].clone())
+            .collect::<Vec<_>>(),
+        [json!(true), json!(false)]
+    );
+    let cleared = cli(profile.path(), &["notifications", "clear", newest], "");
+    assert_eq!(lines(&cleared)[0].as_array().map(Vec::len), Some(1));
+    let all = cli(profile.path(), &["notifications", "clear"], "");
+    assert_eq!(lines(&all)[0], json!([]));
+    let wrong = cli(profile.path(), &["notifications", "delete"], "");
+    assert!(!wrong.status.success());
+}
+
 /// 2026-11-11: `--data-dir` alone (no `KCHESS_USER_DATA_DIR`) gave the scratch profile the
 /// person's own downloaded engine in `~/.kchess/engines`, which installing or deleting it there
 /// then replaced. A scratch profile keeps its own, as the app's do.

@@ -574,6 +574,25 @@ core_api! {
             key: ViewPreferenceKey;
             value: Option<Value>
         ) -> ();
+        /// The notifications kept on this profile, newest first: at most 100, none older than
+        /// 30 days.
+        Notifications = "notifications" fn notifications() -> Vec<NotificationEntry>;
+        /// Keep a notification the app showed. One with the key of a kept one replaces it, or,
+        /// saying the same, leaves it as it was. Answers the notifications kept.
+        #[writes(Notifications)]
+        RecordNotification = "recordNotification" fn record_notification(
+            entry: NotificationInput
+        ) -> Vec<NotificationEntry>;
+        /// Mark one notification read, or every one. Answers the notifications kept.
+        #[writes(Notifications)]
+        MarkNotificationsRead = "markNotificationsRead" fn mark_notifications_read(;
+            id: Option<NotificationId>
+        ) -> Vec<NotificationEntry>;
+        /// Remove one notification, or every one. Answers the notifications kept.
+        #[writes(Notifications)]
+        ClearNotifications = "clearNotifications" fn clear_notifications(;
+            id: Option<NotificationId>
+        ) -> Vec<NotificationEntry>;
     }
 
     /// Network usage and the user's themes.
