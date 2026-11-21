@@ -616,9 +616,18 @@ fn phrases_said_on_the_board_reach_the_voice_history(cx: &mut gpui_kit::TestAppC
         app.cx.run_until_parked();
     }
     assert_eq!(selected(&mut app, "e2e4"), Some(true));
-    let mut logged = app.request(kchess_contracts::calls::VoiceHistory {
-        limit: VoiceLimit(10),
-    });
+    // Each phrase reaches the core on its own thread, after the page has moved on: wait for both
+    // (macOS CI, 2026-11-21: read with the second still on its way).
+    let started = std::time::Instant::now();
+    let mut logged = loop {
+        let logged = app.request(kchess_contracts::calls::VoiceHistory {
+            limit: VoiceLimit(10),
+        });
+        if logged.len() >= 2 || started.elapsed() > super::TIMEOUT {
+            break logged;
+        }
+        app.tick();
+    };
     logged.sort_by_key(|attempt| attempt.id);
     let logged: Vec<_> = logged
         .iter()
