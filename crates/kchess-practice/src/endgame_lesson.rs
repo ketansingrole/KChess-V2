@@ -22,6 +22,8 @@ use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard, Circle};
 use crate::core::AppCore;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
+use crate::voice::moves::{Access, BoardBar, Offer, Said, Turn, VoiceMoves, board_bar, offered_grammar};
+use kchess_domain::voice::PuzzleCommand;
 use crate::widgets::{self, Tone};
 use kchess_domain::training::endgames::san_from;
 use kchess_nav::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, PlayLayout};
@@ -144,6 +146,8 @@ pub struct EndgameLesson {
     engine: EngineMove,
     board: Entity<ChessBoard>,
     move_box: crate::game::surface::MoveBox,
+    /// Spoken moves, and the lesson's buttons said aloud.
+    voice: VoiceMoves,
     layout: PlayLayout,
     _subscriptions: Vec<Subscription>,
 }
@@ -177,6 +181,7 @@ impl EndgameLesson {
         });
         let (move_box, typed) = crate::game::surface::MoveBox::new(Self::typed_move, window, cx);
         let settings = cx.global::<SettingsHandle>().0.clone();
+        let voice = crate::voice::handle(cx);
         let subscriptions = vec![
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
                 if let BoardEvent::Move(uci) = event {
@@ -187,6 +192,10 @@ impl EndgameLesson {
             cx.subscribe(&settings, |this, _, _: &SettingsChanged, cx| {
                 this.redraw(cx)
             }),
+            cx.subscribe(&voice, |this, _, event: &crate::voice::VoiceEvent, cx| {
+                this.voice_heard(event, cx)
+            }),
+            cx.observe(&voice, |_, _, cx| cx.notify()),
         ];
         // The first chapter not yet finished.
         let chapter = course
@@ -208,6 +217,7 @@ impl EndgameLesson {
             engine: EngineMove::default(),
             board,
             move_box,
+            voice: VoiceMoves::new(crate::voice::VoiceSource::Endgames, cx),
             layout: PlayLayout::default(),
             _subscriptions: subscriptions,
         };
@@ -399,6 +409,104 @@ impl EndgameLesson {
         }
     }
 
+    /// Voice listens while the step waits on you: your move, or a step read or over.
+    fn voice_listening(&self) -> bool {
+        self.your_turn() || self.status().over || !self.playable()
+    }
+
+    /// The lesson's buttons voice can press: Next, Retry and Hint (on a step to play), and the
+    /// previous step (“back”).
+    fn voice_offers(&self) -> Vec<Offer> {
+        let actions = self.actions();
+        let has = |action| actions.contains(&action);
+        let mut offers = vec![Offer::new(
+            PuzzleCommand::Next,
+            has(LessonAction::Next) || has(LessonAction::NextChapter),
+            if self.last_step() {
+                "Next chapter"
+            } else {
+                "Next step"
+            },
+            "This is the last step",
+        )];
+        if self.playable() {
+            offers.extend([
+                Offer::new(
+                    PuzzleCommand::Retry,
+                    has(LessonAction::Retry),
+                    "Step restarted",
+                    "Nothing to retry yet",
+                ),
+                Offer::new(
+                    PuzzleCommand::Hint,
+                    has(LessonAction::Hint),
+                    "Hint shown",
+                    "No hint now",
+                ),
+            ]);
+        }
+        offers.push(Offer::new(
+            PuzzleCommand::Back,
+            has(LessonAction::Previous),
+            "Previous step",
+            "This is the first step",
+        ));
+        offers
+    }
+
+    /// A spoken move belongs to this step after these moves; another drops a choice waiting.
+    fn sync_voice(&mut self, cx: &mut Context<Self>) {
+        let context = format!("{}:{}:{}", self.chapter, self.step, self.moves.len());
+        let line = san_from(&self.step().fen, &self.moves);
+        let (grammar, listening) = (offered_grammar(&self.voice_offers()), self.voice_listening());
+        self.voice.sync(&context, Some(line), grammar, listening, cx);
+    }
+
+    fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
+        if !self.voice.owns(event) {
+            return;
+        }
+        let setup = kchess_domain::variant::Setup::standard_at(&self.status().fen);
+        let heard = match event {
+            crate::voice::VoiceEvent::Missed { heard, .. } => {
+                self.voice.missed(heard, &setup.fen, self.your_turn(), cx);
+                return;
+            }
+            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        };
+        let idle = if !self.playable() {
+            Some("Say “next” for the next step")
+        } else if self.status().over {
+            Some("Say “next” or “retry”")
+        } else {
+            None
+        };
+        let turn = Turn {
+            taking: self.your_turn(),
+            idle,
+            immediate: false,
+        };
+        let offers = self.voice_offers();
+        match self.voice.hear_offered(&heard, &setup, turn, &offers, cx) {
+            Said::Play(uci) => self.on_move(&uci, cx),
+            Said::Command(PuzzleCommand::Next) => self.next(cx),
+            Said::Command(PuzzleCommand::Retry) => self.act(LessonAction::Retry, cx),
+            Said::Command(PuzzleCommand::Hint) => self.act(LessonAction::Hint, cx),
+            Said::Command(PuzzleCommand::Back) => self.act(LessonAction::Previous, cx),
+            Said::Nothing => {}
+        }
+        cx.notify();
+    }
+
+    /// `text` said clearly, with voice on: as the recognizer's phrase reaches the lesson.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hear(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.voice.control.enabled = true;
+        let owner = self.voice.control.owner;
+        let heard = crate::voice::Heard::clear(text);
+        self.voice_heard(&crate::voice::VoiceEvent::Heard { owner, heard }, cx);
+    }
+
     /// The opponent answers: a scripted or solved reply after a beat, else the engine.
     fn respond(&mut self, cx: &mut Context<Self>) {
         let status = self.status();
@@ -528,6 +636,7 @@ impl EndgameLesson {
     }
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
+        self.sync_voice(cx);
         let status = self.status();
         let fen = status.fen.clone();
         let Some(position) =
@@ -835,12 +944,32 @@ impl Render for EndgameLesson {
                 .board_size_beside(CHAPTERS_WIDTH + LAYOUT_GAP, window)
         };
         let your_turn = self.your_turn();
+        let entry = widgets::move_entry(&self.move_box.input, your_turn, &palette);
+        let listening = self.voice_listening();
+        let (voice, voice_line) = board_bar(
+            &self.voice,
+            cx.entity().downgrade(),
+            Access {
+                write: |this: &mut Self| &mut this.voice,
+                play: |this: &mut Self, uci, _, cx| this.on_move(uci, cx),
+            },
+            BoardBar {
+                id: "lesson-voice",
+                hint: "Say “E four”, “hint” or “next”",
+                active: your_turn,
+                listening,
+                grammar: offered_grammar(&self.voice_offers()),
+            },
+            cx,
+        );
         let board = v_flex()
             .w(board_size)
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(crate::board::cached(&self.board))
-            .child(self.move_box.lone(your_turn, &palette));
+            .child(widgets::input_row(entry, voice))
+            .children(voice_line)
+            .children(self.move_box.message(&palette));
         let chapters = self.render_chapters(cx, &palette);
         let board_column = if narrow {
             v_flex()

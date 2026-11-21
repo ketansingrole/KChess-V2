@@ -16,7 +16,10 @@ use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
 use crate::game::STANDARD_FEN;
 use crate::game::puzzle::{OnBoard, PuzzleStatus};
 use crate::theme::{Palette, radii, tint};
-use crate::voice::moves::{Access, Action, BoardBar, Turn, VoiceMoves, board_bar};
+use crate::voice::moves::{
+    Access, BoardBar, Offer, Said, Turn, VoiceMoves, board_bar, offered_grammar,
+};
+use kchess_domain::voice::PuzzleCommand;
 use crate::widgets;
 
 /// Before the opponent replies, and the solution's pace when it plays itself.
@@ -313,8 +316,8 @@ impl PuzzleBoard {
         self.reply_delay = reply_delay;
     }
 
-    /// The page goes on to a next puzzle: “next” said once a puzzle is over asks for it
-    /// (`PuzzleBoardEvent::Next`).
+    /// The page goes on to a next puzzle and has a Hint button: “next” said once a puzzle is over
+    /// asks for it (`PuzzleBoardEvent::Next`), and “hint” shows the piece to move.
     pub fn take_next(&mut self) {
         self.next = true;
     }
@@ -559,13 +562,7 @@ impl PuzzleBoard {
     #[cfg(any(test, feature = "test-support"))]
     pub fn hear(&mut self, text: &str, cx: &mut Context<Self>) {
         self.voice.control.enabled = true;
-        let heard = crate::voice::Heard {
-            text: text.into(),
-            raw: text.into(),
-            confidence: 1.,
-            words: Vec::new(),
-            unclear: false,
-        };
+        let heard = crate::voice::Heard::clear(text);
         let owner = self.voice.control.owner;
         self.voice_heard(&crate::voice::VoiceEvent::Heard { owner, heard }, cx);
     }
@@ -585,14 +582,31 @@ impl PuzzleBoard {
         self.playing() || (self.next && self.over())
     }
 
+    /// On a page with Next and Hint buttons (`take_next`): “next” once the puzzle is over (mid-puzzle
+    /// a misheard “next” would throw it away: the button skips), and “hint” while it is played.
+    fn voice_offers(&self) -> Vec<Offer> {
+        if !self.next {
+            return Vec::new();
+        }
+        let (over, playing) = (self.over(), self.playing());
+        vec![
+            Offer::new(
+                PuzzleCommand::Next,
+                over,
+                "Next puzzle",
+                "Finish this puzzle first",
+            ),
+            Offer::new(
+                PuzzleCommand::Hint,
+                playing,
+                if self.hinted { "Hint hidden" } else { "Hint shown" },
+                "No hint now",
+            ),
+        ]
+    }
+
     fn voice_grammar(&self) -> Vec<String> {
-        use kchess_domain::voice::{Grammar, grammar};
-        grammar(if self.next {
-            Grammar::Puzzle
-        } else {
-            Grammar::Move
-        })
-        .to_vec()
+        offered_grammar(&self.voice_offers())
     }
 
     /// A spoken move belongs to this puzzle at this point of it; another drops a choice waiting.
@@ -623,36 +637,18 @@ impl PuzzleBoard {
             }
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
         };
-        let (over, takes_next) = (self.over(), self.next);
+        let (over, playing) = (self.over(), self.playing());
         let turn = Turn {
-            taking: self.playing(),
-            idle: (takes_next && over).then_some("Say “next” for the next puzzle"),
+            taking: playing,
+            idle: (self.next && over).then_some("Say “next” for the next puzzle"),
             immediate: false,
         };
-        let mut next = false;
-        let command = |text: &str| {
-            if !takes_next {
-                return None;
-            }
-            kchess_domain::voice::puzzle_command(text)?;
-            // Mid-puzzle a misheard “next” would throw the puzzle away: the button skips.
-            next = over;
-            Some(crate::voice::moves::Reply {
-                said: "next".into(),
-                feedback: if over {
-                    "Next puzzle"
-                } else {
-                    "Finish this puzzle first"
-                }
-                .into(),
-                understood: over,
-            })
-        };
-        if let Action::Play(uci) = self.voice.hear(&heard, &setup, turn, command, cx) {
-            self.on_move(&uci, cx);
-        }
-        if next {
-            cx.emit(PuzzleBoardEvent::Next);
+        let offers = self.voice_offers();
+        match self.voice.hear_offered(&heard, &setup, turn, &offers, cx) {
+            Said::Play(uci) => self.on_move(&uci, cx),
+            Said::Command(PuzzleCommand::Hint) => self.hint(cx),
+            Said::Command(PuzzleCommand::Next) => cx.emit(PuzzleBoardEvent::Next),
+            Said::Command(PuzzleCommand::Retry | PuzzleCommand::Back) | Said::Nothing => {}
         }
         cx.notify();
     }
@@ -691,7 +687,11 @@ impl Render for PuzzleBoard {
             },
             BoardBar {
                 id: "puzzle-voice",
-                hint: "Say “E four” or “Knight F three”",
+                hint: if self.next {
+                    "Say “E four”, “hint” or “next”"
+                } else {
+                    "Say “E four” or “Knight F three”"
+                },
                 active: listening,
                 listening,
                 grammar,

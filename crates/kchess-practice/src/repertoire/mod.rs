@@ -37,6 +37,8 @@ use crate::game::tree::{TreeNode, child_path, comment_text};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::studies::StudyHandle;
 use crate::theme::{Palette, radii};
+use crate::voice::moves::{Access, BoardBar, Offer, Said, Turn, VoiceMoves, board_bar, offered_grammar};
+use kchess_domain::voice::PuzzleCommand;
 use crate::widgets::{self, Choice, Pill, Tone};
 use kchess_board::game::OpeningChoice;
 use kchess_games::random_unit;
@@ -127,6 +129,8 @@ pub struct Repertoire {
     board: Entity<ChessBoard>,
     layout: PlayLayout,
     move_box: crate::game::surface::MoveBox,
+    /// Spoken moves, and Show move and Restart line said aloud.
+    voice: VoiceMoves,
     study_select: Entity<SelectState<Vec<Choice>>>,
     chapter_select: Entity<SelectState<Vec<Choice>>>,
     /// The selects' items are rebuilt on the next frame, where there is a window.
@@ -155,7 +159,12 @@ impl Repertoire {
         let chapter_select = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
         let settings = cx.global::<SettingsHandle>().0.clone();
         let trainer = cx.entity().downgrade();
+        let voice = crate::voice::handle(cx);
         let subscriptions = vec![
+            cx.subscribe(&voice, |this, _, event: &crate::voice::VoiceEvent, cx| {
+                this.voice_heard(event, cx)
+            }),
+            cx.observe(&voice, |_, _, cx| cx.notify()),
             // Another window practised a repertoire: its misses and schedule are the profile's.
             crate::core::profile_changes(
                 cx,
@@ -226,6 +235,7 @@ impl Repertoire {
             board,
             layout: PlayLayout::default(),
             move_box,
+            voice: VoiceMoves::new(crate::voice::VoiceSource::Repertoire, cx),
             study_select,
             chapter_select,
             stale_selects: true,
@@ -696,6 +706,83 @@ impl Repertoire {
         }
     }
 
+    /// The trainer's buttons voice can press: Show move (“hint”) and Restart line (“retry”).
+    fn voice_offers(&self, cx: &App) -> Vec<Offer> {
+        let actions = self.actions(cx);
+        vec![
+            Offer::new(
+                PuzzleCommand::Hint,
+                actions.contains(&RepertoireAction::ShowMove),
+                "Move shown",
+                "No move to show now",
+            ),
+            Offer::new(
+                PuzzleCommand::Retry,
+                actions.contains(&RepertoireAction::Restart),
+                "Line restarted",
+                "Nothing to restart",
+            ),
+        ]
+    }
+
+    /// A spoken move belongs to this position of the line; another drops a choice waiting.
+    fn sync_voice(&mut self, cx: &mut Context<Self>) {
+        let context = self
+            .at
+            .as_ref()
+            .map(|(root, path)| format!("{root}:{path}"))
+            .unwrap_or_default();
+        let grammar = offered_grammar(&self.voice_offers(cx));
+        let listening = self.your_turn(cx);
+        self.voice.sync(&context, None, grammar, listening, cx);
+    }
+
+    fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
+        if !self.voice.owns(event) {
+            return;
+        }
+        let fen = self.node().map(|node| node.fen.clone()).unwrap_or_default();
+        let setup = kchess_domain::variant::Setup::standard_at(&fen);
+        let heard = match event {
+            crate::voice::VoiceEvent::Missed { heard, .. } => {
+                self.voice.missed(heard, &fen, self.your_turn(cx), cx);
+                return;
+            }
+            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        };
+        let turn = Turn {
+            taking: self.your_turn(cx),
+            idle: None,
+            immediate: false,
+        };
+        let offers = self.voice_offers(cx);
+        match self.voice.hear_offered(&heard, &setup, turn, &offers, cx) {
+            Said::Play(uci) => self.play(&uci, cx),
+            Said::Command(PuzzleCommand::Hint) => self.show_answer(cx),
+            Said::Command(PuzzleCommand::Retry) => {
+                self.reviewing = false;
+                self.start_line(cx)
+            }
+            Said::Command(PuzzleCommand::Next | PuzzleCommand::Back) | Said::Nothing => {}
+        }
+        cx.notify();
+    }
+
+    /// The moves the board shows as hints or answers.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hint_shown(&self) -> usize {
+        self.hint.len()
+    }
+
+    /// `text` said clearly, with voice on: as the recognizer's phrase reaches the trainer.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hear(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.voice.control.enabled = true;
+        let owner = self.voice.control.owner;
+        let heard = crate::voice::Heard::clear(text);
+        self.voice_heard(&crate::voice::VoiceEvent::Heard { owner, heard }, cx);
+    }
+
     fn arrows(
         node: &TreeNode,
         brush: fn(shakmaty::Square, shakmaty::Square) -> Arrow,
@@ -953,6 +1040,7 @@ impl Repertoire {
     }
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
+        self.sync_voice(cx);
         let color = Self::color(cx);
         let state = self.node().map(|node| {
             let position = kchess_domain::rules::setup_start(
@@ -1071,9 +1159,28 @@ impl Render for Repertoire {
         let board_size = self.layout.board_size(window);
         let board_column = v_flex().w(board_size).flex_none().gap(widgets::STACK_GAP);
         let board_column = if self.at.is_some() {
+            let entry = widgets::move_entry(&self.move_box.input, your_turn, &palette);
+            let (voice, voice_line) = board_bar(
+                &self.voice,
+                cx.entity().downgrade(),
+                Access {
+                    write: |this: &mut Self| &mut this.voice,
+                    play: |this: &mut Self, uci, _, cx| this.play(uci, cx),
+                },
+                BoardBar {
+                    id: "repertoire-voice",
+                    hint: "Say “E four”, “hint” or “retry”",
+                    active: your_turn,
+                    listening: your_turn,
+                    grammar: offered_grammar(&self.voice_offers(cx)),
+                },
+                cx,
+            );
             board_column
                 .child(crate::board::cached(&self.board))
-                .child(self.move_box.lone(your_turn, &palette))
+                .child(widgets::input_row(entry, voice))
+                .children(voice_line)
+                .children(self.move_box.message(&palette))
         } else if !(drills_opening && self.preparing) {
             board_column.child(widgets::card(&palette).child(Self::empty(
                 "Choose a repertoire",

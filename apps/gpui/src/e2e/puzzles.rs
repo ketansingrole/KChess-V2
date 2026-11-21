@@ -460,6 +460,9 @@ fn next_said_goes_on_to_the_next_puzzle(cx: &mut gpui_kit::TestAppContext) {
             .as_deref(),
         Some("Finish this puzzle first")
     );
+    // “hint” shows the piece to move, as Hint does.
+    say(&mut app, "hint");
+    assert!(app.cx.update(|cx| board.read(cx).hinted()));
     say(&mut app, "queen takes f seven");
     say(&mut app, "confirm");
     app.wait_for("the puzzle to be solved", |window, _| {

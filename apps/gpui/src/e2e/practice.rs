@@ -11,7 +11,7 @@ fn practice(cx: &mut gpui_kit::TestAppContext) -> Harness {
 }
 
 /// Open a tab of the page.
-fn tab(app: &mut Harness, tab: crate::pages::practice::Tab) {
+pub(super) fn tab(app: &mut Harness, tab: crate::pages::practice::Tab) {
     app.click(super::tab("practice-tabs", tab));
     assert_eq!(
         app.find(super::tab("practice-tabs", tab)).selected(),
@@ -30,7 +30,7 @@ fn wait_for_label(app: &mut Harness, id: &'static str, label: &str) {
 }
 
 /// Scroll `list` until `id` is in view.
-fn reveal(app: &mut Harness, list: &'static str, id: &'static str) {
+pub(super) fn reveal(app: &mut Harness, list: &'static str, id: &'static str) {
     use gpui_kit::test::TestWindowExt as _;
     for _ in 0..30 {
         if app.shows(id) {
@@ -609,6 +609,53 @@ fn next_said_goes_on_to_the_next_due_mistake(cx: &mut gpui_kit::TestAppContext) 
         .update(|cx| board.update(cx, |board, cx| board.hear("next", cx)));
     app.wait_for("the next mistake", |_, cx| {
         board.read(cx).status() == PuzzleStatus::Playing
+    });
+}
+
+/// An Endgames lesson is gone through by voice: a spoken mate is played as a typed one, and
+/// “next”, “retry” and “back” do what Next, Retry and the previous step's button do.
+#[gpui_kit::test]
+fn a_lesson_is_gone_through_by_voice(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
+    app.click("card-checkmate-patterns-2");
+    app.click("training-cp2-balestra");
+    app.find("lesson-next");
+    let lesson = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).endgame_lesson(cx))
+            .expect("the lesson")
+    });
+    let say = |app: &mut Harness, text: &str| {
+        app.cx
+            .update(|cx| lesson.update(cx, |lesson, cx| lesson.hear(text, cx)));
+        app.cx.run_until_parked();
+    };
+    // The step to read goes on to the one to play.
+    say(&mut app, "next");
+    assert_eq!(app.status(), "Your turn");
+    app.find("lesson-previous");
+    // A wrong move is refused as a dragged one is.
+    say(&mut app, "bishop c four");
+    say(&mut app, "confirm");
+    wait_for_label(&mut app, "status-banner", "Not the move — try again");
+    say(&mut app, "bishop b five");
+    say(&mut app, "confirm");
+    wait_for_label(&mut app, "status-banner", "Checkmate");
+    say(&mut app, "retry");
+    assert_eq!(app.status(), "Your turn");
+    say(&mut app, "back");
+    app.wait_gone("lesson-previous");
+    say(&mut app, "next");
+    say(&mut app, "bishop b five");
+    say(&mut app, "confirm");
+    wait_for_label(&mut app, "status-banner", "Checkmate");
+    say(&mut app, "next");
+    app.wait_for("the next chapter", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("status-banner")
+            .is_none_or(|banner| banner.label() != Some("Checkmate"))
     });
 }
 
