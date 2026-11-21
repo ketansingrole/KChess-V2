@@ -16,7 +16,7 @@ use crate::core::AppCore;
 use crate::puzzle_board::PuzzleBoard;
 use crate::theme::{Palette, radii};
 use crate::widgets;
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, tab_bar_height};
 use kchess_ui::icon;
 
 /// The page's way out when the daily puzzle cannot be fetched.
@@ -73,7 +73,7 @@ impl DailyPuzzle {
             _subscriptions: vec![cx.observe(&board, |_, _, cx| cx.notify())],
             board,
             themes,
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             rollover: None,
         };
         daily.load(false, cx);

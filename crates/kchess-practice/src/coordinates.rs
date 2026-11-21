@@ -21,7 +21,7 @@ use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent, VoiceOutcome, VoiceSource};
 use crate::widgets::{self, Pill, Tone};
 use kchess_games::random_unit;
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, tab_bar_height};
 use kchess_ui::icon;
 
 const FILES: [&str; 8] = ["a", "b", "c", "d", "e", "f", "g", "h"];
@@ -194,7 +194,7 @@ impl Coordinates {
             flash: None,
             run_limited: false,
             board,
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             flash_timer: None,
             voice: Control::new(false, cx),
             voice_log: DrillLog::default(),

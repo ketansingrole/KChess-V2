@@ -33,12 +33,11 @@ use gpui_kit::component::v_flex;
 use gpui_kit::*;
 
 use crate::game::surface::TakesKeys as _;
-use crate::theme::Palette;
 use gpui_kit::prelude::FluentBuilder as _;
 use kchess_nav::page::{
     ActionInfo, NavGroup, Page, PageAction, PageCommand, PageInfo, PageTab, PageView, TabInfo,
 };
-use kchess_nav::play_layout::{PAGE_TOP, side_padding};
+use kchess_nav::play_layout::tab_bar;
 
 /// Practice's tabs, in order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -371,19 +370,8 @@ impl PracticePage {
 
 impl Render for PracticePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = *cx.global::<Palette>();
         let tab = Tab::stored(cx);
-        let tabs = widgets::pills(
-            "practice-tabs",
-            Tab::pills(),
-            tab.index(),
-            |index, window, cx| {
-                Tab::ALL[index].store(cx);
-                window.refresh();
-            },
-            false,
-            &palette,
-        );
+        let tabs = tab_bar::<Tab>("practice-tabs", window, cx);
         let body = self.body(tab, window, cx);
         v_flex()
             .size_full()
@@ -403,13 +391,7 @@ impl Render for PracticePage {
                 matches!(Tab::stored(cx), Tab::Endgames | Tab::Mistakes),
                 |page| page.takes_keys(&self.focus),
             )
-            .child(
-                div()
-                    .flex_none()
-                    .px(side_padding(window))
-                    .pt(PAGE_TOP)
-                    .child(tabs),
-            )
+            .child(tabs)
             .child(div().flex_1().min_h_0().child(body))
     }
 }

@@ -41,7 +41,7 @@ use crate::widgets::{self, Choice, Pill, Tone};
 use kchess_board::game::OpeningChoice;
 use kchess_games::random_unit;
 use kchess_nav::page::Page;
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, tab_bar_height};
 use kchess_ui::icon;
 
 mod lines;
@@ -224,7 +224,7 @@ impl Repertoire {
             saving: false,
             reply: None,
             board,
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             move_box,
             study_select,
             chapter_select,

@@ -18,7 +18,7 @@ use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
 use crate::widgets::{self, Tone};
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, tab_bar_height};
 use kchess_ui::icon;
 
 const GROUPS: [&str; 3] = ["Basic mates", "Pawn endings", "Rook endings"];
@@ -102,7 +102,7 @@ impl EndgameDrills {
             engine: EngineMove::default(),
             board,
             move_box,
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             _subscriptions: subscriptions,
         };
         run::load_summary(RunKind::Endgame, cx, |this, summary, cx| {

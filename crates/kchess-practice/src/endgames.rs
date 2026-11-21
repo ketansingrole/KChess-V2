@@ -17,7 +17,7 @@ use crate::theme::{Palette, radii, tint};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
-use kchess_nav::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
+use kchess_nav::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, column_width, side_padding};
 use kchess_ui::icon;
 
 const VIEW: &str = "kchess:endgame-view";
@@ -251,12 +251,9 @@ impl Endgames {
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> AnyElement {
-        let width = self.area.size().width;
-        let width = if width > px(0.) {
-            width
-        } else {
-            window.viewport_size().width - px(400.)
-        };
+        // The page's width inside its padding, so the grid opens with its columns for the
+        // window it opens in rather than settling into them a frame later.
+        let width = column_width(window, Pixels::MAX, self.area.size().width);
         let (count, card_width) = widgets::columns(width, CARD_MIN, CARD_GAP);
         let grid = |cards: Vec<AnyElement>| {
             let mut rows = Vec::new();
