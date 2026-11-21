@@ -885,25 +885,12 @@ impl WatchPage {
             .when(
                 shows_load_error(searching, broadcasts.loading.error().is_some()),
                 |body| {
-                    body.child(
-                        h_flex()
-                            .gap(px(12.))
-                            .text_size(px(13.))
-                            .child(
-                                div()
-                                    .text_color(palette.error)
-                                    .child(broadcasts.loading.error().cloned().unwrap_or_default()),
-                            )
-                            .child(
-                                Button::new("broadcasts-retry")
-                                    .small()
-                                    .outline()
-                                    .label("Try again")
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.broadcasts.load(cx)),
-                                    ),
-                            ),
-                    )
+                    body.child(widgets::retry_line(
+                        "broadcasts-retry",
+                        broadcasts.loading.error().cloned().unwrap_or_default(),
+                        palette.error,
+                        cx.listener(|this, _, _, cx| this.broadcasts.load(cx)),
+                    ))
                 },
             )
             .children(sections.into_iter().map(|(title, items)| {

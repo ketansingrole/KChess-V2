@@ -114,7 +114,7 @@ fn recovery(id: &'static str, cx: &App) -> Vec<AnyElement> {
         Button::new((id, 2usize))
             .small()
             .outline()
-            .icon(icon("rotate-ccw"))
+            .icon(icon("rotate-cw"))
             .label("Try again")
             .on_click(|_, _, cx| super::handle(cx).update(cx, |voice, cx| voice.retry(cx)))
             .into_any_element(),
