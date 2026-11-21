@@ -201,7 +201,7 @@ impl PuzzlesPage {
 
     /// A new puzzle (a new key) starts the board afresh.
     fn sync_board(&mut self, cx: &mut Context<Self>) {
-        let ready = self.session.phase() == "ready";
+        let ready = self.session.phase() == Phase::Ready;
         let key = self.session.puzzle_key();
         let shown = self.puzzle.read(cx).puzzle().is_some();
         match self.session.current().cloned() {
@@ -232,7 +232,7 @@ impl PuzzlesPage {
                 cx.background_executor().timer(AUTO_NEXT_DELAY).await;
                 let _ = this.update(cx, |this, cx| {
                     // Moving on by hand, or changing what to train, already replaced the puzzle.
-                    if this.session.puzzle_key() == key && this.session.phase() == "ready" {
+                    if this.session.puzzle_key() == key && this.session.phase() == Phase::Ready {
                         this.load_next(cx);
                     }
                 });

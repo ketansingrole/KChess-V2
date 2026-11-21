@@ -68,12 +68,27 @@ pub struct Report {
     pub failed: Option<String>,
 }
 
+crate::union!(
+    /// Where the session stands: nothing asked yet, a puzzle on its way or shown, none left for the
+    /// choice, no downloaded puzzles, rated puzzles without an account, an account to connect
+    /// again, or a failed load (`State::train_error` says why).
+    Phase {
+        Idle = "idle",
+        Loading = "loading",
+        Ready = "ready",
+        Exhausted = "exhausted",
+        NoDatabase = "nodb",
+        NoAccount = "noaccount",
+        Reconnect = "reconnect",
+        Error = "error",
+    }
+);
+
 /// What the page shows of the session.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct State {
-    /// `idle`, `loading`, `ready`, `exhausted`, `nodb`, `noaccount`, `reconnect` or `error`.
-    pub phase: String,
+    pub phase: Phase,
     #[serde(default)]
     pub current: Option<Puzzle>,
     pub puzzle_key: u64,
@@ -267,7 +282,7 @@ fn offset(difficulty: &str) -> f64 {
 
 fn initial_state() -> State {
     State {
-        phase: "idle".into(),
+        phase: Phase::Idle,
         current: None,
         puzzle_key: 0,
         is_retry: false,
@@ -334,7 +349,7 @@ impl Session<'_> {
         self.end_attempt();
         self.internal.load_gen += 1;
         self.internal.attempt = None;
-        self.state.phase = "idle".into();
+        self.state.phase = Phase::Idle;
     }
 
     /// Show `puzzle` as a new attempt; `retry` (tried again from the history) is logged, not
@@ -357,7 +372,7 @@ impl Session<'_> {
             wrong_moves: Vec::new(),
             verdict: None,
         });
-        self.state.phase = "ready".into();
+        self.state.phase = Phase::Ready;
     }
 
     fn retry(&mut self, puzzle: Puzzle, selection: &Selection) {
@@ -370,7 +385,7 @@ impl Session<'_> {
     /// No puzzle left for the theme and difficulty, on Lichess or in the local database: an
     /// expected state with its own phase (the page offers other choices), not a failure.
     fn exhausted(&mut self) {
-        self.state.phase = "exhausted".into();
+        self.state.phase = Phase::Exhausted;
     }
 
     /// A failed load: offline without the database is a distinct phase; everything else shows
@@ -378,10 +393,10 @@ impl Session<'_> {
     fn fail(&mut self, selection: &Selection, text: &str) {
         self.warn = true;
         if selection.mode == "offline" && text.contains("Download the puzzle database") {
-            self.state.phase = "nodb".into();
+            self.state.phase = Phase::NoDatabase;
         } else {
             self.state.train_error = text.into();
-            self.state.phase = "error".into();
+            self.state.phase = Phase::Error;
         }
     }
 
@@ -389,7 +404,7 @@ impl Session<'_> {
         self.end_attempt();
         self.internal.load_gen += 1;
         let generation = self.internal.load_gen;
-        self.state.phase = "loading".into();
+        self.state.phase = Phase::Loading;
         self.state.train_error = String::new();
         self.state.last_report = None;
         self.state.is_retry = false;
@@ -407,7 +422,7 @@ impl Session<'_> {
             return;
         }
         if selection.mode == "rated" && selection.account.is_empty() {
-            self.state.phase = "noaccount".into();
+            self.state.phase = Phase::NoAccount;
             return;
         }
         if !online {
@@ -440,7 +455,7 @@ impl Session<'_> {
             "draw" => {
                 if answer == Answer::NeedsReconnect {
                     if selection.mode == "rated" {
-                        self.state.phase = "reconnect".into();
+                        self.state.phase = Phase::Reconnect;
                         return;
                     }
                     // Practice does not need the permission: take a puzzle without the account.
@@ -484,7 +499,7 @@ impl Session<'_> {
     /// A player move of the shown puzzle: the first try at each move of the solution is its score,
     /// and a wrong one is kept as played (`uci`, when the board says).
     fn played(&mut self, index: usize, correct: bool, uci: Option<&str>) {
-        if self.state.phase != "ready" || index >= MAX_TRIES {
+        if self.state.phase != Phase::Ready || index >= MAX_TRIES {
             return;
         }
         let Some(attempt) = self.internal.attempt.as_mut() else {
@@ -557,7 +572,7 @@ impl Session<'_> {
         let (Some(puzzle), Some(started)) = (puzzle, attempt) else {
             return;
         };
-        if self.state.phase != "ready"
+        if self.state.phase != Phase::Ready
             || self.state.attempt_outcome.is_some()
             || started.account != selection.account
             || started.mode != selection.mode
@@ -632,7 +647,7 @@ impl Session<'_> {
         if answer == Answer::NeedsReconnect {
             // Practice goes on without the account; only rated puzzles need it back.
             if rated {
-                self.state.phase = "reconnect".into();
+                self.state.phase = Phase::Reconnect;
             }
             self.state.last_report = Some(Report {
                 win,
@@ -694,8 +709,8 @@ impl PuzzleSession {
         &self.state
     }
 
-    pub fn phase(&self) -> &str {
-        &self.state.phase
+    pub fn phase(&self) -> Phase {
+        self.state.phase
     }
 
     /// The puzzle shown, if any.
@@ -849,15 +864,15 @@ mod tests {
         assert_eq!(session.current(), None);
         let first = session.puzzle_key();
         session.show(puzzle("one"), &selection(), "");
-        assert_eq!(session.phase(), "ready");
+        assert_eq!(session.phase(), Phase::Ready);
         assert_eq!(session.current().map(|p| p.id.as_str()), Some("one"));
         session.show(puzzle("two"), &selection(), "");
         assert_eq!(session.current().map(|p| p.id.as_str()), Some("two"));
         assert_eq!(session.puzzle_key(), first + 2);
         let call = session.load_begin(&selection(), true, "").call.unwrap();
-        assert_eq!(session.phase(), "loading");
+        assert_eq!(session.phase(), Phase::Loading);
         session.load_settled(call.resume, Ok(Answer::Local(Vec::new())), &selection(), "");
-        assert_eq!(session.phase(), "exhausted");
+        assert_eq!(session.phase(), Phase::Exhausted);
     }
 
     #[test]
@@ -887,7 +902,7 @@ mod tests {
         assert_eq!(tries(&session), 0);
         session.played(0, true, None);
         assert_eq!(tries(&session), 1);
-        session.state.phase = "exhausted".into();
+        session.state.phase = Phase::Exhausted;
         session.played(1, false, Some("e2e4"));
         assert_eq!(tries(&session), 1);
     }

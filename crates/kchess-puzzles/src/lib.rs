@@ -36,7 +36,7 @@ use serde_json::Value;
 use shakmaty::Color;
 
 use crate::core::AppCore;
-use crate::game::puzzle::{PuzzleSession, PuzzleStatus, Selection, Step, local_day};
+use crate::game::puzzle::{Phase, PuzzleSession, PuzzleStatus, Selection, Step, local_day};
 use crate::game::surface::TakesKeys as _;
 use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
 use crate::puzzle_db::PuzzleDbHandle;
@@ -317,7 +317,8 @@ impl PuzzlesPage {
                     this.shown_tab.clear();
                     this.sync_accounts(window, cx);
                     this.show_tab(window, cx);
-                    let waiting = matches!(this.session.phase(), "noaccount" | "reconnect");
+                    let waiting =
+                        matches!(this.session.phase(), Phase::NoAccount | Phase::Reconnect);
                     if waiting && !accounts.read(cx).busy {
                         this.load_next(cx);
                     }
@@ -326,7 +327,7 @@ impl PuzzlesPage {
             ),
             // A database just downloaded has puzzles for a session waiting on it.
             cx.observe(&puzzle_db, |this, db, cx| {
-                if db.read(cx).installed() && this.session.phase() == "nodb" {
+                if db.read(cx).installed() && this.session.phase() == Phase::NoDatabase {
                     this.load_next(cx);
                 }
                 cx.notify();
@@ -393,7 +394,7 @@ impl PuzzlesPage {
                 if let Some(progress) = progress.warn_on_err() {
                     this.progress = progress;
                 }
-                if first || this.session.phase() == "idle" {
+                if first || this.session.phase() == Phase::Idle {
                     this.load_next(cx);
                 }
                 cx.notify();
@@ -531,7 +532,8 @@ impl PuzzlesPage {
     /// The puzzle board of the tab shown, while it shows a puzzle, and whether it is Train's.
     fn shown_board(&self, cx: &App) -> Option<(Entity<PuzzleBoard>, bool)> {
         match Tab::stored(cx).info().key {
-            "train" => (self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == "ready")
+            "train" => (self.puzzle.read(cx).puzzle().is_some()
+                && self.session.phase() == Phase::Ready)
                 .then(|| (self.puzzle.clone(), true)),
             "daily" => self
                 .daily

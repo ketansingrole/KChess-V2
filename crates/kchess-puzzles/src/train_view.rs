@@ -38,14 +38,14 @@ impl PuzzlesPage {
                 .child(other(cx))
         };
         let content: AnyElement = match self.session.phase() {
-            "noaccount" => empty(
+            Phase::NoAccount => empty(
                 icon("user-round-plus"),
                 "Connect a Lichess account for rated puzzles".into(),
                 Some("Connect Lichess or switch to Practice".into()),
             )
             .child(actions("connect-lichess", "Connect Lichess", cx))
             .into_any_element(),
-            "reconnect" => empty(
+            Phase::Reconnect => empty(
                 icon("key-round"),
                 "Lichess needs your permission for puzzles".into(),
                 Some(format!(
@@ -55,8 +55,8 @@ impl PuzzlesPage {
             )
             .child(actions("reconnect-lichess", "Reconnect", cx))
             .into_any_element(),
-            "nodb" => crate::puzzle_db::card(false, cx, palette).into_any_element(),
-            "exhausted" => {
+            Phase::NoDatabase => crate::puzzle_db::card(false, cx, palette).into_any_element(),
+            Phase::Exhausted => {
                 let difficulty = crate::prefs::get::<String>(cx, DIFFICULTY, "normal".into());
                 let label = DIFFICULTIES
                     .iter()
@@ -125,7 +125,7 @@ impl PuzzlesPage {
                 )
                 .into_any_element()
             }
-            "error" => empty(
+            Phase::Error => empty(
                 icon("triangle-alert"),
                 "Couldn’t get a puzzle".into(),
                 Some(self.session.state().train_error.clone()),
@@ -149,7 +149,7 @@ impl PuzzlesPage {
                     }),
             )
             .into_any_element(),
-            _ => h_flex()
+            Phase::Idle | Phase::Loading | Phase::Ready => h_flex()
                 .gap(px(8.))
                 .text_color(palette.text_muted)
                 .child(crate::widgets::spinner(px(16.)))
@@ -348,7 +348,7 @@ impl PuzzlesPage {
             .layout
             .board_size_around(px(0.), px(0.), around, window);
         let mode = Self::mode(cx);
-        let ready = self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == "ready";
+        let ready = self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == Phase::Ready;
         let board_column = if ready {
             div()
                 .w(board_size)

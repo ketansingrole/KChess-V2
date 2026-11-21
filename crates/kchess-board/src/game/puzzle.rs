@@ -2,7 +2,7 @@
 //! hand the page the host call each step asks for (a puzzle to fetch, a result to send) and the
 //! attempt to log. A single puzzle on the board is `OnBoard`, moved on by the rules too.
 
-pub use kchess_domain::trainer::puzzle_session::{PuzzleSession, Selection, Step};
+pub use kchess_domain::trainer::puzzle_session::{Phase, PuzzleSession, Selection, Step};
 pub use kchess_domain::training::puzzle::PuzzleStatus;
 pub use kchess_games::puzzle::OnBoard;
 
@@ -18,7 +18,7 @@ mod tests {
     #[test]
     fn a_session_starts_idle_and_asks_for_a_puzzle() {
         let mut session = PuzzleSession::new();
-        assert_eq!(session.phase(), "idle");
+        assert_eq!(session.phase(), Phase::Idle);
         let selection = Selection {
             account: String::new(),
             angle: "mix".into(),
@@ -27,7 +27,7 @@ mod tests {
             mode: "practice".into(),
         };
         let step = session.load_begin(&selection, true, &local_day());
-        assert_eq!(session.phase(), "loading");
+        assert_eq!(session.phase(), Phase::Loading);
         assert!(matches!(
             step.call.map(|call| call.request),
             Some(kchess_domain::trainer::puzzle_session::Request::PuzzleNext(
