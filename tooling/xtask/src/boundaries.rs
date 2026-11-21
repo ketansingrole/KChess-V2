@@ -75,7 +75,8 @@ fn is_test_file(path: &str) -> bool {
     path.contains("/e2e/") || path.contains("/tests/") || path.ends_with("/tests.rs")
 }
 
-/// The shipped part of a source file: what comes before its inline test module.
+/// The shipped part of a source file: what comes before its inline test module, which is last
+/// (`every_test_module_comes_after_the_code`).
 fn shipped(text: &str) -> &str {
     text.find("#[cfg(test)]\nmod tests")
         .map_or(text, |at| &text[..at])
@@ -287,6 +288,89 @@ fn only_code_before_the_test_module_ships() {
     assert_eq!(shipped("a\n#[cfg(test)]\nmod tests {}\n"), "a\n");
     let helper = "a\n#[cfg(test)]\nfn helper() {}\n";
     assert_eq!(shipped(helper), helper);
+}
+
+/// Each item of `files` after a test module, as `path:line` of its first line: code after the
+/// tests is code the boundary rules above do not read (`shipped`), and code a reader of the file
+/// looks for above them. Further test modules may follow.
+fn code_after_tests(files: &[(String, String)]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (path, text) in files {
+        let lines: Vec<&str> = text.lines().collect();
+        let (mut tested, mut index) = (false, 0);
+        while let Some(line) = lines.get(index) {
+            let test_module = *line == "#[cfg(test)]"
+                && lines
+                    .get(index + 1)
+                    .is_some_and(|next| next.starts_with("mod ") && next.ends_with('{'));
+            if test_module {
+                tested = true;
+                index = module_end(&lines, index + 2);
+            } else if tested && starts_item(line) {
+                found.push(format!("{path}:{}", index + 1));
+                // Its other attributes and its first line are the same item.
+                while lines.get(index).is_some_and(|line| line.starts_with("#[")) {
+                    index += 1;
+                }
+            }
+            index += 1;
+        }
+    }
+    found
+}
+
+/// The line that closes a module whose body starts at `from`: the first `}` at the left edge
+/// outside a raw string (tests hold whole sources in `r#"…"#`, closings and all).
+fn module_end(lines: &[&str], from: usize) -> usize {
+    let mut raw = false;
+    for (index, line) in lines.iter().enumerate().skip(from) {
+        if raw {
+            raw = !line.contains("\"#");
+        } else if *line == "}" {
+            return index;
+        } else if let Some(at) = line.find("r#\"") {
+            raw = !line[at + 3..].contains("\"#");
+        }
+    }
+    lines.len()
+}
+
+/// Whether `line` begins an item at the top of a file: code, not a comment, a blank or a closing.
+fn starts_item(line: &str) -> bool {
+    !line.is_empty() && !line.starts_with([' ', '\t', '}', ')', ']']) && !line.starts_with("//")
+}
+
+/// Tests come last in every file of the workspace, so `shipped` reads all of a file's code.
+#[test]
+fn every_test_module_comes_after_the_code() {
+    let repo = root();
+    let mut files = Vec::new();
+    for dir in ["apps", "crates", "tooling"] {
+        sources_under(&repo, dir, &mut files).unwrap();
+    }
+    assert!(files.len() > 100, "only {} sources found", files.len());
+    let found = code_after_tests(&files);
+    assert!(found.is_empty(), "code after a test module: {found:?}");
+}
+
+#[test]
+fn code_after_a_test_module_is_found_with_its_line() {
+    let text =
+        "fn a() {}\n\n#[cfg(test)]\nmod tests {\n    fn b() {}\n}\n\n/// Shipped.\npub fn c() {}\n";
+    assert_eq!(
+        code_after_tests(&[file("crates/x/src/lib.rs", text)]),
+        ["crates/x/src/lib.rs:9"]
+    );
+    let two = "fn a() {}\n\n#[cfg(test)]\nmod tests {\n}\n\n// The variants.\n#[cfg(test)]\nmod variant_tests {\n    fn b() {}\n}\n";
+    assert!(code_after_tests(&[file("crates/x/src/lib.rs", two)]).is_empty());
+    // A test's source text is not the file's: its closing brace does not end the module.
+    let fixture = "#[cfg(test)]\nmod tests {\n    const TEXT: &str = r#\"\nfn x() {\n}\n\"#;\n}\n";
+    assert!(code_after_tests(&[file("crates/x/src/lib.rs", fixture)]).is_empty());
+    let attribute = "#[cfg(test)]\nmod tests {\n}\n#[derive(Debug)]\nstruct S;\n";
+    assert_eq!(
+        code_after_tests(&[file("crates/x/src/lib.rs", attribute)]),
+        ["crates/x/src/lib.rs:4"]
+    );
 }
 
 #[test]
