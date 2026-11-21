@@ -5,7 +5,7 @@
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::hover_card::HoverCard;
-use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use shakmaty::Color;
@@ -1093,24 +1093,25 @@ impl OnlinePage {
                             .on_click(action(OnlineAction::Berserk)),
                     )
                 })
-                .when(live.contains(&LiveAction::Takeback), |row| {
-                    row.child(
-                        action_button("online-takeback")
-                            .outline()
-                            .icon(icon("undo-2"))
-                            .label("Takeback")
-                            .on_click(action(OnlineAction::Takeback)),
-                    )
-                })
-                .when(live.contains(&LiveAction::OfferDraw), |row| {
-                    row.child(
-                        action_button("online-draw")
-                            .outline()
-                            .icon(icon("handshake"))
-                            .label("Offer draw")
-                            .on_click(action(OnlineAction::OfferDraw)),
-                    )
-                })
+                // Takeback and Offer draw keep their places, off while they cannot be asked
+                // (before the second move, or with an offer waiting above): leaving the row,
+                // they let Resign slide under the pointer that had just offered a draw.
+                .child(
+                    action_button("online-takeback")
+                        .outline()
+                        .icon(icon("undo-2"))
+                        .label("Takeback")
+                        .disabled(!live.contains(&LiveAction::Takeback))
+                        .on_click(action(OnlineAction::Takeback)),
+                )
+                .child(
+                    action_button("online-draw")
+                        .outline()
+                        .icon(icon("handshake"))
+                        .label("Offer draw")
+                        .disabled(!live.contains(&LiveAction::OfferDraw))
+                        .on_click(action(OnlineAction::OfferDraw)),
+                )
                 .child(if live.contains(&LiveAction::Resign) {
                     action_button("online-resign")
                         .outline()
