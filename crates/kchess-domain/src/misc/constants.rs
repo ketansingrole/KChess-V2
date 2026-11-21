@@ -96,6 +96,9 @@ crate::union!(
         Elsewhere = "elsewhere",
         /// The puzzle database is not downloaded: download it to train on its puzzles.
         NoPuzzleDatabase = "noPuzzleDatabase",
+        /// Engine help is held back: a live game, or Lichess not yet asked for one. Lent again
+        /// once the game ends or the check answers, when the call can be made again.
+        Withheld = "withheld",
     }
 );
 crate::union!(
