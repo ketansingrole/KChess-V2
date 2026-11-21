@@ -526,3 +526,26 @@ fn a_stored_promotion_choice_outlives_the_new_default(cx: &mut gpui_kit::TestApp
     let mut app = app.restart();
     assert_eq!(app.saved_settings()["promotion"], json!("ask"));
 }
+
+/// Restore defaults shows while a category differs from a new profile: it puts the category's
+/// settings back, and Undo brings the person's own again.
+#[gpui_kit::test]
+fn restore_defaults_puts_a_category_back_and_undo_returns_it(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Gameplay");
+    assert!(
+        !app.shows("restore-defaults"),
+        "a new profile is at its defaults"
+    );
+    app.click("premove");
+    app.click(("promotion", 0usize));
+    app.wait_for_saved("promotion", json!("ask"));
+    app.click("restore-defaults");
+    assert_eq!(app.find("premove").checked(), Some(true));
+    app.wait_for_saved("promotion", json!("premove"));
+    app.wait_gone("restore-defaults");
+    app.click(crate::setting_notice::UNDO);
+    assert_eq!(app.find("premove").checked(), Some(false));
+    app.wait_for_saved("promotion", json!("ask"));
+    assert!(app.shows("restore-defaults"));
+}

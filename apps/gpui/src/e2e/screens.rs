@@ -210,6 +210,53 @@ fn settings_reveal() {
     }
 }
 
+/// A setting just changed in Settings, in both appearances: the notice with its Undo, and the
+/// header's Restore defaults. `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui
+/// e2e::screens::settings_undo -- --ignored` writes `<dir>/settings-undo/<appearance>-<width>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn settings_undo() {
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("settings-undo");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        for width in [1320., 640.] {
+            let profile = tempfile::tempdir().expect("a temporary profile");
+            let (mut cx, window) = start(profile.path(), width, 880.);
+            cx.update(|cx| {
+                crate::settings::change(cx, move |s| s.frontend.appearance = appearance)
+            });
+            cx.update_window(window, |_, window, cx| {
+                crate::shell::open_settings(crate::pages::settings::Section::Gameplay, window, cx)
+            })
+            .expect("the window");
+            settle(&mut cx, window);
+            cx.update_window(window, |_, window, cx| {
+                crate::settings::change(cx, |s| s.frontend.premove = false);
+                let edit = cx
+                    .global::<crate::settings::SettingsHandle>()
+                    .0
+                    .read(cx)
+                    .last_edit()
+                    .cloned()
+                    .expect("the change");
+                crate::setting_notice::edited(&edit, window, cx);
+            })
+            .expect("the window");
+            settle(&mut cx, window);
+            cx.capture_screenshot(window)
+                .expect("a screenshot")
+                .save(out.join(format!("{name}-{width}.png")))
+                .expect("the screenshot saves");
+            let quit = cx.update(crate::quit::quit);
+            cx.foreground_executor().block_test(quit);
+            crate::profile::TEST_DATA_DIR.set(None);
+        }
+    }
+}
+
 /// Every Settings category, dark, wide and narrow: `KCHESS_SCREENSHOTS=<dir> cargo test -p
 /// kchess-gpui e2e::screens::settings_sections -- --ignored` writes
 /// `<dir>/settings/<width>-<category>.png`.

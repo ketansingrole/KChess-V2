@@ -123,6 +123,14 @@ impl Workspace {
             }
         }
         let close = cx.listener(|this, _, window, cx| this.choose(this.back, window, cx));
+        let restore = self.pages.get::<SettingsPage>().and_then(|page| {
+            let settings = &cx
+                .global::<crate::settings::SettingsHandle>()
+                .0
+                .read(cx)
+                .settings;
+            crate::pages::settings::defaults::restore(page.read(cx).section(), settings)
+        });
         div()
             .id("settings-backdrop")
             .absolute()
@@ -165,6 +173,7 @@ impl Workspace {
                             .flex_none()
                             .h(px(52.))
                             .px(px(20.))
+                            .gap(px(8.))
                             .border_b_1()
                             .border_color(palette.border)
                             .child(
@@ -175,6 +184,7 @@ impl Workspace {
                                     .text_color(palette.highlighted)
                                     .child("Settings"),
                             )
+                            .children(restore)
                             .child(
                                 Button::new("settings-close")
                                     .ghost()

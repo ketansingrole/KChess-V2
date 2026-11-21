@@ -344,6 +344,11 @@ impl AppSettings {
         self.edited(cx);
     }
 
+    /// The person's latest change, which Undo would take back.
+    pub fn last_edit(&self) -> Option<&Edit> {
+        self.last_edit.as_ref()
+    }
+
     /// Take back the change `id` (`undo`): each setting it changed that still shows what it
     /// set goes back to what it was; a setting changed since, here or in another window, stays.
     fn undo(&mut self, id: u64, cx: &mut gpui_kit::Context<Self>) {
@@ -492,6 +497,22 @@ fn restored(settings: &Settings, changes: &[Change]) -> Settings {
     for change in changes {
         if shown.get(&change.key) == Some(&change.after) {
             shown.insert(change.key.clone(), change.before.clone());
+        }
+    }
+    serde_json::from_value(Value::Object(shown)).unwrap_or_else(|_| settings.clone())
+}
+
+/// `settings` with each of `keys` (stored names) as `defaults` has it: Restore defaults.
+pub fn reset(settings: &Settings, defaults: &Settings, keys: &[String]) -> Settings {
+    let (Ok(Value::Object(mut shown)), Ok(Value::Object(defaults))) = (
+        serde_json::to_value(settings),
+        serde_json::to_value(defaults),
+    ) else {
+        return settings.clone();
+    };
+    for key in keys {
+        if let Some(value) = defaults.get(key) {
+            shown.insert(key.clone(), value.clone());
         }
     }
     serde_json::from_value(Value::Object(shown)).unwrap_or_else(|_| settings.clone())

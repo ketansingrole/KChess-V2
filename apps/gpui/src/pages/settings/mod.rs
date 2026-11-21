@@ -4,6 +4,7 @@
 mod accounts;
 mod ai;
 mod data;
+pub(crate) mod defaults;
 mod engine;
 mod offline;
 mod toggles;

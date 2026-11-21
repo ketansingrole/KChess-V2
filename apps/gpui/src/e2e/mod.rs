@@ -110,7 +110,6 @@ impl Harness {
     /// Start the app after `prepare` has written to the fresh profile (settings, games).
     pub fn start_with(cx: &mut TestAppContext, prepare: impl FnOnce(&Path)) -> Harness {
         environment();
-        crate::pages::register_pages();
         let profile = tempfile::tempdir().expect("a temporary profile");
         prepare(profile.path());
         Self::boot(cx.clone(), profile, false)
@@ -820,6 +819,9 @@ impl Drop for Harness {
 /// (`kchess_host::env`, which the app and its embedded core read in place of the environment).
 fn environment() {
     use kchess_host::env::set;
+    // The pages, as the app registers them as it starts: the screenshots' apps, started without
+    // a `Harness`, panicked at their first page without them.
+    crate::pages::register_pages();
     static SET: OnceLock<()> = OnceLock::new();
     SET.get_or_init(|| {
         let engine = engine();
