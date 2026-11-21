@@ -141,8 +141,7 @@ pub struct TimeUseReport {
 /// The player's average time per move in one phase of the game.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PhaseTime {
-    /// `opening`, `middlegame` or `endgame`.
-    pub phase: String,
+    pub phase: kchess_domain::time_use::Phase,
     pub moves: i64,
     #[serde(with = "js_number")]
     pub seconds: f64,

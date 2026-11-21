@@ -429,11 +429,11 @@ fn time_use_averages_seconds_per_move_and_clocks_over_the_games() {
         "41 moves in each game"
     );
     for phase in &time.phases {
-        assert_eq!(phase.seconds, 2.0, "{}", phase.phase);
+        assert_eq!(phase.seconds, 2.0, "{:?}", phase.phase);
         let share = phase.share.expect("a share of the time");
         assert!(
             (share - 100.0 * phase.moves as f64 / 82.0).abs() < 1e-9,
-            "{}: {share}",
+            "{:?}: {share}",
             phase.phase
         );
     }
@@ -456,6 +456,11 @@ fn time_use_averages_seconds_per_move_and_clocks_over_the_games() {
         .expect("time use");
     assert!(!time.phases.is_empty());
     for phase in &time.phases {
-        assert_eq!((phase.seconds, phase.share), (0.0, None), "{}", phase.phase);
+        assert_eq!(
+            (phase.seconds, phase.share),
+            (0.0, None),
+            "{:?}",
+            phase.phase
+        );
     }
 }

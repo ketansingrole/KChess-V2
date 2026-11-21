@@ -41,6 +41,14 @@ fn insights_accuracy_and_time_use_keep_their_bytes() {
     }
     let parts: Parts = serde_json::from_str(&text).unwrap();
     assert_eq!(serde_json::to_string(&parts).unwrap(), text);
+    let phases: Vec<_> = parts
+        .time_use
+        .phases
+        .iter()
+        .map(|time| time.phase)
+        .collect();
+    use kchess_domain::time_use::Phase;
+    assert_eq!(phases, [Phase::Opening, Phase::Endgame]);
 }
 
 /// A joined tournament keeps the bytes the core wrote by hand: its end a whole number.

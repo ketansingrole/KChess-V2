@@ -23,6 +23,7 @@ use crate::pages::Page;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::theme::Palette;
 use crate::widgets::{self, Choice};
+use kchess_domain::time_use::Phase;
 
 const SPEEDS: [(&str, &str); 6] = [
     ("all", "All speeds"),
@@ -149,10 +150,10 @@ fn time_use(time: Option<&TimeUseReport>, palette: &Palette) -> Option<AnyElemen
         ))
     });
     let phases = time.phases.iter().map(|entry| {
-        let name = match entry.phase.as_str() {
-            "opening" => "Opening",
-            "middlegame" => "Middlegame",
-            _ => "Endgame",
+        let name = match entry.phase {
+            Phase::Opening => "Opening",
+            Phase::Middlegame => "Middlegame",
+            Phase::Endgame => "Endgame",
         };
         let mut detail = format!("{} a move", seconds(entry.seconds));
         if let Some(share) = entry.share {
