@@ -603,3 +603,42 @@ fn f_turns_the_board_on_every_board_page(cx: &mut gpui_kit::TestAppContext) {
         assert_eq!(app.white_at_bottom(), before, "{page}");
     }
 }
+
+/// A double click on the title bar zooms or restores the window once. The top bar, GPUI Kit's
+/// title bar around it and macOS each answered it, so the window zoomed, restored and zoomed
+/// again; the sidebar's name and the header under it did the same.
+#[gpui_kit::test]
+fn a_double_click_on_the_title_bar_zooms_the_window_once(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::WindowControlArea::Drag;
+    let mut app = Harness::start(cx);
+    // Wide enough for the sidebar to show its name.
+    let wide = gpui_kit::size(gpui_kit::px(1280.), gpui_kit::px(800.));
+    app.cx.simulate_window_resize(app.window, wide);
+    let topbar = app.with_window(|window, _| {
+        let search = window.try_find_by_label("Search pages and commands");
+        let search = search.expect("the search box").bounds();
+        let width = f32::from(window.viewport_size().width) as usize;
+        (0..width)
+            .step_by(4)
+            .map(|x| gpui_kit::point(gpui_kit::px(x as f32), search.center().y))
+            .filter(|at| at.x > search.right())
+            .find(|at| window.window_control_at(*at) == Some(Drag))
+            .expect("the top bar moves the window")
+    });
+    // The sidebar's name, beside its toggle, over the sidebar's header.
+    let toggle = app.find("sidebar-toggle").bounds();
+    let name = gpui_kit::point(toggle.right() + gpui_kit::px(40.), toggle.center().y);
+    let at_name = app.with_window(|window, _| window.window_control_at(name));
+    assert_eq!(at_name, Some(Drag), "the sidebar's name moves the window");
+    for (part, at) in [("the top bar", topbar), ("the sidebar's name", name)] {
+        let before = app.with_window(|window, _| window.zoom_requests());
+        app.double_click_point(at);
+        let zooms = app.with_window(|window, _| window.zoom_requests()) - before;
+        assert_eq!(zooms, 1, "a double click on {part} zooms the window once");
+    }
+    // macOS answers a double click on a window's own title bar as well, unless the app owns it.
+    let owned = app
+        .cx
+        .update(|cx| crate::main_window_options(cx).app_owns_titlebar_drag);
+    assert!(owned, "the app answers its title bar's double clicks alone");
+}

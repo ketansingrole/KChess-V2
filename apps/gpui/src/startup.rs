@@ -56,7 +56,11 @@ fn show(message: String, cx: &mut App) {
         "app",
         &format!("Loading the library failed: {message}"),
     );
-    let options = crate::main_window_options(cx);
+    let options = WindowOptions {
+        // It draws no title bar of its own, so macOS moves and zooms it.
+        app_owns_titlebar_drag: false,
+        ..crate::main_window_options(cx)
+    };
     let opened = gpui_kit::open_window(options, cx, |_, cx| {
         cx.new(|_| StartupScreen {
             error: message.into(),

@@ -18,7 +18,7 @@ refuses to release with nothing there.
 - **Engine back after a Lichess hiccup**: if KChess can't reach Lichess when it starts, the engine, game review and Play with computer now say so and come back on their own once Lichess answers, instead of staying off until you restart.
 - **A board you can hear**: with a screen reader, each move now says its piece and any check ("Last move knight g1–f3, check"), and the board says the hint or solution it shows, in puzzles, endgames and the opening trainer.
 - **Try a setting, then Undo**: change a setting and a notice offers Undo, which puts back what you had. Restore defaults resets a Settings section. New players' premoved pawns now become a queen, as on Lichess; your own choice stays.
-- **Fixes**: A wrong move in a puzzle goes back, so you can try another right away. Cancel seek no longer goes missing right after you sign in to Lichess. The voice meter moves as you speak. The analysis engine keeps going as you step through moves. Plus many smaller fixes.
+- **Fixes**: A wrong puzzle move goes back, so you can try another right away. Cancel seek no longer goes missing after you sign in to Lichess. The engine keeps analysing as you step through moves. Double-clicking the top bar no longer bounces the window. Plus many smaller fixes.
 
 ## 2026.11.7 (2026-11-09)
 

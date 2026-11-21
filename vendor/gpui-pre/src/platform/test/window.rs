@@ -44,6 +44,8 @@ pub(crate) struct TestWindowState {
     insets_callback: Option<Box<dyn FnMut(WindowInsets)>>,
     virtual_keyboard_requests: usize,
     virtual_keyboard_dismissals: usize,
+    // KChess patch: how often the window was asked to zoom (see `zoom_requests`).
+    zoom_requests: usize,
     moved_callback: Option<Box<dyn FnMut()>>,
     display_changed_callback: Option<Box<dyn FnMut()>>,
     appearance_change_callback: Option<Box<dyn FnMut()>>,
@@ -119,6 +121,7 @@ impl TestWindow {
             insets_callback: None,
             virtual_keyboard_requests: 0,
             virtual_keyboard_dismissals: 0,
+            zoom_requests: 0,
             moved_callback: None,
             display_changed_callback: None,
             appearance_change_callback: None,
@@ -222,6 +225,12 @@ impl TestWindow {
 
     pub fn virtual_keyboard_dismissals(&self) -> usize {
         self.0.lock().virtual_keyboard_dismissals
+    }
+
+    /// KChess patch: how often the window was asked to zoom or restore, by `zoom` or by a title
+    /// bar's double click, so a test can see one gesture zoom it exactly once.
+    pub fn zoom_requests(&self) -> usize {
+        self.0.lock().zoom_requests
     }
 
     /// Every [`TextInputConfiguration`] forwarded to this window, in order.
@@ -473,8 +482,14 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
+    // KChess patch: counted (`zoom_requests`) rather than panicking.
     fn zoom(&self) {
-        unimplemented!()
+        self.0.lock().zoom_requests += 1;
+    }
+
+    // KChess patch: counted too, as the platform zooms or minimizes the window here.
+    fn titlebar_double_click(&self, _is_resizable: bool, _is_minimizable: bool) {
+        self.0.lock().zoom_requests += 1;
     }
 
     fn toggle_fullscreen(&self) {

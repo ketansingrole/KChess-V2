@@ -3299,6 +3299,15 @@ impl Window {
             .map(|(area, _)| *area)
     }
 
+    /// KChess patch: how often the test platform's window was asked to zoom or restore, by
+    /// [`Window::zoom_window`] or a title bar's [`Window::titlebar_double_click`].
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn zoom_requests(&mut self) -> usize {
+        self.platform_window
+            .as_test()
+            .map_or(0, |window| window.zoom_requests())
+    }
+
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.platform_window.set_title(title);

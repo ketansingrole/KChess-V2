@@ -204,6 +204,10 @@ fn main_window_options(cx: &mut App) -> WindowOptions {
             px(window_state::MIN_SIZE.1),
         )),
         app_id: Some("com.kchess.app".into()),
+        // The window draws its own title bar, which moves and zooms it (`shell::title_bar`,
+        // GPUI Kit's `TitleBar`); otherwise macOS answers a double click on its top 28px too,
+        // zooming the window a second time, and delays clicks there to tell double ones apart.
+        app_owns_titlebar_drag: true,
         ..WindowOptions::default()
     }
 }
