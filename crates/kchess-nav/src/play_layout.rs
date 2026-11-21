@@ -286,15 +286,20 @@ impl PlayLayout {
         self.stacked.get().is_some()
     }
 
-    /// The panel's height: the board's column, player lines included; its own when stacked.
+    /// The panel's height beside a board between two player lines (a game: `board_size`), so it
+    /// ends with the lower line; its own when stacked. Only for those pages: it adds both lines
+    /// whatever the column holds, so a board with other rows around it, or none, sizes with
+    /// `board_and_panel` instead.
     pub fn panel_height(&self, board: Pixels) -> Length {
         self.fixed(self.panel_height_px(board))
     }
 
-    /// A board whose column holds `around` besides it (a puzzle board's material and move box
-    /// rows: `PuzzleBoard::around`): its side, and the height of the panel beside it, which ends
-    /// level with those rows. Every page with a puzzle board sizes it here: a panel as tall as the
-    /// board alone, or as two player lines, missed the move box.
+    /// A board whose column holds exactly `around` besides it, and no player lines: its side, and
+    /// the height of the panel beside it, which ends level with the column (its own when
+    /// stacked). `around` is what the column really holds: a puzzle board's rows
+    /// (`PuzzleBoard::around`), the move box's row, or nothing for a bare board. Every page
+    /// without player lines sizes here: `panel_height`'s two lines made such a panel run past
+    /// the column, and a panel as tall as the board alone stopped short of the move box.
     pub fn board_and_panel(&self, around: Pixels, window: &Window) -> (Pixels, Length) {
         let side = self.board_size_around(px(0.), px(0.), around, window);
         (side, self.fixed(side + around))
