@@ -211,7 +211,10 @@ impl HomePage {
             area: Measured::default(),
             focus: cx.focus_handle(),
             _subscriptions: vec![
-                cx.observe(&played, |_, _, cx| cx.notify()),
+                cx.observe(&played, |home, _, cx| {
+                    home.sync_board(cx);
+                    cx.notify();
+                }),
                 // The activity follows the accounts, and the one chosen to play online.
                 cx.observe_in(
                     &crate::accounts::handle(cx),
@@ -237,6 +240,7 @@ impl HomePage {
             ],
         };
         page.follow_activity(now(cx), window, cx);
+        page.sync_board(cx);
         page.refresh(cx);
         page
     }
@@ -271,6 +275,29 @@ impl HomePage {
         cx.notify();
     }
 
+    /// The board the card shows: the game you left, else the last one you finished (seen from
+    /// your side), else the starting position. Made again only when that position changes: when
+    /// the unfinished game is read, and when the played games change.
+    fn sync_board(&mut self, cx: &mut Context<Self>) {
+        let latest = self.with_recent(cx, |games| games.first().cloned());
+        let session = self.continue_game.as_ref().map(|(_, session)| session);
+        let (setup, moves, side) = match (session, &latest) {
+            (Some(session), _) => (session.setup.clone(), session.moves.clone(), session.color),
+            (None, Some(game)) => (
+                game.setup.clone(),
+                game.moves.clone(),
+                game.player_side().unwrap_or(Color::White),
+            ),
+            (None, None) => (Setup::standard_at(""), Vec::new(), Color::White),
+        };
+        let drawn = format!("{setup:?}{moves:?}{side:?}");
+        if self.board.as_ref().is_none_or(|(shown, _)| *shown != drawn) {
+            let mut state = view::board_state(&setup, &moves, moves.len(), side, None);
+            state.preview = true;
+            self.board = Some((drawn, cx.new(|_| ChessBoard::new(state))));
+        }
+    }
+
     /// The newest played games, worked out again only once the played games change.
     fn with_recent<R>(&self, cx: &App, read: impl FnOnce(&[PlayedGame]) -> R) -> R {
         let revision = cx.global::<PlayedHandle>().0.read(cx).revision();
@@ -301,6 +328,13 @@ impl HomePage {
                 }
             }
         }
+    }
+
+    /// The position on the board's card, as a FEN.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn board_fen(&self, cx: &App) -> Option<String> {
+        let (_, board) = self.board.as_ref()?;
+        Some(board.read(cx).state().fen.clone())
     }
 
     /// The activity card shown, if any.
@@ -352,6 +386,7 @@ impl HomePage {
                     }
                     _ => None,
                 };
+                self.sync_board(cx);
             }
             // The card stays as it was; a failed read is not the game being over.
             Err(cause) => crate::log::write(
@@ -489,25 +524,7 @@ impl Render for HomePage {
         let tiles = v_flex().gap(GAP).children(rows);
 
         let mut games = self.with_recent(cx, <[PlayedGame]>::to_vec);
-        // The game you left, else the last one you finished, else the starting position.
-        let session = self.continue_game.as_ref().map(|(_, session)| session);
         let latest = games.first().cloned();
-        let (setup, moves, side) = match (session, &latest) {
-            (Some(session), _) => (session.setup.clone(), session.moves.clone(), session.color),
-            // Seen from your side, when you played Black.
-            (None, Some(game)) => (
-                game.setup.clone(),
-                game.moves.clone(),
-                game.player_side().unwrap_or(Color::White),
-            ),
-            (None, None) => (Setup::standard_at(""), Vec::new(), Color::White),
-        };
-        let drawn = format!("{setup:?}{moves:?}{side:?}");
-        if self.board.as_ref().is_none_or(|(shown, _)| *shown != drawn) {
-            let mut state = view::board_state(&setup, &moves, moves.len(), side, None);
-            state.preview = true;
-            self.board = Some((drawn, cx.new(|_| ChessBoard::new(state))));
-        }
         let board = self.board.as_ref().map(|(_, board)| board.clone());
         let names = |game: &PlayedGame| format!("{} vs {}", game.white, game.black);
         // What the board shows: its title, the line under it, and the game it opens.

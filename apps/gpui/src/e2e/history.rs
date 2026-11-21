@@ -149,7 +149,7 @@ fn home_lists_recent_games_once_there_is_one(cx: &mut gpui_kit::TestAppContext) 
 }
 
 /// Another window left a game against the computer unfinished: the open Home offers to continue
-/// it. It kept offering a new game until it was opened again.
+/// it, on a board showing where it stands. It kept offering a new game until it was opened again.
 #[gpui_kit::test]
 fn a_game_left_in_another_window_is_continued_from_home(cx: &mut gpui_kit::TestAppContext) {
     use kchess_domain::games::Host;
@@ -175,6 +175,14 @@ fn a_game_left_in_another_window_is_continued_from_home(cx: &mut gpui_kit::TestA
     });
     app.changed_elsewhere(&[kchess_contracts::types::ProfileArea::Sessions]);
     app.find("home-continue");
+    let fen = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::home::HomePage>(cx)
+            .and_then(|home| home.read(cx).board_fen(cx))
+    });
+    assert_eq!(
+        fen.as_deref(),
+        Some("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2")
+    );
 }
 
 /// Home's _Review_ is in Quick Pick: the last game opens in Game history. Home adds no Sync games

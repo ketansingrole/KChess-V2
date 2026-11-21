@@ -237,6 +237,12 @@ impl ChessBoard {
         }
     }
 
+    /// The position shown, and how.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn state(&self) -> &BoardState {
+        &self.state
+    }
+
     /// Show another position (after a move, a takeback, a new game).
     pub fn set_state(&mut self, state: BoardState, cx: &mut Context<Self>) {
         if state == self.state {
