@@ -77,7 +77,10 @@ impl PuzzlesPage {
                     "puzzles",
                     &format!("{method} failed: {}", cause.message),
                 );
-                cause.message
+                Failure {
+                    message: cause.message,
+                    kind: cause.kind,
+                }
             });
             let _ = this.update(cx, |this, cx| {
                 let selection = this.selection(cx);

@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use super::puzzle_progress::{Outcome, Verdict, classify, moves};
 use crate::js;
+use crate::misc::constants::ErrorKind;
 use crate::training::puzzle::Puzzle;
 
 const OFFLINE_TEXT: &str = "You’re offline. Choose Downloaded to use puzzles on this device, or reconnect for online puzzles.";
@@ -342,7 +343,14 @@ pub enum Answer {
 }
 
 /// A reply's outcome: the answer or the failure's message.
-pub type Reply = Result<Answer, String>;
+pub type Reply = Result<Answer, Failure>;
+
+/// A call that failed: what to show, and what kind of failure the core said it is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Failure {
+    pub message: String,
+    pub kind: Option<ErrorKind>,
+}
 
 impl Session<'_> {
     fn invalidate(&mut self) {
@@ -388,14 +396,14 @@ impl Session<'_> {
         self.state.phase = Phase::Exhausted;
     }
 
-    /// A failed load: offline without the database is a distinct phase; everything else shows
-    /// the message.
-    fn fail(&mut self, selection: &Selection, text: &str) {
+    /// A failed load: offline without the database is a distinct phase, told by its kind;
+    /// everything else shows the message.
+    fn fail(&mut self, selection: &Selection, message: &str, kind: Option<ErrorKind>) {
         self.warn = true;
-        if selection.mode == "offline" && text.contains("Download the puzzle database") {
+        if selection.mode == "offline" && kind == Some(ErrorKind::NoPuzzleDatabase) {
             self.state.phase = Phase::NoDatabase;
         } else {
-            self.state.train_error = text.into();
+            self.state.train_error = message.into();
             self.state.phase = Phase::Error;
         }
     }
@@ -426,7 +434,7 @@ impl Session<'_> {
             return;
         }
         if !online {
-            self.fail(selection, OFFLINE_TEXT);
+            self.fail(selection, OFFLINE_TEXT, Some(ErrorKind::Offline));
             return;
         }
         self.call = Some(Call {
@@ -443,7 +451,7 @@ impl Session<'_> {
         let selection = token.selection.clone();
         let answer = match reply {
             Ok(answer) => answer,
-            Err(text) => return self.fail(&selection, &text),
+            Err(failure) => return self.fail(&selection, &failure.message, failure.kind),
         };
         match token.stage.as_str() {
             "offline" => match answer {
@@ -633,12 +641,12 @@ impl Session<'_> {
         let win = token.win;
         let answer = match reply {
             Ok(answer) => answer,
-            Err(text) => {
+            Err(failure) => {
                 self.warn = true;
                 self.state.last_report = Some(Report {
                     win,
                     rating_diff: None,
-                    failed: Some(text),
+                    failed: Some(failure.message),
                 });
                 return;
             }
@@ -873,6 +881,29 @@ mod tests {
         assert_eq!(session.phase(), Phase::Loading);
         session.load_settled(call.resume, Ok(Answer::Local(Vec::new())), &selection(), "");
         assert_eq!(session.phase(), Phase::Exhausted);
+    }
+
+    /// Without the downloaded puzzles the Train tab offers the download: told by the failure's
+    /// kind, so the core can word its message as it likes, and a message alone that reads like
+    /// it is just a failure.
+    #[test]
+    fn a_missing_database_is_told_by_its_kind_not_its_words() {
+        let failed = |message: &str, kind| {
+            let mut session = PuzzleSession::new();
+            let call = session.load_begin(&selection(), true, "").call.unwrap();
+            let failure = Failure {
+                message: message.into(),
+                kind,
+            };
+            session.load_settled(call.resume, Err(failure), &selection(), "");
+            session.phase()
+        };
+        let missing = Some(ErrorKind::NoPuzzleDatabase);
+        assert_eq!(failed("No puzzles here yet.", missing), Phase::NoDatabase);
+        assert_eq!(
+            failed("Download the puzzle database first.", None),
+            Phase::Error
+        );
     }
 
     #[test]

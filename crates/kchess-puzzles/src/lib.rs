@@ -41,7 +41,7 @@ use crate::game::surface::TakesKeys as _;
 use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
 use crate::puzzle_db::PuzzleDbHandle;
 use crate::theme::{Palette, radii, tint};
-use kchess_domain::trainer::puzzle_session::{Answer, Detail, Reply, Request, Resume};
+use kchess_domain::trainer::puzzle_session::{Answer, Detail, Failure, Reply, Request, Resume};
 use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
 use kchess_ui::icon;
 mod daily;
