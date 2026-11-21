@@ -86,6 +86,9 @@ pub const SMOOTH_SVG_SCALE_FACTOR: f32 = 2.;
 pub struct RenderSvgParams {
     pub path: SharedString,
     pub size: Size<DevicePixels>,
+    /// KChess patch: the window's scale factor in thousandths, so an icon is drawn at the same
+    /// size in points on every display (`icon_drawing`). 0 when unknown: the size is the box's.
+    pub scale_milli: u32,
 }
 
 #[derive(Clone)]
@@ -289,6 +292,12 @@ impl SvgRenderer {
             .strip_prefix("icons/")
             .and_then(|name| name.strip_suffix(".svg"))?;
         let device = params.size.width.0 as f32 / SMOOTH_SVG_SCALE_FACTOR;
+        let scale = match params.scale_milli {
+            0 => 1.,
+            milli => milli as f32 / 1000.,
+        };
+        // The box in points, to the half point (its device size was rounded up).
+        let points = (device / scale * 2.).round() / 2.;
         // A size the icon is not drawn at is absent, whether a source says so or fails to find
         // it (GPUI Kit's answers an error for a file it does not have).
         let drawn: Vec<(u32, Cow<'static, [u8]>)> = ICON_SIZES
@@ -299,7 +308,7 @@ impl SvgRenderer {
             })
             .collect();
         let sizes: Vec<u32> = drawn.iter().map(|(size, _)| *size).collect();
-        let (size, side) = icon_drawing(device, &sizes)?;
+        let (size, side) = icon_drawing(points, scale, &sizes)?;
         drawn
             .into_iter()
             .find(|(drawn, _)| *drawn == size)
@@ -310,17 +319,49 @@ impl SvgRenderer {
 /// KChess patch: the sizes an icon may have drawings for, as `icons/name@N.svg`.
 pub const ICON_SIZES: [u32; 7] = [12, 16, 20, 24, 28, 32, 48];
 
+/// KChess patch: the scale factor at which an icon's size on screen is chosen (`icon_drawing`).
+pub const ICON_REFERENCE_SCALE: f32 = 2.;
+
 /// KChess patch: which of an icon's drawings (`drawn`, their sizes in pixels) to use in a box
-/// `device` pixels wide, and the side to draw it at: a drawing at its own size or scaled a whole
-/// number of times, at most 8/7 of the box. Each drawing puts its lines on its own pixel grid,
-/// which a whole-number scale keeps, and keeps a margin inside its frame, so a 16 px drawing fits
-/// a 14 px box. Scaling any other amount puts lines between pixels: a 2-unit stroke on a 24-unit
-/// grid is 1.17 px wide at 14 px.
+/// `points` wide on a display of `scale` pixels per point, and the side in pixels to draw it at.
+///
+/// The size on screen depends on the box alone: it is the one a 2x display draws (`fit`), the
+/// same in points on every display, so icons keep their sizes beside each other and beside the
+/// text. Choosing it from each display's own pixels drew an 18 pt box 16 pt on a Retina Mac and
+/// 20 px on a 100% Windows display, and a KChess drawing made at 16 px only at 10.7 pt at 150%.
+///
+/// That side is drawn with the drawing made for it, or one scaled a whole number of times (lines
+/// stay on its pixel grid); where none matches (a 1.25 or 1.5 display between drawings), with the
+/// smallest drawing larger than it, scaled down. `None` when the icon has no drawings.
+pub fn icon_drawing(points: f32, scale: f32, drawn: &[u32]) -> Option<(u32, u32)> {
+    let reference = ICON_REFERENCE_SCALE;
+    let side_points = fit(points * reference, drawn).map_or(points, |(_, side)| {
+        side as f32 / reference
+    });
+    let side = ((side_points * scale).round() as u32).max(1);
+    (1..=2)
+        .find_map(|times| {
+            drawn
+                .iter()
+                .find(|&&size| size * times == side)
+                .map(|&size| (size, side))
+        })
+        .or_else(|| {
+            let larger = drawn.iter().filter(|&&size| size >= side).min();
+            larger.or_else(|| drawn.iter().max()).map(|&size| (size, side))
+        })
+}
+
+/// KChess patch: which drawing fits a box `device` pixels wide, and the side to draw it at: a
+/// drawing at its own size or scaled a whole number of times, at most 8/7 of the box. Each
+/// drawing puts its lines on its own pixel grid, which a whole-number scale keeps, and keeps a
+/// margin inside its frame, so a 16 px drawing fits a 14 px box. Scaling any other amount puts
+/// lines between pixels: a 2-unit stroke on a 24-unit grid is 1.17 px wide at 14 px.
 ///
 /// The least scale whose largest fitting drawing nearly fills the box wins, so detail drawn for a
 /// size is kept (32 px stays the 32 px drawing, not 12 px tripled); else the largest that fits.
-/// `None` when even the smallest drawing is too large; the icon's own file is scaled then.
-pub fn icon_drawing(device: f32, drawn: &[u32]) -> Option<(u32, u32)> {
+/// `None` when even the smallest drawing is too large.
+fn fit(device: f32, drawn: &[u32]) -> Option<(u32, u32)> {
     let limit = device * 8. / 7. + 0.01;
     let best = |times: u32| {
         drawn

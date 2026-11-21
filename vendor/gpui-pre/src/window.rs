@@ -5321,6 +5321,8 @@ impl Window {
             size: bounds.size.map(|pixels| {
                 DevicePixels::from((pixels.0 * SMOOTH_SVG_SCALE_FACTOR).ceil() as i32)
             }),
+            // KChess patch: an icon's size in points is the same on every display.
+            scale_milli: (self.scale_factor() * 1000.).round() as u32,
         };
 
         let Some(tile) =

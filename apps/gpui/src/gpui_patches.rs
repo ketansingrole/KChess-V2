@@ -48,19 +48,58 @@ fn text_not_shown_for_a_while_is_not_shaped_again(cx: &mut TestAppContext) {
 #[test]
 fn an_icon_uses_the_drawing_made_for_its_size() {
     let fluent = [12, 16, 20, 24, 28, 32, 48];
-    // 1x: a 14 px box takes the 16 px drawing, whose margin it fits in.
-    assert_eq!(gpui_kit::icon_drawing(14., &fluent), Some((16, 16)));
-    assert_eq!(gpui_kit::icon_drawing(16., &fluent), Some((16, 16)));
-    assert_eq!(gpui_kit::icon_drawing(18., &fluent), Some((20, 20)));
-    assert_eq!(gpui_kit::icon_drawing(12., &fluent), Some((12, 12)));
-    // 2x: the same boxes take the 28 and 32 px drawings.
-    assert_eq!(gpui_kit::icon_drawing(28., &fluent), Some((32, 32)));
-    assert_eq!(gpui_kit::icon_drawing(32., &fluent), Some((32, 32)));
+    // 1x: a 14 pt box takes the 16 px drawing, whose margin it fits in.
+    assert_eq!(gpui_kit::icon_drawing(14., 1., &fluent), Some((16, 16)));
+    assert_eq!(gpui_kit::icon_drawing(16., 1., &fluent), Some((16, 16)));
+    assert_eq!(gpui_kit::icon_drawing(12., 1., &fluent), Some((12, 12)));
+    // 2x: the same boxes take the 32 and 24 px drawings.
+    assert_eq!(gpui_kit::icon_drawing(14., 2., &fluent), Some((32, 32)));
+    assert_eq!(gpui_kit::icon_drawing(16., 2., &fluent), Some((32, 32)));
+    assert_eq!(gpui_kit::icon_drawing(12., 2., &fluent), Some((24, 24)));
     // KChess's own icons are drawn at 16 px only: doubled on a Retina display.
-    assert_eq!(gpui_kit::icon_drawing(28., &[16]), Some((16, 32)));
-    assert_eq!(gpui_kit::icon_drawing(14., &[16]), Some((16, 16)));
-    // Too small for any drawing: the icon's own file is scaled.
-    assert_eq!(gpui_kit::icon_drawing(12., &[16, 20]), None);
+    assert_eq!(gpui_kit::icon_drawing(14., 2., &[16]), Some((16, 32)));
+    assert_eq!(gpui_kit::icon_drawing(14., 1., &[16]), Some((16, 16)));
+    // No drawing for the size on screen: the next larger one, scaled down to it.
+    assert_eq!(gpui_kit::icon_drawing(12., 1., &[16, 20]), Some((16, 10)));
+    assert_eq!(gpui_kit::icon_drawing(14., 1.25, &fluent), Some((20, 20)));
+    assert_eq!(gpui_kit::icon_drawing(20., 1.25, &fluent), Some((28, 25)));
+    assert_eq!(gpui_kit::icon_drawing(18., 1.5, &[16]), Some((16, 24)));
+    assert_eq!(gpui_kit::icon_drawing(12., 1., &[]), None);
+}
+
+/// Windows showed the sidebar's 18 pt icons at 20 px and the 14 pt Settings buttons beside them
+/// at 16, where a Retina Mac shows both at 16 pt; at 150% a KChess drawing made at 16 px only was
+/// drawn at 16 px, 10.7 pt in an 18 pt box. The size each display chose was the drawing that fit
+/// its own pixels, so it moved with the scale factor. An icon is now as large in points on every
+/// display as on a Retina one.
+#[test]
+fn an_icon_is_the_same_size_on_every_display() {
+    let sets: [&[u32]; 4] = [
+        &[12, 16, 20, 24, 28, 32, 48],
+        &[16, 20, 24, 28, 32, 48],
+        &[16, 20, 24, 28],
+        &[16],
+    ];
+    for drawn in sets {
+        for box_points in 10..=40 {
+            let points = box_points as f32;
+            let (_, retina) = gpui_kit::icon_drawing(points, 2., drawn).expect("a drawing");
+            let size = retina as f32 / 2.;
+            for scale in [1., 1.25, 1.5, 1.75, 2., 2.25, 2.5, 3.] {
+                let (_, side) = gpui_kit::icon_drawing(points, scale, drawn).expect("a drawing");
+                let on_screen = side as f32 / scale;
+                assert!(
+                    (on_screen - size).abs() <= 0.5 / scale + 1e-3,
+                    "a {points} pt box with drawings {drawn:?} is {on_screen} pt at {scale}x                      and {size} pt at 2x"
+                );
+            }
+        }
+    }
+    let fluent = [12, 16, 20, 24, 28, 32, 48];
+    // The sidebar's icons and a small button's beside them.
+    assert_eq!(gpui_kit::icon_drawing(18., 1., &fluent), Some((16, 16)));
+    assert_eq!(gpui_kit::icon_drawing(18., 2., &fluent), Some((32, 32)));
+    assert_eq!(gpui_kit::icon_drawing(18., 1.5, &fluent), Some((24, 24)));
 }
 
 /// Looking for the sizes an icon is drawn at asked the app's assets for `monitor@12.svg`, which
@@ -69,21 +108,24 @@ fn an_icon_uses_the_drawing_made_for_its_size() {
 #[test]
 fn an_icon_without_every_size_still_finds_its_drawing() {
     let renderer = gpui_kit::SvgRenderer::new(std::sync::Arc::new(crate::assets::Assets));
-    let params = |name: &str, device: i32| gpui_kit::RenderSvgParams {
-        path: format!("icons/{name}.svg").into(),
-        size: gpui_kit::size(
-            gpui_kit::DevicePixels(device * 2),
-            gpui_kit::DevicePixels(device * 2),
-        ),
+    let side = |name: &str, points: i32, scale: f32| {
+        let device = (points as f32 * scale * 2.).ceil() as i32;
+        let params = gpui_kit::RenderSvgParams {
+            path: format!("icons/{name}.svg").into(),
+            size: gpui_kit::size(
+                gpui_kit::DevicePixels(device),
+                gpui_kit::DevicePixels(device),
+            ),
+            scale_milli: (scale * 1000.) as u32,
+        };
+        renderer.icon_drawing_for(&params).map(|(_, side)| side)
     };
-    let side = |name: &str, device: i32| {
-        renderer
-            .icon_drawing_for(&params(name, device))
-            .map(|(_, side)| side)
-    };
-    assert_eq!(side("monitor", 14), Some(16));
-    assert_eq!(side("monitor", 28), Some(32));
+    assert_eq!(side("monitor", 14, 1.), Some(16));
+    assert_eq!(side("monitor", 14, 2.), Some(32));
+    assert_eq!(side("monitor", 18, 1.), Some(16));
+    assert_eq!(side("monitor", 18, 1.25), Some(20));
     // KChess's own drawings exist at 16 px only.
-    assert_eq!(side("swords", 14), Some(16));
-    assert_eq!(side("swords", 28), Some(32));
+    assert_eq!(side("swords", 14, 1.), Some(16));
+    assert_eq!(side("swords", 14, 2.), Some(32));
+    assert_eq!(side("swords", 18, 1.5), Some(24));
 }

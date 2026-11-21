@@ -647,3 +647,32 @@ fn a_double_click_on_the_title_bar_zooms_the_window_once(cx: &mut gpui_kit::Test
         .update(|cx| crate::main_window_options(cx).app_owns_titlebar_drag);
     assert!(owned, "the app answers its title bar's double clicks alone");
 }
+
+/// On Windows and Linux the sidebar toggle sat 12px from the window's edge, its icon 6px left of
+/// the column of the navigation's icons below it, open or as the rail. (On macOS it sits beside
+/// the traffic lights instead.)
+#[cfg(not(target_os = "macos"))]
+#[gpui_kit::test]
+fn the_sidebar_toggle_lines_up_with_the_navigation_icons(cx: &mut gpui_kit::TestAppContext) {
+    use crate::shell::{NAV_ICON, NAV_INSET};
+    let mut app = Harness::start(cx);
+    for open in [true, false] {
+        let shown = app.find("sidebar-toggle").label() == Some("Hide sidebar");
+        if shown != open {
+            app.click("sidebar-toggle");
+            // The width eases; the rows hold still once it ends.
+            app.settle();
+        }
+        let toggle = app.find("sidebar-toggle").bounds().center().x;
+        let home = app.find("0-0").bounds();
+        let icon = if open {
+            home.left() + NAV_INSET + NAV_ICON / 2.
+        } else {
+            home.center().x
+        };
+        assert!(
+            (toggle - icon).abs() < gpui_kit::px(0.5),
+            "open: {open}: the toggle's centre is at {toggle:?}, the icons' at {icon:?}"
+        );
+    }
+}

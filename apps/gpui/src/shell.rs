@@ -27,6 +27,16 @@ pub(crate) const SIDEBAR_WIDTH: Pixels = px(256.);
 /// How long the sidebar's width eases when it opens or closes.
 const SIDEBAR_EASE: Duration = Duration::from_millis(200);
 const SIDEBAR_RAIL: Pixels = px(64.);
+/// The sidebar's padding either side of its rows; on the right, less its 1px edge, which takes
+/// room from them, so the rail's rows stay centred on it.
+const SIDEBAR_INSET: Pixels = px(16.);
+const SIDEBAR_BORDER: Pixels = px(1.);
+/// A navigation row's icon, and its padding either side: the rail's rows are as wide as twice
+/// the padding and the icon, so an icon sits on the same column open or as the rail.
+pub(crate) const NAV_ICON: Pixels = px(18.);
+pub(crate) const NAV_INSET: Pixels = px(7.);
+/// The sidebar toggle's side.
+const TOGGLE_SIDE: Pixels = px(28.);
 /// Below this window width the sidebar shows as its rail, leaving the page the room; its toggle
 /// opens it there for the moment without changing what wider windows show.
 const NARROW_WINDOW: Pixels = px(800.);
@@ -36,12 +46,12 @@ fn sidebar_width(open: bool) -> Pixels {
 }
 
 /// The sidebar toggle's left edge: 84px on macOS at any interface size, clear of the traffic
-/// lights, else 12px.
+/// lights, else on the column of the navigation's icons below it.
 fn toggle_left(window: &Window) -> Pixels {
     if cfg!(target_os = "macos") {
         px(84. / window.zoom())
     } else {
-        px(12.)
+        SIDEBAR_INSET + NAV_INSET + NAV_ICON / 2. - TOGGLE_SIDE / 2.
     }
 }
 
@@ -74,9 +84,10 @@ fn title_bar(id: &'static str) -> Stateful<Div> {
 /// A row of the sidebar's navigation: 32px tall, an 18px icon 8px from its label.
 fn nav_item(label: impl Into<SharedString>, glyph: Icon) -> SidebarMenuItem {
     SidebarMenuItem::new(label)
-        .icon(glyph.size(px(18.)))
+        .icon(glyph.size(NAV_ICON))
         .min_h(px(32.))
-        .p(px(6.))
+        .py(px(6.))
+        .px(NAV_INSET)
         .gap_x(px(8.))
 }
 
@@ -275,7 +286,7 @@ fn toggle_style(open: bool, window: &Window) -> StyleRefinement {
     };
     style.inset.top = Some(px(0.).into());
     style.inset.left = Some(toggle_left(window).into());
-    style.size.width = Some(px(if open { 100. } else { 28. }).into());
+    style.size.width = Some(if open { px(100.) } else { TOGGLE_SIDE }.into());
     style.size.height = Some(TOPBAR_HEIGHT.into());
     style
 }
@@ -987,7 +998,7 @@ impl Workspace {
             .bg(cx.theme().tokens.sidebar)
             .text_color(cx.theme().sidebar_foreground)
             .border_color(border)
-            .when(!mac, |sidebar| sidebar.border_r_1())
+            .when(!mac, |sidebar| sidebar.border_r(SIDEBAR_BORDER))
             .child(
                 title_bar("sidebar-header")
                     .h(TOPBAR_HEIGHT)
@@ -1000,7 +1011,7 @@ impl Workspace {
                     .flex_1()
                     .min_h_0()
                     .border_color(border)
-                    .when(mac, |rest| rest.border_r_1())
+                    .when(mac, |rest| rest.border_r(SIDEBAR_BORDER))
                     .child(
                         v_flex()
                             .id("sidebar-body")
@@ -1008,7 +1019,8 @@ impl Workspace {
                             .min_h_0()
                             .overflow_y_scroll()
                             .track_scroll(&self.sidebar_scroll)
-                            .px_4()
+                            .pl(SIDEBAR_INSET)
+                            .pr(SIDEBAR_INSET - SIDEBAR_BORDER)
                             .py_2()
                             .gap_1()
                             .children(blocks),
@@ -1016,7 +1028,8 @@ impl Workspace {
                     .child(
                         v_flex()
                             .flex_none()
-                            .px_4()
+                            .pl(SIDEBAR_INSET)
+                            .pr(SIDEBAR_INSET - SIDEBAR_BORDER)
                             .py_2()
                             .border_t_1()
                             .border_color(border)
@@ -1116,7 +1129,7 @@ impl Workspace {
                 Button::new("sidebar-toggle")
                     .custom(ghost_neutral(cx))
                     .icon(icon("panel-left"))
-                    .size(px(28.))
+                    .size(TOGGLE_SIDE)
                     .tooltip_with_action(label, &crate::menu::ToggleSidebar, None)
                     .accessibility_label(label)
                     .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
@@ -1155,7 +1168,8 @@ impl Workspace {
 
     fn render_topbar_content(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Room for the toggle floating over the topbar beside the macOS rail: its 28px and 8px clear of it, less the rail and the padding.
-        let spacer = (toggle_left(window) + px(36.) - SIDEBAR_RAIL - px(20.)).max(px(0.));
+        let spacer =
+            (toggle_left(window) + TOGGLE_SIDE + px(8.) - SIDEBAR_RAIL - px(20.)).max(px(0.));
         // GPUI Kit's `TitleBar` around it moves and zooms the window.
         div()
             .id("topbar")

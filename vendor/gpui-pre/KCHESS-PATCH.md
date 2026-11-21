@@ -87,11 +87,16 @@ pixels and blur on a 1x display (Lucide's 2-unit strokes on a 24-unit grid were 
 the drawings made for each size, `name@16.svg`, `name@20.svg` and so on.
 
 - `SvgRenderer::render_alpha_mask` (`src/svg_renderer.rs`) draws `icons/name.svg` with the
-  drawing `icon_drawing` picks for the icon's size in device pixels: one at its own size or
-  scaled a whole number of times, at most 8/7 of the box (a 16 px drawing keeps a margin, so it
-  fits a 14 px box), preferring the least scale that nearly fills it. The tile is that drawing's
-  size, and `paint_svg` centres it in the icon's bounds as before. With no drawing small enough,
-  `name.svg` is scaled to the box as upstream does.
+  drawing `icon_drawing` picks. The size on screen depends on the icon's box in points alone: it
+  is the size a 2x display draws (a drawing at its own size or scaled a whole number of times, at
+  most 8/7 of the box, preferring the least scale that nearly fills it; a 16 px drawing keeps a
+  margin, so it fits a 14 px box), the same in points on every display. That side is drawn with
+  the drawing made for it, or one scaled a whole number of times; between drawings (a 125% or
+  150% display), with the next larger drawing scaled down to it. The tile is that side, and
+  `paint_svg` centres it in the icon's bounds as before. `paint_svg` passes the window's scale
+  factor in `RenderSvgParams::scale_milli` for this. Choosing the size from each display's own
+  pixels drew an 18 pt icon at 16 pt on a Retina Mac but 20 px at 100% on Windows, and an icon
+  drawn at 16 px only at 10.7 pt at 150%.
 - `icon_drawing_for` treats a size the asset source cannot load as absent: GPUI Kit's asset
   source answers an error for a file it does not have, which once hid every icon without a
   12 px drawing.
