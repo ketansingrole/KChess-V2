@@ -72,10 +72,13 @@ struct Quitting {
 
 impl Global for Quitting {}
 
-/// Every registered save, started now.
+/// Every registered save, started now: the newest first. A page registers after the services it
+/// saves through (the games played, the study library), which register as the app starts, so its
+/// last writes are queued before each service's flush, which then waits for them, and retries
+/// them if they are refused, instead of reporting a failure those writes have since fixed.
 fn flush_all(cx: &mut App) -> Vec<BoxedSave> {
     let flushes = std::mem::take(&mut cx.default_global::<QuitFlushes>().0);
-    let pending = flushes.iter().filter_map(|flush| flush(cx)).collect();
+    let pending = flushes.iter().rev().filter_map(|flush| flush(cx)).collect();
     // Surfaces opened while saving registered theirs meanwhile: keep both.
     let mut kept = flushes;
     kept.append(&mut cx.default_global::<QuitFlushes>().0);
@@ -247,7 +250,9 @@ async fn finish(
 
 #[cfg(test)]
 mod tests {
-    use super::{BoxedSave, Waited, all_saved, finish, saves_again, wait_saved};
+    use super::{
+        BoxedSave, Waited, all_saved, finish, flush_all, on_quit, saves_again, wait_saved,
+    };
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::task::{Context, Poll, Waker};
@@ -361,6 +366,25 @@ mod tests {
         let mut cx = Context::from_waker(Waker::noop());
         assert_eq!(quitting.as_mut().poll(&mut cx), Poll::Ready(()));
         assert_eq!(*order.borrow(), ["close", "install"]);
+    }
+
+    /// Retry in the quit dialog failed once more for a study the board saved again: the study
+    /// library, registered as the app started, flushed before the board queued that save, and
+    /// reported the failure the save was about to fix. Pages, registered later, flush first.
+    #[gpui_kit::test]
+    fn pages_flush_before_the_services_they_save_through(cx: &mut gpui_kit::TestAppContext) {
+        let order = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            for name in ["service", "page"] {
+                let order = Rc::clone(&order);
+                on_quit(cx, move |_| {
+                    order.borrow_mut().push(name);
+                    None
+                });
+            }
+            assert!(flush_all(cx).is_empty());
+        });
+        assert_eq!(*order.borrow(), ["page", "service"]);
     }
 
     #[test]

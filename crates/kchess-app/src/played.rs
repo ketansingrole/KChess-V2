@@ -5,24 +5,22 @@
 
 use crate::log::ResultExt as _;
 use futures::StreamExt as _;
-use futures::channel::{mpsc, oneshot};
-use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
+use futures::channel::mpsc;
+use gpui_kit::{App, AppContext as _, Context, Entity, Global};
 use kchess_contracts::Level;
 use kchess_contracts::calls;
 use kchess_contracts::check::{ArchivedGame, LibraryId, SessionObject};
 use kchess_contracts::types::{Library, PlayedGame, ProfileArea, SessionDocument, SessionKind};
 
 use crate::core::{Answer, AppCore, Reads};
-use crate::quit::BoxedSave;
+use crate::quit::{BoxedSave, Saved};
+use crate::writer::{Store, Writer};
 
 enum Write {
     Game(PlayedGame),
     Remove(String),
     /// A page's session, or its place in history, kept with the games it names.
     Session(SessionKind, SessionDocument),
-    /// Done once every write before it was answered (with `true`, after those refused were tried
-    /// again): with why one still failed, if any did.
-    Flushed(oneshot::Sender<crate::quit::Saved>, bool),
 }
 
 impl Write {
@@ -32,7 +30,6 @@ impl Write {
             Self::Game(game) => format!("game:{}", game.id),
             Self::Remove(id) => format!("game:{id}"),
             Self::Session(kind, _) => format!("session:{}", kind.as_str()),
-            Self::Flushed(..) => String::new(),
         }
     }
 }
@@ -44,7 +41,7 @@ pub struct PlayedGames {
     revision: u64,
     /// Why the last write failed, until one succeeds.
     pub error: Option<String>,
-    writes: mpsc::UnboundedSender<Write>,
+    writes: Writer<Write>,
     reads: Reads,
 }
 
@@ -57,7 +54,15 @@ impl Global for PlayedHandle {}
 /// Start from the games of the library read before the first page opens, and start the writer.
 pub fn init(library: &Library, cx: &mut App) {
     let games = library.games.clone();
-    let (writes, queue) = mpsc::unbounded();
+    // A failure, and the first success after one (`None`), for the page to show.
+    let (outcomes, mut failed) = mpsc::unbounded::<Option<String>>();
+    let saving = Saving {
+        core: cx.global::<AppCore>().clone(),
+        refused: Vec::new(),
+        failing: false,
+        outcomes,
+    };
+    let writes = Writer::start(saving, "The game history is closed", cx);
     let entity = cx.new(|_| PlayedGames {
         games,
         revision: 0,
@@ -65,7 +70,21 @@ pub fn init(library: &Library, cx: &mut App) {
         writes,
         reads: Reads::default(),
     });
-    write_in_order(entity.downgrade(), queue, cx);
+    cx.spawn({
+        let entity = entity.downgrade();
+        async move |cx| {
+            while let Some(outcome) = failed.next().await {
+                let _ = entity.update(cx, |this, cx| {
+                    if outcome.is_some() {
+                        this.reload(cx);
+                    }
+                    this.error = outcome;
+                    cx.notify();
+                });
+            }
+        }
+    })
+    .detach();
     crate::quit::on_quit(cx, {
         let entity = entity.clone();
         move |cx| Some(entity.read(cx).flushed())
@@ -80,57 +99,64 @@ pub fn init(library: &Library, cx: &mut App) {
     cx.set_global(PlayedHandle(entity));
 }
 
-fn write_in_order(
-    entity: WeakEntity<PlayedGames>,
-    mut queue: mpsc::UnboundedReceiver<Write>,
-    cx: &mut App,
-) {
-    let core = cx.global::<AppCore>().clone();
-    // A failure, and the first success after one (`None`), for the page to show.
-    let (outcomes, mut failed) = mpsc::unbounded::<Option<String>>();
-    cx.background_executor()
-        .spawn(async move {
-            let mut failing = false;
-            // Writes the core refused, the newest of each game and session, to try again.
-            let mut refused: Vec<(Write, String)> = Vec::new();
-            while let Some(write) = queue.next().await {
-                let writes = match write {
-                    Write::Flushed(done, again) => {
-                        // Only before quitting: a failure's own reload must not retry in a loop.
-                        let again: Vec<Write> = if again {
-                            refused.drain(..).map(|(write, _)| write).collect()
-                        } else {
-                            Vec::new()
-                        };
-                        for write in again {
-                            let result = send(&core, &write).await;
-                            failing = settle(write, result, failing, &mut refused, &outcomes);
-                        }
-                        let _ = done.send(match refused.first() {
-                            Some((_, cause)) => Err(format!("A game could not be saved: {cause}")),
-                            None => Ok(()),
-                        });
-                        continue;
-                    }
-                    write => write,
-                };
-                let result = send(&core, &writes).await;
-                failing = settle(writes, result, failing, &mut refused, &outcomes);
+/// The games' writes (`Writer`): a refused one is kept, the newest of each game and session, and
+/// tried again before the app quits; a failure, and the first success after one, reach the page.
+struct Saving {
+    core: AppCore,
+    /// Writes the core refused, the newest of each game and session, with why.
+    refused: Vec<(Write, String)>,
+    /// Whether the last write failed.
+    failing: bool,
+    outcomes: mpsc::UnboundedSender<Option<String>>,
+}
+
+impl Saving {
+    /// Send `write`, and note how it went: a refused write is kept (replacing an older one for
+    /// the same game or session) and reported; the first success after a failure clears the
+    /// page's error.
+    async fn send(&mut self, write: Write) {
+        let result = send(&self.core, &write).await;
+        let key = write.key();
+        self.refused.retain(|(kept, _)| kept.key() != key);
+        match result {
+            Err(cause) => {
+                crate::log::write(
+                    Level::Warn,
+                    "history",
+                    &format!("saving a game failed: {}", cause.message),
+                );
+                let _ = self.outcomes.unbounded_send(Some(cause.message.clone()));
+                self.refused.push((write, cause.message));
+                self.failing = true;
             }
-        })
-        .detach();
-    cx.spawn(async move |cx| {
-        while let Some(outcome) = failed.next().await {
-            let _ = entity.update(cx, |this, cx| {
-                if outcome.is_some() {
-                    this.reload(cx);
-                }
-                this.error = outcome;
-                cx.notify();
-            });
+            Ok(()) if self.failing => {
+                let _ = self.outcomes.unbounded_send(None);
+                self.failing = false;
+            }
+            Ok(()) => {}
         }
-    })
-    .detach();
+    }
+}
+
+impl Store for Saving {
+    type Write = Write;
+
+    async fn write(&mut self, write: Write) {
+        self.send(write).await;
+    }
+
+    async fn flush(&mut self, retry: bool) -> Saved {
+        if retry {
+            let again: Vec<Write> = self.refused.drain(..).map(|(write, _)| write).collect();
+            for write in again {
+                self.send(write).await;
+            }
+        }
+        match self.refused.first() {
+            Some((_, cause)) => Err(format!("A game could not be saved: {cause}")),
+            None => Ok(()),
+        }
+    }
 }
 
 /// Sends a write; what the core answers is not read, only whether it went through.
@@ -155,38 +181,6 @@ async fn send(core: &AppCore, write: &Write) -> Result<(), kchess_contracts::Cor
             })
             .await
         }
-        Write::Flushed(..) => Ok(()),
-    }
-}
-
-/// Note a write's result: a refused write is kept (replacing an older one for the same game or
-/// session) and reported; the first success after a failure clears the page's error. Whether
-/// writes are failing now.
-fn settle(
-    write: Write,
-    result: Result<(), kchess_contracts::CoreError>,
-    failing: bool,
-    refused: &mut Vec<(Write, String)>,
-    outcomes: &mpsc::UnboundedSender<Option<String>>,
-) -> bool {
-    let key = write.key();
-    refused.retain(|(kept, _)| kept.key() != key);
-    match result {
-        Err(cause) => {
-            crate::log::write(
-                Level::Warn,
-                "history",
-                &format!("saving a game failed: {}", cause.message),
-            );
-            let _ = outcomes.unbounded_send(Some(cause.message.clone()));
-            refused.push((write, cause.message));
-            true
-        }
-        Ok(_) if failing => {
-            let _ = outcomes.unbounded_send(None);
-            false
-        }
-        Ok(_) => false,
     }
 }
 
@@ -210,7 +204,7 @@ impl PlayedGames {
         self.games.insert(0, game.clone());
         self.changed();
         self.reads.edited();
-        let _ = self.writes.unbounded_send(Write::Game(game));
+        self.writes.send(Write::Game(game));
         cx.notify();
     }
 
@@ -220,7 +214,7 @@ impl PlayedGames {
         let game = self.games.remove(index);
         self.changed();
         self.reads.edited();
-        let _ = self.writes.unbounded_send(Write::Remove(id.to_string()));
+        self.writes.send(Write::Remove(id.to_string()));
         cx.notify();
         Some((index, game))
     }
@@ -231,35 +225,25 @@ impl PlayedGames {
         self.games.insert(index.min(self.games.len()), game.clone());
         self.changed();
         self.reads.edited();
-        let _ = self.writes.unbounded_send(Write::Game(game));
+        self.writes.send(Write::Game(game));
         cx.notify();
     }
 
     /// Keep a page's session after the game writes sent before it.
     pub fn save_session(&self, kind: SessionKind, session: SessionDocument) {
-        let _ = self.writes.unbounded_send(Write::Session(kind, session));
+        self.writes.send(Write::Session(kind, session));
     }
 
     /// Wait for every write sent so far, trying refused ones again: with why one still failed.
     pub fn flushed(&self) -> BoxedSave {
-        self.written(true)
+        self.writes.flushed()
     }
 
-    fn written(&self, again: bool) -> BoxedSave {
-        let (done, wait) = oneshot::channel();
-        let _ = self.writes.unbounded_send(Write::Flushed(done, again));
-        Box::pin(async move {
-            wait.await
-                .unwrap_or_else(|_| Err("The game history is closed".to_string()))
-        })
-    }
-
-    /// Show the games the profile keeps (after a write failed).
     /// Show the profile's games: read once this window's writes are done, and never over a
     /// game saved or removed here after the read started (a deleted game would come back).
     fn reload(&mut self, cx: &mut Context<Self>) {
         let read = self.reads.start();
-        let written = self.written(false);
+        let written = self.writes.written();
         cx.spawn(async move |this, cx| {
             let _ = written.await;
             let Ok(library) = this.update(cx, |_, cx| {
