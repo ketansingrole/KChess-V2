@@ -123,6 +123,8 @@ pub struct PositionExplorer {
     result: Option<PositionLookup>,
     /// The last lookup's failure: with no account it offers Connect Lichess, otherwise Try again.
     failure: Option<CoreError>,
+    /// The core lends help (no live game, and Lichess has said so), as last seen.
+    assistance_allowed: bool,
     busy: bool,
     epoch: Epoch,
     show_filters: bool,
@@ -162,6 +164,16 @@ impl PositionExplorer {
                     this.lookup(None, false, None, cx);
                 }
             }),
+            // Help lent again answers a lookup refused while Lichess was asked for a game in
+            // progress: just connected, the lookup went before the check had answered.
+            cx.observe(&crate::online::handle(cx), |this, online, cx| {
+                let allowed = online.read(cx).assistance_allowed();
+                let lent_again = allowed && !this.assistance_allowed;
+                this.assistance_allowed = allowed;
+                if lent_again && this.failure.is_some() {
+                    this.lookup(None, false, None, cx);
+                }
+            }),
             cx.subscribe_in(
                 &player,
                 window,
@@ -198,6 +210,7 @@ impl PositionExplorer {
             moves: None,
             result: None,
             failure: None,
+            assistance_allowed: crate::online::handle(cx).read(cx).assistance_allowed(),
             busy: false,
             epoch: Epoch::default(),
             show_filters: false,
