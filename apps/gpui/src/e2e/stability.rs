@@ -210,3 +210,25 @@ fn choosing_a_piece_set_leaves_the_options_in_place(cx: &mut gpui_kit::TestAppCo
         );
     }
 }
+
+/// Switching Studies between this device and Lichess leaves its tabs where they were.
+#[gpui_kit::test]
+fn the_studies_tabs_hold_still_as_you_switch(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Studies");
+    let ids: Vec<ElementId> = (0..2usize)
+        .map(|tab| ("studies-tabs", tab).into())
+        .collect();
+    app.find(ids[0].clone());
+    app.settle();
+    let before = places(&mut app, &ids);
+    for tab in [1, 0] {
+        app.click(ids[tab].clone());
+        app.settle();
+        assert_eq!(
+            places(&mut app, &ids),
+            before,
+            "the tabs moved choosing tab {tab}"
+        );
+    }
+}
