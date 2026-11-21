@@ -630,6 +630,11 @@ fn a_double_click_on_the_title_bar_zooms_the_window_once(cx: &mut gpui_kit::Test
     let name = gpui_kit::point(toggle.right() + gpui_kit::px(40.), toggle.center().y);
     let at_name = app.with_window(|window, _| window.window_control_at(name));
     assert_eq!(at_name, Some(Drag), "the sidebar's name moves the window");
+    // On Windows a press on a drag area goes to the system's caption, which maximizes the
+    // window itself and never hands the app the click: the drag areas above are all it needs.
+    if cfg!(target_os = "windows") {
+        return;
+    }
     for (part, at) in [("the top bar", topbar), ("the sidebar's name", name)] {
         let before = app.with_window(|window, _| window.zoom_requests());
         app.double_click_point(at);
