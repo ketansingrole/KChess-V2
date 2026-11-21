@@ -60,6 +60,19 @@ impl RenderOnce for StudyCard {
     }
 }
 
+/// The corners of a card's picture: the card's own on top, 1px in for its border, and square
+/// where the card's text begins. A board shown there takes them (`BoardState::corners`), so its
+/// corner squares follow the card's outline.
+pub fn card_picture_corners() -> Corners<Pixels> {
+    let top = radii::BOX - px(1.);
+    Corners {
+        top_left: top,
+        top_right: top,
+        bottom_right: px(0.),
+        bottom_left: px(0.),
+    }
+}
+
 fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
     let (width, open) = (card.width, card.on_open.clone());
     let open_title = open.clone();
@@ -101,8 +114,8 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
                 .flex()
                 .items_center()
                 .justify_center()
-                // Inside the card's border; GPUI does not clip to the card's rounded corners.
-                .rounded_t(radii::BOX - px(1.))
+                // GPUI does not clip to the card's rounded corners.
+                .rounded_t(card_picture_corners().top_left)
                 .bg(palette.bg)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| open(window, cx))

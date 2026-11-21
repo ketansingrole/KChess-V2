@@ -220,7 +220,7 @@ impl ChessBoard {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(radii::BOARD)
+                .map(|overlay| rounded(overlay, &self.state.corners))
                 .bg(hsla(0., 0., 0., 0.5))
                 .on_mouse_down(
                     MouseButton::Left,
@@ -577,7 +577,7 @@ impl Render for ChessBoard {
                             .absolute()
                             .size_full()
                             .object_fit(ObjectFit::Fill)
-                            .rounded(radii::BOARD),
+                            .map(|image| rounded(image, &self.state.corners)),
                     )
                     .children(check)
                     .child(
@@ -686,6 +686,15 @@ impl Render for ChessBoard {
                 None => CursorStyle::Arrow,
             })
     }
+}
+
+/// `element` with the board's `corners`, one by one (a card's picture rounds only its top).
+fn rounded<E: Styled>(element: E, corners: &Corners<Pixels>) -> E {
+    element
+        .rounded_tl(corners.top_left)
+        .rounded_tr(corners.top_right)
+        .rounded_br(corners.bottom_right)
+        .rounded_bl(corners.bottom_left)
 }
 
 #[cfg(test)]
