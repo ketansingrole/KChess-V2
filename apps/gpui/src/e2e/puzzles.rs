@@ -80,7 +80,12 @@ fn storm_streak_and_rush_wait_for_the_downloaded_puzzles(cx: &mut gpui_kit::Test
     // A run needs the downloaded puzzles; a score is only saved to an account.
     app.find("db-install");
     assert!(!app.enabled("rush-start"));
-    app.find("storm-connect");
+    // Its Connect starts connecting an account, as the Stats tab's does.
+    app.click("storm-connect");
+    assert!(
+        app.cx
+            .update(|cx| crate::accounts::handle(cx).read(cx).busy)
+    );
 }
 
 #[gpui_kit::test]
