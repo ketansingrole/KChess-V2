@@ -27,6 +27,9 @@
 //! - `unnamed_button`: a GPUI Kit button with neither `.label` nor `.accessibility_label` has no
 //!   name for a screen reader, whatever it draws: text as a child names nothing, and a tooltip
 //!   only describes. `widgets::trailing_icon` names one whose icon follows its text.
+//! - `loading_grows`: a GPUI Kit button with `.loading(…)` and no `.icon(…)` grows by a spinner
+//!   while it is busy, moving what is beside it (Cancel beside Import, a dialog's whole footer).
+//!   With an icon, the spinner takes the icon's place: give it one.
 //!
 //! A line that must stay says why on the line before: `// gpui-lints: allow(<lint>) <reason>`.
 
@@ -243,8 +246,9 @@ impl<'ast> Visit<'ast> for Lints {
 impl Lints {
     /// The kit button `call`'s chain builds, judged once, from the whole chain: its shorter tails
     /// are visited after it, and would miss a `min_h` or a `label` that follows. An `.xsmall()`
-    /// without a `min_h` that keeps it a 24 px target, and no name anywhere in the chain (its
-    /// `when` closures too) unless the call it is given to names it (`named`).
+    /// without a `min_h` that keeps it a 24 px target, no name anywhere in the chain (its
+    /// `when` closures too) unless the call it is given to names it (`named`), and a `.loading`
+    /// with no icon for its spinner to stand in.
     fn button(&mut self, call: &syn::ExprMethodCall, named: bool) {
         let mut methods = Vec::new();
         let mut link = call;
@@ -275,6 +279,18 @@ impl Lints {
                     "small_target",
                     "a kit button made `.xsmall()` is 20 px, under the 24 px a target needs: use \
                      `.small()`, or `widgets::text_button` for one that reads as text",
+                );
+            }
+        }
+        if let Some(loading) = methods.iter().find(|method| **method == "loading") {
+            let mut icon = Calls("icon", false);
+            icon.visit_expr_method_call(call);
+            if !icon.1 {
+                self.report(
+                    loading.span(),
+                    "loading_grows",
+                    "a kit button with `.loading` and no `.icon` grows by its spinner while busy, \
+                     moving what is beside it: give it an icon, which the spinner stands in for",
                 );
             }
         }
@@ -334,6 +350,16 @@ struct Named(bool);
 impl<'ast> Visit<'ast> for Named {
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         self.0 |= call.method == "label" || call.method == "accessibility_label";
+        visit::visit_expr_method_call(self, call);
+    }
+}
+
+/// Whether a button chain calls the method `.0` anywhere, its `when` closures too.
+struct Calls(&'static str, bool);
+
+impl<'ast> Visit<'ast> for Calls {
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        self.1 |= call.method == self.0;
         visit::visit_expr_method_call(self, call);
     }
 }
@@ -1038,6 +1064,21 @@ fn row(cx: &mut App) -> Div {
                 ("small_target", 12)
             ]
         );
+    }
+
+    /// A busy Import grew by its spinner and pushed Cancel beside it; one with an icon swaps it.
+    #[test]
+    fn a_loading_button_without_an_icon_is_found() {
+        let text = r#"
+fn footer(busy: bool) -> Div {
+    div()
+        .child(Button::new("import").primary().label("Import").loading(busy))
+        .child(Button::new("sync").icon(icon("refresh-cw")).label("Sync").loading(busy))
+        .child(Button::new("go").label("Go").when(on, |b| b.icon(icon("go"))).loading(busy))
+        .child(Button::new("save").label("Save"))
+}
+"#;
+        assert_eq!(lints_of(text), [("loading_grows", 4)]);
     }
 
     #[test]

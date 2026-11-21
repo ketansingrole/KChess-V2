@@ -13,7 +13,7 @@ fn openings(cx: &mut gpui_kit::TestAppContext) -> Harness {
 const KIESERITZKY: &str = "King's Gambit Accepted: Kieseritzky Gambit";
 
 /// Search for the Kieseritzky Gambit and open it.
-fn open_kieseritzky(app: &mut Harness) {
+pub(super) fn open_kieseritzky(app: &mut Harness) {
     app.click_label("Search openings");
     app.type_text("kieseritzky");
     app.click(format!("result-{KIESERITZKY}"));

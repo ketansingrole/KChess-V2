@@ -684,6 +684,7 @@ impl OnlinePage {
                 row.child(
                     Button::new("online-reconnect")
                         .primary()
+                        .icon(icon("refresh-cw"))
                         .label("Reconnect")
                         .loading(online.busy)
                         .on_click(|_, _, cx| {

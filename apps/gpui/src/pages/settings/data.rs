@@ -410,6 +410,7 @@ impl SettingsPage {
                 h_flex().child(
                     Button::new("data-diagnostics")
                         .outline()
+                        .icon(icon("download"))
                         .label("Export diagnostics")
                         .loading(self.exporting)
                         .on_click(cx.listener(|this, _, _, cx| this.export_diagnostics(cx))),

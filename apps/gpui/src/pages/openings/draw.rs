@@ -600,10 +600,16 @@ impl OpeningsPage {
                     .min_h_0()
                     .gap(px(14.))
                     .overflow_y_scroll()
-                    .children(description)
+                    // The explorer comes first: the description and the popularity come from
+                    // the web after each move, and above it they pushed the next move you were
+                    // about to click down as they came (and up again at the next move).
+                    .child(self.explorer.clone())
                     .when(self.popularity_months > 0, |more| {
                         more.child(
                             v_flex()
+                                .pt(px(14.))
+                                .border_t_1()
+                                .border_color(palette.border)
                                 .gap(px(4.))
                                 .child(
                                     h_flex()
@@ -629,13 +635,13 @@ impl OpeningsPage {
                                 .child(self.popularity.clone()),
                         )
                     })
-                    .child(
+                    .children(description.map(|description| {
                         div()
                             .pt(px(14.))
                             .border_t_1()
                             .border_color(palette.border)
-                            .child(self.explorer.clone()),
-                    ),
+                            .child(description)
+                    })),
             );
         self.layout
             .render("opening-detail", board_column, panel, window, cx)

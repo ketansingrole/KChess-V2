@@ -46,6 +46,7 @@ impl ComputerPage {
                             Button::new("check-engine")
                                 .link()
                                 .small()
+                                .icon(icon("rotate-cw"))
                                 .label("Check again")
                                 .loading(checking)
                                 .on_click(cx.listener(|this, _, _, cx| this.check_engine(cx))),

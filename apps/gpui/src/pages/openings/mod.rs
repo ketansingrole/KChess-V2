@@ -211,6 +211,19 @@ impl OpeningsPage {
             .collect()
     }
 
+    /// Show `description` and `months` of popularity as though they had come from the web.
+    #[cfg(test)]
+    pub(crate) fn arrive(
+        &mut self,
+        description: OpeningDescription,
+        months: &[PopularityMonth],
+        cx: &mut Context<Self>,
+    ) {
+        self.description = Some(description);
+        self.show_popularity(months, "e5", cx);
+        cx.notify();
+    }
+
     /// A small board picturing a position, made once per position.
     fn preview(&mut self, fen: &str, cx: &mut Context<Self>) -> Entity<ChessBoard> {
         let state = || BoardState::preview(fen, Default::default(), Color::White, None);

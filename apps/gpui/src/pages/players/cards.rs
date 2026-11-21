@@ -102,6 +102,7 @@ impl PlayersPage {
                     .child(
                         Button::new("players-lookup")
                             .primary()
+                            .icon(icon("search"))
                             .label("Look up")
                             .loading(self.profile_loading.busy())
                             .disabled(!online || !typed)
