@@ -291,6 +291,15 @@ impl PlayLayout {
         self.fixed(self.panel_height_px(board))
     }
 
+    /// A board whose column holds `around` besides it (a puzzle board's material and move box
+    /// rows: `PuzzleBoard::around`): its side, and the height of the panel beside it, which ends
+    /// level with those rows. Every page with a puzzle board sizes it here: a panel as tall as the
+    /// board alone, or as two player lines, missed the move box.
+    pub fn board_and_panel(&self, around: Pixels, window: &Window) -> (Pixels, Length) {
+        let side = self.board_size_around(px(0.), px(0.), around, window);
+        (side, self.fixed(side + around))
+    }
+
     /// `height` beside the board, or the panel's own height under it.
     pub fn fixed(&self, height: Pixels) -> Length {
         if self.is_stacked() {

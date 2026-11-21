@@ -898,7 +898,7 @@ fn the_session_holds_still_as_a_rated_result_comes_back(cx: &mut gpui_kit::TestA
 
 /// At each window wide enough to put the panel beside the board, the panel `id` ends level with
 /// the board's column: the board and the rows around it, the move box last.
-fn panel_ends_with_the_board(app: &mut Harness, id: &'static str) {
+pub(super) fn panel_ends_with_the_board(app: &mut Harness, id: &'static str) {
     use gpui_kit::{px, size};
     for (width, height) in &super::SIZES[1..] {
         app.cx

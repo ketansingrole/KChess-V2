@@ -62,20 +62,6 @@ use crate::widgets::Pressable as _;
 use crate::widgets::{Choice, Pill, Tone};
 use kchess_nav::page::{PageTab, TabInfo};
 
-/// A puzzle board's side, leaving room for the rows it shows around it (material, the move box),
-/// and the height of the panel beside it, which ends level with those rows. Every tab with a
-/// puzzle board sizes it here: a panel as tall as the board alone stopped short of the move box.
-fn board_and_panel(
-    layout: &PlayLayout,
-    board: &Entity<PuzzleBoard>,
-    window: &Window,
-    cx: &App,
-) -> (Pixels, Length) {
-    let around = board.read(cx).around();
-    let side = layout.board_size_around(px(0.), px(0.), around, window);
-    (side, layout.fixed(side + around))
-}
-
 /// Puzzles' tabs, in order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tab {

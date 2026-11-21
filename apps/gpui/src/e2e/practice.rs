@@ -906,3 +906,31 @@ fn drills_changed_in_another_window_show_here_too(cx: &mut gpui_kit::TestAppCont
     app.changed_elsewhere(&[kchess_contracts::types::ProfileArea::Drills]);
     app.wait_gone("practice-due");
 }
+
+/// Regression: Your mistakes sized its panel for two player lines its puzzle board doesn't have,
+/// so the panel ran 44 px past the move box under the board.
+#[gpui_kit::test]
+fn the_mistakes_panel_ends_with_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Mistakes);
+    app.find("review-a-game");
+    app.cx.update(|cx| {
+        let mistakes = crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).mistakes())
+            .expect("the mistakes trainer");
+        mistakes.update(cx, |mistakes, cx| {
+            mistakes.seed(
+                vec![serde_json::json!({
+                    "id": "panel-height",
+                    "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+                    "solution": ["g1f3"],
+                    "dueAt": 0,
+                })],
+                cx,
+            )
+        });
+    });
+    app.click("practice-due");
+    app.find("mistakes-panel");
+    super::puzzles::panel_ends_with_the_board(&mut app, "mistakes-panel");
+}

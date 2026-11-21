@@ -339,7 +339,9 @@ impl PuzzlesPage {
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> AnyElement {
-        let (board_size, panel_height) = board_and_panel(&self.layout, &self.puzzle, window, cx);
+        let (board_size, panel_height) = self
+            .layout
+            .board_and_panel(self.puzzle.read(cx).around(), window);
         let mode = Self::mode(cx);
         let ready = self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == Phase::Ready;
         let board_column = if ready {
