@@ -187,29 +187,25 @@ impl Render for ImportStudy {
             )
             .child(Input::new(&self.name).aria_label("Study name"))
             .child(Textarea::new(&self.text).aria_label("PGN"))
-            .children(self.error.clone().map(|error| {
-                div()
-                    .text_size(px(14.))
-                    .text_color(palette.error)
-                    .child(error)
-            }))
-            .child(
-                h_flex()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(
-                        Button::new("import-cancel")
-                            .ghost()
-                            .label("Cancel")
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    )
-                    .child(
-                        Button::new("import-run")
-                            .primary()
-                            .label("Import")
-                            .disabled(empty)
-                            .on_click(cx.listener(|this, _, window, cx| this.run(window, cx))),
-                    ),
-            )
+            .child(widgets::dialog_footer(
+                self.error
+                    .clone()
+                    .map(|error| ("import-study-error", error)),
+                None,
+                [
+                    Button::new("import-cancel")
+                        .ghost()
+                        .label("Cancel")
+                        .on_click(|_, window, cx| window.close_dialog(cx))
+                        .into_any_element(),
+                    Button::new("import-run")
+                        .primary()
+                        .label("Import")
+                        .disabled(empty)
+                        .on_click(cx.listener(|this, _, window, cx| this.run(window, cx)))
+                        .into_any_element(),
+                ],
+                &palette,
+            ))
     }
 }

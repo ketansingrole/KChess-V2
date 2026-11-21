@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{Disableable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, WindowExt as _, v_flex};
 use gpui_kit::*;
 
 use crate::theme::Palette;
@@ -79,29 +79,23 @@ impl Render for NameDialog {
         v_flex()
             .gap(px(12.))
             .child(Input::new(&self.input).aria_label("Name"))
-            .children(self.error.clone().map(|error| {
-                div()
-                    .text_size(px(14.))
-                    .text_color(palette.error)
-                    .child(error)
-            }))
-            .child(
-                h_flex()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(
-                        Button::new("name-cancel")
-                            .outline()
-                            .label("Cancel")
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    )
-                    .child(
-                        Button::new("name-confirm")
-                            .primary()
-                            .label(self.confirm)
-                            .disabled(empty)
-                            .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
-                    ),
-            )
+            .child(crate::widgets::dialog_footer(
+                self.error.clone().map(|error| ("name-error", error)),
+                None,
+                [
+                    Button::new("name-cancel")
+                        .outline()
+                        .label("Cancel")
+                        .on_click(|_, window, cx| window.close_dialog(cx))
+                        .into_any_element(),
+                    Button::new("name-confirm")
+                        .primary()
+                        .label(self.confirm)
+                        .disabled(empty)
+                        .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx)))
+                        .into_any_element(),
+                ],
+                &palette,
+            ))
     }
 }
