@@ -223,15 +223,12 @@ impl LocalPage {
                 .announce()
                 .detail(SharedString::from(result.reason.clone()))
             }
-            None if !self.at_live() => widgets::StatusBanner::new(
-                Tone::Plain,
-                icon("history"),
-                "Reviewing an earlier position".into(),
-            )
-            .extra(widgets::back_to_game(cx.listener(|this, _, _, cx| {
-                let last = this.moves().len();
-                this.show_ply(last, cx)
-            }))),
+            None if !self.at_live() => {
+                widgets::StatusBanner::reviewing(cx.listener(|this, _, _, cx| {
+                    let last = this.moves().len();
+                    this.show_ply(last, cx)
+                }))
+            }
             None => {
                 let check = display.as_ref().is_some_and(shakmaty::Position::is_check);
                 let detail = if timed && paused && !moves.is_empty() {

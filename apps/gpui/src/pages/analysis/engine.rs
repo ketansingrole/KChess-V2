@@ -625,11 +625,22 @@ impl AnalysisPage {
                             } else {
                                 palette.text_muted
                             })
-                            .when(engine_on && self.search.busy, |row| {
-                                row.child(crate::widgets::spinner(px(12.)))
+                            // The spinner's place is kept while the engine is on, so the
+                            // depth beside it holds still as each search starts and ends.
+                            .when(engine_on, |row| {
+                                row.child(
+                                    div()
+                                        .flex_none()
+                                        .size(px(12.))
+                                        .when(self.search.busy, |slot| {
+                                            slot.child(crate::widgets::spinner(px(12.)))
+                                        }),
+                                )
                             })
                             .child(
                                 div()
+                                    .id("engine-status")
+                                    .test_support()
                                     .truncate()
                                     .font_features(crate::widgets::tabular())
                                     .child(status),

@@ -76,6 +76,13 @@ impl StatusBanner {
         }
     }
 
+    /// An earlier position looked at, on the turn line's own plain line with Back to game at
+    /// its end: stepping back through the moves leaves the move list under the pointer where it
+    /// was, where a banner's taller surface pushed it down and the next click hit another move.
+    pub fn reviewing(back: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> StatusBanner {
+        StatusBanner::turn(SharedString::new_static("Earlier position")).extra(back_to_game(back))
+    }
+
     /// Say the title when it appears or changes (a live status): results and
     /// feedback, not a turn line the board already says.
     pub fn announce(mut self) -> StatusBanner {
@@ -115,9 +122,16 @@ impl RenderOnce for StatusBanner {
             })
             .items_center()
             .gap(px(8.))
+            // Its own height in a full panel too: squeezed there, a plain line lost 4 px to a
+            // turn's text that a Back to game button kept, and the moves under it jumped.
+            .flex_none()
             .when(plain, |banner| banner.h(px(24.)).text_size(px(14.)))
             .when(!plain, |banner| {
                 banner
+                    // Its actions go under the text where the two do not fit side by side:
+                    // squeezed beside them, a connection's detail stood one word a line, 439 px
+                    // high, and pushed its own buttons out of the panel.
+                    .flex_wrap()
                     .min_h(px(56.))
                     .px(px(12.))
                     .py(px(8.))
@@ -146,14 +160,16 @@ impl RenderOnce for StatusBanner {
                 div()
                     .flex()
                     .flex_1()
-                    .min_w_0()
-                    .when(plain, |text| text.items_baseline().gap(px(8.)))
-                    .when(!plain, |text| text.flex_col())
+                    .when(plain, |text| text.min_w_0().items_baseline().gap(px(8.)))
+                    .when(!plain, |text| text.min_w(px(160.)).flex_col())
                     .child(
                         div()
                             .line_height(px(20.))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.highlighted)
+                            // A plain line is one line high whatever it says: cut short, never
+                            // wrapped onto what is under it.
+                            .when(plain, |title| title.min_w_0().truncate())
                             .child(self.title),
                     )
                     .children(self.detail.map(|detail| {
@@ -169,7 +185,7 @@ impl RenderOnce for StatusBanner {
     }
 }
 
-/// The banner action that leaves an earlier position for the game's last move.
+/// The action that leaves an earlier position for the game's last move.
 pub fn back_to_game(on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> AnyElement {
     Button::new("back-to-game")
         .outline()

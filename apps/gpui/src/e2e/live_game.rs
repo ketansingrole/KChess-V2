@@ -5,7 +5,7 @@ use super::Harness;
 use super::fake_lichess::Handle;
 
 /// Signed in by an earlier launch with a game under way, on its page.
-fn in_a_game(cx: &mut gpui_kit::TestAppContext) -> (Harness, Handle) {
+pub(super) fn in_a_game(cx: &mut gpui_kit::TestAppContext) -> (Harness, Handle) {
     let (app, lichess) = Harness::signed_in(cx, true);
     let mut app = app.restart();
     app.open("Play on Lichess");
@@ -14,7 +14,7 @@ fn in_a_game(cx: &mut gpui_kit::TestAppContext) -> (Harness, Handle) {
 }
 
 /// In the game with a move each played: from here it can be resigned rather than aborted.
-fn past_the_opening(cx: &mut gpui_kit::TestAppContext) -> (Harness, Handle) {
+pub(super) fn past_the_opening(cx: &mut gpui_kit::TestAppContext) -> (Harness, Handle) {
     let (mut app, lichess) = in_a_game(cx);
     app.click_square("e2", true);
     app.click_square("e4", true);

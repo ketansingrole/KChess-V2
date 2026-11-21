@@ -33,6 +33,7 @@ mod review;
 mod screens;
 mod settings;
 mod shell;
+mod stability;
 mod studies;
 mod tournaments;
 mod whats_new;

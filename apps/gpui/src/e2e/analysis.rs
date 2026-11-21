@@ -1075,7 +1075,7 @@ fn a_cancelled_link_import_leaves_the_board_alone(cx: &mut gpui_kit::TestAppCont
 }
 
 /// The board's last search's client id, and whether the engine is searching.
-fn engine_search(app: &mut Harness) -> (Option<u64>, bool) {
+pub(super) fn engine_search(app: &mut Harness) -> (Option<u64>, bool) {
     app.with_window(|_, cx| {
         let page = crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
             .expect("the analysis board");
@@ -1084,7 +1084,7 @@ fn engine_search(app: &mut Harness) -> (Option<u64>, bool) {
 }
 
 /// Send `stopAnalysis` naming `client`'s search, and wait for the core's answer.
-fn stop_search(app: &mut Harness, client: Option<u64>, kill: bool) {
+pub(super) fn stop_search(app: &mut Harness, client: Option<u64>, kill: bool) {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     let answered = Arc::new(AtomicBool::new(false));

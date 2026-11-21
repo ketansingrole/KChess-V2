@@ -751,13 +751,24 @@ impl OnlinePage {
         let variant_name = (!setup.variant.is_standard()).then(|| setup.variant.label());
         let rated = model.online_game_rated;
         let status = model.online_status.clone();
-        let banner: Option<(&'static str, String, String)> = if reviewing {
-            Some((
-                "history",
-                "Reviewing an earlier position".into(),
-                String::new(),
-            ))
-        } else if playing {
+        // While the game is on, one plain line says whose move it is or that an earlier one is
+        // looked at: the same height either way, so stepping back leaves the moves in place.
+        let turn_line = playing.then(|| {
+            if reviewing {
+                let last = moves.len();
+                widgets::StatusBanner::reviewing(move |_, _, cx| {
+                    crate::online::handle(cx).update(cx, |online, cx| online.view_ply(last, cx));
+                })
+            } else {
+                let turn = view::turn(view::position_at(setup, &moves, moves.len()).as_ref());
+                widgets::StatusBanner::turn(if turn == online.color() {
+                    SharedString::new_static("Your move")
+                } else {
+                    format!("{}'s move", model.online_opponent).into()
+                })
+            }
+        });
+        let banner: Option<(&'static str, String, String)> = if playing {
             None
         } else if online.phase == Phase::Disconnected {
             let failure = connection_failure(online);
@@ -816,14 +827,8 @@ impl OnlinePage {
                     .when(online.phase == Phase::Disconnected, |banner| {
                         banner.extra(Self::connection_actions(online).into_any_element())
                     })
-                    .when(reviewing, |banner| {
-                        let last = moves.len();
-                        banner.extra(widgets::back_to_game(move |_, _, cx| {
-                            crate::online::handle(cx)
-                                .update(cx, |online, cx| online.view_ply(last, cx));
-                        }))
-                    })
             }))
+            .children(turn_line)
             .children(notices)
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
                 "online-moves",
