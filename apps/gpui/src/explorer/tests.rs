@@ -22,6 +22,41 @@ fn a_lookup_for_another_database_does_not_land_on_the_player_tab(
     });
     assert!(!busy && !stale);
 }
+
+/// A lookup refused while help was held back is made again once help is lent, told by the
+/// refusal's kind. Judged by seeing help switch off and on, the explorer missed both switches
+/// when they came in one notification, or while the lookup was on its way, and kept Try again
+/// (Linux and Windows CI, `the_explorer_offers_connect_lichess_and_looks_up_once_connected`).
+#[gpui_kit::test]
+fn a_refusal_while_help_was_held_back_is_looked_up_again(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_contracts::{CoreError, ErrorKind};
+    let mut app = Harness::start(cx);
+    let (explorer, asked) = app.with_window(|window, cx| {
+        assert!(crate::online::handle(cx).read(cx).assistance_allowed());
+        let explorer = cx.new(|cx| PositionExplorer::new(Layout::List, window, cx));
+        let asked = explorer.update(cx, |explorer, _| {
+            explorer.failure = Some(CoreError::new("Held back.").with_kind(ErrorKind::Withheld));
+            explorer.epoch.current()
+        });
+        (explorer, asked)
+    });
+    // Help lent, in the one notification it came with.
+    app.with_window(|_, cx| crate::online::handle(cx).update(cx, |_, cx| cx.notify()));
+    let looked_again = app.with_window(|_, cx| !explorer.read(cx).epoch.is_current(asked));
+    assert!(looked_again, "no lookup made again");
+
+    // Any other failure waits for Try again.
+    let asked = app.with_window(|_, cx| {
+        let asked = explorer.update(cx, |explorer, _| {
+            explorer.failure = Some(CoreError::new("Lookup failed."));
+            explorer.epoch.current()
+        });
+        crate::online::handle(cx).update(cx, |_, cx| cx.notify());
+        asked
+    });
+    assert!(app.with_window(|_, cx| explorer.read(cx).epoch.is_current(asked)));
+}
+
 use crate::game::is_username;
 use serde_json::json;
 

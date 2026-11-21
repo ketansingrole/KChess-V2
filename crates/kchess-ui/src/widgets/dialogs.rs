@@ -1,4 +1,4 @@
-//! Opening dialogs and alert dialogs the way every page does.
+//! Opening dialogs and alert dialogs the way every page does, and their row of buttons.
 
 use super::*;
 
@@ -51,4 +51,36 @@ pub fn open_alert_dialog(
     window.open_alert_dialog(cx, move |dialog, window, cx| {
         build(dialog.entrance(entrance).centered(), window, cx)
     });
+}
+
+/// A dialog's last row: its buttons on the right, anything `leading` on the left, and what went
+/// wrong between them, spoken as it appears. A line of its own above the buttons grew the dialog,
+/// which the kit keeps centred, so the button just pressed moved under the pointer as the error
+/// came; beside them, an error of one line moves nothing.
+pub fn dialog_footer(
+    error: Option<(&'static str, SharedString)>,
+    leading: Option<AnyElement>,
+    buttons: impl IntoIterator<Item = AnyElement>,
+    palette: &Palette,
+) -> Div {
+    h_flex()
+        .w_full()
+        .items_center()
+        .gap(px(8.))
+        .children(leading)
+        .child(div().flex_1().min_w_0().children(error.map(|(id, error)| {
+            div()
+                .id(id)
+                .test_support()
+                .aria_label(error.clone())
+                .relative()
+                .text_size(px(13.))
+                .text_color(palette.error)
+                .child(live_region(
+                    SharedString::from(format!("{id}-spoken")),
+                    error.clone(),
+                ))
+                .child(error)
+        })))
+        .children(buttons)
 }

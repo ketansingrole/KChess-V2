@@ -360,6 +360,51 @@ fn players_with_games_to_sync_are_marked(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(app.find("friends-sync").label(), Some("Sync all"));
 }
 
+/// The list keeps its order while you use it: a player coming online shows it in place, and the
+/// list is sorted by it when the page opens again. Resorted on every poll, rows swapped under the
+/// pointer, Challenge and all.
+#[gpui_kit::test]
+fn following_keeps_its_order_as_players_come_online(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::friends::FriendsPage;
+    use kchess_contracts::types::UserPresence;
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Following");
+    follow(&mut app, "dana");
+    app.find(("friend-name", 0usize));
+    follow(&mut app, "erin");
+    app.find(("friend-name", 1usize));
+    let names = |app: &mut Harness| -> Vec<String> {
+        (0..2usize)
+            .map(|row| {
+                app.find(("friend-name", row))
+                    .label()
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect()
+    };
+    let before = names(&mut app);
+    let second = before[1].trim_start_matches('@').to_string();
+    let online = UserPresence {
+        online: true,
+        playing: false,
+        signal: None,
+        playing_id: None,
+    };
+    app.with_window(|_, cx| {
+        crate::shell::view::<FriendsPage>(cx)
+            .expect("the page")
+            .update(cx, |page, cx| {
+                page.presence_arrived([(second.clone(), online.clone())], cx);
+                cx.notify();
+            })
+    });
+    assert_eq!(names(&mut app), before, "kept while the page is open");
+    app.open("Home");
+    app.open("Following");
+    assert_eq!(names(&mut app)[0], before[1], "sorted when it opens again");
+}
+
 #[gpui_kit::test]
 fn insights_without_games_lead_to_following_or_analysis(cx: &mut gpui_kit::TestAppContext) {
     let mut app = open(cx, "Insights", true);

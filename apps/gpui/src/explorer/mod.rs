@@ -123,6 +123,9 @@ pub struct PositionExplorer {
     result: Option<PositionLookup>,
     /// The last lookup's failure: with no account it offers Connect Lichess, otherwise Try again.
     failure: Option<CoreError>,
+    /// The lookup on its way is the one made again as a refusal came back after help was lent:
+    /// refused too, it waits for help to change rather than asking at once again.
+    made_again: bool,
     busy: bool,
     epoch: Epoch,
     show_filters: bool,
@@ -162,6 +165,15 @@ impl PositionExplorer {
                     this.lookup(None, false, None, cx);
                 }
             }),
+            // Help lent again answers a lookup refused while Lichess was asked for a game in
+            // progress: just connected, the lookup went before the check had answered. Told by
+            // the refusal's kind, not by seeing help switch off and on: both can land in one
+            // notification, or while the lookup is still on its way (Linux and Windows CI).
+            cx.observe(&crate::online::handle(cx), |this, online, cx| {
+                if online.read(cx).assistance_allowed() && this.withheld() {
+                    this.lookup(None, false, None, cx);
+                }
+            }),
             cx.subscribe_in(
                 &player,
                 window,
@@ -198,6 +210,7 @@ impl PositionExplorer {
             moves: None,
             result: None,
             failure: None,
+            made_again: false,
             busy: false,
             epoch: Epoch::default(),
             show_filters: false,
@@ -348,6 +361,13 @@ impl PositionExplorer {
         }
     }
 
+    /// The lookup shown was refused while help was held back.
+    fn withheld(&self) -> bool {
+        self.failure
+            .as_ref()
+            .is_some_and(|failure| failure.kind == Some(ErrorKind::Withheld))
+    }
+
     /// Look the position up in `kind` (the chosen database when None); `asked` by the user, a
     /// missing player name takes the focus.
     fn lookup(
@@ -386,6 +406,7 @@ impl PositionExplorer {
         });
         self.busy = true;
         self.failure = None;
+        self.made_again = false;
         cx.notify();
         self.lookup_task = Some(cx.spawn(async move |this, cx| {
             let outcome = call.await;
@@ -410,6 +431,23 @@ impl PositionExplorer {
                         } else {
                             cause
                         });
+                        // Lent while the refusal was on its way: no change of help is left
+                        // to answer it, so it is asked again now, once (after this task, which
+                        // the new lookup replaces).
+                        let lent = crate::online::handle(cx).read(cx).assistance_allowed();
+                        if this.withheld() && lent && !this.made_again {
+                            let explorer = cx.entity().downgrade();
+                            cx.defer(move |cx| {
+                                explorer
+                                    .update(cx, |this, cx| {
+                                        if this.withheld() {
+                                            this.lookup(None, false, None, cx);
+                                            this.made_again = true;
+                                        }
+                                    })
+                                    .ok();
+                            });
+                        }
                     }
                 }
                 cx.notify();

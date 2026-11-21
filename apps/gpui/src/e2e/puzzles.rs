@@ -843,3 +843,48 @@ fn puzzles_deleted_in_another_window_are_gone_here_too(cx: &mut gpui_kit::TestAp
     app.changed_elsewhere(&[kchess_contracts::types::ProfileArea::Puzzles]);
     app.wait_for("the deleted puzzles", |_, cx| !installed(cx));
 }
+
+/// A rated puzzle's result comes from Lichess a moment after the solve. Its line under the puzzle
+/// arrived out of nowhere and pushed the session's tally and Reset down; its place is now kept
+/// from the solve, saying what is on its way.
+#[gpui_kit::test]
+fn the_session_holds_still_as_a_rated_result_comes_back(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestQueryExt as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let (mut app, session) = Harness::signed_in(cx, false);
+    app.cx.update(|cx| {
+        crate::prefs::set(
+            cx,
+            "kchess:puzzle-angle",
+            super::fake_lichess::TRAINED_THEME,
+        );
+        crate::prefs::set(cx, "kchess:puzzle-mode", "rated");
+        crate::settings::change(cx, |settings| settings.frontend.puzzle_auto_next = false);
+    });
+    app.open("Puzzles");
+    app.wait_for("the puzzle to be playable", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_some_and(|hint| hint.disabled() != Some(true))
+    });
+    session.lock().hold_solves = true;
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("Qxf7#");
+    app.press("enter");
+    app.wait_for("the puzzle to be solved", |window, _| {
+        window.try_find_by_label("Puzzle solved").is_some()
+    });
+    let before = app.find("puzzle-reset").bounds();
+    session.lock().hold_solves = false;
+    app.wait_for("the rating change", |window, _| {
+        window.try_find("puzzle-rated").is_some_and(|line| {
+            line.label()
+                .is_some_and(|label| label.starts_with("Lichess puzzle rating +7"))
+        })
+    });
+    assert_eq!(
+        app.find("puzzle-reset").bounds(),
+        before,
+        "the session's tally moved when the result came"
+    );
+}

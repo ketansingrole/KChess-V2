@@ -79,6 +79,32 @@ fn a_failed_check_is_retried_when_the_network_returns(cx: &mut gpui_kit::TestApp
     });
 }
 
+/// The explorer looks its position up again once the check lets help back: a lookup made just
+/// after connecting, before the check had answered, was refused and stayed so behind Try again
+/// (Windows CI, 2026-11-22, `the_explorer_offers_connect_lichess_and_looks_up_once_connected`).
+#[gpui_kit::test]
+fn a_refused_lookup_is_made_again_once_the_check_answers(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::openings::OpeningsPage;
+    let (mut app, lichess) = check_failed(cx);
+    app.open("Openings");
+    // 1. d4 d5, where the stand-in Lichess's 1. e4 is a move White can play.
+    app.with_window(|window, cx| {
+        crate::shell::view::<OpeningsPage>(cx)
+            .expect("the page")
+            .update(cx, |page, cx| {
+                page.show_line(Some(vec!["d2d4".into(), "d7d5".into()]), window, cx)
+            })
+    });
+    app.find("explorer-retry");
+    lichess.lock().fail_check = false;
+    app.cx.executor().advance_clock(Duration::from_secs(16));
+    app.wait_for("engine help to come back", |_, cx| {
+        crate::online::handle(cx).read(cx).assistance_allowed()
+    });
+    app.find(("explorer-tile", 0usize));
+    assert!(!app.shows("explorer-retry"));
+}
+
 /// Play with computer says why the computer is not moving, and offers to check again.
 #[gpui_kit::test]
 fn the_computer_waits_with_a_reason(cx: &mut gpui_kit::TestAppContext) {
@@ -110,6 +136,8 @@ fn a_refusal_names_the_check_not_a_live_game(cx: &mut gpui_kit::TestAppContext) 
             options: None,
         })
         .expect_err("refused while unverified");
+    // Told by its kind, so a lookup refused for it is made again once help is lent.
+    assert_eq!(refused.kind, Some(kchess_contracts::ErrorKind::Withheld));
     assert_eq!(
         refused.message,
         "Engine assistance is unavailable until your Lichess game status is verified."

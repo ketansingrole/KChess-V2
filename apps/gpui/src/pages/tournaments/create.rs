@@ -372,32 +372,29 @@ impl Render for CreateArena {
                             )
                             .into_any_element(),))
             })
-            .children(self.creating.error().cloned().map(|error| {
-                div()
-                    .text_size(px(13.))
-                    .text_color(palette.error)
-                    .child(error)
-            }))
-            .child(
-                h_flex()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(
-                        Button::new("arena-cancel")
-                            .ghost()
-                            .label("Cancel")
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    )
-                    .child(
-                        Button::new("arena-create")
-                            .primary()
-                            .icon(icon("plus"))
-                            .label("Create arena")
-                            .loading(self.creating.busy())
-                            .disabled(problem.is_some() || self.creating.busy())
-                            .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
-                    ),
-            )
+            .child(crate::widgets::dialog_footer(
+                self.creating
+                    .error()
+                    .cloned()
+                    .map(|error| ("arena-error", error)),
+                None,
+                [
+                    Button::new("arena-cancel")
+                        .ghost()
+                        .label("Cancel")
+                        .on_click(|_, window, cx| window.close_dialog(cx))
+                        .into_any_element(),
+                    Button::new("arena-create")
+                        .primary()
+                        .icon(icon("plus"))
+                        .label("Create arena")
+                        .loading(self.creating.busy())
+                        .disabled(problem.is_some() || self.creating.busy())
+                        .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx)))
+                        .into_any_element(),
+                ],
+                &palette,
+            ))
     }
 }
 

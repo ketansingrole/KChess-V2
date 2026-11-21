@@ -230,6 +230,35 @@ fn an_opponents_draw_offer_can_be_declined_and_the_game_goes_on(cx: &mut gpui_ki
     assert!(app.shows("online-abort"));
 }
 
+/// The game's buttons keep their places as offers come and go: Offer draw left the row while a
+/// draw was offered, and Resign widened into its place, under the pointer that had just offered.
+#[gpui_kit::test]
+fn the_games_buttons_hold_still_as_offers_come_and_go(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, lichess) = past_the_opening(cx);
+    let ids = ["online-takeback", "online-draw", "online-resign"];
+    let places =
+        |app: &mut Harness| -> Vec<_> { ids.iter().map(|id| app.find(*id).bounds()).collect() };
+    let before = places(&mut app);
+    {
+        let mut session = lichess.lock();
+        session.draw_offered = true;
+        session.changed();
+    }
+    app.find("draw-accept");
+    assert_eq!(places(&mut app), before, "with a draw offered");
+    // Off while the offer waits: it is answered above.
+    assert_eq!(app.find("online-draw").disabled(), Some(true));
+    app.click("draw-decline");
+    app.wait_gone("draw-accept");
+    {
+        let mut session = lichess.lock();
+        session.takeback_offered = true;
+        session.changed();
+    }
+    app.find("takeback-accept");
+    assert_eq!(places(&mut app), before, "with a takeback asked for");
+}
+
 #[gpui_kit::test]
 fn an_opponents_takeback_request_is_answered(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, lichess) = past_the_opening(cx);

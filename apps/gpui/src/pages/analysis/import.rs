@@ -30,38 +30,23 @@ impl AnalysisPage {
                             .child("Paste a FEN, a PGN, or a Lichess game or study link"),
                     )
                     .child(Textarea::new(&import).aria_label("FEN, PGN or Lichess link"))
-                    .children(error.map(|error| {
+                    .child(crate::widgets::dialog_footer(
                         // Spoken when it appears: a link's fetch fails after Import was pressed.
-                        div()
-                            .id("import-error")
-                            .test_support()
-                            .aria_label(error.clone())
-                            .relative()
-                            .text_size(px(14.))
-                            .text_color(cx.global::<Palette>().error)
-                            .child(crate::widgets::live_region(
-                                "import-error-spoken",
-                                error.clone(),
-                            ))
-                            .child(error)
-                    }))
-                    .child(
-                        h_flex()
-                            .justify_end()
-                            .gap(px(8.))
-                            .child({
-                                let page = run.clone();
-                                Button::new("import-file")
-                                    .ghost()
-                                    .icon(icon("folder-open"))
-                                    .label("Open file…")
-                                    .on_click(move |_, window, cx| {
-                                        let _ = page
-                                            .update(cx, |page, cx| page.choose_file(window, cx));
-                                    })
-                            })
-                            .child(div().flex_1())
-                            .child({
+                        error.map(|error| ("import-error", error)),
+                        Some({
+                            let page = run.clone();
+                            Button::new("import-file")
+                                .ghost()
+                                .icon(icon("folder-open"))
+                                .label("Open file…")
+                                .on_click(move |_, window, cx| {
+                                    let _ =
+                                        page.update(cx, |page, cx| page.choose_file(window, cx));
+                                })
+                                .into_any_element()
+                        }),
+                        [
+                            {
                                 let page = run.clone();
                                 Button::new("import-cancel")
                                     .ghost()
@@ -71,20 +56,21 @@ impl AnalysisPage {
                                         let _ = page.update(cx, |page, _| page.importing = None);
                                         window.close_dialog(cx);
                                     })
-                            })
-                            .child(
-                                Button::new("import-run")
-                                    .primary()
-                                    .icon(icon("import"))
-                                    .label("Import")
-                                    .loading(importing)
-                                    .disabled(text.read(cx).value().trim().is_empty())
-                                    .on_click(move |_, window, cx| {
-                                        let _ =
-                                            run.update(cx, |page, cx| page.run_import(window, cx));
-                                    }),
-                            ),
-                    ),
+                                    .into_any_element()
+                            },
+                            Button::new("import-run")
+                                .primary()
+                                .icon(icon("import"))
+                                .label("Import")
+                                .loading(importing)
+                                .disabled(text.read(cx).value().trim().is_empty())
+                                .on_click(move |_, window, cx| {
+                                    let _ = run.update(cx, |page, cx| page.run_import(window, cx));
+                                })
+                                .into_any_element(),
+                        ],
+                        cx.global::<Palette>(),
+                    )),
             )
         });
     }

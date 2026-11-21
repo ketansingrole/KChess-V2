@@ -628,3 +628,44 @@ fn nothing_notifies_while_drawing_in_a_wide_window(cx: &mut gpui_kit::TestAppCon
 fn nothing_notifies_while_drawing_in_a_narrow_window(cx: &mut gpui_kit::TestAppContext) {
     nothing_notifies_while_drawing(cx, SIZES[0], false);
 }
+
+/// A dialog's error shows beside its buttons: on a line of its own above them it grew the
+/// dialog, which stays centred, and the button just pressed moved under the pointer as the
+/// error came.
+#[gpui_kit::test]
+fn a_dialogs_buttons_hold_still_as_its_error_shows(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Analysis board");
+    app.click("analysis-import");
+    app.fill_in_dialog("FEN, PGN or Lichess link", "not a game");
+    let before = places(&mut app, &["import-cancel".into(), "import-run".into()]);
+    app.click("import-run");
+    app.find("import-error");
+    let after = places(&mut app, &["import-cancel".into(), "import-run".into()]);
+    assert_eq!(after, before, "Import moved as its error showed");
+    app.click("import-cancel");
+    app.settle();
+
+    app.with_window(|window, cx| {
+        crate::name_dialog::NameDialog::open(
+            "Rename study",
+            "Endgames",
+            "Rename",
+            window,
+            cx,
+            // As the save's answer does, after the press.
+            |_, dialog, _, cx| {
+                cx.defer(move |cx| {
+                    dialog.update(cx, |dialog, cx| {
+                        dialog.fail("The study could not be saved.", cx)
+                    })
+                })
+            },
+        )
+    });
+    let before = places(&mut app, &["name-cancel".into(), "name-confirm".into()]);
+    app.click("name-confirm");
+    app.find("name-error");
+    let after = places(&mut app, &["name-cancel".into(), "name-confirm".into()]);
+    assert_eq!(after, before, "Rename moved as its error showed");
+}
