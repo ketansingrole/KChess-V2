@@ -212,7 +212,7 @@ impl HomePage {
             focus: cx.focus_handle(),
             _subscriptions: vec![
                 cx.observe(&played, |home, _, cx| {
-                    home.sync_board(cx);
+                    home.sync_card(cx);
                     cx.notify();
                 }),
                 // The activity follows the accounts, and the one chosen to play online.
@@ -240,7 +240,7 @@ impl HomePage {
             ],
         };
         page.follow_activity(now(cx), window, cx);
-        page.sync_board(cx);
+        page.sync_card(cx);
         page.refresh(cx);
         page
     }
@@ -275,11 +275,22 @@ impl HomePage {
         cx.notify();
     }
 
-    /// The board the card shows: the game you left, else the last one you finished (seen from
-    /// your side), else the starting position. Made again only when that position changes: when
-    /// the unfinished game is read, and when the played games change.
-    fn sync_board(&mut self, cx: &mut Context<Self>) {
+    /// What the board's card shows, worked out when the unfinished game is read and when the
+    /// played games change, not while drawing: the board, with the game you left, else the last
+    /// one you finished (seen from your side), else the starting position; and the last game's
+    /// opening.
+    fn sync_card(&mut self, cx: &mut Context<Self>) {
         let latest = self.with_recent(cx, |games| games.first().cloned());
+        if let Some(game) = &latest {
+            let key = (game.id.clone(), game.moves.len());
+            if self
+                .last_opening
+                .as_ref()
+                .is_none_or(|(seen, _)| *seen != key)
+            {
+                self.last_opening = Some((key, kchess_history::opening_name(game)));
+            }
+        }
         let session = self.continue_game.as_ref().map(|(_, session)| session);
         let (setup, moves, side) = match (session, &latest) {
             (Some(session), _) => (session.setup.clone(), session.moves.clone(), session.color),
@@ -386,7 +397,7 @@ impl HomePage {
                     }
                     _ => None,
                 };
-                self.sync_board(cx);
+                self.sync_card(cx);
             }
             // The card stays as it was; a failed read is not the game being over.
             Err(cause) => crate::log::write(
@@ -542,15 +553,6 @@ impl Render for HomePage {
             // The last game, as its row in Recent games says it: who won, and against whom; and
             // the opening it was.
             (None, Some(game)) => {
-                let key = (game.id.clone(), game.moves.len());
-                if self
-                    .last_opening
-                    .as_ref()
-                    .is_none_or(|(seen, _)| *seen != key)
-                {
-                    let name = kchess_history::opening_name(game);
-                    self.last_opening = Some((key, name));
-                }
                 // A variant game is named by its variant, as its row is; a standard one by its
                 // opening, while opening names are shown.
                 let opening = variant_of(game).or_else(|| {

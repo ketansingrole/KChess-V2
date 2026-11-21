@@ -148,9 +148,10 @@ time. `cargo xtask lints` finds the first three, a failure shown but not logged 
 `check-fast` runs it when an app source changed): a line that must stay says why on the line
 before, `// gpui-lints: allow(<lint>) <reason>`.
 
-- `render` only reads. Never `cx.notify()` or `entity.update(…)` directly in `render`: it asks for
-  another frame every frame. Change state in the handler or task that learned of the change, and
-  `cx.notify()` there; a closure built in `render` (`cx.listener(…)`, `on_click`) runs later and may.
+- `render` only reads. Never `cx.notify()`, `entity.update(…)` or `self.field = …` directly in
+  `render`: it asks for another frame every frame, or changes state while drawing it. Change
+  state in the handler or task that learned of the change, and `cx.notify()` there; a closure
+  built in `render` (`cx.listener(…)`, `on_click`) runs later and may.
 - The main thread never waits. A call to the disk, a process, the clipboard or the core in a
   frame or handler blocks every window: run it with `cx.background_spawn` and adopt the answer in a
   `cx.spawn`. A wait that must stay on the main thread is marked `slow_calls::call` (GUARDRAILS.md).
