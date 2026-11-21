@@ -1,7 +1,7 @@
 //! The default preferences, as data.
 
 use crate::types::{
-    Appearance, CoordinateMode, CoreSettings, EngineLevel, FrontendPreferences, PieceAnimation,
+    Appearance, CloseAction, CoordinateMode, CoreSettings, EngineLevel, FrontendPreferences, PieceAnimation,
     PromotionMode, ReviewAuto, Settings,
 };
 use kchess_domain::training::engine_levels;
@@ -74,6 +74,9 @@ pub fn default_settings() -> Result<Settings, String> {
             puzzle_auto_next: false,
             confirm_correspondence: true,
             figurine_notation: false,
+            open_at_login: false,
+            close_action: CloseAction::Default,
+            show_tray_icon: true,
         },
     })
 }
