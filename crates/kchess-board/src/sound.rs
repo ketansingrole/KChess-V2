@@ -1,7 +1,9 @@
 //! Move and game sounds: the move, capture,
 //! low-time and notification clips. A sound thread owns the
 //! output device, opened at the first sound and again after its stream ends, and decodes each
-//! clip once.
+//! clip once. On Windows it also tells a Bluetooth speaker that KChess is playing (`playing`).
+
+mod playing;
 
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -47,6 +49,16 @@ pub fn init(cx: &mut App) {
         .spawn(move || {
             let mut output = Output::default();
             let mut clips: HashMap<Sound, SamplesBuffer> = HashMap::new();
+            #[cfg(windows)]
+            let playing = playing::Playing::start()
+                .inspect_err(|cause| {
+                    crate::log::write(
+                        Level::Warn,
+                        "sound",
+                        &format!("the playing signal's thread could not start: {cause}"),
+                    );
+                })
+                .ok();
             while let Ok((sound, volume)) = queue.recv() {
                 let Some(device) = output.ready(open_default) else {
                     continue;
@@ -58,6 +70,14 @@ pub fn init(cx: &mut App) {
                         None => continue,
                     },
                 };
+                // A Bluetooth speaker that waits for "playing" opens before the first sound.
+                #[cfg(windows)]
+                if let Some(playing) = &playing {
+                    let wait = playing.before_sound(playing::default_is_bluetooth());
+                    if !wait.is_zero() {
+                        std::thread::sleep(wait);
+                    }
+                }
                 device.mixer().add(clip.amplify(volume));
             }
         });

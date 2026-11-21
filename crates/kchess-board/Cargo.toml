@@ -47,10 +47,14 @@ objc2 = "0.6"
 objc2-av-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "AVCaptureDevice", "AVMediaFormat"] }
 block2 = "0.6"
 
-# Microphone access status: the privacy switches Windows keeps in the registry (already in
-# Cargo.lock through GPUI).
+# Microphone access status, and whether the output is a Bluetooth one: what Windows keeps in the
+# registry (already in Cargo.lock through GPUI).
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-registry = "0.6"
+# The "playing" state some Bluetooth speakers wait for before they play a sound
+# (`src/sound/playing.rs`): Windows' media controls and its list of what is playing. The crate is
+# already in Cargo.lock through GPUI; these features are this crate's alone.
+windows = { version = "0.62", features = ["Foundation", "Foundation_Collections", "Media", "Media_Control", "Media_Playback"] }
 
 [dev-dependencies]
 # Headless windows for the tests (`#[gpui_kit::test]`).
