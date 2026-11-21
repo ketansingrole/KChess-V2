@@ -192,7 +192,13 @@ impl SettingsPage {
                     .on_click(move |_, _, cx| cx.open_url(url))
             }));
         self.rows()
-            .row_with("Microphone access", access_info, access_actions, palette)
+            .row_with(
+                "Microphone access",
+                access_info,
+                access_actions,
+                None,
+                palette,
+            )
             .row_with(
                 "Test your microphone",
                 v_flex()
@@ -226,6 +232,7 @@ impl SettingsPage {
                         .label(if test.is_some() { "Stop" } else { "Start test" })
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_mic_test(cx))),
                 ),
+                None,
                 palette,
             )
             .switch("voice-confirm", settings, true, palette)

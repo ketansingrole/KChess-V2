@@ -117,6 +117,45 @@ pub fn setting_row(info: Div, control: impl IntoElement) -> Div {
         .child(h_flex().flex_none().justify_end().child(control))
 }
 
+/// A setting row that ends in its reset slot (`setting_reset`), as Settings' rows do.
+pub fn resettable_row(info: Div, control: impl IntoElement, reset: Option<AnyElement>) -> Div {
+    setting_row(
+        info,
+        h_flex()
+            .gap(px(8.))
+            .child(control)
+            .child(setting_reset(reset)),
+    )
+}
+
+/// The end of a setting row, where its reset button (`setting_reset_button`) shows while the
+/// setting differs from its default: kept empty otherwise, so the control does not move when the
+/// button appears under the pointer that changed it.
+pub fn setting_reset(reset: Option<AnyElement>) -> Div {
+    h_flex()
+        .flex_none()
+        .size(px(24.))
+        .justify_center()
+        .children(reset)
+}
+
+/// A setting's reset button: a small icon whose tooltip names the default, `label` naming the
+/// setting too for a screen reader.
+pub fn setting_reset_button(
+    id: impl Into<ElementId>,
+    tooltip: SharedString,
+    label: SharedString,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Button {
+    Button::new(id)
+        .ghost()
+        .small()
+        .icon(icon("rotate-ccw"))
+        .tooltip(tooltip)
+        .accessibility_label(label)
+        .on_click(on_click)
+}
+
 /// The width of a setting's field (a list, a slider), so the fields of a list line up.
 pub const SETTING_FIELD: Pixels = px(240.);
 

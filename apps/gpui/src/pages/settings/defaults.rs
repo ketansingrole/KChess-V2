@@ -1,6 +1,7 @@
 //! Each stored setting's name and category, by its stored name (`soundVolume`): the Undo notice
 //! names a changed setting by it, and a category's Restore defaults puts its settings back as a
-//! new profile has them, with that notice's Undo instead of a question first.
+//! new profile has them, with that notice's Undo instead of a question first. A row's reset
+//! button (`Shown::reset`) does the same for its one setting.
 
 use std::sync::LazyLock;
 
@@ -108,6 +109,86 @@ fn section_keys(section: Section) -> Vec<String> {
         )
         .filter(|key| !KEPT.contains(&key.as_str()))
         .collect()
+}
+
+/// The stored setting the toggle `id` (`TOGGLES`) turns on and off.
+pub(crate) fn toggle_key(id: &str) -> Option<&'static str> {
+    toggles()
+        .find(|(toggle, _)| toggle.id == id)
+        .and_then(|(_, key)| key)
+}
+
+/// What a setting row's reset puts back: its stored setting in `settings` (as shown now), and
+/// how the row words a value of it (the default its tooltip names), read from a new profile's
+/// settings.
+pub(crate) struct Reset<'a> {
+    pub settings: &'a Settings,
+    key: &'static str,
+    describe: Box<dyn FnOnce(&Settings) -> SharedString>,
+}
+
+impl<'a> Reset<'a> {
+    pub fn new(
+        key: &'static str,
+        settings: &'a Settings,
+        describe: impl FnOnce(&Settings) -> SharedString + 'static,
+    ) -> Self {
+        debug_assert!(name(key).is_some(), "no stored setting {key:?}");
+        Reset {
+            settings,
+            key,
+            describe: Box::new(describe),
+        }
+    }
+
+    /// A yes/no setting, whose default is On or Off.
+    pub fn toggle(toggle: &'static Toggle, settings: &'a Settings) -> Option<Self> {
+        let on = toggle.on;
+        let key = toggle_key(toggle.id)?;
+        Some(Reset::new(key, settings, move |defaults| {
+            SharedString::new_static(if on(defaults) { "On" } else { "Off" })
+        }))
+    }
+}
+
+/// The settings as shown, by stored name, to tell which rows differ from a new profile.
+pub(crate) struct Shown(serde_json::Map<String, serde_json::Value>);
+
+impl Shown {
+    pub fn of(settings: &Settings) -> Self {
+        match serde_json::to_value(settings) {
+            Ok(serde_json::Value::Object(values)) => Shown(values),
+            _ => Shown(serde_json::Map::new()),
+        }
+    }
+
+    /// The reset button of the row titled `title`, while its setting differs from a new
+    /// profile's: it puts the default back through the Undo notice, as Restore defaults does.
+    pub fn reset(&self, title: &str, reset: Reset) -> Option<AnyElement> {
+        let Reset { key, describe, .. } = reset;
+        let shown = self.0.get(key)?;
+        if KEPT.contains(&key) || is_default(key, shown) {
+            return None;
+        }
+        let default = describe(DEFAULTS.as_ref()?);
+        Some(
+            crate::widgets::setting_reset_button(
+                SharedString::from(format!("reset-{key}")),
+                format!("Reset to default: {default}").into(),
+                format!("Reset {title} to default: {default}").into(),
+                move |_, _, cx| {
+                    let Some(defaults) = DEFAULTS.as_ref() else {
+                        return;
+                    };
+                    let (defaults, keys) = (defaults.clone(), [key.to_string()]);
+                    crate::settings::change(cx, move |settings| {
+                        *settings = crate::settings::reset(settings, &defaults, &keys);
+                    });
+                },
+            )
+            .into_any_element(),
+        )
+    }
 }
 
 /// Whether `value` is what a new profile has for `key`.
