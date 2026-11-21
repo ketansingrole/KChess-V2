@@ -664,9 +664,8 @@ impl PuzzleBoard {
         }
         let variant = board.variant();
         let position = kchess_domain::rules::setup_start(variant, board.fen());
-        match self.move_box.take(position.as_ref(), window, cx) {
-            Some(uci) => self.on_move(&uci, cx),
-            None => cx.notify(),
+        if let Some(uci) = self.move_box.take(position.as_ref(), window, cx) {
+            self.on_move(&uci, cx);
         }
     }
 }

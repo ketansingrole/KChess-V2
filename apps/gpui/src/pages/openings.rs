@@ -968,13 +968,12 @@ impl OpeningsPage {
             .as_ref()
             .map_or_else(|| "Starting position".to_string(), |(name, _)| name.clone());
         let board_size = self.layout.board_size(window);
-        let entry = widgets::move_entry(&self.move_box.input, true, palette);
         let board_column = v_flex()
             .w(board_size)
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(crate::board::cached(&self.board))
-            .child(widgets::lone_entry(entry));
+            .child(self.move_box.lone(true, palette));
         let figurine = crate::notation::figurine(cx);
         let moves = h_flex()
             .flex_wrap()

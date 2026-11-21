@@ -993,11 +993,7 @@ impl GuessMoves {
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(crate::board::cached(&self.board))
-            .child(widgets::lone_entry(widgets::move_entry(
-                &self.move_box.input,
-                your_turn,
-                palette,
-            )));
+            .child(self.move_box.lone(your_turn, palette));
         let page = cx.entity().downgrade();
         let shown = self.viewing.unwrap_or(self.ply);
         // The moves so far, a guessed one marked as the engine found it.

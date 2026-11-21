@@ -470,9 +470,8 @@ impl ComputerPage {
             return;
         }
         let position = self.position_at(self.ply());
-        match self.moves.take(position.as_ref(), window, cx) {
-            Some(uci) => self.play(&uci, cx),
-            None => cx.notify(),
+        if let Some(uci) = self.moves.take(position.as_ref(), window, cx) {
+            self.play(&uci, cx);
         }
     }
 

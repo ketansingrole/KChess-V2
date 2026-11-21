@@ -968,11 +968,8 @@ impl AnalysisPage {
 
     fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let position = self.position();
-        match self.move_box.take(position.as_ref(), window, cx) {
-            Some(uci) => {
-                self.play(&uci, cx);
-            }
-            None => cx.notify(),
+        if let Some(uci) = self.move_box.take(position.as_ref(), window, cx) {
+            self.play(&uci, cx);
         }
     }
 

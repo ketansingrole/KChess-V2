@@ -220,6 +220,23 @@ fn endgame_drills_open_and_return_to_the_courses(cx: &mut gpui_kit::TestAppConte
     assert!(!app.shows("chess-board"));
 }
 
+/// A drill's move box dropped a move it could not play without a word; it says so now.
+#[gpui_kit::test]
+fn an_endgame_drill_refuses_a_typed_move_with_a_word(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
+    reveal(&mut app, "endgame-courses", "card-drills");
+    app.click("card-drills");
+    app.find("drill-hint");
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("zz9");
+    app.press("enter");
+    assert_eq!(
+        app.find("move-box-message").label(),
+        Some("Enter a legal move, such as Nf3 or g1f3")
+    );
+}
+
 /// F turns an endgame drill's board, as its button does.
 #[gpui_kit::test]
 fn f_flips_an_endgame_drill(cx: &mut gpui_kit::TestAppContext) {

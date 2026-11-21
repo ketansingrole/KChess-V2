@@ -524,9 +524,8 @@ impl LocalPage {
             return;
         }
         let position = view::position_at(self.setup(), &self.moves(), self.moves().len());
-        match self.moves.take(position.as_ref(), window, cx) {
-            Some(uci) => self.play(&uci, cx),
-            None => cx.notify(),
+        if let Some(uci) = self.moves.take(position.as_ref(), window, cx) {
+            self.play(&uci, cx);
         }
     }
 

@@ -142,11 +142,16 @@ fn an_illegal_typed_move_is_refused(cx: &mut gpui_kit::TestAppContext) {
     app.press("enter");
     assert!(app.moves().is_empty());
     assert_eq!(app.status(), "White to move");
+    assert_eq!(
+        app.find("move-box-message").label(),
+        Some("Enter a legal move, such as Nf3 or g1f3")
+    );
     // The refused text stays in the box to correct.
     app.press("secondary-a");
     app.type_text("e4");
     app.press("enter");
     app.wait_for_moves(&["e4"]);
+    app.wait_gone("move-box-message");
 }
 
 #[gpui_kit::test]

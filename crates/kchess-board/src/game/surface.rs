@@ -14,6 +14,8 @@ use shakmaty::variant::VariantPosition;
 use crate::board::BoardState;
 use crate::game::view::{Way, Wheel};
 use crate::theme::Palette;
+use crate::widgets;
+use gpui_kit::component::v_flex;
 
 /// A page whose board steps through the moves of a game.
 pub trait Steps: Sized + 'static {
@@ -128,11 +130,13 @@ pub fn board_options(state: &mut BoardState, live: bool, premove: Option<Color>,
     state.premove = premove.filter(|_| frontend.premove);
 }
 
-/// The box a move is typed into, SAN or UCI, and what it says of a move it cannot play; a page
-/// that keeps quiet about such a move leaves `message` out.
+/// The box a move is typed into, SAN or UCI, and what it says of a move it cannot play, under
+/// the board (`lone`, or `message` on a page that lays the box out itself).
 pub struct MoveBox {
     pub input: Entity<InputState>,
     message: Option<SharedString>,
+    /// The page showing the box, redrawn when what the box says changes.
+    page: EntityId,
 }
 
 impl MoveBox {
@@ -152,6 +156,7 @@ impl MoveBox {
             MoveBox {
                 input,
                 message: None,
+                page: cx.entity_id(),
             },
             subscription,
         )
@@ -163,7 +168,7 @@ impl MoveBox {
     }
 
     /// The move typed, as UCI, when it is legal in `position`: the box is emptied. Otherwise it
-    /// says what it takes. `None` too when nothing is typed.
+    /// says what it takes, and its page is redrawn to show it. `None` too when nothing is typed.
     pub fn take(
         &mut self,
         position: Option<&VariantPosition>,
@@ -181,8 +186,9 @@ impl MoveBox {
                 self.input
                     .update(cx, |input, cx| input.set_value("", window, cx));
             }
-            None => self.message = Some("Enter a legal move, such as Nf3 or g1f3".into()),
+            None => self.message = Some(SharedString::new_static(REFUSED)),
         }
+        cx.notify(self.page);
         uci
     }
 
@@ -191,16 +197,39 @@ impl MoveBox {
         self.message = None;
     }
 
-    /// What the box says under the board, if anything.
-    pub fn message(&self, palette: &Palette) -> Option<Div> {
+    /// What the box says under the board, if anything, spoken as it appears.
+    pub fn message(&self, palette: &Palette) -> Option<AnyElement> {
         self.message.clone().map(|message| {
             div()
+                .id("move-box-message")
+                .test_support()
+                .role(Role::Status)
+                .aria_label(message.clone())
                 .text_size(px(12.))
                 .text_color(palette.text_muted)
                 .child(message)
+                .into_any_element()
         })
     }
+
+    /// The box on a line of its own under the board, `enabled` when a move may be typed, with
+    /// what it says below.
+    pub fn lone(&self, enabled: bool, palette: &Palette) -> Div {
+        v_flex()
+            .w_full()
+            .items_end()
+            .gap(px(4.))
+            .child(widgets::lone_entry(widgets::move_entry(
+                &self.input,
+                enabled,
+                palette,
+            )))
+            .children(self.message(palette))
+    }
 }
+
+/// What the move box says of a move it cannot play.
+const REFUSED: &str = "Enter a legal move, such as Nf3 or g1f3";
 
 #[cfg(test)]
 mod tests {
