@@ -837,14 +837,6 @@ impl Render for StudiesPage {
                     .px(side_padding(window))
                     .pt(PAGE_TOP)
                     .pb(PAGE_BOTTOM)
-                    .when(count > 0 || tab == "lichess", |page| {
-                        page.child(
-                            h_flex()
-                                .justify_end()
-                                .mb(px(20.))
-                                .child(Self::header_actions()),
-                        )
-                    })
                     .when(connected, |page| {
                         page.child(div().mb(px(20.)).child(widgets::pills(
                             "studies-tabs",
@@ -881,6 +873,16 @@ impl Render for StudiesPage {
                             false,
                             &palette,
                         )))
+                    })
+                    // Under the tabs, as Puzzles has them: above, the actions shown on one tab and
+                    // not the other moved the tabs 52 px under the pointer that switched them.
+                    .when(count > 0 || tab == "lichess", |page| {
+                        page.child(
+                            h_flex()
+                                .justify_end()
+                                .mb(px(20.))
+                                .child(Self::header_actions()),
+                        )
                     })
                     .child(div().relative().child(self.area.probe(cx)).child(body)),
             )

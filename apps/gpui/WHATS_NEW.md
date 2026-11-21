@@ -8,7 +8,7 @@ refuses to release with nothing there.
 
 ## Unreleased
 
-- **Pages that hold still**: stepping back through a game no longer makes the move list jump under your pointer, and your Lichess games now say whose move it is. The engine's depth and the Voice button stay put too.
+- **Pages that hold still**: stepping back through a game no longer makes the move list jump under your pointer, and your Lichess games now say whose move it is. The engine's depth, the Voice button, the Studies tabs and the analysis board's moves stay put too.
 - **Fixes**: If a study chapter couldn't be saved when you quit, Retry now saves it. Sort themes in Puzzles › Lichess stats stays inside the window. Small buttons, such as Accept, Train, Watch and the entry code's eye, are easier to click. Plus many smaller fixes.
 
 ## 2026.11.8 (2026-11-21)
