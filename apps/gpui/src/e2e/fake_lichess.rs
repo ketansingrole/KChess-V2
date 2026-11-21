@@ -697,7 +697,6 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
     }
 }
 
-/// The app acted in the game: Lichess records it, and Black answers a move.
 /// The account's game download waits while `hold_games` is set: a sync still running.
 fn hold_games(session: &Handle) {
     while session.lock().hold_games {
@@ -705,6 +704,7 @@ fn hold_games(session: &Handle) {
     }
 }
 
+/// The app acted in the game: Lichess records it, and Black answers a move.
 fn write_game(session: &Handle, path: &str) {
     let mut session = session.lock();
     session.writes.push(format!("POST {path}"));

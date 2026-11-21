@@ -59,7 +59,6 @@ fn texts_of(items: &[Value]) -> Vec<String> {
         .collect()
 }
 
-/// A string argument, '' for anything else.
 /// The recorded suites passed any value as a saved game and read its fields loosely: a field
 /// that is missing or not a string reads as empty, and `finished` as JavaScript truth.
 fn played(value: Option<&Value>) -> kchess_domain::library::PlayedGame {
@@ -89,6 +88,7 @@ fn played(value: Option<&Value>) -> kchess_domain::library::PlayedGame {
     }
 }
 
+/// A string argument, '' for anything else.
 fn str_or_empty(args: &[Value], i: usize) -> &str {
     arg(args, i).and_then(Value::as_str).unwrap_or_default()
 }

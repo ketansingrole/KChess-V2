@@ -435,7 +435,6 @@ impl<V: PageView> AnyPage for Entity<V> {
     }
 }
 
-/// A page type as the registry knows it.
 /// A page as the registry makes it (`register`).
 pub struct Registered {
     info: PageInfo,
@@ -464,7 +463,6 @@ fn create<V: PageView>(window: &mut Window, cx: &mut App) -> Rc<dyn AnyPage> {
     Rc::new(cx.new(|cx| V::create(window, cx)))
 }
 
-/// Every page, in `Page`'s order, which is the sidebar's.
 /// The app's pages (`register`), each at its `Page`'s place: set once as the app starts, before
 /// anything asks about a page.
 static REGISTRY: OnceLock<&'static [Registered]> = OnceLock::new();

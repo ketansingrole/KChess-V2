@@ -187,7 +187,6 @@ fn read_command_studies(db: &Connection, command: &StudyCommand) -> Result<Vec<S
     read_study_rows(db, StudyBodies::Only(target))
 }
 
-/// One change to the study library, stored on success.
 /// Another window saved the study after this one read it (`docs/shared-core.md`).
 pub const STALE_STUDY: &str =
     "This study was changed in another KChess window. Reload it to see the latest version.";
@@ -244,6 +243,7 @@ fn restructured(study: Study, chapters: Vec<StudyChapter>, now: f64) -> Study {
     }
 }
 
+/// One change to the study library, stored on success.
 pub(crate) fn study_command(
     db: &Connection,
     command: &StudyCommand,

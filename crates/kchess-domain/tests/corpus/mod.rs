@@ -94,12 +94,12 @@ pub fn variant(key: &str) -> Result<kchess_domain::variant::Variant, String> {
     kchess_domain::variant::Variant::from_key(key).ok_or_else(|| format!("unknown variant {key}"))
 }
 
-/// Argument `i`; JSON null stands for an argument that was not given.
 /// A side as the recorded calls named it: anything but `white` was Black.
 pub fn side(name: &str) -> kchess_domain::color::Color {
     kchess_domain::color::from_name(name).unwrap_or(kchess_domain::color::Color::Black)
 }
 
+/// Argument `i`; JSON null stands for an argument that was not given.
 pub fn arg(args: &[Value], i: usize) -> Option<&Value> {
     args.get(i).filter(|v| !v.is_null())
 }
