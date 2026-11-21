@@ -646,7 +646,9 @@ impl PuzzleRush {
         palette: &Palette,
     ) -> AnyElement {
         let config = self.config();
-        let board_size = self.layout.board_size(window);
+        let (board_size, panel_height) = self
+            .layout
+            .board_and_panel(self.board.read(cx).around(), window);
         let state = &self.state;
         let combo_on = config.is_some_and(|config| config.combo);
         let board_column = div()
@@ -671,7 +673,9 @@ impl PuzzleRush {
             .map(|config| config.title.clone())
             .unwrap_or_default();
         let mut panel = widgets::side_panel(palette)
-            .h(board_size)
+            .id("rush-panel")
+            .test_support()
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)
