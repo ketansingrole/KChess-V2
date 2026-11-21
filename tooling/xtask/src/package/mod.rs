@@ -190,7 +190,7 @@ pub fn copy_voice(built: &Built, dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(code)
 }
 
-/// The element id only the development builds' sidebar badge carries (`apps/gpui/src/shell.rs`).
+/// The element id only the development builds' sidebar badge carries (`apps/gpui/src/shell/sidebar.rs`).
 const DEV_BUILD_MARKER: &str = "kchess-dev-build-badge";
 
 fn verify_no_dev_build(path: &Path) -> Result {
