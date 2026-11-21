@@ -783,6 +783,36 @@ fn zen_mode_hides_the_sidebar_in_a_trainer(cx: &mut gpui_kit::TestAppContext) {
     app.find("sidebar");
 }
 
+/// An opening chosen to train while Practice is not shown (Openings' Train) is built at once.
+/// The trainer looked for new choices only while it was being drawn, rebuilding then.
+#[gpui_kit::test]
+fn an_opening_chosen_elsewhere_is_built_without_drawing_the_trainer(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Openings);
+    let trainer = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).repertoire())
+            .expect("the repertoire trainer")
+    });
+    app.open("Analysis board");
+    app.cx.update(|cx| {
+        let choice = crate::game::OpeningChoice {
+            name: "Italian Game".into(),
+            moves: vec!["e2e4".into(), "e7e5".into(), "g1f3".into()],
+        };
+        crate::prefs::set(cx, "kchess:repertoire-opening", choice);
+        crate::prefs::set(cx, "kchess:repertoire-study", "opening");
+    });
+    app.cx.run_until_parked();
+    assert_eq!(
+        app.cx
+            .update(|cx| trainer.read(cx).drilled_opening().map(str::to_string)),
+        Some("Italian Game".to_string())
+    );
+}
+
 /// Another window practised a repertoire: the open Openings tab has its misses. It read them
 /// only once, when the tab was first opened.
 #[gpui_kit::test]
