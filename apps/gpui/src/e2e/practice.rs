@@ -371,6 +371,40 @@ fn a_crazyhouse_mistake_is_solved_with_a_drop(cx: &mut gpui_kit::TestAppContext)
     });
 }
 
+/// Your mistakes opens at its overview each time its tab is chosen, wherever it was left: the
+/// page follows the tab as it is chosen, not as it is drawn.
+#[gpui_kit::test]
+fn your_mistakes_opens_at_its_overview_again(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Mistakes);
+    app.find("review-a-game");
+    let mistakes = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).mistakes())
+            .expect("the mistakes trainer")
+    });
+    app.cx.update(|cx| {
+        mistakes.update(cx, |mistakes, cx| {
+            mistakes.seed(
+                vec![serde_json::json!({
+                    "id": "left-mid-drill",
+                    "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+                    "solution": ["g1f3"],
+                    "dueAt": 0,
+                })],
+                cx,
+            )
+        });
+    });
+    // The drill takes the overview's place.
+    app.click("practice-due");
+    app.wait_gone("practice-early");
+    tab(&mut app, crate::pages::practice::Tab::Coordinates);
+    tab(&mut app, crate::pages::practice::Tab::Mistakes);
+    // The overview, read again: the profile saved no mistake.
+    app.find("review-a-game");
+}
+
 /// A saved mistake is practised from Quick Pick, as the trainer's buttons do.
 #[gpui_kit::test]
 fn a_mistake_is_practised_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
