@@ -40,7 +40,6 @@ const MIN_ATTEMPTS: u64 = 3;
 pub enum StatsEvent {
     /// Train a theme.
     Train(String),
-    Connect,
     Reconnect,
     /// Another connected account's numbers.
     Account(String),
@@ -495,20 +494,14 @@ impl Render for PuzzleStats {
                     .child(
                         widgets::empty_state(
                             icon("user-round-plus"),
-                            "Connect a Lichess account",
+                            "No Lichess account connected",
                             None,
                             &palette,
                         )
                         .child(
-                            h_flex().mt(px(12.)).child(
-                                Button::new("stats-connect")
-                                    .primary()
-                                    .icon(icon("log-in"))
-                                    .label("Connect Lichess")
-                                    .on_click(
-                                        cx.listener(|_, _, _, cx| cx.emit(StatsEvent::Connect)),
-                                    ),
-                            ),
+                            h_flex()
+                                .mt(px(12.))
+                                .child(widgets::connect_lichess("stats-connect", cx)),
                         ),
                     )
                     .into_any_element(),
@@ -768,7 +761,6 @@ impl PuzzleStats {
     pub fn storm_panel(stats: &Entity<Self>, cx: &App, palette: &Palette) -> AnyElement {
         let this = stats.read(cx);
         if this.account.is_empty() {
-            let stats = stats.clone();
             return widgets::card(palette)
                 .gap(px(12.))
                 .child(widgets::heading("Your results on Lichess", palette))
@@ -780,15 +772,9 @@ impl PuzzleStats {
                         palette,
                     )
                     .child(
-                        h_flex().mt(px(8.)).child(
-                            Button::new("storm-connect")
-                                .primary()
-                                .icon(icon("log-in"))
-                                .label("Connect Lichess")
-                                .on_click(move |_, _, cx| {
-                                    stats.update(cx, |_, cx| cx.emit(StatsEvent::Connect))
-                                }),
-                        ),
+                        h_flex()
+                            .mt(px(8.))
+                            .child(widgets::connect_lichess("storm-connect", cx)),
                     ),
                 )
                 .into_any_element();

@@ -88,6 +88,26 @@ fn storm_streak_and_rush_wait_for_the_downloaded_puzzles(cx: &mut gpui_kit::Test
     );
 }
 
+/// Every Connect Lichess is the one button: once a sign-in starts from any of them, each page's
+/// shows it running and takes no second click. Play on Lichess and the Stats tab took one.
+#[gpui_kit::test]
+fn every_connect_lichess_waits_for_the_sign_in_running(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.set_online(true);
+    app.open("Play on Lichess");
+    app.click("online-connect");
+    assert!(
+        app.cx
+            .update(|cx| crate::accounts::handle(cx).read(cx).busy)
+    );
+    assert!(!app.enabled("online-connect"));
+    app.open("Home");
+    assert!(!app.enabled("home-connect"));
+    app.open("Puzzles");
+    tab(&mut app, crate::pages::puzzles::Tab::Stats);
+    assert!(!app.enabled("stats-connect"));
+}
+
 #[gpui_kit::test]
 fn lichess_stats_ask_for_an_account(cx: &mut gpui_kit::TestAppContext) {
     let mut app = puzzles(cx);

@@ -14,7 +14,7 @@ use kchess_board::{board, game, rating_history, widgets};
 use kchess_ui::{dates, theme};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{Disableable as _, Icon, h_flex, v_flex};
+use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Variant;
@@ -654,7 +654,6 @@ fn tile(
 impl Render for HomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let busy = crate::accounts::handle(cx).read(cx).busy;
         let padding = side_padding(window);
         // Before the first layout, the window less the sidebar is the guess.
         let measured = self.area.size().width;
@@ -675,7 +674,7 @@ impl Render for HomePage {
         // A connected account's (or Chess.com player's) activity follows; until then, one line to
         // connect it.
         let activity = self.activity.as_ref().map(|(_, view)| view.clone());
-        let connect = activity.is_none().then(|| connect_card(busy, &palette));
+        let connect = activity.is_none().then(|| connect_card(cx, &palette));
         let starts = v_flex()
             .flex_1()
             .min_w_0()
@@ -849,7 +848,7 @@ fn recent_card(games: Vec<PlayedGame>, palette: &Palette) -> Div {
 }
 
 /// One line to connect a Lichess account, until one is.
-fn connect_card(busy: bool, palette: &Palette) -> Div {
+fn connect_card(cx: &App, palette: &Palette) -> Div {
     widgets::card(palette).py(px(16.)).child(
         h_flex()
             .flex_wrap()
@@ -878,18 +877,7 @@ fn connect_card(busy: bool, palette: &Palette) -> Div {
                             .child("Your ratings and games"),
                     ),
             )
-            .child(
-                Button::new("home-connect")
-                    .outline()
-                    .icon(icon("log-in"))
-                    .label("Connect Lichess")
-                    .loading(busy)
-                    .disabled(busy)
-                    .on_click(|_, window, cx| {
-                        crate::accounts::handle(cx)
-                            .update(cx, |accounts, cx| accounts.connect(window, cx))
-                    }),
-            ),
+            .child(widgets::connect_lichess("home-connect", cx).outline()),
     )
 }
 
